@@ -535,16 +535,42 @@ pub struct ConsentFloored {
 /// A lane and its capability were created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneSeated {
-    /// Created lane.
+    /// Created independently steerable member seat.
     pub lane: CanonicalUuid,
+    /// Canvas lineage whose lane contains the member.
+    pub lineage_id: CanonicalUuid,
     /// Capability minted with the lane.
     pub capability: CanonicalUuid,
+    /// Operator-configured agent display name, absent on pre-field facts.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub name: Option<String>,
     /// Worktree the lane is bound to.
     pub worktree: String,
     /// Closed lane-life spelling selected for the seat.
     pub life: String,
     /// Vendor selected for occupants of this seat.
     pub vendor: Name,
+}
+
+/// One Canvas lineage adopted a task-subscription policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageConfigured {
+    /// Stable Canvas lineage identifying the configured group.
+    pub lineage_id: CanonicalUuid,
+    /// Prior task-subscription policy before this transaction.
+    pub from: crate::intent::LineageLife,
+    /// Authoritative task-subscription policy after this transaction.
+    pub life: crate::intent::LineageLife,
+    /// Prior operator-pinned project set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub from_manual_projects: Vec<String>,
+    /// Authoritative operator-pinned project set after this transaction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub manual_projects: Vec<String>,
 }
 
 /// A selected vendor record declared the exact resumable lane session.
@@ -588,7 +614,7 @@ pub struct LaneStarted {
 /// A vacant lane seat moved to a fresh linked worktree before exact-session seating.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneImported {
-    /// Lane whose team seat is retained.
+    /// Lane whose lineage seat is retained.
     pub lane: CanonicalUuid,
     /// Latest occupant in the retained lineage.
     pub ancestor: CanonicalUuid,

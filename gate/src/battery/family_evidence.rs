@@ -292,9 +292,10 @@ const fn toolchain_state(outcome: ArmOutcome) -> BatteryState {
         ArmOutcome::NotApplicable => BatteryState::NotApplicable,
         ArmOutcome::Excluded => BatteryState::Excluded,
         ArmOutcome::Timeout => BatteryState::TimedOut,
-        ArmOutcome::Findings | ArmOutcome::ParseFailure | ArmOutcome::NonzeroAnalysis => {
-            BatteryState::Failed
-        }
+        ArmOutcome::Findings
+        | ArmOutcome::Cancelled
+        | ArmOutcome::ParseFailure
+        | ArmOutcome::NonzeroAnalysis => BatteryState::Failed,
     }
 }
 

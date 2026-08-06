@@ -9,9 +9,9 @@ use journal::{FactCause, GuardError, JournalGuard, JournalRead, JournalWrite, Pe
 use spice::repository::Repository;
 use wire::body::GitBoundary;
 use wire::intent::{
-    BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardTask, ClaimRenew, ClaimWin,
-    CommandAnswer, DocApply, DocLedger, Positioned, TaskAdd, TaskDefer, TaskDepends, TaskDone,
-    TaskNote, TaskOopsAdd, TaskRef, TaskReview, TextAnswer,
+    BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead, BoardTask, ClaimRenew,
+    ClaimWin, CommandAnswer, DocApply, DocLedger, Positioned, ReviewFollowup, TaskAdd, TaskDefer,
+    TaskDepends, TaskDone, TaskNote, TaskOopsAdd, TaskRef, TaskReview, TextAnswer,
 };
 use wire::{
     Actor, ClaimDisposition, ClaimHead, Command, CommandKind, Digest, Domain, Fault, FaultClass,
@@ -22,6 +22,8 @@ use wire::{
 use crate::cli::Contract;
 
 include!("board_command/client.rs");
+include!("board_command/client_document.rs");
+include!("board_command/followup.rs");
 include!("board_command/mutation.rs");
 include!("board_command/progress.rs");
 include!("board_command/read_guard.rs");

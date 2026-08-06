@@ -4,7 +4,12 @@ use app::{
     CanvasRuntime, ChainEnd, LaneStatus, Session, Stale, StreamDirective, StreamTerminal,
     stale_reads,
 };
-use wire::{CanonicalUuid, CommandKind, Response, Seq, StreamFrame, ViewSubject};
+use wire::{
+    CanonicalUuid, CommandKind, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition,
+    Response, Seq, StreamFrame, ViewSubject, WireVersion,
+};
+
+mod support;
 
 const OPERATOR: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
 const LANE_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c6";
@@ -64,6 +69,7 @@ fn seated_fact(position: u64, capability: Option<&str>) -> serde_json::Value {
         "fact": {
             "kind": "lane::seated",
             "lane": LANE,
+            "lineage_id": LANE,
             "worktree": "/tmp/lane",
             "life": "continuous",
             "vendor": "codex",
@@ -107,54 +113,63 @@ fn admitted_stream(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame
         .expect("stream frame is admitted")
 }
 
-fn board_task(handle: &str, uuid: &str, title: &str, project: &str) -> serde_json::Value {
+fn board_task(handle: &str, id: &str, title: &str, project: &str) -> wire::intent::BoardTask {
     let visibility = if project.starts_with('.') {
-        serde_json::json!({"kind": "hidden", "stem": "oops"})
+        wire::intent::ProjectVisibility::Hidden {
+            stem: "oops".to_owned(),
+        }
     } else {
-        serde_json::json!({"kind": "public"})
+        wire::intent::ProjectVisibility::Public
     };
-    serde_json::json!({
-        "visibility": visibility,
-        "presentation_title": title,
-        "statement": {
-            "position": 1,
-            "body": {
-                "handle": handle,
-                "uuid": uuid,
-                "project": project,
-                "tags": [],
-                "dependencies": [],
-                "provenance": format!("task:{handle}"),
-                "revision": 1,
+    wire::intent::BoardTask {
+        visibility,
+        presentation_title: title.to_owned(),
+        statement: wire::intent::Positioned {
+            position: seq(1),
+            body: wire::intent::BoardStatement {
+                handle: handle.parse().expect("fixture task handle"),
+                uuid: uuid(id),
+                description: None,
+                acceptance: Vec::new(),
+                project: project.to_owned(),
+                tags: Vec::new(),
+                dependencies: Vec::new(),
+                provenance: format!("task:{handle}").parse().expect("fixture origin"),
+                revision: seq(1),
             },
         },
-        "workflow": {
-            "position": 2,
-            "body": {
-                "flow": ["todo"],
-                "phase": "todo",
-                "status": "pending",
-                "review": "unassigned",
+        workflow: wire::intent::Positioned {
+            position: seq(2),
+            body: wire::WorkflowHead {
+                flow: vec!["todo".parse().expect("fixture phase")],
+                phase: "todo".parse().expect("fixture phase"),
+                status: "pending".to_owned(),
+                review: "unassigned".to_owned(),
+                assignment: None,
+                deferral: None,
+                completion: None,
             },
         },
-    })
+        claim: None,
+        lease: None,
+    }
 }
 
 fn board_response(
     session: &Session,
     hidden_title: &str,
 ) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
-    let body = serde_json::json!({
-        "schema": 1,
-        "cursor": 4,
-        "principal": "operator",
-        "tasks": [
-            board_task(
-                "HIDDEN-oops1",
-                REQUEST,
-                hidden_title,
-                ".oops.correctness",
-            ),
+    let body = wire::intent::BoardAnswer {
+        schema: 1,
+        cursor: seq(4),
+        principal: wire::Actor::Operator,
+        project_policy: wire::intent::BoardProjectPolicy {
+            public_stems: vec!["app".to_owned(), "board".to_owned()],
+            public_min_depth: 2,
+            public_max_depth: 3,
+        },
+        tasks: vec![
+            board_task("HIDDEN-oops1", REQUEST, hidden_title, ".oops.correctness"),
             board_task(
                 "PUBLIC-work1",
                 NEXT_CAPABILITY,
@@ -162,73 +177,92 @@ fn board_response(
                 "board.visibility",
             ),
         ],
-        "residency": {
-            "position": 3,
-            "body": {
-                "epoch": EPOCH,
-                "state": "seated",
-                "lanes": [],
+        residency: wire::intent::Positioned {
+            position: seq(3),
+            body: wire::ResidencyHead {
+                epoch: uuid(EPOCH),
+                state: wire::ResidentState::Seated,
+                lanes: Vec::new(),
+                subscriptions: Vec::new(),
             },
         },
-    });
-    let bytes = serde_json::to_vec(&serde_json::json!({
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "outcome": {
-            "kind": "reply",
-            "cursor": 4,
-            "body": body,
-        },
-    }))
-    .expect("board response fixture serializes");
+    };
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(4)),
+            body,
+        }),
+    );
     session
         .admit_frame(&bytes)
         .expect("board response is admitted")
 }
 
-/// One admitted lane roster, one row per `(lane, occupant, session)` triple.
+/// One admitted safe lane roster, one row per `(lane, lineage, occupant, bound)` tuple.
 ///
-/// The session body is the resident's real one rather than a placeholder,
-/// because `bound` is derived from its presence and a shape the wire refuses
-/// would prove the mapping against a row that never crosses.
-fn lane_response(rows: &[(&str, Option<&str>, bool)]) -> String {
+/// Session authority and capabilities are intentionally not part of this DTO;
+/// only the explicit `bound` projection crosses into the Canvas.
+fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
+    let subscriptions = rows
+        .iter()
+        .map(|(_, lineage_id, _, _)| {
+            let lineage_id = uuid(lineage_id);
+            (
+                lineage_id,
+                wire::LineageSubscription {
+                    lineage_id,
+                    policy: wire::intent::LineageLife::Steer,
+                    manual_projects: Vec::new(),
+                    auto_projects: Vec::new(),
+                },
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>()
+        .into_values()
+        .collect();
     let lanes = rows
         .iter()
-        .map(|(lane, occupant, bound)| {
-            let mut row = serde_json::json!({
-                "lane": lane,
-                "worktree": format!("/tmp/worktree-{}", &lane[..8]),
-                "life": "steer",
-                "vendor": "claude",
-                "lineage": [],
-                "capabilities": [],
-                "disposition": if occupant.is_some() { "occupied" } else { "vacant" },
-            });
-            if let Some(occupant) = occupant {
-                row["occupant"] = serde_json::json!(occupant);
-            }
-            if *bound {
-                row["session"] = serde_json::json!({
-                    "lane": lane,
-                    "occupant": OPERATOR,
-                    "worktree": format!("/tmp/worktree-{}", &lane[..8]),
-                    "vendor": "claude",
-                    "epoch": EPOCH,
-                    "stream": "stdout",
-                    "identity": "018f7777-7777-7444-8888-999999999999",
-                    "locus": {"member": 0, "offset": 0, "length": 12},
-                });
-            }
-            row
-        })
+        .map(
+            |(lane, lineage_id, occupant, bound)| wire::intent::LaneAnswerRow {
+                lane: uuid(lane),
+                lineage_id: uuid(lineage_id),
+                name: None,
+                worktree: format!("/tmp/worktree-{}", &lane[..8]),
+                life: "steer".to_owned(),
+                vendor: "claude".parse().expect("fixture vendor"),
+                occupant: occupant.map(uuid),
+                lineage: Vec::new(),
+                bound: *bound,
+                disposition: if occupant.is_some() {
+                    "occupied".to_owned()
+                } else {
+                    "vacant".to_owned()
+                },
+                liveness: if occupant.is_some() {
+                    wire::intent::LaneLiveness::Running
+                } else {
+                    wire::intent::LaneLiveness::Vacant
+                },
+            },
+        )
         .collect::<Vec<_>>();
-    let body = serde_json::json!({
-        "kind": "reply",
-        "cursor": 41,
-        "body": {"epoch": EPOCH, "state": "seated", "lanes": lanes},
-    });
-    serde_json::json!({"v": 1, "id": REQUEST, "epoch": EPOCH, "outcome": body}).to_string()
+    support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(41)),
+            body: wire::intent::LaneAnswer {
+                epoch: uuid(EPOCH),
+                state: wire::ResidentState::Seated,
+                lanes,
+                subscriptions,
+            },
+        }),
+    )
 }
 
 fn fact_frame(fact: serde_json::Value) -> Vec<u8> {
@@ -656,6 +690,7 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
             serde_json::json!({
                 "kind": "lane::seated",
                 "lane": LANE,
+                "lineage_id": LANE,
                 "worktree": "/tmp/lane",
                 "life": "continuous",
                 "vendor": "codex",
@@ -817,15 +852,15 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
 
 /// The tile ladder is the predecessor's, and every rung has its own cause.
 ///
-/// The four rungs are read from three independent inputs — queued direction,
-/// a live occupant, and a declared session — so the fixture varies one at a
-/// time rather than presenting four lanes that differ in every field. The
+/// The five rungs are read from three independent inputs — queued direction,
+/// typed occupant liveness, and a declared session — so the fixture varies one
+/// at a time rather than presenting lanes that differ in every field. The
 /// labels are written out here rather than read back from [`LaneStatus`],
 /// because a test that asks the enum what its wording is passes after the
 /// wording changes.
 ///
 /// The rank is asserted through a shuffled sort because the strip orders its
-/// tiles by `Ord` alone: a ladder that named the four states in the right
+/// tiles by `Ord` alone: a ladder that named the five states in the right
 /// order but derived the wrong comparison would still put the lane waiting on
 /// the operator at the far end of the strip.
 #[test]
@@ -834,12 +869,12 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
     let bytes = lane_response(&[
-        (SECOND_LANE, None, false),
-        (LANE, Some(OPERATOR), false),
-        (THIRD_LANE, None, true),
+        (SECOND_LANE, SECOND_LANE, None, false),
+        (LANE, LANE, Some(OPERATOR), false),
+        (THIRD_LANE, THIRD_LANE, None, true),
     ]);
     let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
-        .admit_frame(bytes.as_bytes())
+        .admit_frame(&bytes)
         .expect("lane answer is admitted");
     runtime.apply_lanes(&admitted);
 
@@ -850,6 +885,9 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         .clone();
     let [never_seated, occupied, seated_before] = <[_; 3]>::try_from(lanes)
         .unwrap_or_else(|rows| panic!("three rows survive admission, got {}", rows.len()));
+    let never_seated = never_seated.host().expect("lineage has one member");
+    let occupied = occupied.host().expect("lineage has one member");
+    let seated_before = seated_before.host().expect("lineage has one member");
     assert_eq!(never_seated.status(0), LaneStatus::Unbound);
     assert_eq!(
         seated_before.status(0),
@@ -866,11 +904,18 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
 
     assert_eq!(LaneStatus::Queued.label(), "steering queued");
     assert_eq!(LaneStatus::Running.label(), "agent running");
+    assert_eq!(LaneStatus::RunningStale.label(), "agent running-stale");
     assert_eq!(LaneStatus::Bound.label(), "agent bound");
     assert_eq!(LaneStatus::Unbound.label(), "agent unbound");
+    assert_eq!(LaneStatus::Queued.key(), "queued");
+    assert_eq!(LaneStatus::Running.key(), "running");
+    assert_eq!(LaneStatus::RunningStale.key(), "running-stale");
+    assert_eq!(LaneStatus::Bound.key(), "bound");
+    assert_eq!(LaneStatus::Unbound.key(), "unbound");
 
     let mut strip = vec![
         LaneStatus::Unbound,
+        LaneStatus::RunningStale,
         LaneStatus::Running,
         LaneStatus::Bound,
         LaneStatus::Queued,
@@ -881,11 +926,76 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         vec![
             LaneStatus::Queued,
             LaneStatus::Running,
+            LaneStatus::RunningStale,
             LaneStatus::Bound,
             LaneStatus::Unbound,
         ],
         "the strip reads left to right as the predecessor's targetChoiceStatusValues"
     );
+}
+
+#[test]
+fn one_lineage_groups_multiple_steerable_worktrees_without_losing_member_order() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = lane_response(&[
+        (LANE, EPOCH, Some(OPERATOR), false),
+        (SECOND_LANE, EPOCH, None, true),
+        (THIRD_LANE, THIRD_LANE, None, false),
+    ]);
+    let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(&bytes)
+        .expect("plural lineage answer is admitted");
+
+    runtime.apply_lanes(&admitted);
+
+    let lanes = &runtime.lanes().expect("the roster is retained").lanes;
+    assert_eq!(lanes.len(), 2);
+    assert_eq!(lanes[0].lane, uuid(EPOCH));
+    assert_eq!(lanes[0].members.len(), 2);
+    assert_eq!(lanes[0].members[0].lane, uuid(LANE));
+    assert_eq!(lanes[0].members[1].lane, uuid(SECOND_LANE));
+    assert_eq!(lanes[1].members[0].lane, uuid(THIRD_LANE));
+    assert!(
+        lanes
+            .iter()
+            .all(|lineage| lineage.subscription == wire::intent::LineageLife::Steer)
+    );
+}
+
+#[test]
+fn every_distinct_lineage_forms_one_console_even_when_members_have_no_name() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = lane_response(&[
+        (LANE, LANE, None, false),
+        (SECOND_LANE, SECOND_LANE, None, false),
+        (THIRD_LANE, THIRD_LANE, None, false),
+    ]);
+    let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(&bytes)
+        .expect("distinct lineage answer is admitted");
+
+    runtime.apply_lanes(&admitted);
+
+    let lineages = &runtime.lanes().expect("the roster is retained").lanes;
+    assert_eq!(
+        lineages.len(),
+        3,
+        "distinct lineage keys never share a console"
+    );
+    assert_eq!(
+        lineages
+            .iter()
+            .map(|lineage| lineage.lane)
+            .collect::<Vec<_>>(),
+        vec![uuid(LANE), uuid(SECOND_LANE), uuid(THIRD_LANE)]
+    );
+    assert!(lineages.iter().all(|lineage| {
+        lineage.members.len() == 1 && lineage.host().is_some_and(|member| member.name.is_none())
+    }));
 }
 
 /// The one steering receipt shape quotes the key exactly as the resident set it.
@@ -902,17 +1012,21 @@ fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_dispos
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
-    let reply = format!(
-        concat!(
-            r#"{{"kind":"reply","cursor":41,"body":{{"directive":"{LANE}","#,
-            r#""key":"1kKQtLsP","disposition":"acked"}}}}"#,
-        ),
-        LANE = LANE
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(41)),
+            body: wire::intent::DirectiveAnswer {
+                directive: uuid(LANE),
+                key: "1kKQtLsP".to_owned(),
+                disposition: wire::Disposition::Acked,
+            },
+        }),
     );
-    let bytes = format!(r#"{{"v":1,"id":"{REQUEST}","epoch":"{EPOCH}","outcome":{reply}}}"#);
-    let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
-        .admit_frame(bytes.as_bytes())
-        .expect("response is admitted");
+    let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> =
+        session.admit_frame(&bytes).expect("response is admitted");
     runtime.apply_steer(&admitted, uuid(LANE));
 
     let event = runtime
@@ -936,12 +1050,21 @@ fn a_seating_receipt_names_the_lane_and_the_dispositions_it_moved_between() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
-    let body = format!(r#"{{"lane":"{LANE}","from":"absent","to":"occupied"}}"#);
-    let reply = format!(r#"{{"kind":"reply","cursor":17,"body":{body}}}"#);
-    let bytes = format!(r#"{{"v":1,"id":"{REQUEST}","epoch":"{EPOCH}","outcome":{reply}}}"#);
-    let admitted: app::Admitted<Response<wire::intent::LaneChangeAnswer>> = session
-        .admit_frame(bytes.as_bytes())
-        .expect("response is admitted");
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(17)),
+            body: wire::intent::LaneChangeAnswer {
+                lane: uuid(LANE),
+                from: "absent".to_owned(),
+                to: "occupied".to_owned(),
+            },
+        }),
+    );
+    let admitted: app::Admitted<Response<wire::intent::LaneChangeAnswer>> =
+        session.admit_frame(&bytes).expect("response is admitted");
     runtime.apply_lane_change(&admitted);
 
     let event = runtime.events().first().expect("seating records one event");
@@ -957,16 +1080,31 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
-    let outcomes = [
-        r#"{"kind":"reply","cursor":41,"body":{"task":"SPICE-aBcD","status":"done"}}"#,
-        r#"{"kind":"refusal","reason":"task::missing","remedy":"use a current handle"}"#,
-        r#"{"kind":"fault","class":"protocol","reason":"command::stale","detail":"epoch moved"}"#,
+    let outcomes: [Outcome<wire::intent::TaskAnswer>; 3] = [
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(41)),
+            body: wire::intent::TaskAnswer {
+                task: "SPICE-aBcD".parse().expect("fixture task handle"),
+                status: "done".to_owned(),
+            },
+        }),
+        Outcome::Refusal(Refusal {
+            reason: "task::missing".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "use a current handle".to_owned(),
+        }),
+        Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "command::stale".to_owned(),
+            detail: "epoch moved".to_owned(),
+        }),
     ];
     for outcome in outcomes {
-        let bytes = format!(r#"{{"v":1,"id":"{REQUEST}","epoch":"{EPOCH}","outcome":{outcome}}}"#);
-        let admitted: app::Admitted<Response<wire::intent::TaskAnswer>> = session
-            .admit_frame(bytes.as_bytes())
-            .expect("response is admitted");
+        let bytes = support::response(WireVersion::CURRENT, uuid(REQUEST), uuid(EPOCH), outcome);
+        let admitted: app::Admitted<Response<wire::intent::TaskAnswer>> =
+            session.admit_frame(&bytes).expect("response is admitted");
         runtime.apply_note(&admitted, "SPICE-aBcD");
     }
 
@@ -981,25 +1119,55 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
 }
 
 #[test]
+fn the_second_command_outcome_is_the_ticker_source() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let outcomes: [Outcome<wire::intent::TaskAnswer>; 2] = [
+        Outcome::Refusal(Refusal {
+            reason: "task::first".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "use the first remedy".to_owned(),
+        }),
+        Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "command::second".to_owned(),
+            detail: "second detail".to_owned(),
+        }),
+    ];
+    for outcome in outcomes {
+        let bytes = support::response(WireVersion::CURRENT, uuid(REQUEST), uuid(EPOCH), outcome);
+        let admitted: app::Admitted<Response<wire::intent::TaskAnswer>> =
+            session.admit_frame(&bytes).expect("response is admitted");
+        runtime.apply_note(&admitted, "SPICE-aBcD");
+    }
+
+    let ticker = runtime.newest_event().expect("the ticker has one source");
+    assert_eq!(ticker.class(), "fault");
+    assert_eq!(ticker.title(), "command::second");
+    assert_eq!(ticker.detail(), "second detail");
+}
+
+#[test]
 fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
-    let bytes = serde_json::to_vec(&serde_json::json!({
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "outcome": {
-            "kind": "reply",
-            "cursor": 41,
-            "body": {
-                "directive": LANE,
-                "key": "1kQTest",
-                "disposition": "live",
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(41)),
+            body: wire::intent::DirectiveAnswer {
+                directive: uuid(LANE),
+                key: "1kQTest".to_owned(),
+                disposition: wire::Disposition::Live,
             },
-        },
-    }))
-    .expect("steer response serializes");
+        }),
+    );
     let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
         .admit_frame(&bytes)
         .expect("steer response is admitted");

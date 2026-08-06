@@ -10,6 +10,8 @@ mod tests {
 
     use super::*;
 
+    mod subscription;
+
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
     static NEXT_COMMAND: AtomicU64 = AtomicU64::new(100);
 
@@ -47,6 +49,8 @@ mod tests {
             .enumerate()
             .map(|(index, seat)| wire::LaneResidency {
                 lane: seat.lane,
+                lineage_id: seat.lane,
+                name: None,
                 worktree: "/fixture".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
@@ -55,6 +59,15 @@ mod tests {
                 capabilities: vec![uuid(number * 100 + index as u64 + 50)],
                 session: None,
                 disposition: "occupied".to_owned(),
+            })
+            .collect::<Vec<_>>();
+        let subscriptions = lanes
+            .iter()
+            .map(|lane| wire::LineageSubscription {
+                lineage_id: lane.lineage_id,
+                policy: wire::intent::LineageLife::Drain,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
             })
             .collect::<Vec<_>>();
         let origin = format!("resident:{epoch}")
@@ -69,6 +82,7 @@ mod tests {
             epoch,
             state: ResidentState::Seated,
             lanes,
+            subscriptions,
         });
         match bus.commit(write).expect("fixture seating reaches writer") {
             CommitOutcome::Committed(_) => {}
@@ -153,6 +167,23 @@ mod tests {
         project: &str,
         flow: Option<&str>,
     ) -> TaskHandle {
+        add_project_with_acceptance(bus, epoch, actor, task, title, project, flow, &[])
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "task fixtures retain the command's authored fields"
+    )]
+    fn add_project_with_acceptance(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        actor: Actor,
+        task: &str,
+        title: &str,
+        project: &str,
+        flow: Option<&str>,
+        acceptance: &[&str],
+    ) -> TaskHandle {
         let task = task.parse::<TaskHandle>().expect("fixture task handle");
         assert_committed(issue(
             bus,
@@ -164,7 +195,7 @@ mod tests {
                 title: title.to_owned(),
                 project: Some(project.to_owned()),
                 description: None,
-                acceptance: Vec::new(),
+                acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
                 origin: None,
                 flow: flow.map(str::to_owned),
                 depends: Vec::new(),
@@ -198,6 +229,28 @@ mod tests {
         bus.verify().expect("fixture authority verifies");
         bus.shutdown().expect("fixture bus stops");
         fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn native_task_handles_use_the_predecessor_stamp_alphabet() {
+        const PREDECESSOR_ALPHABET: &[u8; 52] =
+            b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
+
+        for (value, expected) in PREDECESSOR_ALPHABET.iter().copied().enumerate() {
+            let handle = mint_handle_at(Some("task.identity"), "ignored", value as i64);
+            let (_, stamp) = handle
+                .as_str()
+                .split_once('-')
+                .expect("native handle carries a stem and stamp");
+            assert_eq!(stamp.len(), steer::Key::WIDTH);
+            assert!(
+                stamp
+                    .bytes()
+                    .all(|byte| PREDECESSOR_ALPHABET.contains(&byte)),
+                "{stamp:?} is outside the predecessor task alphabet"
+            );
+            assert_eq!(stamp.as_bytes()[steer::Key::WIDTH - 1], expected);
+        }
     }
 
     #[test]
@@ -254,6 +307,8 @@ mod tests {
         for expected in [
             "claim -",
             "actor operator",
+            "filter ( project:board or project:rim or project:serve or project:task )",
+            "public task project depth 2..3 dotted segments",
             "active 0",
             "ready 1",
             "review 1",
@@ -265,6 +320,163 @@ mod tests {
             assert!(status.lines().any(|line| line == expected), "{status}");
         }
         clean(&root, bus);
+    }
+
+    #[test]
+    fn task_list_preserves_scope_status_project_and_newest_limit_semantics() {
+        let (root, bus, epoch, _) = fixture("task-list", 0);
+        let (answer, first, descendant, waiting) = task_list_fixture(&bus, epoch);
+        assert_task_list_queries(&answer, &first, &descendant, &waiting);
+        clean(&root, bus);
+    }
+
+    fn task_list_fixture(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+    ) -> (BoardAnswer, TaskHandle, TaskHandle, TaskHandle) {
+        let first = add_project(
+            bus,
+            epoch,
+            Actor::Operator,
+            "CLI-list0001",
+            "First task route",
+            "task.cli",
+            Some("todo"),
+        );
+        let descendant = add_project(
+            bus,
+            epoch,
+            Actor::Operator,
+            "CLI-list0002",
+            "Descendant task route",
+            "task.cli.deep",
+            Some("todo"),
+        );
+        let waiting = add_project(
+            bus,
+            epoch,
+            Actor::Operator,
+            "CLI-list0003",
+            "Deferred serve route",
+            "serve.ops",
+            Some("todo"),
+        );
+        let completed = add_project(
+            bus,
+            epoch,
+            Actor::Operator,
+            "CLI-list0004",
+            "Completed board route",
+            "board.test",
+            Some("todo"),
+        );
+        let mut answer = board(bus, epoch, Actor::Operator);
+        answer
+            .tasks
+            .iter_mut()
+            .find(|task| task.statement.body.handle == first)
+            .expect("first row")
+            .statement
+            .body
+            .tags
+            .push("priority:medium".to_owned());
+        answer
+            .tasks
+            .iter_mut()
+            .find(|task| task.statement.body.handle == waiting)
+            .expect("waiting row")
+            .workflow
+            .body
+            .deferral = Some(fixture_instant("fixture deferral"));
+        let completed_row = answer
+            .tasks
+            .iter_mut()
+            .find(|task| task.statement.body.handle == completed)
+            .expect("completed row");
+        completed_row.workflow.body.status = "completed".to_owned();
+        completed_row.workflow.body.completion = Some(fixture_instant("fixture completion"));
+        (answer, first, descendant, waiting)
+    }
+
+    fn assert_task_list_queries(
+        answer: &BoardAnswer,
+        first: &TaskHandle,
+        descendant: &TaskHandle,
+        waiting: &TaskHandle,
+    ) {
+        let default = task_list(
+            answer,
+            &TaskListOptions {
+                all: false,
+                project: None,
+                limit: None,
+                status: None,
+            },
+        );
+        assert!(default.starts_with(concat!(
+            "scope actor-route filter ",
+            "( project:board or project:rim or project:serve or project:task )\n"
+        )));
+        assert!(default.contains("CLI-list0001 [todo] P:M task.cli First task route"));
+        assert!(default.contains("CLI-list0002 [todo] task.cli.deep Descendant task route"));
+        assert!(!default.contains("CLI-list0003"), "{default}");
+        assert!(!default.contains("CLI-list0004"), "{default}");
+
+        let project = task_list(
+            answer,
+            &TaskListOptions {
+                all: false,
+                project: Some("task.cli".to_owned()),
+                limit: None,
+                status: Some(TaskListStatus::Pending),
+            },
+        );
+        assert!(project.starts_with("scope explicit-project project:task.cli\n"));
+        assert!(project.contains(first.as_str()));
+        assert!(project.contains(descendant.as_str()));
+        assert!(!project.contains(waiting.as_str()));
+
+        let waiting_only = task_list(
+            answer,
+            &TaskListOptions {
+                all: false,
+                project: None,
+                limit: None,
+                status: Some(TaskListStatus::Waiting),
+            },
+        );
+        assert!(waiting_only.contains(waiting.as_str()));
+        assert!(!waiting_only.contains(first.as_str()));
+
+        let newest_global = task_list(
+            answer,
+            &TaskListOptions {
+                all: true,
+                project: None,
+                limit: Some(1),
+                status: None,
+            },
+        );
+        assert_eq!(
+            newest_global,
+            "scope global --all\nCLI-list0004 [done] board.test Completed board route"
+        );
+        let deleted = task_list(
+            answer,
+            &TaskListOptions {
+                all: true,
+                project: None,
+                limit: None,
+                status: Some(TaskListStatus::Deleted),
+            },
+        );
+        assert_eq!(deleted, "scope global --all\nno tasks in global scope");
+    }
+
+    fn fixture_instant(context: &str) -> Instant {
+        "2030-04-12T18:44:09.271Z"
+            .parse()
+            .unwrap_or_else(|error| panic!("{context}: {error}"))
     }
 
     /// A held task is named on the claim line and counted as active.
@@ -360,7 +572,12 @@ mod tests {
         let entries = actor_entries(&available)
             .expect("capture board entries are valid");
         assert_eq!(
-            board::select(&entries, &lane)
+            board::select(
+                &entries,
+                &lane,
+                allocation_subscription(&available.residency.body, &lane)
+                    .expect("fixture lane subscription"),
+            )
                 .expect("allocator winner")
                 .entry()
                 .statement()
@@ -396,6 +613,88 @@ mod tests {
             ClaimDisposition::Active,
         );
         clean(&root, bus);
+    }
+
+    #[test]
+    fn claims_warn_on_shared_acceptance_surface_not_shared_project_stem() {
+        let (root, bus, epoch, seats) = fixture("claim-overlap", 3);
+        let first = add_project_with_acceptance(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "MOSAIC-1kKQTw1V",
+            "Canvas lacks the mosaic lane interface",
+            "board.alpha",
+            Some("todo"),
+            &["The watchband mosaic uses per-lane cards and stays stable"],
+        );
+        let overlapping = add_project_with_acceptance(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "FIDELIT-1kKRSfyV",
+            "Rebuild the lane watchband and message mosaic",
+            "rim.beta",
+            Some("todo"),
+            &["The mosaic watchband keeps focused-agent state visible"],
+        );
+        let same_stem = add_project_with_acceptance(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "MOSAIC-1kKQTw1W",
+            "Audit unrelated board output",
+            "board.gamma",
+            Some("todo"),
+            &["Export signed ledger receipts for audit and keep output stable"],
+        );
+
+        let first_answer = capture_for(&bus, epoch, &seats[0], &first);
+        assert!(first_answer.warnings.is_empty());
+
+        let overlap_answer = capture_for(&bus, epoch, &seats[1], &overlapping);
+        assert_eq!(
+            overlap_answer.warnings,
+            [wire::intent::ClaimWarning {
+                task: first,
+                lane: seats[0].lane,
+                surface: vec!["mosaic".to_owned(), "watchband".to_owned()],
+            }]
+        );
+
+        let same_stem_answer = capture_for(&bus, epoch, &seats[2], &same_stem);
+        assert!(same_stem_answer.warnings.is_empty());
+        clean(&root, bus);
+    }
+
+    fn capture_for(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        seat: &Seat,
+        task: &TaskHandle,
+    ) -> wire::intent::ClaimAnswer {
+        let lane = Actor::Lane(seat.lane);
+        let available = board(bus, epoch, lane.clone());
+        let heads = at(&available, task);
+        let rule: Name = "capture".parse().expect("capture rule");
+        let answer = assert_committed(issue(
+            bus,
+            epoch,
+            lane,
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility { rule: rule.clone() },
+                residency(&available, seat),
+            ],
+            &ClaimWin { rule },
+        ));
+        let CommandAnswer::Claim(answer) = answer else {
+            panic!("claim win returned another answer shape: {answer:?}");
+        };
+        answer
     }
 
     #[test]
@@ -590,7 +889,12 @@ mod tests {
         assert_eq!(at(&after_restart, &held_task), after);
         let entries = actor_entries(&after_restart).expect("restarted board validates");
         assert_eq!(
-            board::select(&entries, &lane)
+            board::select(
+                &entries,
+                &lane,
+                allocation_subscription(&after_restart.residency.body, &lane)
+                    .expect("restarted lane subscription"),
+            )
                 .expect("allocator still has unclaimed work")
                 .entry()
                 .statement()
@@ -601,386 +905,9 @@ mod tests {
         clean(&root, reopened);
     }
 
-    #[test]
-    fn lane_claim_free_done_and_review_finding_survive_restart() {
-        let (root, bus, epoch, seats) = fixture("workflow", 2);
-        let lane_one = Actor::Lane(seats[0].lane);
-        let lane_two = Actor::Lane(seats[1].lane);
-        assert_lane_resolution(&bus, epoch, &seats, &lane_one);
-        let task = add(
-            &bus,
-            epoch,
-            Actor::Operator,
-            "FLOW-flow0001",
-            "Complete and review",
-            None,
-        );
-        advance_task_to_review(&bus, epoch, &seats[0], &lane_one, &task);
-        complete_review_with_finding(&bus, epoch, &seats[1], &lane_two, &task);
-        let settled = assert_review_settled(&bus, epoch, &task);
-        assert_restart_preserves(&root, bus, epoch, &settled);
-    }
-
-    fn assert_lane_resolution(
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        seats: &[Seat],
-        lane_one: &Actor,
-    ) {
-        let operator = board(bus, epoch, Actor::Operator);
-        assert!(matches!(
-            actor_seat(&operator),
-            Err(Outcome::Refusal(Refusal { ref reason, .. }))
-                if reason == "claim::operator-lane-ambiguous"
-        ));
-        let lane_board = board(bus, epoch, lane_one.clone());
-        assert_eq!(
-            actor_seat(&lane_board).expect("lane resolves its own seat"),
-            (seats[0].lane, seats[0].occupant)
-        );
-    }
-
-    fn advance_task_to_review(
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        seat: &Seat,
-        lane: &Actor,
-        task: &TaskHandle,
-    ) {
-        let available = board(bus, epoch, lane.clone());
-        assert_committed(issue(
-            bus,
-            epoch,
-            lane.clone(),
-            CommandKind::ClaimWin,
-            claim_expected(&available, task, seat),
-            &ClaimWin {
-                rule: "next".parse().expect("allocator rule"),
-            },
-        ));
-        let held = board(bus, epoch, lane.clone());
-        let held_heads = at(&held, task);
-        assert_committed(issue(
-            bus,
-            epoch,
-            lane.clone(),
-            CommandKind::ClaimFree,
-            vec![
-                claim_witness(held_heads),
-                Witness::Lease {
-                    task: task.clone(),
-                    head: held_heads.lease.as_ref().expect("lease head").position,
-                },
-                residency(&held, seat),
-            ],
-            &TaskRef { task: task.clone() },
-        ));
-        claim_and_complete_task(bus, epoch, seat, lane, task);
-    }
-
-    fn claim_and_complete_task(
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        seat: &Seat,
-        lane: &Actor,
-        task: &TaskHandle,
-    ) {
-        let available = board(bus, epoch, lane.clone());
-        assert_committed(issue(
-            bus,
-            epoch,
-            lane.clone(),
-            CommandKind::ClaimWin,
-            claim_expected(&available, task, seat),
-            &ClaimWin {
-                rule: "next".parse().expect("allocator rule"),
-            },
-        ));
-        let held = board(bus, epoch, lane.clone());
-        let expected = progress_witnesses(&held, at(&held, task), seat.lane, seat.occupant, false)
-            .expect("held task has progress witnesses");
-        assert_committed(issue(
-            bus,
-            epoch,
-            lane.clone(),
-            CommandKind::TaskDone,
-            expected,
-            &TaskDone {
-                task: task.clone(),
-                validation: "implementation and focused checks complete".to_owned(),
-            },
-        ));
-    }
-
-    fn complete_review_with_finding(
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        seat: &Seat,
-        lane: &Actor,
-        task: &TaskHandle,
-    ) {
-        let reviewable = board(bus, epoch, lane.clone());
-        assert_eq!(at(&reviewable, task).workflow.body.phase.as_str(), "review");
-        assert_committed(issue(
-            bus,
-            epoch,
-            lane.clone(),
-            CommandKind::ClaimWin,
-            claim_expected(&reviewable, task, seat),
-            &ClaimWin {
-                rule: "next".parse().expect("allocator rule"),
-            },
-        ));
-        let assigned = board(bus, epoch, lane.clone());
-        assert_eq!(
-            at(&assigned, task).workflow.body.assignment,
-            Some(lane.clone())
-        );
-        let expected = progress_witnesses(
-            &assigned,
-            at(&assigned, task),
-            seat.lane,
-            seat.occupant,
-            true,
-        )
-        .expect("assigned review has exact witnesses");
-        assert_committed(issue(
-            bus,
-            epoch,
-            lane.clone(),
-            CommandKind::TaskReview,
-            expected,
-            &TaskReview {
-                task: task.clone(),
-                finding: "missing negative-path evidence".to_owned(),
-                note: Some("recorded for the next authored correction".to_owned()),
-            },
-        ));
-    }
-
-    fn assert_review_settled(
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        task: &TaskHandle,
-    ) -> BoardAnswer {
-        let settled = board(bus, epoch, Actor::Operator);
-        let heads = at(&settled, task);
-        assert_eq!(heads.workflow.body.status, "completed");
-        assert_eq!(heads.workflow.body.review, "finding");
-        assert_eq!(
-            heads.claim.as_ref().expect("review claim head").body.disposition,
-            ClaimDisposition::Freed
-        );
-        let facts = bus.fact_snapshot().expect("workflow facts read");
-        assert!(facts.facts().iter().any(|fact| {
-            fact.fact.kind() == wire::FactKind::TaskReviewed
-                && fact
-                    .fact
-                    .body()
-                    .get("finding")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|finding| finding.contains("negative-path evidence"))
-        }));
-        settled
-    }
-
-    fn assert_restart_preserves(
-        root: &Path,
-        bus: Bus,
-        epoch: CanonicalUuid,
-        settled: &BoardAnswer,
-    ) {
-        bus.verify().expect("workflow authority verifies before restart");
-        bus.shutdown().expect("workflow bus stops");
-        let reopened = journal::Journal::open(root.join("authority.sqlite3"))
-            .expect("workflow journal reopens");
-        let reopened = Bus::start(reopened).expect("workflow bus restarts");
-        assert_eq!(board(&reopened, epoch, Actor::Operator), *settled);
-        clean(root, reopened);
-    }
-
-    struct AppliedDocument {
-        preview: board::Preview,
-        document: String,
-        answer: wire::intent::DocAnswer,
-        board: BoardAnswer,
-    }
-
-    #[test]
-    fn authored_document_apply_is_atomic_idempotent_and_barrier_bound() {
-        let (root, bus, epoch, _) = fixture("document", 0);
-        let initial_board = board(&bus, epoch, Actor::Operator);
-        let initial = apply_document(
-            &bus,
-            epoch,
-            "# Goal\n\n- First task\n- Second task\n  After: first-task\n",
-            &initial_board,
-        );
-        assert_initial_document(&initial);
-        let edited = apply_document(
-            &bus,
-            epoch,
-            "# Goal\n\n- First task\n  Tags: revised\n- Second task\n  After: first-task\n",
-            &initial.board,
-        );
-        assert_edited_document(&bus, &initial, &edited);
-        assert_idempotent_document(&bus, epoch, &edited);
-        assert_stale_document_refused(&bus, epoch, &initial_board);
-        assert_ledger_contains(&bus, epoch, &initial.answer.touched[1], "# First task");
-        clean(&root, bus);
-    }
-
-    fn apply_document(
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        source: &str,
-        barrier: &BoardAnswer,
-    ) -> AppliedDocument {
-        let preview = board::Preview::classify(source).expect("document previews");
-        let document = dialect::emit(preview.document());
-        let preview = board::Preview::classify(&document).expect("normal document previews");
-        let answer = assert_committed(issue(
-            bus,
-            epoch,
-            Actor::Operator,
-            CommandKind::DocApply,
-            vec![
-                Witness::Preview {
-                    digest: preview.digest().clone(),
-                },
-                Witness::Barrier {
-                    name: "board".parse().expect("board barrier name"),
-                    digest: board_barrier(barrier),
-                },
-            ],
-            &DocApply {
-                preview: preview.digest().clone(),
-                document: document.clone(),
-            },
-        ));
-        let CommandAnswer::Doc(answer) = answer else {
-            panic!("document apply returned the wrong answer shape")
-        };
-        AppliedDocument {
-            preview,
-            document,
-            answer,
-            board: board(bus, epoch, Actor::Operator),
-        }
-    }
-
-    fn assert_initial_document(applied: &AppliedDocument) {
-        assert_eq!(applied.answer.touched.len(), 3);
-        assert_eq!(applied.board.tasks.len(), 3);
-        assert!(
-            at(&applied.board, &applied.answer.touched[2])
-                .statement
-                .body
-                .dependencies
-                .contains(&applied.answer.touched[1])
-        );
-    }
-
-    fn assert_edited_document(
-        bus: &Bus,
-        initial: &AppliedDocument,
-        edited: &AppliedDocument,
-    ) {
-        assert_ne!(edited.preview.digest(), initial.preview.digest());
-        assert_eq!(edited.answer.touched, initial.answer.touched);
-        assert_eq!(edited.board.tasks.len(), 3);
-        assert!(
-            at(&edited.board, &edited.answer.touched[1])
-                .statement
-                .body
-                .tags
-                .contains(&"revised".to_owned())
-        );
-        let facts = bus.fact_snapshot().expect("document edit facts read");
-        assert_eq!(
-            facts
-                .facts()
-                .iter()
-                .filter(|fact| fact.fact.kind() == wire::FactKind::TaskEdited)
-                .count(),
-            3,
-            "an edited document must update its stable task identities",
-        );
-    }
-
-    fn assert_idempotent_document(bus: &Bus, epoch: CanonicalUuid, edited: &AppliedDocument) {
-        let before = bus
-            .fact_snapshot()
-            .expect("facts before idempotent apply")
-            .facts()
-            .len();
-        let repeated = issue(
-            bus,
-            epoch,
-            Actor::Operator,
-            CommandKind::DocApply,
-            vec![
-                Witness::Preview {
-                    digest: edited.preview.digest().clone(),
-                },
-                Witness::Barrier {
-                    name: "board".parse().expect("board barrier name"),
-                    digest: board_barrier(&edited.board),
-                },
-            ],
-            &DocApply {
-                preview: edited.preview.digest().clone(),
-                document: edited.document.clone(),
-            },
-        );
-        assert!(matches!(
-            repeated,
-            Outcome::Reply(Reply {
-                position: ReplyPosition::Committed(_),
-                body: CommandAnswer::Doc(_),
-            })
-        ));
-        assert_eq!(
-            bus.fact_snapshot()
-                .expect("facts after idempotent apply")
-                .facts()
-                .len(),
-            before,
-            "the same document digest must not append a second durable path",
-        );
-    }
-
-    fn assert_stale_document_refused(
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        initial_board: &BoardAnswer,
-    ) {
-        let changed = board::Preview::classify("# Goal\n\n- Third task\n")
-            .expect("changed document previews");
-        let stale = issue(
-            bus,
-            epoch,
-            Actor::Operator,
-            CommandKind::DocApply,
-            vec![
-                Witness::Preview {
-                    digest: changed.digest().clone(),
-                },
-                Witness::Barrier {
-                    name: "board".parse().expect("board barrier name"),
-                    digest: board_barrier(initial_board),
-                },
-            ],
-            &DocApply {
-                preview: changed.digest().clone(),
-                document: dialect::emit(changed.document()),
-            },
-        );
-        assert!(matches!(
-            stale,
-            Outcome::Refusal(Refusal { ref reason, .. }) if reason == "doc::barrier-moved"
-        ));
-    }
+    // Lane lifecycle, review, and document tests share this fixture harness.
+    // Their execution seam lives separately so each source stays reviewable.
+    include!("tests/resolution.rs");
 
     // The hidden-visibility tests and the two helpers only they use. They share
     // this module's fixture harness, so the seam is the law under test rather

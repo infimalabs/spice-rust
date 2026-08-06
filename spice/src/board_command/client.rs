@@ -22,8 +22,9 @@ fn dispatch_client(
         ["board"] => client_board(repository, contract, matches),
         ["board", "graph"] => client_graph(repository, contract, matches),
         ["board", "handout"] => client_handout(repository, contract, matches),
-        ["doc"] => run_doc(repository, contract, matches),
+        ["doc"] => run_doc(repository, contract, matches, dialect::emit),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
+        ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
         ["task", "next"] => client_next(repository, contract),
         ["task", "reclaim"] => client_reclaim(repository, contract, matches),
@@ -86,6 +87,252 @@ fn client_status(repository: &Repository, contract: &Contract) -> Outcome<Comman
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),
     }
+}
+
+fn client_list(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let options = match TaskListOptions::from_matches(matches) {
+        Ok(options) => options,
+        Err(outcome) => return outcome,
+    };
+    match crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead { family: None },
+    ) {
+        Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Board(board),
+        }) => Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Text(TextAnswer {
+                text: task_list(&board, &options),
+            }),
+        }),
+        Outcome::Reply(_) => protocol_fault(
+            "task::list-answer",
+            "task list board read returned another answer shape",
+        ),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TaskListStatus {
+    Pending,
+    Waiting,
+    Completed,
+    Deleted,
+}
+
+struct TaskListOptions {
+    all: bool,
+    project: Option<String>,
+    limit: Option<usize>,
+    status: Option<TaskListStatus>,
+}
+
+impl TaskListOptions {
+    fn from_matches(matches: &ArgMatches) -> Result<Self, Outcome<CommandAnswer>> {
+        let all = matches.get_flag("all");
+        let project = matches.get_one::<String>("project").map(|written| {
+            written
+                .trim()
+                .strip_prefix("project:")
+                .unwrap_or(written.trim())
+                .to_owned()
+        });
+        if all && project.is_some() {
+            return Err(refusal(
+                "task::list-scope",
+                None,
+                "choose either --all or --project PROJECT",
+            ));
+        }
+        if project.as_ref().is_some_and(String::is_empty) {
+            return Err(refusal(
+                "task::list-project",
+                matches.get_one::<String>("project").cloned(),
+                "name a non-empty project after --project",
+            ));
+        }
+        let limit = matches
+            .get_one::<String>("limit")
+            .map(|written| {
+                written.parse::<usize>().map_err(|_| {
+                    refusal(
+                        "task::list-limit",
+                        Some(written.clone()),
+                        "name a positive integer after --limit",
+                    )
+                })
+            })
+            .transpose()?;
+        if limit == Some(0) {
+            return Err(refusal(
+                "task::list-limit",
+                Some("0".to_owned()),
+                "name a positive integer after --limit",
+            ));
+        }
+        let status = matches
+            .get_one::<String>("status")
+            .map(|status| match status.as_str() {
+                "pending" => TaskListStatus::Pending,
+                "waiting" => TaskListStatus::Waiting,
+                "completed" => TaskListStatus::Completed,
+                "deleted" => TaskListStatus::Deleted,
+                _ => unreachable!("contract parser owns task list status values"),
+            });
+        Ok(Self {
+            all,
+            project,
+            limit,
+            status,
+        })
+    }
+}
+
+fn task_list(board: &BoardAnswer, options: &TaskListOptions) -> String {
+    let mut rows = board
+        .tasks
+        .iter()
+        .filter(|task| list_scope_matches(task, options))
+        .filter(|task| list_status_matches(task, options))
+        .collect::<Vec<_>>();
+    if let Some(limit) = options.limit {
+        rows.sort_by(|left, right| {
+            task_newest_position(right)
+                .cmp(&task_newest_position(left))
+                .then_with(|| {
+                    right
+                        .statement
+                        .body
+                        .handle
+                        .cmp(&left.statement.body.handle)
+                })
+        });
+        rows.truncate(limit);
+    }
+
+    let (scope, empty) = if options.all {
+        (
+            "scope global --all".to_owned(),
+            "no tasks in global scope".to_owned(),
+        )
+    } else if let Some(project) = &options.project {
+        (
+            format!("scope explicit-project project:{project}"),
+            "no tasks in scope; use --all for global rows or --project PROJECT for one project"
+                .to_owned(),
+        )
+    } else {
+        (
+            format!("scope actor-route filter {}", actor_route_filter(board)),
+            "no tasks in scope; use --all for global rows or --project PROJECT for one project"
+                .to_owned(),
+        )
+    };
+    if rows.is_empty() {
+        return format!("{scope}\n{empty}");
+    }
+    let mut output = scope;
+    for task in rows {
+        output.push('\n');
+        output.push_str(&render_task_list_row(task));
+    }
+    output
+}
+
+fn list_scope_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
+    if let Some(project) = &options.project {
+        let candidate = task.statement.body.project.as_str();
+        return candidate == project
+            || candidate
+                .strip_prefix(project)
+                .is_some_and(|suffix| suffix.starts_with('.'));
+    }
+    options.all || !task.visibility.is_hidden()
+}
+
+fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
+    let pending = task.workflow.body.status == "pending"
+        && task.workflow.body.completion.is_none()
+        && task.workflow.body.deferral.is_none();
+    let waiting = task.workflow.body.status == "pending"
+        && task.workflow.body.completion.is_none()
+        && task.workflow.body.deferral.is_some();
+    match options.status {
+        Some(TaskListStatus::Pending) => pending,
+        Some(TaskListStatus::Waiting) => waiting,
+        Some(TaskListStatus::Completed) => task.workflow.body.status == "completed",
+        Some(TaskListStatus::Deleted) => false,
+        None if options.all => true,
+        None => {
+            pending
+                || waiting
+                    && task.claim.as_ref().is_some_and(|claim| {
+                        claim.body.disposition == ClaimDisposition::Active
+                    })
+        }
+    }
+}
+
+fn task_newest_position(task: &BoardTask) -> Seq {
+    let mut newest = task.statement.position.max(task.workflow.position);
+    if let Some(claim) = &task.claim {
+        newest = newest.max(claim.position);
+    }
+    if let Some(lease) = &task.lease {
+        newest = newest.max(lease.position);
+    }
+    newest
+}
+
+fn render_task_list_row(task: &BoardTask) -> String {
+    let state = if task.workflow.body.status == "completed" {
+        "done"
+    } else {
+        task.workflow.body.phase.as_str()
+    };
+    let priority = task
+        .statement
+        .body
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix("priority:"))
+        .map(|priority| match priority {
+            "critical" => "C".to_owned(),
+            "high" => "H".to_owned(),
+            "medium" => "M".to_owned(),
+            "low" => "L".to_owned(),
+            "none" => "N".to_owned(),
+            other => other.to_owned(),
+        });
+    let priority = priority.map_or_else(String::new, |value| format!(" P:{value}"));
+    format!(
+        "{} [{state}]{priority} {} {}",
+        task.statement.body.handle,
+        task.statement.body.project,
+        task.presentation_title()
+    )
+}
+
+fn actor_route_filter(board: &BoardAnswer) -> String {
+    let projects = board
+        .project_policy
+        .public_stems
+        .iter()
+        .map(|stem| format!("project:{stem}"))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    format!("( {projects} )")
 }
 
 fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
@@ -161,10 +408,14 @@ fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
         })
         .count();
     Ok(format!(
-        "claim {claim}\nactor {}\nactive {active_count}\nready {ready}\n\
+        "claim {claim}\nactor {}\nfilter {}\npublic task project depth {}..{} dotted segments\n\
+         active {active_count}\nready {ready}\n\
          review {review}\nblocked {blocked}\nwaiting {waiting}\n\
          stale {stale}\noops {oops}",
-        board.principal
+        board.principal,
+        actor_route_filter(board),
+        board.project_policy.public_min_depth,
+        board.project_policy.public_max_depth,
     ))
 }
 
@@ -226,7 +477,8 @@ fn client_ledger(
 fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
         let entries = actor_entries(&board)?;
-        let selected = board::select(&entries, &board.principal).ok_or_else(|| {
+        let subscription = allocation_subscription(&board.residency.body, &board.principal)?;
+        let selected = board::select(&entries, &board.principal, subscription).ok_or_else(|| {
             refusal(
                 "board::allocator-empty",
                 None,
@@ -627,9 +879,12 @@ fn client_review(
 ) -> Outcome<CommandAnswer> {
     mutate_task_from_board(repository, contract, matches, |board, task, heads| {
         let (lane, occupant) = actor_seat(board)?;
+        let mut expected = progress_witnesses(board, heads, lane, occupant, true)?;
+        let then = plan_followups(board, matches, &mut expected)?;
+        let followup = plan_followup_edges(board, matches, &task, &mut expected)?;
         Ok((
             CommandKind::TaskReview,
-            progress_witnesses(board, heads, lane, occupant, true)?,
+            expected,
             serde_json::to_value(TaskReview {
                 task,
                 finding: matches
@@ -637,158 +892,12 @@ fn client_review(
                     .cloned()
                     .unwrap_or_default(),
                 note: matches.get_one::<String>("note").cloned(),
+                then,
+                followup,
             })
             .expect("typed intent encodes"),
         ))
     })
-}
-
-fn run_doc(
-    repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let input = match read_doc_input(matches) {
-        Ok(input) => input,
-        Err(outcome) => return outcome,
-    };
-    let preview = match board::Preview::classify(&input) {
-        Ok(preview) => preview,
-        Err(error) => {
-            return refusal(
-                "doc::classification-refused",
-                Some(error.to_string()),
-                "correct the authored task document and preview it again",
-            );
-        }
-    };
-    let normalized = dialect::emit(preview.document());
-    let normalized = match board::Preview::classify(&normalized) {
-        Ok(preview) => preview,
-        Err(error) => {
-            return protocol_fault(
-                "doc::normal-form-invalid",
-                &format!("dialect emitted a document it refused: {error}"),
-            );
-        }
-    };
-    let board = match current_board(repository) {
-        Ok(board) => board,
-        Err(outcome) => return outcome,
-    };
-    let touched = document_handles(normalized.document());
-    let answer = wire::intent::DocAnswer {
-        preview: normalized.digest().clone(),
-        touched,
-    };
-    let Some(apply) = matches.get_one::<String>("apply") else {
-        return Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(board.cursor),
-            body: CommandAnswer::Doc(answer),
-        });
-    };
-    let observed = match apply.parse::<Digest>() {
-        Ok(digest) => digest,
-        Err(error) => {
-            return refusal(
-                "doc::apply-digest-invalid",
-                Some(apply.clone()),
-                &error.to_string(),
-            );
-        }
-    };
-    if observed != *normalized.digest() {
-        return refusal(
-            "doc::preview-moved",
-            Some(observed.to_string()),
-            &format!(
-                "apply the exact current preview digest {}",
-                normalized.digest()
-            ),
-        );
-    }
-    let barrier = board_barrier(&board);
-    crate::command_client::execute_typed(
-        repository,
-        contract,
-        CommandKind::DocApply,
-        vec![
-            Witness::Preview {
-                digest: normalized.digest().clone(),
-            },
-            Witness::Barrier {
-                name: "board".parse().expect("board is a wire name"),
-                digest: barrier,
-            },
-        ],
-        &DocApply {
-            preview: normalized.digest().clone(),
-            document: dialect::emit(normalized.document()),
-        },
-    )
-}
-
-fn read_doc_input(matches: &ArgMatches) -> Result<String, Outcome<CommandAnswer>> {
-    let Some(path) = matches.get_one::<String>("PATH|-") else {
-        return Err(refusal(
-            "doc::input-missing",
-            None,
-            "name one task-document PATH or - for standard input",
-        ));
-    };
-    if path == "-" {
-        let mut input = String::new();
-        std::io::stdin()
-            .read_to_string(&mut input)
-            .map_err(|error| environment_fault("doc::stdin-unreadable", &error.to_string()))?;
-        return Ok(input);
-    }
-    std::fs::read_to_string(path)
-        .map_err(|error| environment_fault("doc::input-unreadable", &error.to_string()))
-}
-
-fn document_handles(document: &dialect::Document) -> Vec<TaskHandle> {
-    document
-        .nodes
-        .iter()
-        .filter(|node| node.kind != dialect::NodeKind::SyntheticRoot)
-        .map(|node| document_handle(document.project.as_deref(), node))
-        .collect()
-}
-
-fn document_handle(project: Option<&str>, node: &dialect::Node) -> TaskHandle {
-    let family = project
-        .and_then(|project| project.rsplit('.').next())
-        .map(stem)
-        .filter(|stem| !stem.is_empty())
-        .unwrap_or_else(|| stem(&node.title));
-    let family = if family.is_empty() {
-        "TASK".to_owned()
-    } else {
-        family
-    };
-    let seed = wire::encode(&(project, node.slug.as_str()))
-        .expect("canonical document task identity encodes");
-    let key = Digest::compute(Domain::BoardTaskIdentity, &seed);
-    format!("{family}-{}", &key.as_str()[..8])
-        .parse()
-        .expect("document handle uses admitted ASCII components")
-}
-
-fn board_barrier(board: &BoardAnswer) -> Digest {
-    let heads = board
-        .tasks
-        .iter()
-        .map(|task| {
-            (
-                task.statement.body.handle.clone(),
-                task.statement.position,
-                task.workflow.position,
-            )
-        })
-        .collect::<Vec<_>>();
-    let bytes = wire::encode(&heads).expect("typed board barrier encodes");
-    Digest::compute(Domain::BoardBarrier, &bytes)
 }
 
 type ClientMapping = (CommandKind, Vec<Witness>, serde_json::Value);
@@ -1150,6 +1259,14 @@ fn progress_witnesses(
 }
 
 fn mint_handle(project: Option<&str>, title: &str) -> TaskHandle {
+    mint_handle_at(
+        project,
+        title,
+        jiff::Timestamp::now().as_millisecond(),
+    )
+}
+
+fn mint_handle_at(project: Option<&str>, title: &str, epoch_millis: i64) -> TaskHandle {
     let stem = project
         .and_then(|project| project.rsplit('.').next())
         .map(stem)
@@ -1160,8 +1277,9 @@ fn mint_handle(project: Option<&str>, title: &str) -> TaskHandle {
     } else {
         stem
     };
-    let key = uuid::Uuid::new_v4().simple().to_string();
-    format!("{stem}-{}", &key[..8])
+    let key = steer::Key::for_millis(epoch_millis)
+        .expect("the current epoch millisecond fits the task stamp codec");
+    format!("{stem}-{key}")
         .parse()
         .expect("generated handle uses admitted ASCII components")
 }

@@ -491,6 +491,8 @@ mod tests {
             state: ResidentState::Seated,
             lanes: vec![LaneResidency {
                 lane,
+                lineage_id: lane,
+                name: None,
                 worktree: "/fixture".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
@@ -499,6 +501,12 @@ mod tests {
                 capabilities: Vec::new(),
                 session: None,
                 disposition: "occupied".to_owned(),
+            }],
+            subscriptions: vec![wire::LineageSubscription {
+                lineage_id: lane,
+                policy: wire::intent::LineageLife::Drive,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
             }],
         });
     }

@@ -48,6 +48,7 @@ mod manifest;
 mod merge_parents;
 mod minting;
 mod report;
+mod single_arm;
 
 fn fixture_baseline(floors: &str) -> Digest {
     Digest::compute(Domain::GateBaseline, floors.as_bytes())
@@ -361,6 +362,11 @@ const FIXTURE_BATTERY_ACTOR: &str = "battery-actor";
 
 /// Run one complete battery over a repository and return its report.
 fn battery_report(repository: &Path) -> BatteryReport {
+    battery_report_with_changes(repository, &[])
+}
+
+/// Run one battery with the exact staged paths the rim attributed to it.
+fn battery_report_with_changes(repository: &Path, changes: &[&str]) -> BatteryReport {
     let mut capture = crate::BatteryCapture::capture(
         repository,
         &crate::Selector::staged(),
@@ -369,8 +375,12 @@ fn battery_report(repository: &Path) -> BatteryReport {
             actor: FIXTURE_BATTERY_ACTOR.to_owned(),
             bound_claims: Vec::new(),
         },
-        crate::RimCapture::new(repository, None, Vec::new())
-            .expect("the fixture repository root is absolute"),
+        crate::RimCapture::new(
+            repository,
+            None,
+            changes.iter().map(|path| (*path).to_owned()),
+        )
+        .expect("the fixture repository root is absolute"),
         crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
     )
     .expect("capture the fixture battery source");

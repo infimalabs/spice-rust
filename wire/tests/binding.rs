@@ -141,6 +141,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::LaneSeat,
         r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "worktree": "worktrees/h",
   "life": "drive",
   "vendor": "claude"
@@ -152,6 +153,13 @@ const BODIES: &[(CommandKind, &str)] = &[
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "action": "wake",
   "worktree": "/worktrees/successor"
+}"#,
+    ),
+    (
+        CommandKind::LineageConfigure,
+        r#"{
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "life": "drain"
 }"#,
     ),
     (
@@ -220,6 +228,11 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
   "schema": 1,
   "cursor": 1,
   "principal": "operator",
+  "project_policy": {
+    "public_stems": ["serve", "task"],
+    "public_min_depth": 2,
+    "public_max_depth": 3
+  },
   "tasks": [],
   "residency": {
     "position": 1,
@@ -266,6 +279,8 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
       "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
       "key": "1kJJP87B",
       "text": "drain the queue",
+      "preview": "drain the queue",
+      "authored": "2026-08-01T06:07:19.000Z",
       "expires": "2026-08-01T07:07:19.000Z"
     }]
   }]
@@ -295,7 +310,36 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "state": "seated",
-  "lanes": []
+  "subscriptions": [{
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "policy": "drive"
+  }, {
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+    "policy": "steer"
+  }],
+  "lanes": [{
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "name": "Ava",
+    "worktree": "/worktrees/lane-a",
+    "life": "drive",
+    "vendor": "claude",
+    "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+    "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c5"],
+    "bound": true,
+    "disposition": "occupied",
+    "liveness": "running"
+  }, {
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+    "worktree": "/worktrees/lane-b",
+    "life": "steer",
+    "vendor": "codex",
+    "lineage": [],
+    "bound": false,
+    "disposition": "vacant",
+    "liveness": "vacant"
+  }]
 }"#,
     ),
     (
@@ -318,7 +362,8 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
   "residency": {
     "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
     "state": "seated",
-    "lanes": []
+    "lanes": [],
+    "subscriptions": []
   },
   "recent": []
 }"#,
@@ -404,6 +449,38 @@ fn every_answer_re_encodes_unchanged() {
             "{shape:?} did not re-encode to the spelling it was decoded from",
         );
     }
+}
+
+#[test]
+fn a_claim_overlap_is_visible_while_the_legacy_empty_shape_stays_stable() {
+    let body = r#"{
+  "task": "FIDELIT-1kKRSfyV",
+  "holder": "operator",
+  "warnings": [{
+    "task": "MOSAIC-1kKQTw1V",
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "surface": ["mosaic", "watchband"]
+  }]
+}"#;
+    let answer = AnswerShape::Claim
+        .decode(body.as_bytes())
+        .expect("claim warning decodes");
+    let CommandAnswer::Claim(claim) = &answer else {
+        panic!("claim binding returned another answer: {answer:?}");
+    };
+    assert_eq!(claim.warnings.len(), 1);
+    assert_eq!(claim.warnings[0].task.as_str(), "MOSAIC-1kKQTw1V");
+    assert_eq!(
+        claim.warnings[0].lane.to_string(),
+        "018f82d4-6f59-7d06-92e3-bce9131163c2"
+    );
+    assert_eq!(claim.warnings[0].surface, ["mosaic", "watchband"]);
+
+    let spelled: serde_json::Value = serde_json::from_str(body).expect("fixture JSON");
+    assert_eq!(
+        serde_json::to_value(answer).expect("warning answer encodes"),
+        spelled
+    );
 }
 
 #[test]
@@ -499,6 +576,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::LaneRead,
     BodyShape::LaneSeat,
     BodyShape::LaneState,
+    BodyShape::LineageConfigure,
     BodyShape::LaneRecall,
     BodyShape::TasteRecord,
     BodyShape::Recognize,
@@ -534,4 +612,22 @@ fn the_union_reports_the_shape_it_carries() {
         task: "SPICE-aBcD".parse().expect("a handle"),
     });
     assert_eq!(intent.shape(), BodyShape::TaskRef);
+}
+
+#[test]
+fn lineage_subscription_policies_close_over_the_predecessor_scopes() {
+    use wire::intent::{LineageLife, TaskSubscriptionScope};
+
+    let policies = [
+        (LineageLife::Steer, TaskSubscriptionScope::Manual),
+        (
+            LineageLife::Drive,
+            TaskSubscriptionScope::ManualAndAutoProject,
+        ),
+        (LineageLife::Drain, TaskSubscriptionScope::AllAssignable),
+    ];
+    for (policy, scope) in policies {
+        assert_eq!(policy.scope(), scope);
+        assert_eq!(LineageLife::from_wire(policy.as_str()), Some(policy));
+    }
 }

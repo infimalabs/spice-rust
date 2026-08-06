@@ -19,10 +19,12 @@ use app::{
 };
 use serde::{Deserialize, Serialize};
 use wire::{
-    Accepted, Answer, Authority, CanonicalUuid, Command, CommandKind, Derived, Digest, FaultClass,
-    FoldName, Name, Outcome, Overflow, Packed, Response, Seq, TaskHandle, TrustState, Witness,
-    WitnessKind,
+    Accepted, Answer, Authority, CanonicalUuid, Command, CommandKind, Derived, Digest, Fault,
+    FaultClass, FoldName, Name, Outcome, Overflow, Packed, Refusal, Reply, ReplyPosition, Response,
+    Seq, SeqRange, TaskHandle, TrustState, WireVersion, Witness, WitnessKind,
 };
+
+mod support;
 
 /// Capability the operator session opens with.
 const OPERATOR_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -154,23 +156,11 @@ fn note() -> Note {
     }
 }
 
-/// One reply document answering `id`, as bytes off the socket.
-fn response_bytes(id: &str, outcome: &str) -> Vec<u8> {
-    format!(
-        r#"{{
-  "v": 1,
-  "id": "{id}",
-  "epoch": "{EPOCH}",
-  "outcome": {outcome}
-}}"#
-    )
-    .into_bytes()
-}
-
-/// One admitted answer to `id`, carrying `outcome` verbatim.
-fn response(id: &str, outcome: &str) -> Admitted<Response<Note>> {
+/// One typed answer to `id`, encoded before it crosses the session door.
+fn response(id: &str, outcome: Outcome<Note>) -> Admitted<Response<Note>> {
+    let bytes = support::response(WireVersion::CURRENT, uuid(id), uuid(EPOCH), outcome);
     lane_session()
-        .admit_frame::<Note>(&response_bytes(id, outcome))
+        .admit_frame::<Note>(&bytes)
         .expect("the fixture answer is admitted")
 }
 
@@ -181,28 +171,25 @@ fn packed_answer(
     overflow: Option<(u64, u64)>,
     horizon: u64,
 ) -> Admitted<Response<Packed<Row>>> {
-    let rows = rows
-        .iter()
-        .map(|row| format!(r#""{row}""#))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let overflow = overflow.map_or_else(String::new, |(omitted, continuation)| {
-        format!(r#""overflow": {{ "omitted": {omitted}, "continuation": {continuation} }},"#)
-    });
-    let bytes = format!(
-        r#"{{
-  "v": 1,
-  "id": "{COMMAND}",
-  "epoch": "{EPOCH}",
-  "outcome": {{
-    "kind": "reply",
-    "cursor": {horizon},
-    "body": {{ "rows": [{rows}], {overflow} "horizon": {horizon} }}
-  }}
-}}"#
+    let body = Packed {
+        rows: rows.iter().map(|row| Row((*row).to_owned())).collect(),
+        overflow: overflow.map(|(omitted, continuation)| Overflow {
+            omitted,
+            continuation: seq(continuation),
+        }),
+        horizon: seq(horizon),
+    };
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(COMMAND),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(horizon)),
+            body,
+        }),
     );
     session
-        .admit_frame(&bytes.into_bytes())
+        .admit_frame(&bytes)
         .expect("the packed fixture answer is admitted")
 }
 
@@ -530,18 +517,31 @@ fn a_reply_a_refusal_and_a_fault_reach_the_pane_as_three_distinct_outcomes() {
 
     let reply = response(
         COMMAND,
-        r#"{ "kind": "reply", "seq": { "first": 48213, "last": 48214 },
-             "body": { "task": "SPICE-aBcD", "note": "observed in review" } }"#,
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(48213),
+                last: seq(48214),
+            }),
+            body: note(),
+        }),
     );
     let refusal = response(
         COMMAND,
-        r#"{ "kind": "refusal", "reason": "task::absent",
-             "remedy": "name a task that exists" }"#,
+        Outcome::Refusal(Refusal {
+            reason: "task::absent".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "name a task that exists".to_owned(),
+        }),
     );
     let fault = response(
         COMMAND,
-        r#"{ "kind": "fault", "class": "store", "reason": "journal::unreadable",
-             "detail": "authority database is not readable" }"#,
+        Outcome::Fault(Fault {
+            class: FaultClass::Store,
+            reason: "journal::unreadable".to_owned(),
+            detail: "authority database is not readable".to_owned(),
+        }),
     );
 
     let outcomes = [&reply, &refusal, &fault].map(|admitted| {
@@ -576,8 +576,13 @@ fn an_answer_to_another_command_faults_rather_than_being_shown() {
     let command = noted(&lane);
     let elsewhere = response(
         OTHER_COMMAND,
-        r#"{ "kind": "refusal", "reason": "claim::held",
-             "remedy": "wait for the lease to lapse" }"#,
+        Outcome::Refusal(Refusal {
+            reason: "claim::held".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "wait for the lease to lapse".to_owned(),
+        }),
     );
 
     let fault = settled(&command, &elsewhere).expect_err("an answer to another command faults");
@@ -656,6 +661,7 @@ fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() 
             CommandKind::LaneRead,
             CommandKind::LaneSeat,
             CommandKind::LaneState,
+            CommandKind::LineageConfigure,
             CommandKind::ReleasePublish,
             CommandKind::UpChange,
         ])
@@ -679,7 +685,7 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
         }
     }
 
-    assert_eq!(operator, 13);
+    assert_eq!(operator, 14);
     assert_eq!(connected, 30);
     assert_eq!(
         CommandKind::TaskOopsAdd.law().authority,
@@ -688,7 +694,7 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
     );
     assert_eq!(
         CommandKind::ALL.len(),
-        43,
+        44,
         "a command joined or left the registry; the counts above are the claim \
          to re-make, not the number to bump"
     );
@@ -785,33 +791,30 @@ fn derived_answer(
     overflow: Option<(u64, u64)>,
     horizon: u64,
 ) -> Admitted<Response<Derived<Row>>> {
-    let rows = rows
-        .iter()
-        .map(|row| format!(r#""{row}""#))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let overflow = overflow.map_or_else(String::new, |(omitted, continuation)| {
-        format!(r#""overflow": {{ "omitted": {omitted}, "continuation": {continuation} }},"#)
-    });
-    let bytes = format!(
-        r#"{{
-  "v": 1,
-  "id": "{COMMAND}",
-  "epoch": "{EPOCH}",
-  "outcome": {{
-    "kind": "reply",
-    "cursor": {horizon},
-    "body": {{
-      "fold": "{fold}",
-      "gen": {generation},
-      "cursor": {cursor},
-      "packed": {{ "rows": [{rows}], {overflow} "horizon": {horizon} }}
-    }}
-  }}
-}}"#
+    let body = Derived {
+        fold: fold.parse().expect("fixture fold name"),
+        r#gen: generation,
+        cursor: seq(cursor),
+        packed: Packed {
+            rows: rows.iter().map(|row| Row((*row).to_owned())).collect(),
+            overflow: overflow.map(|(omitted, continuation)| Overflow {
+                omitted,
+                continuation: seq(continuation),
+            }),
+            horizon: seq(horizon),
+        },
+    };
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(COMMAND),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(horizon)),
+            body,
+        }),
     );
     session
-        .admit_frame(&bytes.into_bytes())
+        .admit_frame(&bytes)
         .expect("the derived fixture answer is admitted")
 }
 
@@ -935,12 +938,20 @@ fn a_refused_answer_leaves_the_provenance_the_pane_already_had() {
 
     // A refusal is an answer about an event that did not occur. Letting it
     // clear the fold would report "no generation answered" when one had.
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(COMMAND),
+        uuid(EPOCH),
+        Outcome::<Derived<Row>>::Refusal(Refusal {
+            reason: "fold::rebuilding".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "read again once the generation settles".to_owned(),
+        }),
+    );
     let refusal: Admitted<Response<Derived<Row>>> = operator_session()
-        .admit_frame(&response_bytes(
-            COMMAND,
-            r#"{ "kind": "refusal", "reason": "fold::rebuilding",
-             "remedy": "read again once the generation settles" }"#,
-        ))
+        .admit_frame(&bytes)
         .expect("the fixture refusal is admitted");
     assert!(!state.replace(&refusal));
 

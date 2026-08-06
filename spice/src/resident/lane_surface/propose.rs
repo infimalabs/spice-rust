@@ -15,8 +15,37 @@ pub(super) fn propose_seat(
     let group = prepared.proven.group;
     let session = &prepared.proven.session;
     let mut next = observed.body().clone();
+    if subscription_policy(observed.body(), request.lineage_id)?.is_none() {
+        if observed
+            .body()
+            .lanes
+            .iter()
+            .any(|row| row.lineage_id == request.lineage_id)
+        {
+            return Err(store_fault(
+                "lineage::subscription-missing",
+                "an existing lineage has no durable task-subscription policy",
+            ));
+        }
+        let policy = LineageLife::from_wire(&request.life).ok_or_else(|| {
+            store_fault(
+                "lineage::subscription-invalid",
+                "a seated lane has no closed task-subscription policy",
+            )
+        })?;
+        next.subscriptions.push(wire::LineageSubscription {
+            lineage_id: request.lineage_id,
+            policy,
+            manual_projects: Vec::new(),
+            auto_projects: Vec::new(),
+        });
+        next.subscriptions
+            .sort_by_key(|subscription| subscription.lineage_id);
+    }
     next.lanes.push(wire::LaneResidency {
         lane: request.lane,
+        lineage_id: request.lineage_id,
+        name: request.name.clone(),
         worktree: request.worktree.clone(),
         life: request.life.clone(),
         vendor: request.vendor.clone(),
@@ -37,7 +66,9 @@ pub(super) fn propose_seat(
         .fact(
             wire::body::LaneSeated {
                 lane: request.lane,
+                lineage_id: request.lineage_id,
                 capability,
+                name: request.name.clone(),
                 worktree: request.worktree.clone(),
                 life: request.life.clone(),
                 vendor: request.vendor.clone(),

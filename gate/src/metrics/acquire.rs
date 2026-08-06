@@ -135,6 +135,20 @@ pub(crate) fn acquire_metrics_with_bounds(source: &MetricSource<'_>) -> MetricAc
     MetricAcquisition { evidence, bounds }
 }
 
+/// Acquire exactly one structural arm and the bounds that arm decided.
+pub(crate) fn acquire_metric_arm_with_bounds(
+    source: &MetricSource<'_>,
+    gate_id: GateId,
+) -> MetricArmAcquisition {
+    let mut bounds = Vec::new();
+    let evidence = STRUCTURAL_ARMS
+        .into_iter()
+        .find(|declaration| declaration.id() == gate_id)
+        .ok_or(EvidenceError::ForeignGate(gate_id).into())
+        .and_then(|declaration| acquire_arm_evidence(source, declaration, &mut bounds));
+    MetricArmAcquisition { evidence, bounds }
+}
+
 /// Both products of one structural-family acquisition.
 pub(crate) struct MetricAcquisition {
     evidence: Result<Vec<StructuralArmEvidence>, MetricAcquisitionError>,
@@ -152,22 +166,47 @@ impl MetricAcquisition {
     }
 }
 
+/// Both products of one selected structural-arm acquisition.
+pub(crate) struct MetricArmAcquisition {
+    evidence: Result<StructuralArmEvidence, MetricAcquisitionError>,
+    bounds: Vec<BoundDecision>,
+}
+
+impl MetricArmAcquisition {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Result<StructuralArmEvidence, MetricAcquisitionError>,
+        Vec<BoundDecision>,
+    ) {
+        (self.evidence, self.bounds)
+    }
+}
+
 fn acquire_metric_evidence(
     source: &MetricSource<'_>,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<StructuralArmEvidence>, MetricAcquisitionError> {
     let mut arms = Vec::with_capacity(STRUCTURAL_ARMS.len());
     for declaration in STRUCTURAL_ARMS {
-        let metrics = match declaration.id() {
-            GateId::Complexity => complexity_metrics(source, bounds)?,
-            GateId::FileShape => file_shape_metrics(source, declaration, bounds)?,
-            GateId::MagicNumbers => magic_metrics(source, declaration)?,
-            GateId::MarkdownLinks => markdown_metrics(source)?,
-            _ => unavailable(declaration, unreached_input(declaration.id()))?,
-        };
-        arms.push(StructuralArmEvidence::new(declaration.id(), metrics)?);
+        arms.push(acquire_arm_evidence(source, declaration, bounds)?);
     }
     Ok(arms)
+}
+
+fn acquire_arm_evidence(
+    source: &MetricSource<'_>,
+    declaration: ArmDeclaration,
+    bounds: &mut Vec<BoundDecision>,
+) -> Result<StructuralArmEvidence, MetricAcquisitionError> {
+    let metrics = match declaration.id() {
+        GateId::Complexity => complexity_metrics(source, bounds)?,
+        GateId::FileShape => file_shape_metrics(source, declaration, bounds)?,
+        GateId::MagicNumbers => magic_metrics(source, declaration)?,
+        GateId::MarkdownLinks => markdown_metrics(source)?,
+        _ => unavailable(declaration, unreached_input(declaration.id()))?,
+    };
+    StructuralArmEvidence::new(declaration.id(), metrics).map_err(Into::into)
 }
 
 /// The exact input an arm needs and this build cannot reach.
@@ -240,8 +279,8 @@ fn file_shape_metrics(
     declaration: ArmDeclaration,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
-    let baselines = match source.baselines {
-        BaselineCapture::Reached(baselines) => baselines,
+    match source.baselines {
+        BaselineCapture::Reached(_) => {}
         BaselineCapture::Unreachable(reason) => {
             return unavailable(
                 declaration,
@@ -265,14 +304,7 @@ fn file_shape_metrics(
             continue;
         }
         let key = MetricKey::path(path).map_err(MetricAcquisitionError::Evidence)?;
-        metrics.extend(file_shape_rows(
-            source,
-            declaration,
-            path,
-            &key,
-            baselines,
-            bounds,
-        )?);
+        metrics.extend(file_shape_rows(source, declaration, path, &key, bounds)?);
     }
     if metrics.is_empty() {
         return declared_rows(
@@ -302,7 +334,6 @@ fn file_shape_rows(
     declaration: ArmDeclaration,
     path: &str,
     key: &MetricKey,
-    baselines: &CommittedTexts,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let bytes = match std::fs::read(source.root().join(path)) {
@@ -317,7 +348,7 @@ fn file_shape_rows(
             );
         }
     };
-    if baselines.merge_inherits(path, &bytes) {
+    if source.baselines.merge_inherits(path, &bytes) {
         return declared_rows(
             declaration,
             key,
@@ -621,12 +652,19 @@ fn complexity_metrics(
 /// A refused routine contributes its paired unavailable rows and no decision;
 /// a measured routine contributes both. Appending here keeps evidence and
 /// decisions in the same parse traversal and the same canonical metric order.
+/// A merge-inherited file contributes neither because this commit authored no
+/// routine in it and therefore owns no complexity or bound decision for it.
 fn complexity_rows(
     source: &MetricSource<'_>,
     path: &str,
     metrics: &mut Vec<MetricEvidence>,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<(), MetricAcquisitionError> {
+    if std::fs::read(source.root().join(path))
+        .is_ok_and(|bytes| source.baselines.merge_inherits(path, &bytes))
+    {
+        return Ok(());
+    }
     let routines = match read_complexity(source, path) {
         Ok(routines) => routines,
         Err(state) => return whole_file_complexity(path, &state, metrics),

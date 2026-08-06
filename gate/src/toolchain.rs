@@ -16,8 +16,9 @@ use crate::manifest::GateId;
 
 /// The only report schema emitted by this compiled arm family.
 ///
-/// Version 4 adds [`ArmTiming`], which a version-3 reader cannot retain, so the
-/// schema is renamed rather than widened silently.
+/// Version 4 adds [`ArmTiming`] and the timed [`ArmOutcome::Cancelled`] state,
+/// which a version-3 reader cannot retain, so the schema is renamed rather than
+/// widened silently.
 pub const TOOLCHAIN_REPORT_VERSION: u64 = 4;
 
 /// A compiled source of configuration admitted by one arm.
@@ -200,8 +201,36 @@ mod declarations;
 #[cfg(not(target_arch = "wasm32"))]
 mod environment;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use acquire::acquire_toolchain_arm;
+#[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
 pub use declarations::*;
+
+/// Extensions selected by the compiled prose scanner, without their leading dot.
+///
+/// Kept beside the toolchain surface because both the scanner and the atomic
+/// repository capture need the same class: the first decides which staged
+/// changes Taste reads, and the second retains the parent bytes that can prove
+/// a merge merely inherited one of those files.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const TASTE_EXTENSIONS: &[&str] = &["md", "txt", "rst"];
+
+/// File suffixes whose committed blobs can prove environment-arm authorship.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn environment_baseline_suffixes() -> Vec<String> {
+    PACKAGED_ENV_INCLUDES
+        .iter()
+        .map(|include| {
+            include
+                .strip_prefix("**/*")
+                .filter(|suffix| suffix.starts_with('.'))
+                .unwrap_or_else(|| {
+                    panic!("packaged environment include {include:?} is not a suffix glob")
+                })
+                .to_owned()
+        })
+        .collect()
+}
 
 /// What one resolved executable did instead of identifying itself.
 ///
@@ -447,6 +476,8 @@ pub enum ArmOutcome {
     Excluded,
     /// Bounded analysis exceeded its compiled deadline.
     Timeout,
+    /// Bounded analysis was cancelled after its process started.
+    Cancelled,
     /// Analysis output or selected source could not be parsed.
     ParseFailure,
     /// A direct analysis process returned an unexplained nonzero completion.
@@ -695,6 +726,15 @@ pub fn measure_toolchain(
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn measure_toolchain_arm(
+    observation: ArmObservation,
+) -> Result<ArmMeasurement, ToolchainError> {
+    let declaration =
+        declaration(observation.gate_id).ok_or(ToolchainError::ForeignGate(observation.gate_id))?;
+    measure_arm(declaration, observation)
+}
+
 fn declaration(gate: GateId) -> Option<ToolchainDeclaration> {
     TOOLCHAIN_ARMS.into_iter().find(|arm| arm.id == gate)
 }
@@ -775,6 +815,7 @@ fn validate_timing(
         ArmOutcome::Passed
             | ArmOutcome::Findings
             | ArmOutcome::Timeout
+            | ArmOutcome::Cancelled
             | ArmOutcome::NonzeroAnalysis
     );
     let valid = match (gate, timing) {
@@ -1102,6 +1143,7 @@ fn validate_external_tool_outcome(
         ArmOutcome::Passed
         | ArmOutcome::Findings
         | ArmOutcome::Timeout
+        | ArmOutcome::Cancelled
         | ArmOutcome::ParseFailure
         | ArmOutcome::NonzeroAnalysis => {
             require_all_identified(gate, declared, evidence)?;

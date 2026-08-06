@@ -14,15 +14,16 @@
 //! test compiles every packaged spelling to prove that cannot ship.
 //!
 //! Nothing here reads a file or produces a finding. [`super::analyze`] owns
-//! selection and outcome; this module owns only what one line of one language
-//! family says about the environment.
+//! selection and outcome; this module owns what source text says about the
+//! environment, including literal-only Rust concatenations that cross lines.
 
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use regex::Regex;
+use tree_sitter::{Language, Parser};
 
-use super::{PACKAGED_ENV_PROFILE, column_of};
+use super::{ENV_NAME_LITERAL_MARKER, PACKAGED_ENV_PROFILE, column_of};
 
 /// The compiled form of the packaged environment include globs, in order.
 pub(super) const ENV_EXTENSIONS: &[&str] = &[
@@ -219,9 +220,11 @@ pub(super) fn waived_lines(text: &str) -> BTreeSet<u32> {
 /// suppressed: two reads on one line are two accesses, whichever extractor
 /// names them.
 pub(super) fn accesses(family: Option<&str>, line: &str) -> Vec<Access> {
+    let exemptions = literal_exemptions(line);
     let literals: BTreeSet<(usize, String)> = watchlist()
         .iter()
         .flat_map(|matcher| matcher.names(line))
+        .filter(|(_, name)| !exemptions.contains(name))
         .collect();
     let gated = family.filter(|_| PACKAGED_ENV_PROFILE.access_gate);
     let gates: BTreeSet<usize> = gated
@@ -270,6 +273,12 @@ fn gate_starts(family: &str, line: &str) -> BTreeSet<usize> {
 /// symbol, any quoted literal on a line already about the environment, and any
 /// literal the watchlist recognizes. Waivers do not enter here, because a
 /// waived read is still a name the ledger has to account for.
+///
+/// One explicit current-port assertion narrows only the broad literal fallback:
+/// `env-policy: not-an-env NAME` removes that exact name when it was inferred
+/// solely from the watchlist or packaged declaration list. A name grounded by
+/// access, declaration, or environment context remains a reference even beside
+/// the assertion, so it cannot turn the access waiver into a ledger waiver.
 pub(super) fn references(family: Option<&str>, line: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     if let Some(family) = family {
@@ -287,10 +296,218 @@ pub(super) fn references(family: Option<&str>, line: &str) -> BTreeSet<String> {
     if context().is_match(line) || line.contains(PACKAGED_ENV_PROFILE.allow_marker) {
         extend(&mut names, context_names(), line);
     }
-    extend(&mut names, watchlist(), line);
-    extend(&mut names, declared_names(), line);
+    let exemptions = literal_exemptions(line);
+    let mut inferred = BTreeSet::new();
+    extend(&mut inferred, watchlist(), line);
+    extend(&mut inferred, declared_names(), line);
+    names.extend(inferred.difference(&exemptions).cloned());
     names.retain(|name| is_ledger_name(name));
     names
+}
+
+/// Every environment-name reference in one file, with its one-based line.
+///
+/// Ordinary references retain the predecessor's one-line rules. Rust adds one
+/// closed construction the line scanner cannot see: a literal-only `concat!`
+/// whose fragments reconstruct a watchlisted or declared ledger name. The
+/// macro may wrap across lines, and its reference belongs to the line where the
+/// macro opens. An exact non-environment assertion anywhere in the statement
+/// containing that macro exempts the reconstructed literal just as it exempts
+/// a plain literal.
+pub(super) fn references_in(
+    extension: Option<&str>,
+    family: Option<&str>,
+    text: &str,
+) -> BTreeSet<(u32, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut found = BTreeSet::new();
+    for (index, line) in lines.iter().enumerate() {
+        let Ok(number) = u32::try_from(index + 1) else {
+            continue;
+        };
+        found.extend(
+            references(family, line)
+                .into_iter()
+                .map(|name| (number, name)),
+        );
+    }
+    if extension != Some("rs") {
+        return found;
+    }
+
+    for concatenation in rust_concatenations(text) {
+        let start = concatenation.start;
+        let scope_start = concatenation.scope_start;
+        let scope_end = concatenation.scope_end;
+        let name = concatenation.name;
+        if !is_inferred_reference(&name) {
+            continue;
+        }
+        let exempt = lines[scope_start as usize - 1..scope_end as usize]
+            .iter()
+            .flat_map(|line| literal_exemptions(line))
+            .any(|literal| literal == name);
+        if !exempt {
+            found.insert((start, name));
+        }
+    }
+    found
+}
+
+/// One literal-only Rust concatenation recovered from the syntax tree.
+struct RustConcatenation {
+    start: u32,
+    scope_start: u32,
+    scope_end: u32,
+    name: String,
+}
+
+/// Every literal-only `concat!` in executable Rust syntax.
+fn rust_concatenations(text: &str) -> Vec<RustConcatenation> {
+    let mut parser = rust_parser();
+    let tree = parser
+        .parse(text, None)
+        .expect("an unbounded Rust parse completes");
+    let mut found = Vec::new();
+    let mut pending = vec![tree.root_node()];
+    while let Some(node) = pending.pop() {
+        let mut cursor = node.walk();
+        pending.extend(node.children(&mut cursor));
+        if node.kind() != "macro_invocation" {
+            continue;
+        }
+        let Some(macro_name) = node.child_by_field_name("macro") else {
+            continue;
+        };
+        let Some(spelling) = text.get(macro_name.byte_range()) else {
+            continue;
+        };
+        if spelling.rsplit("::").next() != Some("concat") {
+            continue;
+        }
+        let mut cursor = node.walk();
+        let Some(body) = node
+            .named_children(&mut cursor)
+            .find(|child| child.kind() == "token_tree")
+        else {
+            continue;
+        };
+        let mut parts = Vec::new();
+        let mut wants_part = true;
+        let mut valid = true;
+        let mut cursor = body.walk();
+        for token in body.children(&mut cursor) {
+            match token.kind() {
+                "(" | ")" | "[" | "]" | "{" | "}" => {}
+                "line_comment" | "block_comment" => {}
+                "," if !wants_part => wants_part = true,
+                "string_literal" | "raw_string_literal" if wants_part => {
+                    let mut cursor = token.walk();
+                    let mut children = token.named_children(&mut cursor);
+                    let Some(content) = children.next() else {
+                        valid = false;
+                        break;
+                    };
+                    if content.kind() != "string_content" || children.next().is_some() {
+                        valid = false;
+                        break;
+                    }
+                    let Some(content) = text.get(content.byte_range()) else {
+                        valid = false;
+                        break;
+                    };
+                    if content.is_empty() || !content.bytes().all(is_environment_fragment_byte) {
+                        valid = false;
+                        break;
+                    }
+                    parts.push(content);
+                    wants_part = false;
+                }
+                _ => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if !valid || parts.len() < 2 {
+            continue;
+        }
+        let name = parts.concat();
+        let Ok(start) = u32::try_from(node.start_position().row + 1) else {
+            continue;
+        };
+        let scope = rust_syntax_scope(node);
+        let Ok(scope_start) = u32::try_from(scope.start_position().row + 1) else {
+            continue;
+        };
+        let Ok(scope_end) = u32::try_from(scope.end_position().row + 1) else {
+            continue;
+        };
+        found.push(RustConcatenation {
+            start,
+            scope_start,
+            scope_end,
+            name,
+        });
+    }
+    found
+}
+
+/// The executable syntax unit containing one macro invocation.
+fn rust_syntax_scope(mut node: tree_sitter::Node<'_>) -> tree_sitter::Node<'_> {
+    let invocation = node;
+    while let Some(parent) = node.parent() {
+        node = parent;
+        if matches!(
+            node.kind(),
+            "let_declaration" | "expression_statement" | "const_item" | "static_item"
+        ) {
+            return node;
+        }
+    }
+    invocation
+}
+
+/// One parser bound to the packaged Rust grammar.
+fn rust_parser() -> Parser {
+    let mut parser = Parser::new();
+    let language = Language::new(tree_sitter_rust::LANGUAGE);
+    parser
+        .set_language(&language)
+        .expect("packaged Rust grammar is compatible");
+    parser
+}
+
+/// Whether one byte can belong to an environment-name literal fragment.
+fn is_environment_fragment_byte(byte: u8) -> bool {
+    byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b"_"[0]
+}
+
+/// Whether a reconstructed literal is one the ordinary ledger would infer.
+fn is_inferred_reference(name: &str) -> bool {
+    if !is_ledger_name(name) {
+        return false;
+    }
+    let literal = format!("\"{name}\"");
+    watchlist().iter().chain(declared_names()).any(|matcher| {
+        matcher
+            .names(&literal)
+            .into_iter()
+            .any(|(_, found)| found == name)
+    })
+}
+
+/// Exact ledger-shaped names asserted to be non-environment literals on a line.
+///
+/// A marker without a following name exempts nothing. Repeating the marker can
+/// name several literals without broadening any one assertion to the whole line.
+fn literal_exemptions(line: &str) -> BTreeSet<String> {
+    line.split(ENV_NAME_LITERAL_MARKER)
+        .skip(1)
+        .filter_map(|suffix| suffix.split_whitespace().next())
+        .filter(|name| is_ledger_name(name))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Add every name one group of patterns reads out of one line.

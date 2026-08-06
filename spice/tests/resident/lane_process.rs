@@ -245,10 +245,25 @@ fn refusal_reason(output: &Output) -> String {
 
 fn assert_session_binding(
     fixture: &Fixture,
-    row: &wire::LaneResidency,
+    row: &wire::intent::LaneAnswerRow,
     epoch: wire::CanonicalUuid,
 ) {
-    let session = row.session.as_ref().expect("lane session authority exists");
+    assert!(row.bound, "the safe row retains session presence");
+    let journal = journal::Journal::open(fixture.journal()).expect("lane journal opens");
+    let head = journal
+        .read(|read| read.residency_head())
+        .expect("lane residency reads")
+        .expect("lane residency exists");
+    let durable = head
+        .body()
+        .lanes
+        .iter()
+        .find(|durable| durable.lane == row.lane)
+        .expect("safe lane remains durable");
+    let session = durable
+        .session
+        .as_ref()
+        .expect("lane session authority exists");
     assert_eq!(
         (
             session.lane,
@@ -332,6 +347,8 @@ fn seed_occupied_lane(
     let mut next = current.body().clone();
     next.lanes.push(wire::LaneResidency {
         lane,
+        lineage_id: lane,
+        name: None,
         worktree: worktree.clone(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -355,7 +372,9 @@ fn seed_occupied_lane(
         .fact(
             wire::body::LaneSeated {
                 lane,
+                lineage_id: lane,
                 capability,
+                name: None,
                 worktree: worktree.clone(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
@@ -415,7 +434,9 @@ fn seat_and_recall(fixture: &Fixture) -> (wire::intent::LaneChangeAnswer, wire::
     assert!(initial.lanes.is_empty());
     let added = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
         fixture,
-        &["lane", "add", "--life", "Drive", "--vendor", "claude"],
+        &[
+            "lane", "add", "--name", "Ava", "--life", "Drive", "--vendor", "claude",
+        ],
         true,
         None,
     ));
@@ -427,6 +448,7 @@ fn seat_and_recall(fixture: &Fixture) -> (wire::intent::LaneChangeAnswer, wire::
         reply_body::<wire::intent::LaneAnswer>(&invoke_args(fixture, &["lane"], true, None));
     let row = &lanes.lanes[0];
     assert_eq!(row.lane, added.lane);
+    assert_eq!(row.name.as_deref(), Some("Ava"));
     assert_eq!(
         row.worktree,
         fs::canonicalize(&fixture.root)
@@ -443,7 +465,7 @@ fn seat_and_recall(fixture: &Fixture) -> (wire::intent::LaneChangeAnswer, wire::
         ("occupied", 1)
     );
     assert_session_binding(fixture, row, lanes.epoch);
-    assert!(row.capabilities.is_empty());
+    assert_eq!(row.liveness, wire::intent::LaneLiveness::Running);
     let contended = invoke_args(fixture, &["lane", "add"], true, None);
     assert_eq!(contended.status.code(), Some(REFUSAL_EXIT));
     let Outcome::Refusal(refusal) = outcome(&contended) else {
@@ -483,7 +505,10 @@ fn seat_and_recall(fixture: &Fixture) -> (wire::intent::LaneChangeAnswer, wire::
         (recalled.lane, recalled.residency.lanes.len()),
         (Some(added.lane), 1)
     );
-    assert!(recalled.residency.lanes[0].capabilities.is_empty());
+    assert!(recalled.residency.lanes[0].bound);
+    let safe = wire::encode(&recalled.residency).expect("safe recall residency encodes");
+    assert!(!String::from_utf8_lossy(&safe).contains(&capability.to_string()));
+    assert!(!String::from_utf8_lossy(&safe).contains(SESSION_ID));
     assert!(recalled.recent.len() <= RECALL_LIMIT);
     assert!(
         recalled
@@ -554,7 +579,12 @@ fn drain_and_restart(
     let snapshot =
         reply_body::<wire::intent::LaneAnswer>(&invoke_args(fixture, &["lane"], true, None));
     assert_eq!(snapshot.lanes[0].occupant, None);
-    assert!(snapshot.lanes[0].capabilities.is_empty());
+    assert_eq!(snapshot.lanes[0].name.as_deref(), Some("Ava"));
+    assert!(snapshot.lanes[0].bound);
+    assert_eq!(
+        snapshot.lanes[0].liveness,
+        wire::intent::LaneLiveness::Vacant
+    );
     assert_eq!(durable_capability(fixture), capability);
     replacement
 }
@@ -572,6 +602,7 @@ fn wake_and_finish(fixture: &Fixture, resident: RunningResident, lane: wire::Can
     );
     let occupied =
         reply_body::<wire::intent::LaneAnswer>(&invoke_args(fixture, &["lane"], true, None));
+    assert_eq!(occupied.lanes[0].name.as_deref(), Some("Ava"));
     assert_eq!(occupied.lanes[0].lineage.len(), 2);
     assert!(occupied.lanes[0].occupant.is_some());
     assert_latest_launch_resumed(fixture);
@@ -643,7 +674,9 @@ fn predecessor_import_launches_the_successor_through_the_shared_occupant_path() 
 
     let added = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
         &fixture,
-        &["lane", "add", "--life", "Drive", "--vendor", "claude"],
+        &[
+            "lane", "add", "--name", "Ava", "--life", "Drive", "--vendor", "claude",
+        ],
         true,
         None,
     ));
@@ -683,30 +716,14 @@ fn predecessor_import_launches_the_successor_through_the_shared_occupant_path() 
     let lanes =
         reply_body::<wire::intent::LaneAnswer>(&invoke_args(&fixture, &["lane"], true, None));
     let row = &lanes.lanes[0];
+    assert_eq!(row.name.as_deref(), Some("Ava"));
     assert_eq!(row.worktree, successor.display().to_string());
     assert_eq!(row.disposition, "occupied");
     assert_eq!(row.lineage.len(), 2);
     assert_eq!(row.occupant, row.lineage.last().copied());
-    let session = row
-        .session
-        .as_ref()
-        .expect("imported session authority exists");
-    assert_eq!(
-        (
-            session.lane,
-            session.occupant,
-            session.worktree.as_str(),
-            session.identity.as_str(),
-            session.epoch,
-        ),
-        (
-            row.lane,
-            row.occupant.expect("imported lane is occupied"),
-            row.worktree.as_str(),
-            SESSION_ID,
-            lanes.epoch,
-        )
-    );
+    assert!(row.bound, "import preserves resumable session presence");
+    let safe = wire::encode(&lanes).expect("imported safe lanes encode");
+    assert!(!String::from_utf8_lossy(&safe).contains(SESSION_ID));
     assert_latest_launch_resumed(&fixture);
     let journal = journal::Journal::open(fixture.journal()).expect("import journal opens");
     let kinds = journal
@@ -873,7 +890,7 @@ fn typed_task_commands_retain_the_ambient_lane_principal() {
             "spice.client",
         ],
         true,
-        None,
+        Some(added_lane.lane),
     ));
 
     let implementation = reply_body::<wire::intent::ClaimAnswer>(&invoke_args(
@@ -947,7 +964,7 @@ fn assert_recovered_lane(
         reply_body::<wire::intent::LaneAnswer>(&invoke_args(fixture, &["lane"], true, None));
     let row = &snapshot.lanes[0];
     assert_eq!((row.lane, row.disposition.as_str()), (lane, "occupied"));
-    assert!(row.capabilities.is_empty());
+    assert!(row.bound);
     assert_eq!(
         (row.lineage.first(), row.lineage.len()),
         (Some(&ancestor), 2)
@@ -1261,12 +1278,9 @@ fn mismatched_resume_and_moved_tape_refuse_without_advancing_the_vacant_lane() {
         (
             vacant.lanes[0].occupant,
             vacant.lanes[0].lineage.len(),
-            vacant.lanes[0]
-                .session
-                .as_ref()
-                .map(|session| session.identity.as_str()),
+            vacant.lanes[0].bound,
         ),
-        (None, 1, Some(SESSION_ID))
+        (None, 1, true)
     );
 
     let tape = fixture

@@ -1,4 +1,4 @@
-use app::runtime::LaneRow;
+use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, leaf, one_line, short,
     standings, ticker_line, truncate,
@@ -41,11 +41,21 @@ fn spell(delta: i64) -> String {
 fn lane(id: &str, worktree: &str) -> LaneRow {
     LaneRow {
         lane: uuid(id),
+        subscription: wire::intent::LineageLife::Steer,
+        members: vec![member(id, worktree)],
+    }
+}
+
+fn member(id: &str, worktree: &str) -> LaneMember {
+    LaneMember {
+        lane: uuid(id),
+        name: None,
         worktree: worktree.to_owned(),
         life: "docker".to_owned(),
         vendor: "codex".parse().expect("the fixture spells a vendor name"),
         occupant: Some(uuid(OCCUPANT)),
         disposition: "seated".to_owned(),
+        liveness: wire::intent::LaneLiveness::Running,
         // A seat that has run: `bound` records that a resumable session was once
         // declared for it, which is true of every lane this fixture builds
         // because each one is occupied. No standing reads the field, so the
@@ -55,17 +65,22 @@ fn lane(id: &str, worktree: &str) -> LaneRow {
     }
 }
 
-fn inbox(id: &str, texts: &[&str]) -> LaneInbox {
-    let pending = texts
+fn inbox(id: &str, directives: &[(&str, Option<&str>)]) -> LaneInbox {
+    let pending = directives
         .iter()
         .enumerate()
-        .map(|(index, text)| {
-            serde_json::json!({
+        .map(|(index, (text, preview))| {
+            let mut directive = serde_json::json!({
                 "directive": OCCUPANT,
                 "key": format!("key{index}"),
                 "text": text,
+                "authored": spell(0),
                 "expires": spell(600_000),
-            })
+            });
+            if let Some(preview) = preview {
+                directive["preview"] = serde_json::Value::String((*preview).to_owned());
+            }
+            directive
         })
         .collect::<Vec<_>>();
     serde_json::from_value(serde_json::json!({
@@ -130,7 +145,13 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
 #[test]
 fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     let lanes = [lane(LANE_A, "main-c"), lane(LANE_B, "main-g")];
-    let waiting = [inbox(LANE_A, &["first direction", "second direction"])];
+    let waiting = [inbox(
+        LANE_A,
+        &[
+            ("first direction", Some("first direction")),
+            ("second direction", Some("second direction")),
+        ],
+    )];
     let tasks = [task("FIDELIT-1kKRSfyV", "review", LANE_A, 7, "active")];
 
     let rows = standings(&lanes, &waiting, &tasks, at(0));
@@ -140,6 +161,7 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows[0].vendor, "codex");
     assert_eq!(rows[0].life, "docker");
     assert_eq!(rows[0].disposition, "seated");
+    assert_eq!(rows[0].liveness, wire::intent::LaneLiveness::Running);
     assert_eq!(rows[0].pending, 2);
     assert_eq!(rows[0].handle.as_deref(), Some("FIDELIT-1kKRSfyV"));
     assert_eq!(rows[0].phase.as_deref(), Some("review"));
@@ -156,13 +178,51 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
 }
 
 #[test]
-fn the_headline_is_the_newest_waiting_directive_on_one_line() {
+fn one_lineage_emits_one_standing_per_member_without_losing_the_lineage_identity() {
+    let lineage = LaneRow {
+        lane: uuid(EPOCH),
+        subscription: wire::intent::LineageLife::Steer,
+        members: vec![member(LANE_A, "main-a"), member(LANE_B, "main-b")],
+    };
+
+    let rows = standings(&[lineage], &[], &[], at(0));
+
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.lineage_id == uuid(EPOCH)));
+    assert_eq!(rows[0].lane, uuid(LANE_A));
+    assert_eq!(rows[1].lane, uuid(LANE_B));
+    assert_eq!(rows[0].label, "main-a");
+    assert_eq!(rows[1].label, "main-b");
+}
+
+#[test]
+fn the_headline_is_the_newest_producer_preview() {
     let lanes = [lane(LANE_A, "main-c")];
-    let waiting = [inbox(LANE_A, &["older direction", "newer\ndirection"])];
+    let waiting = [inbox(
+        LANE_A,
+        &[
+            ("older direction", Some("older direction")),
+            (
+                "> quoted context\n\nnewer author words",
+                Some("newer author words"),
+            ),
+        ],
+    )];
 
     let rows = standings(&lanes, &waiting, &[], at(0));
 
-    assert_eq!(rows[0].headline.as_deref(), Some("newer\\ndirection"));
+    assert_eq!(rows[0].headline.as_deref(), Some("newer author words"));
+}
+
+#[test]
+fn absent_producer_preview_does_not_reinterpret_the_directive_text() {
+    let lanes = [lane(LANE_A, "main-c")];
+    let waiting = [inbox(LANE_A, &[("text the client must not parse", None)])];
+
+    let rows = standings(&lanes, &waiting, &[], at(0));
+
+    assert_eq!(rows[0].pending, 1);
+    assert_eq!(rows[0].headline, None);
 }
 
 #[test]
@@ -248,6 +308,35 @@ fn a_lane_is_labelled_by_what_separates_it_from_its_fleet() {
     );
     assert_eq!(leaf("main-c"), "main-c");
     assert_eq!(leaf("/"), "/");
+}
+
+#[test]
+fn a_configured_agent_name_wins_while_an_unconfigured_lane_uses_the_worktree_leaf() {
+    let mut configured = lane(LANE_A, "/fleet/one/spice-rust-a");
+    configured.members[0].name = Some("Ava".to_owned());
+    let unconfigured = lane(LANE_B, "/fleet/one/spice-rust-g");
+
+    let rows = standings(&[configured, unconfigured], &[], &[], at(0));
+
+    assert_eq!(rows[0].label, "Ava");
+    assert_eq!(rows[0].worktree, "/fleet/one/spice-rust-a");
+    assert_eq!(rows[1].label, "spice-rust-g");
+    assert_eq!(rows[1].worktree, "/fleet/one/spice-rust-g");
+    assert_eq!(rows[0].pending, 0, "pending remains an inbox-derived join");
+}
+
+#[test]
+fn configured_agent_names_distinguish_two_lanes_that_share_one_worktree() {
+    let mut ava = lane(LANE_A, "/fleet/shared");
+    ava.members[0].name = Some("Ava".to_owned());
+    let mut matilda = lane(LANE_B, "/fleet/shared");
+    matilda.members[0].name = Some("Matilda".to_owned());
+
+    let rows = standings(&[ava, matilda], &[], &[], at(0));
+
+    assert_eq!(rows[0].label, "Ava");
+    assert_eq!(rows[1].label, "Matilda");
+    assert_eq!(rows[0].worktree, rows[1].worktree);
 }
 
 #[test]

@@ -153,6 +153,29 @@ fn runner_executes_all_27_once_in_order_with_complete_context() {
     assert_eq!(BatteryReport::decode(&encoded).expect("decode"), report);
 }
 
+#[test]
+fn one_selected_arm_runs_alone_and_matches_its_complete_report_row() {
+    let fixture = Fixture::new();
+    let inputs = fixture.inputs();
+    let mut complete_executor = RecordingExecutor::all_passed(&fixture.source);
+    let complete = run_battery(&inputs, &mut complete_executor).expect("complete battery");
+
+    let selected_id = GateId::EnvNameLedger;
+    let mut selected_executor = RecordingExecutor::all_passed(&fixture.source);
+    let selected = run_battery_arm(&inputs, &mut selected_executor, selected_id)
+        .expect("selected battery arm");
+
+    assert_eq!(selected_executor.calls, [selected_id]);
+    assert_eq!(
+        &selected,
+        complete
+            .results()
+            .iter()
+            .find(|result| result.gate_id() == selected_id)
+            .expect("complete report contains selected arm")
+    );
+}
+
 /// One capture answers for the whole battery, including its Git-derived arms.
 ///
 /// The repository is moved after capture in every direction a core arm reads:
@@ -521,7 +544,8 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
         .iter()
         .filter_map(|event| match event {
             RepositoryExecutionEvent::ArmInvoked { gate_id, .. } => Some(*gate_id),
-            RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+            RepositoryExecutionEvent::FamilyInvoked { .. }
+            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
         })
         .collect();
     assert_eq!(arm_events, GateId::ALL);
@@ -530,7 +554,8 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
         .iter()
         .filter_map(|event| match event {
             RepositoryExecutionEvent::FamilyInvoked { family } => Some(*family),
-            RepositoryExecutionEvent::ArmInvoked { .. } => None,
+            RepositoryExecutionEvent::ArmInvoked { .. }
+            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
         })
         .collect();
     assert_eq!(
@@ -542,6 +567,19 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
             ArmFamily::Hygiene,
         ]
     );
+
+    let mut analyses = events
+        .iter()
+        .filter_map(|event| match event {
+            RepositoryExecutionEvent::AnalysisInvoked { gate_id, .. } => Some(*gate_id),
+            RepositoryExecutionEvent::ArmInvoked { .. }
+            | RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    let mut expected = GateId::ALL.to_vec();
+    analyses.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(analyses, expected);
 }
 
 /// Each result carries evidence its own family owns, refusals included.

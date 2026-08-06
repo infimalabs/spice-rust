@@ -24,9 +24,6 @@ fn validated_snapshot(
         )
     })?;
     let mut residency = positioned(residency);
-    for lane in &mut residency.body.lanes {
-        lane.capabilities.clear();
-    }
     let mut tasks = Vec::with_capacity(observed.tasks().len());
     let mut entries = Vec::with_capacity(observed.tasks().len());
     for heads in observed.tasks() {
@@ -58,12 +55,26 @@ fn validated_snapshot(
             lease,
         ));
     }
+    board::project_subscription_history(
+        &mut residency.body,
+        &entries,
+        observed.facts().facts(),
+    )
+    .map_err(|error| store_fault("lineage::subscription-history-invalid", &error))?;
+    for lane in &mut residency.body.lanes {
+        lane.capabilities.clear();
+    }
     Ok(ValidatedSnapshot {
         cursor,
         answer: BoardAnswer {
             schema: journal::SCHEMA_VERSION,
             cursor,
             principal,
+            project_policy: BoardProjectPolicy {
+                public_stems: projects.public_stems().iter().cloned().collect(),
+                public_min_depth: projects.public_min_depth(),
+                public_max_depth: projects.public_max_depth(),
+            },
             tasks,
             residency,
         },
@@ -348,6 +359,64 @@ fn guard(write: &mut JournalWrite, expected: Vec<Witness>) {
 
 type AllocationHeads = Vec<(TaskHandle, Seq, Seq, Option<Seq>, Option<Seq>)>;
 
+struct AllocationObservation {
+    heads: AllocationHeads,
+    winner: TaskHandle,
+    actor: Actor,
+    subscription: wire::LineageSubscription,
+    residency_position: Seq,
+    projects: ProjectPolicy,
+}
+
+fn allocation_subscription<'a>(
+    residency: &'a wire::ResidencyHead,
+    actor: &Actor,
+) -> Result<&'a wire::LineageSubscription, Outcome<CommandAnswer>> {
+    let occupied =
+        |lane: &&wire::LaneResidency| lane.disposition == "occupied" && lane.occupant.is_some();
+    let seat = match actor {
+        Actor::Lane(actor) => residency.lanes.iter().find(|seat| seat.lane == *actor),
+        Actor::Operator => {
+            let mut seats = residency.lanes.iter().filter(occupied);
+            let first = seats.next();
+            if seats.next().is_some() {
+                return Err(refusal(
+                    "claim::operator-lane-ambiguous",
+                    None,
+                    "use a lane capability when more than one occupied lane is seated",
+                ));
+            }
+            first
+        }
+        Actor::Spice => None,
+    }
+    .filter(occupied)
+    .ok_or_else(|| {
+        refusal(
+            "claim::lane-unavailable",
+            Some(actor.to_string()),
+            "seat one occupied lane before requesting task next",
+        )
+    })?;
+    let mut subscriptions = residency
+        .subscriptions
+        .iter()
+        .filter(|subscription| subscription.lineage_id == seat.lineage_id);
+    let subscription = subscriptions.next().ok_or_else(|| {
+        store_fault(
+            "lineage::subscription-missing",
+            "the allocating lane lineage has no durable task-subscription policy",
+        )
+    })?;
+    if subscriptions.next().is_some() {
+        return Err(store_fault(
+            "lineage::subscription-ambiguous",
+            "the allocating lane lineage has more than one durable task-subscription policy",
+        ));
+    }
+    Ok(subscription)
+}
+
 fn allocation_heads(board: &BoardAnswer) -> AllocationHeads {
     board
         .tasks
@@ -367,13 +436,18 @@ fn allocation_heads(board: &BoardAnswer) -> AllocationHeads {
 fn guard_allocation(
     write: &mut JournalWrite,
     expected: Vec<Witness>,
-    observed: AllocationHeads,
-    winner: TaskHandle,
-    actor: Actor,
-    projects: ProjectPolicy,
+    observed: AllocationObservation,
 ) {
     write.guard(JournalGuard::new(move |read| {
         witnesses_hold(read, &expected)?;
+        let residency = read.residency_head()?.ok_or_else(|| {
+            GuardError::Invalid("allocator current residency head is missing".to_owned())
+        })?;
+        if residency.position() != observed.residency_position {
+            return Err(GuardError::refused(
+                "board::witness-moved: allocator subscription head changed",
+            ));
+        }
         let heads = read.task_heads()?;
         let current = heads
             .iter()
@@ -387,7 +461,7 @@ fn guard_allocation(
                 )
             })
             .collect::<AllocationHeads>();
-        if current != observed {
+        if current != observed.heads {
             return Err(GuardError::refused(
                 "board::witness-moved: allocator head set changed",
             ));
@@ -400,15 +474,15 @@ fn guard_allocation(
                     task.workflow().body().clone(),
                     task.claim().map(|head| head.body().clone()),
                     task.lease().map(|head| head.body().clone()),
-                    &projects,
+                    &observed.projects,
                 )
                 .map_err(|error| {
                     GuardError::Invalid(format!("allocator current heads are invalid: {error}"))
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if board::select(&entries, &actor)
-            .is_some_and(|selected| selected.entry().statement().handle == winner)
+        if board::select(&entries, &observed.actor, &observed.subscription)
+            .is_some_and(|selected| selected.entry().statement().handle == observed.winner)
         {
             Ok(())
         } else {

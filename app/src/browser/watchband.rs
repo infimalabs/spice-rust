@@ -1,278 +1,730 @@
-//! The watchband: one tile per seated lane, and the compose bar that steers it.
-//!
-//! This is the operator's primary surface, not a decoration on the four read
-//! axes. The axes answer questions about the journal; the watchband answers
-//! "who is running, what did they just say, and how do I redirect them", which
-//! is the only question that cannot be answered by reading.
-//!
-//! The structure is taken from the predecessor 0.31.0 UI rather than invented:
-//! a single horizontal strip of fixed-height tiles above the workspace, each
-//! tile carrying the lane's latest pending direction, its driver, and a hover
-//! card reading name, lane, pending count, run state, claim and claim title.
-//! One compose input serves the whole strip and sends to the focused tile,
-//! because the predecessor puts Compose in the command bar rather than in each
-//! tile.
-//!
-//! A tile is drawn from three joined snapshots — the lane roster, the steering
-//! inbox, and the board — and every one of them can be absent independently.
-//! The tile degrades a field at a time rather than disappearing, so a lane that
-//! is seated but has no claim still shows as seated.
+//! Predecessor-style lane composer rendered inside the Agents surface.
+
+use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
+use web_sys::{DragEvent, HtmlInputElement};
 
 use super::*;
+use crate::composer_drafts::{ComposerDraft, compose};
+use crate::watchband::{self, Standing};
 
-/// The steering control, carried as one value.
-///
-/// The focused tile, the compose buffer, and the submit that joins them are
-/// three fields of one control rather than three independent inputs, and
-/// passing them separately is what lets a caller wire a compose box to the
-/// wrong tile.
-#[derive(Clone)]
-pub(super) struct Steering {
-    pub(super) focus: UseStateHandle<Option<CanonicalUuid>>,
-    pub(super) compose: UseStateHandle<String>,
-    pub(super) submit: Callback<SubmitEvent>,
+mod composer;
+mod controls;
+mod mosaic_view;
+mod state;
+
+use composer::{
+    choose_images, drop_on_lane, keyboard_submit, paste_images, primary_textarea_id,
+    render_agent_message_card, render_attachments, render_directive_card, render_markdown,
+    render_quote_bands, update_body,
+};
+pub(super) use controls::{LineageControlAction, LineageControls};
+use controls::{LineageLife, LineageSpeech, render_lineage_controls};
+use mosaic_view::{ActivityCard, CardLayout, MosaicPlane};
+use state::ComposerAction;
+pub(super) use state::ComposerDrafts;
+
+const MAX_ATTACHMENTS: usize = 8;
+const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
+
+/// The four one-click views of one live team.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LineageMode {
+    Compose,
+    Filters,
+    Metrics,
+    Info,
 }
 
-/// One lane tile, already joined across the three snapshots that feed it.
-struct Tile {
-    lane: CanonicalUuid,
-    worktree: String,
-    life: String,
-    vendor: String,
-    occupant: Option<CanonicalUuid>,
-    status: LaneStatus,
-    pending: usize,
-    headline: Option<String>,
-    body: Option<String>,
-    claim: Option<(String, String)>,
-}
+impl LineageMode {
+    const ALL: [Self; 4] = [Self::Compose, Self::Filters, Self::Metrics, Self::Info];
 
-impl Tile {
-    /// Whether this tile can receive direction.
-    ///
-    /// The resident refuses `steer::lane-vacant` for an unoccupied lane, so the
-    /// tile refuses first rather than sending a command that cannot land.
-    const fn seated(&self) -> bool {
-        self.occupant.is_some()
-    }
-
-    /// The name the tile shows: the worktree's final segment.
-    ///
-    /// A tile is a fixed-width card in a strip meant to be read at a glance,
-    /// and a worktree is an absolute path whose distinguishing part is its
-    /// last segment -- every lane on this machine shares the leading ones. CSS
-    /// truncation would keep the shared prefix and drop exactly the segment
-    /// that names the lane. The full path stays one hover away, on the card.
-    fn name(&self) -> &str {
-        self.worktree
-            .rsplit('/')
-            .find(|segment| !segment.is_empty())
-            .unwrap_or(&self.worktree)
-    }
-
-    /// The hover card, matching the predecessor's four-line tooltip.
-    fn hover(&self) -> String {
-        let mut lines = vec![
-            format!("{}, {}", self.worktree, self.life),
-            format!("{} pending, {}", self.pending, self.status.label()),
-        ];
-        match &self.claim {
-            Some((handle, title)) => {
-                lines.push(handle.clone());
-                lines.push(title.clone());
-            }
-            None => lines.push("no claim".to_owned()),
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Compose => "Compose",
+            Self::Filters => "Filters",
+            Self::Metrics => "Metrics",
+            Self::Info => "Info",
         }
-        lines.join("\n")
     }
 }
 
-/// Render the strip and its compose bar.
-pub(super) fn render(surface: &UseStateHandle<SurfaceData>, steering: &Steering) -> Html {
-    let tiles = tiles(surface);
-    let focused = *steering.focus;
+/// Render every live lineage as one packed surface.
+///
+/// This is the sole Agents conversation path: each lineage owns exactly one
+/// composer and activity plane, however many independently steerable members
+/// the lineage contains.
+pub(super) fn render_lineage(
+    surface: &SurfaceData,
+    sender: &SenderHandle,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    mode: &UseStateHandle<LineageMode>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
+    controls: &view::AgentControls,
+) -> Html {
+    let Some(runtime) = surface.as_ref() else {
+        return empty("No admitted live team is available.");
+    };
+    let Some(lanes) = runtime.lanes() else {
+        return empty("No lane snapshot is available.");
+    };
+    let waiting = runtime
+        .inbox()
+        .map(|inbox| inbox.lanes.as_slice())
+        .unwrap_or(&[]);
+    let tasks = runtime
+        .board()
+        .map(|board| board.tasks.as_slice())
+        .unwrap_or(&[]);
+    let standings = watchband::standings(&lanes.lanes, waiting, tasks, js_sys::Date::now() as i64);
+    let can_send = runtime.offers(CommandKind::SteerSend);
+    let can_configure = runtime.offers(CommandKind::LineageConfigure);
+    if lanes.lanes.is_empty() {
+        let empty_lineage = crate::runtime::LaneRow {
+            lane: lanes.epoch,
+            subscription: wire::intent::LineageLife::Steer,
+            members: Vec::new(),
+        };
+        return html! {
+            <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic">
+                <section class="team-surface" data-lineage-weight="1">
+                    {render_lineage_toolbar(mode, &empty_lineage, &[])}
+                    <div class="team-pane" data-team-mode={(**mode).label()}>
+                        {match **mode {
+                            LineageMode::Compose => empty("No agents are assigned. Open Info to add one."),
+                            LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => {
+                                render_details(runtime, &empty_lineage, &[], **mode, controls)
+                            }
+                        }}
+                    </div>
+                </section>
+            </div>
+        };
+    }
     html! {
-        <section class="watchband" aria-label="Lanes">
-            <div class="watchband-bar">
-                {compose_bar(&tiles, focused, steering)}
-            </div>
-            <div class="watchband-strip" role="list">
-                {if tiles.is_empty() {
+        <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic">
+            {for lanes.lanes.iter().map(|lineage| {
+                let lineage_standings = standings
+                    .iter()
+                    .filter(|standing| standing.lineage_id == lineage.lane)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                html! {
+                    <section
+                        class="team-surface"
+                        data-lineage-id={lineage.lane.to_string()}
+                        data-lineage-weight={lineage_standings.len().max(1).to_string()}
+                    >
+                        {render_lineage_toolbar(mode, lineage, &lineage_standings)}
+                        <div class="team-pane" data-team-mode={(**mode).label()}>
+                            {match **mode {
+                                LineageMode::Compose => render_compose(
+                                    surface,
+                                    runtime,
+                                    lineage,
+                                    &lineage_standings,
+                                    lanes.epoch,
+                                    can_send,
+                                    sender,
+                                    drafts,
+                                    mode,
+                                    lineage_controls,
+                                    can_configure,
+                                    controls,
+                                ),
+                                LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => html! {
+                                    <>
+                                        {view::chrome::render_ticker(surface)}
+                                        {render_details(
+                                            runtime,
+                                            lineage,
+                                            &lineage_standings,
+                                            **mode,
+                                            controls,
+                                        )}
+                                    </>
+                                },
+                            }}
+                        </div>
+                    </section>
+                }
+            })}
+        </div>
+    }
+}
+
+fn render_lineage_toolbar(
+    mode: &UseStateHandle<LineageMode>,
+    lineage: &crate::runtime::LaneRow,
+    standings: &[Standing],
+) -> Html {
+    html! {
+        <header class="team-toolbar">
+            <span
+                class="team-lights"
+                role="group"
+                aria-label={format!("{} admitted agents", standings.len())}
+            >
+                {for standings.iter().filter_map(|standing| {
+                    let member = lineage.member(standing.lane)?;
+                    let status = member.status(standing.pending);
+                    Some(html! {
+                        <span
+                            class={classes!("team-light", status.key())}
+                            role="img"
+                            data-lane-light-target-id={member.lane.to_string()}
+                            data-lane-status={status.key()}
+                            aria-label={format!("{}: {}", standing.label, status.label())}
+                        ></span>
+                    })
+                })}
+            </span>
+            <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
+                {for LineageMode::ALL.map(|candidate| {
+                    let selected = candidate == **mode;
+                    let choose = mode.clone();
+                    let badge = mode_badge(candidate, standings);
                     html! {
-                        <p class="watchband-empty">
-                            {"No lanes are seated. Start an agent to give the strip a tile."}
-                        </p>
+                        <button
+                            type="button"
+                            role="tab"
+                            class={classes!("team-mode", selected.then_some("selected"))}
+                            aria-selected={selected.to_string()}
+                            onclick={Callback::from(move |_| choose.set(candidate))}
+                        >
+                            <span>{candidate.label()}</span>
+                            if let Some(badge) = badge {
+                                <span class="team-mode-badge">{badge}</span>
+                            }
+                        </button>
                     }
-                } else {
-                    html! { for tiles.iter().map(|tile| {
-                        render_tile(tile, focused, &steering.focus)
-                    }) }
+                })}
+            </nav>
+            <button
+                class="team-menu"
+                type="button"
+                aria-label="Team and agent details"
+                title="Team and agent details"
+                onclick={{
+                    let mode = mode.clone();
+                    Callback::from(move |_| mode.set(LineageMode::Info))
                 }}
+            ><span aria-hidden="true">{"☰"}</span></button>
+        </header>
+    }
+}
+
+fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
+    let count = match mode {
+        LineageMode::Compose => standings.iter().map(|standing| standing.pending).sum(),
+        LineageMode::Filters => standings
+            .iter()
+            .filter(|standing| standing.handle.is_some())
+            .count(),
+        LineageMode::Metrics => standings
+            .iter()
+            .filter(|standing| standing.held.is_some())
+            .count(),
+        LineageMode::Info => standings.len(),
+    };
+    watchband::badge(count)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one lineage renderer needs the admitted surface and its interactive control handles"
+)]
+fn render_compose(
+    surface: &SurfaceData,
+    runtime: &CanvasRuntime,
+    lineage: &crate::runtime::LaneRow,
+    standings: &[Standing],
+    epoch: CanonicalUuid,
+    can_send: bool,
+    sender: &SenderHandle,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    mode: &UseStateHandle<LineageMode>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
+    can_configure: bool,
+    controls: &view::AgentControls,
+) -> Html {
+    if lineage.members.is_empty() {
+        return empty("No agents are assigned. Open Info to add one.");
+    }
+    let authoritative_life = lineage.subscription;
+    let control = lineage_controls.current(lineage.lane, authoritative_life);
+    let submit = submit_lineage_callback(&lineage.members, epoch, sender.clone(), drafts.clone());
+    let ready = can_send
+        && !control.pending_life
+        && lineage.members.iter().any(|member| {
+            member.occupant.is_some()
+                && drafts
+                    .get(&member.lane.to_string())
+                    .is_some_and(|draft| !compose(draft).trim().is_empty())
+        });
+    html! {
+        <div class="team-compose">
+            <form class="team-composer" onsubmit={submit.clone()}>
+                <div class="team-agents">
+                    {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
+                        render_agent_composer(
+                            member,
+                            standing,
+                            epoch,
+                            standing.pending,
+                            can_send,
+                            sender,
+                            drafts,
+                            mode,
+                        )
+                    })}
+                </div>
+                {render_lineage_controls(
+                    lineage.lane,
+                    authoritative_life,
+                    &control,
+                    lineage_controls,
+                    sender,
+                    can_configure,
+                    ready,
+                )}
+            </form>
+            {view::chrome::render_ticker(surface)}
+            {render_activity(runtime, lineage, drafts, controls, control.speech, control.life)}
+        </div>
+    }
+}
+
+fn render_activity(
+    runtime: &CanvasRuntime,
+    lineage: &crate::runtime::LaneRow,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    controls: &view::AgentControls,
+    speech: LineageSpeech,
+    life: LineageLife,
+) -> Html {
+    let cards = runtime
+        .messages()
+        .iter()
+        .filter_map(|message| {
+            let member = lineage.member(message.lane)?;
+            Some(ActivityCard::Agent {
+                member: member.clone(),
+                quote_lane: crate::composer_drafts::quote_lane(&lineage.members, message),
+                message: message.clone(),
+            })
+        })
+        .chain(lineage.members.iter().flat_map(|member| {
+            let lane = member.lane;
+            runtime
+                .inbox()
+                .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == lane))
+                .map(|row| row.pending.as_slice())
+                .unwrap_or(&[])
+                .iter()
+                .cloned()
+                .map(move |directive| ActivityCard::Directive { lane, directive })
+        }))
+        .collect::<Vec<_>>();
+    let empty = cards.is_empty();
+    let speak = if speech == LineageSpeech::Quiet {
+        Callback::from(|_: String| {})
+    } else {
+        controls.speak.clone()
+    };
+    html! {
+        <div
+            class="team-activity-grid"
+            aria-live="polite"
+            aria-label="Live agent activity"
+            data-empty={empty.to_string()}
+        >
+            if empty {
+                <div class="mosaic-message-empty">{"No pending direction."}</div>
+            }
+            <MosaicPlane
+                key={lineage.lane.to_string()}
+                lane={lineage.lane}
+                {life}
+                members={lineage.members.len()}
+                {cards}
+                drafts={drafts.clone()}
+                {speak}
+                {speech}
+            />
+        </div>
+    }
+}
+
+fn render_details(
+    runtime: &CanvasRuntime,
+    lineage: &crate::runtime::LaneRow,
+    standings: &[Standing],
+    mode: LineageMode,
+    controls: &view::AgentControls,
+) -> Html {
+    html! {
+        <div class={classes!(
+            "team-detail-pane",
+            (mode == LineageMode::Info).then_some("with-seat")
+        )}>
+            <div class="team-detail-grid">
+                {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
+                    render_agent_details(member, standing, mode)
+                })}
             </div>
+            if mode == LineageMode::Info {
+                {view::render_seat_panel(Some(runtime), controls)}
+            }
+        </div>
+    }
+}
+
+fn render_agent_details(
+    member: &crate::runtime::LaneMember,
+    standing: &Standing,
+    mode: LineageMode,
+) -> Html {
+    let occupant = member
+        .occupant
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "vacant".to_owned());
+    let claim = standing
+        .handle
+        .as_deref()
+        .zip(standing.phase.as_deref())
+        .map_or_else(
+            || "no active claim".to_owned(),
+            |(handle, phase)| format!("{handle} / {phase}"),
+        );
+    let held = standing
+        .held
+        .map(watchband::elapsed_label)
+        .unwrap_or_else(|| "—".to_owned());
+    let renewed = standing
+        .renewed
+        .map(watchband::elapsed_label)
+        .unwrap_or_else(|| "—".to_owned());
+    let headline = standing
+        .headline
+        .clone()
+        .unwrap_or_else(|| "clear".to_owned());
+    html! {
+        <article
+            class="team-detail-card"
+            data-accent={standing.accent.to_string()}
+            title={standing_title(standing)}
+        >
+            <header>
+                <span class="agent-presence"></span>
+                <strong>{standing.label.clone()}</strong>
+                <span>{standing.vendor.clone()}</span>
+            </header>
+            {match mode {
+                LineageMode::Filters => html! {
+                    <dl>
+                        <div><dt>{"Task scope"}</dt><dd>{claim}</dd></div>
+                        <div>
+                            <dt>{"Queue"}</dt>
+                            <dd>{format!("{} pending", standing.pending)}</dd>
+                        </div>
+                        <div><dt>{"Life"}</dt><dd>{standing.life.clone()}</dd></div>
+                        <div>
+                            <dt>{"Activity"}</dt>
+                            <dd>{headline}</dd>
+                        </div>
+                    </dl>
+                },
+                LineageMode::Metrics => html! {
+                    <dl>
+                        <div><dt>{"Pending"}</dt><dd>{standing.pending}</dd></div>
+                        <div><dt>{"Claim age"}</dt><dd>{held}</dd></div>
+                        <div><dt>{"Renewed"}</dt><dd>{renewed}</dd></div>
+                        <div>
+                            <dt>{"Liveness"}</dt>
+                            <dd>{standing.liveness.as_str()}</dd>
+                        </div>
+                    </dl>
+                },
+                LineageMode::Info => html! {
+                    <dl>
+                        <div><dt>{"Agent channel"}</dt><dd>{standing.lane.to_string()}</dd></div>
+                        <div><dt>{"Occupant"}</dt><dd>{occupant}</dd></div>
+                        <div><dt>{"Worktree"}</dt><dd>{standing.worktree.clone()}</dd></div>
+                        <div>
+                            <dt>{"Pending"}</dt>
+                            <dd>{format!("{} pending", standing.pending)}</dd>
+                        </div>
+                        <div>
+                            <dt>{"Liveness"}</dt>
+                            <dd>{standing.liveness.as_str()}</dd>
+                        </div>
+                        <div>
+                            <dt>{"Vendor / life"}</dt>
+                            <dd>{format!("{} / {}", standing.vendor, standing.life)}</dd>
+                        </div>
+                    </dl>
+                },
+                LineageMode::Compose => Html::default(),
+            }}
+        </article>
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one member composer needs its standing and shared lineage interaction handles"
+)]
+fn render_agent_composer(
+    member: &crate::runtime::LaneMember,
+    standing: &Standing,
+    epoch: CanonicalUuid,
+    pending: usize,
+    can_send: bool,
+    sender: &SenderHandle,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    mode: &UseStateHandle<LineageMode>,
+) -> Html {
+    let lane_id = member.lane;
+    let lane_key = lane_id.to_string();
+    let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
+    let occupant = member.occupant;
+    let send_enabled = can_send && occupant.is_some();
+    let onkeydown = keyboard_submit(
+        lane_id,
+        occupant,
+        epoch,
+        lane_key.clone(),
+        sender.clone(),
+        drafts.clone(),
+    );
+    let ondragover = Callback::from(move |event: DragEvent| {
+        event.prevent_default();
+        if let Some(transfer) = event.data_transfer() {
+            transfer.set_drop_effect("copy");
+        }
+    });
+    let ondrop = drop_on_lane(
+        lane_id,
+        occupant,
+        epoch,
+        lane_key.clone(),
+        sender.clone(),
+        drafts.clone(),
+    );
+    html! {
+        <section
+            key={lane_key.clone()}
+            class={classes!(
+                "team-agent",
+                "composer-shard",
+                (!send_enabled).then_some("team-agent--vacant"),
+            )}
+            data-agent-lane={lane_id.to_string()}
+            data-shard-target-id={lane_id.to_string()}
+            title={standing_title(standing)}
+            {ondragover}
+            {ondrop}
+        >
+            {render_quote_bands(&lane_key, &draft, drafts, onkeydown.clone())}
+            {render_composer_body(
+                lane_id,
+                &lane_key,
+                &draft,
+                standing,
+                pending,
+                drafts,
+                mode,
+                onkeydown,
+            )}
         </section>
     }
 }
 
-/// The single compose input, aimed at the focused tile.
-fn compose_bar(tiles: &[Tile], focused: Option<CanonicalUuid>, steering: &Steering) -> Html {
-    let target = focused.and_then(|lane| tiles.iter().find(|tile| tile.lane == lane));
-    let placeholder = match target {
-        Some(tile) if tile.seated() => format!("Steer {}", tile.worktree),
-        Some(tile) => format!("{} is vacant", tile.worktree),
-        None => "Select a lane to steer".to_owned(),
-    };
-    let ready = target.is_some_and(Tile::seated);
-    let oninput = {
-        let compose = steering.compose.clone();
-        Callback::from(move |event: InputEvent| {
-            if let Some(input) = event.target_dyn_into::<web_sys::HtmlInputElement>() {
-                compose.set(input.value());
-            }
-        })
-    };
-    html! {
-        <form class="compose" onsubmit={steering.submit.clone()}>
-            <input
-                class="compose-input"
-                type="text"
-                value={(*steering.compose).clone()}
-                placeholder={placeholder}
-                disabled={!ready}
-                {oninput}
-            />
-            <button class="compose-send" type="submit" disabled={!ready}>{"Send"}</button>
-        </form>
-    }
-}
-
-fn render_tile(
-    tile: &Tile,
-    focused: Option<CanonicalUuid>,
-    focus: &UseStateHandle<Option<CanonicalUuid>>,
-) -> Html {
-    let selected = focused == Some(tile.lane);
-    let onclick = {
-        let focus = focus.clone();
-        let lane = tile.lane;
-        Callback::from(move |_| {
-            focus.set((*focus != Some(lane)).then_some(lane));
-        })
-    };
-    let class = if selected {
-        "lane-tile lane-tile--focused"
-    } else {
-        "lane-tile"
-    };
-    html! {
-        <button
-            class={class}
-            type="button"
-            role="listitem"
-            title={tile.hover()}
-            aria-pressed={selected.to_string()}
-            {onclick}
-        >
-            <span class="lane-tile-top">
-                <span class="lane-tile-name">{tile.name().to_owned()}</span>
-                <span class="lane-tile-head">{
-                    tile.headline
-                        .clone()
-                        .unwrap_or_else(|| tile.status.label().to_owned())
-                }</span>
-            </span>
-            <span class="lane-tile-body">{
-                tile.body.clone().unwrap_or_else(|| match &tile.claim {
-                    Some((_, title)) => title.clone(),
-                    None => "No direction pending.".to_owned(),
-                })
-            }</span>
-            <span class="lane-tile-foot">
-                <span class="lane-tile-claim">{
-                    tile.claim
-                        .as_ref()
-                        .map_or_else(|| "-".to_owned(), |(handle, _)| handle.clone())
-                }</span>
-                {if tile.pending > 0 {
-                    html! { <span class="lane-tile-pending">{tile.pending}</span> }
-                } else {
-                    Html::default()
-                }}
-                <span class="lane-tile-vendor">{tile.vendor.clone()}</span>
-            </span>
-        </button>
-    }
-}
-
-/// Join the lane roster, the steering inbox and the board into tiles.
-///
-/// Order is the predecessor's `compareTargetChoices`: status first, so the
-/// lanes waiting on the operator sit at the head of the strip, then the name,
-/// then the lane id so the order is total. The predecessor breaks its status
-/// tie on recency before the name; this wire carries no per-lane activity
-/// instant to break it with, which is a contract gap rather than a decision.
-fn tiles(surface: &UseStateHandle<SurfaceData>) -> Vec<Tile> {
-    let Some(runtime) = (**surface).as_ref() else {
-        return Vec::new();
-    };
-    let Some(lanes) = runtime.lanes() else {
-        return Vec::new();
-    };
-    let inbox = runtime.inbox();
-    let board = runtime.board();
-    let mut tiles = lanes
-        .lanes
-        .iter()
-        .map(|lane| {
-            let pending = inbox
-                .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == lane.lane))
-                .map(|row| row.pending.as_slice())
-                .unwrap_or_default();
-            let latest = pending.last();
-            let claim = board.and_then(|board| {
-                board.tasks.iter().find_map(|task| {
-                    let claim = task.claim.as_ref()?;
-                    (claim.body.lane == lane.lane
-                        && claim.body.disposition == wire::ClaimDisposition::Active)
-                        .then(|| {
-                            (
-                                task.statement.body.handle.to_string(),
-                                task.presentation_title.clone(),
-                            )
-                        })
-                })
-            });
-            Tile {
-                lane: lane.lane,
-                worktree: lane.worktree.clone(),
-                life: lane.life.clone(),
-                vendor: lane.vendor.to_string(),
-                occupant: lane.occupant,
-                status: lane.status(pending.len()),
-                pending: pending.len(),
-                headline: latest.map(|directive| directive.key.clone()),
-                body: latest.map(|directive| directive.text.clone()),
-                claim,
-            }
-        })
-        .collect::<Vec<_>>();
-    tiles.sort_by(|left, right| {
-        left.status
-            .cmp(&right.status)
-            .then_with(|| left.worktree.cmp(&right.worktree))
-            .then_with(|| left.lane.to_string().cmp(&right.lane.to_string()))
-    });
-    tiles
-}
-
-/// The residency the focused lane's directive must witness.
-///
-/// Returned together because the resident re-proves all three as one witness
-/// and refuses a command whose expectation differs by any field.
-pub(super) fn residency(
-    surface: &UseStateHandle<SurfaceData>,
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the composer body renders one target's typed state and browser callbacks"
+)]
+fn render_composer_body(
     lane: CanonicalUuid,
-) -> Option<(CanonicalUuid, CanonicalUuid)> {
-    let inbox = (**surface).as_ref()?.inbox()?;
-    let row = inbox.lanes.iter().find(|row| row.lane == lane)?;
-    Some((row.occupant?, inbox.epoch))
+    lane_key: &str,
+    draft: &ComposerDraft,
+    standing: &Standing,
+    pending: usize,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    mode: &UseStateHandle<LineageMode>,
+    onkeydown: Callback<KeyboardEvent>,
+) -> Html {
+    let markdown = compose(draft);
+    let oninput = update_body(lane_key.to_owned(), drafts.clone());
+    let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
+    html! {
+        <div class="mosaic-composer">
+            {render_composer_heading(standing, mode)}
+            <div class="composer-shard-standing">
+                <span>{format!("{pending} pending")}</span>
+                <span>{standing.liveness.as_str()}</span>
+            </div>
+            <textarea
+                id={primary_textarea_id(lane_key)}
+                aria-label={format!("Message for {lane}")}
+                data-primary-composer-target-id={lane.to_string()}
+                rows="4"
+                value={draft.body.clone()}
+                placeholder={composer_placeholder(standing, pending)}
+                {oninput}
+                {onkeydown}
+                {onpaste}
+            ></textarea>
+            {render_attachments(lane_key, draft, drafts)}
+            if let Some(issue) = &draft.issue {
+                <p class="composer-issue" role="status">{issue.clone()}</p>
+            }
+            if !markdown.is_empty() {
+                <div class="composer-markdown markdown-body" aria-label="Markdown preview">
+                    {render_markdown(&markdown)}
+                </div>
+            }
+            {render_image_picker(lane, lane_key, draft, drafts)}
+        </div>
+    }
+}
+
+fn render_composer_heading(standing: &Standing, mode: &UseStateHandle<LineageMode>) -> Html {
+    let activity = standing
+        .headline
+        .as_deref()
+        .or(standing.handle.as_deref())
+        .unwrap_or(&standing.disposition);
+    let open = mode.clone();
+    html! {
+        <header class="composer-shard-heading">
+            <span class="composer-shard-age">{
+                standing
+                    .held
+                    .map(watchband::elapsed_label)
+                    .unwrap_or_else(|| "now".to_owned())
+            }</span>
+            <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
+            <button
+                type="button"
+                aria-label={format!("Details for {}", standing.label)}
+                onclick={Callback::from(move |_| open.set(LineageMode::Info))}
+            >{"☰"}</button>
+        </header>
+    }
+}
+
+fn render_image_picker(
+    lane: CanonicalUuid,
+    lane_key: &str,
+    draft: &ComposerDraft,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+) -> Html {
+    let input_id = format!("mosaic-images-{lane}");
+    let onchange = choose_images(lane_key.to_owned(), drafts.clone());
+    html! {
+        <div class="mosaic-composer-actions">
+            <input
+                id={input_id.clone()}
+                class="visually-hidden"
+                type="file"
+                accept="image/*"
+                multiple=true
+                {onchange}
+            />
+            <label class="image-picker" for={input_id}>{"Images"}</label>
+            <span>{format!("{}/{}", draft.attachments.len(), MAX_ATTACHMENTS)}</span>
+        </div>
+    }
+}
+
+fn composer_placeholder(standing: &Standing, pending: usize) -> String {
+    let mut lines = vec![
+        format!(
+            "{}, {}",
+            standing.vendor,
+            watchband::truncate(&standing.label, 8)
+        ),
+        format!("{pending} pending, {}", standing.liveness.as_str()),
+    ];
+    if let Some(handle) = &standing.handle {
+        lines.push(match &standing.phase {
+            Some(phase) => format!("{handle}, {phase}"),
+            None => handle.clone(),
+        });
+    }
+    lines.join("\n")
+}
+
+fn standing_title(standing: &Standing) -> String {
+    format!(
+        "{}\n{}\n{} pending\n{}",
+        standing.label,
+        standing.worktree,
+        standing.pending,
+        standing.liveness.as_str(),
+    )
+}
+
+fn submit_lineage_callback(
+    members: &[crate::runtime::LaneMember],
+    epoch: CanonicalUuid,
+    sender: SenderHandle,
+    drafts: UseReducerHandle<ComposerDrafts>,
+) -> Callback<SubmitEvent> {
+    let targets = members
+        .iter()
+        .map(|member| (member.lane, member.occupant, member.lane.to_string()))
+        .collect::<Vec<_>>();
+    Callback::from(move |event: SubmitEvent| {
+        event.prevent_default();
+        for (lane, occupant, lane_key) in &targets {
+            submit_draft(*lane, *occupant, epoch, lane_key, &sender, &drafts);
+        }
+    })
+}
+
+fn submit_draft(
+    lane: CanonicalUuid,
+    occupant: Option<CanonicalUuid>,
+    epoch: CanonicalUuid,
+    lane_key: &str,
+    sender: &SenderHandle,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+) -> bool {
+    let Some(occupant) = occupant else {
+        return false;
+    };
+    let Some(prepared) = drafts.0.prepare(lane_key) else {
+        return false;
+    };
+    let restore_drafts = drafts.clone();
+    let restore_lane = lane_key.to_owned();
+    let snapshot = prepared.snapshot;
+    let resolve = Callback::from(move |accepted: bool| {
+        if !accepted {
+            restore_drafts.dispatch(ComposerAction::Restore {
+                lane: restore_lane.clone(),
+                draft: snapshot.clone(),
+            });
+        }
+    });
+    if !send_action(
+        sender,
+        ClientAction::Steer {
+            lane,
+            occupant,
+            epoch,
+            message: prepared.message,
+            attachments: prepared.attachments,
+            resolve: Some(resolve),
+        },
+    ) {
+        return false;
+    }
+    drafts.dispatch(ComposerAction::Clear {
+        lane: lane_key.to_owned(),
+    });
+    true
 }

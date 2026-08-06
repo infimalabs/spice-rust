@@ -31,14 +31,12 @@ pub(super) fn render_command_bar(
     html! {
         <header class="commandbar">
             <div class="brand">
-                <span class="brand-dots" aria-hidden="true">
-                    {for (0..4).map(|_| html! { <span class="brand-dot"></span> })}
-                </span>
+                {render_agent_roster(runtime)}
                 <span class="brand-name">{"Spice Canvas"}</span>
             </div>
             <nav class="pills" aria-label="Canvas views">
                 {render_pill(
-                    "Mosaic",
+                    "Agents",
                     "Converse with seated agents",
                     **mosaic,
                     watchband::badge(waiting_directives(runtime)),
@@ -159,7 +157,7 @@ fn render_canvas_menu(
             </summary>
             <nav aria-label="Canvas views">
                 {render_pill(
-                    "Mosaic",
+                    "Agents",
                     "Converse with seated agents",
                     **mosaic,
                     watchband::badge(waiting_directives(runtime)),
@@ -184,6 +182,60 @@ fn render_canvas_menu(
                 })}
             </nav>
         </details>
+    }
+}
+
+fn render_agent_roster(runtime: Option<&CanvasRuntime>) -> Html {
+    let members = runtime
+        .and_then(|runtime| {
+            let lanes = runtime.lanes()?;
+            let waiting = runtime
+                .inbox()
+                .map(|inbox| inbox.lanes.as_slice())
+                .unwrap_or(&[]);
+            Some(
+                lanes
+                    .lanes
+                    .iter()
+                    .flat_map(|lineage| lineage.members.iter())
+                    .map(|member| {
+                        let pending = waiting
+                            .iter()
+                            .find(|row| row.lane == member.lane)
+                            .map_or(0, |row| row.pending.len());
+                        (member, pending)
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or_default();
+    html! {
+        <span
+            class="brand-dots"
+            role="group"
+            aria-label={format!("{} admitted agents", members.len())}
+        >
+            {for members.into_iter().map(|(member, pending)| {
+                let status = member.status(pending);
+                let label = member.name.as_deref().unwrap_or_else(|| {
+                    member
+                        .worktree
+                        .rsplit('/')
+                        .find(|segment| !segment.is_empty())
+                        .unwrap_or(&member.worktree)
+                });
+                html! {
+                    <span
+                        class={classes!("brand-dot", status.key())}
+                        role="img"
+                        aria-label={format!("{label}: {}", status.label())}
+                        title={format!("{label}: {}", status.label())}
+                        data-agent-lane={member.lane.to_string()}
+                        data-agent-status={status.key()}
+                    ></span>
+                }
+            })}
+        </span>
     }
 }
 
@@ -290,7 +342,7 @@ fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
 
 /// The newest command outcome, folded onto one line.
 pub(in crate::browser) fn render_ticker(surface: &SurfaceData) -> Html {
-    let Some(event) = surface.as_ref().and_then(|runtime| runtime.events().last()) else {
+    let Some(event) = surface.as_ref().and_then(|runtime| runtime.newest_event()) else {
         return Html::default();
     };
     let detail = if event.detail().is_empty() {
@@ -307,22 +359,21 @@ pub(in crate::browser) fn render_ticker(surface: &SurfaceData) -> Html {
 
 /// Who the card is addressed to, and the colour that says so.
 ///
-/// A pending directive carries no author of its own: the operator wrote every
-/// one of them. What distinguishes cards is the lane they are waiting on, so
-/// that is what the accent and the footer name.
+/// For assistant prose this is the immutable producing worktree. A pending
+/// direction carries no agent author, so its correspondent is the member the
+/// operator addressed.
 #[derive(Clone, PartialEq)]
 pub(in crate::browser) struct Correspondent {
     pub(in crate::browser) name: String,
     pub(in crate::browser) accent: usize,
     pub(in crate::browser) speak: Callback<String>,
-    pub(in crate::browser) quote: Callback<String>,
+    pub(in crate::browser) quote: Callback<()>,
 }
 
 pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Correspondent) -> Html {
     let speak = correspondent.speak.clone();
     let quote = correspondent.quote.clone();
     let spoken = text.to_owned();
-    let quoted = text.to_owned();
     let copied = text.to_owned();
     html! {
         <span class="message-actions">
@@ -334,7 +385,7 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
             <button
                 class="card-action" type="button" title="Quote this message"
                 aria-label="Quote this message"
-                onclick={Callback::from(move |_| quote.emit(quoted.clone()))}
+                onclick={Callback::from(move |_| quote.emit(()))}
             >{"❞"}</button>
             <button
                 class="card-action" type="button" title="Copy this message"

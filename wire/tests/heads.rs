@@ -90,8 +90,13 @@ const FINDING: &str = r#"{
 const RESIDENCY: &str = r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
   "state": "seated",
+  "subscriptions": [{
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
+    "policy": "drive"
+  }],
   "lanes": [{
     "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
     "worktree": "/worktrees/lane-a",
     "life": "drive",
     "vendor": "claude",
@@ -156,7 +161,7 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
         FINDING,
         &["identity", "locus", "owner", "receipt", "severity", "state"],
     );
-    assert_fields::<ResidencyHead>(RESIDENCY, &["epoch", "lanes", "state"]);
+    assert_fields::<ResidencyHead>(RESIDENCY, &["epoch", "lanes", "state", "subscriptions"]);
     assert_fields::<CursorHead>(CURSOR, &["seq", "wake"]);
 
     let residency: serde_json::Value =
@@ -169,12 +174,30 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
             "lane",
             "life",
             "lineage",
+            "lineage_id",
             "occupant",
             "session",
             "vendor",
             "worktree",
         ],
     );
+    assert_value_fields(&residency["subscriptions"][0], &["lineage_id", "policy"]);
+}
+
+#[test]
+fn a_legacy_residency_head_admits_an_absent_subscription_table() {
+    let mut legacy: serde_json::Value =
+        serde_json::from_str(RESIDENCY).expect("residency fixture is JSON");
+    legacy
+        .as_object_mut()
+        .expect("residency fixture is an object")
+        .remove("subscriptions");
+
+    let decoded: ResidencyHead =
+        serde_json::from_value(legacy).expect("legacy residency still decodes");
+    assert!(decoded.subscriptions.is_empty());
+    let encoded = serde_json::to_value(decoded).expect("legacy residency re-encodes");
+    assert!(encoded.get("subscriptions").is_none());
 }
 
 #[test]

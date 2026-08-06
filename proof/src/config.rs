@@ -11,9 +11,9 @@ use wire::manifest::ProofImage;
 /// Proof image sealed into this build's compiled configuration defaults.
 ///
 /// This is the exact OCI identity of the `linux/amd64` appliance assembled by
-/// `dist/proof-image/build.sh`, and `dist/proof-image/identity.txt` is the same
-/// digest in the one spelling a shell can read. The two are proven equal by
-/// [`the_shell_readable_identity_names_the_compiled_image`], so the image a
+/// `cargo xtask proof-image build`, and `dist/proof-image/identity.txt` is the
+/// same digest in the one spelling a shell can read. The two are proven equal
+/// by [`the_shell_readable_identity_names_the_compiled_image`], so the image a
 /// host loads and the image this build demands cannot drift apart silently.
 pub const DEFAULT_IMAGE: &str =
     "sha256:3e8a97ea5628fad302eafb4e93f81da8236c6bf164fd3459509d6db71ee57334";
@@ -136,7 +136,7 @@ impl Config {
 mod tests {
     use super::*;
 
-    /// The identity `dist/proof-image/build.sh` and `load.sh` compare against.
+    /// The identity both `cargo xtask proof-image` actions compare against.
     const SHELL_READABLE_IDENTITY: &str =
         include_str!("../../dist/proof-image/identity.txt").trim_ascii();
 

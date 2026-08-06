@@ -117,6 +117,7 @@ fold_registry! {
         answer: "Lanes, worktrees, occupant lineage, and possession.";
         content: [
             Facts(Lane => "lane::*"),
+            Fact(LineageConfigured),
             Fact(ClaimCarried),
             Fact(ClaimRenewed),
             Facts(Resident => "up::*"),
@@ -125,6 +126,7 @@ fold_registry! {
         ];
         sources: [
             Facts(Lane => "lane::*"),
+            Fact(LineageConfigured),
             Fact(ClaimCarried),
             Fact(ClaimRenewed),
             Facts(Resident => "up::*"),
@@ -137,6 +139,7 @@ fold_registry! {
         answer: "Compaction, queues, human delay, trust, recovery, and lifecycle transitions in time.";
         content: [
             Facts(Lane => "lane::*"),
+            Fact(LineageConfigured),
             Facts(Steering => "steer::*"),
             Facts(Consent => "consent::*"),
             Facts(Canary => "canary::*"),
@@ -150,6 +153,7 @@ fold_registry! {
         ];
         sources: [
             Facts(Lane => "lane::*"),
+            Fact(LineageConfigured),
             Facts(Steering => "steer::*"),
             Facts(Consent => "consent::*"),
             Facts(Canary => "canary::*"),

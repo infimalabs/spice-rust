@@ -446,6 +446,8 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
 
     let occupied = LaneResidency {
         lane: first_uuid,
+        lineage_id: first_uuid,
+        name: Some("Ava".to_owned()),
         worktree: "/worktrees/lane-a".to_owned(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -470,6 +472,8 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
     };
     let empty = LaneResidency {
         lane: second_uuid,
+        lineage_id: second_uuid,
+        name: None,
         worktree: "/worktrees/lane-b".to_owned(),
         life: "steer".to_owned(),
         vendor: "codex".parse().expect("fixture vendor"),
@@ -480,6 +484,23 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         disposition: "empty".to_owned(),
     };
     law(covered, "LaneResidency", &[occupied.clone(), empty.clone()]);
+    let drive = LineageSubscription {
+        lineage_id: first_uuid,
+        policy: wire::intent::LineageLife::Drive,
+        manual_projects: vec!["task.manual".to_owned()],
+        auto_projects: vec!["task.learned".to_owned()],
+    };
+    let steer = LineageSubscription {
+        lineage_id: second_uuid,
+        policy: wire::intent::LineageLife::Steer,
+        manual_projects: Vec::new(),
+        auto_projects: Vec::new(),
+    };
+    law(
+        covered,
+        "LineageSubscription",
+        &[drive.clone(), steer.clone()],
+    );
     law(
         covered,
         "ResidencyHead",
@@ -488,11 +509,13 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
                 epoch: first_uuid,
                 state: ResidentState::Seated,
                 lanes: vec![occupied],
+                subscriptions: vec![drive],
             },
             ResidencyHead {
                 epoch: second_uuid,
                 state: ResidentState::Dark,
                 lanes: vec![empty],
+                subscriptions: vec![steer],
             },
         ],
     );
@@ -803,7 +826,9 @@ fn stream_lane_seated(position: u64, cause: Option<u64>) -> StreamFact {
         cause: cause.map(seq),
         fact: Fact::new(body::LaneSeated {
             lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
+            lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
             capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163d9"),
+            name: Some("Ava".to_owned()),
             worktree: "/tmp/lane".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("vendor"),

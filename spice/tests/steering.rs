@@ -325,6 +325,8 @@ fn seed_occupied_lane(
     let mut next = current.body().clone();
     next.lanes.push(wire::LaneResidency {
         lane,
+        lineage_id: lane,
+        name: None,
         worktree: worktree.clone(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -348,7 +350,9 @@ fn seed_occupied_lane(
         .fact(
             wire::body::LaneSeated {
                 lane,
+                lineage_id: lane,
                 capability,
+                name: None,
                 worktree,
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
@@ -438,11 +442,8 @@ fn acknowledgment_paths(
     lanes: Lanes,
 ) -> (ExpectedRecognition, String) {
     let lane = lanes.target.to_string();
-    let sent = invoke(
-        fixture,
-        &["steer", &lane, "bind the exact command family"],
-        true,
-    );
+    let direction = "> > earlier context\n> quoted context\n\nbind the exact command family";
+    let sent = invoke(fixture, &["steer", &lane, direction], true);
     if !sent.status.success() {
         resident.assert_running();
     }
@@ -459,6 +460,16 @@ fn acknowledgment_paths(
     );
     assert_eq!(inbox.lanes[0].pending[0].directive, sent.directive);
     assert_eq!(inbox.lanes[0].pending[0].key, sent.key);
+    assert_eq!(inbox.lanes[0].pending[0].text, direction);
+    assert_eq!(
+        inbox.lanes[0].pending[0].authored,
+        directive_authored(fixture, sent.directive)
+    );
+    assert!(inbox.lanes[0].pending[0].authored < inbox.lanes[0].pending[0].expires);
+    assert_eq!(
+        inbox.lanes[0].pending[0].preview.as_deref(),
+        Some("bind the exact command family")
+    );
 
     let other = lanes.other.to_string();
     record_reply(
@@ -827,6 +838,26 @@ fn verify_authority(
 fn fact_body<T: serde::de::DeserializeOwned>(envelope: &wire::Envelope<wire::AnyFact>) -> T {
     let bytes = wire::encode(envelope.fact.body()).expect("fact body encodes");
     wire::decode(&bytes).expect("registered fact body decodes")
+}
+
+fn directive_authored(fixture: &Fixture, directive: wire::CanonicalUuid) -> Instant {
+    let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
+    let snapshot = journal.fact_snapshot().expect("steering facts read");
+    snapshot
+        .facts()
+        .iter()
+        .find_map(|envelope| match envelope.fact.kind() {
+            FactKind::SteerSent => {
+                let body: wire::body::SteerSent = fact_body(envelope);
+                (body.directive == directive).then_some(envelope.at)
+            }
+            FactKind::SteerResent => {
+                let body: wire::body::SteerResent = fact_body(envelope);
+                (body.directive == directive).then_some(envelope.at)
+            }
+            _ => None,
+        })
+        .expect("pending directive has an authoring fact")
 }
 
 fn assert_transcript_locus(

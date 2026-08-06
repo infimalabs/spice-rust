@@ -101,6 +101,8 @@ pub enum CommandKind {
     LaneSeat,
     /// Change a seated lane's state.
     LaneState,
+    /// Change the shared task-subscription life of one Canvas lineage.
+    LineageConfigure,
     /// Build one bounded continuity account from the current resident barrier.
     LaneRecall,
 
@@ -261,7 +263,10 @@ impl Law {
         optional: &[WitnessKind::Assignment],
         authority: Authority::Connected,
     };
-    /// The review path is the one that always carries the assignment.
+    /// The review path is the one that always carries the assignment, and the
+    /// only one that may also carry follow-up tracking: the absence of each
+    /// handle it mints and of each edge it wires, exactly the predicates
+    /// [`Self::ADD`] and [`Self::DEPENDS`] require of those moves alone.
     pub const REVIEW: Self = Self {
         required: &[
             WitnessKind::Task,
@@ -271,7 +276,7 @@ impl Law {
             WitnessKind::Residency,
             WitnessKind::Assignment,
         ],
-        optional: &[],
+        optional: &[WitnessKind::Absence, WitnessKind::Edge],
         authority: Authority::Connected,
     };
     /// Exact workflow and claim heads plus the anti-self-review witness.
@@ -488,6 +493,7 @@ impl CommandKind {
         Self::LaneRead,
         Self::LaneSeat,
         Self::LaneState,
+        Self::LineageConfigure,
         Self::LaneRecall,
         Self::TasteRecord,
         Self::CanaryRecognize,
@@ -541,6 +547,7 @@ impl CommandKind {
             | Self::LaneRead
             | Self::LaneSeat
             | Self::LaneState
+            | Self::LineageConfigure
             | Self::LaneRecall
             | Self::TasteRecord
             | Self::CanaryRecognize
@@ -601,6 +608,7 @@ impl CommandKind {
             Self::LaneRead => "lane::read",
             Self::LaneSeat => "lane::seat",
             Self::LaneState => "lane::state",
+            Self::LineageConfigure => "lineage::configure",
             Self::LaneRecall => "lane::recall",
             Self::TasteRecord => "taste::record",
             Self::CanaryRecognize => "canary::recognize",
@@ -647,7 +655,7 @@ impl CommandKind {
             Self::TrustPend => Law::PEND,
             Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
             Self::LaneRead => Law::LANE_READ,
-            Self::LaneSeat | Self::LaneState => Law::LANE,
+            Self::LaneSeat | Self::LaneState | Self::LineageConfigure => Law::LANE,
             Self::LaneRecall => Law::LANE_RECALL,
             Self::TasteRecord => Law::TASTE,
             Self::CanaryRecognize

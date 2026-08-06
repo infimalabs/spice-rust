@@ -109,7 +109,9 @@ fn commit_lane_stream(
         .fact(
             wire::body::LaneSeated {
                 lane,
+                lineage_id: lane,
                 capability,
+                name: None,
                 worktree: "/tmp/canvas-stream-lane".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("vendor"),

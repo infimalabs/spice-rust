@@ -19,14 +19,14 @@ use serde::{Deserialize, Serialize};
 use crate::body::{ConsentQueueCause, DirectiveAttachment, TranscriptLocus};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
-use crate::head::{LaneResidency, ResidentState, TapeLocus, TrustState};
+use crate::head::{ResidentState, TapeLocus, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
 mod board;
 pub use board::{
-    BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardStatement, BoardTask, DocLedger,
-    Positioned, ProjectVisibility, TextAnswer,
+    BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead, BoardStatement,
+    BoardTask, DocLedger, Positioned, ProjectVisibility, TextAnswer,
 };
 
 /// Add one task as direct intent.
@@ -185,6 +185,25 @@ pub struct TaskReview {
         deserialize_with = "crate::optional::present"
     )]
     pub note: Option<String>,
+    /// Follow-up statements this review creates behind the reviewed task.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub then: Vec<ReviewFollowup>,
+    /// Existing tasks wired to follow the reviewed task.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub followup: Vec<TaskHandle>,
+}
+
+/// One follow-up statement a review creates, paired with its minted handle.
+///
+/// The caller mints the handle and witnesses its absence, the way `task add`
+/// does, so the whole batch is decided before the review writes anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewFollowup {
+    /// Handle minted for the statement.
+    pub task: TaskHandle,
+    /// The statement to create.
+    pub add: TaskAdd,
 }
 
 /// Seat a reviewer under the anti-self-review rule.
@@ -324,14 +343,99 @@ pub struct LaneRead {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneSeat {
-    /// Lane being seated.
+    /// Independently steerable member seat being created.
     pub lane: CanonicalUuid,
+    /// Canvas lineage whose lane receives the member.
+    pub lineage_id: CanonicalUuid,
+    /// Operator-configured agent display name, absent when unconfigured.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub name: Option<String>,
     /// Worktree path the operator created.
     pub worktree: String,
     /// Closed lane-life spelling selected for this seat.
     pub life: String,
     /// Vendor selected for this seat.
     pub vendor: Name,
+}
+
+/// The closed task-subscription policy selected for a Canvas lineage.
+///
+/// This is task-subscription policy. It is deliberately distinct from
+/// [`LaneAction::Drain`], which tears down an occupant process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineageLife {
+    /// The operator steers task selection explicitly.
+    Steer,
+    /// The lineage follows work it creates or claims.
+    Drive,
+    /// The lineage can draw from all assignable work.
+    Drain,
+}
+
+impl LineageLife {
+    /// Stable wire spelling retained by the Canvas control.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Steer => "steer",
+            Self::Drive => "drive",
+            Self::Drain => "drain",
+        }
+    }
+
+    /// Task-selection scope this policy authorizes for the lineage.
+    #[must_use]
+    pub const fn scope(self) -> TaskSubscriptionScope {
+        match self {
+            Self::Steer => TaskSubscriptionScope::Manual,
+            Self::Drive => TaskSubscriptionScope::ManualAndAutoProject,
+            Self::Drain => TaskSubscriptionScope::AllAssignable,
+        }
+    }
+
+    /// Parse one stable task-subscription policy spelling.
+    #[must_use]
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "steer" => Some(Self::Steer),
+            "drive" => Some(Self::Drive),
+            "drain" => Some(Self::Drain),
+            _ => None,
+        }
+    }
+}
+
+/// Closed task-selection scope represented by one lineage subscription policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskSubscriptionScope {
+    /// Use only the task filters the operator stored explicitly.
+    Manual,
+    /// Use stored filters and automatically follow projects the lineage creates or claims.
+    ManualAndAutoProject,
+    /// Dissolve the lineage boundary and admit every assignable task.
+    AllAssignable,
+}
+
+/// Change the task-subscription policy shared by one Canvas lineage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineageConfigure {
+    /// Stable Canvas lineage identifying the group.
+    pub lineage_id: CanonicalUuid,
+    /// Authoritative task-subscription policy to commit for the lineage.
+    pub life: LineageLife,
+    /// Replacement operator-pinned project set, or absent to preserve it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub manual_projects: Option<Vec<String>>,
 }
 
 /// Change a seated lane's state.
@@ -433,6 +537,21 @@ pub struct ClaimAnswer {
     pub task: TaskHandle,
     /// Actor holding it after the transaction.
     pub holder: Actor,
+    /// Non-blocking overlap warnings discovered from the claim-time board.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<ClaimWarning>,
+}
+
+/// One active claim whose acceptance names the same implementation surface.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimWarning {
+    /// Other in-flight task.
+    pub task: TaskHandle,
+    /// Lane holding the other claim.
+    pub lane: CanonicalUuid,
+    /// Exact normalized acceptance terms shared by both tasks.
+    pub surface: Vec<String>,
 }
 
 /// The answer a document application returns.
@@ -467,6 +586,13 @@ pub struct PendingDirective {
     pub key: String,
     /// Direction text.
     pub text: String,
+    /// First line authored outside quoted context, when the producer found one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preview: Option<String>,
     /// Control channel attached to the direction, when present.
     #[serde(
         default,
@@ -477,6 +603,8 @@ pub struct PendingDirective {
     /// Exact attachments retained with the directive.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<DirectiveAttachment>,
+    /// Commit instant of the fact that authored this directive rung.
+    pub authored: Instant,
     /// Instant at which the directive lapses.
     pub expires: Instant,
 }
@@ -631,6 +759,68 @@ pub struct StateAnswer {
     pub to: ResidentState,
 }
 
+/// Dynamic liveness of one lane at the read barrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LaneLiveness {
+    /// The occupant was seated or emitted selected-record activity recently.
+    Running,
+    /// The supervised occupant has been quiet for the complete stale horizon.
+    RunningStale,
+    /// No occupant is supervised in this durable seat.
+    Vacant,
+}
+
+impl LaneLiveness {
+    /// Exact operator-facing wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::RunningStale => "running-stale",
+            Self::Vacant => "vacant",
+        }
+    }
+}
+
+/// One capability-free lane row returned by [`LaneRead`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneAnswerRow {
+    /// Stable independently steerable member identity.
+    pub lane: CanonicalUuid,
+    /// Canvas lineage whose lane contains this member.
+    pub lineage_id: CanonicalUuid,
+    /// Operator-configured agent display name, absent when unconfigured.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub name: Option<String>,
+    /// Canonical worktree bound to the lane.
+    pub worktree: String,
+    /// Closed lane-life spelling governing re-seating.
+    pub life: String,
+    /// Vendor selected for occupants of this lane.
+    pub vendor: Name,
+    /// Current occupant, absent between seats.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub occupant: Option<CanonicalUuid>,
+    /// Occupant ancestry, oldest first.
+    pub lineage: Vec<CanonicalUuid>,
+    /// Whether this seat has resumable session authority without exposing it.
+    pub bound: bool,
+    /// Durable occupancy disposition.
+    pub disposition: String,
+    /// Dynamic supervised live/quiet projection at this read barrier.
+    pub liveness: LaneLiveness,
+}
+
 /// Current lane state read at one resident barrier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -640,7 +830,9 @@ pub struct LaneAnswer {
     /// Resident state at the read barrier.
     pub state: ResidentState,
     /// Current lane rows in stable lane order.
-    pub lanes: Vec<LaneResidency>,
+    pub lanes: Vec<LaneAnswerRow>,
+    /// One authoritative task-subscription policy per returned lineage.
+    pub subscriptions: Vec<crate::LineageSubscription>,
 }
 
 /// The answer a lane seating or lifecycle command returns.

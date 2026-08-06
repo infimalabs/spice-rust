@@ -251,6 +251,57 @@ mod tests {
         );
     }
 
+    /// The explicit assertion removes only the broad watchlist inference.
+    #[test]
+    fn a_named_non_environment_literal_is_not_a_ledger_reference() {
+        // The generated source below contains the exact names; this test source
+        // constructs them so the repository ledger does not consume its fixture.
+        const FIXTURE: &str = concat!("SPICE", "_123"); // env-policy: not-an-env SPICE_123
+        const ACCESS: &str = concat!("SPICE", "_REAL"); // env-policy: not-an-env SPICE_REAL
+        let fixture = format!(
+            "let invalid = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {FIXTURE}"
+        );
+        assert!(references(None, &fixture).is_empty());
+        assert!(
+            references(None, &format!("let invalid = \"{FIXTURE}\";")).contains(FIXTURE),
+            "the unmarked control must still exercise the broad watchlist"
+        );
+        assert!(
+            references(
+                Some("python"),
+                &format!(
+                    "os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}"
+                )
+            )
+            .contains(ACCESS),
+            "the marker cannot suppress a name grounded by an access idiom"
+        );
+        assert!(accesses(None, &fixture).is_empty());
+        let actual = accesses(
+            Some("python"),
+            &format!("os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}"),
+        );
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0].name, finding_name("python"));
+    }
+
+    /// A marker must name one exact ledger-shaped token to have any effect.
+    #[test]
+    fn a_non_environment_marker_never_waives_the_whole_line() {
+        // Build both fixture names before formatting the synthetic source, which
+        // keeps this scanner test outside the repository's own name inventory.
+        const FIXTURE: &str = concat!("SPICE", "_123"); // env-policy: not-an-env SPICE_123
+        const OTHER: &str = concat!("SPICE", "_OTHER"); // env-policy: not-an-env SPICE_OTHER
+        for line in [
+            format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER}"),
+            format!(
+                "let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {OTHER}"
+            ),
+        ] {
+            assert!(references(None, &line).contains(FIXTURE));
+        }
+    }
+
     /// A ledger name is a shape, and a trailing underscore is not that shape.
     #[test]
     fn a_ledger_name_opens_on_a_letter_and_never_closes_on_an_underscore() {
@@ -259,5 +310,88 @@ mod tests {
         assert!(!is_ledger_name("TRAILING_"));
         assert!(!is_ledger_name("lower"));
         assert!(!is_ledger_name(""));
+    }
+
+    /// Literal-only Rust concatenations are one reference even across lines.
+    #[test]
+    fn a_wrapped_rust_concat_is_reassembled_and_exactly_exempted() {
+        const PREFIX: &str = "SPICE";
+        const SUFFIX: &str = "_SPLIT_LANE";
+        const NAME: &str = concat!(
+            "SPICE",
+            "_SPLIT_LANE",
+        ); // env-policy: not-an-env SPICE_SPLIT_LANE
+        let source = format!(
+            concat!(
+                "let value = std::env::var(concat!(\n",
+                "    \"{PREFIX}\", // keep the namespace visible\n",
+                "    /* join the literal tokens */\n",
+                "    \"{SUFFIX}\",\n",
+                "));\n"
+            ),
+            PREFIX = PREFIX,
+            SUFFIX = SUFFIX,
+        );
+        assert_eq!(
+            references_in(Some("rs"), None, &source),
+            BTreeSet::from([(1, NAME.to_owned())])
+        );
+
+        let exempted = format!(
+            concat!(
+                "let value = {{\n",
+                "    // {marker} {name}\n",
+                "    std::env::var(concat!(\n",
+                "        \"{prefix}\",\n",
+                "        \"{suffix}\",\n",
+                "    ))\n",
+                "}};\n"
+            ),
+            prefix = PREFIX,
+            suffix = SUFFIX,
+            marker = ENV_NAME_LITERAL_MARKER,
+            name = NAME,
+        );
+        assert!(references_in(Some("rs"), None, &exempted).is_empty());
+
+        let unrelated_marker = format!(
+            concat!(
+                "let value = std::env::var(concat!(\n",
+                "    \"{prefix}\", /* an unmatched ( is comment prose */\n",
+                "    \"{suffix}\",\n",
+                "));\n",
+                "let fixture = \"{name}\"; // {marker} {name}\n",
+            ),
+            prefix = PREFIX,
+            suffix = SUFFIX,
+            marker = ENV_NAME_LITERAL_MARKER,
+            name = NAME,
+        );
+        assert_eq!(
+            references_in(Some("rs"), None, &unrelated_marker),
+            BTreeSet::from([(1, NAME.to_owned())]),
+            "a marker in a later statement cannot exempt a concat through comment punctuation",
+        );
+
+        let examples = format!(
+            concat!(
+                "let joined = concat!(\"A\", \"B\"); ",
+                "let example = r#\"concat!(\"{prefix}\", \"{suffix}\")\"#;\n",
+                "let joined = concat!(\"A\", \"B\"); ",
+                "// concat!(\"{prefix}\", \"{suffix}\")\n",
+                "let wrapped = r#\"\n",
+                "concat!(\"{prefix}\", \"{suffix}\")\n",
+                "\"#;\n",
+                "/*\n",
+                "concat!(\"{prefix}\", \"{suffix}\")\n",
+                "*/\n"
+            ),
+            prefix = PREFIX,
+            suffix = SUFFIX,
+        );
+        assert!(
+            references_in(Some("rs"), None, &examples).is_empty(),
+            "a macro spelling in a single- or multi-line string or comment is not source code"
+        );
     }
 }

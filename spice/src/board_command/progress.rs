@@ -62,6 +62,7 @@ fn claim_free(
     let answer = wire::intent::ClaimAnswer {
         task: task.task.clone(),
         holder: command.actor().clone(),
+        warnings: Vec::new(),
     };
     if let Err(error) = write.command_result(
         request(command, task.clone()),
@@ -116,6 +117,7 @@ fn claim_reclaim(
     let answer = wire::intent::ClaimAnswer {
         task: renew.task.clone(),
         holder: command.actor().clone(),
+        warnings: Vec::new(),
     };
     if let Err(error) = write.command_result(
         request(command, renew.clone()),
@@ -432,6 +434,80 @@ fn append_done(
     })
 }
 
+/// Resolve the one entry this actor may settle, and the transition it completes.
+///
+/// Every refusal on the way to a verdict lives here: an unknown handle, a task
+/// that is not this actor's assigned review, a claim that is no longer active,
+/// and a phase that is not the final one.
+fn admit_review<'a>(
+    snapshot: &'a ValidatedSnapshot,
+    command: &'a wire::AdmittedCommand,
+    review: &TaskReview,
+) -> Result<(&'a Entry, board::Transition, Instant), Outcome<CommandAnswer>> {
+    let Some(entry) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.statement().handle == review.task)
+    else {
+        return Err(refusal(
+            "task::unknown",
+            Some(review.task.to_string()),
+            "read board and name one current review task",
+        ));
+    };
+    if entry.workflow().phase.as_str() != "review"
+        || entry.workflow().assignment.as_ref() != Some(command.actor())
+    {
+        return Err(refusal(
+            "review::assignment-refused",
+            Some(review.task.to_string()),
+            "win the review phase with task next before recording its verdict",
+        ));
+    }
+    let at = current_instant()?;
+    let active = board::Active::admit(entry, command.actor(), at).map_err(|error| {
+        refusal(
+            "claim::active-refused",
+            Some(error.to_string()),
+            "win a current review claim before recording its verdict",
+        )
+    })?;
+    let transition = board::Transition::complete(entry, &active, at).map_err(|error| {
+        refusal(
+            "review::phase-refused",
+            Some(error.to_string()),
+            "review only the final assigned workflow phase",
+        )
+    })?;
+    Ok((entry, transition, at))
+}
+
+/// Decide the verdict a review records and the finding text it carries.
+///
+/// A finding that tracks nothing is refused here rather than written, so the
+/// change a reviewer asked for always has a task behind the reviewed one.
+fn review_verdict(
+    review: &TaskReview,
+) -> Result<(body::Verdict, Option<String>), Outcome<CommandAnswer>> {
+    let verdict = if review_is_clean(&review.finding) {
+        body::Verdict::Clean
+    } else {
+        body::Verdict::Finding
+    };
+    if verdict == body::Verdict::Finding && review.then.is_empty() && review.followup.is_empty() {
+        return Err(refusal(
+            "review::followup-required",
+            Some(review.finding.clone()),
+            "track an unclean review with --then \"title=... | project=...\" or --followup HANDLE",
+        ));
+    }
+    let finding = (verdict == body::Verdict::Finding).then(|| match &review.note {
+        Some(note) if !note.trim().is_empty() => format!("{}\n\n{note}", review.finding),
+        _ => review.finding.clone(),
+    });
+    Ok((verdict, finding))
+}
+
 fn task_review(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -443,59 +519,14 @@ fn task_review(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.statement().handle == review.task)
-    else {
-        return refusal(
-            "task::unknown",
-            Some(review.task.to_string()),
-            "read board and name one current review task",
-        );
-    };
-    if entry.workflow().phase.as_str() != "review"
-        || entry.workflow().assignment.as_ref() != Some(command.actor())
-    {
-        return refusal(
-            "review::assignment-refused",
-            Some(review.task.to_string()),
-            "win the review phase with task next before recording its verdict",
-        );
-    }
-    let at = match current_instant() {
-        Ok(at) => at,
+    let (entry, transition, at) = match admit_review(&snapshot, command, review) {
+        Ok(admitted) => admitted,
         Err(outcome) => return outcome,
     };
-    let active = match board::Active::admit(entry, command.actor(), at) {
-        Ok(active) => active,
-        Err(error) => {
-            return refusal(
-                "claim::active-refused",
-                Some(error.to_string()),
-                "win a current review claim before recording its verdict",
-            );
-        }
+    let (verdict, finding) = match review_verdict(review) {
+        Ok(decided) => decided,
+        Err(outcome) => return outcome,
     };
-    let transition = match board::Transition::complete(entry, &active, at) {
-        Ok(transition) => transition,
-        Err(error) => {
-            return refusal(
-                "review::phase-refused",
-                Some(error.to_string()),
-                "review only the final assigned workflow phase",
-            );
-        }
-    };
-    let verdict = if review.finding.trim().is_empty() {
-        body::Verdict::Clean
-    } else {
-        body::Verdict::Finding
-    };
-    let finding = (verdict == body::Verdict::Finding).then(|| match &review.note {
-        Some(note) if !note.trim().is_empty() => format!("{}\n\n{note}", review.finding),
-        _ => review.finding.clone(),
-    });
     let origin = match task_origin(&review.task) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
@@ -535,6 +566,10 @@ fn task_review(
         fact,
         ..claim
     });
+    let tracking = record_followups(&mut write, command, &snapshot, review, reviewed, projects);
+    if let Err(outcome) = tracking {
+        return outcome;
+    }
     let answer = wire::intent::TaskAnswer {
         task: review.task.clone(),
         status: "completed".to_owned(),

@@ -36,18 +36,18 @@ fn listen_refusal_for(argv: &[&str]) -> String {
     }
 }
 
-fn access_for(argv: &[&str]) -> CommandResult<canvas::axum::Access> {
+fn access_for(argv: &[&str]) -> CommandResult<()> {
     let matches = spice::cli::command()
         .try_get_matches_from(argv)
         .expect("declared up operands parse");
     let leaf = spice::cli::selected_matches(&matches);
     let listen = requested_listen(leaf)?;
-    requested_access(leaf, listen)
+    requested_access(leaf, listen).map(|_| ())
 }
 
 fn access_refusal(argv: &[&str]) -> Refusal {
     match access_for(argv) {
-        Ok(access) => panic!("{argv:?} must not admit {access:?}"),
+        Ok(()) => panic!("{argv:?} must not admit access"),
         Err(Outcome::Refusal(refusal)) => refusal,
         Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
     }
@@ -543,6 +543,211 @@ fn capture_failure_vacates_and_durably_degrades_the_exact_occupant() {
     fs::remove_dir_all(root).expect("capture fixture cleanup");
 }
 
+#[test]
+fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_authority() {
+    let lineage = test_uuid(2);
+    let sibling = test_uuid(5);
+    let row = |lane, lineage_id, life: &str| wire::LaneResidency {
+        lane,
+        lineage_id,
+        name: None,
+        worktree: format!("/fixture/{lane}"),
+        life: life.to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
+        occupant: None,
+        lineage: Vec::new(),
+        capabilities: Vec::new(),
+        session: None,
+        disposition: "vacant".to_owned(),
+    };
+    let lanes = vec![
+        row(test_uuid(3), lineage, "drive"),
+        row(test_uuid(4), lineage, "drive"),
+        row(test_uuid(6), sibling, "steer"),
+    ];
+
+    let migrated =
+        super::startup_subscriptions(&lanes, Vec::new()).expect("one absent legacy table migrates");
+    assert_eq!(
+        migrated,
+        vec![
+            wire::LineageSubscription {
+                lineage_id: lineage,
+                policy: wire::intent::LineageLife::Drive,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
+            },
+            wire::LineageSubscription {
+                lineage_id: sibling,
+                policy: wire::intent::LineageLife::Steer,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
+            },
+        ]
+    );
+    let mut projected = migrated.clone();
+    projected[0].auto_projects = vec!["task.derived".to_owned()];
+    assert_eq!(
+        super::startup_subscriptions(&lanes, projected)
+            .expect("the current complete table is preserved"),
+        migrated,
+        "startup discards derived auto projects before fact replay",
+    );
+
+    let Err(Outcome::Fault(fault)) =
+        super::startup_subscriptions(&lanes, vec![migrated[0].clone()])
+    else {
+        panic!("a partial current subscription table must fault")
+    };
+    assert_eq!(fault.reason, "lineage::subscription-misaligned");
+
+    let mut mixed = lanes.clone();
+    mixed[1].life = "steer".to_owned();
+    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&mixed, Vec::new()) else {
+        panic!("mixed legacy lives must not choose an implicit policy")
+    };
+    assert_eq!(fault.reason, "lineage::subscription-ambiguous");
+
+    let duplicated = vec![
+        migrated[0].clone(),
+        migrated[0].clone(),
+        migrated[1].clone(),
+    ];
+    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, duplicated) else {
+        panic!("duplicate current subscription authority must fault")
+    };
+    assert_eq!(fault.reason, "lineage::subscription-ambiguous");
+}
+
+fn assert_lineage_configuration_fact(bus: &Bus, lineage: CanonicalUuid) {
+    let snapshot = bus.canvas_snapshot().expect("configured journal reads");
+    let configured = snapshot
+        .facts()
+        .facts()
+        .iter()
+        .find(|fact| fact.fact.kind() == wire::FactKind::LineageConfigured)
+        .expect("lineage configuration is durable");
+    assert_eq!(
+        configured.fact.body().get("lineage_id"),
+        Some(&serde_json::Value::String(lineage.to_string())),
+    );
+    assert_eq!(
+        configured.fact.body().get("from"),
+        Some(&serde_json::json!("drive"))
+    );
+    assert_eq!(
+        configured.fact.body().get("life"),
+        Some(&serde_json::json!("drain"))
+    );
+    assert_eq!(configured.fact.body().get("from_manual_projects"), None);
+    assert_eq!(
+        configured.fact.body().get("manual_projects"),
+        Some(&serde_json::json!(["task.manual"]))
+    );
+}
+
+#[test]
+fn lineage_configuration_changes_only_the_typed_task_subscription() {
+    let (root, paths) = resident_fixture("lineage-configuration");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface =
+        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(1);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let lineage = test_uuid(2);
+    let first_lane = test_uuid(3);
+    let first_occupant = test_uuid(4);
+    let second_lane = test_uuid(5);
+    let second_occupant = test_uuid(6);
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            first_lane,
+            first_occupant,
+            process_spec("sleep 0.05", Duration::from_secs(5)),
+        )
+        .expect("first supervised occupant starts");
+    seats
+        .seat(
+            second_lane,
+            second_occupant,
+            process_spec("sleep 0.05", Duration::from_secs(5)),
+        )
+        .expect("second supervised occupant starts");
+    seed_lane_in_lineage(&bus, epoch, first_lane, lineage, first_occupant);
+    seed_lane_in_lineage(&bus, epoch, second_lane, lineage, second_occupant);
+
+    let request = wire::intent::LineageConfigure {
+        lineage_id: lineage,
+        life: wire::intent::LineageLife::Drain,
+        manual_projects: Some(vec!["task.manual".to_owned()]),
+    };
+    let command = Command {
+        v: wire::WireVersion::CURRENT,
+        id: test_uuid(7),
+        epoch,
+        kind: CommandKind::LineageConfigure,
+        expected: Vec::new(),
+        body: serde_json::to_value(&request).expect("lineage configuration encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("operator lineage configuration admits");
+
+    let projects =
+        board::ProjectPolicy::new(Vec::new(), Vec::new(), 2, 4).expect("fixture project policy");
+    let Outcome::Reply(reply) =
+        super::lane_surface::configure(&bus, epoch, &seats, &projects, &command, &request)
+    else {
+        panic!("lineage configuration replies");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
+    let CommandAnswer::Lane(answer) = reply.body else {
+        panic!("lineage configuration returns the authoritative lane table");
+    };
+    assert_eq!(answer.lanes.len(), 2);
+    assert!(answer.lanes.iter().all(|row| row.lineage_id == lineage));
+    assert!(answer.lanes.iter().all(|row| row.life == "drive"));
+    assert_eq!(
+        answer.subscriptions,
+        vec![wire::LineageSubscription {
+            lineage_id: lineage,
+            policy: wire::intent::LineageLife::Drain,
+            manual_projects: vec!["task.manual".to_owned()],
+            auto_projects: Vec::new(),
+        }]
+    );
+    assert_eq!(answer.lanes[0].occupant, Some(first_occupant));
+    assert_eq!(answer.lanes[1].occupant, Some(second_occupant));
+    assert!(
+        answer.lanes.iter().all(|row| row.disposition == "occupied"),
+        "task-subscription drain never performs LaneAction::Drain",
+    );
+    assert!(seats.occupied(first_lane));
+    assert!(seats.occupied(second_lane));
+    let durable = current_residency(&bus, epoch)
+        .expect("configured residency reads")
+        .into_body();
+    assert!(durable.lanes.iter().all(|row| row.life == "drive"));
+    assert_eq!(durable.subscriptions, answer.subscriptions);
+    assert_lineage_configuration_fact(&bus, lineage);
+    for lane in [first_lane, second_lane] {
+        seats
+            .vacate(lane)
+            .expect("configured occupant remains supervised")
+            .wait()
+            .expect("fixture occupant exits");
+    }
+    bus.verify().expect("configured authority verifies");
+    bus.shutdown().expect("fixture bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
 fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
     let root = fixture(name);
     fs::create_dir_all(root.join(".git")).expect("git directory");
@@ -572,10 +777,22 @@ fn process_spec(command: &str, runtime: Duration) -> Spec {
 }
 
 fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: CanonicalUuid) {
+    seed_lane_in_lineage(bus, epoch, lane, lane, occupant);
+}
+
+fn seed_lane_in_lineage(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    lineage_id: CanonicalUuid,
+    occupant: CanonicalUuid,
+) {
     let current = current_residency(bus, epoch).expect("current residency");
     let mut head = current.body().clone();
     head.lanes.push(wire::LaneResidency {
         lane,
+        lineage_id,
+        name: None,
         worktree: "/fixture".to_owned(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -585,6 +802,20 @@ fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: Can
         session: None,
         disposition: "occupied".to_owned(),
     });
+    if !head
+        .subscriptions
+        .iter()
+        .any(|subscription| subscription.lineage_id == lineage_id)
+    {
+        head.subscriptions.push(wire::LineageSubscription {
+            lineage_id,
+            policy: wire::intent::LineageLife::Drive,
+            manual_projects: Vec::new(),
+            auto_projects: Vec::new(),
+        });
+        head.subscriptions
+            .sort_by_key(|subscription| subscription.lineage_id);
+    }
     head.lanes.sort_by_key(|lane| lane.lane);
     let mut write =
         write(Actor::Spice, epoch, Producer::ResidentRecognition).expect("fixture write starts");
@@ -592,7 +823,9 @@ fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: Can
         .fact(
             wire::body::LaneSeated {
                 lane,
+                lineage_id,
                 capability: test_uuid(9),
+                name: None,
                 worktree: "/fixture".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
@@ -663,6 +896,7 @@ fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
 
     announce_canvas(
         &path,
+        None,
         false,
         || {},
         |endpoint| {
@@ -696,6 +930,7 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
 
     announce_canvas(
         &path,
+        None,
         true,
         || {},
         |endpoint| {
@@ -716,6 +951,44 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
         "an opened endpoint is not a diagnostic: {}",
         String::from_utf8_lossy(&diagnostics)
     );
+    fs::remove_dir_all(&root).expect("announcement fixture cleanup");
+}
+
+/// An authenticated opening keeps its bearer outside the HTTP origin.
+#[test]
+fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
+    const TOKEN: &str = "correct-horse-battery-staple";
+
+    let (root, path, discovery) = published_discovery("announce-authenticated", 48234);
+    let mut dialled = None;
+    let mut announced = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    announce_canvas(
+        &path,
+        Some(TOKEN),
+        true,
+        || {},
+        |endpoint| {
+            dialled = Some(endpoint.to_owned());
+            Ok(())
+        },
+        &mut announced,
+        &mut diagnostics,
+    );
+
+    let opening = format!("{}#{TOKEN}", discovery.endpoint);
+    assert_eq!(dialled.as_deref(), Some(opening.as_str()));
+    assert_eq!(
+        String::from_utf8(announced).expect("announcement is text"),
+        format!("canvas endpoint: {opening}\n")
+    );
+    assert_eq!(
+        opening.split_once('#').expect("opening has fragment").0,
+        discovery.endpoint,
+        "the token must not become part of the HTTP origin"
+    );
+    assert!(diagnostics.is_empty());
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
 }
 
@@ -744,6 +1017,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 
     announce_canvas(
         &path,
+        None,
         true,
         || {
             replacement
@@ -773,7 +1047,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 }
 
 #[test]
-fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
+fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
     let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
         .expect("message bus starts");
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
@@ -799,8 +1073,28 @@ fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
             }),
         ]),
     };
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            record.lane,
+            record.occupant,
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("capture fixture occupant starts");
+    let mut diagnostics = Vec::new();
 
-    publish_agent_messages(&publisher, &record).expect("capture projects");
+    accept_capture_record(
+        &bus,
+        test_uuid(4),
+        &mut seats,
+        &publisher,
+        &record,
+        &mut diagnostics,
+    )
+    .expect("current capture projects");
 
     let message = updates.try_recv().expect("prose publishes once");
     assert_eq!(message.lane, record.lane);
@@ -819,8 +1113,129 @@ fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
+
+    seats
+        .vacate(record.lane)
+        .expect("original occupant remains supervised")
+        .wait()
+        .expect("original occupant stops");
+    seats
+        .seat(
+            record.lane,
+            test_uuid(7),
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("replacement occupant starts");
+    let stale_locus = listen::Locus::new(4, 180, 48);
+    let stale_record = lane::capture::CaptureRecord {
+        lane: record.lane,
+        occupant: record.occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus: stale_locus,
+        declaration: None,
+        decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
+            text: "stale prior-occupant answer".to_owned(),
+            phase: None,
+            locus: stale_locus,
+        })]),
+    };
+    accept_capture_record(
+        &bus,
+        test_uuid(4),
+        &mut seats,
+        &publisher,
+        &stale_record,
+        &mut diagnostics,
+    )
+    .expect("stale capture is ignored");
+    assert!(matches!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    assert!(diagnostics.is_empty());
+    seats
+        .vacate(record.lane)
+        .expect("replacement occupant remains supervised")
+        .wait()
+        .expect("replacement occupant stops");
     drop(source);
     bus.shutdown().expect("message bus stops");
+}
+
+struct UnavailableMessagePublisher;
+
+impl AgentMessagePublisher for UnavailableMessagePublisher {
+    fn publish(
+        &self,
+        _message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        Err(canvas::stream::MessagePublishError::Unavailable)
+    }
+}
+
+#[test]
+fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
+    let bus = Bus::start(journal::Journal::in_memory().expect("capture authority opens"))
+        .expect("capture bus starts");
+    let epoch = test_uuid(4);
+    let lane = test_uuid(5);
+    let occupant = test_uuid(6);
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            lane,
+            occupant,
+            process_spec("sleep 0.05", Duration::from_secs(5)),
+        )
+        .expect("capture fixture group starts");
+    let mut diagnostics = Vec::new();
+
+    for (offset, text) in [(120, "first answer"), (180, "later answer")] {
+        let locus = listen::Locus::new(4, offset, 48);
+        let record = lane::capture::CaptureRecord {
+            lane,
+            occupant,
+            stream: vendor::RecordStream::Stdout,
+            boundary: sill::RecordBoundary::Complete,
+            locus,
+            declaration: None,
+            decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
+                text: text.to_owned(),
+                phase: None,
+                locus,
+            })]),
+        };
+
+        accept_capture_record(
+            &bus,
+            epoch,
+            &mut seats,
+            &UnavailableMessagePublisher,
+            &record,
+            &mut diagnostics,
+        )
+        .expect("a failed Canvas view leaves the capture handler live");
+    }
+
+    assert_eq!(
+        String::from_utf8(diagnostics).expect("diagnostic is text"),
+        concat!(
+            "canvas message unavailable: canvas::message-publish-failed: ",
+            "canvas message retention is unavailable\n",
+            "canvas message unavailable: canvas::message-publish-failed: ",
+            "canvas message retention is unavailable\n",
+        )
+    );
+    seats
+        .vacate(lane)
+        .expect("capture fixture remains supervised")
+        .wait()
+        .expect("capture fixture stops");
+    bus.shutdown().expect("capture bus stops");
 }
 
 /// A generation that was never published is a diagnostic, not a silent start.
@@ -842,6 +1257,7 @@ fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
 
     announce_canvas(
         &path,
+        None,
         true,
         || {},
         |endpoint| {

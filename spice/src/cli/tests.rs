@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 88);
+    assert_eq!(contracts().len(), 89);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 88);
+    assert_eq!(landed, 89);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
@@ -132,6 +132,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["lane", "import"]), Landing::Landed);
     assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
     assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
+    assert_eq!(landing(&["task", "list"]), Landing::Landed);
     assert_eq!(landing(&["task", "status"]), Landing::Landed);
     assert_eq!(landing(&["recall"]), Landing::Landed);
     assert_eq!(landing(&["steer"]), Landing::Landed);
@@ -335,7 +336,81 @@ fn review_finding_and_note_are_declared_on_the_only_review_leaf() {
 }
 
 #[test]
+fn review_follow_up_tracking_repeats_on_the_review_leaf() {
+    // A finding has to be able to open more than one statement and wire more
+    // than one existing task, so both operands accrue rather than overwrite.
+    let matches = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "review",
+            "BOARD-review01",
+            "--finding",
+            "the refusal has no fixture",
+            "--then",
+            "title=Cover the refusal | project=task.cli",
+            "--then",
+            "title=Cover the sentinel | project=task.board",
+            "--followup",
+            "BOARD-track001",
+            "--followup",
+            "BOARD-track002",
+        ])
+        .expect("declared follow-up operands parse");
+    let leaf = selected_matches(&matches);
+
+    assert_eq!(
+        leaf.get_many::<String>("then")
+            .expect("--then is declared on the review leaf")
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "title=Cover the refusal | project=task.cli",
+            "title=Cover the sentinel | project=task.board",
+        ],
+        "a second --then replaced the first instead of accruing"
+    );
+    assert_eq!(
+        leaf.get_many::<String>("followup")
+            .expect("--followup is declared on the review leaf")
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["BOARD-track001", "BOARD-track002"],
+        "a second --followup replaced the first instead of accruing"
+    );
+}
+
+#[test]
 fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
+    let list = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "list",
+            "--project",
+            "project:task.cli",
+            "--limit",
+            "2",
+            "--status",
+            "waiting",
+        ])
+        .expect("task list filters parse");
+    let leaf = selected_matches(&list);
+    assert_eq!(
+        selected_contract(&list)
+            .expect("list selects a contract")
+            .path,
+        ["task", "list"]
+    );
+    assert_eq!(
+        leaf.get_one::<String>("project").map(String::as_str),
+        Some("project:task.cli")
+    );
+    assert_eq!(
+        leaf.get_one::<String>("status").map(String::as_str),
+        Some("waiting")
+    );
+
     let status = command()
         .try_get_matches_from(["spice", "task", "status"])
         .expect("task status parses");
@@ -583,6 +658,13 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "task", "add", "title", "--project", "rim.cli"],
         &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
         &["spice", "lane", "add", "--life", "Drive"],
+        &[
+            "spice",
+            "lane",
+            "add",
+            "--lineage",
+            "018f82d4-6f59-7d06-92e3-bce913116302",
+        ],
         &["spice", "install", "--apply=digest"],
         &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],

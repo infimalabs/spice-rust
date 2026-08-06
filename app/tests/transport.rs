@@ -1,9 +1,9 @@
 //! What the browser is allowed to believe.
 //!
-//! Every fixture here is an encoded document rather than a constructed value,
-//! because the socket carries bytes and the app's only honest input is bytes.
-//! A test that built a DTO in memory would prove the app agrees with itself;
-//! these prove it agrees with the wire.
+//! Every fixture reaches the app as an encoded document because the socket
+//! carries bytes and the app's only honest input is bytes. Valid response
+//! documents are first constructed from their wire DTOs, so schema drift is a
+//! compile error; deliberately malformed decoder inputs remain raw bytes.
 //!
 //! The streamed fixtures name [`wire::body::TaskPhased`] rather than a shape
 //! declared here, so the fact they carry is one the vocabulary registers. A
@@ -13,9 +13,11 @@
 use app::{Admitted, Applied, BrowserState, ChainEnd, Session};
 use serde::{Deserialize, Serialize};
 use wire::{
-    Accepted, CanonicalUuid, Envelope, Fact, FaultClass, Overflow, Packed, Response, Seq,
-    WireVersion, body,
+    Accepted, CanonicalUuid, Envelope, Fact, FaultClass, Outcome, Overflow, Packed, Reply,
+    ReplyPosition, Response, Seq, SeqRange, WireVersion, body,
 };
+
+mod support;
 
 /// Capability this session opens with.
 const CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -105,19 +107,21 @@ fn causal_envelope(seq: u64, cause: Option<u64>) -> Admitted<Envelope<Fact<body:
 
 /// One committed reply document at `version`, answering `epoch`.
 fn response(version: u32, epoch: &str) -> Vec<u8> {
-    format!(
-        r#"{{
-  "v": {version},
-  "id": "018f82d4-6f59-7d06-92e3-bce9131163c4",
-  "epoch": "{epoch}",
-  "outcome": {{
-    "kind": "reply",
-    "seq": {{ "first": 48213, "last": 48214 }},
-    "body": {{ "task": "SPICE-aBcD", "status": "done" }}
-  }}
-}}"#
+    support::response(
+        WireVersion(version),
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+        uuid(epoch),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(48213),
+                last: seq(48214),
+            }),
+            body: Status {
+                task: "SPICE-aBcD".to_owned(),
+                status: "done".to_owned(),
+            },
+        }),
     )
-    .into_bytes()
 }
 
 /// One packed reply admitted through the same response door as every answer.
@@ -126,28 +130,25 @@ fn packed_answer(
     overflow: Option<(u64, u64)>,
     horizon: u64,
 ) -> Admitted<Response<Packed<Row>>> {
-    let rows = rows
-        .iter()
-        .map(|row| format!(r#""{row}""#))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let overflow = overflow.map_or_else(String::new, |(omitted, continuation)| {
-        format!(r#""overflow": {{ "omitted": {omitted}, "continuation": {continuation} }},"#)
-    });
-    let bytes = format!(
-        r#"{{
-  "v": 1,
-  "id": "018f82d4-6f59-7d06-92e3-bce9131163c4",
-  "epoch": "{EPOCH}",
-  "outcome": {{
-    "kind": "reply",
-    "cursor": {horizon},
-    "body": {{ "rows": [{rows}], {overflow} "horizon": {horizon} }}
-  }}
-}}"#
+    let body = Packed {
+        rows: rows.iter().map(|row| Row((*row).to_owned())).collect(),
+        overflow: overflow.map(|(omitted, continuation)| Overflow {
+            omitted,
+            continuation: seq(continuation),
+        }),
+        horizon: seq(horizon),
+    };
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(horizon)),
+            body,
+        }),
     );
     session()
-        .admit_frame(&bytes.into_bytes())
+        .admit_frame(&bytes)
         .expect("the packed fixture answer is admitted")
 }
 

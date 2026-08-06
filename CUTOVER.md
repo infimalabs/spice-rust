@@ -141,7 +141,7 @@ target/debug/spice --json config policy.admission |
   tee "$CUTOVER_EVIDENCE/native-admission-policy.json"
 cargo metadata --no-deps --offline --format-version 1 \
   > "$CUTOVER_EVIDENCE/native-admission-metadata.json"
-./scripts/install-hooks.sh
+cargo xtask activate-hooks
 test "$(git config --get core.hooksPath)" = "$CUTOVER_HOOKS"
 ```
 
@@ -181,7 +181,7 @@ cd "$CUTOVER_REPO"
 The Canvas web app is built natively into ignored `dist/stage-app`; its atomic
 `current` pointer selects a complete immutable generation, and `up` serves only
 those lane-local assets. There is no separate opener command: the start already
-running in terminal A announces the exact URL on its standard error:
+running in terminal A announces the exact URL on its standard output:
 
 ```
 canvas endpoint: http://127.0.0.1:8765
@@ -197,6 +197,16 @@ default browser itself.
 one, and `--port 0` takes any free port. The listener is IPv4 loopback unless
 `--host` names another address of this machine, so by default the app is
 reachable only on the resident host.
+
+For an authenticated VPN cutover, start with `--host 0.0.0.0`,
+`--allow-insecure-bind`, and `--auth-token TOKEN`. The announced URL and the URL
+opened by `--open` retain `#TOKEN`; that fragment is not part of the HTTP
+origin. A wildcard bind announces a local loopback host because it has no one
+routable address. In the remote browser, replace `127.0.0.1` with the resident
+host's VPN address while preserving the announced port and `#TOKEN`. The app
+then presents the token on bootstrap and speech requests; bootstrap returns the
+capability used for the socket. A URL with the token before `#` is not the
+supported opening.
 
 The board must contain no task rows. Create only wanted work with `task add` or
 preview and apply a native task document; every resulting handle is new. Seat

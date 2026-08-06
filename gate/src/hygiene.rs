@@ -23,15 +23,17 @@ mod measure;
 mod predecessor;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use acquire::{HygieneSource, acquire_hygiene};
+pub(crate) use acquire::acquire_hygiene_arm;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use analyze::analyze_hygiene;
+pub use acquire::{HygieneSource, acquire_hygiene};
 #[cfg(not(target_arch = "wasm32"))]
 pub use analyze::{
     HygieneAnalysisError, HygieneConfiguration, HygieneExclusion, PrivateCouplingException,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use measure::measure_hygiene;
+pub(crate) use analyze::{analyze_hygiene, analyze_hygiene_arm};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use measure::{measure_hygiene, measure_hygiene_arm};
 pub use predecessor::{
     MigrationRefusal, PredecessorComparison, PredecessorComparisonError, PredecessorObservation,
     PredecessorResult, compare_predecessor,

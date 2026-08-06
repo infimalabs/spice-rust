@@ -18,15 +18,26 @@ use wire::{
 
 type CommandResult<T> = Result<T, Outcome<()>>;
 
+pub(crate) const SIMULATED_VENDOR: &str = "simulated";
+pub(crate) const SIMULATED_DISPOSITION: &str = "simulated";
+
+fn is_simulated_lane(lane: &wire::LaneResidency) -> bool {
+    lane.vendor.as_str() == SIMULATED_VENDOR && lane.disposition == SIMULATED_DISPOSITION
+}
+
 mod capture;
 mod command_surface;
 mod lane_recovery;
 mod lane_surface;
+mod message_surface;
 mod policy_surface;
 mod shutdown;
 mod steering;
 mod timers;
 
+#[cfg(test)]
+use message_surface::AgentMessagePublisher;
+use message_surface::accept_capture_record;
 use shutdown::{current_residency, drive_shutdown};
 
 include!("resident/runtime.rs");

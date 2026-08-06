@@ -56,6 +56,8 @@ const SUCCESSOR: &str = "/worktrees/successor";
 fn occupied_row(fixture: &Fixture) -> wire::LaneResidency {
     wire::LaneResidency {
         lane: fixture.lane,
+        lineage_id: fixture.lane,
+        name: Some("Ava".to_owned()),
         worktree: PREDECESSOR.into(),
         life: "drive".into(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -89,6 +91,7 @@ fn seed_residency(fixture: &Fixture, seed: &mut JournalWrite, lanes: Vec<wire::L
         epoch,
         state: wire::ResidentState::Seated,
         lanes,
+        subscriptions: Vec::new(),
     });
 }
 
@@ -400,6 +403,7 @@ fn admit_row_reason(
         epoch: fixture.old_epoch,
         state: wire::ResidentState::Seated,
         lanes: lanes.to_vec(),
+        subscriptions: Vec::new(),
     };
     refusal_reason(admit_row(&paths, &Seats::new(), &residency, row, worktree))
 }
@@ -563,6 +567,7 @@ fn import_refuses_a_vacant_row_whose_lane_seat_is_still_live() {
         epoch: fixture.old_epoch,
         state: wire::ResidentState::Seated,
         lanes: vec![row.clone()],
+        subscriptions: Vec::new(),
     };
     let mut seats = Seats::new();
     seats
@@ -595,6 +600,29 @@ fn import_refuses_a_lane_whose_life_already_ended_in_drain() {
 }
 
 #[test]
+fn watchband_drain_does_not_end_a_drive_lanes_import_life() {
+    let fixture = fixture();
+    let row = vacant_row(&fixture);
+    let (successor, common) = real_worktree(&fixture);
+    let paths = runtime_paths(&fixture, common);
+    let residency = wire::ResidencyHead {
+        epoch: fixture.old_epoch,
+        state: wire::ResidentState::Seated,
+        lanes: vec![row.clone()],
+        subscriptions: vec![wire::LineageSubscription {
+            lineage_id: row.lineage_id,
+            policy: wire::intent::LineageLife::Drain,
+            manual_projects: Vec::new(),
+            auto_projects: Vec::new(),
+        }],
+    };
+
+    admit_row(&paths, &Seats::new(), &residency, &row, &successor)
+        .expect("task-subscription Drain leaves the drive lane importable");
+    finish(fixture);
+}
+
+#[test]
 fn import_refuses_a_worktree_identical_to_the_predecessor_root() {
     let fixture = fixture();
     let row = vacant_row(&fixture);
@@ -611,6 +639,7 @@ fn import_refuses_a_worktree_already_bound_to_another_lane() {
     let row = vacant_row(&fixture);
     let neighbour = wire::LaneResidency {
         lane: uuid(9),
+        lineage_id: uuid(9),
         worktree: SUCCESSOR.into(),
         ..vacant_row(&fixture)
     };

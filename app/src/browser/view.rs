@@ -6,6 +6,7 @@ pub(super) mod chrome;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
+    pub(super) seat_name: UseStateHandle<String>,
     pub(super) seat_worktree: UseStateHandle<String>,
     pub(super) seat_vendor: UseStateHandle<String>,
     pub(super) seat_life: UseStateHandle<String>,
@@ -36,12 +37,13 @@ pub(super) struct CanvasRender<'a> {
     pub axis: &'a UseStateHandle<Axis>,
     pub mosaic: &'a UseStateHandle<bool>,
     pub lineage_mode: &'a UseStateHandle<LineageMode>,
-    pub lineage_life: &'a UseStateHandle<LineageLife>,
+    pub lineage_controls: &'a UseReducerHandle<LineageControls>,
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub sender: &'a SenderHandle,
     pub agents: &'a AgentControls,
     pub note_task: &'a UseStateHandle<String>,
     pub note_text: &'a UseStateHandle<String>,
+    pub note_notice: &'a UseStateHandle<Notice>,
     pub submit_note: Callback<SubmitEvent>,
     pub refresh: Callback<MouseEvent>,
     pub speech: &'a UseStateHandle<wire::SpeechPlayback>,
@@ -96,12 +98,12 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
             }
             <main class="content">
                 if **render.mosaic {
-                    {composer::render_lineage(
+                    {watchband::render_lineage(
                         render.surface,
                         render.sender,
                         render.composer_drafts,
                         render.lineage_mode,
-                        render.lineage_life,
+                        render.lineage_controls,
                         render.agents,
                     )}
                 } else {
@@ -153,15 +155,7 @@ fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
                     <span class="pane-chip">{title(pane.as_str())}</span>
                 })}
             </div>
-            {render_axis(
-                active_axis,
-                render.surface,
-                render.connection,
-                render.sender,
-                render.note_task,
-                render.note_text,
-                render.submit_note.clone(),
-            )}
+            {render_axis(active_axis, render)}
         </>
     }
 }
@@ -180,6 +174,10 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                 <p>{"Add one agent member from an existing worktree in this repository."}</p>
             </div>
             <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
+                <label for="seat-name">{"Name"}</label>
+                <input id="seat-name" type="text" placeholder="Ava"
+                    value={(*controls.seat_name).clone()}
+                    oninput={state_from_input(controls.seat_name.clone())} />
                 <label for="seat-worktree">{"Worktree"}</label>
                 <input id="seat-worktree" type="text" placeholder="/absolute/path/to/worktree"
                     value={(*controls.seat_worktree).clone()}
@@ -244,20 +242,18 @@ pub(super) fn speech_control(
     }
 }
 
-pub(super) fn render_axis(
-    axis: Axis,
-    surface: &SurfaceData,
-    connection: &Connection,
-    sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-) -> Html {
+pub(super) fn render_axis(axis: Axis, render: &CanvasRender<'_>) -> Html {
     match axis {
-        Axis::Magnitude => render_magnitude(surface),
-        Axis::Flow => render_flow(surface, note_task, note_text, submit_note),
-        Axis::Topology => render_topology(surface),
-        Axis::Chronology => render_chronology(surface, sender, connection),
+        Axis::Magnitude => render_magnitude(render.surface),
+        Axis::Flow => render_flow(
+            render.surface,
+            render.note_task,
+            render.note_text,
+            render.note_notice,
+            render.submit_note.clone(),
+        ),
+        Axis::Topology => render_topology(render.surface),
+        Axis::Chronology => render_chronology(render.surface, render.sender, render.connection),
     }
 }
 
@@ -295,6 +291,7 @@ pub(super) fn render_flow(
     surface: &SurfaceData,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
+    note_notice: &UseStateHandle<Notice>,
     submit_note: Callback<SubmitEvent>,
 ) -> Html {
     let Some(board) = surface.as_ref().and_then(CanvasRuntime::board) else {
@@ -375,6 +372,7 @@ pub(super) fn render_flow(
                         type="submit"
                         disabled={note_task.is_empty() || note_text.trim().is_empty()}
                     >{"Add note"}</button>
+                    {render_notice(note_notice)}
                     </form>
                 </section>
             }
@@ -404,18 +402,20 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
                             <th>{"Lane"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
                             <th>{"Worktree"}</th><th>{"Vendor"}</th>
                         </tr></thead>
-                        <tbody>{for lanes.lanes.iter().map(|lane| html! {
+                        <tbody>{for lanes.lanes.iter().flat_map(|lineage| {
+                            lineage.members.iter().map(move |member| (lineage, member))
+                        }).map(|(lineage, member)| html! {
                             <tr>
-                                <td class="mono">{short(&lane.lane.to_string())}</td>
-                                <td><span class="tag active">{lane.disposition.clone()}</span></td>
+                                <td class="mono">{short(&lineage.lane.to_string())}</td>
+                                <td><span class="tag active">{member.disposition.clone()}</span></td>
                                 <td class="mono">{
-                                    lane
+                                    member
                                         .occupant
                                         .map(|value| short(&value.to_string()))
                                         .unwrap_or_else(|| "vacant".to_owned())
                                 }</td>
-                                <td class="mono">{lane.worktree.clone()}</td>
-                                <td>{lane.vendor.to_string()}</td>
+                                <td class="mono">{member.worktree.clone()}</td>
+                                <td>{member.vendor.to_string()}</td>
                             </tr>
                         })}</tbody>
                     </table></div>

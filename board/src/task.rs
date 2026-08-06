@@ -199,6 +199,24 @@ impl ProjectPolicy {
     pub fn hidden_stems(&self) -> &[String] {
         &self.hidden_stems
     }
+
+    /// Fully resolved public roots in deterministic lexical order.
+    #[must_use]
+    pub const fn public_stems(&self) -> &BTreeSet<String> {
+        &self.public_stems
+    }
+
+    /// Fewest dotted segments admitted for a public project.
+    #[must_use]
+    pub const fn public_min_depth(&self) -> u64 {
+        self.public_min_depth
+    }
+
+    /// Most dotted segments admitted for a public project.
+    #[must_use]
+    pub const fn public_max_depth(&self) -> u64 {
+        self.public_max_depth
+    }
 }
 
 /// Why a captured project vocabulary could not be constructed.

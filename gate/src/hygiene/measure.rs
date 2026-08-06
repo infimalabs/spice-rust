@@ -36,6 +36,15 @@ pub(crate) fn measure_hygiene(
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn measure_hygiene_arm(
+    observation: HygieneObservation,
+) -> Result<HygieneMeasurement, HygieneError> {
+    let declaration =
+        declaration(observation.gate_id).ok_or(HygieneError::ForeignGate(observation.gate_id))?;
+    measure_arm(declaration, observation)
+}
+
 fn declaration(gate: GateId) -> Option<HygieneDeclaration> {
     HYGIENE_ARMS.into_iter().find(|arm| arm.id == gate)
 }

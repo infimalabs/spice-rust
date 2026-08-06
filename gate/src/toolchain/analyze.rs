@@ -31,10 +31,10 @@ use std::path::{Path, PathBuf};
 use sill::{Argv, Completion, Environment, spawn};
 
 use super::{
-    ArmFinding, ArmOutcome, ArmTiming, EnvironmentLedgerKind, FindingDetail,
-    JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
-    PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, SourceLocus, ToolchainDeclaration, column_of,
-    environment,
+    ArmFinding, ArmOutcome, ArmTiming, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind,
+    FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
+    PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, SourceLocus, TASTE_EXTENSIONS, ToolchainDeclaration,
+    column_of, environment,
 };
 use crate::GateId;
 use crate::jurisdiction::{Ignore, Jurisdiction};
@@ -45,7 +45,7 @@ mod compile;
 mod csharp;
 mod rust;
 
-pub(super) use compile::{CompileInvocation, run_compile_analysis};
+pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
 pub(super) use csharp::csharp_unused;
 pub(super) use rust::rust_typecheck;
 
@@ -210,9 +210,6 @@ const SCANNER_EXCLUSIONS: &[Exclusion] = &[
 /// and the two tables are genuinely different rules: these are top-level
 /// directories written as `name/**`, not components matched at any depth.
 const BUILD_EXCLUSIONS: &[&str] = &[".git", "target", "dist", "node_modules", ".venv", "vendor"];
-
-/// The compiled form of the Taste include globs, in declaration order.
-const PROSE_EXTENSIONS: &[&str] = &["md", "txt", "rst"];
 
 /// The compiled form of the JavaScript-unused include globs.
 const JAVASCRIPT_EXTENSIONS: &[&str] = &["js", "mjs", "cjs"];
@@ -380,7 +377,7 @@ fn taste_with(
     read_source: SourceReader,
 ) -> Analysis {
     let selected = selected_changes(root, changes, |path| {
-        extension(path).is_some_and(|found| PROSE_EXTENSIONS.contains(&found.as_str()))
+        extension(path).is_some_and(|found| TASTE_EXTENSIONS.contains(&found.as_str()))
     });
     if selected.is_empty() {
         return Analysis::not_applicable(declaration);
@@ -465,16 +462,18 @@ fn env_policy_with(
 /// Account every environment name the complete selected tree references.
 ///
 /// A name the tree references and the profile does not declare is unaccounted
-/// and carries every locus that references it. A name the profile declares and
-/// the tree never references is stale and carries none, because there is no
-/// place to point at. Both directions are reported, so the ledger cannot drift
-/// in either one without saying so.
+/// and carries every authored locus that references it. Inherited merge-parent
+/// loci do not charge the pending commit. A name the profile declares and the
+/// complete tree never references is stale and carries none, because there is
+/// no place to point at. Both directions are reported, so the ledger cannot
+/// drift in either one without saying so.
 pub(super) fn env_name_ledger(
     declaration: ToolchainDeclaration,
     root: &Path,
     declared_names: &[String],
+    chargeable: impl Fn(&str) -> bool,
 ) -> Analysis {
-    env_name_ledger_with(declaration, root, declared_names, read_source)
+    env_name_ledger_with(declaration, root, declared_names, read_source, chargeable)
 }
 
 fn env_name_ledger_with(
@@ -482,6 +481,7 @@ fn env_name_ledger_with(
     root: &Path,
     declared_names: &[String],
     read_source: SourceReader,
+    chargeable: impl Fn(&str) -> bool,
 ) -> Analysis {
     let sources = match env_sources(root) {
         Ok(sources) => sources,
@@ -493,26 +493,41 @@ fn env_name_ledger_with(
 
     let mut referenced: BTreeMap<String, Vec<SourceLocus>> = BTreeMap::new();
     for path in &sources {
-        let family = extension(path).and_then(|found| environment::family(&found));
-        let lines = match numbered_lines(root, path, read_source) {
-            Ok(lines) => lines,
+        let extension = extension(path);
+        let family = extension.as_deref().and_then(environment::family);
+        let text = match decoded(root, path, read_source) {
+            Ok(text) => text,
             Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
         };
-        for (line, text) in lines {
-            for name in environment::references(family, &text) {
-                referenced.entry(name).or_default().push(SourceLocus {
-                    path: path.clone(),
-                    line,
-                });
-            }
+        for (line, name) in environment::references_in(extension.as_deref(), family, &text) {
+            referenced.entry(name).or_default().push(SourceLocus {
+                path: path.clone(),
+                line,
+            });
         }
     }
 
     let declared: BTreeSet<&str> = declared_names.iter().map(String::as_str).collect();
+    let referenced_paths: BTreeSet<&str> = referenced
+        .iter()
+        .filter(|(name, _)| !declared.contains(name.as_str()))
+        .flat_map(|(_, loci)| loci.iter().map(|locus| locus.path.as_str()))
+        .collect();
+    let chargeable_paths: BTreeSet<&str> = referenced_paths
+        .into_iter()
+        .filter(|path| chargeable(path))
+        .collect();
     let mut findings: Vec<ArmFinding> = referenced
         .iter()
         .filter(|(name, _)| !declared.contains(name.as_str()))
-        .map(|(name, loci)| ledger(EnvironmentLedgerKind::Unaccounted, name, loci.clone()))
+        .filter_map(|(name, loci)| {
+            let loci = loci
+                .iter()
+                .filter(|locus| chargeable_paths.contains(locus.path.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            (!loci.is_empty()).then(|| ledger(EnvironmentLedgerKind::Unaccounted, name, loci))
+        })
         .collect();
     findings.extend(
         declared
@@ -520,7 +535,18 @@ fn env_name_ledger_with(
             .filter(|name| !referenced.contains_key(**name))
             .map(|name| ledger(EnvironmentLedgerKind::Stale, name, Vec::new())),
     );
-    Analysis::scanned(declaration.id, sources.len(), findings)
+    let has_findings = !findings.is_empty();
+    let mut analysis = Analysis::scanned(declaration.id, sources.len(), findings);
+    if has_findings {
+        analysis.reason.push_str(&format!(
+            concat!(
+                "; mark a quoted non-environment literal as ",
+                "`{marker} NAME` on its line"
+            ),
+            marker = ENV_NAME_LITERAL_MARKER
+        ));
+    }
+    analysis
 }
 
 /// One repository-wide ledger finding, which carries loci instead of a locus.

@@ -13,12 +13,13 @@ pub const TRACK_COUNT: usize = 12;
 pub const FREEZE_DEPTH: usize = 2;
 /// Scroll distance after which incremental pushes preserve the viewport.
 pub const NEAR_TOP_THRESHOLD_PX: f64 = 80.0;
+/// Base-width height that admits one distinct wider measurement.
+pub const TALL_THRESHOLD_PX: f64 = 230.0;
 
 const LEGAL_BASE_SPANS: [usize; 5] = [2, 3, 4, 6, 12];
 const GAP_REM: f64 = 0.75;
 const MIN_LANE_REM: f64 = 17.0;
 const MODULE_LINE_HEIGHT_REM: f64 = 1.25;
-const TALL_THRESHOLD_PX: f64 = 230.0;
 const WIDE_FACTOR: usize = 2;
 const QUOTE_FONT_SIZE_REM: f64 = 0.8125;
 const QUOTE_LINE_HEIGHT_RATIO: f64 = 1.34;
@@ -26,6 +27,12 @@ const QUOTE_CHROME_REM: f64 = 1.25;
 const QUOTE_TYPICAL_LINES: f64 = 2.0;
 const IMAGE_HEIGHT_REM: f64 = 8.75;
 const IMAGE_LARGE_HEIGHT_REM: f64 = 15.75;
+
+/// Convert the DOM client box, which includes padding, into usable content width.
+#[must_use]
+pub fn content_box_width(client_width_px: f64, padding_left_px: f64, padding_right_px: f64) -> f64 {
+    (client_width_px - padding_left_px - padding_right_px).max(0.0)
+}
 
 /// Geometry resolved from the live root type size and host width.
 #[derive(Clone, Debug, PartialEq)]
@@ -443,12 +450,12 @@ pub fn replay_liquid(cards: &[Card], track_count: usize, freeze_depth: usize) ->
 /// Grow one card downward and move every transitively lower overlapping card.
 #[must_use]
 pub fn ripple_rows(cards: &[Card], creation_index: usize, delta: i32) -> Vec<Card> {
-    let Some(growing) = cards
+    let growing = cards
         .iter()
         .find(|card| card.creation_index == creation_index)
-    else {
-        return cards.to_vec();
-    };
+        .unwrap_or_else(|| {
+            panic!("Mosaic creation index {creation_index} is absent from the card set")
+        });
     let mut shifted = BTreeMap::new();
     let mut seen = BTreeSet::from([creation_index]);
     let mut stack = vec![growing.creation_index];
@@ -486,12 +493,12 @@ pub fn ripple_rows(cards: &[Card], creation_index: usize, delta: i32) -> Vec<Car
 /// Resolve a frozen card resize, retaining its reservation for shrinkage.
 #[must_use]
 pub fn resolve_frozen_resize(cards: &[Card], creation_index: usize, new_rows: i32) -> Vec<Card> {
-    let Some(card) = cards
+    let card = cards
         .iter()
         .find(|card| card.creation_index == creation_index)
-    else {
-        return cards.to_vec();
-    };
+        .unwrap_or_else(|| {
+            panic!("Mosaic creation index {creation_index} is absent from the card set")
+        });
     if new_rows <= card.rows {
         cards.to_vec()
     } else {

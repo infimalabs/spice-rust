@@ -270,8 +270,17 @@ pub struct LaneSession {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneResidency {
-    /// Lane identity.
+    /// Address of this independently steerable lineage member.
     pub lane: CanonicalUuid,
+    /// Canvas lineage whose lane contains this member.
+    pub lineage_id: CanonicalUuid,
+    /// Operator-configured agent display name, absent on pre-field seats.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub name: Option<String>,
     /// Canonical worktree permanently bound to the lane.
     pub worktree: String,
     /// Closed lane-life spelling governing re-seating.
@@ -300,6 +309,57 @@ pub struct LaneResidency {
     pub disposition: String,
 }
 
+/// Durable task-subscription policy owned by one Canvas lineage.
+///
+/// This policy controls which tasks a team may draw. It is deliberately
+/// separate from [`LaneResidency::life`], which controls whether an individual
+/// seat may be occupied again after its current process exits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineageSubscription {
+    /// Stable Canvas lineage identifying the subscribed team.
+    pub lineage_id: CanonicalUuid,
+    /// Authoritative task-selection policy for the entire lineage.
+    pub policy: crate::intent::LineageLife,
+    /// Operator-pinned public projects retained across policy changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub manual_projects: Vec<String>,
+    /// Server-projected public projects replayed from durable create/claim facts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto_projects: Vec<String>,
+}
+
+impl LineageSubscription {
+    /// Whether this effective policy admits one public project to `task next`.
+    #[must_use]
+    pub fn admits_project(&self, project: &str) -> bool {
+        match self.policy.scope() {
+            crate::intent::TaskSubscriptionScope::Manual => self
+                .manual_projects
+                .iter()
+                .any(|candidate| candidate == project),
+            crate::intent::TaskSubscriptionScope::ManualAndAutoProject => self
+                .manual_projects
+                .iter()
+                .chain(&self.auto_projects)
+                .any(|candidate| candidate == project),
+            crate::intent::TaskSubscriptionScope::AllAssignable => true,
+        }
+    }
+
+    /// Project one server-learned public project in deterministic lexical order.
+    pub fn learn_project(&mut self, project: &str) {
+        if !self
+            .auto_projects
+            .iter()
+            .any(|candidate| candidate == project)
+        {
+            self.auto_projects.push(project.to_owned());
+            self.auto_projects.sort();
+        }
+    }
+}
+
 /// Current resident and lane state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -310,6 +370,13 @@ pub struct ResidencyHead {
     pub state: ResidentState,
     /// Current lanes, occupants, lineage, capabilities, and dispositions.
     pub lanes: Vec<LaneResidency>,
+    /// One durable task-subscription policy per Canvas lineage.
+    ///
+    /// Absence is admitted only for journal heads written before this field
+    /// existed; resident reads derive that legacy lineage's initial policy
+    /// until its next seating or configuration transaction persists it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subscriptions: Vec<LineageSubscription>,
 }
 
 /// Current journal and wake positions.

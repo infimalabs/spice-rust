@@ -540,6 +540,14 @@ fn claim_win(
     let answer = wire::intent::ClaimAnswer {
         task: task.clone(),
         holder: command.actor().clone(),
+        warnings: board::claim_overlaps(selected, &snapshot.entries)
+            .into_iter()
+            .map(|overlap| wire::intent::ClaimWarning {
+                task: overlap.task,
+                lane: overlap.lane,
+                surface: overlap.surface,
+            })
+            .collect(),
     };
     if let Err(error) = write.command_result(
         request(command, win.clone()),
@@ -593,9 +601,14 @@ fn claim_selection<'a>(
     possession: Possession,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
     if !possession.captures() {
-        return board::select(
+        let subscription = allocation_subscription(
+            &snapshot.answer.residency.body,
+            command.actor(),
+        )?;
+        let selected = board::select(
             &snapshot.entries,
             command.actor(),
+            subscription,
         )
         .map(|selected| selected.entry())
         .ok_or_else(|| {
@@ -607,7 +620,28 @@ fn claim_selection<'a>(
                     "requesting task next",
                 ),
             )
-        });
+        })?;
+        let witnessed = command
+            .expected()
+            .iter()
+            .find_map(|witness| match witness {
+                Witness::Task { task, .. } => Some(task),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                protocol_fault(
+                    "board::allocator-task-witness",
+                    "task next has no selected task witness",
+                )
+            })?;
+        if witnessed != &selected.statement().handle {
+            return Err(refusal(
+                "board::witness-moved",
+                Some(format!("witnessed {witnessed}; selected {}", selected.statement().handle)),
+                "read the current board subscription and retry task next",
+            ));
+        }
+        return Ok(selected);
     }
     let task = command
         .expected()
@@ -743,10 +777,19 @@ fn guard_claim(
         guard_allocation(
             write,
             expected,
-            heads,
-            task.clone(),
-            command.actor().clone(),
-            projects.clone(),
+            AllocationObservation {
+                heads,
+                winner: task.clone(),
+                actor: command.actor().clone(),
+                subscription: allocation_subscription(
+                    &snapshot.answer.residency.body,
+                    command.actor(),
+                )
+                .expect("claim selection admitted one durable lineage subscription")
+                .clone(),
+                residency_position: snapshot.answer.residency.position,
+                projects: projects.clone(),
+            },
         );
     }
 }

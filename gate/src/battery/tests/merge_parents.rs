@@ -27,6 +27,15 @@ use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricId, Met
 /// The source the second parent commits and the merge inherits verbatim.
 const INHERITED: &str = "src/inherited.rs";
 
+/// A second-parent source carrying complexity and environment debt.
+const INHERITED_POLICY: &str = "src/inherited_policy.rs";
+
+/// An extensionless second-parent file carrying one workstation-local path.
+const INHERITED_LOCAL_PATH: &str = "notes/inherited-local-path";
+
+/// A second-parent prose file carrying one discouraged word.
+const INHERITED_TASTE: &str = "notes/inherited.md";
+
 /// The short source the merge itself writes, standing for its resolutions.
 const RESOLVED: &str = "src/resolved.rs";
 
@@ -53,6 +62,9 @@ const INHERITED_LITERAL: u64 = 4242;
 /// satisfied by the inherited one being counted twice.
 const MERGED_LITERAL: u64 = 31337;
 
+/// Lines that put the inherited routine beyond the compiled routine limit.
+const INHERITED_ROUTINE_LINES: usize = 100;
+
 /// One Rust source of the requested length holding one compared literal.
 ///
 /// The literal is interpolated rather than written out because this file is
@@ -65,6 +77,26 @@ fn compared_source(literal: u64, lines: usize) -> String {
         source.push_str("pub fn spacer() {}\n");
     }
     source
+}
+
+/// One over-limit routine whose environment name is absent from the ledger.
+fn inherited_policy_source() -> String {
+    let mut source = String::from("pub fn inherited_policy() {\n");
+    for _ in 0..INHERITED_ROUTINE_LINES {
+        source.push_str("    let _ = std::env::var(\"SPICE_MERGE_PARENT\");\n");
+    }
+    source.push_str("}\n");
+    source
+}
+
+/// One workstation-local path authored wholly by the second parent.
+fn inherited_local_path_source() -> String {
+    format!("source = {}/peer/spice\n", crate::LOCAL_PATH_MARKER)
+}
+
+/// One discouraged prose token authored wholly by the second parent.
+fn inherited_taste_source() -> &'static str {
+    "the orphan fixture belongs to the side parent\n"
 }
 
 /// One short source whose final byte is deliberately not UTF-8.
@@ -130,6 +162,23 @@ fn measured(row: &MetricEvidence, path: &str) -> u64 {
     measurement.value()
 }
 
+/// Repository path one structural key names, absent for whole-arm evidence.
+fn key_path(key: &MetricKey) -> Option<&str> {
+    match key {
+        MetricKey::Arm => None,
+        MetricKey::Path(path) => Some(path),
+        MetricKey::Function(function) => Some(function.path()),
+    }
+}
+
+/// Toolchain findings retained by one battery arm.
+fn findings(report: &BatteryReport, id: GateId) -> &[crate::ArmFinding] {
+    let ArmEvidence::Toolchain { report } = arm(report, id).evidence() else {
+        panic!("the {id:?} arm projects toolchain evidence")
+    };
+    &report.findings
+}
+
 /// Commit `INHERITED` on a side branch and merge it into `main`, uncommitted.
 ///
 /// The merge is left with `MERGE_HEAD` in place and the merged content staged,
@@ -137,6 +186,16 @@ fn measured(row: &MetricEvidence, path: &str) -> u64 {
 /// it for the merge commit.
 fn merged_repository(root: &Path) -> PathBuf {
     let repository = production_repository(root);
+    let mut tracked: toml::Value = toml::from_str(
+        &fs::read_to_string(repository.join("spice.toml")).expect("fixture tracked policy"),
+    )
+    .expect("fixture tracked policy parses");
+    tracked["policy"]["env_names"] = toml::Value::Array(Vec::new());
+    fs::write(
+        repository.join("spice.toml"),
+        toml::to_string(&tracked).expect("fixture tracked policy encodes"),
+    )
+    .expect("fixture tracked policy without unrelated ledger names");
     // Taken out of the index before either parent exists, so neither branch and
     // neither case below carries it. Left committed, the magic arm folds to its
     // refusal to read the class and stops answering the question asked here.
@@ -150,20 +209,39 @@ fn merged_repository(root: &Path) -> PathBuf {
     fs::write(repository.join(INHERITED), "pub fn inherited() {}\n").expect("fixture base source");
     fs::write(repository.join(REINTRODUCED), "pub fn reintroduced() {}\n")
         .expect("fixture merge-base source");
-    fixture_git(&repository, &["add", INHERITED, REINTRODUCED]);
+    fixture_git(&repository, &["add", "spice.toml", INHERITED, REINTRODUCED]);
     fixture_git(
         &repository,
         &["commit", "-q", "-m", "drop the unreadable class"],
     );
 
     fixture_git(&repository, &["checkout", "-q", "-b", "side"]);
+    fs::create_dir(repository.join("notes")).expect("fixture prose directory");
     fs::write(
         repository.join(INHERITED),
         compared_source(INHERITED_LITERAL, INHERITED_LINES),
     )
     .expect("fixture inherited source");
+    fs::write(repository.join(INHERITED_POLICY), inherited_policy_source())
+        .expect("fixture inherited policy source");
+    fs::write(
+        repository.join(INHERITED_LOCAL_PATH),
+        inherited_local_path_source(),
+    )
+    .expect("fixture inherited local path");
+    fs::write(repository.join(INHERITED_TASTE), inherited_taste_source())
+        .expect("fixture inherited taste");
     fixture_git(&repository, &["rm", "-q", REINTRODUCED]);
-    fixture_git(&repository, &["add", INHERITED]);
+    fixture_git(
+        &repository,
+        &[
+            "add",
+            INHERITED,
+            INHERITED_POLICY,
+            INHERITED_LOCAL_PATH,
+            INHERITED_TASTE,
+        ],
+    );
     fixture_git(
         &repository,
         &["commit", "-q", "-m", "side authors the file"],
@@ -225,7 +303,7 @@ fn invalid_merged_repository(root: &Path) -> PathBuf {
     repository
 }
 
-/// A merge is charged for neither the shape nor the literals it only carried.
+/// A merge is charged by no per-file arm for content it only carried.
 ///
 /// The second parent's file is past `file_loc` and holds a literal `HEAD` has
 /// never seen, so a gate comparing the staged tree against the first parent
@@ -241,7 +319,10 @@ fn a_merge_is_not_charged_for_a_file_its_second_parent_already_committed() {
     let fixture = Fixture::new();
     let repository = merged_repository(&fixture.root);
 
-    let report = battery_report(&repository);
+    let report = battery_report_with_changes(
+        &repository,
+        &[INHERITED_POLICY, INHERITED_LOCAL_PATH, INHERITED_TASTE],
+    );
 
     let shape = row(&report, GateId::FileShape, INHERITED, MetricId::FileLines);
     assert!(
@@ -281,6 +362,61 @@ fn a_merge_is_not_charged_for_a_file_its_second_parent_already_committed() {
         "the magic-number arm admits a merge that introduced no literal: {}",
         arm(&report, GateId::MagicNumbers).reason()
     );
+    let ArmEvidence::Metrics { report: complexity } = arm(&report, GateId::Complexity).evidence()
+    else {
+        panic!("the complexity arm projects structural metric evidence")
+    };
+    assert!(
+        complexity
+            .metrics()
+            .iter()
+            .all(|metric| key_path(metric.key()) != Some(INHERITED_POLICY)),
+        "the inherited routine takes no complexity decision"
+    );
+    assert_eq!(
+        arm(&report, GateId::Complexity).state(),
+        BatteryState::Passed,
+        "the complexity arm admits a routine authored by the second parent: {}",
+        arm(&report, GateId::Complexity).reason()
+    );
+    assert_eq!(
+        arm(&report, GateId::EnvPolicy).state(),
+        BatteryState::NotApplicable,
+        "the environment policy scans no inherited staged path: {}",
+        arm(&report, GateId::EnvPolicy).reason()
+    );
+    assert!(
+        findings(&report, GateId::EnvPolicy).is_empty(),
+        "the inherited environment access produces no policy finding"
+    );
+    assert_eq!(
+        arm(&report, GateId::EnvNameLedger).state(),
+        BatteryState::Passed,
+        concat!(
+            "the environment ledger admits an unaccounted name referenced only by inherited ",
+            "files: {}; findings={:?}"
+        ),
+        arm(&report, GateId::EnvNameLedger).reason(),
+        findings(&report, GateId::EnvNameLedger),
+    );
+    assert!(
+        findings(&report, GateId::EnvNameLedger).is_empty(),
+        "the inherited environment name produces no ledger finding"
+    );
+    for id in [GateId::LocalPaths, GateId::Taste] {
+        assert_eq!(
+            arm(&report, id).state(),
+            BatteryState::NotApplicable,
+            "{} scans no path inherited byte-identically from a merge parent: {}",
+            id.as_str(),
+            arm(&report, id).reason(),
+        );
+        assert!(
+            findings(&report, id).is_empty(),
+            "{} produces no finding for a path the merge did not author",
+            id.as_str(),
+        );
+    }
 }
 
 /// The same merge is charged in full once it writes to that same file.
@@ -306,9 +442,31 @@ fn a_merge_is_charged_for_the_line_it_adds_to_an_inherited_file() {
         "pub fn merged(value: u64) -> bool {{\n    value >= {MERGED_LITERAL}\n}}\n"
     ));
     fs::write(repository.join(INHERITED), &resolved).expect("the merge's own edit");
-    fixture_git(&repository, &["add", INHERITED]);
+    let mut policy = inherited_policy_source();
+    policy.push_str("// resolved by the merge\n");
+    fs::write(repository.join(INHERITED_POLICY), policy).expect("the merge's policy edit");
+    let mut local_path = inherited_local_path_source();
+    local_path.push_str("merge touched this file\n");
+    fs::write(repository.join(INHERITED_LOCAL_PATH), local_path)
+        .expect("the merge's local-path edit");
+    let mut taste = inherited_taste_source().to_owned();
+    taste.push_str("merge touched this prose\n");
+    fs::write(repository.join(INHERITED_TASTE), taste).expect("the merge's taste edit");
+    fixture_git(
+        &repository,
+        &[
+            "add",
+            INHERITED,
+            INHERITED_POLICY,
+            INHERITED_LOCAL_PATH,
+            INHERITED_TASTE,
+        ],
+    );
 
-    let report = battery_report(&repository);
+    let report = battery_report_with_changes(
+        &repository,
+        &[INHERITED_POLICY, INHERITED_LOCAL_PATH, INHERITED_TASTE],
+    );
 
     let lines = measured(
         row(&report, GateId::FileShape, INHERITED, MetricId::FileLines),
@@ -342,6 +500,41 @@ fn a_merge_is_charged_for_the_line_it_adds_to_an_inherited_file() {
         arm(&report, GateId::MagicNumbers).state(),
         BatteryState::Failed,
         "the magic-number arm still refuses the literal this merge introduced"
+    );
+    for id in [
+        GateId::Complexity,
+        GateId::LocalPaths,
+        GateId::Taste,
+        GateId::EnvPolicy,
+        GateId::EnvNameLedger,
+    ] {
+        assert_eq!(
+            arm(&report, id).state(),
+            BatteryState::Failed,
+            "{} still charges a merge that edited the inherited file: {}",
+            id.as_str(),
+            arm(&report, id).reason(),
+        );
+    }
+    assert!(
+        !findings(&report, GateId::EnvPolicy).is_empty(),
+        "the edited file's environment accesses are charged"
+    );
+    assert!(
+        !findings(&report, GateId::EnvNameLedger).is_empty(),
+        "the edited file's unaccounted environment name is charged"
+    );
+    assert!(
+        findings(&report, GateId::LocalPaths)
+            .iter()
+            .any(|finding| finding.path.as_deref() == Some(INHERITED_LOCAL_PATH)),
+        "the edited extensionless file's inherited local path is charged"
+    );
+    assert!(
+        findings(&report, GateId::Taste)
+            .iter()
+            .any(|finding| finding.path.as_deref() == Some(INHERITED_TASTE)),
+        "the edited prose file's inherited discouraged word is charged"
     );
 }
 

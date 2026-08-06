@@ -1134,6 +1134,8 @@ fn residency_head() -> ResidencyHead {
         state: ResidentState::Seated,
         lanes: vec![LaneResidency {
             lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+            lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+            name: None,
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
@@ -1142,6 +1144,12 @@ fn residency_head() -> ResidencyHead {
             capabilities: Vec::new(),
             session: None,
             disposition: "active".to_owned(),
+        }],
+        subscriptions: vec![wire::LineageSubscription {
+            lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+            policy: wire::intent::LineageLife::Drive,
+            manual_projects: Vec::new(),
+            auto_projects: Vec::new(),
         }],
     }
 }

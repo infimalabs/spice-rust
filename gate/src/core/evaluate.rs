@@ -9,7 +9,7 @@ use super::{
 /// Evaluate one complete immutable core-family battery.
 #[must_use]
 pub fn evaluate_core(inputs: &CoreInputs) -> CoreReport {
-    let arms = inputs.arms().iter().map(evaluate_arm).collect();
+    let arms = inputs.arms().iter().map(evaluate_core_arm).collect();
     CoreReport {
         version: CORE_REPORT_VERSION,
         tree: inputs.tree().clone(),
@@ -17,7 +17,7 @@ pub fn evaluate_core(inputs: &CoreInputs) -> CoreReport {
     }
 }
 
-pub(super) fn evaluate_arm(input: &CoreArmInput) -> CoreArmReport {
+pub(crate) fn evaluate_core_arm(input: &CoreArmInput) -> CoreArmReport {
     let (standing, diagnostic) = match input.observation() {
         CoreObservation::Measured { evidence } => {
             let (standing, diagnostic) = evaluate_evidence(evidence);

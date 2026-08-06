@@ -1,26 +1,86 @@
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { unwatchFile, watchFile } from "node:fs";
-import { chmod, cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import { chromium } from "playwright";
+import {
+  assertLineageLifeIsolation,
+  assertSpeechVariants,
+  assertSystemSpeech,
+  buildResident,
+  chooseCanvasView,
+  configureFixture,
+  installBrowserSpeech,
+  installSocketControl,
+  journalExtent,
+  monitorPage,
+  reply,
+  seedAuthority,
+  startResident,
+  stopResident,
+} from "./canvas-fixture.mjs";
 
-const execute = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
-const binary = join(root, "target/debug/spice");
 const artifacts = join(root, "artifacts/canvas");
-const sessionRecord = JSON.stringify({
-  type: "system",
-  subtype: "init",
-  session_id: "018f7777-7777-7444-8888-999999999999",
-});
+const coverageReceiptFlag = "--spice-coverage-receipt";
+const coverageReceipt = "BROWSER-1kKSWhZk browser coverage complete\n";
+const coverageArguments = process.argv.slice(2);
+let coverageReceiptPath;
+if (coverageArguments.length > 0) {
+  if (
+    coverageArguments.length !== 2 ||
+    coverageArguments[0] !== coverageReceiptFlag ||
+    !coverageArguments[1] ||
+    coverageArguments[1].startsWith("--")
+  ) {
+    throw new Error(`expected ${coverageReceiptFlag} FILE or no arguments`);
+  }
+  coverageReceiptPath = coverageArguments[1];
+}
+const agentNames = ["Ava", "Bex", "Cy", "Dee"];
 const staleEpoch = "018f9999-9999-7444-8888-999999999999";
+const nestedQuoteMessage = [
+  "> > The final review found no alternate execution path.",
+  "> >",
+  "> > `cargo xtask verify` is green.",
+  ">",
+  "> Why it matters: nested context remains visible.",
+  "",
+  "The author words belong in the composer band.",
+].join("\n");
+const nestedQuotePreview = "The author words belong in the composer band.";
+const entirelyQuotedMessage = [
+  "> > Borrowed context has no authored preview.",
+  "> > A second borrowed line stays reachable.",
+].join("\n");
+const tallMosaicMessage = [
+  "## Measured lattice witness",
+  "",
+  "This directive is intentionally tall at the base span.",
+  "",
+  "- measurement comes from the rendered DOM",
+  "- placement comes from the Rust lattice",
+  "- the wide tier remains content-class agnostic",
+  "- track bounds stay inside twelve columns",
+  "- row spans cover the natural card height",
+  "- creation order stays deterministic",
+  "- independent lineage controls remain mounted",
+  "- attachment presence cannot choose a span",
+  "- agent identity cannot choose a span",
+  "- CSS class cannot choose a span",
+  "- one base-height read is mandatory",
+  "- only a tall base measurement admits one more read",
+  "- no third candidate is measured",
+  "- no card overlaps another card",
+  "- exact viewport geometry stays observable",
+  "- the browser test reads the instrumentation",
+  "- the short path remains one read",
+  "- the tall path remains two reads",
+].join("\n");
 
 const axisPanes = new Map([
   ["Magnitude", ["Effort", "Pressure", "Residue", "Consent Volume"]],
@@ -37,255 +97,6 @@ const axisPanes = new Map([
   ]],
 ]);
 
-function waitForDiscovery(child, canvas, timeout = 30_000) {
-  return new Promise((resolveDiscovery, rejectDiscovery) => {
-    let settled = false;
-    let lastError;
-    const published = (current, previous) => {
-      if (current.ino !== previous.ino || current.size !== previous.size) readPublishedDiscovery();
-    };
-    watchFile(canvas, { interval: 50 }, published);
-    const deadline = setTimeout(() => {
-      finish(new Error("timed out waiting for resident canvas discovery", { cause: lastError }));
-    }, timeout);
-    const residentExit = (code) => {
-      finish(new Error(`resident exited ${code} before publishing canvas discovery`));
-    };
-
-    function finish(error, discovery) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(deadline);
-      unwatchFile(canvas, published);
-      child.off("exit", residentExit);
-      if (error) rejectDiscovery(error);
-      else resolveDiscovery(discovery);
-    }
-
-    function readPublishedDiscovery() {
-      readFile(canvas, "utf8").then(
-        (bytes) => {
-          try {
-            finish(null, JSON.parse(bytes));
-          } catch (error) {
-            finish(new Error("resident canvas discovery is malformed", { cause: error }));
-          }
-        },
-        (error) => {
-          lastError = error;
-          if (error.code !== "ENOENT") finish(error);
-        },
-      );
-    }
-
-    child.once("exit", residentExit);
-    readPublishedDiscovery();
-  });
-}
-
-async function startResident(fixture) {
-  const canvas = join(fixture, ".git/.spice/canvas");
-  await mkdir(dirname(canvas), { recursive: true });
-  const child = spawn(binary, ["--json", "up", "--port", "0"], {
-    cwd: fixture,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-  child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-  child.on("exit", (code) => {
-    if (code && code !== 0) process.stderr.write(`resident exited ${code}: ${stderr}\n`);
-  });
-  try {
-    const discovery = await waitForDiscovery(child, canvas);
-    return { child, discovery };
-  } catch (error) {
-    let residue;
-    try {
-      residue = await readdir(fixture, { recursive: true });
-    } catch (readError) {
-      residue = [`<unreadable: ${readError}>`];
-    }
-    if (child.exitCode === null) {
-      const exited = once(child, "exit");
-      child.kill("SIGKILL");
-      await exited;
-    }
-    throw new Error(`resident did not publish discovery: stdout=${stdout || "<none>"} stderr=${stderr || "<none>"} files=${JSON.stringify(residue)}`, {
-      cause: error,
-    });
-  }
-}
-
-function decodeOutcome(stdout, stderr = "") {
-  const text = stdout.trim() || stderr.trim();
-  assert.ok(text, "spice command returns one JSON outcome");
-  return JSON.parse(text);
-}
-
-async function invoke(fixture, args) {
-  try {
-    const result = await execute(binary, ["--json", ...args], {
-      cwd: fixture,
-      timeout: 20_000,
-    });
-    return decodeOutcome(result.stdout, result.stderr);
-  } catch (error) {
-    if (typeof error?.stdout === "string" || typeof error?.stderr === "string") {
-      return decodeOutcome(error.stdout ?? "", error.stderr ?? "");
-    }
-    throw error;
-  }
-}
-
-async function reply(fixture, args) {
-  const outcome = await invoke(fixture, args);
-  assert.equal(outcome.kind, "reply", `${args.join(" ")} replies: ${JSON.stringify(outcome)}`);
-  return outcome;
-}
-
-async function configureFixture(fixture, linkedRoot) {
-  await execute("git", ["init", "--quiet"], { cwd: fixture });
-  await cp(join(root, "dist/stage-local"), join(fixture, "dist/stage-local"), { recursive: true });
-  const vendor = join(fixture, "fake-claude");
-  await writeFile(vendor, [
-    "#!/bin/sh",
-    "trap 'exit 0' TERM INT",
-    `printf '%s\\n' '${sessionRecord}'`,
-    "while :; do sleep 1; done",
-    "",
-  ].join("\n"));
-  await chmod(vendor, 0o700);
-  await writeFile(join(fixture, "spice.toml"), [
-    "[consent]",
-    'posture = "queue"',
-    "",
-    "[[consent.rule]]",
-    'name = "browser"',
-    'tool = "shell:*"',
-    'answer = "allow"',
-    "budget = 2",
-    "",
-    "[lane]",
-    'lease = "30s"',
-    'vendor = "claude"',
-    "",
-    "[tasks]",
-    'stems = ["app", "canvas", "dist", "gate", "spice", "steer"]',
-    "",
-    "[vendor.claude]",
-    `binary = ${JSON.stringify(vendor)}`,
-    "",
-    "[canvas.pack]",
-    "rows = 2",
-    "",
-  ].join("\n"));
-  await writeFile(join(fixture, ".gitignore"), ["dist/stage-local", "",].join("\n"));
-  await execute("git", ["add", ".gitignore", "fake-claude", "spice.toml"], { cwd: fixture });
-  await execute("git", [
-    "-c", "user.name=Canvas Fixture",
-    "-c", "user.email=canvas@example.invalid",
-    "commit", "--quiet", "-m", "canvas fixture",
-  ], { cwd: fixture });
-  const worktrees = [fixture];
-  for (let index = 2; index <= 4; index += 1) {
-    const worktree = join(linkedRoot, `lane-${index}`);
-    await execute("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: fixture });
-    worktrees.push(await realpath(worktree));
-  }
-  return worktrees;
-}
-
-async function journalExtent(fixture) {
-  const report = await reply(fixture, ["journal"]);
-  assert.ok(report.body.cursor, "running authority has a journal cursor");
-  return {
-    cursor: Number(report.body.cursor),
-    facts: Number(report.body.facts),
-  };
-}
-
-async function seedAuthority(fixture) {
-  const pending = await reply(fixture, ["trust"]);
-  const digest = pending.body.digest;
-  assert.equal(pending.body.standing, "pended");
-  await reply(fixture, ["trust", "grant", digest]);
-
-  const first = await reply(fixture, [
-    "task",
-    "add",
-    "Browser fixture task",
-    "--project",
-    "app.browser",
-  ]);
-  await reply(fixture, [
-    "task",
-    "add",
-    "Continuation witness",
-    "--project",
-    "canvas.browser",
-  ]);
-  for (const [title, project] of [
-    ["Distribution witness", "dist.browser"],
-    ["Gate witness", "gate.browser"],
-    ["Spice witness", "spice.browser"],
-    ["Steering witness", "steer.browser"],
-  ]) {
-    await reply(fixture, ["task", "add", title, "--project", project]);
-  }
-  await reply(fixture, ["task", "note", first.body.task, "first causal observation"]);
-  await reply(fixture, ["task", "note", first.body.task, "second causal observation"]);
-
-  return {
-    task: first.body.task,
-    extent: await journalExtent(fixture),
-  };
-}
-
-function monitorPage(page) {
-  const pageErrors = [];
-  const requestFailures = [];
-  let expectedNetworkInterruption = false;
-  page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.toString()));
-  page.on("console", (message) => {
-    if (message.type() === "error") pageErrors.push(`console: ${message.text()}`);
-  });
-  page.on("requestfailed", (request) => {
-    if (!expectedNetworkInterruption) {
-      requestFailures.push(`${request.url()} ${request.failure()?.errorText ?? "unknown failure"}`);
-    }
-  });
-  return {
-    expectNetworkInterruption(value) {
-      expectedNetworkInterruption = value;
-    },
-    assertClean() {
-      assert.deepEqual(pageErrors, [], "page emits no uncaught errors");
-      assert.deepEqual(requestFailures, [], "page emits no unexpected request failures");
-    },
-  };
-}
-
-async function chooseCanvasView(page, name) {
-  const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
-  if (!(await button.isVisible())) {
-    await page.getByLabel("Open Spice Canvas menu").click();
-  }
-  await button.click();
-  const openMenu = page.locator(".canvas-menu[open]");
-  if (await openMenu.count()) {
-    await openMenu.locator("summary").click();
-  }
-}
-
-async function stopResident(fixture, resident) {
-  const exited = resident.child.exitCode === null
-    ? once(resident.child, "exit")
-    : Promise.resolve();
-  await execute(binary, ["--json", "down"], { cwd: fixture, timeout: 10_000 });
-  await exited;
-}
 
 async function assertCanvas(page, scheme) {
   try {
@@ -301,6 +112,16 @@ async function assertCanvas(page, scheme) {
   assert.ok(
     await page.locator('[data-pane="agent-console"]').count() <= 1,
     "the active view never mounts duplicate lineage consoles",
+  );
+  assert.equal(
+    await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
+    0,
+    "the internal packing name is not a user-facing view",
+  );
+  assert.equal(
+    await page.locator("button.axis-button", { hasText: /^Agents/ }).count(),
+    1,
+    "one Agents entry reaches the one conversation surface",
   );
   await page.waitForFunction(() => {
     const cursor = document.querySelector(".bar-meta")?.textContent ?? "";
@@ -355,17 +176,19 @@ async function assertCanvas(page, scheme) {
     assert.ok(await page.getByRole("button", { name: "Add note" }).isVisible());
     await page.locator(".workspace").evaluate((element) => element.scrollTo(0, 0));
   }
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   await page.locator('[data-pane="agent-console"]').waitFor();
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }
 
 async function assertAgentConversation(page, fixture, worktrees) {
+  const teamWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   await console.waitFor();
   await console.getByRole("tab", { name: /^Info/ }).click();
-  await console.getByLabel("Worktree").fill(worktrees[0]);
+  await console.getByLabel("Name").fill(agentNames[0]);
+  await console.getByLabel("Worktree").fill(teamWorktrees[0]);
   await console.getByLabel("Life").fill("steer");
 
   // A refused submission has to say why. The vendor field is free text with no
@@ -384,23 +207,59 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("button", { name: "Seat agent" }).click();
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
   await console.locator(".team-detail-card").nth(0).waitFor({ timeout: 15_000 });
+  const firstSeatedAt = Date.now();
 
-  for (const [index, worktree] of worktrees.slice(1).entries()) {
-    await console.getByLabel("Worktree").fill(worktree);
-    await console.getByLabel("Vendor").fill("claude");
-    await console.getByLabel("Life").fill("steer");
-    await console.getByRole("button", { name: "Seat agent" }).click();
-    await console.locator(".team-detail-card").nth(index + 1).waitFor({ timeout: 15_000 });
+  const firstSnapshot = await reply(fixture, ["lane"]);
+  const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === teamWorktrees[0]);
+  assert.ok(host, "the Canvas seat control creates the lineage host");
+  for (const [index, worktree] of teamWorktrees.slice(1).entries()) {
+    await reply(fixture, [
+      "lane", "add", worktree,
+      "--lineage", host.lineage_id,
+      "--name", agentNames[index + 1],
+      "--life", "Steer",
+      "--vendor", "claude",
+    ]);
   }
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  await console.getByRole("tab", { name: /^Info/ }).click();
+  await console.locator(".team-detail-card").nth(3).waitFor({ timeout: 15_000 });
 
   const lanes = await reply(fixture, ["lane"]);
-  const seated = worktrees.map((worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree));
-  assert.ok(seated.every(Boolean), "the Canvas seat control creates all four linked-worktree lanes");
+  const seated = teamWorktrees.map(
+    (worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree),
+  );
+  assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
+  assert.ok(
+    seated.every((lane) => lane.lineage_id === host.lineage_id),
+    "every independently steerable member retains the shared lineage identity",
+  );
+  assert.deepEqual(seated.map((lane) => lane.name), agentNames);
   assert.ok(seated.every((lane) => lane.vendor === "claude"));
   assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
 
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await console.locator(".team-agent").nth(3).waitFor();
+  assert.equal(await console.locator(".team-surface").count(), 1, "one lineage renders one surface");
+  assert.equal(
+    await console.locator(".team-activity-grid").count(),
+    1,
+    "all lineage members share exactly one packed activity plane",
+  );
+  const authored = console.locator('[data-card-kind="agent-message"]');
+  await authored.nth(3).waitFor({ timeout: 10_000 });
+  const producerIds = new Set(await authored.evaluateAll((cards) =>
+    cards.map((card) => card.getAttribute("data-producer-target-id")),
+  ));
+  const producerNames = new Set(await authored.locator(".message-author").allTextContents());
+  assert.ok(producerIds.size > 1, "the packed plane contains more than one producing agent");
+  assert.ok(producerNames.size > 1, "each authored card footer names its producing agent");
+  await assertRosterPips(page, console, seated);
+  const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
+  for (const name of producerNames) {
+    assert.match(accessibility, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
   assert.equal(await console.getByRole("button", { name: "Steer", exact: true }).count(), 1);
   const lifetime = console.locator('.team-lifetime input[type="range"]');
   await lifetime.fill("2");
@@ -411,7 +270,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
     "browser direction survives streaming",
     "## Gate contract\n\n- green on the integrated tip\n- exact checks retained",
     "> The reference viewport keeps **all agent status** visible.\n>\n> Density remains readable.\n\n`1000×568` stays bounded.",
-    "> > The final review found no alternate execution path.\n> >\n> > `cargo xtask verify` is green.\n>\n> Why it matters: nested context remains visible.\n\n### Result\n\nThe Mosaic card grows with its Markdown.",
+    nestedQuoteMessage,
   ];
   const messageLabels = [
     messages[0],
@@ -428,6 +287,28 @@ async function assertAgentConversation(page, fixture, worktrees) {
       .filter({ hasText: messageLabels[index] })
       .waitFor({ timeout: 10_000 });
   }
+  const quoteLane = console.locator(`.team-agent[data-agent-lane="${seated[3].lane}"]`);
+  await quoteLane.getByRole("textbox").fill(entirelyQuotedMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[3].lane}"]`)
+    .filter({ hasText: "Borrowed context has no authored preview." })
+    .waitFor({ timeout: 10_000 });
+  const tallLane = console.locator(`.team-agent[data-agent-lane="${seated[1].lane}"]`);
+  await tallLane.getByRole("textbox").fill(tallMosaicMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[1].lane}"]`)
+    .filter({ hasText: "Measured lattice witness" })
+    .waitFor({ timeout: 10_000 });
+  const orderedInbox = await reply(fixture, ["inbox", seated[1].lane]);
+  assert.deepEqual(
+    await console
+      .locator(`[data-card-kind="directive"][data-agent-lane="${seated[1].lane}"]`)
+      .evaluateAll((cards) => cards.map((card) => card.dataset.directive)),
+    orderedInbox.body.lanes[0].pending.map((directive) => directive.directive),
+    "pending directives reach the lattice in durable journal order",
+  );
   assert.ok(await console.locator(".mosaic-message-card h2").count(), "cards render headings");
   assert.ok(await console.locator(".mosaic-message-card ul li").count(), "cards render lists");
   assert.ok(
@@ -438,6 +319,108 @@ async function assertAgentConversation(page, fixture, worktrees) {
     cards.map((card) => Math.round(card.getBoundingClientRect().height)),
   );
   assert.ok(new Set(cardHeights).size >= 3, "Markdown produces nonuniform Mosaic card heights");
+  const planes = console.locator(".lane-mosaic-plane");
+  assert.equal(await planes.count(), 1, "one seated lineage owns one Mosaic plane");
+  const plane = console.locator(
+    `.lane-mosaic-plane[data-agent-plane="${host.lineage_id}"]`,
+  );
+  await plane.waitFor();
+  const placements = await assertMosaicLattice(page, true);
+  assert.ok(placements.length > seated.length, "the lane packs agent and directive cards");
+  assert.ok(placements.every((card) => card.span >= 1 && card.track + card.span <= 12));
+  assert.ok(placements.every((card) => card.rows >= 2));
+  assert.ok(placements.every((card) => card.columnStart === card.track + 1));
+  assert.ok(placements.every((card) => card.rowStart === card.row));
+  assert.equal(Math.min(...placements.map((card) => card.base)), 0, "the lane owns its row floor");
+  const packedMembers = new Set(placements.map((card) => card.lane));
+  for (const member of seated) {
+    assert.ok(packedMembers.has(member.lane), "every worktree member reaches the lane plane");
+  }
+
+  const directiveChrome = await console.locator('[data-card-kind="directive"]').evaluateAll(
+    (cards) => cards.map((card) => ({
+      lane: card.dataset.agentLane,
+      accent: card.dataset.accent,
+      edge: getComputedStyle(card).borderRightColor,
+    })),
+  );
+  const repeatedLane = seated[1].lane;
+  const repeatedChrome = directiveChrome.filter((card) => card.lane === repeatedLane);
+  assert.ok(repeatedChrome.length >= 2, "the accent probe has two cards from one lane");
+  assert.ok(repeatedChrome.every((card) => card.accent === repeatedChrome[0].accent));
+  assert.ok(repeatedChrome.every((card) => card.edge === repeatedChrome[0].edge));
+  const distinctChrome = directiveChrome.find(
+    (card) => card.lane !== repeatedLane && card.accent !== repeatedChrome[0].accent,
+  );
+  assert.ok(distinctChrome, "the fixture exposes a different lane accent slot");
+  assert.notEqual(distinctChrome.edge, repeatedChrome[0].edge);
+  const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
+  for (const kind of ["agent-message", "directive"]) {
+    const card = console.locator(`[data-card-kind="${kind}"]`).first();
+    assert.ok((await card.locator(".message-author").innerText()).trim());
+    assert.deepEqual(
+      await card.locator(".message-actions button").evaluateAll(
+        (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
+      ),
+      expectedActions,
+      `${kind} exposes the reference speak, quote, and copy controls`,
+    );
+  }
+
+  const scroller = plane;
+  const compensationViewport = page.viewportSize();
+  await page.setViewportSize({ width: compensationViewport.width, height: 360 });
+  await scroller.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  const beforeCompensation = await scroller.evaluate((element) => {
+    return {
+      scrollTop: element.scrollTop,
+      maxRow: Number(element.dataset.maxRow),
+    };
+  });
+  assert.ok(beforeCompensation.scrollTop > 80, "the compensation probe begins in a scrolled pane");
+  const compensationMessage = [
+    "mosaic scroll compensation probe",
+    ...Array.from({ length: 72 }, (_, index) => `- exact row delta ${index + 1}`),
+  ].join("\n");
+  const compensationLane = console.locator(
+    `.team-agent[data-agent-lane="${seated[0].lane}"]`,
+  );
+  await compensationLane.getByRole("textbox").fill(compensationMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  const compensationCard = console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
+    .filter({ hasText: "mosaic scroll compensation probe" });
+  await compensationCard.waitFor({ timeout: 10_000 });
+  await page.waitForFunction((before) => {
+    const element = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+    const maxRow = Number(element?.dataset.maxRow);
+    return maxRow > before.maxRow;
+  }, beforeCompensation);
+  const afterCompensation = await scroller.evaluate((element) => {
+    return {
+      scrollTop: element.scrollTop,
+      maxRow: Number(element.dataset.maxRow),
+      module: Number(element.dataset.module),
+    };
+  });
+  assert.ok(afterCompensation.maxRow > beforeCompensation.maxRow);
+  assert.equal(
+    afterCompensation.scrollTop,
+    beforeCompensation.scrollTop
+      + (afterCompensation.maxRow - beforeCompensation.maxRow) * afterCompensation.module,
+    `incremental placement compensates by exactly the added lattice rows: ${JSON.stringify({
+      beforeCompensation,
+      afterCompensation,
+    })}`,
+  );
+  await page.setViewportSize(compensationViewport);
+  const compensationInbox = await reply(fixture, ["inbox", seated[0].lane]);
+  const compensationDirective = compensationInbox.body.lanes[0].pending.find(
+    (directive) => directive.text === compensationMessage,
+  );
+  assert.ok(compensationDirective, "the compensation probe reached the real inbox");
+  await reply(fixture, ["steer", "cancel", compensationDirective.directive]);
+  await compensationCard.waitFor({ state: "detached", timeout: 10_000 });
   await page.locator('.task-pill[data-task-stem="app"]').waitFor();
   await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
   assert.match(await page.locator('.task-pill[data-task-stem="app"]').innerText(), /\d+·\d+·\d+/);
@@ -453,7 +436,20 @@ async function assertAgentConversation(page, fixture, worktrees) {
     await outgoing.locator(".message-key").innerText(),
     inbox.body.lanes[0].pending[0].key,
   );
-  assert.match(await outgoing.locator(".message-age").innerText(), / left$/);
+  await assertQueuedRosterPip(page, console, seated[0]);
+  const age = outgoing.locator(".message-age");
+  const authoredAt = Date.parse(inbox.body.lanes[0].pending[0].authored);
+  const expectedBeforeRead = elapsedLabel(Date.now() - authoredAt);
+  const renderedAge = await age.innerText();
+  const expectedAfterRead = elapsedLabel(Date.now() - authoredAt);
+  assert.ok(
+    [expectedBeforeRead, expectedAfterRead].includes(renderedAge),
+    `the card shows authored age: ${JSON.stringify({ renderedAge, expectedBeforeRead, expectedAfterRead })}`,
+  );
+  assert.equal(
+    await age.getAttribute("title"),
+    `authored ${inbox.body.lanes[0].pending[0].authored}; expires ${inbox.body.lanes[0].pending[0].expires}`,
+  );
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
   for (const mode of ["Filters", "Metrics", "Info"]) {
@@ -461,12 +457,29 @@ async function assertAgentConversation(page, fixture, worktrees) {
     await console.locator(".team-detail-card").nth(3).waitFor();
     assert.equal(await console.locator(".team-detail-card").count(), 4, `${mode} reaches all agents`);
   }
-  await console.getByText(worktrees[0], { exact: true }).waitFor();
+  await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
-  return seated[0].lane;
+  const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
+  for (const pending of clearedInbox.body.lanes[0].pending) {
+    await reply(fixture, ["steer", "cancel", pending.directive]);
+  }
+  const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
+  await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
+  return { lane: seated[0].lane, quoteLane: seated[3].lane };
 }
+
+
+function elapsedLabel(millis) {
+  const seconds = Math.trunc(millis / 1_000);
+  if (seconds <= 0) return "now";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3_600) return `${Math.trunc(seconds / 60)}m`;
+  if (seconds < 86_400) return `${Math.trunc(seconds / 3_600)}h`;
+  return `${Math.trunc(seconds / 86_400)}d`;
+}
+
 
 async function assertFourAgentDensity(console) {
   const geometry = await console.evaluate((surface) => ({
@@ -498,9 +511,437 @@ async function assertFourAgentDensity(console) {
   }
 }
 
+async function assertMosaicLattice(page, requireBothReadPaths) {
+  await waitForMosaicReady(page);
+  const snapshot = await page.locator('[data-pane="agent-console"]').evaluate((console) => ({
+    activities: [...console.querySelectorAll(".team-activity-grid")].map((activity) => ({
+      columnCount: getComputedStyle(activity).columnCount,
+      columnWidth: getComputedStyle(activity).columnWidth,
+    })),
+    planes: [...console.querySelectorAll(".lane-mosaic-plane")].map((plane) => ({
+      trackCount: Number(plane.dataset.trackCount),
+      baseSpan: Number(plane.dataset.baseSpan),
+      tallThreshold: Number(plane.dataset.tallThreshold),
+      cards: [...plane.querySelectorAll(".mosaic-message-card")].map((card) => {
+        const box = card.getBoundingClientRect();
+        const style = getComputedStyle(card);
+        return {
+          kind: card.dataset.cardKind,
+          lane: card.dataset.agentLane,
+          creationIndex: Number(card.dataset.creationIndex),
+          track: Number(card.dataset.track),
+          span: Number(card.dataset.span),
+          base: Number(card.dataset.base),
+          row: Number(card.dataset.row),
+          rows: Number(card.dataset.rows),
+          reads: Number(card.dataset.measurementReads),
+          heights: card.dataset.measuredHeights.split(",").filter(Boolean).map(Number),
+          candidateSpans: card.dataset.candidateSpans.split(",").filter(Boolean).map(Number),
+          columnStart: Number(style.gridColumnStart),
+          columnEnd: style.gridColumnEnd,
+          rowStart: Number(style.gridRowStart),
+          rowEnd: style.gridRowEnd,
+          box: {
+            left: box.left,
+            right: box.right,
+            top: box.top,
+            bottom: box.bottom,
+          },
+        };
+      }),
+    })),
+  }));
+
+  assert.ok(snapshot.activities.length > 0, "the live activity region is mounted");
+  assert.ok(
+    snapshot.activities.every(
+      (activity) => activity.columnCount === "auto" && activity.columnWidth === "auto",
+    ),
+    "the live activity region uses no CSS multi-column flow",
+  );
+  const readPaths = new Set();
+  const kinds = new Set();
+  const placements = [];
+  for (const plane of snapshot.planes) {
+    assert.equal(plane.trackCount, 12, "the browser renders the twelve-track lattice");
+    assert.deepEqual(
+      plane.cards.map((card) => card.creationIndex),
+      plane.cards.map((_, index) => index),
+      "DOM order is the stable creation order submitted to Rust",
+    );
+    for (const card of plane.cards) {
+      const wideSpan = Math.min(plane.trackCount, plane.baseSpan * 2);
+      const wideEligible = wideSpan > plane.baseSpan && card.heights[0] >= plane.tallThreshold;
+      const expectedSpans = wideEligible ? [plane.baseSpan, wideSpan] : [plane.baseSpan];
+      assert.equal(card.reads, wideEligible ? 2 : 1, "height reads follow the bounded policy");
+      assert.equal(card.heights.length, card.reads, "every instrumented read records one height");
+      assert.deepEqual(card.candidateSpans, expectedSpans, "height alone admits the wide tier");
+      assert.ok(card.track >= 0 && card.track + card.span <= plane.trackCount);
+      assert.ok(card.rows >= 2);
+      assert.equal(card.columnStart, card.track + 1);
+      assert.equal(card.columnEnd, `span ${card.span}`);
+      assert.equal(card.rowStart, card.row);
+      assert.equal(card.rowEnd, `span ${card.rows}`);
+      readPaths.add(card.reads);
+      kinds.add(card.kind);
+      placements.push(card);
+    }
+    for (let left = 0; left < plane.cards.length; left += 1) {
+      for (let right = left + 1; right < plane.cards.length; right += 1) {
+        const one = plane.cards[left].box;
+        const two = plane.cards[right].box;
+        const separated = one.right <= two.left + 0.5 || two.right <= one.left + 0.5
+          || one.bottom <= two.top + 0.5 || two.bottom <= one.top + 0.5;
+        assert.ok(separated, `Mosaic cards ${left} and ${right} do not overlap`);
+      }
+    }
+  }
+  assert.ok(kinds.has("agent-message"), "agent-authored cards use the measured policy");
+  assert.ok(readPaths.has(1), "a short card takes exactly one DOM height read");
+  if (requireBothReadPaths) {
+    assert.ok(kinds.has("directive"), "pending directives use the measured policy");
+    assert.ok(readPaths.has(2), "a tall card takes exactly two DOM height reads");
+  }
+  return placements;
+}
+
+async function waitForMosaicReady(page) {
+  await page.waitForFunction(() => {
+    const planes = [...document.querySelectorAll(
+      '[data-pane="agent-console"] .lane-mosaic-plane',
+    )];
+    return planes.length > 0 && planes.every(
+      (plane) => plane.dataset.measurementPhase === "ready",
+    );
+  });
+}
+
+async function assertRosterPips(page, console, seated) {
+  const teamPips = console.locator(".team-light");
+  await teamPips.nth(seated.length - 1).waitFor();
+  const teamRoster = await teamPips.evaluateAll((pips) => pips.map((pip) => ({
+    lane: pip.dataset.laneLightTargetId,
+    status: pip.dataset.laneStatus,
+  })).sort((left, right) => left.lane.localeCompare(right.lane)));
+  assert.deepEqual(
+    teamRoster.map((entry) => entry.lane),
+    seated.map((member) => member.lane).sort(),
+    "the team pips are keyed by every admitted member and no decorative slot",
+  );
+  assert.ok(
+    teamRoster.every((entry) => ["running", "running-stale"].includes(entry.status)),
+    "every supervised member has a lit liveness pip",
+  );
+
+  await chooseCanvasView(page, "Flow");
+  const brandPips = page.locator(".brand-dot");
+  await brandPips.nth(seated.length - 1).waitFor();
+  const chromeRoster = await brandPips.evaluateAll((pips) => pips.map((pip) => ({
+    lane: pip.dataset.agentLane,
+    status: pip.dataset.agentStatus,
+  })).sort((left, right) => left.lane.localeCompare(right.lane)));
+  assert.deepEqual(
+    chromeRoster,
+    teamRoster,
+    "the compact chrome roster preserves the live team identities and liveness states",
+  );
+  assert.equal(
+    await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
+    0,
+    "analytic chrome keeps the layout implementation name private",
+  );
+  await chooseCanvasView(page, "Agents");
+  await console.waitFor();
+  await waitForMosaicReady(page);
+}
+
+async function assertQueuedRosterPip(page, console, member) {
+  const teamPip = console.locator(
+    `.team-light[data-lane-light-target-id="${member.lane}"]`,
+  );
+  await page.waitForFunction((lane) => (
+    document.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`)
+      ?.getAttribute("data-lane-status") === "queued"
+  ), member.lane);
+  const teamStyle = await teamPip.evaluate((pip) => {
+    const style = getComputedStyle(pip);
+    return {
+      backgroundColor: style.backgroundColor,
+      boxShadow: style.boxShadow,
+      opacity: style.opacity,
+    };
+  });
+
+  await chooseCanvasView(page, "Flow");
+  const brandPip = page.locator(`.brand-dot[data-agent-lane="${member.lane}"]`);
+  assert.equal(await brandPip.count(), 1, "the queued member retains exactly one brand pip");
+  await page.waitForFunction((lane) => (
+    document.querySelector(`.brand-dot[data-agent-lane="${lane}"]`)
+      ?.getAttribute("data-agent-status") === "queued"
+  ), member.lane);
+  assert.equal(await brandPip.getAttribute("data-agent-status"), "queued");
+  const brandStyle = await brandPip.evaluate((pip) => {
+    const style = getComputedStyle(pip);
+    return {
+      backgroundColor: style.backgroundColor,
+      boxShadow: style.boxShadow,
+      opacity: style.opacity,
+    };
+  });
+  assert.deepEqual(
+    brandStyle,
+    teamStyle,
+    "a queued live member keeps the team roster's visible warning state in the brand roster",
+  );
+  assert.equal(brandStyle.opacity, "1", "queued direction never mutes an occupied agent");
+  assert.notEqual(brandStyle.boxShadow, "none", "the queued agent remains visibly lit");
+  await chooseCanvasView(page, "Agents");
+  await console.waitFor();
+  await waitForMosaicReady(page);
+}
+
+async function assertPerTeamWatchbands(page, fixture, worktrees) {
+  const before = await reply(fixture, ["lane"]);
+  const primary = before.body.lanes.find((lane) => lane.worktree === worktrees[0]);
+  assert.ok(primary, "the primary team remains seated for watchband proof");
+  await reply(fixture, [
+    "lane", "add", worktrees[4],
+    "--life", "Drive",
+    "--vendor", "claude",
+  ]);
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  const console = page.locator('[data-pane="agent-console"]');
+  await console.getByRole("tab", { name: /^Compose/ }).first().click();
+  await console.locator(".team-surface").nth(1).waitFor({ timeout: 15_000 });
+
+  const lanes = await reply(fixture, ["lane"]);
+  const secondary = lanes.body.lanes.find((lane) => lane.worktree === worktrees[4]);
+  assert.ok(secondary, "the second team is independently seated");
+  const primarySurface = console.locator(
+    `.team-surface[data-lineage-id="${primary.lineage_id}"]`,
+  );
+  const secondarySurface = console.locator(
+    `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
+  );
+  assert.equal(await console.locator(".team-surface").count(), 2);
+  assert.equal(await console.locator(".team-speech").count(), 2);
+  assert.equal(await console.locator(".team-lifetime").count(), 2);
+  const weightedWidths = await console.locator(".team-surface").evaluateAll((surfaces) =>
+    surfaces.map((surface) => ({
+      weight: Number(surface.dataset.lineageWeight),
+      width: surface.getBoundingClientRect().width,
+    })),
+  );
+  const widthsByWeight = weightedWidths.toSorted((left, right) => left.weight - right.weight);
+  assert.deepEqual(
+    widthsByWeight.map(({ weight }) => weight),
+    [1, 4],
+    "lineage weights remain the admitted member counts",
+  );
+  assert.ok(
+    widthsByWeight[1].width > widthsByWeight[0].width,
+    "the four-agent lineage remains wider than its one-agent sibling",
+  );
+
+  const primaryLife = primarySurface.locator('.team-lifetime input[type="range"]');
+  const primarySeatLives = new Map(
+    lanes.body.lanes
+      .filter((lane) => lane.lineage_id === primary.lineage_id)
+      .map((lane) => [lane.lane, lane.life]),
+  );
+  const initialPrimaryPolicy = lanes.body.subscriptions.find(
+    (subscription) => subscription.lineage_id === primary.lineage_id,
+  )?.policy;
+  assert.ok(initialPrimaryPolicy, "the primary team has one authoritative task policy");
+  const initialPrimaryLabel = `${initialPrimaryPolicy[0].toUpperCase()}${initialPrimaryPolicy.slice(1)}`;
+  const initialPrimaryIndex = { steer: "0", drive: "1", drain: "2" }[initialPrimaryPolicy];
+  await page.evaluate((missingLineage) => {
+    const socket = window.__canvasSockets.at(-1);
+    if (!socket) throw new Error("canvas WebSocket was not captured");
+    const send = socket.send.bind(socket);
+    let intercepted = false;
+    const rewrite = (bytes) => {
+      const command = JSON.parse(new TextDecoder().decode(bytes));
+      if (!intercepted && command.kind === "lineage::configure") {
+        intercepted = true;
+        command.body.lineage_id = missingLineage;
+        return new TextEncoder().encode(JSON.stringify(command));
+      }
+      return bytes;
+    };
+    socket.send = (data) => {
+      if (typeof data === "string") {
+        const rewritten = rewrite(new TextEncoder().encode(data));
+        send(new TextDecoder().decode(rewritten));
+      } else if (data instanceof Blob) {
+        void data.arrayBuffer().then((buffer) => send(rewrite(new Uint8Array(buffer))));
+      } else {
+        send(rewrite(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
+      }
+    };
+  }, staleEpoch);
+  await primaryLife.fill("2");
+  await page.waitForFunction(
+    (lineage) => document
+      .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
+      ?.dataset.lifetimePending === "false",
+    primary.lineage_id,
+  );
+  await primarySurface
+    .getByRole("button", { name: initialPrimaryLabel, exact: true })
+    .waitFor();
+  assert.equal(await primaryLife.inputValue(), initialPrimaryIndex);
+  assert.match(await primarySurface.locator(".team-control-issue").innerText(), /lineage::missing/);
+
+  await primaryLife.fill("2");
+  await page.waitForFunction(
+    (lineage) => document
+      .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
+      ?.dataset.lifetimePending === "false",
+    primary.lineage_id,
+  );
+  await primarySurface.getByRole("button", { name: "Drain", exact: true }).waitFor();
+  const configured = await reply(fixture, ["lane"]);
+  const primaryRows = configured.body.lanes.filter(
+    (lane) => lane.lineage_id === primary.lineage_id,
+  );
+  const primarySubscription = configured.body.subscriptions.find(
+    (subscription) => subscription.lineage_id === primary.lineage_id,
+  );
+  assert.equal(primaryRows.length, 4, "the first team retains all four worktrees");
+  assert.equal(primarySubscription?.policy, "drain");
+  assert.ok(
+    primaryRows.every((lane) => lane.life === primarySeatLives.get(lane.lane)),
+    "watchband Drain never changes terminal lane life",
+  );
+  assert.ok(
+    primaryRows.every((lane) => lane.occupant && lane.disposition === "occupied"),
+    "watchband Drain changes task policy and never tears down occupants",
+  );
+  assert.equal(
+    await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
+    1,
+    "the sibling team keeps its own authoritative lifetime",
+  );
+
+  const primarySpeech = primarySurface.locator('.team-speech input[type="range"]');
+  const secondarySpeech = secondarySurface.locator('.team-speech input[type="range"]');
+  await primarySpeech.fill("0");
+  await secondarySpeech.fill("2");
+  assert.equal(await primarySpeech.inputValue(), "0");
+  assert.equal(await secondarySpeech.inputValue(), "2");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
+  await console.getByRole("tab", { name: /^Info/ }).first().click();
+  await console.getByRole("tab", { name: /^Compose/ }).first().click();
+  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a team redraw");
+  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a team redraw");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
+
+  await page.evaluate(() => { window.__speechLog = []; });
+  await primarySurface.getByLabel("Speak this message").first().click();
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog),
+    [],
+    "Quiet suppresses manual speech for only its team",
+  );
+  await secondarySurface.getByLabel("Speak this message").first().click();
+  await page.waitForFunction(() => window.__speechLog.some((row) => row.action === "speak"));
+
+  const policyMessage = "drain lifetime is task policy, not occupant teardown";
+  await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);
+  await primarySurface.getByRole("button", { name: "Drain", exact: true }).click();
+  await primarySurface
+    .locator(".mosaic-message-card")
+    .filter({ hasText: policyMessage })
+    .waitFor({ timeout: 10_000 });
+  const inbox = await reply(fixture, ["inbox", primaryRows[0].lane]);
+  assert.ok(
+    inbox.body.lanes[0].pending.some((directive) => directive.text === policyMessage),
+    "the Drain-labelled submit follows the configured team policy into real steering",
+  );
+  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a streamed refresh");
+  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a streamed refresh");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
+
+  const renderedPrimaryMembers = await primarySurface.locator(".team-agent").evaluateAll(
+    (members) => members.map((member) => member.dataset.agentLane),
+  );
+  assert.equal(renderedPrimaryMembers.length, 4, "the quote fixture has four ordered members");
+  const lifecycleLane = primaryRows.find((lane) => lane.lane === renderedPrimaryMembers[1]);
+  assert.ok(lifecycleLane, "the quote fixture resolves the card's second rendered member");
+  assert.notEqual(
+    lifecycleLane.lane,
+    renderedPrimaryMembers[0],
+    "the departed-author card is not the row-order member",
+  );
+  const departedAuthor = lifecycleLane.occupant;
+  const departedCards = primarySurface.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${lifecycleLane.lane}"]`,
+  );
+  await departedCards.first().waitFor({ timeout: 10_000 });
+  await reply(fixture, ["lane", "drain", lifecycleLane.lane]);
+  const vacantSnapshot = await reply(fixture, ["lane"]);
+  const vacant = vacantSnapshot.body.lanes.find((lane) => lane.lane === lifecycleLane.lane);
+  assert.ok(vacant, "the configured member remains durable after leaving");
+  assert.equal(vacant.disposition, "vacant");
+  assert.equal(vacant.occupant, undefined);
+  assert.equal(vacant.life, primarySeatLives.get(vacant.lane));
+  assert.equal(
+    vacantSnapshot.body.lanes.some((lane) => lane.occupant === departedAuthor),
+    false,
+    "the author of the second member's retained cards is seated in no lane",
+  );
+  await page.waitForFunction(({ lineage, lane }) => {
+    const cards = [...document.querySelectorAll(
+      `.team-surface[data-lineage-id="${lineage}"] `
+        + `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
+    )];
+    return cards.length > 0 && cards.every((card) => card.dataset.producerTargetId === lane);
+  }, { lineage: primary.lineage_id, lane: lifecycleLane.lane });
+  assert.deepEqual(
+    new Set(await departedCards.evaluateAll(
+      (cards) => cards.map((card) => card.dataset.producerTargetId),
+    )),
+    new Set([lifecycleLane.lane]),
+    "an unseated author routes every retained card to its own lane, never the first member",
+  );
+  assert.equal(
+    vacantSnapshot.body.subscriptions.find(
+      (subscription) => subscription.lineage_id === primary.lineage_id,
+    )?.policy,
+    "drain",
+  );
+  await reply(fixture, ["lane", "wake", lifecycleLane.lane]);
+  const wokenSnapshot = await reply(fixture, ["lane"]);
+  const woken = wokenSnapshot.body.lanes.find((lane) => lane.lane === lifecycleLane.lane);
+  assert.ok(woken?.occupant, "watchband Drain leaves the member eligible for a normal wake");
+  assert.equal(woken.disposition, "occupied");
+  assert.equal(woken.life, primarySeatLives.get(woken.lane));
+  await page.screenshot({
+    path: join(artifacts, "canvas-light-watchband-teams.png"),
+    fullPage: true,
+  });
+  return { lineage: primary.lineage_id, policy: "drain" };
+}
+
 async function captureReferenceViewport(page) {
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   const team = page.locator('[data-pane="agent-console"]');
+  await team.getByRole("tab", { name: /^Info/ }).click();
+  for (const name of agentNames) {
+    await team.getByText(name, { exact: true }).waitFor();
+  }
+  await team.getByText("0 pending", { exact: true }).waitFor();
+  await team.getByText("running", { exact: true }).first().waitFor();
+  await team.getByText("running-stale", { exact: true }).first().waitFor();
+  await page.screenshot({
+    path: join(artifacts, "canvas-reference-agent-details-dark.png"),
+    fullPage: false,
+  });
   await team.getByRole("tab", { name: /^Compose/ }).click();
   await team.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
   assert.equal(
@@ -509,6 +950,12 @@ async function captureReferenceViewport(page) {
     "the reference capture explicitly exercises dark mode",
   );
   await assertFourAgentDensity(team);
+  assert.equal(
+    await team.locator(".team-surface").getAttribute("data-lineage-weight"),
+    "4",
+    "the reference viewport retains the four-agent lineage weight",
+  );
+  await assertMosaicLattice(page, false);
   const pixels = await page.evaluate(() => ({
     width: innerWidth,
     height: innerHeight,
@@ -557,12 +1004,68 @@ async function assertAuthoritySurface(page, seeded) {
 }
 
 async function assertMosaicComposer(page, fixture, seeded) {
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   const team = page.locator('[data-pane="agent-console"]');
   await team.getByRole("tab", { name: /^Compose/ }).click();
   const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);
   const activity = team.locator(`.mosaic-message-card[data-agent-lane="${seeded.lane}"]`);
+  const quoteLane = page.locator(`.team-agent[data-agent-lane="${seeded.quoteLane}"]`);
+  const quoteActivity = team.locator(
+    `.mosaic-message-card[data-agent-lane="${seeded.quoteLane}"]`,
+  );
   await activity.filter({ hasText: "browser direction survives streaming" }).waitFor();
+
+  const nestedCard = quoteActivity
+    .filter({ hasText: nestedQuotePreview })
+    .getByRole("button", { name: "Quote this message" });
+  await nestedCard.click();
+  let previewBand = quoteLane
+    .locator(".composer-quote-band")
+    .filter({ hasText: nestedQuotePreview });
+  await previewBand.waitFor();
+  let previewLabel = await previewBand.locator("header span").innerText();
+  assert.equal(previewLabel, nestedQuotePreview);
+  assert.doesNotMatch(previewLabel, /[<>]/, "the producer preview contains no quote marker");
+  assert.equal(
+    await previewBand.getAttribute("title"),
+    nestedQuoteMessage,
+    "the complete nested message remains reachable from the band",
+  );
+  await nestedCard.click();
+  assert.equal(
+    await quoteLane.locator(".composer-quote-band").count(),
+    1,
+    "quoting the same message identity reveals its existing band",
+  );
+  const repeatedQuoteId = await previewBand.getByRole("textbox").getAttribute("id");
+  await page.waitForFunction(
+    (id) => document.activeElement?.id === id,
+    repeatedQuoteId,
+  );
+  assert.equal(
+    await previewBand
+      .getByRole("textbox")
+      .evaluate((textarea) => document.activeElement === textarea),
+    true,
+    "repeated quote identity focuses the existing reply",
+  );
+
+  await quoteActivity
+    .filter({ hasText: "Borrowed context has no authored preview." })
+    .getByRole("button", { name: "Quote this message" })
+    .click();
+  assert.equal(
+    await quoteLane.locator(".composer-quote-band").count(),
+    2,
+    "two distinct messages retain two simultaneous quote bands",
+  );
+  previewBand = quoteLane.locator(".composer-quote-band").first();
+  await previewBand.waitFor();
+  previewLabel = await previewBand.locator("header span").innerText();
+  assert.equal(previewLabel, "quoted message", "an absent preview has a visible placeholder");
+  assert.ok(previewLabel.trim(), "the absent-preview band is not blank");
+  assert.doesNotMatch(previewLabel, /[<>]/);
+  assert.equal(await previewBand.getAttribute("title"), entirelyQuotedMessage);
 
   await activity
     .filter({ hasText: "browser direction survives streaming" })
@@ -598,10 +1101,22 @@ async function assertMosaicComposer(page, fixture, seeded) {
     path: join(artifacts, "canvas-light-mosaic-composer.png"),
     fullPage: true,
   });
-  await team.getByRole("button", { name: "Steer", exact: true }).click();
+  await quotedComposer.getByRole("textbox").press("Control+Enter");
   await activity.filter({ hasText: "canvas quote reply" }).waitFor({
     timeout: 10_000,
   });
+  assert.equal(
+    await lane
+      .locator("textarea[data-primary-composer-target-id]")
+      .evaluate((textarea) => document.activeElement === textarea),
+    true,
+    "quote keyboard submission returns focus to that target's primary composer",
+  );
+  assert.equal(
+    await quoteLane.locator(".composer-quote-band").count(),
+    2,
+    "target keyboard submission leaves sibling target drafts unchanged",
+  );
   assert.equal(
     await activity.filter({ hasText: "canvas quote reply" }).locator(".message-body img").count(),
     2,
@@ -768,197 +1283,8 @@ async function assertSameGenerationResume(
   assert.ok(after.length > before.length, "same-generation resume appends missed facts");
 }
 
-async function routeSpeechBootstrap(page, speech) {
-  await page.route("**/bootstrap", async (route) => {
-    const response = await route.fetch();
-    const bootstrap = await response.json();
-    bootstrap.speech = speech;
-    await route.fulfill({
-      response,
-      contentType: "application/json; charset=utf-8",
-      body: JSON.stringify(bootstrap),
-    });
-  });
-}
 
-async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) {
-  await context.addInitScript((voiceNames) => {
-    window.__speechLog = [];
-    class FakeVoice {
-      constructor(name) { this.name = name; }
-    }
-    class FakeUtterance {
-      constructor(text) {
-        this.text = text;
-        this.voice = null;
-        this.rate = 1;
-        this.onend = null;
-        this.onerror = null;
-      }
-    }
-    class FakeAudio {
-      constructor(src) {
-        this.src = src;
-        this.currentTime = 0;
-        this.onended = null;
-        this.onerror = null;
-        window.__speechLog.push({ action: "audio", src });
-      }
-      play() {
-        window.__speechLog.push({ action: "play" });
-        return Promise.resolve();
-      }
-      pause() { window.__speechLog.push({ action: "pause" }); }
-    }
-    window.SpeechSynthesisVoice = FakeVoice;
-    window.SpeechSynthesisUtterance = FakeUtterance;
-    window.Audio = FakeAudio;
-    Object.defineProperty(window, "speechSynthesis", {
-      configurable: true,
-      value: {
-        cancel() { window.__speechLog.push({ action: "cancel" }); },
-        getVoices() { return voiceNames.map((name) => new FakeVoice(name)); },
-        speak(utterance) {
-          window.__speechLog.push({
-            action: "speak",
-            text: utterance.text,
-            voice: utterance.voice?.name,
-            rate: utterance.rate,
-          });
-        },
-      },
-    });
-  }, voices);
-}
-
-async function installSocketControl(context) {
-  await context.addInitScript(() => {
-    const NativeWebSocket = window.WebSocket;
-    window.__canvasSockets = [];
-    window.WebSocket = class FixtureWebSocket extends NativeWebSocket {
-      constructor(...args) {
-        super(...args);
-        window.__canvasSockets.push(this);
-      }
-    };
-  });
-}
-
-async function assertSystemSpeech(page) {
-  await chooseCanvasView(page, "Flow");
-  const button = page.locator(".speech-button");
-  await button.waitFor();
-  assert.equal(await button.getAttribute("aria-label"), "Read current canvas");
-  const before = await button.boundingBox();
-  assert.ok(before, "speech control has stable geometry");
-  await button.click();
-  await page.locator('.speech-button[data-state="playing"]').waitFor();
-  assert.equal(await button.getAttribute("aria-label"), "Stop reading");
-  const after = await button.boundingBox();
-  assert.deepEqual(after, before, "play state does not shift the speech control");
-  const spoken = await page.evaluate(() => window.__speechLog.find((row) => row.action === "speak"));
-  assert.equal(spoken.voice, "Zoe (Premium)");
-  assert.equal(spoken.rate, 1);
-  assert.match(spoken.text, /Flow/);
-  assert.match(spoken.text, /Current work/);
-  await button.click();
-  await page.locator('.speech-button[data-state="idle"]').waitFor();
-  const actions = await page.evaluate(() => window.__speechLog.map((row) => row.action));
-  assert.ok(actions.includes("cancel"), "stop cancels system speech");
-}
-
-async function assertSpeechVariants(browser, endpoint) {
-  const unavailableContext = await browser.newContext({ viewport: { width: 1024, height: 768 } });
-  await installBrowserSpeech(unavailableContext, []);
-  const unavailablePage = await unavailableContext.newPage();
-  const unavailableMonitor = monitorPage(unavailablePage);
-  await unavailablePage.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(unavailablePage, "Flow");
-  await unavailablePage.waitForSelector(".status.online");
-  await unavailablePage.locator(".speech-button").click();
-  await unavailablePage.locator('.speech-button[data-state="error"]').waitFor();
-  assert.match(await unavailablePage.locator(".speech-button").getAttribute("title"), /Zoe.*unavailable/);
-  unavailableMonitor.assertClean();
-  await unavailableContext.close();
-
-  const variants = await browser.newContext({ viewport: { width: 1024, height: 768 } });
-  await installBrowserSpeech(variants);
-
-  const disabled = await variants.newPage();
-  const disabledMonitor = monitorPage(disabled);
-  await routeSpeechBootstrap(disabled, { backend: "disabled" });
-  await disabled.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(disabled, "Flow");
-  await disabled.waitForSelector(".status.online");
-  assert.equal(await disabled.locator(".speech-button").count(), 0, "disabled hides playback");
-  disabledMonitor.assertClean();
-  await disabled.close();
-
-  const externalUnavailable = await variants.newPage();
-  const externalUnavailableMonitor = monitorPage(externalUnavailable);
-  await routeSpeechBootstrap(externalUnavailable, {
-    backend: "external",
-    content_type: "audio/wav",
-    words_per_minute: 175,
-    available: false,
-  });
-  await externalUnavailable.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(externalUnavailable, "Flow");
-  await externalUnavailable.waitForSelector(".status.online");
-  const unavailableButton = externalUnavailable.locator(".speech-button");
-  assert.equal(await unavailableButton.getAttribute("aria-label"), "Speech unavailable");
-  assert.equal(await unavailableButton.isDisabled(), true);
-  externalUnavailableMonitor.assertClean();
-  await externalUnavailable.close();
-
-  const external = await variants.newPage();
-  const externalMonitor = monitorPage(external);
-  await routeSpeechBootstrap(external, {
-    backend: "external",
-    content_type: "audio/wav",
-    words_per_minute: 175,
-    available: true,
-  });
-  let submitted;
-  await external.route("**/speech", async (route) => {
-    submitted = route.request().postDataJSON();
-    await route.fulfill({
-      status: 200,
-      contentType: "audio/wav",
-      body: Buffer.from("fixture-audio"),
-    });
-  });
-  await external.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(external, "Flow");
-  await external.waitForSelector(".status.online");
-  const externalButton = external.locator(".speech-button");
-  await externalButton.click();
-  await external.locator('.speech-button[data-state="playing"]').waitFor();
-  assert.deepEqual(Object.keys(submitted), ["text"]);
-  assert.match(submitted.text, /Flow/);
-  await externalButton.click();
-  await external.locator('.speech-button[data-state="idle"]').waitFor();
-  const externalActions = await external.evaluate(() => window.__speechLog.map((row) => row.action));
-  assert.ok(externalActions.includes("play"));
-  assert.ok(externalActions.includes("pause"));
-  externalMonitor.assertClean();
-  await external.close();
-
-  const malformed = await variants.newPage();
-  const malformedMonitor = monitorPage(malformed);
-  await routeSpeechBootstrap(malformed, { backend: "system", voice: "Zoe (Premium)" });
-  await malformed.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(malformed, "Chronology");
-  await malformed.waitForSelector(".status.offline");
-  assert.match(await malformed.locator(".status-copy").innerText(), /bootstrap response was invalid/);
-  assert.equal(await malformed.locator(".speech-button").count(), 0);
-  assert.match(await malformed.locator(".event.fault").innerText(), /bootstrap response was invalid/);
-  malformedMonitor.assertClean();
-  await malformed.close();
-
-  await variants.close();
-}
-
+await buildResident();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
 const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
 await mkdir(artifacts, { recursive: true });
@@ -970,6 +1296,7 @@ try {
   resident = await startResident(fixture);
   const seeded = await seedAuthority(fixture);
   browser = await chromium.launch({ headless: true });
+  await assertLineageLifeIsolation(browser);
 
   const light = await browser.newContext({
     colorScheme: "light",
@@ -982,7 +1309,7 @@ try {
   lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(lightPage, "light");
-  seeded.lane = await assertAgentConversation(lightPage, fixture, worktrees);
+  Object.assign(seeded, await assertAgentConversation(lightPage, fixture, worktrees));
   const reference = await browser.newContext({
     colorScheme: "dark",
     viewport: { width: 1000, height: 568 },
@@ -1007,6 +1334,15 @@ try {
   await chooseCanvasView(lightPage, "Chronology");
   await lightPage.getByText(/Note appended to/).waitFor({ timeout: 10_000 });
   await chooseCanvasView(lightPage, "Flow");
+  await lightPage.getByLabel("Task").fill("not a handle");
+  await lightPage.getByLabel("Observation").fill("the callback must explain this refusal");
+  const addNote = lightPage.getByRole("button", { name: "Add note" });
+  assert.equal(await addNote.isEnabled(), true, "nonempty malformed input reaches the callback");
+  await addNote.click();
+  const noteRefusal = lightPage.getByRole("alert");
+  await noteRefusal.waitFor();
+  assert.match(await noteRefusal.innerText(), /Task must be .*both parts alphanumeric/);
+  assert.match(await noteRefusal.innerText(), /"not a handle"/);
   const existingTasks = await lightPage.locator("#note-tasks option").evaluateAll(
     (options) => options.map((option) => option.value),
   );
@@ -1016,7 +1352,8 @@ try {
   assert.ok(absentTask, "an absent canonical task handle is available");
   await lightPage.getByLabel("Task").fill(absentTask);
   await lightPage.getByLabel("Observation").fill("this task does not exist");
-  await lightPage.getByRole("button", { name: "Add note" }).click();
+  await addNote.click();
+  await noteRefusal.waitFor({ state: "detached" });
   await chooseCanvasView(lightPage, "Chronology");
   await lightPage.locator(".event.refusal").waitFor({ timeout: 10_000 });
   const beforeReconnect = await journalExtent(fixture);
@@ -1045,6 +1382,7 @@ try {
     resident.discovery.epoch,
     beforeReconnect,
   );
+  const configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
   lightMonitor.assertClean();
   await dark.close();
 
@@ -1065,6 +1403,14 @@ try {
     resident.discovery.capability,
     firstCapability,
     "restart publishes a new operator capability",
+  );
+  const restartedLanes = await reply(fixture, ["lane"]);
+  assert.equal(
+    restartedLanes.body.subscriptions.find(
+      (subscription) => subscription.lineage_id === configuredPolicy.lineage,
+    )?.policy,
+    configuredPolicy.policy,
+    "restart preserves the configured task policy instead of deriving it from lane life",
   );
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(lightPage, "Chronology");
@@ -1098,3 +1444,4 @@ try {
   await rm(fixture, { recursive: true, force: true });
   await rm(linkedRoot, { recursive: true, force: true });
 }
+if (coverageReceiptPath) await writeFile(coverageReceiptPath, coverageReceipt);

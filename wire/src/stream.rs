@@ -37,6 +37,15 @@ pub struct MessageLocus {
 /// This is a Canvas view over tape evidence, not an authoritative fact. The
 /// lane says where the transcript belongs, the author is the exact occupant
 /// that emitted it, and the locus lets consumers deduplicate reconnects.
+///
+/// Prose outlives the seat that produced it, so [`Self::author`] names an
+/// occupant that need not still be seated anywhere, and a consumer routing a
+/// reply may not assume otherwise. When exactly one current member is occupied
+/// by the author, a reply follows that member in whichever lane it now occupies.
+/// With zero matches the reply belongs to [`Self::lane`], the lane this message
+/// was carried in; multiple matches are ambiguous and resolve there as well.
+/// Neither case may select another member by row order, so no unrelated occupant
+/// is handed direction it did not earn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentMessage {
@@ -300,13 +309,17 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
             .expect("validated lane::seated decodes through its registered DTO");
     let crate::body::LaneSeated {
         lane,
+        lineage_id,
         capability: _,
+        name,
         worktree,
         life,
         vendor,
     } = durable;
     let visible = StreamLaneSeated {
         lane,
+        lineage_id,
+        name,
         worktree,
         life,
         vendor,
@@ -357,6 +370,13 @@ impl<'de> Deserialize<'de> for StreamFactBody {
 #[serde(deny_unknown_fields)]
 struct StreamLaneSeated {
     lane: CanonicalUuid,
+    lineage_id: CanonicalUuid,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    name: Option<String>,
     worktree: String,
     life: String,
     vendor: Name,

@@ -9,12 +9,23 @@ use super::{
     BatteryInputs, CompiledArm, inline_evidence,
 };
 use crate::GateId;
-use crate::core::{ActorCapture, ClaimCapture, CoreSource, acquire_core, evaluate_core};
-use crate::hygiene::{HygieneConfiguration, HygieneSource, acquire_hygiene};
+use crate::core::{
+    ActorCapture, CORE_GATE_IDS, ClaimCapture, CoreSource, acquire_core, acquire_core_arm,
+    evaluate_core, evaluate_core_arm,
+};
+use crate::hygiene::{
+    HYGIENE_ARMS, HygieneConfiguration, HygieneSource, acquire_hygiene, acquire_hygiene_arm,
+};
 use crate::input::Contract;
-use crate::metrics::{BaselineCapture, MetricSource, acquire_metrics_with_bounds};
+use crate::metrics::{
+    BaselineCapture, MetricSource, STRUCTURAL_ARMS, acquire_metric_arm_with_bounds,
+    acquire_metrics_with_bounds,
+};
 use crate::state::{BoundDecision, LatchEntry};
-use crate::toolchain::{RimCapture, ToolchainSource, acquire_toolchain, measure_toolchain};
+use crate::toolchain::{
+    RimCapture, TASTE_EXTENSIONS, TOOLCHAIN_ARMS, ToolchainSource, acquire_toolchain,
+    acquire_toolchain_arm, environment_baseline_suffixes, measure_toolchain, measure_toolchain_arm,
+};
 use crate::tree::{SelectedTree, Selector};
 
 const FAMILY_COUNT: usize = 4;
@@ -29,8 +40,10 @@ pub enum RepositoryExecutionEvent {
         gate_id: GateId,
         family: ArmFamily,
     },
-    /// The executor invoked one complete family acquisition.
+    /// The executor crossed one family acquisition boundary.
     FamilyInvoked { family: ArmFamily },
+    /// One family began the named arm's actual analysis.
+    AnalysisInvoked { gate_id: GateId, family: ArmFamily },
 }
 
 enum FamilyExecution {
@@ -40,26 +53,29 @@ enum FamilyExecution {
 
 /// One capture-owning production implementation of [`BatteryExecutor`].
 ///
-/// A family is acquired when its first arm is requested. Its complete result
-/// set or refusal is cached, so the remaining canonical positions only project
-/// family-owned evidence and cannot run the family again.
+/// A family is projected when its first arm is requested. A complete capture
+/// caches the family's complete result set or refusal; a selected capture
+/// caches only the named result. Either way, no requested analysis runs twice.
 ///
-/// The core and metrics families are the two exceptions, and are acquired in
-/// full at capture. Two core arms observe the live repository the tree was
-/// materialized from, so they can only be taken in the same moment the source
-/// is captured: an acquisition deferred to first request would read an index, a
-/// `MERGE_HEAD`, or a worktree that moved after the capture the report names.
+/// The core and metrics families are the two exceptions, and are acquired at
+/// capture. A complete run acquires each complete family; a selected run
+/// acquires only the named arm. Two core arms observe the live repository the
+/// tree was materialized from, so they can only be taken in the same moment the
+/// source is captured: an acquisition deferred to first request would read an
+/// index, a `MERGE_HEAD`, or a worktree that moved after the capture the report
+/// names.
 /// Metrics are acquired immediately after that observation because their
 /// file-shape and routine-complexity rows decide elastic bounds which must be
 /// present in the immutable run context before any arm executes. Each complete
 /// result or refusal is retained and handed over unchanged when its first arm
 /// is requested.
 ///
-/// The committed magic-number baselines are read in that same moment and for
-/// the same reason, even though the arm that reads them is not a core arm. They
-/// are the live repository's `HEAD`, and `HEAD` moves: a read deferred to first
-/// request would compare part of the selection against one commit and the rest
-/// against another, and the report would name neither.
+/// The committed comparison and merge-authorship baselines are read in that
+/// same moment and for the same reason, even though some arms that read them
+/// are not core arms. They are the live repository's `HEAD` and pending merge
+/// parents, and those move: a read deferred to first request would compare part
+/// of the selection against one ancestry and the rest against another, and the
+/// report would name neither.
 ///
 /// The acting actor and the latch inventory are handed directly from the core
 /// capture to the structural acquisition. That keeps both families deciding
@@ -68,13 +84,15 @@ pub struct RepositoryExecutor<'trace> {
     tree: SelectedTree,
     contract: Contract,
     source: Digest,
-    core: Result<Vec<ArmEvidence>, String>,
-    metrics: Result<Vec<ArmEvidence>, String>,
+    core: Option<Result<Vec<ArmEvidence>, String>>,
+    metrics: Option<Result<Vec<ArmEvidence>, String>>,
+    baselines: BaselineCapture,
     bounds: Vec<BoundDecision>,
     rim: RimCapture,
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
     families: [Option<FamilyExecution>; FAMILY_COUNT],
+    selected: Option<GateId>,
     trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
 }
 
@@ -119,7 +137,8 @@ impl<'trace> RepositoryExecutor<'trace> {
         rim: RimCapture,
         hygiene: HygieneConfiguration,
         latches: &[LatchEntry],
-        trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
+        selected: Option<GateId>,
+        mut trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
     ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
         let tree = selector.materialize(&repository).map_err(|error| {
@@ -129,29 +148,76 @@ impl<'trace> RepositoryExecutor<'trace> {
             BatteryError::new(format!("cannot load captured battery contract: {error}"))
         })?;
         // One capture, taken once: the digest every arm is labelled with, the
-        // whole core family and the bounds it decided, and the committed
-        // baselines the magic-number delta is measured against and the
-        // file-shape arm reads a merge's authorship from are all read here, and
-        // nothing below this block can reach the live repository again. Both
-        // classes are captured together because one capture cannot answer for a
-        // suffix it never walked, and a second capture could name a different
-        // commit than the one this report is labelled with.
+        // requested core acquisition and the bounds it decided, and the
+        // committed baselines every delta or merge-authorship decision reads
+        // are all read here, and nothing below this block can reach the live
+        // repository again. Suffix classes cover arms with class-bound jurisdictions;
+        // exact rim changes cover every-change arms such as local-paths, whose
+        // inputs may be extensionless. Both are retained together because a
+        // second capture could name a different commit than this report does.
         let (source, core, mut bounds, baselines) = {
-            let captured = CoreSource::capture(&tree, &contract, claim, actor.clone(), latches)
-                .map_err(|error| {
-                    BatteryError::new(format!("cannot identify battery source: {error}"))
-                })?;
-            let (core, bounds) = core_family(&captured, &contract);
+            let captured = match selected {
+                Some(gate_id) => CoreSource::capture_arm(
+                    &tree,
+                    &contract,
+                    claim,
+                    actor.clone(),
+                    latches,
+                    gate_id,
+                ),
+                None => CoreSource::capture(&tree, &contract, claim, actor.clone(), latches),
+            }
+            .map_err(|error| {
+                BatteryError::new(format!("cannot identify battery source: {error}"))
+            })?;
+            let (core, bounds) = match selected {
+                None => {
+                    record_capture_analyses(&mut trace, ArmFamily::Core, CORE_GATE_IDS);
+                    let (evidence, bounds) = core_family(&captured, &contract);
+                    (Some(evidence), bounds)
+                }
+                Some(gate_id) if CORE_GATE_IDS.contains(&gate_id) => {
+                    record_capture_analyses(&mut trace, ArmFamily::Core, [gate_id]);
+                    let (evidence, bounds) = core_arm(&captured, &contract, gate_id);
+                    (Some(evidence), bounds)
+                }
+                Some(_) => (None, Vec::new()),
+            };
             let classes = contract.rule_policy().document().file_classes();
             let mut selected = classes.magic().to_vec();
             selected.extend(classes.file_shape().iter().cloned());
+            selected.extend(classes.complexity().iter().cloned());
+            selected.extend(environment_baseline_suffixes());
+            selected.extend(
+                TASTE_EXTENSIONS
+                    .iter()
+                    .map(|extension| format!(".{extension}")),
+            );
             selected.sort();
             selected.dedup();
-            let baselines = BaselineCapture::capture(&repository, &selected);
+            let baselines =
+                BaselineCapture::capture_with_paths(&repository, &selected, rim.changes());
             (captured.digest().clone(), core, bounds, baselines)
         };
-        let (metrics, metric_bounds) =
-            metrics_family(&tree, &contract, &baselines, &actor, latches);
+        let (metrics, metric_bounds) = match selected {
+            None => {
+                record_capture_analyses(
+                    &mut trace,
+                    ArmFamily::Metrics,
+                    STRUCTURAL_ARMS.map(|arm| arm.id()),
+                );
+                let (evidence, bounds) =
+                    metrics_family(&tree, &contract, &baselines, &actor, latches);
+                (Some(evidence), bounds)
+            }
+            Some(gate_id) if STRUCTURAL_ARMS.iter().any(|arm| arm.id() == gate_id) => {
+                record_capture_analyses(&mut trace, ArmFamily::Metrics, [gate_id]);
+                let (evidence, bounds) =
+                    metrics_arm(&tree, &contract, &baselines, &actor, latches, gate_id);
+                (Some(evidence), bounds)
+            }
+            Some(_) => (None, Vec::new()),
+        };
         bounds.extend(metric_bounds);
         Ok(Self {
             tree,
@@ -159,11 +225,13 @@ impl<'trace> RepositoryExecutor<'trace> {
             source,
             core,
             metrics,
+            baselines,
             bounds,
             rim,
             hygiene,
             context: None,
             families: std::array::from_fn(|_| None),
+            selected,
             trace,
         })
     }
@@ -231,15 +299,19 @@ impl<'trace> RepositoryExecutor<'trace> {
         self.families[index] = Some(execution);
     }
 
-    fn acquire_family(&self, family: ArmFamily) -> FamilyExecution {
+    fn acquire_family(&mut self, family: ArmFamily) -> FamilyExecution {
         let result = match family {
             // Not acquired here: this hands over the result the capture already
             // took, so the first core arm cannot start a second observation.
-            ArmFamily::Core => self.core.clone(),
+            ArmFamily::Core => self.core.clone().unwrap_or_else(|| {
+                Err("selected capture did not acquire the core family".to_owned())
+            }),
             ArmFamily::Toolchain => self.acquire_toolchain_family(),
             // Like core, this hands over the one result captured before the run
             // context froze its exact bound decisions.
-            ArmFamily::Metrics => self.metrics.clone(),
+            ArmFamily::Metrics => self.metrics.clone().unwrap_or_else(|| {
+                Err("selected capture did not acquire the metrics family".to_owned())
+            }),
             ArmFamily::Hygiene => self.acquire_hygiene_family(),
         };
         match result {
@@ -248,8 +320,25 @@ impl<'trace> RepositoryExecutor<'trace> {
         }
     }
 
-    fn acquire_toolchain_family(&self) -> Result<Vec<ArmEvidence>, String> {
-        let source = ToolchainSource::capture(&self.tree, self.rim.clone());
+    fn acquire_toolchain_family(&mut self) -> Result<Vec<ArmEvidence>, String> {
+        let analyses = self.selected.map_or_else(
+            || {
+                TOOLCHAIN_ARMS
+                    .iter()
+                    .map(|arm| arm.id())
+                    .collect::<Vec<_>>()
+            },
+            |gate_id| vec![gate_id],
+        );
+        self.record_analyses(ArmFamily::Toolchain, analyses);
+        let source =
+            ToolchainSource::capture_with_baselines(&self.tree, self.rim.clone(), &self.baselines);
+        if let Some(gate_id) = self.selected {
+            let observation = acquire_toolchain_arm(&source, &self.contract, gate_id)
+                .map_err(|error| error.to_string())?;
+            let report = measure_toolchain_arm(observation).map_err(|error| error.to_string())?;
+            return Ok(vec![ArmEvidence::Toolchain { report }]);
+        }
         let report = measure_toolchain(acquire_toolchain(&source, &self.contract))
             .map_err(|error| error.to_string())?;
         Ok(report
@@ -259,15 +348,31 @@ impl<'trace> RepositoryExecutor<'trace> {
             .collect())
     }
 
-    fn acquire_hygiene_family(&self) -> Result<Vec<ArmEvidence>, String> {
+    fn acquire_hygiene_family(&mut self) -> Result<Vec<ArmEvidence>, String> {
+        let analyses = self.selected.map_or_else(
+            || HYGIENE_ARMS.iter().map(|arm| arm.id()).collect::<Vec<_>>(),
+            |gate_id| vec![gate_id],
+        );
+        self.record_analyses(ArmFamily::Hygiene, analyses);
         let source = HygieneSource::capture(&self.tree, &self.contract)
             .map_err(|error| error.to_string())?;
+        if let Some(gate_id) = self.selected {
+            let report = acquire_hygiene_arm(&source, &self.hygiene, gate_id)
+                .map_err(|error| error.to_string())?;
+            return Ok(vec![ArmEvidence::Hygiene { report }]);
+        }
         let report = acquire_hygiene(&source, &self.hygiene).map_err(|error| error.to_string())?;
         Ok(report
             .arms
             .into_iter()
             .map(|report| ArmEvidence::Hygiene { report })
             .collect())
+    }
+
+    fn record_analyses(&mut self, family: ArmFamily, gate_ids: impl IntoIterator<Item = GateId>) {
+        for gate_id in gate_ids {
+            self.record(RepositoryExecutionEvent::AnalysisInvoked { gate_id, family });
+        }
     }
 
     fn project(&self, arm: &CompiledArm) -> Result<ArmEvidence, BatteryError> {
@@ -344,6 +449,26 @@ fn metrics_family(
     (arms, bounds)
 }
 
+/// Acquire one structural arm and retain only the bounds it decided.
+fn metrics_arm(
+    tree: &SelectedTree,
+    contract: &Contract,
+    baselines: &BaselineCapture,
+    actor: &ActorCapture,
+    latches: &[LatchEntry],
+    gate_id: GateId,
+) -> (Result<Vec<ArmEvidence>, String>, Vec<BoundDecision>) {
+    let source = match MetricSource::capture(tree, contract, baselines, actor, latches) {
+        Ok(source) => source,
+        Err(error) => return (Err(error.to_string()), Vec::new()),
+    };
+    let (evidence, bounds) = acquire_metric_arm_with_bounds(&source, gate_id).into_parts();
+    let arm = evidence
+        .map(|report| vec![ArmEvidence::Metrics { report }])
+        .map_err(|error| error.to_string());
+    (arm, bounds)
+}
+
 /// Acquire and judge the complete core family from one captured source.
 ///
 /// Taken while the capture is still in hand rather than from anything the
@@ -372,6 +497,32 @@ fn core_family(
         .map(|report| ArmEvidence::Core { report })
         .collect();
     (Ok(arms), bounds)
+}
+
+/// Acquire and judge exactly one core arm from the capture made for it.
+fn core_arm(
+    source: &CoreSource<'_>,
+    contract: &Contract,
+    gate_id: GateId,
+) -> (Result<Vec<ArmEvidence>, String>, Vec<BoundDecision>) {
+    let (input, bounds) = match acquire_core_arm(source, contract, gate_id) {
+        Ok(acquisition) => acquisition,
+        Err(error) => return (Err(error.to_string()), Vec::new()),
+    };
+    let report = evaluate_core_arm(&input);
+    (Ok(vec![ArmEvidence::Core { report }]), bounds)
+}
+
+fn record_capture_analyses(
+    trace: &mut Option<&mut dyn FnMut(RepositoryExecutionEvent)>,
+    family: ArmFamily,
+    gate_ids: impl IntoIterator<Item = GateId>,
+) {
+    if let Some(trace) = trace {
+        for gate_id in gate_ids {
+            trace(RepositoryExecutionEvent::AnalysisInvoked { gate_id, family });
+        }
+    }
 }
 
 const fn family_index(family: ArmFamily) -> usize {

@@ -138,6 +138,8 @@ fn fixture(path: Option<&Path>) -> Journal {
         state: ResidentState::Seated,
         lanes: vec![LaneResidency {
             lane: uuid(20),
+            lineage_id: uuid(20),
+            name: None,
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
@@ -146,6 +148,12 @@ fn fixture(path: Option<&Path>) -> Journal {
             capabilities: Vec::new(),
             session: None,
             disposition: "occupied".to_owned(),
+        }],
+        subscriptions: vec![wire::LineageSubscription {
+            lineage_id: uuid(20),
+            policy: wire::intent::LineageLife::Drain,
+            manual_projects: Vec::new(),
+            auto_projects: Vec::new(),
         }],
     });
     journal.apply(write).expect("seed authority");

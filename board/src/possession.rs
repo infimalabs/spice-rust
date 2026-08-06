@@ -372,6 +372,7 @@ fn build_write(request: FreeRequest, observed: Observation) -> Result<JournalWri
             intent::ClaimAnswer {
                 task,
                 holder: request.actor,
+                warnings: Vec::new(),
             },
         )
         .map_err(FreeError::Build)?;
@@ -528,6 +529,8 @@ mod tests {
             state: ResidentState::Seated,
             lanes: vec![LaneResidency {
                 lane: uuid(20),
+                lineage_id: uuid(20),
+                name: None,
                 worktree: "/worktrees/lane-a".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
@@ -536,6 +539,12 @@ mod tests {
                 capabilities: Vec::new(),
                 session: None,
                 disposition: "occupied".to_owned(),
+            }],
+            subscriptions: vec![wire::LineageSubscription {
+                lineage_id: uuid(20),
+                policy: wire::intent::LineageLife::Drain,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
             }],
         });
         journal.apply(write).expect("seed");

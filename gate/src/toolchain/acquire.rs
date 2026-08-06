@@ -43,11 +43,12 @@ use wire::{Digest, Domain};
 use super::analyze::{self, Analysis};
 use super::{
     ArmObservation, ArmOutcome, ProbeFailure, TOOLCHAIN_ARMS, ToolEvidence, ToolRequirement,
-    ToolchainDeclaration, contracted_version,
+    ToolchainDeclaration, ToolchainError, contracted_version,
 };
 use crate::GateId;
 use crate::input::Contract;
 use crate::measure::Bounds;
+use crate::metrics::BaselineCapture;
 use crate::tree::SelectedTree;
 
 type ProgramReader = fn(&Path) -> std::io::Result<Vec<u8>>;
@@ -161,16 +162,37 @@ pub struct ToolchainSource<'a> {
     root: &'a Path,
     repository: &'a Path,
     rim: RimCapture,
+    baselines: Option<&'a BaselineCapture>,
 }
 
 impl<'a> ToolchainSource<'a> {
     /// Capture one selected tree beside the rim that will supply its programs.
+    ///
+    /// Standalone toolchain acquisition does not infer ancestry from the live
+    /// repository after the tree was selected. The production battery supplies
+    /// ancestry from its atomic repository capture instead.
     #[must_use]
     pub fn capture(tree: &'a SelectedTree, rim: RimCapture) -> Self {
         Self {
             root: tree.root(),
             repository: tree.repository(),
             rim,
+            baselines: None,
+        }
+    }
+
+    /// Capture one selected tree with the parents that can prove merge authorship.
+    #[must_use]
+    pub(crate) fn capture_with_baselines(
+        tree: &'a SelectedTree,
+        rim: RimCapture,
+        baselines: &'a BaselineCapture,
+    ) -> Self {
+        Self {
+            root: tree.root(),
+            repository: tree.repository(),
+            rim,
+            baselines: Some(baselines),
         }
     }
 
@@ -197,6 +219,23 @@ impl<'a> ToolchainSource<'a> {
     pub fn changes(&self) -> &[String] {
         self.rim.changes()
     }
+
+    /// Whether this pending merge inherited one selected path verbatim.
+    fn merge_inherits(&self, path: &str) -> bool {
+        let Some(baselines) = self.baselines else {
+            return false;
+        };
+        fs::read(self.root.join(path)).is_ok_and(|bytes| baselines.merge_inherits(path, &bytes))
+    }
+
+    /// Changed paths authored by this pending commit rather than a merge parent.
+    fn chargeable_changes(&self) -> Vec<String> {
+        self.changes()
+            .iter()
+            .filter(|path| !self.merge_inherits(path))
+            .cloned()
+            .collect()
+    }
 }
 
 /// Acquire one observation for every declared toolchain arm.
@@ -217,6 +256,23 @@ pub fn acquire_toolchain(source: &ToolchainSource<'_>, contract: &Contract) -> V
             )
         })
         .collect()
+}
+
+pub(crate) fn acquire_toolchain_arm(
+    source: &ToolchainSource<'_>,
+    contract: &Contract,
+    gate_id: GateId,
+) -> Result<ArmObservation, ToolchainError> {
+    let declaration = TOOLCHAIN_ARMS
+        .into_iter()
+        .find(|declaration| declaration.id == gate_id)
+        .ok_or(ToolchainError::ForeignGate(gate_id))?;
+    Ok(observe(
+        declaration,
+        source,
+        contract.bounds(),
+        contract.environment_names(),
+    ))
 }
 
 fn observe(
@@ -312,13 +368,24 @@ fn examine(
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
-            GateId::LocalPaths => analyze::local_paths(declaration, source.root, source.changes()),
-            GateId::Taste => analyze::taste(declaration, source.root, source.changes()),
+            GateId::LocalPaths => {
+                let changes = source.chargeable_changes();
+                analyze::local_paths(declaration, source.root, &changes)
+            }
+            GateId::Taste => {
+                let changes = source.chargeable_changes();
+                analyze::taste(declaration, source.root, &changes)
+            }
             GateId::JavascriptUnused => analyze::javascript_unused(declaration, source.root),
             GateId::CsharpUnusedCandidates => analyze::csharp_unused(declaration, source.root),
-            GateId::EnvPolicy => analyze::env_policy(declaration, source.root, source.changes()),
+            GateId::EnvPolicy => {
+                let changes = source.chargeable_changes();
+                analyze::env_policy(declaration, source.root, &changes)
+            }
             GateId::EnvNameLedger => {
-                analyze::env_name_ledger(declaration, source.root, environment_names)
+                analyze::env_name_ledger(declaration, source.root, environment_names, |path| {
+                    !source.merge_inherits(path)
+                })
             }
             id => Analysis::terminal(
                 ArmOutcome::ParseFailure,

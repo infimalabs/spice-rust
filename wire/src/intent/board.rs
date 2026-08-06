@@ -185,6 +185,18 @@ pub struct BoardTask {
     pub lease: Option<Positioned<crate::LeaseHead>>,
 }
 
+/// Server-resolved public task route metadata for one board snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardProjectPolicy {
+    /// Public project roots admitted by the resident, in lexical order.
+    pub public_stems: Vec<String>,
+    /// Fewest dotted segments admitted for a public project.
+    pub public_min_depth: u64,
+    /// Most dotted segments admitted for a public project.
+    pub public_max_depth: u64,
+}
+
 impl BoardTask {
     /// Project authoritative heads into one actor-facing task row.
     #[must_use]
@@ -253,6 +265,8 @@ pub struct BoardAnswer {
     pub cursor: crate::Seq,
     /// Principal derived from the capability that requested this snapshot.
     pub principal: Actor,
+    /// Public project route captured by the authority that validated the tasks.
+    pub project_policy: BoardProjectPolicy,
     /// Complete current task evidence bundles in ascending handle order.
     pub tasks: Vec<BoardTask>,
     /// Current resident and lane head used by possession witnesses.

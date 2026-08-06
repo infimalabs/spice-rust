@@ -209,14 +209,22 @@ pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
 
 pub(crate) struct CanvasBinding {
     listen: SocketAddr,
-    access: canvas::axum::Access,
+    access: CanvasAccess,
+}
+
+struct CanvasAccess {
+    policy: canvas::axum::Access,
+    token: Option<String>,
 }
 
 impl CanvasBinding {
     pub(crate) fn local(listen: SocketAddr) -> Self {
         Self {
             listen,
-            access: canvas::axum::Access::local(),
+            access: CanvasAccess {
+                policy: canvas::axum::Access::local(),
+                token: None,
+            },
         }
     }
 }
@@ -271,7 +279,7 @@ fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
 fn requested_access(
     leaf: &clap::ArgMatches,
     listen: SocketAddr,
-) -> CommandResult<canvas::axum::Access> {
+) -> CommandResult<CanvasAccess> {
     let token = leaf.get_one::<String>("auth-token").cloned();
     if let Some(token) = token.as_deref()
         && !auth_token_is_valid(token)
@@ -299,7 +307,10 @@ fn requested_access(
             "add --auth-token TOKEN and open the remote URL with #TOKEN",
         ));
     }
-    Ok(token.map_or_else(canvas::axum::Access::local, canvas::axum::Access::authenticated))
+    let policy = token.as_ref().map_or_else(canvas::axum::Access::local, |token| {
+        canvas::axum::Access::authenticated(token.clone())
+    });
+    Ok(CanvasAccess { policy, token })
 }
 
 fn auth_token_is_valid(token: &str) -> bool {
@@ -533,6 +544,79 @@ struct StartupCommit {
     last: u64,
 }
 
+/// Preserve current typed subscriptions or migrate one legacy all-lane head.
+///
+/// Legacy heads are recognizable because their subscription table is wholly
+/// absent and therefore decodes empty. Once any typed row exists, the table is
+/// current and must match the lane lineages exactly; partial or duplicate
+/// authority is refused instead of repaired through a second path.
+pub(super) fn startup_subscriptions(
+    lanes: &[wire::LaneResidency],
+    stored: Vec<wire::LineageSubscription>,
+) -> CommandResult<Vec<wire::LineageSubscription>> {
+    let lineage_ids = lanes
+        .iter()
+        .map(|row| row.lineage_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    if stored.is_empty() {
+        return lineage_ids
+            .into_iter()
+            .map(|lineage_id| {
+                let row = lanes
+                    .iter()
+                    .find(|row| row.lineage_id == lineage_id)
+                    .expect("a collected lineage has one lane row");
+                if lanes
+                    .iter()
+                    .filter(|candidate| candidate.lineage_id == lineage_id)
+                    .any(|candidate| candidate.life != row.life)
+                {
+                    return Err(store_fault(
+                        "lineage::subscription-ambiguous",
+                        concat!(
+                            "a legacy lineage has mixed lane lives and no authoritative ",
+                            "task-subscription policy"
+                        ),
+                    ));
+                }
+                let policy = wire::intent::LineageLife::from_wire(&row.life).ok_or_else(|| {
+                    store_fault(
+                        "lineage::subscription-invalid",
+                        "a legacy lineage lane has no closed task-subscription policy",
+                    )
+                })?;
+                Ok(wire::LineageSubscription {
+                    lineage_id,
+                    policy,
+                    manual_projects: Vec::new(),
+                    auto_projects: Vec::new(),
+                })
+            })
+            .collect();
+    }
+
+    let mut indexed = std::collections::BTreeMap::new();
+    for mut subscription in stored {
+        subscription.auto_projects.clear();
+        if indexed
+            .insert(subscription.lineage_id, subscription)
+            .is_some()
+        {
+            return Err(store_fault(
+                "lineage::subscription-ambiguous",
+                "one lineage has more than one durable task-subscription policy",
+            ));
+        }
+    }
+    if indexed.keys().copied().collect::<std::collections::BTreeSet<_>>() != lineage_ids {
+        return Err(store_fault(
+            "lineage::subscription-misaligned",
+            "the durable task-subscription table does not match the resident lineages",
+        ));
+    }
+    Ok(indexed.into_values().collect())
+}
+
 fn commit_startup(
     bus: &Bus,
     repository: &Repository,
@@ -554,11 +638,18 @@ fn commit_startup_with<F>(
 where
     F: FnOnce(),
 {
-    let lanes = bus
+    let (lanes, subscriptions) = bus
         .residency_head()
         .map_err(|error| store_fault("resident::head-unreadable", &error.to_string()))?
-        .map(|head| head.into_body().lanes)
-        .unwrap_or_default();
+        .map_or_else(
+            || Ok((Vec::new(), Vec::new())),
+            |head| {
+                let head = head.into_body();
+                let subscriptions =
+                    startup_subscriptions(&head.lanes, head.subscriptions)?;
+                Ok((head.lanes, subscriptions))
+            },
+        )?;
     let mut first = None;
     let mut cause = FactCause::Root;
     if let Some(migration) = migration {
@@ -630,6 +721,7 @@ where
         epoch,
         state: ResidentState::Seated,
         lanes,
+        subscriptions,
     });
     let committed = commit(bus, write)?;
     Ok(StartupCommit {
@@ -682,9 +774,10 @@ async fn run_surface(
         progress,
         endpoint,
     } = launch;
-    let listen = binding.listen;
+    let CanvasBinding { listen, access } = binding;
+    let CanvasAccess { policy, token } = access;
     let (server, control) = canvas::axum::Server::bind_streaming(
-        canvas::axum::Binding::new(listen, binding.access),
+        canvas::axum::Binding::new(listen, policy),
         epoch,
         capabilities.clone(),
         app,
@@ -727,6 +820,7 @@ async fn run_surface(
     let _ = writeln!(progress, "canvas app source: {app_description}");
     announce_canvas(
         &paths.canvas,
+        token.as_deref(),
         open,
         || {},
         crate::command_client::system_browser,
@@ -762,6 +856,7 @@ async fn run_surface(
         message_publisher,
         records,
         failures,
+        progress,
         timers.drive(bus, timer_commits),
     )
     .await
@@ -776,14 +871,23 @@ async fn run_surface(
 /// the whole reason there is no separate opener command: one reader admits the
 /// endpoint, and `up` is simply its first caller.
 ///
+/// Authenticated access decorates that admitted endpoint only after admission.
+/// The token stays in the URL fragment for announcement and browser launch, so
+/// it neither changes the discovery origin nor crosses in the browser's HTTP
+/// origin.
+///
 /// A resident whose own discovery fails that admission says so and keeps
 /// serving. The surface is up either way, and refusing to run because the
 /// operator cannot be handed a URL would trade a working appliance for a
 /// cosmetic one.
+///
 /// Only an endpoint reaches the endpoint stream; a failure to produce one is a
-/// diagnostic and goes where the other diagnostics went.
+/// diagnostic and goes where the other diagnostics went. A shell that reads the
+/// endpoint stream to dial it cannot tell a URL from a sentence explaining why
+/// there is not one, so it sees an empty capture instead.
 fn announce_canvas(
     discovery_path: &Path,
+    auth_token: Option<&str>,
     open: bool,
     before_current_check: impl FnOnce(),
     browser: impl FnOnce(&str) -> Result<(), String>,
@@ -793,12 +897,26 @@ fn announce_canvas(
     let result = crate::command_client::open_canvas_result_with(
         discovery_path,
         before_current_check,
-        |endpoint| if open { browser(endpoint) } else { Ok(()) },
+        |endpoint| {
+            if open {
+                browser(&canvas_opening(endpoint, auth_token))
+            } else {
+                Ok(())
+            }
+        },
     );
     let _ = match result {
-        Ok(opened) => writeln!(announcement, "canvas endpoint: {}", opened.endpoint),
+        Ok(opened) => writeln!(
+            announcement,
+            "canvas endpoint: {}",
+            canvas_opening(&opened.endpoint, auth_token)
+        ),
         Err(fault) => writeln!(diagnostic, "canvas unavailable: {}", fault.reason),
     };
+}
+
+fn canvas_opening(endpoint: &str, auth_token: Option<&str>) -> String {
+    auth_token.map_or_else(|| endpoint.to_owned(), |token| format!("{endpoint}#{token}"))
 }
 
 fn surface_capabilities(
@@ -837,6 +955,7 @@ async fn drive_surface(
     message_publisher: canvas::stream::MessagePublisher,
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
     mut failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
+    diagnostic: &mut dyn io::Write,
     timer: impl std::future::Future<Output = CommandResult<()>>,
 ) -> CommandResult<()> {
     tokio::pin!(timer);
@@ -857,13 +976,14 @@ async fn drive_surface(
                     "lane::capture-records-closed",
                     "lane capture record receiver closed",
                 ))?;
-                let current = seats
-                    .occupant(record.lane)
-                    .is_some_and(|occupant| occupant.occupant() == record.occupant);
-                lane_surface::capture_record(bus, epoch, seats, &record)?;
-                if current {
-                    publish_agent_messages(&message_publisher, &record)?;
-                }
+                accept_capture_record(
+                    bus,
+                    epoch,
+                    seats,
+                    &message_publisher,
+                    &record,
+                    diagnostic,
+                )?;
             }
             failure = failures.recv() => {
                 let failure = failure.ok_or_else(|| environment_fault(
@@ -878,36 +998,6 @@ async fn drive_surface(
             }
         }
     }
-}
-
-fn publish_agent_messages(
-    publisher: &canvas::stream::MessagePublisher,
-    record: &lane::capture::CaptureRecord,
-) -> CommandResult<()> {
-    for (event, decoded) in record.decoded.events().iter().enumerate() {
-        let listen::Event::Prose(prose) = decoded else {
-            continue;
-        };
-        let event = u32::try_from(event).map_err(|error| {
-            store_fault("canvas::message-locus-invalid", &error.to_string())
-        })?;
-        publisher
-            .publish(wire::AgentMessage {
-                lane: record.lane,
-                author: record.occupant,
-                locus: wire::MessageLocus {
-                    member: prose.locus.member,
-                    offset: prose.locus.offset,
-                    length: prose.locus.length,
-                    event,
-                },
-                text: prose.text.clone(),
-            })
-            .map_err(|error| {
-                store_fault("canvas::message-publish-failed", &error.to_string())
-            })?;
-    }
-    Ok(())
 }
 
 async fn dispatch_control(

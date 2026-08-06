@@ -164,6 +164,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TrustGrant
         | CommandKind::TrustRevoke
         | CommandKind::LaneRead
+        | CommandKind::LineageConfigure
         | CommandKind::LaneRecall
         | CommandKind::TasteRecord
         | CommandKind::CanaryRecognize
@@ -643,6 +644,17 @@ const CONTRACTS: &[Contract] = &[
         "board::handout"
     ),
     row!(
+        ["task", "list"],
+        "task list [--all] [--project PROJECT] [--limit N] \
+         [--status pending|waiting|completed|deleted]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Resident],
+        Reply,
+        "board::list"
+    ),
+    row!(
         ["task", "status"],
         "task status",
         OperatorOrLane,
@@ -708,10 +720,11 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "review"],
-        "task review HANDLE [--finding TEXT] [--note TEXT]",
+        "task review HANDLE [--finding TEXT] [--note TEXT] \
+         [--then FOLLOWUP...] [--followup HANDLE...]",
         Lane,
         Command,
-        [TaskReviewed],
+        [TaskReviewed, TaskAdded, TaskEdited],
         [Resident, LaneCapability, Toolful],
         TASK_GIT_TOOLS,
         Reply,
@@ -849,7 +862,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["lane", "add"],
-        "lane add [WORKTREE] [--life Steer|Drive|Drain] [--vendor NAME]",
+        "lane add [WORKTREE] [--lineage ID] [--name DISPLAY] [--life Steer|Drive|Drain] [--vendor NAME]",
         Operator,
         Command,
         [LaneSeated, LaneSessionDeclared, LaneStarted],
@@ -1252,6 +1265,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
+        | ["task", "list"]
         | ["task", "status"]
         | ["task", "next"]
         | ["task", "reclaim"]

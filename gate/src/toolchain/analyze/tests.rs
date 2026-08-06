@@ -60,7 +60,7 @@ mod tests {
             .expect("taste is declared")
             .jurisdiction
             .includes;
-        let expected: Vec<String> = PROSE_EXTENSIONS
+        let expected: Vec<String> = TASTE_EXTENSIONS
             .iter()
             .map(|extension| format!("**/*.{extension}"))
             .collect();
@@ -476,6 +476,7 @@ mod tests {
                     &fixture.root,
                     &[],
                     refused_source,
+                    |_| true,
                 ),
             ),
         ];

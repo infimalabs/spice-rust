@@ -195,6 +195,26 @@ impl RunningResident {
         Self { child: Some(child) }
     }
 
+    fn spawn_text_authenticated(fixture: &Fixture, token: &str) -> Self {
+        let child = Command::new(env!("CARGO_BIN_EXE_spice"))
+            .args([
+                "up",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "0",
+                "--allow-insecure-bind",
+                "--auth-token",
+                token,
+            ])
+            .current_dir(&fixture.root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("authenticated foreground resident launches");
+        Self { child: Some(child) }
+    }
+
     fn spawn_with_form(
         fixture: &Fixture,
         executable: &Path,
@@ -901,6 +921,8 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
     let mut next = current.body().clone();
     next.lanes.push(wire::LaneResidency {
         lane,
+        lineage_id: lane,
+        name: None,
         worktree: fixture.root.display().to_string(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -924,7 +946,9 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
         .fact(
             wire::body::LaneSeated {
                 lane,
+                lineage_id: lane,
                 capability,
+                name: None,
                 worktree: fixture.root.display().to_string(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
@@ -1002,27 +1026,42 @@ fn wait_for_event<T>(
 }
 
 fn effect_observers(path: &Path) -> Vec<readiness::filesystem_event::DirectObserver> {
+    effect_observers_before_arm(path, |_| {})
+}
+
+fn effect_observers_before_arm(
+    path: &Path,
+    mut before_arm: impl FnMut(&Path),
+) -> Vec<readiness::filesystem_event::DirectObserver> {
     let root = if path.is_dir() {
         path
     } else {
         path.parent().expect("effect path has a parent")
     };
-    let mut watched = vec![root.to_path_buf()];
+    let mut watched = vec![(root.to_path_buf(), false)];
     if path.is_file() {
-        watched.push(path.to_path_buf());
+        watched.push((path.to_path_buf(), false));
     } else {
         watched.extend(
             fs::read_dir(root)
                 .expect("effect directory reads")
                 .map(|entry| entry.expect("effect directory entry reads").path())
-                .filter(|entry| entry.is_file()),
+                .filter(|entry| entry.is_file())
+                .map(|entry| (entry, true)),
         );
     }
-    watched.sort();
-    watched.dedup();
+    watched.sort_by(|(left, _), (right, _)| left.cmp(right));
+    watched.dedup_by(|(left, _), (right, _)| left == right);
     watched
-        .iter()
-        .map(|watched| readiness::filesystem_event::DirectObserver::arm(watched, "effect"))
+        .into_iter()
+        .filter_map(|(watched, incidental)| {
+            before_arm(&watched);
+            match readiness::filesystem_event::DirectObserver::try_arm(&watched) {
+                Ok(observer) => Some(observer),
+                Err(error) if incidental && error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => panic!("effect observer arms on {}: {error}", watched.display()),
+            }
+        })
         .collect()
 }
 

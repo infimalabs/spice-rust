@@ -65,7 +65,7 @@ impl<'a> Surface<'a> {
                 dispatch_release_publish(self.bus, self.paths, self.epoch, command, publish)
             }
             (CommandKind::LaneRead, Intent::LaneRead(_)) => {
-                lane_surface::read(self.bus, self.paths, self.epoch, command)
+                lane_surface::read(self.bus, self.paths, self.epoch, seats, command)
             }
             (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => lane_surface::seat(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
@@ -84,8 +84,18 @@ impl<'a> Surface<'a> {
             (CommandKind::LaneState, Intent::LaneState(state)) => lane_surface::state(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
             ),
+            (CommandKind::LineageConfigure, Intent::LineageConfigure(configure)) => {
+                lane_surface::configure(
+                    self.bus,
+                    self.epoch,
+                    seats,
+                    &self.config.projects,
+                    command,
+                    configure,
+                )
+            }
             (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => {
-                lane_surface::recall(self.bus, self.paths, self.epoch, command, recall)
+                lane_surface::recall(self.bus, self.paths, self.epoch, seats, command, recall)
             }
             (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
                 steering::inbox(self.bus, self.epoch, command, inbox)

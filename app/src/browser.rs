@@ -14,8 +14,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, SteerInbox, SteerSend, TaskAnswer,
-    TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, LineageConfigure, LineageLife,
+    SteerInbox, SteerSend, TaskAnswer, TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
@@ -23,13 +23,22 @@ use wire::{
 use yew::prelude::*;
 
 use crate::compose::{self, Notice};
-use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
+use crate::{
+    Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective, stale_reads,
+};
 
-mod composer;
 mod view;
+mod watchband;
 
-use composer::{ComposerDrafts, LineageLife, LineageMode};
 use view::{CanvasRender, render_canvas};
+use watchband::{ComposerDrafts, LineageControlAction, LineageControls, LineageMode};
+
+/// Source identity injected by `cargo xtask app` and verified before publish.
+const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY") {
+    // env-policy: allow
+    Some(identity) => identity,
+    None => "unbound-development-build",
+};
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
@@ -109,9 +118,14 @@ type SurfaceData = Option<CanvasRuntime>;
 enum ClientAction {
     Refresh,
     Seat {
+        name: Option<String>,
         worktree: String,
         life: String,
         vendor: wire::Name,
+    },
+    ConfigureLineage {
+        lineage: CanonicalUuid,
+        life: LineageLife,
     },
     Note {
         task: TaskHandle,
@@ -134,6 +148,8 @@ enum ClientAction {
         epoch: CanonicalUuid,
         message: String,
         attachments: Vec<DirectiveAttachment>,
+        /// Composer sends restore through this receipt; non-draft sends omit it.
+        resolve: Option<Callback<bool>>,
     },
 }
 
@@ -145,13 +161,17 @@ enum PendingKind {
     Consent,
     Policy,
     LaneSeat,
+    LineageConfigure(CanonicalUuid),
     /// Direction in flight, carrying the lane it was aimed at.
     ///
     /// The receipt names that lane, and the only moment it is known for certain
     /// is the send: by the time the answer lands the selection may have moved,
     /// so reading it back off the surface would attribute the receipt to
     /// whichever lane the operator is looking at now.
-    Steer(CanonicalUuid),
+    Steer {
+        lane: CanonicalUuid,
+        resolve: Option<Callback<bool>>,
+    },
     Note(TaskHandle),
     ConsentDecision,
 }
@@ -168,17 +188,17 @@ fn canvas_app() -> Html {
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
     let lineage_mode = use_state(|| LineageMode::Compose);
-    let lineage_life = use_state(|| LineageLife::Steer);
+    let lineage_controls = use_reducer(LineageControls::default);
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
+    let note_notice = use_state(Notice::none);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
     let agents = use_agent_controls(
         sender.clone(),
-        lineage_life.clone(),
         speech_speak(
             speech.clone(),
             speech_status.clone(),
@@ -191,11 +211,19 @@ fn canvas_app() -> Html {
         let surface = surface.clone();
         let sender = sender.clone();
         let speech = speech.clone();
+        let lineage_controls = lineage_controls.clone();
         use_effect_with((), move |()| {
             let active = Rc::new(Cell::new(true));
             let (tx, rx) = mpsc::unbounded();
             *sender.borrow_mut() = Some(tx);
-            spawn_local(run_surface(active.clone(), connection, surface, speech, rx));
+            spawn_local(run_surface(
+                active.clone(),
+                connection,
+                surface,
+                speech,
+                lineage_controls,
+                rx,
+            ));
             move || {
                 active.set(false);
                 sender.borrow_mut().take();
@@ -214,23 +242,31 @@ fn canvas_app() -> Html {
 
     let refresh = {
         let sender = sender.clone();
-        Callback::from(move |_| send_action(&sender, ClientAction::Refresh))
+        Callback::from(move |_| {
+            send_action(&sender, ClientAction::Refresh);
+        })
     };
     let submit_note = {
         let sender = sender.clone();
         let note_task = note_task.clone();
         let note_text = note_text.clone();
+        let note_notice = note_notice.clone();
         Callback::from(move |event: SubmitEvent| {
             event.prevent_default();
-            let Ok(task) = (*note_task).parse::<TaskHandle>() else {
-                return;
-            };
-            let note = note_text.trim().to_owned();
-            if note.is_empty() {
-                return;
+            match compose::note(&note_task, &note_text) {
+                Ok(note) => {
+                    note_notice.set(Notice::none());
+                    send_action(
+                        &sender,
+                        ClientAction::Note {
+                            task: note.task,
+                            note: note.text,
+                        },
+                    );
+                    note_text.set(String::new());
+                }
+                Err(refusal) => note_notice.set(refusal.into()),
             }
-            send_action(&sender, ClientAction::Note { task, note });
-            note_text.set(String::new());
         })
     };
     let toggle_speech = speech_toggle(
@@ -245,12 +281,13 @@ fn canvas_app() -> Html {
         axis: &axis,
         mosaic: &mosaic,
         lineage_mode: &lineage_mode,
-        lineage_life: &lineage_life,
+        lineage_controls: &lineage_controls,
         composer_drafts: &composer_drafts,
         sender: &sender,
         agents: &agents,
         note_task: &note_task,
         note_text: &note_text,
+        note_notice: &note_notice,
         submit_note,
         refresh,
         speech: &speech,
@@ -260,11 +297,8 @@ fn canvas_app() -> Html {
 }
 
 #[hook]
-fn use_agent_controls(
-    sender: SenderHandle,
-    lineage_life: UseStateHandle<LineageLife>,
-    speak: Callback<String>,
-) -> view::AgentControls {
+fn use_agent_controls(sender: SenderHandle, speak: Callback<String>) -> view::AgentControls {
+    let seat_name = use_state(String::new);
     let seat_worktree = use_state(String::new);
     let seat_vendor = use_state(|| "codex".to_owned());
     let seat_life = use_state(|| "steer".to_owned());
@@ -272,12 +306,13 @@ fn use_agent_controls(
     view::AgentControls {
         submit_seat: seat_submit(
             sender,
+            seat_name.clone(),
             seat_worktree.clone(),
             seat_vendor.clone(),
             seat_life.clone(),
             seat_notice.clone(),
-            lineage_life,
         ),
+        seat_name,
         seat_worktree,
         seat_vendor,
         seat_life,
@@ -288,23 +323,21 @@ fn use_agent_controls(
 
 fn seat_submit(
     sender: SenderHandle,
+    name: UseStateHandle<String>,
     worktree: UseStateHandle<String>,
     vendor: UseStateHandle<String>,
     life: UseStateHandle<String>,
     notice: UseStateHandle<Notice>,
-    lineage_life: UseStateHandle<LineageLife>,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        match compose::seat(&worktree, &vendor, &life) {
+        match compose::seat(&name, &worktree, &vendor, &life) {
             Ok(seat) => {
                 notice.set(Notice::none());
-                if let Some(selected_life) = LineageLife::from_wire(&seat.life) {
-                    lineage_life.set(selected_life);
-                }
                 send_action(
                     &sender,
                     ClientAction::Seat {
+                        name: seat.name,
                         worktree: seat.worktree,
                         life: seat.life,
                         vendor: seat.vendor,
@@ -436,6 +469,7 @@ async fn run_surface(
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
     speech: UseStateHandle<wire::SpeechPlayback>,
+    lineage_controls: UseReducerHandle<LineageControls>,
     mut actions: UnboundedReceiver<ClientAction>,
 ) {
     let data = Rc::new(RefCell::new(SurfaceData::default()));
@@ -443,8 +477,16 @@ async fn run_surface(
         if matches!(&*connection, Connection::Starting) {
             connection.set(Connection::Connecting);
         }
-        let result =
-            run_connection(&active, &connection, &surface, &speech, &data, &mut actions).await;
+        let result = run_connection(
+            &active,
+            &connection,
+            &surface,
+            &speech,
+            &lineage_controls,
+            &data,
+            &mut actions,
+        )
+        .await;
         if !active.get() {
             break;
         }
@@ -472,6 +514,7 @@ async fn run_connection(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
     speech: &UseStateHandle<wire::SpeechPlayback>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
     data: &Rc<RefCell<SurfaceData>>,
     actions: &mut UnboundedReceiver<ClientAction>,
 ) -> Result<(), String> {
@@ -492,7 +535,14 @@ async fn run_connection(
                     .map_err(websocket_error)?;
                 let bytes = binary_message(frame)?;
                 let (directives, refresh) =
-                    handle_incoming(&session, surface, data, &mut pending, &bytes)?;
+                    handle_incoming(
+                        &session,
+                        surface,
+                        lineage_controls,
+                        data,
+                        &mut pending,
+                        &bytes,
+                    )?;
                 relay_directives(&principal, &mut writer, directives).await?;
                 if refresh {
                     send_refresh(&principal, &mut writer, &mut pending).await?;
@@ -605,12 +655,16 @@ async fn dispatch_action(
     match action {
         ClientAction::Refresh => send_refresh(principal, writer, pending).await,
         ClientAction::Seat {
+            name,
             worktree,
             life,
             vendor,
         } => {
+            let lane = random_uuid()?;
             let body = LaneSeat {
-                lane: random_uuid()?,
+                lane,
+                lineage_id: lane,
+                name,
                 worktree,
                 life,
                 vendor,
@@ -626,53 +680,24 @@ async fn dispatch_action(
             )
             .await
         }
+        ClientAction::ConfigureLineage { lineage, life } => {
+            send_lineage_configuration(principal, writer, pending, lineage, life).await
+        }
         ClientAction::Note { task, note } => {
-            let body = TaskNote {
-                task: task.clone(),
-                note,
-            };
-            let expected = vec![Witness::Existence { task: task.clone() }];
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::Note(task),
-                CommandKind::TaskNote,
-                expected,
-                body,
-            )
-            .await
+            send_task_note(principal, writer, pending, task, note).await
         }
         ClientAction::Consent {
             request,
             rule,
             answer,
-        } => {
-            let body = wire::intent::ConsentDecide { request, answer };
-            let expected = vec![
-                Witness::Consent {
-                    request,
-                    answer: Answer::Asked,
-                },
-                Witness::Rule { name: rule },
-            ];
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::ConsentDecision,
-                CommandKind::ConsentDecide,
-                expected,
-                body,
-            )
-            .await
-        }
+        } => send_consent_decision(principal, writer, pending, request, rule, answer).await,
         ClientAction::Steer {
             lane,
             occupant,
             epoch,
             message,
             attachments,
+            resolve,
         } => {
             let body = SteerSend {
                 lane,
@@ -688,7 +713,7 @@ async fn dispatch_action(
                 principal,
                 writer,
                 pending,
-                PendingKind::Steer(lane),
+                PendingKind::Steer { lane, resolve },
                 CommandKind::SteerSend,
                 expected,
                 body,
@@ -696,6 +721,81 @@ async fn dispatch_action(
             .await
         }
     }
+}
+
+async fn send_lineage_configuration(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    lineage: CanonicalUuid,
+    life: LineageLife,
+) -> Result<(), String> {
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::LineageConfigure(lineage),
+        CommandKind::LineageConfigure,
+        vec![],
+        LineageConfigure {
+            lineage_id: lineage,
+            life,
+            manual_projects: None,
+        },
+    )
+    .await
+}
+
+async fn send_task_note(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    task: TaskHandle,
+    note: String,
+) -> Result<(), String> {
+    let body = TaskNote {
+        task: task.clone(),
+        note,
+    };
+    let expected = vec![Witness::Existence { task: task.clone() }];
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::Note(task),
+        CommandKind::TaskNote,
+        expected,
+        body,
+    )
+    .await
+}
+
+async fn send_consent_decision(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    request: CanonicalUuid,
+    rule: wire::Name,
+    answer: Answer,
+) -> Result<(), String> {
+    let body = wire::intent::ConsentDecide { request, answer };
+    let expected = vec![
+        Witness::Consent {
+            request,
+            answer: Answer::Asked,
+        },
+        Witness::Rule { name: rule },
+    ];
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::ConsentDecision,
+        CommandKind::ConsentDecide,
+        expected,
+        body,
+    )
+    .await
 }
 
 async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u8>, String> {
@@ -945,6 +1045,7 @@ async fn send_stream_request(
 fn handle_incoming(
     session: &Session,
     surface: &UseStateHandle<SurfaceData>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
     data: &Rc<RefCell<SurfaceData>>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
@@ -954,13 +1055,14 @@ fn handle_incoming(
         let admitted = session
             .admit_stream(bytes)
             .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+        let refresh = stale_reads(&admitted).any();
         let directives = data
             .borrow_mut()
             .as_mut()
             .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
             .apply_stream(&admitted);
         surface.set(data.borrow().clone());
-        return Ok((directives, false));
+        return Ok((directives, refresh));
     }
 
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
@@ -977,7 +1079,15 @@ fn handle_incoming(
             false
         }
         PendingKind::Lanes => {
-            runtime.apply_lanes(&admit_response(session, bytes)?);
+            let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
+                admit_response(session, bytes)?;
+            if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
+                lineage_controls.dispatch(LineageControlAction::SyncLanes {
+                    answer: reply.body.clone(),
+                    settle: false,
+                });
+            }
+            runtime.apply_lanes(&admitted);
             false
         }
         PendingKind::Inbox => {
@@ -998,10 +1108,17 @@ fn handle_incoming(
             runtime.apply_lane_change(&admitted);
             true
         }
-        PendingKind::Steer(lane) => {
+        PendingKind::LineageConfigure(lineage) => {
+            apply_lineage_configuration(session, lineage_controls, runtime, lineage, bytes)?
+        }
+        PendingKind::Steer { lane, resolve } => {
             let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
                 admit_response(session, bytes)?;
+            let accepted = matches!(&admitted.get().outcome, wire::Outcome::Reply(_));
             runtime.apply_steer(&admitted, lane);
+            if let Some(resolve) = resolve {
+                resolve.emit(accepted);
+            }
             true
         }
         PendingKind::Note(task) => {
@@ -1018,6 +1135,42 @@ fn handle_incoming(
     };
     surface.set(data.clone());
     Ok((Vec::new(), refresh))
+}
+
+fn apply_lineage_configuration(
+    session: &Session,
+    lineage_controls: &UseReducerHandle<LineageControls>,
+    runtime: &mut CanvasRuntime,
+    lineage: CanonicalUuid,
+    bytes: &[u8],
+) -> Result<bool, String> {
+    let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
+        admit_response(session, bytes)?;
+    let refresh = match &admitted.get().outcome {
+        wire::Outcome::Reply(reply) => {
+            lineage_controls.dispatch(LineageControlAction::SyncLanes {
+                answer: reply.body.clone(),
+                settle: true,
+            });
+            false
+        }
+        wire::Outcome::Refusal(refusal) => {
+            lineage_controls.dispatch(LineageControlAction::SettleIssue {
+                lineage,
+                issue: format!("{}: {}", refusal.reason, refusal.remedy),
+            });
+            true
+        }
+        wire::Outcome::Fault(fault) => {
+            lineage_controls.dispatch(LineageControlAction::SettleIssue {
+                lineage,
+                issue: format!("{}: {}", fault.reason, fault.detail),
+            });
+            true
+        }
+    };
+    runtime.apply_lanes(&admitted);
+    Ok(refresh)
 }
 
 fn admit_response<T: for<'de> Deserialize<'de>>(
@@ -1076,10 +1229,11 @@ fn binary_message(message: Message) -> Result<Vec<u8>, String> {
     }
 }
 
-fn send_action(sender: &SenderHandle, action: ClientAction) {
-    if let Some(sender) = sender.borrow_mut().as_mut() {
-        let _ = sender.unbounded_send(action);
-    }
+fn send_action(sender: &SenderHandle, action: ClientAction) -> bool {
+    sender
+        .borrow_mut()
+        .as_mut()
+        .is_some_and(|sender| sender.unbounded_send(action).is_ok())
 }
 
 fn metric(label: &'static str, value: String, detail: String) -> Html {
@@ -1147,13 +1301,13 @@ fn state_from_textarea(state: UseStateHandle<String>) -> Callback<InputEvent> {
 
 #[wasm_bindgen(start)]
 pub fn start() {
-    yew::Renderer::<CanvasApp>::with_root(
-        web_sys::window()
-            .expect("browser window")
-            .document()
-            .expect("browser document")
-            .get_element_by_id("app")
-            .expect("canvas app root"),
-    )
-    .render();
+    let root = web_sys::window()
+        .expect("browser window")
+        .document()
+        .expect("browser document")
+        .get_element_by_id("app")
+        .expect("canvas app root");
+    root.set_attribute("data-app-source", APP_SOURCE_IDENTITY)
+        .expect("stamp canvas app source identity");
+    yew::Renderer::<CanvasApp>::with_root(root).render();
 }

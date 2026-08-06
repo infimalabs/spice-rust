@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use sill::{Argv, Completion, Environment, spawn};
+use sill::{Argv, Completion, Environment, WaitPolicy, spawn};
 
 use super::{Analysis, compile_findings, complete_output, plural};
 use crate::GateId;
@@ -52,6 +52,18 @@ pub(in crate::toolchain) fn run_compile_analysis(
     environment: &Environment,
     detail: fn(String, String) -> FindingDetail,
 ) -> Result<Duration, CompileFailure> {
+    run_compile_analysis_with_wait(id, root, invocation, bounds, environment, detail, None)
+}
+
+pub(in crate::toolchain) fn run_compile_analysis_with_wait(
+    id: GateId,
+    root: &Path,
+    invocation: CompileInvocation<'_>,
+    bounds: &Bounds,
+    environment: &Environment,
+    detail: fn(String, String) -> FindingDetail,
+    wait: Option<WaitPolicy>,
+) -> Result<Duration, CompileFailure> {
     let CompileInvocation {
         name,
         program,
@@ -66,6 +78,9 @@ pub(in crate::toolchain) fn run_compile_analysis(
     })?;
     let mut spec = bounds.spec(argv, cwd);
     spec.environment = environment.clone();
+    if let Some(wait) = wait {
+        spec.wait = wait;
+    }
     let running = spawn(spec).map_err(|error| {
         CompileFailure::before_start(Analysis::terminal(
             ArmOutcome::ParseFailure,
@@ -94,7 +109,7 @@ pub(in crate::toolchain) fn run_compile_analysis(
         }
         Completion::Cancelled(_) => {
             let analysis = Analysis::terminal(
-                ArmOutcome::ParseFailure,
+                ArmOutcome::Cancelled,
                 format!("{name} was cancelled before it reported"),
             );
             return Err(CompileFailure::after_wait(analysis, elapsed));
