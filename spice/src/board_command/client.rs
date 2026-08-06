@@ -161,7 +161,9 @@ fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
         })
         .count();
     Ok(format!(
-        "claim {claim}\nactor {}\nactive {active_count}\nready {ready}\nreview {review}\nblocked {blocked}\nwaiting {waiting}\nstale {stale}\noops {oops}",
+        "claim {claim}\nactor {}\nactive {active_count}\nready {ready}\n\
+         review {review}\nblocked {blocked}\nwaiting {waiting}\n\
+         stale {stale}\noops {oops}",
         board.principal
     ))
 }

@@ -251,7 +251,10 @@ fn requested_access(
         return Err(access_refusal(
             "resident::auth-token-invalid",
             None,
-            "use 16 to 256 URL-safe characters: letters, digits, hyphen, period, underscore, or tilde",
+            concat!(
+                "use 16 to 256 URL-safe characters: letters, digits, hyphen, ",
+                "period, underscore, or tilde"
+            ),
         ));
     }
     if !listen.ip().is_loopback() && !leaf.get_flag("allow-insecure-bind") {
@@ -291,7 +294,9 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
         witness: Some("requested-listen-address".to_owned()),
         expected: Some(expected.to_owned()),
         observed: Some(observed.to_owned()),
-        remedy: format!("name an address this machine can listen on, or omit the flag for {DEFAULT_LISTEN}"),
+        remedy: format!(
+            "name an address this machine can listen on, or omit the flag for {DEFAULT_LISTEN}"
+        ),
     })
 }
 
