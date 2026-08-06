@@ -45,7 +45,7 @@ mod compile;
 mod csharp;
 mod rust;
 
-pub(super) use compile::{CompileInvocation, run_compile_analysis};
+pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
 pub(super) use csharp::csharp_unused;
 pub(super) use rust::rust_typecheck;
 

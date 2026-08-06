@@ -16,8 +16,9 @@ use crate::manifest::GateId;
 
 /// The only report schema emitted by this compiled arm family.
 ///
-/// Version 4 adds [`ArmTiming`], which a version-3 reader cannot retain, so the
-/// schema is renamed rather than widened silently.
+/// Version 4 adds [`ArmTiming`] and the timed [`ArmOutcome::Cancelled`] state,
+/// which a version-3 reader cannot retain, so the schema is renamed rather than
+/// widened silently.
 pub const TOOLCHAIN_REPORT_VERSION: u64 = 4;
 
 /// A compiled source of configuration admitted by one arm.
@@ -447,6 +448,8 @@ pub enum ArmOutcome {
     Excluded,
     /// Bounded analysis exceeded its compiled deadline.
     Timeout,
+    /// Bounded analysis was cancelled after its process started.
+    Cancelled,
     /// Analysis output or selected source could not be parsed.
     ParseFailure,
     /// A direct analysis process returned an unexplained nonzero completion.
@@ -775,6 +778,7 @@ fn validate_timing(
         ArmOutcome::Passed
             | ArmOutcome::Findings
             | ArmOutcome::Timeout
+            | ArmOutcome::Cancelled
             | ArmOutcome::NonzeroAnalysis
     );
     let valid = match (gate, timing) {
@@ -1102,6 +1106,7 @@ fn validate_external_tool_outcome(
         ArmOutcome::Passed
         | ArmOutcome::Findings
         | ArmOutcome::Timeout
+        | ArmOutcome::Cancelled
         | ArmOutcome::ParseFailure
         | ArmOutcome::NonzeroAnalysis => {
             require_all_identified(gate, declared, evidence)?;
