@@ -168,6 +168,16 @@ impl ObservedFile {
     }
 }
 
+fn images_match(observed: Option<&ObservedFile>, expected: Option<&ObservedFile>) -> bool {
+    // Durable drift belongs to the complete file image. A generation is only
+    // an immediate compare-and-swap guard for the mutation that follows.
+    match (observed, expected) {
+        (None, None) => true,
+        (Some(observed), Some(expected)) => observed.image == expected.image,
+        _ => false,
+    }
+}
+
 impl FileImage {
     fn new(mode: u32, bytes: Vec<u8>) -> Self {
         let digest = Digest::compute(Domain::InstallArtifact, &bytes);
@@ -452,7 +462,7 @@ impl InstallPlan {
                 ));
             }
             let observed = observe(&operation.destination(repository))?;
-            if observed != operation.previous {
+            if !images_match(observed.as_ref(), operation.previous.as_ref()) {
                 return Err(drift(operation, observed));
             }
         }

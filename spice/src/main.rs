@@ -104,7 +104,10 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
             ),
             observed: Some(error.to_string()),
             remedy: format!(
-                "follow the named archive/remove action or repair the malformed state component at {}",
+                concat!(
+                    "follow the named archive/remove action or repair the malformed state ",
+                    "component at {}"
+                ),
                 error.path().display()
             ),
         }),
