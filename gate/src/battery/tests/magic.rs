@@ -26,15 +26,6 @@ const COMMITTED_LITERALS: [u64; 3] = [4242, 7777, 9999];
 /// The one literal added to an already-committed source.
 const INTRODUCED_LITERAL: u64 = 31337;
 
-/// The Python sources `production_repository` commits, which this build's
-/// scanner refuses by field rather than reading with C-grammar semantics.
-///
-/// Named so a fixture can take the whole class out of history at once. Any one
-/// of them left committed reports the class refusal from its own row whichever
-/// question the arm asks first, which is enough to hide the order entirely.
-const PREDECESSOR_CLASS_SOURCES: [&str; 3] =
-    ["app/__init__.py", "app/main.py", "tests/test_main.py"];
-
 /// One Rust source that compares a value against each literal it is given.
 ///
 /// The literals are interpolated rather than written out, because this file is

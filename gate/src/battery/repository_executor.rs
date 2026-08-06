@@ -130,19 +130,24 @@ impl<'trace> RepositoryExecutor<'trace> {
         })?;
         // One capture, taken once: the digest every arm is labelled with, the
         // whole core family and the bounds it decided, and the committed
-        // baselines the magic-number delta is measured against are all read
-        // here, and nothing below this block can reach the live repository
-        // again.
+        // baselines the magic-number delta is measured against and the
+        // file-shape arm reads a merge's authorship from are all read here, and
+        // nothing below this block can reach the live repository again. Both
+        // classes are captured together because one capture cannot answer for a
+        // suffix it never walked, and a second capture could name a different
+        // commit than the one this report is labelled with.
         let (source, core, mut bounds, baselines) = {
             let captured = CoreSource::capture(&tree, &contract, claim, actor.clone(), latches)
                 .map_err(|error| {
                     BatteryError::new(format!("cannot identify battery source: {error}"))
                 })?;
             let (core, bounds) = core_family(&captured, &contract);
-            let baselines = BaselineCapture::capture(
-                &repository,
-                contract.rule_policy().document().file_classes().magic(),
-            );
+            let classes = contract.rule_policy().document().file_classes();
+            let mut selected = classes.magic().to_vec();
+            selected.extend(classes.file_shape().iter().cloned());
+            selected.sort();
+            selected.dedup();
+            let baselines = BaselineCapture::capture(&repository, &selected);
             (captured.digest().clone(), core, bounds, baselines)
         };
         let (metrics, metric_bounds) =

@@ -78,6 +78,16 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     let Outcome::Refusal(refusal) = outcome else {
         panic!("non-admitting tripwire vector must refuse: {outcome:?}");
     };
+    // An operator reaching this refusal mid-merge needs to know that a merge is
+    // recorded like anything else, because the alternative they otherwise reach
+    // for is bypassing the hook. The remedy names that command rather than the
+    // gate growing a second way to record one, and it is asserted here, on the
+    // shipped binary's own output, rather than beside the string that builds it.
+    assert!(
+        refusal.remedy.contains("git commit"),
+        "the pre-commit refusal names how a merge is recorded: {}",
+        refusal.remedy
+    );
     let pre_commit_report = BatteryReport::decode(
         refusal
             .observed
