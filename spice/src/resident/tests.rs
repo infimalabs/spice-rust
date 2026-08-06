@@ -544,7 +544,70 @@ fn capture_failure_vacates_and_durably_degrades_the_exact_occupant() {
 }
 
 #[test]
-fn lineage_configuration_changes_shared_life_without_touching_occupants() {
+fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_authority() {
+    let lineage = test_uuid(2);
+    let sibling = test_uuid(5);
+    let row = |lane, lineage_id, life: &str| wire::LaneResidency {
+        lane,
+        lineage_id,
+        name: None,
+        worktree: format!("/fixture/{lane}"),
+        life: life.to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
+        occupant: None,
+        lineage: Vec::new(),
+        capabilities: Vec::new(),
+        session: None,
+        disposition: "vacant".to_owned(),
+    };
+    let lanes = vec![
+        row(test_uuid(3), lineage, "drive"),
+        row(test_uuid(4), lineage, "drive"),
+        row(test_uuid(6), sibling, "steer"),
+    ];
+
+    let migrated =
+        super::startup_subscriptions(&lanes, Vec::new()).expect("one absent legacy table migrates");
+    assert_eq!(
+        migrated,
+        vec![
+            wire::LineageSubscription {
+                lineage_id: lineage,
+                policy: wire::intent::LineageLife::Drive,
+            },
+            wire::LineageSubscription {
+                lineage_id: sibling,
+                policy: wire::intent::LineageLife::Steer,
+            },
+        ]
+    );
+    assert_eq!(
+        super::startup_subscriptions(&lanes, migrated.clone())
+            .expect("the current complete table is preserved"),
+        migrated
+    );
+
+    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, vec![migrated[0]]) else {
+        panic!("a partial current subscription table must fault")
+    };
+    assert_eq!(fault.reason, "lineage::subscription-misaligned");
+
+    let mut mixed = lanes.clone();
+    mixed[1].life = "steer".to_owned();
+    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&mixed, Vec::new()) else {
+        panic!("mixed legacy lives must not choose an implicit policy")
+    };
+    assert_eq!(fault.reason, "lineage::subscription-ambiguous");
+
+    let duplicated = vec![migrated[0], migrated[0], migrated[1]];
+    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, duplicated) else {
+        panic!("duplicate current subscription authority must fault")
+    };
+    assert_eq!(fault.reason, "lineage::subscription-ambiguous");
+}
+
+#[test]
+fn lineage_configuration_changes_only_the_typed_subscription_policy() {
     let (root, paths) = resident_fixture("lineage-configuration");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let surface =
@@ -606,7 +669,14 @@ fn lineage_configuration_changes_shared_life_without_touching_occupants() {
     };
     assert_eq!(answer.lanes.len(), 2);
     assert!(answer.lanes.iter().all(|row| row.lineage_id == lineage));
-    assert!(answer.lanes.iter().all(|row| row.life == "drain"));
+    assert!(answer.lanes.iter().all(|row| row.life == "drive"));
+    assert_eq!(
+        answer.subscriptions,
+        vec![wire::LineageSubscription {
+            lineage_id: lineage,
+            policy: wire::intent::LineageLife::Drain,
+        }]
+    );
     assert_eq!(answer.lanes[0].occupant, Some(first_occupant));
     assert_eq!(answer.lanes[1].occupant, Some(second_occupant));
     assert!(
@@ -615,6 +685,11 @@ fn lineage_configuration_changes_shared_life_without_touching_occupants() {
     );
     assert!(seats.occupied(first_lane));
     assert!(seats.occupied(second_lane));
+    let durable = current_residency(&bus, epoch)
+        .expect("configured residency reads")
+        .into_body();
+    assert!(durable.lanes.iter().all(|row| row.life == "drive"));
+    assert_eq!(durable.subscriptions, answer.subscriptions);
     let snapshot = bus.canvas_snapshot().expect("configured journal reads");
     let configured = snapshot
         .facts()
@@ -625,6 +700,14 @@ fn lineage_configuration_changes_shared_life_without_touching_occupants() {
     assert_eq!(
         configured.fact.body().get("lineage_id"),
         Some(&serde_json::Value::String(lineage.to_string())),
+    );
+    assert_eq!(
+        configured.fact.body().get("from"),
+        Some(&serde_json::json!("drive"))
+    );
+    assert_eq!(
+        configured.fact.body().get("life"),
+        Some(&serde_json::json!("drain"))
     );
     for lane in [first_lane, second_lane] {
         seats
@@ -692,6 +775,18 @@ fn seed_lane_in_lineage(
         session: None,
         disposition: "occupied".to_owned(),
     });
+    if !head
+        .subscriptions
+        .iter()
+        .any(|subscription| subscription.lineage_id == lineage_id)
+    {
+        head.subscriptions.push(wire::LineageSubscription {
+            lineage_id,
+            policy: wire::intent::LineageLife::Drive,
+        });
+        head.subscriptions
+            .sort_by_key(|subscription| subscription.lineage_id);
+    }
     head.lanes.sort_by_key(|lane| lane.lane);
     let mut write =
         write(Actor::Spice, epoch, Producer::ResidentRecognition).expect("fixture write starts");

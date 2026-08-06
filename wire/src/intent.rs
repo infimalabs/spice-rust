@@ -362,7 +362,7 @@ pub struct LaneSeat {
     pub vendor: Name,
 }
 
-/// The closed lineage lifetime selected by the operator's Canvas watchband.
+/// The closed task-subscription policy selected for a Canvas lineage.
 ///
 /// This is task-subscription policy. It is deliberately distinct from
 /// [`LaneAction::Drain`], which tears down an occupant process.
@@ -378,7 +378,7 @@ pub enum LineageLife {
 }
 
 impl LineageLife {
-    /// Stable residency spelling shared with existing lane rows.
+    /// Stable wire spelling retained by the Canvas control.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -387,15 +387,47 @@ impl LineageLife {
             Self::Drain => "drain",
         }
     }
+
+    /// Task-selection scope this policy authorizes for the lineage.
+    #[must_use]
+    pub const fn scope(self) -> TaskSubscriptionScope {
+        match self {
+            Self::Steer => TaskSubscriptionScope::Manual,
+            Self::Drive => TaskSubscriptionScope::ManualAndAutoProject,
+            Self::Drain => TaskSubscriptionScope::AllAssignable,
+        }
+    }
+
+    /// Parse one stable task-subscription policy spelling.
+    #[must_use]
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "steer" => Some(Self::Steer),
+            "drive" => Some(Self::Drive),
+            "drain" => Some(Self::Drain),
+            _ => None,
+        }
+    }
 }
 
-/// Change the task-subscription life shared by every member of one Canvas lineage.
+/// Closed task-selection scope represented by one lineage subscription policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskSubscriptionScope {
+    /// Use only the task filters the operator stored explicitly.
+    Manual,
+    /// Use stored filters and automatically follow projects the lineage creates or claims.
+    ManualAndAutoProject,
+    /// Dissolve the lineage boundary and admit every assignable task.
+    AllAssignable,
+}
+
+/// Change the task-subscription policy shared by one Canvas lineage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineageConfigure {
     /// Stable Canvas lineage identifying the group.
     pub lineage_id: CanonicalUuid,
-    /// Authoritative task-subscription life to commit for every member.
+    /// Authoritative task-subscription policy to commit for the lineage.
     pub life: LineageLife,
 }
 
@@ -790,6 +822,8 @@ pub struct LaneAnswer {
     pub state: ResidentState,
     /// Current lane rows in stable lane order.
     pub lanes: Vec<LaneAnswerRow>,
+    /// One authoritative task-subscription policy per returned lineage.
+    pub subscriptions: Vec<crate::LineageSubscription>,
 }
 
 /// The answer a lane seating or lifecycle command returns.

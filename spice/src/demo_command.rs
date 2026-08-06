@@ -742,6 +742,10 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                     disposition: crate::resident::SIMULATED_DISPOSITION.to_owned(),
                 })
                 .collect(),
+            subscriptions: vec![wire::LineageSubscription {
+                lineage_id,
+                policy: wire::intent::LineageLife::Drive,
+            }],
         }
     });
     journal.apply(write).map_err(commit_failure)?;

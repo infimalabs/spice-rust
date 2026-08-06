@@ -1145,6 +1145,10 @@ fn residency_head() -> ResidencyHead {
             session: None,
             disposition: "active".to_owned(),
         }],
+        subscriptions: vec![wire::LineageSubscription {
+            lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+            policy: wire::intent::LineageLife::Drive,
+        }],
     }
 }
 

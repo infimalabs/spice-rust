@@ -183,6 +183,7 @@ fn board_response(
                 epoch: uuid(EPOCH),
                 state: wire::ResidentState::Seated,
                 lanes: Vec::new(),
+                subscriptions: Vec::new(),
             },
         },
     };
@@ -205,6 +206,21 @@ fn board_response(
 /// Session authority and capabilities are intentionally not part of this DTO;
 /// only the explicit `bound` projection crosses into the Canvas.
 fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
+    let subscriptions = rows
+        .iter()
+        .map(|(_, lineage_id, _, _)| {
+            let lineage_id = uuid(lineage_id);
+            (
+                lineage_id,
+                wire::LineageSubscription {
+                    lineage_id,
+                    policy: wire::intent::LineageLife::Steer,
+                },
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>()
+        .into_values()
+        .collect();
     let lanes = rows
         .iter()
         .map(
@@ -241,6 +257,7 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
                 epoch: uuid(EPOCH),
                 state: wire::ResidentState::Seated,
                 lanes,
+                subscriptions,
             },
         }),
     )
@@ -938,6 +955,11 @@ fn one_lineage_groups_multiple_steerable_worktrees_without_losing_member_order()
     assert_eq!(lanes[0].members[0].lane, uuid(LANE));
     assert_eq!(lanes[0].members[1].lane, uuid(SECOND_LANE));
     assert_eq!(lanes[1].members[0].lane, uuid(THIRD_LANE));
+    assert!(
+        lanes
+            .iter()
+            .all(|lineage| lineage.subscription == wire::intent::LineageLife::Steer)
+    );
 }
 
 #[test]

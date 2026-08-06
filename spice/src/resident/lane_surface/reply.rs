@@ -64,10 +64,27 @@ fn answer_at(
             })
         })
         .collect::<CommandResult<Vec<_>>>()?;
+    let lineage_ids = lanes
+        .iter()
+        .map(|row| row.lineage_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    let subscriptions = lineage_ids
+        .into_iter()
+        .map(|lineage_id| {
+            let policy = subscription_policy(head, lineage_id)?.ok_or_else(|| {
+                store_fault(
+                    "lineage::subscription-missing",
+                    "a returned lineage has no task-subscription policy",
+                )
+            })?;
+            Ok(wire::LineageSubscription { lineage_id, policy })
+        })
+        .collect::<CommandResult<Vec<_>>>()?;
     Ok(LaneAnswer {
         epoch: head.epoch,
         state: head.state,
         lanes,
+        subscriptions,
     })
 }
 
@@ -372,6 +389,13 @@ mod tests {
         row
     }
 
+    fn subscriptions() -> Vec<wire::LineageSubscription> {
+        vec![wire::LineageSubscription {
+            lineage_id: uuid(1),
+            policy: wire::intent::LineageLife::Drive,
+        }]
+    }
+
     #[test]
     fn the_same_occupied_lane_turns_quiet_at_the_exact_sixty_second_boundary() {
         let row = occupied();
@@ -379,6 +403,7 @@ mod tests {
             epoch: uuid(4),
             state: ResidentState::Seated,
             lanes: vec![row.clone()],
+            subscriptions: subscriptions(),
         };
         let unchanged = head.clone();
         let observed = Monotonic::now();
@@ -421,6 +446,7 @@ mod tests {
             epoch: uuid(4),
             state: ResidentState::Seated,
             lanes: vec![row],
+            subscriptions: subscriptions(),
         };
         let observed = Monotonic::now();
         let answer = answer_at(&head, None, observed, |_| {
@@ -443,6 +469,7 @@ mod tests {
             epoch: uuid(4),
             state: ResidentState::Seated,
             lanes: vec![occupied()],
+            subscriptions: subscriptions(),
         };
         let error = answer_at(&head, None, Monotonic::now(), |_| None)
             .expect_err("unobserved occupancy must fail loudly");
@@ -458,6 +485,7 @@ mod tests {
             epoch: uuid(4),
             state: ResidentState::Seated,
             lanes: vec![simulated()],
+            subscriptions: subscriptions(),
         };
 
         let answer = answer_at(&head, None, Monotonic::now(), |_| None)
@@ -486,6 +514,7 @@ mod tests {
             epoch: uuid(4),
             state: ResidentState::Seated,
             lanes: vec![row],
+            subscriptions: subscriptions(),
         };
         let error = answer_at(&head, None, Monotonic::now(), |_| {
             Some(lane::occupant::Activity::new(occupant, Monotonic::now()))

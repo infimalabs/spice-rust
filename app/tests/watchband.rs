@@ -41,6 +41,7 @@ fn spell(delta: i64) -> String {
 fn lane(id: &str, worktree: &str) -> LaneRow {
     LaneRow {
         lane: uuid(id),
+        subscription: wire::intent::LineageLife::Steer,
         members: vec![member(id, worktree)],
     }
 }
@@ -179,6 +180,7 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
 fn one_lineage_emits_one_standing_per_member_without_losing_the_lineage_identity() {
     let lineage = LaneRow {
         lane: uuid(EPOCH),
+        subscription: wire::intent::LineageLife::Steer,
         members: vec![member(LANE_A, "main-a"), member(LANE_B, "main-b")],
     };
 
