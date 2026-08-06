@@ -124,6 +124,7 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
     );
     fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
     fixture_git(&fixture.root, &["commit", "-m", "fixture baseline"]);
+    assert_fixture_repository_clean(&fixture.root);
     fixture_git(&fixture.root, &["branch", "integration"]);
     fixture_git(
         &fixture.root,
@@ -334,6 +335,7 @@ fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
     );
     fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
     fixture_git(&fixture.root, &["commit", "-m", "empty cutover authority"]);
+    assert_fixture_repository_clean(&fixture.root);
     fs::remove_dir_all(&rig.codex_worktree).expect("synthetic Codex worktree withdraws");
     fs::remove_dir_all(fixture.root.join(".git/worktrees/vendor-process-codex"))
         .expect("synthetic Codex Git directory withdraws");

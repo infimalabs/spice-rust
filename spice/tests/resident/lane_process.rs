@@ -100,6 +100,7 @@ fn initialize_task_git_fixture(fixture: &Fixture) {
     .expect("task fixture ignore writes");
     fixture_git(fixture, &["add", ".gitignore", "fake-claude", "spice.toml"]);
     fixture_git(fixture, &["commit", "-m", "resident fixture"]);
+    assert_fixture_repository_clean(&fixture.root);
 }
 
 fn establish_task_baseline(fixture: &Fixture) {

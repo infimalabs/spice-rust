@@ -130,6 +130,32 @@ fn app_stage_ignore() -> String {
     format!("/{}/\n", canvas::DEV_STAGE)
 }
 
+/// Assert a freshly seeded fixture repository sees nothing but what it committed.
+///
+/// The stage [`Fixture`] installs lands inside the worktree, so a fixture whose
+/// ignore policy does not cover it is dirty from birth. Cases that refuse on a
+/// dirty worktree then fail far from the cause, naming a git refusal in a case
+/// about lanes or vendors; asserting it where the repository is built says which
+/// ignore policy is short instead.
+fn assert_fixture_repository_clean(root: &Path) {
+    let status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(root)
+        .output()
+        .expect("fixture status runs");
+    assert!(
+        status.status.success(),
+        "fixture status failed: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&status.stdout),
+        "",
+        "the fixture repository is dirty before its case begins: its ignore \
+         policy does not cover everything the fixture writes"
+    );
+}
+
 struct RunningResident {
     child: Option<Child>,
 }
