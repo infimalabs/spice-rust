@@ -311,6 +311,7 @@ pub(super) fn render_lineage_controls(
                             &life_sender,
                             ClientAction::ConfigureLineage {
                                 lineage,
+                                member: None,
                                 life: life.wire(),
                             },
                         );

@@ -23,10 +23,11 @@ pub(super) fn render_command_bar(
     active_axis: Axis,
     surface: &SurfaceData,
     cursor: &str,
+    sender: &SenderHandle,
 ) -> Html {
     let runtime = surface.as_ref();
     if **mosaic {
-        return render_mosaic_command_bar(axis, mosaic, active_axis, runtime, cursor);
+        return render_mosaic_command_bar(axis, mosaic, active_axis, runtime, cursor, sender);
     }
     html! {
         <header class="commandbar">
@@ -100,6 +101,7 @@ fn render_mosaic_command_bar(
     active_axis: Axis,
     runtime: Option<&CanvasRuntime>,
     cursor: &str,
+    sender: &SenderHandle,
 ) -> Html {
     let task_pills = task_pills(runtime);
     html! {
@@ -138,24 +140,7 @@ fn render_mosaic_command_bar(
                 }
             </nav>
             <span class="bar-meta">{format!("cursor {cursor}")}</span>
-            {render_canvas_menu(axis, mosaic, active_axis, runtime)}
-        </header>
-    }
-}
-
-fn render_canvas_menu(
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
-    active_axis: Axis,
-    runtime: Option<&CanvasRuntime>,
-) -> Html {
-    html! {
-        <details class="canvas-menu">
-            <summary aria-label="Open Spice Canvas menu">
-                <span aria-hidden="true">{"🌶️"}</span>
-                <span>{"Spice"}</span>
-            </summary>
-            <nav aria-label="Canvas views">
+            <nav class="canvas-shortcuts" aria-label="Canvas context views">
                 {render_pill(
                     "Agents",
                     "Converse with seated agents",
@@ -166,7 +151,7 @@ fn render_canvas_menu(
                         Callback::from(move |_| mosaic.set(true))
                     },
                 )}
-                {for Axis::ALL.iter().copied().map(|candidate| {
+                {for [Axis::Topology, Axis::Chronology].map(|candidate| {
                     let axis = axis.clone();
                     let mosaic = mosaic.clone();
                     render_pill(
@@ -181,6 +166,43 @@ fn render_canvas_menu(
                     )
                 })}
             </nav>
+            {render_canvas_menu(axis, mosaic, active_axis, runtime, sender)}
+        </header>
+    }
+}
+
+fn render_canvas_menu(
+    axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
+    active_axis: Axis,
+    runtime: Option<&CanvasRuntime>,
+    sender: &SenderHandle,
+) -> Html {
+    html! {
+        <details class="canvas-menu">
+            <summary aria-label="Open Spice Canvas menu">
+                <span aria-hidden="true">{"🌶️"}</span>
+                <span>{"Spice"}</span>
+            </summary>
+            <div class="canvas-menu-panel">
+                {super::team_menu::render(runtime, sender)}
+                <nav class="canvas-menu-views" aria-label="More Canvas views">
+                    {for [Axis::Magnitude, Axis::Flow].map(|candidate| {
+                        let axis = axis.clone();
+                        let mosaic = mosaic.clone();
+                        render_pill(
+                            &title(candidate.as_str()),
+                            candidate.question(),
+                            !*mosaic && candidate == active_axis,
+                            watchband::badge(axis_count(candidate, runtime)),
+                            Callback::from(move |_| {
+                                axis.set(candidate);
+                                mosaic.set(false);
+                            }),
+                        )
+                    })}
+                </nav>
+            </div>
         </details>
     }
 }

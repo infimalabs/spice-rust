@@ -10,6 +10,7 @@ import { assertComposerShards, assertNoDraftPreview } from "./composer-shards.mj
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
+import { assertTeamMenu } from "./team-menu.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
   assertEndpointProbeClosesWithoutResponse,
@@ -1252,6 +1253,7 @@ try {
   await assertCanvas(lightPage, "light");
   const hiddenStatusReport = await assertWaitReporting(lightPage, resident);
   Object.assign(seeded, await assertAgentConversation(lightPage, fixture, worktrees));
+  await assertTeamMenu(lightPage, fixture);
   const reference = await browser.newContext({
     colorScheme: "dark",
     viewport: { width: 1000, height: 568 },

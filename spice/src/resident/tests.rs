@@ -681,6 +681,7 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
 
     let request = wire::intent::LineageConfigure {
         lineage_id: lineage,
+        member: None,
         life: wire::intent::LineageLife::Drain,
         manual_projects: Some(vec!["task.manual".to_owned()]),
     };
