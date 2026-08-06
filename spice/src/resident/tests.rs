@@ -829,11 +829,8 @@ fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
 /// it reaches the announcement through `DiscoveryRead::open` rather than the
 /// identity recheck the replaced-generation case above exercises.
 ///
-/// Both arrive as *faults*: probing this path, the replaced path, an
-/// undialable endpoint, and a failed launch produced `Outcome::Fault` every
-/// time, so no input to `announce_canvas` reaches the refusal arm. That arm is
-/// held instead by `a_refusal_is_a_diagnostic_and_never_an_endpoint`, which
-/// hands the routing a refusal directly.
+/// Both arrive as *faults*: the announcement boundary accepts only a typed
+/// endpoint or fault, so no unreachable refusal arm can intercept this route.
 #[test]
 fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
     let root = fixture("announce-missing");
@@ -867,46 +864,4 @@ fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
     );
     assert_eq!(dialled, None, "a missing generation must not be dialled");
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
-}
-
-/// A refusal is a diagnostic, whatever produced it.
-///
-/// No discovery path drives this. Four were tried — a missing generation, a
-/// replaced generation, an undialable endpoint, and a failed launch — and every
-/// one of them arrives as a fault, because `dialable_endpoint` and the discovery
-/// reader both build faults and `rebody` only forwards what it is given. The
-/// refusal arm exists because `Outcome` has three variants, not because a caller
-/// reaches it, so it is handed one here instead of being left to a comment.
-///
-/// The arm is worth holding rather than deleting: it cannot be deleted while the
-/// match stays exhaustive without a catch-all, and the day an admission step
-/// refuses instead of faulting, the difference between these two streams is the
-/// difference between a shell reporting "no endpoint" and a shell dialling the
-/// sentence explaining why there isn't one.
-#[test]
-fn a_refusal_is_a_diagnostic_and_never_an_endpoint() {
-    let mut announced = Vec::new();
-    let mut diagnostics = Vec::new();
-
-    render_announcement(
-        Outcome::Refusal(Refusal {
-            reason: "canvas::discovery-unavailable".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "start the resident with `spice up`".to_owned(),
-        }),
-        &mut announced,
-        &mut diagnostics,
-    );
-
-    assert_eq!(
-        String::from_utf8(diagnostics).expect("diagnostic is text"),
-        "canvas unavailable: canvas::discovery-unavailable\n"
-    );
-    assert!(
-        announced.is_empty(),
-        "a shell capturing the endpoint stream would dial this: {}",
-        String::from_utf8_lossy(&announced)
-    );
 }
