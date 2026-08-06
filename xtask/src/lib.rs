@@ -2,9 +2,11 @@
 
 use std::ffi::OsStr;
 use std::fmt;
+use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 mod app;
 mod commit_message;
@@ -56,10 +58,11 @@ pub fn reference_transaction(
 /// and binds each to one compiled Rust arm; its one additional C# arm is marked
 /// native by carrying no retired-step name. The workspace tests exercise that
 /// exact manifest and the production executor for all four families, including
-/// the structural family that once lacked acquisition. Contract landing is
-/// therefore terminal: no alternate runtime or executable discovered from
+/// the structural family that once lacked acquisition. The real-browser action
+/// is the one non-Cargo runtime check and requires its end-of-run receipt.
+/// Contract landing remains terminal: no alternate executable discovered from
 /// `PATH` repeats policy after the Rust-owned checks finish.
-const VERIFY_ACTIONS: [Action; 7] = [
+const VERIFY_ACTIONS: [Action; 8] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
         &["fmt", "--all", "--", "--check"],
@@ -80,6 +83,7 @@ const VERIFY_ACTIONS: [Action; 7] = [
         "cargo check --locked --workspace --target wasm32-unknown-unknown",
         &["check", "--locked", "--workspace", "--target", WASM_TARGET],
     )),
+    Action::Browser,
     Action::Command(Step::cargo(
         "cargo test --locked --workspace --all-targets",
         &["test", "--locked", "--workspace", "--all-targets"],
@@ -93,6 +97,14 @@ const VERIFY_ACTIONS: [Action; 7] = [
 ];
 
 const BATTERY_LABEL: &str = "canonical Rust gate battery";
+/// Real-browser guard for the production Mosaic engine edge.
+///
+/// BROWSER-1kKSWhZk removed one of the two former surfaces. This mandatory
+/// action protects the remaining `composer -> mosaic_plane -> mosaic` path.
+const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
+const BROWSER_RECEIPT_FLAG: &str = "--spice-coverage-receipt";
+const BROWSER_RECEIPT: &[u8] = b"BROWSER-1kKSWhZk browser coverage complete\n";
+static NEXT_BROWSER_RECEIPT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Step {
@@ -109,6 +121,7 @@ impl Step {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Action {
     Command(Step),
+    Browser,
     Battery,
     Landing,
 }
@@ -117,6 +130,7 @@ impl Action {
     const fn label(self) -> &'static str {
         match self {
             Self::Command(step) => step.label,
+            Self::Browser => BROWSER_LABEL,
             Self::Battery => BATTERY_LABEL,
             Self::Landing => landing::LABEL,
         }
@@ -131,6 +145,7 @@ struct Status {
 
 trait Runner {
     fn run(&mut self, step: Step) -> io::Result<Status>;
+    fn browser(&mut self) -> io::Result<BrowserRun>;
     fn battery(&mut self) -> Result<BatteryRun, String>;
     fn landing(&mut self) -> Result<landing::Report, landing::Error>;
 }
@@ -138,6 +153,12 @@ trait Runner {
 struct BatteryRun {
     document: Vec<u8>,
     admitted: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BrowserRun {
+    status: Status,
+    completed: bool,
 }
 
 struct SystemRunner;
@@ -148,6 +169,28 @@ impl Runner for SystemRunner {
         Ok(Status {
             success: status.success(),
             code: status.code(),
+        })
+    }
+
+    fn browser(&mut self) -> io::Result<BrowserRun> {
+        let receipt = std::env::temp_dir().join(format!(
+            "spice-browser-coverage-{}-{}",
+            std::process::id(),
+            NEXT_BROWSER_RECEIPT.fetch_add(1, Ordering::Relaxed),
+        ));
+        remove_receipt(&receipt)?;
+        let process = Command::new("npm")
+            .args(["run", "test:canvas", "--", BROWSER_RECEIPT_FLAG])
+            .arg(&receipt)
+            .status()?;
+        let completed = fs::read(&receipt).is_ok_and(|body| body == BROWSER_RECEIPT);
+        remove_receipt(&receipt)?;
+        Ok(BrowserRun {
+            status: Status {
+                success: process.success(),
+                code: process.code(),
+            },
+            completed,
         })
     }
 
@@ -168,6 +211,14 @@ impl Runner for SystemRunner {
 
     fn landing(&mut self) -> Result<landing::Report, landing::Error> {
         landing::inspect()
+    }
+}
+
+fn remove_receipt(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -195,6 +246,19 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
                         label: step.label,
                         code: status.code,
                     });
+                }
+            }
+            Action::Browser => {
+                let run = runner
+                    .browser()
+                    .map_err(|source| VerifyError::BrowserLaunch { source })?;
+                if !run.status.success {
+                    return Err(VerifyError::BrowserExit {
+                        code: run.status.code,
+                    });
+                }
+                if !run.completed {
+                    return Err(VerifyError::BrowserIncomplete);
                 }
             }
             Action::Battery => {
@@ -231,6 +295,13 @@ pub enum VerifyError {
     LandingRefused,
     Battery(String),
     BatteryRefused,
+    BrowserLaunch {
+        source: io::Error,
+    },
+    BrowserExit {
+        code: Option<i32>,
+    },
+    BrowserIncomplete,
     Launch {
         label: &'static str,
         source: io::Error,
@@ -252,6 +323,25 @@ impl fmt::Display for VerifyError {
             Self::LandingRefused => formatter.write_str("[verify] contract landing refused"),
             Self::Battery(detail) => write!(formatter, "[verify] battery failed: {detail}"),
             Self::BatteryRefused => formatter.write_str("[verify] battery refused publication"),
+            Self::BrowserLaunch { source } => {
+                write!(
+                    formatter,
+                    "[verify] failed to launch: {BROWSER_LABEL} ({source})"
+                )
+            }
+            Self::BrowserExit { code: Some(code) } => {
+                write!(formatter, "[verify] failed: {BROWSER_LABEL} (exit {code})")
+            }
+            Self::BrowserExit { code: None } => {
+                write!(
+                    formatter,
+                    "[verify] failed: {BROWSER_LABEL} (terminated by signal)"
+                )
+            }
+            Self::BrowserIncomplete => write!(
+                formatter,
+                "[verify] browser coverage did not complete: {BROWSER_LABEL} emitted no receipt"
+            ),
             Self::Launch { label, source } => {
                 write!(formatter, "[verify] failed to launch: {label} ({source})")
             }
@@ -269,12 +359,16 @@ impl fmt::Display for VerifyError {
 impl std::error::Error for VerifyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Output(source) | Self::Launch { source, .. } => Some(source),
+            Self::Output(source) | Self::Launch { source, .. } | Self::BrowserLaunch { source } => {
+                Some(source)
+            }
             Self::Encode(source) => Some(source),
             Self::Landing(_)
             | Self::LandingRefused
             | Self::Battery(_)
             | Self::BatteryRefused
+            | Self::BrowserExit { .. }
+            | Self::BrowserIncomplete
             | Self::Exit { .. } => None,
         }
     }
@@ -294,6 +388,7 @@ mod tests {
 
     struct FakeRunner {
         outcomes: VecDeque<Outcome>,
+        browser: Option<io::Result<BrowserRun>>,
         battery: Option<Result<BatteryRun, String>>,
         landing: Option<Result<landing::Report, landing::Error>>,
         calls: Vec<&'static str>,
@@ -313,6 +408,13 @@ mod tests {
                 }),
                 Outcome::Launch => Err(io::Error::other("fixture launch refusal")),
             }
+        }
+
+        fn browser(&mut self) -> io::Result<BrowserRun> {
+            self.calls.push(BROWSER_LABEL);
+            self.browser
+                .take()
+                .expect("fixture has one browser outcome")
         }
 
         fn battery(&mut self) -> Result<BatteryRun, String> {
@@ -345,6 +447,7 @@ mod tests {
             .into_iter()
             .map(|action| match action {
                 Action::Command(step) => format!("[verify] {}\n", step.label),
+                Action::Browser => format!("[verify] {BROWSER_LABEL}\n"),
                 Action::Battery => format!("[verify] {BATTERY_LABEL}\n{{\"admitted\":true}}\n"),
                 Action::Landing => format!("[verify] {}\n{report}\n", landing::LABEL),
             })
@@ -354,7 +457,7 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 7] = [
+        const GUARDED_ACTIONS: [Action; 8] = [
             Action::Command(Step::cargo(
                 "cargo fmt --all -- --check",
                 &["fmt", "--all", "--", "--check"],
@@ -381,6 +484,7 @@ mod tests {
                     "wasm32-unknown-unknown",
                 ],
             )),
+            Action::Browser,
             Action::Command(Step::cargo(
                 "cargo test --locked --workspace --all-targets",
                 &["test", "--locked", "--workspace", "--all-targets"],
@@ -423,6 +527,72 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    /// BROWSER-1kKSWhZk removed one former surface, so real Chromium guards
+    /// the final production edge immediately after the browser-target build.
+    #[test]
+    fn verifier_makes_the_real_browser_guard_mandatory_after_the_wasm_build() {
+        let browser = VERIFY_ACTIONS
+            .iter()
+            .position(|action| *action == Action::Browser)
+            .expect("the verifier has a browser action");
+
+        assert_eq!(browser, 3);
+        assert!(
+            matches!(VERIFY_ACTIONS[browser - 1], Action::Command(step) if step.arguments.contains(&WASM_TARGET))
+        );
+        assert_eq!(
+            BROWSER_RECEIPT,
+            b"BROWSER-1kKSWhZk browser coverage complete\n"
+        );
+        assert!(BROWSER_LABEL.contains("BROWSER-1kKSWhZk"));
+    }
+
+    #[test]
+    fn zero_exit_without_the_browser_receipt_is_not_a_pass() {
+        let mut runner = runner(successful_commands());
+        runner.browser = Some(Ok(BrowserRun {
+            status: Status {
+                success: true,
+                code: Some(0),
+            },
+            completed: false,
+        }));
+        let mut output = Vec::new();
+
+        let error = verify_with(&mut runner, &mut output)
+            .expect_err("a skipped browser body emits no completion receipt");
+
+        assert!(matches!(error, VerifyError::BrowserIncomplete));
+        assert_eq!(runner.calls, labels()[..=3]);
+    }
+
+    #[test]
+    fn browser_dependency_and_launch_failures_are_not_incomplete_coverage() {
+        let mut missing_npm = runner(successful_commands());
+        missing_npm.browser = Some(Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "npm unavailable",
+        )));
+        let launch = verify_with(&mut missing_npm, &mut Vec::new())
+            .expect_err("a missing browser launcher fails");
+        assert!(matches!(launch, VerifyError::BrowserLaunch { .. }));
+
+        let mut missing_browser = runner(successful_commands());
+        missing_browser.browser = Some(Ok(BrowserRun {
+            status: Status {
+                success: false,
+                code: Some(127),
+            },
+            completed: false,
+        }));
+        let dependency = verify_with(&mut missing_browser, &mut Vec::new())
+            .expect_err("a missing Node or browser dependency fails its process");
+        assert!(matches!(
+            dependency,
+            VerifyError::BrowserExit { code: Some(127) }
+        ));
     }
 
     /// The battery builds for a second target, and says which one.
@@ -524,13 +694,28 @@ mod tests {
                 .filter(|action| matches!(action, Action::Command(_)))
                 .count(),
             5,
-            "only the five declared Cargo commands precede compiled landing"
+            "exactly five declared Cargo commands precede compiled landing"
+        );
+        assert_eq!(
+            VERIFY_ACTIONS
+                .iter()
+                .filter(|action| matches!(action, Action::Browser))
+                .count(),
+            1,
+            "one mandatory browser action precedes compiled landing"
         );
     }
 
     fn runner(outcomes: impl IntoIterator<Item = Outcome>) -> FakeRunner {
         FakeRunner {
             outcomes: outcomes.into_iter().collect(),
+            browser: Some(Ok(BrowserRun {
+                status: Status {
+                    success: true,
+                    code: Some(0),
+                },
+                completed: true,
+            })),
             battery: Some(Ok(BatteryRun {
                 document: br#"{"admitted":true}"#.to_vec(),
                 admitted: true,
