@@ -890,3 +890,34 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
         vec!["fault", "refusal", "reply"]
     );
 }
+
+#[test]
+fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "outcome": {
+            "kind": "reply",
+            "cursor": 41,
+            "body": {
+                "directive": LANE,
+                "key": "1kQTest",
+                "disposition": "live",
+            },
+        },
+    }))
+    .expect("steer response serializes");
+    let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
+        .admit_frame(&bytes)
+        .expect("steer response is admitted");
+
+    runtime.apply_steer(&admitted, uuid(LANE));
+
+    assert_eq!(runtime.events()[0].class(), "reply");
+    assert_eq!(runtime.events()[0].title(), format!("Steered lane {LANE}"));
+    assert_eq!(runtime.events()[0].detail(), "key 1kQTest live");
+}

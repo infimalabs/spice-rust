@@ -19,7 +19,7 @@ use wire::{Digest, Domain};
 
 mod support;
 
-use support::Tree;
+use support::{Tree, git_commit, git_repository};
 
 /// A line counter written entirely in shell builtins.
 ///
@@ -438,16 +438,16 @@ fn completed_run_identity_moves_when_any_observed_input_moves() {
 
 #[test]
 fn a_published_receipt_survives_a_round_trip_and_an_interrupted_successor() {
-    let tree = Tree::new("publish");
+    let tree = git_repository("publish");
     tree.write("src/lib.rs", "one\n");
     let receipt = tree.path("verdict.json");
 
     let policy_path = tree.path("spice.toml");
     let baseline_path = tree.path("baseline.toml");
-    let baseline = "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n\
-                    [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n";
+    let baseline = "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n";
     tree.write("spice.toml", gate::NARROWEST_FILE_CLASSES);
     tree.write("baseline.toml", baseline);
+    git_commit(&tree, "receipt fixture");
     let contract = Contract::from_tracked(
         &tree.root,
         &policy_path,

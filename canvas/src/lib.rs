@@ -14,8 +14,8 @@ pub mod thread;
 pub mod view;
 
 pub use asset::{
-    AppSource, AppSourceError, Discovery, EMBEDDED_APP, EmbeddedApp, EmbeddedAsset, LOCAL_STAGE,
-    PublishError, ServedAsset,
+    APP, App, AppAsset, AppSource, AppSourceError, Discovery, LOCAL_STAGE, PublishError,
+    ServedAsset,
 };
 pub use config::{Config, ConfigError};
 pub use speech::{SpeechBackend, SpeechConfig, SpeechConfigError};

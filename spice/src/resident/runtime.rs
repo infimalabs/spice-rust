@@ -186,6 +186,8 @@ impl Drop for PublishedDiscovery {
 /// because reaching this surface from another machine is a decision only the
 /// operator can make, and `--host` is how they make it.
 const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8765);
+const AUTH_TOKEN_MIN_BYTES: usize = 16;
+const AUTH_TOKEN_MAX_BYTES: usize = 256;
 
 /// The address a caller that owns no operator intent should listen on.
 ///
@@ -251,7 +253,7 @@ fn requested_access(
 ) -> CommandResult<canvas::axum::Access> {
     let token = leaf.get_one::<String>("auth-token").cloned();
     if let Some(token) = token.as_deref()
-        && (token.len() < 16 || token.len() > 256 || !token.bytes().all(is_token_byte))
+        && !auth_token_is_valid(token)
     {
         return Err(access_refusal(
             "resident::auth-token-invalid",
@@ -277,6 +279,11 @@ fn requested_access(
         ));
     }
     Ok(token.map_or_else(canvas::axum::Access::local, canvas::axum::Access::authenticated))
+}
+
+fn auth_token_is_valid(token: &str) -> bool {
+    (AUTH_TOKEN_MIN_BYTES..=AUTH_TOKEN_MAX_BYTES).contains(&token.len())
+        && token.bytes().all(is_token_byte)
 }
 
 const fn is_token_byte(byte: u8) -> bool {

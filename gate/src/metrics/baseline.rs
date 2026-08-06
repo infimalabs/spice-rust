@@ -34,7 +34,7 @@ const BLOB_MODES: [u16; 2] = [0o100644, 0o100755];
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BaselineCapture {
     /// The committed texts read from one named commit.
-    Reached(MagicBaselines),
+    Reached(CommittedTexts),
     /// The committed state could not be read, and why.
     Unreachable(String),
 }
@@ -43,21 +43,21 @@ impl BaselineCapture {
     /// Read every selected committed text, or retain why none could be read.
     #[must_use]
     pub fn capture(repository: &Path, suffixes: &[String]) -> Self {
-        match MagicBaselines::read(repository, suffixes) {
+        match CommittedTexts::read(repository, suffixes) {
             Ok(baselines) => Self::Reached(baselines),
             Err(error) => Self::Unreachable(error.to_string()),
         }
     }
 }
 
-/// Every committed text one magic-number scan may be measured against.
+/// Every selected text captured from one committed `HEAD`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct MagicBaselines {
+pub struct CommittedTexts {
     commit: Option<String>,
     texts: BTreeMap<String, String>,
 }
 
-impl MagicBaselines {
+impl CommittedTexts {
     /// The committed text for one path, or `None` when `HEAD` does not carry it.
     ///
     /// The two answers are kept apart deliberately. A path absent from `HEAD` is
@@ -79,7 +79,7 @@ impl MagicBaselines {
     /// A repository with no commit yet is read as an empty baseline naming no
     /// commit rather than refused. An unborn `HEAD` is a real repository state,
     /// and every selected path then honestly has no committed bytes behind it.
-    fn read(repository: &Path, suffixes: &[String]) -> Result<Self, TreeError> {
+    pub(crate) fn read(repository: &Path, suffixes: &[String]) -> Result<Self, TreeError> {
         let repo = open_repository(repository)?;
         let head = repo.head().map_err(|source| TreeError::Repository {
             path: repository.to_path_buf(),

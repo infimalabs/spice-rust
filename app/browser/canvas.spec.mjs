@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { unwatchFile, watchFile } from "node:fs";
-import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -151,54 +151,24 @@ async function reply(fixture, args) {
   return outcome;
 }
 
-/// Serve the app this lane built, when it built one.
+/// Refuse a run whose stage carries no app to serve.
 ///
-/// The resident prefers a worktree's local stage over its embedded bytes, and
-/// this fixture is a worktree of its own -- so without this copy the spec
-/// always checks the committed bundle no matter what the app sources say. That
-/// is a trap rather than a stricter check: the committed stage is reproducible
-/// only inside the sealed image, so a lane that changes the browser and runs
-/// this spec would watch it pass or fail on bytes its change never reached.
-/// Copying the local stage in reproduces the same precedence the operator gets
-/// from `spice up` in this worktree.
-async function stageLocalApp(fixture) {
-  const source = join(root, "dist/stage-local");
-  const staged = await readdir(source).catch(() => null);
-  if (!staged) return false;
-  const destination = join(fixture, "dist/stage-local");
-  await mkdir(destination, { recursive: true });
-  for (const name of staged) {
-    await writeFile(join(destination, name), await readFile(join(source, name)));
-  }
-  return true;
-}
-
-/// Refuse a run whose resident is not serving the app this spec staged.
-///
-/// The bytes the browser executes come from one of two places and this spec
-/// chooses which above, but neither choice is self-enforcing. The embedded
-/// branch is served out of `target/debug/spice`, which carries whatever
-/// `dist/stage` held when it was last linked -- so restaging the app without
-/// relinking drives every assertion below against the previous bundle. That
-/// failure does not announce itself: it surfaces as a timeout in whichever
-/// feature moved, ten seconds of waiting for an element the served app has no
-/// code to render, and it reads exactly like a regression in the change that
-/// actually fixed it. Comparing one served asset against the file it must have
-/// come from turns a whole debugging session into a refusal naming the command.
-async function assertServedApp(endpoint, local) {
-  const expected = join(root, local ? "dist/stage-local" : "dist/stage", "app_bg.wasm");
-  const response = await fetch(new URL("/app_bg.wasm", endpoint));
-  assert.equal(response.status, 200, "the resident serves the app it was asked for");
-  const served = Buffer.from(await response.arrayBuffer());
-  const wanted = await readFile(expected);
-  assert.ok(
-    served.equals(wanted),
-    `the resident serves ${served.length} bytes of app wasm, but ${expected} is ${wanted.length}`
-      + ` bytes: run cargo build -p spice to relink the binary this spec drives`,
-  );
-}
-
+/// There is one stage now and the resident has no embedded bundle to fall back
+/// on, so a lane that has not run `cargo xtask local-app` -- or whose stage was
+/// half written -- gets a resident that starts, answers, and serves nothing the
+/// browser can execute. That failure does not announce itself: it surfaces as a
+/// timeout in whichever feature the lane just changed, ten seconds of waiting
+/// for an element no served code renders, and it reads exactly like a
+/// regression in that change. One directory read before the copy turns a
+/// debugging session into a refusal naming the command that fixes it.
 async function configureFixture(fixture) {
+  const stage = join(root, "dist/stage-local");
+  const staged = await readdir(stage).catch(() => []);
+  assert.ok(
+    staged.includes("app_bg.wasm"),
+    `${stage} carries no app wasm: run cargo xtask local-app to build the stage this spec serves`,
+  );
+  await cp(stage, join(fixture, "dist/stage-local"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
     "#!/bin/sh",
@@ -315,7 +285,7 @@ async function assertCanvas(page, scheme) {
   await assert.doesNotReject(() => page.locator(".brand-name:visible, .mobile-brand:visible").waitFor());
   await assert.doesNotReject(() => page.getByRole("heading", { name: "Agents", exact: true }).waitFor());
   await page.waitForFunction(() => {
-    const cursor = document.querySelector(".rail-meta")?.textContent ?? "";
+    const cursor = document.querySelector(".bar-meta")?.textContent ?? "";
     return /cursor \d+/.test(cursor);
   });
 
@@ -325,7 +295,7 @@ async function assertCanvas(page, scheme) {
     const rootStyle = root ? getComputedStyle(root) : null;
     const canvasBox = canvas?.getBoundingClientRect();
     const workspaceBox = document.querySelector(".workspace")?.getBoundingClientRect();
-    const railBox = document.querySelector(".rail")?.getBoundingClientRect();
+    const barBox = document.querySelector(".commandbar")?.getBoundingClientRect();
     return {
       appChildren: root?.childElementCount ?? 0,
       bodyWidth: document.body.scrollWidth,
@@ -333,8 +303,7 @@ async function assertCanvas(page, scheme) {
       canvasHeight: Math.round(canvasBox?.height ?? 0),
       ink: rootStyle?.color ?? "",
       background: getComputedStyle(document.body).backgroundColor,
-      mobileNavOverlap: window.innerWidth <= 560
-        && (workspaceBox?.bottom ?? 0) > (railBox?.top ?? window.innerHeight),
+      barOverlap: (barBox?.bottom ?? 0) > (workspaceBox?.top ?? 0) + 1,
       overflowingControls: [...document.querySelectorAll("button, .pane-chip")]
         .filter((element) => {
           const style = getComputedStyle(element);
@@ -348,7 +317,7 @@ async function assertCanvas(page, scheme) {
   assert.ok(pixels.canvasHeight > 300, "primary canvas has visible content");
   assert.ok(pixels.bodyWidth <= pixels.viewportWidth, "page has no viewport overflow");
   assert.notEqual(pixels.ink, pixels.background, "foreground and background pixels differ");
-  assert.equal(pixels.mobileNavOverlap, false, "mobile workspace stops above bottom navigation");
+  assert.equal(pixels.barOverlap, false, "the workspace starts below the command bar");
   assert.deepEqual(pixels.overflowingControls, [], "controls and pane labels fit their bounds");
 
   for (const [axis, panes] of axisPanes) {
@@ -547,6 +516,78 @@ async function assertAuthoritySurface(page, seeded) {
   assert.match(trustText, /trust::pended/);
   assert.match(trustText, /trust::granted/);
   assert.match(trustText, /granted/);
+}
+
+async function assertMosaicComposer(page, fixture, seeded) {
+  await page.getByRole("button", { name: "Mosaic", exact: true }).click();
+  await page.getByRole("heading", { name: "Mosaic", exact: true }).waitFor();
+  const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
+  await lane.getByText("browser direction survives streaming", { exact: true }).waitFor();
+
+  await lane.locator(".mosaic-message-card")
+    .filter({ hasText: "browser direction survives streaming" })
+    .getByRole("button", { name: "Quote reply" })
+    .click();
+  const composer = lane.locator(".mosaic-composer");
+  await composer.getByLabel("Markdown preview").waitFor();
+  assert.equal(
+    await composer.locator("blockquote").innerText(),
+    "browser direction survives streaming",
+  );
+  await composer.getByRole("textbox").fill("canvas quote reply");
+  const pixel = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await composer.locator('input[type="file"]').setInputFiles([
+    { name: "pixel.png", mimeType: "image/png", buffer: pixel },
+    { name: "pixel-copy.png", mimeType: "image/png", buffer: pixel },
+  ]);
+  await composer.getByRole("img", { name: "pixel.png" }).waitFor();
+  await composer.getByRole("img", { name: "pixel-copy.png" }).waitFor();
+  await page.screenshot({
+    path: join(artifacts, "canvas-light-mosaic-composer.png"),
+    fullPage: true,
+  });
+  await composer.getByRole("button", { name: "Send" }).click();
+  await lane.locator(".mosaic-message-card").filter({ hasText: "canvas quote reply" }).waitFor({
+    timeout: 10_000,
+  });
+  const quoted = await reply(fixture, ["inbox", seeded.lane]);
+  const quotedDirective = quoted.body.lanes[0].pending.find(
+    (directive) => directive.text.includes("canvas quote reply"),
+  );
+  assert.ok(quotedDirective, "quote reply reaches the lane inbox");
+  assert.match(quotedDirective.text, /> browser direction survives streaming/);
+  assert.equal(quotedDirective.attachments.length, 2);
+  assert.deepEqual(
+    quotedDirective.attachments.map((attachment) => attachment.name).sort(),
+    ["pixel-copy.png", "pixel.png"],
+  );
+  for (const attachment of quotedDirective.attachments) {
+    assert.equal(attachment.content_type, "image/png");
+    assert.match(attachment.data_url, /^data:image\/png;base64,/);
+  }
+
+  await lane.evaluate((target) => {
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", "dragged card direction");
+    target.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+  });
+  await lane.locator(".mosaic-message-card").filter({ hasText: "dragged card direction" }).waitFor({
+    timeout: 10_000,
+  });
+  const dropped = await reply(fixture, ["inbox", seeded.lane]);
+  assert.ok(
+    dropped.body.lanes[0].pending.some(
+      (directive) => directive.text === "> dragged card direction",
+    ),
+    "dropping text on a lane sends quoted steering",
+  );
 }
 
 async function assertPackedHistory(page, extent, linked = false) {
@@ -864,18 +905,12 @@ const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browse
 await mkdir(join(fixture, ".git"));
 await mkdir(artifacts, { recursive: true });
 await configureFixture(fixture);
-const local = await stageLocalApp(fixture);
-process.stderr.write(
-  local
-    ? "canvas spec: serving dist/stage-local, the app this worktree built\n"
-    : "canvas spec: serving the embedded app; run cargo xtask local-app to check local sources\n",
-);
+process.stderr.write("canvas spec: serving dist/stage-local, the app this worktree built\n");
 
 let resident;
 let browser;
 try {
   resident = await startResident(fixture);
-  await assertServedApp(resident.discovery.endpoint, local);
   const seeded = await seedAuthority(fixture);
   browser = await chromium.launch({ headless: true });
 
@@ -893,7 +928,8 @@ try {
   seeded.lane = await assertAgentConversation(lightPage, fixture);
   seeded.extent = await journalExtent(fixture);
   await assertAuthoritySurface(lightPage, seeded);
-  await assertPackedHistory(lightPage, seeded.extent, true);
+  await assertMosaicComposer(lightPage, fixture, seeded);
+  await assertPackedHistory(lightPage, await journalExtent(fixture), true);
   await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
   await assertSystemSpeech(lightPage);
   await lightPage.getByRole("button", { name: "Flow" }).click();

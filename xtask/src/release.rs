@@ -29,8 +29,8 @@ const GRACE: Duration = Duration::from_secs(5);
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 const PINNED_TRUNK: &str = "trunk 0.21.14";
 const PINNED_MUTANTS: &str = "cargo-mutants 27.1.0";
-const APP_ARTIFACT: &str = "dist/stage/app_bg.wasm";
-const EMBEDDED_ARTIFACT: &str = "dist/stage/canvas-app.html";
+const APP_ARTIFACT: &str = "dist/stage-local/app_bg.wasm";
+const EMBEDDED_ARTIFACT: &str = "dist/stage-local/canvas-app.html";
 
 /// One complete bounded command observation from a target build.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -402,7 +402,7 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
         self.run(CommandSpec::new(
             "app-build",
             &self.programs.xtask,
-            ["check-app"],
+            ["local-app"],
         ))?;
         read_regular(&self.root.join(APP_ARTIFACT)).map_err(build_error)
     }
@@ -877,7 +877,7 @@ impl SystemExecutor {
         entries.extend([
             (OsString::from("RUSTC"), rustc.as_os_str().to_owned()),
             // Named rather than dropped, because one of the commands below is
-            // this same binary: `app-build` re-invokes `xtask check-app`, which
+            // this same binary: `app-build` re-invokes `xtask local-app`, which
             // resolves its own build root from this variable at its own rim. An
             // absent value there is not a neutral default but a second answer —
             // the app rebuild would write under the workspace while everything
@@ -1016,7 +1016,7 @@ fn workspace_root() -> Result<PathBuf, TargetBuildError> {
         path: PathBuf::from("."),
         source,
     })?;
-    if !root.join("Cargo.toml").is_file() || !root.join("dist/stage").is_dir() {
+    if !root.join("Cargo.toml").is_file() || !root.join("dist").is_dir() {
         return Err(TargetBuildError::Workspace(root));
     }
     Ok(root)

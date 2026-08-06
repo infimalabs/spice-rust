@@ -1,9 +1,5 @@
 version = 1
 
 [[floor]]
-name = "rust.long-lines"
-value = 70
-
-[[floor]]
 name = "rust.mutation-survivors"
 value = 0

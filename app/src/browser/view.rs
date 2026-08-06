@@ -2,70 +2,10 @@
 
 use super::*;
 
-/// Where the rail can send the operator.
-///
-/// [`Axis`] is a closed vocabulary of questions asked *about the journal*, and
-/// its own documentation says a new plane becomes a pane on one of the four
-/// rather than a fifth view. The mosaic is not a plane and does not belong
-/// inside it: it answers who is running right now and how to redirect them,
-/// which no pane derives and no admitted snapshot alone can answer. So it
-/// stands beside the axes as a second kind of destination. Adding it as an
-/// `Axis` variant would have demanded a pane registry row for a surface that
-/// has no panes, and would have widened a vocabulary whose closure is what
-/// makes the pane match exhaustive.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Destination {
-    /// One of the four derived read axes.
-    Axis(Axis),
-    /// The live operating surface: lanes, their latest word, and steering.
-    Mosaic,
-}
+mod chrome;
 
-impl Destination {
-    /// The rail label for this destination.
-    fn label(self) -> String {
-        match self {
-            Self::Axis(axis) => title(axis.as_str()),
-            Self::Mosaic => "Mosaic".to_owned(),
-        }
-    }
+use chrome::Correspondent;
 
-    /// The tooltip for this destination.
-    const fn question(self) -> &'static str {
-        match self {
-            Self::Axis(axis) => axis.question(),
-            Self::Mosaic => "Who is running, and what are they saying?",
-        }
-    }
-}
-
-/// The note composer, carried as one value.
-///
-/// The task handle, the note buffer and the submit that joins them are three
-/// fields of one control; passing them separately is what lets a caller wire a
-/// buffer to a different submit than the one reading it.
-#[derive(Clone)]
-pub(super) struct Notes {
-    pub(super) task: UseStateHandle<String>,
-    pub(super) text: UseStateHandle<String>,
-    pub(super) submit: Callback<SubmitEvent>,
-}
-
-/// Everything the top bar owns.
-///
-/// Speech playback, its status and its toggle are one control, and refresh sits
-/// beside them in the same bar; grouping them keeps the render signatures at a
-/// size where the argument list is still readable as a list.
-#[derive(Clone)]
-pub(super) struct Topbar {
-    pub(super) speech: UseStateHandle<wire::SpeechPlayback>,
-    pub(super) status: UseStateHandle<SpeechStatus>,
-    pub(super) toggle: Callback<MouseEvent>,
-    pub(super) refresh: Callback<MouseEvent>,
-}
-
-/// What the agent console owns: which lane is open, the seat form's fields,
-/// the message buffer, and the two submits that send them.
 #[derive(Clone)]
 pub(super) struct AgentControls {
     pub(super) selected_lane: UseStateHandle<String>,
@@ -77,22 +17,8 @@ pub(super) struct AgentControls {
     pub(super) steer_notice: UseStateHandle<Notice>,
     pub(super) submit_seat: Callback<SubmitEvent>,
     pub(super) submit_steer: Callback<SubmitEvent>,
-}
-
-/// The chrome the shell owns, carried as one value.
-///
-/// These four controls belong to the frame rather than to any one destination:
-/// the workspace draws the top bar on every visit, the mosaic draws the strip
-/// and the console, and only an axis asks for the note composer. They travel
-/// together because each is already a bundle of state plus the submit that
-/// reads it, and passing eleven loose handles down two levels is exactly what
-/// lets a caller wire one control's buffer to another's callback.
-#[derive(Clone)]
-pub(super) struct Chrome {
-    pub(super) notes: Notes,
-    pub(super) topbar: Topbar,
-    pub(super) steering: super::watchband::Steering,
-    pub(super) agents: AgentControls,
+    /// Read one message aloud, using the resident's current speech settings.
+    pub(super) speak: Callback<String>,
 }
 
 /// Render the reason the last submission was refused, or nothing.
@@ -110,133 +36,84 @@ fn render_notice(notice: &Notice) -> Html {
     }
 }
 
-pub(super) fn render_canvas(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    destination: &UseStateHandle<Destination>,
-    sender: &SenderHandle,
-    chrome: &Chrome,
-) -> Html {
-    let active = **destination;
-    let cursor = (**surface)
+pub(super) struct CanvasRender<'a> {
+    pub connection: &'a UseStateHandle<Connection>,
+    pub surface: &'a UseStateHandle<SurfaceData>,
+    pub axis: &'a UseStateHandle<Axis>,
+    pub mosaic: &'a UseStateHandle<bool>,
+    pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
+    pub sender: &'a SenderHandle,
+    pub agents: &'a AgentControls,
+    pub note_task: &'a UseStateHandle<String>,
+    pub note_text: &'a UseStateHandle<String>,
+    pub submit_note: Callback<SubmitEvent>,
+    pub refresh: Callback<MouseEvent>,
+    pub speech: &'a UseStateHandle<wire::SpeechPlayback>,
+    pub speech_status: &'a UseStateHandle<SpeechStatus>,
+    pub toggle_speech: Callback<MouseEvent>,
+}
+
+pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
+    let active_axis = **render.axis;
+    let cursor = (**render.surface)
         .as_ref()
         .and_then(CanvasRuntime::resume)
         .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="shell">
-            {render_rail(destination, active, &cursor)}
-            {render_workspace(connection, surface, active, sender, chrome)}
+            {chrome::render_command_bar(
+                render.axis,
+                render.mosaic,
+                active_axis,
+                render.surface,
+                &cursor,
+            )}
+            {render_workspace(&render, active_axis)}
         </div>
     }
 }
 
-pub(super) fn render_rail(
-    destination: &UseStateHandle<Destination>,
-    active: Destination,
-    cursor: &str,
-) -> Html {
-    // The mosaic leads the four axes rather than trailing them because it is
-    // the surface the operator works from; the axes are what they consult when
-    // a read is what they wanted.
-    let candidates = std::iter::once(Destination::Mosaic)
-        .chain(Axis::ALL.iter().copied().map(Destination::Axis));
-    html! {
-        <aside class="rail">
-            <div class="brand">
-                <span class="brand-mark">{"SP"}</span>
-                <span class="brand-name">{"Spice Canvas"}</span>
-            </div>
-            <nav class="axis-nav" aria-label="Canvas destinations">
-                {for candidates.map(|candidate| {
-                    let destination = destination.clone();
-                    let selected = candidate == active;
-                    html! {
-                        <button
-                            class="axis-button"
-                            aria-current={selected.then_some("page")}
-                            title={candidate.question()}
-                            onclick={Callback::from(move |_| destination.set(candidate))}
-                        >
-                            <span class="axis-glyph"></span>
-                            <span class="axis-label">{candidate.label()}</span>
-                        </button>
-                    }
-                })}
-            </nav>
-            <div class="rail-meta">{format!("cursor {cursor}")}</div>
-        </aside>
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn render_workspace(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    active: Destination,
-    sender: &SenderHandle,
-    chrome: &Chrome,
-) -> Html {
+pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
     html! {
         <div class="workspace">
             <header class="topbar">
                 <div class="mobile-brand">{"Spice Canvas"}</div>
-                <div class={connection.class()}>
+                <div class={render.connection.class()}>
                     <span class="status-dot"></span>
-                    <span class="status-copy">{connection.label()}</span>
+                    <span class="status-copy">{render.connection.label()}</span>
                 </div>
                 <div class="topbar-actions">
                     {speech_control(
-                        &chrome.topbar.speech,
-                        &chrome.topbar.status,
-                        chrome.topbar.toggle.clone(),
+                        render.speech,
+                        render.speech_status,
+                        render.toggle_speech.clone(),
                     )}
                     <button
                         class="refresh"
                         type="button"
-                        onclick={chrome.topbar.refresh.clone()}
+                        onclick={render.refresh.clone()}
                     >{"Refresh"}</button>
                 </div>
             </header>
-            <main class={active_content_class(active)}>
-                {match active {
-                    // The strip and the console are one surface: the strip is
-                    // every seated lane at a glance, the console is the one
-                    // conversation the operator opened out of it.
-                    Destination::Mosaic => html! {
-                        <>
-                            {super::watchband::render(surface, &chrome.steering)}
-                            {render_agent_console(surface, &chrome.agents)}
-                        </>
-                    },
-                    Destination::Axis(axis) => {
-                        render_analytics(connection, surface, axis, sender, &chrome.notes)
-                    }
-                }}
+            <main class="content">
+                if **render.mosaic {
+                    {render_agent_console(render.surface, render.agents)}
+                    {composer::render_mosaic(
+                        render.surface,
+                        render.sender,
+                        render.composer_drafts,
+                    )}
+                } else {
+                    {render_analytics(render, active_axis)}
+                }
             </main>
         </div>
     }
 }
 
-/// The content class for a destination.
-///
-/// The mosaic is a desktop operating surface with its own scroll and density,
-/// so it carries a second class rather than reusing the axis page's spacing.
-const fn active_content_class(active: Destination) -> &'static str {
-    match active {
-        Destination::Axis(_) => "content",
-        Destination::Mosaic => "content content--mosaic",
-    }
-}
-
-fn render_analytics(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    active_axis: Axis,
-    sender: &SenderHandle,
-    notes: &Notes,
-) -> Html {
-    let runtime = (**surface).as_ref();
+fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
+    let runtime = (**render.surface).as_ref();
     let task_count = runtime
         .and_then(CanvasRuntime::board)
         .map_or(0, |board| board.tasks.len());
@@ -263,7 +140,7 @@ fn render_analytics(
             </div>
             <section class="metrics" aria-label="Current resident metrics">
                 {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
-                {metric("Lanes", lane_count.to_string(), resident_state(surface))}
+                {metric("Lanes", lane_count.to_string(), resident_state(render.surface))}
                 {metric(
                     "Consent",
                     pending_count.to_string(),
@@ -276,7 +153,15 @@ fn render_analytics(
                     <span class="pane-chip">{title(pane.as_str())}</span>
                 })}
             </div>
-            {render_axis(active_axis, surface, connection, sender, notes)}
+            {render_axis(
+                active_axis,
+                render.surface,
+                render.connection,
+                render.sender,
+                render.note_task,
+                render.note_text,
+                render.submit_note.clone(),
+            )}
         </>
     }
 }
@@ -302,7 +187,8 @@ pub(super) fn render_agent_console(surface: &SurfaceData, controls: &AgentContro
                 </div>
                 <span class="agent-count">{format!("{} active", lanes.len())}</span>
             </div>
-            {render_agent_tabs(lanes, selected, controls)}
+            {chrome::render_watchband(surface, controls)}
+            {chrome::render_ticker(surface)}
             <div class="agent-stage">
                 {render_conversation(runtime, selected, pending, controls)}
                 {render_seat_panel(runtime, controls)}
@@ -336,40 +222,6 @@ fn selected_inbox<'a>(
         .unwrap_or(&[])
 }
 
-fn render_agent_tabs(
-    lanes: &[crate::runtime::LaneRow],
-    selected: Option<&crate::runtime::LaneRow>,
-    controls: &AgentControls,
-) -> Html {
-    html! {
-        <div class="agent-tabs" role="tablist" aria-label="Seated agents">
-            if lanes.is_empty() {
-                <span class="agent-tab-empty">{"No agents seated"}</span>
-            } else {
-                {for lanes.iter().map(|lane| {
-                    let lane_id = lane.lane.to_string();
-                    let selected_now = selected.is_some_and(|selected| selected.lane == lane.lane);
-                    let choose = controls.selected_lane.clone();
-                    let label = format!("Open {} lane {}", lane.vendor, short(&lane_id));
-                    html! {
-                        <button
-                            class={classes!("agent-tab", selected_now.then_some("selected"))}
-                            type="button" role="tab"
-                            aria-selected={selected_now.to_string()} aria-label={label}
-                            data-lane={lane_id.clone()}
-                            onclick={Callback::from(move |_| choose.set(lane_id.clone()))}
-                        >
-                            <span class="agent-presence"></span>
-                            <span>{lane.vendor.to_string()}</span>
-                            <span class="mono">{short(&lane.lane.to_string())}</span>
-                        </button>
-                    }
-                })}
-            }
-        </div>
-    }
-}
-
 fn render_conversation(
     runtime: Option<&CanvasRuntime>,
     selected: Option<&crate::runtime::LaneRow>,
@@ -381,7 +233,7 @@ fn render_conversation(
     html! {
         <section class="conversation" aria-label="Selected agent conversation">
             {render_conversation_heading(selected)}
-            {render_inbox(pending)}
+            {render_inbox(pending, correspondent(selected, controls))}
             <form class="agent-compose" onsubmit={controls.submit_steer.clone()}>
                 <label for="agent-message">{"Message"}</label>
                 <textarea
@@ -419,13 +271,47 @@ fn render_conversation_heading(selected: Option<&crate::runtime::LaneRow>) -> Ht
     }
 }
 
-fn render_inbox(pending: &[wire::intent::PendingDirective]) -> Html {
-    html! { <MosaicInbox pending={pending.to_vec()} /> }
+/// Who the open conversation is with, and what its cards can do.
+///
+/// The lane is the correspondent because the operator authored every pending
+/// directive; keying the accent to it means the whole feed changes colour when
+/// the selection moves, which is the signal the reference band carries.
+fn correspondent(
+    selected: Option<&crate::runtime::LaneRow>,
+    controls: &AgentControls,
+) -> Correspondent {
+    let steer = controls.steer_text.clone();
+    Correspondent {
+        name: selected.map_or_else(
+            || "no lane".to_owned(),
+            |lane| crate::watchband::leaf(&lane.worktree).to_owned(),
+        ),
+        accent: selected.map_or(0, |lane| crate::watchband::accent(lane.lane)),
+        speak: controls.speak.clone(),
+        quote: Callback::from(move |text: String| {
+            let quoted = text
+                .lines()
+                .map(|line| format!("> {line}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let standing = (*steer).clone();
+            steer.set(if standing.is_empty() {
+                format!("{quoted}\n\n")
+            } else {
+                format!("{standing}\n{quoted}\n\n")
+            });
+        }),
+    }
+}
+
+fn render_inbox(pending: &[wire::intent::PendingDirective], correspondent: Correspondent) -> Html {
+    html! { <MosaicInbox pending={pending.to_vec()} correspondent={correspondent} /> }
 }
 
 #[derive(Properties, PartialEq)]
 struct MosaicInboxProps {
     pending: Vec<wire::intent::PendingDirective>,
+    correspondent: Correspondent,
 }
 
 #[function_component(MosaicInbox)]
@@ -446,13 +332,14 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
         geometry.module,
         (*width).round() as i32,
     );
+    let feed = classes!(
+        "conversation-feed",
+        (!properties.pending.is_empty()).then_some("mosaic-feed"),
+    );
     html! {
         <div
             ref={host}
-            class={classes!(
-                "conversation-feed",
-                (!properties.pending.is_empty()).then_some("mosaic-feed"),
-            )}
+            class={feed}
             aria-live="polite"
             data-lanes={geometry.lane_count.to_string()}
         >
@@ -463,7 +350,7 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
                 </div>
             } else {
                 {for properties.pending.iter().zip(cards.iter()).map(|pair| {
-                    render_mosaic_card(pair, max_row)
+                    chrome::render_mosaic_card(pair, max_row, &properties.correspondent)
                 })}
             }
         </div>
@@ -496,53 +383,6 @@ fn message_candidates(
             .sum::<f64>();
         54.0 + text_lines as f64 * 19.0 + attachment_height
     })
-}
-
-fn render_mosaic_card(
-    (directive, card): (&wire::intent::PendingDirective, &crate::mosaic::Card),
-    max_row: i32,
-) -> Html {
-    let state = card.lifecycle.as_str();
-    html! {
-        <article
-            class={classes!("message", "outgoing", "mosaic-card", state)}
-            data-state={state}
-            data-track={card.track.to_string()}
-            data-span={card.span.to_string()}
-            data-base={card.base.to_string()}
-            data-row={crate::mosaic::css_row_start(card, max_row).to_string()}
-            data-rows={card.rows.to_string()}
-        >
-            <div class="message-meta">
-                <strong>{"You"}</strong>
-                <span>{format!("{} / pending", directive.key)}</span>
-            </div>
-            <p>{directive.text.clone()}</p>
-            {render_attachments(&directive.attachments)}
-        </article>
-    }
-}
-
-fn render_attachments(attachments: &[wire::body::DirectiveAttachment]) -> Html {
-    if attachments.is_empty() {
-        return Html::default();
-    }
-    html! {
-        <div class="message-attachments">
-            {for attachments.iter().map(|attachment| {
-                if attachment.content_type.starts_with("image/") {
-                    html! {
-                        <figure>
-                            <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
-                            <figcaption>{attachment.name.clone()}</figcaption>
-                        </figure>
-                    }
-                } else {
-                    html! { <span class="message-attachment">{attachment.name.clone()}</span> }
-                }
-            })}
-        </div>
-    }
 }
 
 #[hook]
@@ -685,11 +525,13 @@ pub(super) fn render_axis(
     surface: &SurfaceData,
     connection: &Connection,
     sender: &SenderHandle,
-    notes: &Notes,
+    note_task: &UseStateHandle<String>,
+    note_text: &UseStateHandle<String>,
+    submit_note: Callback<SubmitEvent>,
 ) -> Html {
     match axis {
         Axis::Magnitude => render_magnitude(surface),
-        Axis::Flow => render_flow(surface, &notes.task, &notes.text, notes.submit.clone()),
+        Axis::Flow => render_flow(surface, note_task, note_text, submit_note),
         Axis::Topology => render_topology(surface),
         Axis::Chronology => render_chronology(surface, sender, connection),
     }

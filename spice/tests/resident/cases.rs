@@ -1210,6 +1210,7 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
 fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app() {
     let fixture = Fixture::new("app-source");
     let stage = fixture.root.join(canvas::LOCAL_STAGE);
+    fs::remove_dir_all(&stage).expect("remove complete fixture app");
     fs::create_dir_all(&stage).expect("fixture stage");
     fs::write(
         stage.join("canvas-app.html"),
@@ -1259,25 +1260,9 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
 }
 
 #[test]
-fn resident_text_startup_names_the_compiled_or_exact_local_app_source() {
-    let compiled = Fixture::new("compiled-app-announcement");
-    let mut resident = RunningResident::spawn_text(&compiled);
-    resident.assert_ready(&compiled);
-    let down = invoke(&compiled, "down");
-    assert!(down.status.success(), "compiled resident down failed");
-    let output = resident.wait();
-    assert!(output.status.success(), "compiled resident failed");
-    assert_eq!(
-        String::from_utf8(output.stderr).expect("compiled announcement is UTF-8"),
-        "canvas app source: compiled app\n"
-    );
-
+fn resident_text_startup_names_the_exact_lane_app_source() {
     let local = Fixture::new("local-app-announcement");
     let stage = local.root.join(canvas::LOCAL_STAGE);
-    fs::create_dir_all(&stage).expect("local app stage");
-    for asset in canvas::EMBEDDED_APP.assets() {
-        fs::write(stage.join(asset.file()), asset.bytes()).expect("local app asset");
-    }
     let mut resident = RunningResident::spawn_text(&local);
     resident.assert_ready(&local);
     let down = invoke(&local, "down");
@@ -1287,6 +1272,6 @@ fn resident_text_startup_names_the_compiled_or_exact_local_app_source() {
     let stage = fs::canonicalize(&stage).expect("local app stage canonicalizes");
     assert_eq!(
         String::from_utf8(output.stderr).expect("local announcement is UTF-8"),
-        format!("canvas app source: local app at {}\n", stage.display())
+        format!("canvas app source: lane app at {}\n", stage.display())
     );
 }

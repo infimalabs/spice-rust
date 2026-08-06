@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, SteerInbox, SteerSend, TaskAnswer,
     TaskNote,
@@ -22,15 +23,13 @@ use wire::{
 use yew::prelude::*;
 
 use crate::compose::{self, Notice};
-use crate::{
-    Axis, CanvasRuntime, ChainEnd, LaneStatus, Principal, Session, Stale, SteerPane,
-    StreamDirective, stale_reads,
-};
+use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
 
+mod composer;
 mod view;
-mod watchband;
 
-use view::render_canvas;
+use composer::ComposerDrafts;
+use view::{CanvasRender, render_canvas};
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
@@ -109,7 +108,6 @@ type SurfaceData = Option<CanvasRuntime>;
 #[derive(Clone)]
 enum ClientAction {
     Refresh,
-    /// A new lane the operator asked the console to seat.
     Seat {
         worktree: String,
         life: String,
@@ -135,6 +133,7 @@ enum ClientAction {
         occupant: CanonicalUuid,
         epoch: CanonicalUuid,
         message: String,
+        attachments: Vec<DirectiveAttachment>,
     },
 }
 
@@ -146,9 +145,15 @@ enum PendingKind {
     Consent,
     Policy,
     LaneSeat,
+    /// Direction in flight, carrying the lane it was aimed at.
+    ///
+    /// The receipt names that lane, and the only moment it is known for certain
+    /// is the send: by the time the answer lands the selection may have moved,
+    /// so reading it back off the surface would attribute the receipt to
+    /// whichever lane the operator is looking at now.
+    Steer(CanonicalUuid),
     Note(TaskHandle),
     ConsentDecision,
-    Steer(CanonicalUuid),
 }
 
 #[derive(Deserialize)]
@@ -160,164 +165,93 @@ struct ResponseIdentity {
 fn canvas_app() -> Html {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
-    // The mosaic opens first because it is the surface the operator works from;
-    // the axes are what they consult when a read is what they wanted.
-    let destination = use_state(|| view::Destination::Mosaic);
+    let axis = use_state(|| Axis::Topology);
+    let mosaic = use_state(|| true);
+    let composer_drafts = use_reducer(ComposerDrafts::default);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
-    let focus = use_state(|| None::<CanonicalUuid>);
-    let compose = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
-    let agents = use_agent_controls(sender.clone(), surface.clone());
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
-
-    use_socket(
-        connection.clone(),
-        surface.clone(),
-        speech.clone(),
+    let agents = use_agent_controls(
         sender.clone(),
+        surface.clone(),
+        speech_speak(
+            speech.clone(),
+            speech_status.clone(),
+            speech_controller.clone(),
+        ),
     );
-    use_speech_reset(
-        &speech,
-        speech_status.clone(),
-        Rc::clone(&speech_controller),
-    );
+
+    {
+        let connection = connection.clone();
+        let surface = surface.clone();
+        let sender = sender.clone();
+        let speech = speech.clone();
+        use_effect_with((), move |()| {
+            let active = Rc::new(Cell::new(true));
+            let (tx, rx) = mpsc::unbounded();
+            *sender.borrow_mut() = Some(tx);
+            spawn_local(run_surface(active.clone(), connection, surface, speech, rx));
+            move || {
+                active.set(false);
+                sender.borrow_mut().take();
+            }
+        });
+    }
+    {
+        let effective = (*speech).clone();
+        let speech_controller = speech_controller.clone();
+        let speech_status = speech_status.clone();
+        use_effect_with(effective, move |_| {
+            speech_controller.borrow_mut().stop();
+            speech_status.set(SpeechStatus::Idle);
+        });
+    }
 
     let refresh = {
         let sender = sender.clone();
         Callback::from(move |_| send_action(&sender, ClientAction::Refresh))
     };
-    let submit_note = note_submit(sender.clone(), note_task.clone(), note_text.clone());
-    let submit_steer = tile_steer_submit(
-        sender.clone(),
-        surface.clone(),
-        focus.clone(),
-        compose.clone(),
-    );
+    let submit_note = {
+        let sender = sender.clone();
+        let note_task = note_task.clone();
+        let note_text = note_text.clone();
+        Callback::from(move |event: SubmitEvent| {
+            event.prevent_default();
+            let Ok(task) = (*note_task).parse::<TaskHandle>() else {
+                return;
+            };
+            let note = note_text.trim().to_owned();
+            if note.is_empty() {
+                return;
+            }
+            send_action(&sender, ClientAction::Note { task, note });
+            note_text.set(String::new());
+        })
+    };
     let toggle_speech = speech_toggle(
-        speech.clone(),
         speech_status.clone(),
         speech_controller.clone(),
+        agents.speak.clone(),
     );
 
-    render_canvas(
-        &connection,
-        &surface,
-        &destination,
-        &sender,
-        &view::Chrome {
-            notes: view::Notes {
-                task: note_task,
-                text: note_text,
-                submit: submit_note,
-            },
-            topbar: view::Topbar {
-                speech,
-                status: speech_status,
-                toggle: toggle_speech,
-                refresh,
-            },
-            steering: watchband::Steering {
-                focus,
-                compose,
-                submit: submit_steer,
-            },
-            agents,
-        },
-    )
-}
-
-/// Own the socket task for as long as the component is mounted.
-///
-/// The sender is published into the shared cell only while the task is alive,
-/// so a callback that fires after teardown finds no sender and drops its
-/// action rather than sending into a closed channel.
-#[hook]
-fn use_socket(
-    connection: UseStateHandle<Connection>,
-    surface: UseStateHandle<SurfaceData>,
-    speech: UseStateHandle<wire::SpeechPlayback>,
-    sender: SenderHandle,
-) {
-    use_effect_with((), move |()| {
-        let active = Rc::new(Cell::new(true));
-        let (tx, rx) = mpsc::unbounded();
-        *sender.borrow_mut() = Some(tx);
-        spawn_local(run_surface(active.clone(), connection, surface, speech, rx));
-        move || {
-            active.set(false);
-            sender.borrow_mut().take();
-        }
-    });
-}
-
-/// Stop playback whenever the resident's speech policy changes.
-#[hook]
-fn use_speech_reset(
-    speech: &UseStateHandle<wire::SpeechPlayback>,
-    status: UseStateHandle<SpeechStatus>,
-    controller: Rc<RefCell<crate::speech::Controller>>,
-) {
-    use_effect_with((**speech).clone(), move |_| {
-        controller.borrow_mut().stop();
-        status.set(SpeechStatus::Idle);
-    });
-}
-
-/// The note composer's submit: a handle, a body, and the task they name.
-fn note_submit(
-    sender: SenderHandle,
-    task: UseStateHandle<String>,
-    text: UseStateHandle<String>,
-) -> Callback<SubmitEvent> {
-    Callback::from(move |event: SubmitEvent| {
-        event.prevent_default();
-        let Ok(handle) = task.parse::<TaskHandle>() else {
-            return;
-        };
-        let note = text.trim().to_owned();
-        if note.is_empty() {
-            return;
-        }
-        send_action(&sender, ClientAction::Note { task: handle, note });
-        text.set(String::new());
-    })
-}
-
-/// The watchband compose bar's submit, aimed at the focused tile.
-fn tile_steer_submit(
-    sender: SenderHandle,
-    surface: UseStateHandle<SurfaceData>,
-    focus: UseStateHandle<Option<CanonicalUuid>>,
-    compose: UseStateHandle<String>,
-) -> Callback<SubmitEvent> {
-    Callback::from(move |event: SubmitEvent| {
-        event.prevent_default();
-        let Some(lane) = *focus else {
-            return;
-        };
-        let message = compose.trim().to_owned();
-        if message.is_empty() {
-            return;
-        }
-        // The witness is read at send time rather than at draw time: the
-        // roster can reseat between the click and the submit, and a stale
-        // occupant would be refused by the resident instead of retargeted.
-        let Some((occupant, epoch)) = watchband::residency(&surface, lane) else {
-            return;
-        };
-        send_action(
-            &sender,
-            ClientAction::Steer {
-                lane,
-                occupant,
-                epoch,
-                message,
-            },
-        );
-        compose.set(String::new());
+    render_canvas(CanvasRender {
+        connection: &connection,
+        surface: &surface,
+        axis: &axis,
+        mosaic: &mosaic,
+        composer_drafts: &composer_drafts,
+        sender: &sender,
+        agents: &agents,
+        note_task: &note_task,
+        note_text: &note_text,
+        submit_note,
+        refresh,
+        speech: &speech,
+        speech_status: &speech_status,
+        toggle_speech,
     })
 }
 
@@ -325,6 +259,7 @@ fn tile_steer_submit(
 fn use_agent_controls(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
+    speak: Callback<String>,
 ) -> view::AgentControls {
     let selected_lane = use_state(String::new);
     let seat_worktree = use_state(String::new);
@@ -355,6 +290,7 @@ fn use_agent_controls(
         steer_text,
         seat_notice,
         steer_notice,
+        speak,
     }
 }
 
@@ -394,16 +330,7 @@ fn steer_submit(
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
         let selected = selected_lane.parse::<CanonicalUuid>().ok();
-        // The console sends through the same door as a lane tile, and reads its
-        // residency witness the same way: from the inbox, at send time. A
-        // console that built the witness from its own epoch would keep sending
-        // after the lane reseated, and the resident would refuse each one. An
-        // unwitnessed lane is the same refusal as an unselected one -- there is
-        // nothing to send to -- so it arrives at the operator as one notice
-        // rather than as a submit that silently does nothing.
-        let seated = console_lane(&surface, selected).and_then(|lane| {
-            watchband::residency(&surface, lane).map(|(occupant, epoch)| (lane, occupant, epoch))
-        });
+        let seated = selected_occupant(&surface, selected);
         match compose::steer(&message, seated) {
             Ok(((lane, occupant, epoch), text)) => {
                 notice.set(Notice::none());
@@ -414,6 +341,7 @@ fn steer_submit(
                         occupant,
                         epoch,
                         message: text,
+                        attachments: Vec::new(),
                     },
                 );
                 message.set(String::new());
@@ -423,27 +351,41 @@ fn steer_submit(
     })
 }
 
-/// The lane the console is aimed at: the selected one, else the first seated.
+/// The lane a directive is aimed at: the selected one, else the first seated.
 ///
-/// A lane with no occupant is not a candidate, because the resident refuses
-/// `steer::lane-vacant` for one.
-fn console_lane(surface: &SurfaceData, selected: Option<CanonicalUuid>) -> Option<CanonicalUuid> {
+/// An explicit selection is honoured as given -- if the operator picked a lane
+/// that has since gone vacant they get the refusal for that lane, not a quiet
+/// substitution. The fallback is what has to skip: a vacant lane sorting first
+/// would hand back `steer::lane-vacant` while seated lanes sat further down the
+/// same list, which reads as the console being broken rather than as the one
+/// lane it happened to land on being empty.
+fn selected_occupant(
+    surface: &SurfaceData,
+    selected: Option<CanonicalUuid>,
+) -> Option<(CanonicalUuid, CanonicalUuid, CanonicalUuid)> {
     surface
         .as_ref()
         .and_then(CanvasRuntime::lanes)
         .and_then(|lanes| {
             selected
                 .and_then(|selected| lanes.lanes.iter().find(|row| row.lane == selected))
-                .or_else(|| lanes.lanes.first())
+                .or_else(|| lanes.lanes.iter().find(|row| row.occupant.is_some()))
+                .and_then(|row| {
+                    row.occupant
+                        .map(|occupant| (row.lane, occupant, lanes.epoch))
+                })
         })
-        .filter(|row| row.occupant.is_some())
-        .map(|row| row.lane)
 }
 
+/// Stop what is playing, or read the whole rendered surface aloud.
+///
+/// The topbar control is a toggle because it speaks one thing; a card speaks
+/// its own text and shares only the second half of that, so the two enter
+/// through [`speech_speak`] rather than each driving the controller.
 fn speech_toggle(
-    speech: UseStateHandle<wire::SpeechPlayback>,
     speech_status: UseStateHandle<SpeechStatus>,
     speech_controller: Rc<RefCell<crate::speech::Controller>>,
+    speak: Callback<String>,
 ) -> Callback<MouseEvent> {
     Callback::from(move |_| {
         if speech_status.active() {
@@ -451,13 +393,19 @@ fn speech_toggle(
             speech_status.set(SpeechStatus::Idle);
             return;
         }
-        let text = match crate::speech::rendered_text() {
-            Ok(text) => text,
-            Err(error) => {
-                speech_status.set(SpeechStatus::Failed(error));
-                return;
-            }
-        };
+        match crate::speech::rendered_text() {
+            Ok(text) => speak.emit(text),
+            Err(error) => speech_status.set(SpeechStatus::Failed(error)),
+        }
+    })
+}
+
+fn speech_speak(
+    speech: UseStateHandle<wire::SpeechPlayback>,
+    speech_status: UseStateHandle<SpeechStatus>,
+    speech_controller: Rc<RefCell<crate::speech::Controller>>,
+) -> Callback<String> {
+    Callback::from(move |text: String| {
         let generation = speech_controller.borrow_mut().begin();
         speech_status.set(SpeechStatus::Loading);
         match &*speech {
@@ -604,10 +552,12 @@ async fn run_connection(
                     .ok_or_else(|| "resident closed the socket".to_owned())?
                     .map_err(websocket_error)?;
                 let bytes = binary_message(frame)?;
-                let (directives, stale) =
+                let (directives, refresh) =
                     handle_incoming(&session, surface, data, &mut pending, &bytes)?;
                 relay_directives(&principal, &mut writer, directives).await?;
-                send_stale(&principal, &mut writer, &mut pending, stale).await?;
+                if refresh {
+                    send_refresh(&principal, &mut writer, &mut pending).await?;
+                }
             },
             action = action => {
                 let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
@@ -783,11 +733,12 @@ async fn dispatch_action(
             occupant,
             epoch,
             message,
+            attachments,
         } => {
             let body = SteerSend {
                 lane,
                 message,
-                attachments: Vec::new(),
+                attachments,
             };
             let expected = vec![Witness::Residency {
                 lane,
@@ -1058,20 +1009,19 @@ fn handle_incoming(
     data: &Rc<RefCell<SurfaceData>>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
-) -> Result<(Vec<StreamDirective>, Stale), String> {
+) -> Result<(Vec<StreamDirective>, bool), String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
         let admitted = session
             .admit_stream(bytes)
             .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
-        let stale = stale_reads(&admitted);
         let directives = data
             .borrow_mut()
             .as_mut()
             .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
             .apply_stream(&admitted);
         surface.set(data.borrow().clone());
-        return Ok((directives, stale));
+        return Ok((directives, false));
     }
 
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
@@ -1082,113 +1032,53 @@ fn handle_incoming(
     let runtime = data
         .as_mut()
         .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
-    // A reply carries a receipt, not a snapshot, and it never widens the stale
-    // set: the resident appended a fact for whatever this command changed, and
-    // that fact reaches this socket on its own subscription, where
-    // `stale_reads` decides what to re-read. Refreshing here as well would put
-    // a second round of reads on the wire for the same event.
-    match kind {
-        PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
-        PendingKind::Lanes => runtime.apply_lanes(&admit_response(session, bytes)?),
-        PendingKind::Inbox => runtime.apply_inbox(&admit_response(session, bytes)?),
-        PendingKind::Consent => runtime.apply_consent(&admit_response(session, bytes)?),
-        PendingKind::Policy => runtime.apply_policy(&admit_response(session, bytes)?),
+    let refresh = match kind {
+        PendingKind::Board => {
+            runtime.apply_board(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::Lanes => {
+            runtime.apply_lanes(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::Inbox => {
+            runtime.apply_inbox(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::Consent => {
+            runtime.apply_consent(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::Policy => {
+            runtime.apply_policy(&admit_response(session, bytes)?);
+            false
+        }
         PendingKind::LaneSeat => {
             let admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
                 admit_response(session, bytes)?;
             runtime.apply_lane_change(&admitted);
-        }
-        PendingKind::Note(task) => {
-            let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
-            runtime.apply_note(&admitted, &task.to_string());
-        }
-        PendingKind::ConsentDecision => {
-            let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
-                admit_response(session, bytes)?;
-            runtime.apply_decision(&admitted);
+            true
         }
         PendingKind::Steer(lane) => {
             let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
                 admit_response(session, bytes)?;
             runtime.apply_steer(&admitted, lane);
+            true
         }
-    }
+        PendingKind::Note(task) => {
+            let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
+            runtime.apply_note(&admitted, &task.to_string());
+            false
+        }
+        PendingKind::ConsentDecision => {
+            let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_decision(&admitted);
+            false
+        }
+    };
     surface.set(data.clone());
-    Ok((Vec::new(), Stale::default()))
-}
-
-/// Re-read what a stream advance invalidated.
-///
-/// A read already in flight is not reissued. Facts arrive in bursts — one
-/// command can append several — and without this a burst would put one
-/// redundant read on the socket per fact, all of them answering with the same
-/// snapshot.
-async fn send_stale(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    stale: Stale,
-) -> Result<(), String> {
-    if !stale.any() {
-        return Ok(());
-    }
-    if stale.board() && !awaiting(pending, |kind| matches!(kind, PendingKind::Board)) {
-        send_if_offered(
-            principal,
-            writer,
-            pending,
-            PendingKind::Board,
-            CommandKind::BoardRead,
-            vec![],
-            BoardRead { family: None },
-        )
-        .await?;
-    }
-    if stale.lanes() && !awaiting(pending, |kind| matches!(kind, PendingKind::Lanes)) {
-        send_if_offered(
-            principal,
-            writer,
-            pending,
-            PendingKind::Lanes,
-            CommandKind::LaneRead,
-            vec![],
-            LaneRead {},
-        )
-        .await?;
-    }
-    if stale.inbox() && !awaiting(pending, |kind| matches!(kind, PendingKind::Inbox)) {
-        send_if_offered(
-            principal,
-            writer,
-            pending,
-            PendingKind::Inbox,
-            CommandKind::SteerInbox,
-            vec![],
-            SteerInbox { lane: None },
-        )
-        .await?;
-    }
-    if stale.consent() && !awaiting(pending, |kind| matches!(kind, PendingKind::Consent)) {
-        send_if_offered(
-            principal,
-            writer,
-            pending,
-            PendingKind::Consent,
-            CommandKind::ConsentRead,
-            vec![],
-            ConsentRead {},
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-/// Whether a read of this kind is already outstanding.
-fn awaiting(
-    pending: &BTreeMap<CanonicalUuid, PendingKind>,
-    want: impl Fn(&PendingKind) -> bool,
-) -> bool {
-    pending.values().any(want)
+    Ok((Vec::new(), refresh))
 }
 
 fn admit_response<T: for<'de> Deserialize<'de>>(

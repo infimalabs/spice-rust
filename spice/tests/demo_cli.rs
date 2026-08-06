@@ -147,6 +147,13 @@ fn seed_only_process_is_anchored_recoverable_and_ambient_inert() {
         fs::read(root.join("spice.toml")).expect("read seeded config"),
         b"[tasks]\nstems = [\"rim\"]\n"
     );
+    for asset in canvas::APP.assets() {
+        assert!(
+            root.join(canvas::LOCAL_STAGE).join(asset.file()).is_file(),
+            "demo seed omitted {}",
+            asset.file()
+        );
+    }
     let transcript = fs::read_to_string(&reply.body.transcript).expect("read canned transcript");
     let turns = transcript
         .lines()

@@ -208,6 +208,7 @@ fn seed_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Enviro
 
 fn seed_prepared_root(root: &Path, executable: &Path, automatic: bool) -> DemoResult<Environment> {
     born_repository(root)?;
+    seed_lane_app(root)?;
     let repository = spice::repository::Repository::discover(root)
         .map_err(|error| environment_fault("demo::repository-unavailable", error.to_string()))?;
     let state = repository
@@ -246,6 +247,46 @@ fn seed_prepared_root(root: &Path, executable: &Path, automatic: bool) -> DemoRe
         )
     })?;
     environment(root.to_path_buf(), transcript, state, executable, automatic)
+}
+
+/// Copy the binary's build lane app into the disposable demo lane.
+fn seed_lane_app(root: &Path) -> DemoResult<()> {
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| {
+            environment_fault(
+                "demo::source-repository-unavailable",
+                "the spice crate has no workspace parent".to_owned(),
+            )
+        })?;
+    let source = canvas::AppSource::resolve(source_root)
+        .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
+    let stage = root.join(canvas::LOCAL_STAGE);
+    fs::create_dir_all(&stage).map_err(|error| {
+        environment_fault(
+            "demo::app-stage-unwritable",
+            format!("{}: {error}", stage.display()),
+        )
+    })?;
+    for asset in canvas::APP.assets() {
+        let served = source
+            .served(asset.path())
+            .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?
+            .ok_or_else(|| {
+                environment_fault(
+                    "demo::app-inventory-invalid",
+                    format!("route {} is absent", asset.path()),
+                )
+            })?;
+        let target = stage.join(asset.file());
+        fs::write(&target, served.into_bytes()).map_err(|error| {
+            environment_fault(
+                "demo::app-stage-unwritable",
+                format!("{}: {error}", target.display()),
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn reopen_environment(root: &Path, executable: &Path) -> DemoResult<Environment> {

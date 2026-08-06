@@ -21,6 +21,8 @@ use wire::{
 
 #[path = "support/readiness.rs"]
 mod readiness;
+#[path = "support/staged_app.rs"]
+mod staged_app;
 
 use readiness::Readiness;
 
@@ -63,6 +65,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join(".git")).expect("fixture Git directory");
+        staged_app::seed(&root);
         fs::write(root.join("spice.toml"), POLICY).expect("tracked policy");
         let runtime = root.join(".git/.spice");
         let fixture = Self {

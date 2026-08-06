@@ -131,13 +131,13 @@ Socket, journal, and browser compatibility advance independently. A socket
 admits only the current hello containing wire version, capability, and
 resident epoch; mismatch refuses while naming both artifacts. The journal
 stores one current schema and performs one forward migration at open before
-the resident mints its epoch. The browser ships inside the same binary and
-therefore has no independent compatibility clock.
+the resident mints its epoch. The browser is built per worktree into the one
+ignored lane stage; resident startup refuses unless that complete stage exists.
 
 The split matches three different replacement events: a client can be stale
 while durable data remains current; durable data can require migration while
-the command grammar is unchanged; an embedded app cannot legitimately drift
-from the binary that contains it. One version number would obscure these
+the command grammar is unchanged; and a lane can rebuild its browser without
+recompiling the resident. One version number would obscure these
 cases and make a successful comparison meaningless.
 
 The resolution deletes old socket arms, permanent historical upcasters,
@@ -150,9 +150,9 @@ journal.
 
 The release object is one canonical sealed manifest containing a separate
 entry for each target tuple, and the pipeline that produces it is acyclic.
-`dist` verifies pins, builds the Wasm app, stages and embeds its exact bytes,
-builds the native canvas, and emits a receipt-free target payload binding the
-tuple, native binary digest, embedded app digest, and toolchain and container
+`dist` verifies pins, builds the Wasm app, builds the native canvas, and emits
+a receipt-free target payload binding the tuple, native binary digest, app
+digest, and toolchain and container
 identity. Proof consumes that payload digest and emits a detached receipt —
 in the sealed Linux container for `x86_64-unknown-linux-musl`, on the named
 native sealed runner for `aarch64-apple-darwin`. A post-proof seal composes
