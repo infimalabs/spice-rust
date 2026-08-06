@@ -1,4 +1,31 @@
 //! Native guard for Git reference transactions on the current branch.
+//!
+//! # The refusal necessarily arrives after the worktree is written
+//!
+//! This guard cannot refuse a destructive rewind before that rewind touches
+//! the tree, and no care taken in this module changes it. `reference-transaction`
+//! is a *reference* hook: githooks(5) describes it as invoked by commands that
+//! perform reference updates, defines its `prepared` state as the point where
+//! "all reference updates have been queued to the transaction and references
+//! were locked on disk", and scopes an abort to references alone. Git publishes
+//! no `pre-reset` hook, so there is no earlier surface for this guard to
+//! occupy. A `reset --hard` writes the index and worktree first and only then
+//! opens the reference transaction this hook is able to veto.
+//!
+//! Verified against git 2.50.1 rather than recalled: with this guard installed,
+//! a `reset --hard` onto an upstream-merged parent is refused, and leaves HEAD
+//! unmoved while the index and worktree hold the abandoned rewind's target
+//! content. The branch survives; the tree does not. That asymmetry is why the
+//! `ProtectedHistory` refusal carries a recovery rather than merely reporting
+//! that it refused. The recovery is `git reset --hard HEAD`, which this guard
+//! admits because such an update leaves the reference where it already is, so
+//! `abandoned_upstream_commits` finds nothing to protect.
+//!
+//! Refusing any earlier would mean intercepting the rewind above Git, in a
+//! spice-side wrapper for destructive commands. That is a larger design
+//! question and is deliberately outside this module. It is recorded here so
+//! the next reader of this guard can tell why the refusal arrives when it does
+//! without re-deriving Git's hook ordering to reach the same answer.
 
 use std::error::Error;
 use std::ffi::OsStr;
@@ -300,7 +327,11 @@ impl fmt::Display for ReferenceTransactionError {
                     "reference-transaction guard refused to abandon upstream-merged commits ",
                     "on current branch {}: {}. This is expected when a task ",
                     "boundary has advanced origin/upstream; keep those commits and continue ",
-                    "with an append-only commit instead of amending or resetting backwards."
+                    "with an append-only commit instead of amending or resetting backwards. ",
+                    "This refusal protected the branch, not the tree: the rewind had already ",
+                    "written the index and worktree before any hook could run, so they now ",
+                    "disagree with the commits that were kept. Restore them with ",
+                    "`git reset --hard HEAD`, which this guard admits."
                 ),
                 reference, commits
             ),
@@ -350,6 +381,25 @@ mod tests {
             error,
             ReferenceTransactionError::MalformedInput { line: 2 }
         ));
+    }
+
+    /// The guard cannot protect the tree, so the refusal owes the reader the
+    /// state it was left in and the way out. Both halves are load-bearing text.
+    #[test]
+    fn protected_history_names_the_tree_it_could_not_protect_and_the_recovery() {
+        let message = ReferenceTransactionError::ProtectedHistory {
+            reference: "refs/heads/main".to_owned(),
+            commits: "deadbee".to_owned(),
+        }
+        .to_string();
+        assert!(
+            message.contains("index and worktree"),
+            "refusal must report that the rewind already wrote the tree: {message}"
+        );
+        assert!(
+            message.contains("git reset --hard HEAD"),
+            "refusal must name the recovery this guard admits: {message}"
+        );
     }
 
     #[test]
