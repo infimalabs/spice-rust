@@ -20,6 +20,18 @@ The plan publishes `.spice/bin/spice`, the operator skill, and the
 .spice/bin/spice up
 ```
 
+That resident also serves the Canvas web app, whose HTML, JavaScript,
+stylesheet, and WASM are embedded in the same binary. Open it with:
+
+```sh
+.spice/bin/spice canvas
+```
+
+The command launches the default browser and its reply names the exact
+`endpoint`, shaped `http://127.0.0.1:<port>`. The resident selects that port
+ephemerally at every start and listens on IPv4 loopback only, so the app is
+reachable only from the host running it.
+
 The one-time predecessor shutdown and empty-authority start are specified in
 [CUTOVER.md](CUTOVER.md).
 
