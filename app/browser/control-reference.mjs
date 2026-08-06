@@ -30,8 +30,7 @@ async function selectLifetime(page, lineage, input, value, label) {
 }
 
 function measureReference(surface) {
-  const rect = (selector) => {
-    const node = surface.querySelector(selector);
+  const measured = (node, selector) => {
     if (!node) throw new Error(`reference control is missing ${selector}`);
     const box = node.getBoundingClientRect();
     const style = getComputedStyle(node);
@@ -44,13 +43,22 @@ function measureReference(surface) {
       height: box.height,
       background: style.backgroundColor,
       border: style.borderColor,
+      borderStyle: style.borderStyle,
+      borderWidth: style.borderWidth,
       borderRadius: style.borderRadius,
       boxShadow: style.boxShadow,
       color: style.color,
+      display: style.display,
+      fontSize: style.fontSize,
+      gap: style.gap,
+      paddingLeft: style.paddingLeft,
+      paddingTop: style.paddingTop,
       clientWidth: node.clientWidth,
       scrollWidth: node.scrollWidth,
     };
   };
+  const rect = (selector, root = surface) => measured(root.querySelector(selector), selector);
+  const taskStrip = rect(".task-pill-strip", document);
   const toolbar = rect(".team-toolbar");
   const rail = rect(".team-mode-rail");
   const composer = rect(".team-composer");
@@ -75,6 +83,22 @@ function measureReference(surface) {
       clientWidth: surface.clientWidth,
       scrollWidth: surface.scrollWidth,
     },
+    versionDisplays: document.querySelectorAll(".version-pill, [data-package-version]").length,
+    taskStrip,
+    taskPills: [...document.querySelectorAll(".task-pill")].map((pill) => {
+      const count = pill.querySelector(".task-pill-count");
+      return {
+        ...measured(pill, ".task-pill"),
+        tag: pill.tagName,
+        stem: pill.dataset.taskStem,
+        ready: pill.dataset.ready,
+        active: pill.dataset.active,
+        unavailable: pill.dataset.unavailable,
+        hidden: pill.classList.contains("system"),
+        countText: count?.textContent,
+        count: measured(count, ".task-pill-count"),
+      };
+    }),
     toolbar,
     rail,
     composer,
@@ -85,8 +109,13 @@ function measureReference(surface) {
     lifetime: rect(".team-lifetime"),
     send: rect(".team-send"),
     badges: [...surface.querySelectorAll(".team-mode-badge")].map((badge) => ({
+      text: badge.textContent,
       background: getComputedStyle(badge).backgroundColor,
       width: badge.getBoundingClientRect().width,
+      fontSize: getComputedStyle(badge).fontSize,
+      paddingLeft: getComputedStyle(badge).paddingLeft,
+      paddingTop: getComputedStyle(badge).paddingTop,
+      boxShadow: getComputedStyle(badge).boxShadow,
     })),
     lights: [...surface.querySelectorAll(".team-light")].map((light) => ({
       width: light.getBoundingClientRect().width,
@@ -104,6 +133,18 @@ function measureReference(surface) {
       textTransform: getComputedStyle(label).textTransform,
     })),
     modes: [...surface.querySelectorAll(".team-mode")].map((mode) => ({
+      label: mode.firstElementChild?.textContent,
+      selected: mode.classList.contains("selected"),
+      badge: mode.querySelector(".team-mode-badge")?.textContent ?? null,
+      background: getComputedStyle(mode).backgroundColor,
+      border: getComputedStyle(mode).borderColor,
+      borderWidth: getComputedStyle(mode).borderWidth,
+      boxShadow: getComputedStyle(mode).boxShadow,
+      color: getComputedStyle(mode).color,
+      fontSize: getComputedStyle(mode).fontSize,
+      gap: getComputedStyle(mode).gap,
+      paddingLeft: getComputedStyle(mode).paddingLeft,
+      paddingTop: getComputedStyle(mode).paddingTop,
       clientWidth: mode.clientWidth,
       scrollWidth: mode.scrollWidth,
     })),
@@ -111,26 +152,93 @@ function measureReference(surface) {
 }
 
 function assertReferenceGeometry(geometry) {
+  assert.equal(geometry.versionDisplays, 0, "the task strip never becomes a version display");
+  assert.ok(geometry.taskPills.length > 0, "the live board renders task-stem pills");
+  assert.equal(
+    new Set(geometry.taskPills.map((pill) => pill.stem)).size,
+    geometry.taskPills.length,
+    "each live board stem renders exactly one pill",
+  );
+  assert.equal(geometry.taskStrip.gap, "6px", "task-pill-strip gap matches the Python reference");
+  for (const pill of geometry.taskPills) {
+    const expected = pill.hidden
+      ? String(Number(pill.ready) + Number(pill.active) + Number(pill.unavailable))
+      : `${pill.ready}·${pill.active}·${pill.unavailable}`;
+    assert.equal(pill.countText, expected, `${pill.stem} carries board-state counts, not a version`);
+    assert.equal(
+      pill.tag,
+      "BUTTON",
+      `${pill.stem} deliberately remains a Rust navigation control while matching the reference treatment`,
+    );
+    assert.equal(pill.fontSize, "12px", `${pill.stem} uses the reference pill type size`);
+    assert.equal(pill.gap, "4px", `${pill.stem} uses the reference label/count gap`);
+    assert.equal(pill.paddingLeft, "10px", `${pill.stem} uses reference inline padding`);
+    assert.equal(pill.paddingTop, "2px", `${pill.stem} uses reference block padding`);
+    assert.equal(pill.borderWidth, "1px", `${pill.stem} keeps the one-pixel pill outline`);
+    assert.ok(
+      Number.parseFloat(pill.borderRadius) >= pill.height / 2 - 1,
+      `${pill.stem} remains capsule-shaped`,
+    );
+    assert.equal(pill.count.fontSize, "9px", `${pill.stem} count uses reference badge type`);
+    assert.equal(pill.count.paddingLeft, "5px", `${pill.stem} count uses reference inline padding`);
+    assert.equal(pill.count.paddingTop, "0px", `${pill.stem} count uses reference block padding`);
+    assert.notEqual(pill.count.boxShadow, "none", `${pill.stem} count keeps its inset edge`);
+  }
   assert.ok(
     geometry.rail.width / geometry.toolbar.width >= 0.82,
     "the four-mode rail remains the dominant toolbar element",
   );
-  assert.ok(geometry.toolbar.height >= 58, "the desktop toolbar has reference-scale height");
-  assert.ok(geometry.rail.height >= 46, "the rounded rail has a substantial inset track");
-  assert.notEqual(geometry.selected.boxShadow, "none", "the selected mode has an inset treatment");
-  assert.equal(geometry.badges.length >= 2, true, "the live rail exposes green count badges");
+  assert.equal(
+    geometry.toolbar.display,
+    "grid",
+    "Rust deliberately uses a grid so the four reference modes retain equal widths",
+  );
   assert.ok(
-    geometry.badges.every((badge) => badge.background === darkPalette.green && badge.width >= 19),
+    geometry.toolbar.height >= 44 && geometry.toolbar.height <= 47,
+    "the desktop toolbar keeps the compact reference height",
+  );
+  assert.ok(
+    geometry.rail.height >= 34 && geometry.rail.height <= 37,
+    "the rounded rail keeps the compact reference track",
+  );
+  assert.notEqual(geometry.selected.boxShadow, "none", "the selected mode has an inset treatment");
+  const selected = geometry.modes.filter((mode) => mode.selected);
+  const unselected = geometry.modes.filter((mode) => !mode.selected);
+  assert.equal(selected.length, 1, "one mode alone is selected");
+  assert.ok(
+    unselected.every(
+      (mode) => mode.boxShadow === "none" && mode.background !== selected[0].background,
+    ),
+    "the outlined selected pill is measurably distinct from every bare neighbour",
+  );
+  assert.ok(geometry.badges.length > 0, "the live rail exposes green count badges");
+  assert.ok(
+    geometry.modes.some((mode) => mode.badge === null),
+    "a mode without a count renders no badge",
+  );
+  assert.ok(
+    geometry.modes.filter((mode) => mode.badge !== null).every((mode) => Number(mode.badge) > 0),
+    "a badge renders only for a positive count without duplicating any named mode's count",
+  );
+  assert.ok(
+    geometry.badges.every(
+      (badge) => badge.background === darkPalette.green
+        && badge.width >= 19
+        && badge.fontSize === "9px"
+        && badge.paddingLeft === "5px"
+        && badge.paddingTop === "0px"
+        && badge.boxShadow !== "none",
+    ),
     "the rail badges retain the dark-palette green treatment",
   );
   assert.equal(geometry.lights.length, 4, "the reference toolbar shows four agent lights");
   assert.ok(
-    geometry.lights.every((light) => light.width >= 10 && light.height >= 10),
+    geometry.lights.every((light) => light.width === 9 && light.height === 9),
     "the four status lights stay legible",
   );
   assert.ok(
-    Math.abs(geometry.menu.width - geometry.menu.height) <= 1 && geometry.menu.width >= 38,
-    "the details control is a substantial round button",
+    Math.abs(geometry.menu.width - geometry.menu.height) <= 1 && geometry.menu.width === 30,
+    "the details control matches the compact round reference button",
   );
   assert.ok(
     Number.parseFloat(geometry.menu.borderRadius) >= geometry.menu.width / 2 - 1,
@@ -192,6 +300,17 @@ function assertReferenceGeometry(geometry) {
   assert.ok(
     geometry.surface.scrollWidth <= geometry.surface.clientWidth + 1,
     "the reference control treatment introduces no horizontal overflow",
+  );
+}
+
+function assertReferenceGuardRejectsPerturbation(geometry) {
+  const perturbed = structuredClone(geometry);
+  perturbed.taskStrip.gap = "13px";
+  assert.throws(
+    () => assertReferenceGeometry(perturbed),
+    (error) => error instanceof assert.AssertionError
+      && error.message.includes("task-pill-strip gap matches the Python reference"),
+    "the measured-style guard reddens and names a deliberately perturbed property",
   );
 }
 
@@ -293,6 +412,7 @@ export async function captureReferenceControls(page, team, artifactPath) {
     assert.equal(await lifetime.inputValue(), "2", "the native lifetime range selects Drain");
     await assertReportedTaskChip(surface);
     const geometry = await surface.evaluate(measureReference);
+    assertReferenceGuardRejectsPerturbation(geometry);
     assertReferenceGeometry(geometry);
     await page.screenshot({ path: artifactPath, fullPage: false });
   } finally {
