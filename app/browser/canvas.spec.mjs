@@ -459,6 +459,29 @@ async function assertAgentConversation(page, fixture, worktrees) {
     cards.map((card) => Math.round(card.getBoundingClientRect().height)),
   );
   assert.ok(new Set(cardHeights).size >= 3, "Markdown produces nonuniform Mosaic card heights");
+  const planes = console.locator(".lane-mosaic-plane");
+  assert.equal(await planes.count(), seated.length, "every seated lane owns one Mosaic plane");
+  for (const lane of seated) {
+    const plane = console.locator(`.lane-mosaic-plane[data-agent-plane="${lane.lane}"]`);
+    await plane.waitFor();
+    const placements = await plane.locator(".mosaic-message-card").evaluateAll((cards) =>
+      cards.map((card) => ({
+        track: Number(card.dataset.track),
+        span: Number(card.dataset.span),
+        base: Number(card.dataset.base),
+        row: Number(card.dataset.row),
+        rows: Number(card.dataset.rows),
+        columnStart: Number(getComputedStyle(card).gridColumnStart),
+        rowStart: Number(getComputedStyle(card).gridRowStart),
+      })),
+    );
+    assert.ok(placements.length, "a seeded lane has engine-placed cards");
+    assert.ok(placements.every((card) => card.span >= 1 && card.track + card.span <= 12));
+    assert.ok(placements.every((card) => card.rows >= 2));
+    assert.ok(placements.every((card) => card.columnStart === card.track + 1));
+    assert.ok(placements.every((card) => card.rowStart === card.row));
+    assert.equal(placements[0].base, 0, "each lane starts from its own row floor");
+  }
   await page.locator('.task-pill[data-task-stem="app"]').waitFor();
   await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
   assert.match(await page.locator('.task-pill[data-task-stem="app"]').innerText(), /\d+·\d+·\d+/);
