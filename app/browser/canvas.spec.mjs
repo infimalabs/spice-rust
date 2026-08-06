@@ -183,9 +183,6 @@ async function seedAuthority(fixture) {
   assert.equal(pending.body.standing, "pended");
   await reply(fixture, ["trust", "grant", digest]);
 
-  const lane = await reply(fixture, ["lane", "add", "--vendor", "claude"]);
-  await reply(fixture, ["steer", lane.body.lane, "browser direction survives streaming"]);
-
   const first = await reply(fixture, [
     "task",
     "add",
@@ -202,11 +199,8 @@ async function seedAuthority(fixture) {
   ]);
   await reply(fixture, ["task", "note", first.body.task, "first causal observation"]);
   await reply(fixture, ["task", "note", first.body.task, "second causal observation"]);
-  await reply(fixture, ["lane", "drain", lane.body.lane]);
-  await reply(fixture, ["lane", "wake", lane.body.lane]);
 
   return {
-    lane: lane.body.lane,
     task: first.body.task,
     extent: await journalExtent(fixture),
   };
@@ -250,7 +244,7 @@ async function assertCanvas(page, scheme) {
   }
   await page.waitForFunction(() => document.querySelector("#app")?.childElementCount > 0);
   await assert.doesNotReject(() => page.locator(".brand-name:visible, .mobile-brand:visible").waitFor());
-  await assert.doesNotReject(() => page.getByRole("heading", { name: "Flow", exact: true }).waitFor());
+  await assert.doesNotReject(() => page.getByRole("heading", { name: "Topology", exact: true }).waitFor());
   await page.waitForFunction(() => {
     const text = document.body.innerText;
     return text.includes("seated") && /JOURNAL\s+\d+/.test(text);
@@ -306,6 +300,37 @@ async function assertCanvas(page, scheme) {
     await page.locator(".workspace").evaluate((element) => element.scrollTo(0, 0));
   }
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
+}
+
+async function assertAgentConversation(page, fixture) {
+  const console = page.locator('[data-pane="agent-console"]');
+  await console.getByRole("heading", { name: "Agents", exact: true }).waitFor();
+  await console.getByLabel("Worktree").fill(fixture);
+  await console.getByLabel("Vendor").fill("claude");
+  await console.getByLabel("Life").fill("steer");
+  await console.getByRole("button", { name: "Seat agent" }).click();
+
+  const tab = console.locator(".agent-tab");
+  await tab.waitFor({ timeout: 15_000 });
+  const lanes = await reply(fixture, ["lane"]);
+  const seated = lanes.body.lanes.find((lane) => lane.worktree === fixture);
+  assert.ok(seated, "the Canvas seat control creates a lane in the requested worktree");
+  assert.equal(seated.vendor, "claude");
+  assert.equal(seated.life, "steer");
+  assert.equal(await tab.getAttribute("data-lane"), seated.lane);
+
+  const message = "browser direction survives streaming";
+  await console.getByLabel("Message").fill(message);
+  await console.getByRole("button", { name: "Send direction" }).click();
+  const outgoing = console.locator(".message.outgoing").filter({ hasText: message });
+  await outgoing.waitFor({ timeout: 10_000 });
+  assert.match(await outgoing.innerText(), /pending/);
+
+  const inbox = await reply(fixture, ["inbox", seated.lane]);
+  assert.equal(inbox.body.lanes.length, 1);
+  assert.equal(inbox.body.lanes[0].pending.length, 1);
+  assert.equal(inbox.body.lanes[0].pending[0].text, message);
+  return seated.lane;
 }
 
 async function assertAuthoritySurface(page, seeded) {
@@ -668,6 +693,8 @@ try {
   lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(lightPage, "light");
+  seeded.lane = await assertAgentConversation(lightPage, fixture);
+  seeded.extent = await journalExtent(fixture);
   await assertAuthoritySurface(lightPage, seeded);
   await assertPackedHistory(lightPage, seeded.extent, true);
   await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);

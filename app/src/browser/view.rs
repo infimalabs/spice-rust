@@ -2,11 +2,23 @@
 
 use super::*;
 
+#[derive(Clone)]
+pub(super) struct AgentControls {
+    pub(super) selected_lane: UseStateHandle<String>,
+    pub(super) seat_worktree: UseStateHandle<String>,
+    pub(super) seat_vendor: UseStateHandle<String>,
+    pub(super) seat_life: UseStateHandle<String>,
+    pub(super) steer_text: UseStateHandle<String>,
+    pub(super) submit_seat: Callback<SubmitEvent>,
+    pub(super) submit_steer: Callback<SubmitEvent>,
+}
+
 pub(super) fn render_canvas(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
     axis: &UseStateHandle<Axis>,
     sender: &SenderHandle,
+    agents: &AgentControls,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
     submit_note: Callback<SubmitEvent>,
@@ -29,6 +41,7 @@ pub(super) fn render_canvas(
                 surface,
                 active_axis,
                 sender,
+                agents,
                 note_task,
                 note_text,
                 submit_note,
@@ -75,6 +88,7 @@ pub(super) fn render_workspace(
     surface: &UseStateHandle<SurfaceData>,
     active_axis: Axis,
     sender: &SenderHandle,
+    agents: &AgentControls,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
     submit_note: Callback<SubmitEvent>,
@@ -114,6 +128,7 @@ pub(super) fn render_workspace(
                 </div>
             </header>
             <main class="content">
+                {render_agent_console(surface, agents)}
                 <div class="page-heading">
                     <div>
                         <h1>{title(active_axis.as_str())}</h1>
@@ -146,6 +161,200 @@ pub(super) fn render_workspace(
                 )}
             </main>
         </div>
+    }
+}
+
+/// The operator's primary surface: current lanes, one selected conversation,
+/// and the controls that create or direct an agent without leaving Canvas.
+pub(super) fn render_agent_console(surface: &SurfaceData, controls: &AgentControls) -> Html {
+    let runtime = surface.as_ref();
+    let lanes = runtime
+        .and_then(CanvasRuntime::lanes)
+        .map(|lanes| lanes.lanes.as_slice())
+        .unwrap_or(&[]);
+    let selected = selected_agent(lanes, &controls.selected_lane);
+    let pending = selected_inbox(runtime, selected);
+
+    html! {
+        <section class="agent-console" data-pane="agent-console">
+            <div class="agent-console-heading">
+                <div>
+                    <span class="eyebrow">{"Live workspace"}</span>
+                    <h1>{"Agents"}</h1>
+                    <p>{"Seat a lane, send direction, and keep its inbox in view."}</p>
+                </div>
+                <span class="agent-count">{format!("{} active", lanes.len())}</span>
+            </div>
+            {render_agent_tabs(lanes, selected, controls)}
+            <div class="agent-stage">
+                {render_conversation(runtime, selected, pending, controls)}
+                {render_seat_panel(runtime, controls)}
+            </div>
+        </section>
+    }
+}
+
+fn selected_agent<'a>(
+    lanes: &'a [crate::runtime::LaneRow],
+    requested: &str,
+) -> Option<&'a crate::runtime::LaneRow> {
+    requested
+        .parse::<CanonicalUuid>()
+        .ok()
+        .and_then(|requested| lanes.iter().find(|lane| lane.lane == requested))
+        .or_else(|| lanes.first())
+}
+
+fn selected_inbox<'a>(
+    runtime: Option<&'a CanvasRuntime>,
+    selected: Option<&crate::runtime::LaneRow>,
+) -> &'a [wire::intent::PendingDirective] {
+    selected
+        .and_then(|selected| {
+            runtime
+                .and_then(CanvasRuntime::inbox)
+                .and_then(|inbox| inbox.lanes.iter().find(|lane| lane.lane == selected.lane))
+        })
+        .map(|lane| lane.pending.as_slice())
+        .unwrap_or(&[])
+}
+
+fn render_agent_tabs(
+    lanes: &[crate::runtime::LaneRow],
+    selected: Option<&crate::runtime::LaneRow>,
+    controls: &AgentControls,
+) -> Html {
+    html! {
+        <div class="agent-tabs" role="tablist" aria-label="Seated agents">
+            if lanes.is_empty() {
+                <span class="agent-tab-empty">{"No agents seated"}</span>
+            } else {
+                {for lanes.iter().map(|lane| {
+                    let lane_id = lane.lane.to_string();
+                    let selected_now = selected.is_some_and(|selected| selected.lane == lane.lane);
+                    let choose = controls.selected_lane.clone();
+                    let label = format!("Open {} lane {}", lane.vendor, short(&lane_id));
+                    html! {
+                        <button
+                            class={classes!("agent-tab", selected_now.then_some("selected"))}
+                            type="button" role="tab"
+                            aria-selected={selected_now.to_string()} aria-label={label}
+                            data-lane={lane_id.clone()}
+                            onclick={Callback::from(move |_| choose.set(lane_id.clone()))}
+                        >
+                            <span class="agent-presence"></span>
+                            <span>{lane.vendor.to_string()}</span>
+                            <span class="mono">{short(&lane.lane.to_string())}</span>
+                        </button>
+                    }
+                })}
+            }
+        </div>
+    }
+}
+
+fn render_conversation(
+    runtime: Option<&CanvasRuntime>,
+    selected: Option<&crate::runtime::LaneRow>,
+    pending: &[wire::intent::PendingDirective],
+    controls: &AgentControls,
+) -> Html {
+    let can_steer = selected.is_some_and(|lane| lane.occupant.is_some())
+        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::SteerSend));
+    html! {
+        <section class="conversation" aria-label="Selected agent conversation">
+            {render_conversation_heading(selected)}
+            {render_inbox(pending)}
+            <form class="agent-compose" onsubmit={controls.submit_steer.clone()}>
+                <label for="agent-message">{"Message"}</label>
+                <textarea
+                    id="agent-message" placeholder="Send direction to the selected agent…"
+                    value={(*controls.steer_text).clone()} disabled={!can_steer}
+                    oninput={state_from_textarea(controls.steer_text.clone())}
+                ></textarea>
+                <button
+                    type="submit"
+                    disabled={!can_steer || controls.steer_text.trim().is_empty()}
+                >{"Send direction"}</button>
+            </form>
+        </section>
+    }
+}
+
+fn render_conversation_heading(selected: Option<&crate::runtime::LaneRow>) -> Html {
+    html! {
+        <div class="conversation-heading">
+            <div>
+                <h2>{selected.map_or_else(|| "Conversation".to_owned(), |lane| {
+                    format!("{} / {}", lane.vendor, short(&lane.lane.to_string()))
+                })}</h2>
+                <p>{selected.map_or_else(|| "Seat an agent to begin.".to_owned(), |lane| {
+                    format!("{} / {} / {}", lane.disposition, lane.life, lane.worktree)
+                })}</p>
+            </div>
+            if let Some(lane) = selected {
+                <span class={classes!("tag", lane.occupant.is_some().then_some("active"))}>
+                    {if lane.occupant.is_some() { "online" } else { "vacant" }}
+                </span>
+            }
+        </div>
+    }
+}
+
+fn render_inbox(pending: &[wire::intent::PendingDirective]) -> Html {
+    html! {
+        <div class="conversation-feed" aria-live="polite">
+            if pending.is_empty() {
+                <div class="conversation-empty">
+                    <strong>{"Inbox clear"}</strong>
+                    <p>{"Pending direction and acknowledgement state appear here."}</p>
+                </div>
+            } else {
+                {for pending.iter().map(|directive| html! {
+                    <article class="message outgoing">
+                        <div class="message-meta">
+                            <strong>{"You"}</strong>
+                            <span>{format!("{} / pending", directive.key)}</span>
+                        </div>
+                        <p>{directive.text.clone()}</p>
+                    </article>
+                })}
+            }
+        </div>
+    }
+}
+
+fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &AgentControls) -> Html {
+    let can_seat = runtime.is_some_and(|runtime| runtime.offers(CommandKind::LaneSeat));
+    let ready = can_seat
+        && !controls.seat_worktree.trim().is_empty()
+        && !controls.seat_vendor.trim().is_empty()
+        && !controls.seat_life.trim().is_empty();
+    html! {
+        <aside class="seat-panel">
+            <div class="seat-panel-heading">
+                <span class="eyebrow">{"Add agent"}</span>
+                <h2>{"Seat a lane"}</h2>
+                <p>{"Use an existing worktree in this repository."}</p>
+            </div>
+            <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
+                <label for="seat-worktree">{"Worktree"}</label>
+                <input id="seat-worktree" type="text" placeholder="/absolute/path/to/worktree"
+                    value={(*controls.seat_worktree).clone()}
+                    oninput={state_from_input(controls.seat_worktree.clone())} />
+                <label for="seat-vendor">{"Vendor"}</label>
+                <input id="seat-vendor" type="text" value={(*controls.seat_vendor).clone()}
+                    oninput={state_from_input(controls.seat_vendor.clone())} />
+                <label for="seat-life">{"Life"}</label>
+                <input id="seat-life" type="text" list="lane-lives"
+                    value={(*controls.seat_life).clone()}
+                    oninput={state_from_input(controls.seat_life.clone())} />
+                <datalist id="lane-lives">
+                    <option value="steer" /><option value="drive" /><option value="drain" />
+                </datalist>
+                <button type="submit" disabled={!ready}>{"Seat agent"}</button>
+            </form>
+        </aside>
     }
 }
 
