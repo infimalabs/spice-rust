@@ -502,18 +502,19 @@ pub(super) fn state(
 /// Admit one already-durable capture report from the current occupant.
 ///
 /// Stale reports can race a completed drain or renewal and are discarded by
-/// exact occupant identity. Session recognition consumes this same event seam.
+/// exact occupant identity. Session recognition and Canvas message projection
+/// consume this same admission decision.
 pub(super) fn capture_record(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     record: &CaptureRecord,
-) -> CommandResult<()> {
+) -> CommandResult<bool> {
     if !seats
         .occupant(record.lane)
         .is_some_and(|occupant| occupant.occupant() == record.occupant)
     {
-        return Ok(());
+        return Ok(false);
     }
     if let Some(declaration) = &record.declaration {
         let observed = current_residency(bus, epoch)?;
@@ -598,7 +599,7 @@ pub(super) fn capture_record(
     }
     let admitted = seats.observe_activity(record.lane, record.occupant, Monotonic::now());
     debug_assert!(admitted, "the current capture record remains supervised");
-    Ok(())
+    Ok(true)
 }
 
 /// Vacate and durably degrade an occupant whose selected capture path failed.
