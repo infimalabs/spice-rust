@@ -8,8 +8,12 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import {
   assertLineageLifeIsolation,
+  assertResidentLossObserved,
+  assertResidentRestart,
   assertSpeechVariants,
   assertSystemSpeech,
+  assertWaitReportDistinguishesLayout,
+  assertWaitReporting,
   buildResident,
   chooseCanvasView,
   configureFixture,
@@ -1350,6 +1354,7 @@ try {
   lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(lightPage, "light");
+  const hiddenStatusReport = await assertWaitReporting(lightPage, resident);
   Object.assign(seeded, await assertAgentConversation(lightPage, fixture, worktrees));
   const reference = await browser.newContext({
     colorScheme: "dark",
@@ -1435,31 +1440,11 @@ try {
   const firstCapability = resident.discovery.capability;
   lightMonitor.expectNetworkInterruption(true);
   await chooseCanvasView(lightPage, "Chronology");
+  await assertWaitReportDistinguishesLayout(lightPage, resident, hiddenStatusReport);
   await stopResident(fixture, resident);
-  await lightPage.waitForSelector(".status.offline", { timeout: 10_000 });
-  await lightPage.locator(".event.fault").waitFor({ timeout: 10_000 });
-  resident = await startResident(fixture);
-  assert.notEqual(resident.discovery.epoch, firstEpoch, "restart publishes a new generation");
-  assert.notEqual(
-    resident.discovery.capability,
-    firstCapability,
-    "restart publishes a new operator capability",
-  );
-  const restartedLanes = await reply(fixture, ["lane"]);
-  assert.equal(
-    restartedLanes.body.subscriptions.find(
-      (subscription) => subscription.lineage_id === configuredPolicy.lineage,
-    )?.policy,
-    configuredPolicy.policy,
-    "restart preserves the configured task policy instead of deriving it from lane life",
-  );
-  await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(lightPage, "Chronology");
-  await lightPage.waitForSelector(".status.online", { timeout: 10_000 });
-  await lightPage.waitForFunction(
-    (epoch) => document.querySelector(".status-copy")?.textContent?.includes(epoch),
-    resident.discovery.epoch,
-  );
+  await assertResidentLossObserved(lightPage, resident);
+  const restart = { epoch: firstEpoch, capability: firstCapability, policy: configuredPolicy };
+  resident = await assertResidentRestart(fixture, lightPage, restart);
   lightMonitor.expectNetworkInterruption(false);
   await assertCanvas(lightPage, "light-restarted");
   await chooseCanvasView(lightPage, "Chronology");
