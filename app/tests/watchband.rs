@@ -53,7 +53,10 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         worktree: worktree.to_owned(),
         life: "docker".to_owned(),
         vendor: "codex".parse().expect("the fixture spells a vendor name"),
+        model: Some("gpt-5.2-codex".to_owned()),
+        effort: Some("high".to_owned()),
         occupant: Some(uuid(OCCUPANT)),
+        session: Some("session-fixture".to_owned()),
         disposition: "seated".to_owned(),
         liveness: wire::intent::LaneLiveness::Running,
         // A seat that has run: `bound` records that a resumable session was once
@@ -160,6 +163,10 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].worktree, "main-c");
     assert_eq!(rows[0].vendor, "codex");
+    assert_eq!(rows[0].model.as_deref(), Some("gpt-5.2-codex"));
+    assert_eq!(rows[0].effort.as_deref(), Some("high"));
+    assert_eq!(rows[0].thread, Some(uuid(OCCUPANT)));
+    assert_eq!(rows[0].session.as_deref(), Some("session-fixture"));
     assert_eq!(rows[0].life, "docker");
     assert_eq!(rows[0].disposition, "seated");
     assert_eq!(rows[0].liveness, wire::intent::LaneLiveness::Running);
