@@ -86,7 +86,13 @@ function waitForDiscovery(child, canvas, timeout = 30_000) {
 async function startResident(fixture) {
   const canvas = join(fixture, ".git/.spice/canvas");
   await mkdir(dirname(canvas), { recursive: true });
-  const child = spawn(binary, ["--json", "up"], {
+  // Port 0 asks the kernel for a free one, as every Rust integration test that
+  // spawns a resident already does. The default is a fixed port so an operator
+  // has a stable URL, but this fixture is one of several residents alive at
+  // once -- the lane's own appliance, the other lanes', and a second copy of
+  // this spec -- and it reads the port back out of the published discovery
+  // record, so it never needed the fixed one.
+  const child = spawn(binary, ["--json", "up", "--port", "0"], {
     cwd: fixture,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -143,6 +149,28 @@ async function reply(fixture, args) {
   const outcome = await invoke(fixture, args);
   assert.equal(outcome.kind, "reply", `${args.join(" ")} replies: ${JSON.stringify(outcome)}`);
   return outcome;
+}
+
+/// Serve the app this lane built, when it built one.
+///
+/// The resident prefers a worktree's development stage over its embedded bytes,
+/// and this fixture is a worktree of its own -- so without this copy the spec
+/// always checks the committed bundle no matter what the app sources say. That
+/// is a trap rather than a stricter check: the committed stage is reproducible
+/// only inside the sealed image, so a lane that changes the browser and runs
+/// this spec would watch it pass or fail on bytes its change never reached.
+/// Copying the development stage in reproduces the same precedence the operator
+/// gets from `spice up` in this worktree.
+async function stageDevelopmentApp(fixture) {
+  const source = join(root, "dist/stage-dev");
+  const staged = await readdir(source).catch(() => null);
+  if (!staged) return false;
+  const destination = join(fixture, "dist/stage-dev");
+  await mkdir(destination, { recursive: true });
+  for (const name of staged) {
+    await writeFile(join(destination, name), await readFile(join(source, name)));
+  }
+  return true;
 }
 
 async function configureFixture(fixture) {
@@ -356,7 +384,40 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(inbox.body.lanes[0].pending.length, 1);
   assert.equal(inbox.body.lanes[0].pending[0].text, message);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
+  await assertLaneStrip(page, fixture, seated, message);
   return seated.lane;
+}
+
+/// The strip above the console: one tile per seated lane, carrying its state.
+///
+/// The tile is what the operator reads before opening a conversation, so it is
+/// checked for what it joins rather than for its existence: the lane's name,
+/// the direction that is actually queued, the count of it, and the vendor. The
+/// name is the worktree's last segment because the full path is the same for
+/// every tile up to it; the whole path is on the hover card instead, which is
+/// also what a screen reader reads for the tile.
+async function assertLaneStrip(page, fixture, seated, message) {
+  const tile = page.locator(".watchband .lane-tile");
+  await tile.waitFor({ timeout: 10_000 });
+  assert.equal(await tile.count(), 1, "the strip carries one tile per seated lane");
+  const leaf = fixture.split("/").filter(Boolean).pop();
+  assert.equal(await tile.locator(".lane-tile-name").innerText(), leaf);
+  assert.equal(await tile.locator(".lane-tile-body").innerText(), message);
+  assert.equal(await tile.locator(".lane-tile-pending").innerText(), "1");
+  // innerText reports the rendered text, and the chip is uppercased by the
+  // stylesheet, so this is the vendor as the operator reads it off the tile.
+  assert.equal(await tile.locator(".lane-tile-vendor").innerText(), "CLAUDE");
+  const hover = await tile.getAttribute("title");
+  assert.ok(hover.startsWith(`${fixture}, steer\n`), `hover card names the worktree: ${hover}`);
+  assert.match(hover, /^.*\n1 pending, steering queued\n/m);
+
+  // Focusing the tile aims the one compose bar at it, which is the whole point
+  // of a strip that shares a single input.
+  await tile.click();
+  const compose = page.locator(".watchband .compose-input");
+  assert.equal(await compose.getAttribute("placeholder"), `Steer ${fixture}`);
+  assert.equal(await compose.isDisabled(), false, "an occupied lane accepts direction");
+  await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-strip.png"), fullPage: true });
 }
 
 async function assertAuthoritySurface(page, seeded) {
@@ -701,6 +762,12 @@ const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browse
 await mkdir(join(fixture, ".git"));
 await mkdir(artifacts, { recursive: true });
 await configureFixture(fixture);
+const development = await stageDevelopmentApp(fixture);
+process.stderr.write(
+  development
+    ? "canvas spec: serving dist/stage-dev, the app this worktree built\n"
+    : "canvas spec: serving the embedded app; run cargo xtask dev-app to check local sources\n",
+);
 
 let resident;
 let browser;
