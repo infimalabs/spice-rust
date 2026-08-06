@@ -156,7 +156,11 @@ current authority is absent. The clean diff proves the worktree still carries
 exactly the policy committed at `HEAD`. The hook activation follows the install
 because its three executable inputs are installer-owned assets. It clears
 worktree-specific hook overrides and configures one absolute common hook path,
-so existing and future linked worktrees resolve the same installed hooks.
+so existing and future linked worktrees resolve the same installed hooks. It
+also publishes the `xtask` those hooks exec and records which guard that copy
+carries; the copy is frozen at the build activation ran from, and `cargo xtask
+verify` refuses in any lane whose tree carries a different guard until this
+command is run again.
 
 ## Start the singular appliance
 

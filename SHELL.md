@@ -32,8 +32,10 @@ Caller: Repository installer operator, `README.md`, and `CUTOVER.md`.
 Disposition: Ported to Rust and deleted.
 
 Reason: `cargo xtask activate-hooks` verifies the installed common hooks,
-clears linked-worktree overrides, activates the common path, and checks the
-result.
+publishes the executable those hooks exec, clears linked-worktree overrides,
+activates the common path, and checks the result. `cargo xtask verify` refuses
+when the published guard is not the running build's, because publication
+happens at cutover and nothing else refreshes it.
 
 ## `scripts/verify.sh`
 
