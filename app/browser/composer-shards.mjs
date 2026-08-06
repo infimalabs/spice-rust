@@ -78,6 +78,11 @@ export async function assertComposerShards({
     1,
     "the primary shard owns the agent hamburger",
   );
+  assert.equal(
+    await quotePrimary.locator(":scope > .agent-renew-request").count(),
+    0,
+    "the primary shard exposes no renewal action outside its hamburger drawer",
+  );
 
   const primarySources = [];
   for (const lane of [seeded.lane, seeded.quoteLane]) {
@@ -136,6 +141,11 @@ export async function assertComposerShards({
     "a quote-created shard carries no hamburger",
   );
   assert.equal(
+    await previewShard.locator(".agent-renew-request").count(),
+    0,
+    "a quote-created shard carries no renewal action",
+  );
+  assert.equal(
     await quoteStack.locator(".composer-shard-link").count(),
     await quoteStack.locator(".composer-shard").count(),
     "every primary or quote-created shard carries a top-left deep link",
@@ -147,8 +157,8 @@ export async function assertComposerShards({
   const primaryHref = await primaryLink.getAttribute("href");
   assert.equal(
     primaryHref,
-    `#agent-stream-${seeded.quoteLane}`,
-    "the primary shard links to this agent's own stream position",
+    primarySources[1],
+    "the primary shard retains this agent's proven stream destination",
   );
   await primaryLink.click();
   assert.equal(await page.evaluate(() => window.location.hash), primaryHref);
@@ -158,12 +168,12 @@ export async function assertComposerShards({
   assert.equal(
     await primaryAnchor.count(),
     1,
-    "the primary deep link resolves to a live stream anchor",
+    "the primary deep link resolves to a live source card",
   );
   assert.equal(
     await primaryAnchor.evaluate((anchor) => anchor.matches(":target")),
     true,
-    "following the primary deep link targets that stream anchor",
+    "following the primary deep link targets that source card",
   );
 
   const sourceLink = previewShard.locator("header > .composer-shard-link:first-child");
@@ -184,13 +194,20 @@ export async function assertComposerShards({
   );
 
   const drawerToggle = quotePrimary.locator(".agent-action-menu > summary");
-  await drawerToggle.click();
   const drawer = quotePrimary.locator(".agent-action-drawer");
+  const drawerRenewal = drawer.locator(".agent-renew-request");
+  assert.equal(await drawer.isVisible(), false, "the agent action drawer starts closed");
+  assert.equal(
+    await drawerRenewal.isVisible(),
+    false,
+    "agent renewal is not visible while the hamburger drawer is closed",
+  );
+  await drawerToggle.click();
   await drawer.waitFor();
   assert.equal(await drawer.getAttribute("data-agent-drawer-target-id"), seeded.quoteLane);
   assert.deepEqual(
-    await drawer.getByRole("button").allTextContents(),
-    ["Focus message editor", "Renew this agent"],
+    (await drawer.getByRole("button").allInnerTexts()).map((text) => text.replaceAll("\n", " ")),
+    ["Focus message editor", "Renew this agent request renewal"],
     "the hamburger opens actions scoped to this agent",
   );
   assert.equal(
@@ -200,6 +217,12 @@ export async function assertComposerShards({
   );
   assert.equal(await team.locator(".team-detail-pane").count(), 0);
   await drawerToggle.click();
+  assert.equal(await drawer.isVisible(), false, "closing the hamburger hides its agent actions");
+  assert.equal(
+    await drawerRenewal.isVisible(),
+    false,
+    "renewal is exclusive to the open hamburger drawer",
+  );
 
   await nestedCard.click();
   assert.equal(
@@ -238,6 +261,7 @@ export async function assertComposerShards({
     "only the primary shard keeps a hamburger as quote shards accumulate",
   );
   assert.equal(await quoteLane.locator(".composer-shard--quote .agent-action-menu").count(), 0);
+  assert.equal(await quoteLane.locator(".composer-shard--quote .agent-renew-request").count(), 0);
   const stackOverflow = await quoteStack.evaluate((stack) => ({
     clientHeight: stack.clientHeight,
     scrollHeight: stack.scrollHeight,
