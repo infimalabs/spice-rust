@@ -18,15 +18,17 @@ directory's `.spice-install`. Every linked worktree uses those same assets.
 Build this lane's Canvas app, then start Spice with:
 
 ```sh
-cargo xtask build-app
+cargo xtask local-app
 "$(git rev-parse --path-format=absolute --git-common-dir)/.spice-install/bin/spice" up
 ```
 
 That resident serves the HTML, JavaScript, stylesheet, and WASM built in this
-worktree's ignored `dist/stage-lane`. It refuses to start when that four-file
-stage is absent or incomplete. There is no separate command to open the app:
-the start above announces the exact URL on its standard error, and adding
-`--open` has the resident open the default browser too.
+worktree's ignored `dist/stage-local` generation store. `local-app` finalizes all
+four files away from the served path and atomically publishes one immutable
+generation, so rebuilding cannot mix a page's assets. The resident refuses to
+start when no complete generation is active. There is no separate command to
+open the app: the start above announces the exact URL on its standard error,
+and adding `--open` has the resident open the default browser too.
 
 ```
 canvas endpoint: http://127.0.0.1:8765

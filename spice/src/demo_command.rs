@@ -261,24 +261,24 @@ fn seed_lane_app(root: &Path) -> DemoResult<()> {
         })?;
     let source = canvas::AppSource::resolve(source_root)
         .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
-    let stage = root.join(canvas::LANE_STAGE);
-    fs::create_dir_all(&stage).map_err(|error| {
+    let generation = source
+        .current_generation()
+        .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
+    let stage = root.join(canvas::LOCAL_STAGE);
+    let target_generation = stage
+        .join(canvas::LOCAL_STAGE_GENERATIONS)
+        .join(generation.identity().as_str());
+    fs::create_dir_all(&target_generation).map_err(|error| {
         environment_fault(
             "demo::app-stage-unwritable",
-            format!("{}: {error}", stage.display()),
+            format!("{}: {error}", target_generation.display()),
         )
     })?;
     for asset in canvas::APP.assets() {
-        let served = source
-            .served(asset.path())
-            .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?
-            .ok_or_else(|| {
-                environment_fault(
-                    "demo::app-inventory-invalid",
-                    format!("route {} is absent", asset.path()),
-                )
-            })?;
-        let target = stage.join(asset.file());
+        let served = generation
+            .served(*asset)
+            .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
+        let target = target_generation.join(asset.file());
         fs::write(&target, served.into_bytes()).map_err(|error| {
             environment_fault(
                 "demo::app-stage-unwritable",
@@ -286,6 +286,13 @@ fn seed_lane_app(root: &Path) -> DemoResult<()> {
             )
         })?;
     }
+    let pointer = stage.join(canvas::LOCAL_STAGE_CURRENT);
+    fs::write(&pointer, format!("{}\n", generation.identity())).map_err(|error| {
+        environment_fault(
+            "demo::app-stage-unwritable",
+            format!("{}: {error}", pointer.display()),
+        )
+    })?;
     Ok(())
 }
 

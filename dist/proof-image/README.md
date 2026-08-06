@@ -27,5 +27,6 @@ battery runs. Replay uses a read-only workspace, empty temporary caches, and a
 disabled network boundary.
 
 This image does not build or own the interactive Canvas stage. Every lane
-builds that stage natively with `cargo xtask build-app` into ignored
-`dist/stage-lane`, and its resident serves only those worktree-local bytes.
+builds that stage natively with `cargo xtask local-app` into ignored
+`dist/stage-local`; the command atomically publishes one complete immutable
+generation, and its resident serves only those worktree-local bytes.

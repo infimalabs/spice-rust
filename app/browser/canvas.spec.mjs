@@ -146,7 +146,7 @@ async function reply(fixture, args) {
 }
 
 async function configureFixture(fixture) {
-  await cp(join(root, "dist/stage-lane"), join(fixture, "dist/stage-lane"), { recursive: true });
+  await cp(join(root, "dist/stage-local"), join(fixture, "dist/stage-local"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
     "#!/bin/sh",

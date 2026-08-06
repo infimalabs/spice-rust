@@ -1209,14 +1209,21 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
 #[test]
 fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app() {
     let fixture = Fixture::new("app-source");
-    let stage = fixture.root.join(canvas::LANE_STAGE);
+    let stage = fixture.root.join(canvas::LOCAL_STAGE);
     fs::remove_dir_all(&stage).expect("remove complete fixture app");
-    fs::create_dir_all(&stage).expect("fixture stage");
+    let identity = "5555555555555555555555555555555555555555555555555555555555555555";
+    let generation = stage.join(canvas::LOCAL_STAGE_GENERATIONS).join(identity);
+    fs::create_dir_all(&generation).expect("fixture generation");
     fs::write(
-        stage.join("canvas-app.html"),
+        generation.join("canvas-app.html"),
         b"locally built canvas-app.html",
     )
     .expect("fixture asset");
+    fs::write(
+        stage.join(canvas::LOCAL_STAGE_CURRENT),
+        format!("{identity}\n"),
+    )
+    .expect("fixture pointer");
 
     let mut resident = RunningResident::spawn(&fixture);
     // Bounded rather than a bare wait: a resident that never resolved this
@@ -1250,7 +1257,7 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
         );
     }
     assert!(
-        detail.contains("cargo xtask build-app"),
+        detail.contains("cargo xtask local-app"),
         "the refusal does not say how to build the stage: {detail}"
     );
     assert!(
@@ -1262,7 +1269,7 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
 #[test]
 fn resident_text_startup_names_the_exact_lane_app_source() {
     let local = Fixture::new("local-app-announcement");
-    let stage = local.root.join(canvas::LANE_STAGE);
+    let stage = local.root.join(canvas::LOCAL_STAGE);
     let mut resident = RunningResident::spawn_text(&local);
     resident.assert_ready(&local);
     let published = local.discovery().endpoint;

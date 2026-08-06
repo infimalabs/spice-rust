@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -16,8 +17,14 @@ static APP_ASSETS: [AppAsset; 4] = [
     AppAsset::new("/app_bg.wasm", "app_bg.wasm", "application/wasm"),
 ];
 
-/// The one browser app stage, built and served from each worktree.
-pub const LANE_STAGE: &str = "dist/stage-lane";
+/// The one browser app stage, built at [`LOCAL_STAGE`] and served per worktree.
+pub const LOCAL_STAGE: &str = "dist/stage-local";
+/// Atomic pointer to the active immutable lane-app generation.
+pub const LOCAL_STAGE_CURRENT: &str = "current";
+/// Immutable lane-app generations beneath [`LOCAL_STAGE`].
+pub const LOCAL_STAGE_GENERATIONS: &str = "generations";
+/// Route prefix that pins a page's dependent assets to one generation.
+pub const APP_GENERATION_ROUTE: &str = "/_spice/app";
 
 /// One route in the closed browser app inventory.
 #[derive(Clone, Copy)]
@@ -87,6 +94,12 @@ impl App {
     pub fn asset(self, path: &str) -> Option<AppAsset> {
         self.assets.iter().copied().find(|asset| asset.path == path)
     }
+
+    /// Resolve one file in the closed generation inventory.
+    #[must_use]
+    pub fn asset_file(self, file: &str) -> Option<AppAsset> {
+        self.assets.iter().copied().find(|asset| asset.file == file)
+    }
 }
 
 impl fmt::Debug for App {
@@ -101,7 +114,14 @@ impl fmt::Debug for App {
 /// The lane-built browser app served by one canvas generation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppSource {
+    stage: PathBuf,
+}
+
+/// One immutable, complete lane-app generation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppGeneration {
     directory: PathBuf,
+    identity: wire::Digest,
 }
 
 impl AppSource {
@@ -109,43 +129,78 @@ impl AppSource {
     ///
     /// # Errors
     ///
-    /// Returns [`AppSourceError::Incomplete`] naming every missing file when
-    /// the directory exists without the full app.
+    /// Returns [`AppSourceError::Incomplete`] when the pointer or any file in
+    /// its named generation is absent.
     pub fn resolve(worktree: &Path) -> Result<Self, AppSourceError> {
-        let directory = worktree.join(LANE_STAGE);
-        let missing = APP
-            .assets()
-            .iter()
-            .map(|asset| asset.file())
-            .filter(|file| !directory.join(file).is_file())
-            .collect::<Vec<_>>();
-        if missing.is_empty() {
-            return Ok(Self { directory });
-        }
-        Err(AppSourceError::Incomplete { directory, missing })
+        let source = Self {
+            stage: worktree.join(LOCAL_STAGE),
+        };
+        source.current_generation()?;
+        Ok(source)
+    }
+
+    /// Resolve the generation named by the one atomic publication pointer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a named pointer, identity, inventory, or file-system failure.
+    pub fn current_generation(&self) -> Result<AppGeneration, AppSourceError> {
+        let pointer = self.stage.join(LOCAL_STAGE_CURRENT);
+        let text =
+            std::fs::read_to_string(&pointer).map_err(|source| AppSourceError::Incomplete {
+                directory: self.stage.clone(),
+                missing: vec![LOCAL_STAGE_CURRENT.to_owned()],
+                source: Some(source),
+            })?;
+        let spelling = text.strip_suffix('\n').ok_or_else(|| {
+            AppSourceError::Generation(format!(
+                "{} is not one newline-terminated generation identity",
+                pointer.display()
+            ))
+        })?;
+        let identity = wire::Digest::from_str(spelling).map_err(|error| {
+            AppSourceError::Generation(format!("{}: {error}", pointer.display()))
+        })?;
+        self.generation(identity)
+    }
+
+    fn generation(&self, identity: wire::Digest) -> Result<AppGeneration, AppSourceError> {
+        let directory = self
+            .stage
+            .join(LOCAL_STAGE_GENERATIONS)
+            .join(identity.as_str());
+        validate_generation(&directory)?;
+        Ok(AppGeneration {
+            directory,
+            identity,
+        })
     }
 
     /// Serve one exact route. Unknown paths have no shell fallback.
     ///
-    /// The directory answer is read per request rather than at startup, so an
-    /// app rebuilt underneath a running canvas is served on the next reload
-    /// without the resident being restarted.
+    /// The root reads the current atomic generation pointer. Every dependent
+    /// route carries the generation identity emitted into that root, so a
+    /// publication between requests cannot mix a page's module, stylesheet,
+    /// and Wasm across generations.
     ///
     /// # Errors
     ///
-    /// Returns [`AppSourceError::Unreadable`] when a directory stage named a
-    /// file at startup that cannot be read now.
+    /// Returns a named generation, inventory, or read error when the current
+    /// pointer or one versioned generation cannot supply its complete answer.
     pub fn served(&self, route: &str) -> Result<Option<ServedAsset>, AppSourceError> {
-        let Some(asset) = APP.asset(route) else {
+        if route == "/" {
+            return self
+                .current_generation()?
+                .served(APP.asset("/").expect("the closed inventory has a root"))
+                .map(Some);
+        }
+        let Some((identity, file)) = generation_route(route) else {
             return Ok(None);
         };
-        let path = self.directory.join(asset.file());
-        let bytes =
-            std::fs::read(&path).map_err(|source| AppSourceError::Unreadable { path, source })?;
-        Ok(Some(ServedAsset {
-            bytes,
-            content_type: asset.content_type(),
-        }))
+        let Some(asset) = APP.asset_file(file) else {
+            return Ok(None);
+        };
+        self.generation(identity)?.served(asset).map(Some)
     }
 
     /// Identity of the HTML shell this lane build serves.
@@ -163,8 +218,114 @@ impl AppSource {
 
 impl fmt::Display for AppSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "lane app at {}", self.directory.display())
+        write!(formatter, "lane app at {}", self.stage.display())
     }
+}
+
+impl AppGeneration {
+    /// Canonical identity used in every generation-qualified route.
+    #[must_use]
+    pub const fn identity(&self) -> &wire::Digest {
+        &self.identity
+    }
+
+    /// Route that keeps this asset on this immutable generation.
+    #[must_use]
+    pub fn route(&self, asset: AppAsset) -> String {
+        format!("{APP_GENERATION_ROUTE}/{}/{}", self.identity, asset.file())
+    }
+
+    /// Read one asset from this immutable generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppSourceError::Unreadable`] when the generation moved or
+    /// became unreadable after it was admitted.
+    pub fn served(&self, asset: AppAsset) -> Result<ServedAsset, AppSourceError> {
+        let path = self.directory.join(asset.file());
+        let bytes =
+            std::fs::read(&path).map_err(|source| AppSourceError::Unreadable { path, source })?;
+        Ok(ServedAsset {
+            bytes,
+            content_type: asset.content_type(),
+        })
+    }
+}
+
+fn generation_route(route: &str) -> Option<(wire::Digest, &str)> {
+    let rest = route
+        .strip_prefix(APP_GENERATION_ROUTE)?
+        .strip_prefix('/')?;
+    let (identity, file) = rest.split_once('/')?;
+    if file.contains('/') {
+        return None;
+    }
+    Some((identity.parse().ok()?, file))
+}
+
+fn validate_generation(directory: &Path) -> Result<(), AppSourceError> {
+    let mut observed = std::fs::read_dir(directory)
+        .map_err(|source| AppSourceError::Incomplete {
+            directory: directory.to_path_buf(),
+            missing: APP
+                .assets()
+                .iter()
+                .map(|asset| asset.file().to_owned())
+                .collect(),
+            source: Some(source),
+        })?
+        .map(|entry| {
+            let entry = entry.map_err(|source| AppSourceError::Unreadable {
+                path: directory.to_path_buf(),
+                source,
+            })?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|source| AppSourceError::Unreadable { path, source })?;
+            if !metadata.file_type().is_file() {
+                return Err(AppSourceError::Inventory(format!(
+                    "{} is not a regular generation file",
+                    entry.path().display()
+                )));
+            }
+            entry.file_name().into_string().map_err(|_| {
+                AppSourceError::Inventory(format!(
+                    "{} contains a non-UTF-8 file name",
+                    directory.display()
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    observed.sort();
+    let mut expected = APP
+        .assets()
+        .iter()
+        .map(|asset| asset.file().to_owned())
+        .collect::<Vec<_>>();
+    expected.sort();
+    if observed != expected {
+        let missing = expected
+            .iter()
+            .filter(|file| !observed.contains(file))
+            .cloned()
+            .collect::<Vec<_>>();
+        let unexpected = observed
+            .iter()
+            .filter(|file| !expected.contains(file))
+            .collect::<Vec<_>>();
+        if unexpected.is_empty() && !missing.is_empty() {
+            return Err(AppSourceError::Incomplete {
+                directory: directory.to_path_buf(),
+                missing,
+                source: None,
+            });
+        }
+        return Err(AppSourceError::Inventory(format!(
+            "{} contains {observed:?}, expected {expected:?}",
+            directory.display()
+        )));
+    }
+    Ok(())
 }
 
 /// One lane-built asset resolved for one request.
@@ -184,6 +345,12 @@ impl ServedAsset {
     #[must_use]
     pub fn digest(&self) -> wire::Digest {
         wire::Digest::compute(wire::Domain::DistArtifact, &self.bytes)
+    }
+
+    /// Borrow the exact response bytes before consuming the asset.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 
     /// The bytes read for this request.
@@ -212,7 +379,9 @@ pub enum AppSourceError {
         /// The directory that was read.
         directory: PathBuf,
         /// Every staged file it does not hold.
-        missing: Vec<&'static str>,
+        missing: Vec<String>,
+        /// File-system failure that made the generation incomplete, if any.
+        source: Option<io::Error>,
     },
     /// A file the directory named at startup cannot be read now.
     Unreadable {
@@ -223,14 +392,18 @@ pub enum AppSourceError {
     },
     /// The closed route inventory itself is invalid.
     Inventory(String),
+    /// The atomic generation pointer did not name one canonical identity.
+    Generation(String),
 }
 
 impl fmt::Display for AppSourceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Incomplete { directory, missing } => write!(
+            Self::Incomplete {
+                directory, missing, ..
+            } => write!(
                 formatter,
-                "the lane app stage {} is missing {}; build it with cargo xtask build-app",
+                "the lane app stage {} is missing {}; build it with cargo xtask local-app",
                 directory.display(),
                 missing.join(", ")
             ),
@@ -242,6 +415,9 @@ impl fmt::Display for AppSourceError {
                 )
             }
             Self::Inventory(reason) => write!(formatter, "canvas app inventory invalid: {reason}"),
+            Self::Generation(reason) => {
+                write!(formatter, "canvas app generation invalid: {reason}")
+            }
         }
     }
 }
@@ -249,9 +425,11 @@ impl fmt::Display for AppSourceError {
 impl Error for AppSourceError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Incomplete { .. } => None,
+            Self::Incomplete { source, .. } => source
+                .as_ref()
+                .map(|source| source as &(dyn Error + 'static)),
             Self::Unreadable { source, .. } => Some(source),
-            Self::Inventory(_) => None,
+            Self::Inventory(_) | Self::Generation(_) => None,
         }
     }
 }
@@ -365,6 +543,10 @@ mod tests {
     use super::*;
 
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+    const FIRST_GENERATION: &str =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    const SECOND_GENERATION: &str =
+        "2222222222222222222222222222222222222222222222222222222222222222";
 
     fn uuid(text: &str) -> wire::CanonicalUuid {
         text.parse().expect("canonical fixture UUID")
@@ -398,14 +580,21 @@ mod tests {
         root
     }
 
-    /// Fill that worktree's lane-local stage with exactly the named files.
-    fn staged(root: &Path, files: &[(&str, Vec<u8>)]) -> PathBuf {
-        let stage = root.join(LANE_STAGE);
-        fs::create_dir_all(&stage).expect("fixture stage");
+    /// Fill that worktree's local stage with exactly the named files.
+    fn staged_as(root: &Path, identity: &str, files: &[(&str, Vec<u8>)]) -> PathBuf {
+        let stage = root.join(LOCAL_STAGE);
+        let generation = stage.join(LOCAL_STAGE_GENERATIONS).join(identity);
+        fs::create_dir_all(&generation).expect("fixture generation");
         for (file, bytes) in files {
-            fs::write(stage.join(file), bytes).expect("fixture asset");
+            fs::write(generation.join(file), bytes).expect("fixture asset");
         }
-        stage
+        fs::write(stage.join(LOCAL_STAGE_CURRENT), format!("{identity}\n"))
+            .expect("fixture pointer");
+        generation
+    }
+
+    fn staged(root: &Path, files: &[(&str, Vec<u8>)]) -> PathBuf {
+        staged_as(root, FIRST_GENERATION, files)
     }
 
     /// Bytes for every staged file, each naming itself, so no route can be
@@ -429,17 +618,21 @@ mod tests {
         let error = AppSource::resolve(&root).expect_err("an absent stage refuses");
 
         let message = error.to_string();
-        assert!(message.contains(LANE_STAGE));
-        assert!(message.contains("cargo xtask build-app"));
+        assert!(message.contains(LOCAL_STAGE));
+        assert!(message.contains("cargo xtask local-app"));
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
     #[test]
-    fn a_complete_local_stage_is_read_again_on_every_request() {
+    fn one_page_generation_remains_addressable_after_atomic_publication() {
         let root = worktree();
-        let stage = staged(&root, &local_app());
+        let first = staged(&root, &local_app());
+        let stage = root.join(LOCAL_STAGE);
 
         let source = AppSource::resolve(&root).expect("a complete stage resolves");
+        let first_generation = source
+            .current_generation()
+            .expect("first generation resolves");
 
         assert_eq!(
             source.to_string(),
@@ -451,17 +644,24 @@ mod tests {
             .expect("the root route is served");
         assert_eq!(served.content_type(), "text/html; charset=utf-8");
         assert_eq!(served.into_bytes(), b"locally built canvas-app.html");
+        let wasm_route = first_generation.route(
+            APP.asset("/app_bg.wasm")
+                .expect("the closed inventory has wasm"),
+        );
         let wasm = source
-            .served("/app_bg.wasm")
+            .served(&wasm_route)
             .expect("staged files are readable")
             .expect("the wasm route is served");
         assert_eq!(wasm.content_type(), "application/wasm");
         assert_eq!(wasm.into_bytes(), b"locally built app_bg.wasm");
 
-        // The operator rebuilds under a canvas that is already listening: the
-        // next request has to carry the new bytes, because nothing resolves
-        // the source a second time.
-        fs::write(stage.join("canvas-app.html"), b"rebuilt").expect("fixture rebuild");
+        let mut rebuilt = local_app();
+        rebuilt
+            .iter_mut()
+            .find(|(file, _)| *file == "canvas-app.html")
+            .expect("fixture shell")
+            .1 = b"rebuilt".to_vec();
+        staged_as(&root, SECOND_GENERATION, &rebuilt);
 
         let served = source
             .served("/")
@@ -476,6 +676,16 @@ mod tests {
             served.digest()
         );
         assert_eq!(served.into_bytes(), b"rebuilt");
+        assert_eq!(
+            source
+                .served(&wasm_route)
+                .expect("the first generation remains readable")
+                .expect("the first wasm route remains admitted")
+                .into_bytes(),
+            b"locally built app_bg.wasm",
+            "publication mixed the first page's dependent asset with the second generation"
+        );
+        assert!(first.is_dir(), "the first immutable generation moved");
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
@@ -487,18 +697,21 @@ mod tests {
 
         let error = AppSource::resolve(&root).expect_err("a partial stage refuses");
 
-        let AppSourceError::Incomplete { directory, missing } = &error else {
+        let AppSourceError::Incomplete {
+            directory, missing, ..
+        } = &error
+        else {
             panic!("a partial stage refused as {error:?}");
         };
         assert_eq!(directory, &stage);
-        assert_eq!(missing, &["style.css", "app_bg.wasm"]);
+        assert_eq!(missing, &["app_bg.wasm", "style.css"]);
         let message = error.to_string();
         assert!(
             message.contains("style.css") && message.contains("app_bg.wasm"),
             "the refusal does not name what is missing: {message}"
         );
         assert!(
-            message.contains("cargo xtask build-app"),
+            message.contains("cargo xtask local-app"),
             "the refusal does not say how to build the stage: {message}"
         );
         fs::remove_dir_all(root).expect("fixture cleanup");
@@ -509,19 +722,26 @@ mod tests {
         let root = worktree();
         let stage = staged(&root, &local_app());
         let source = AppSource::resolve(&root).expect("a complete stage resolves");
+        let generation = source
+            .current_generation()
+            .expect("current generation resolves");
 
         fs::remove_file(stage.join("style.css")).expect("fixture removes one staged file");
 
+        let route = generation.route(
+            APP.asset("/style.css")
+                .expect("the closed inventory has a stylesheet"),
+        );
         let error = source
-            .served("/style.css")
+            .served(&route)
             .expect_err("a vanished staged file refuses");
-        let AppSourceError::Unreadable { path, .. } = &error else {
+        let AppSourceError::Incomplete { directory, .. } = &error else {
             panic!("a vanished staged file refused as {error:?}");
         };
-        assert_eq!(path, &stage.join("style.css"));
+        assert_eq!(directory, &stage);
         assert!(
-            source.served("/").is_ok(),
-            "one unreadable file took the routes that are still there with it"
+            source.served("/").is_err(),
+            "a partial generation was served route by route"
         );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
