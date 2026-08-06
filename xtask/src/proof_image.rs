@@ -169,7 +169,7 @@ fn run_image_build<R: Runner>(
         if contains(&build_log, b"unexpected EOF") {
             return Err(ProofImageError::DroppedBuild {
                 code: build.code,
-                state: state.to_path_buf(),
+                context: context.to_path_buf(),
             });
         }
         return Err(ProofImageError::Exit {
@@ -525,7 +525,7 @@ pub enum ProofImageError {
     },
     DroppedBuild {
         code: Option<i32>,
-        state: PathBuf,
+        context: PathBuf,
     },
     MalformedOutput {
         operation: &'static str,
@@ -589,21 +589,26 @@ impl fmt::Display for ProofImageError {
             } => write!(formatter, "{operation} terminated by signal"),
             Self::DroppedBuild {
                 code: Some(code),
-                state,
+                context,
             } => write!(
                 formatter,
                 "docker buildx build failed with exit {code}: the container runtime dropped this \
                  build; no compiler refused it. On a shared daemon an unexpected EOF usually \
                  means a concurrent global prune took the build cache and pinned proof image \
-                 from every lane. Clean up only what this lane owns, {}, and rerun",
-                state.display(),
+                 from every lane. Clean up only this lane's disposable build context, {}, and \
+                 rerun",
+                context.display(),
             ),
-            Self::DroppedBuild { code: None, state } => write!(
+            Self::DroppedBuild {
+                code: None,
+                context,
+            } => write!(
                 formatter,
                 "docker buildx build terminated by signal after an unexpected EOF: the container \
                  runtime dropped this build; no compiler refused it. A concurrent global prune \
-                 usually took the shared cache and pinned image. Clean up only {} and rerun",
-                state.display(),
+                 usually took the shared cache and pinned image. Clean up only this lane's \
+                 disposable build context, {}, and rerun",
+                context.display(),
             ),
             Self::MalformedOutput {
                 operation,
@@ -747,9 +752,35 @@ mod tests {
         ] {
             assert!(diagnostic.contains(text), "missing {text:?}: {diagnostic}");
         }
+        assert_disposable_context(&diagnostic, &fixture.root);
         assert_eq!(
             fs::read_to_string(fixture.root.join("target/proof-image/build.status")).unwrap(),
             "73\n"
+        );
+    }
+
+    #[test]
+    fn unexpected_eof_after_a_signal_names_only_the_disposable_context() {
+        let fixture = Fixture::new();
+        let mut runner = FakeRunner::new([
+            success(b"", b""),
+            terminated(b"", b"failed to solve: unexpected EOF\n"),
+        ]);
+
+        let error = build_with(
+            &mut runner,
+            &fixture.root,
+            &fixture.archive(),
+            &mut Vec::new(),
+            &mut Vec::new(),
+        )
+        .expect_err("a signalled build refuses");
+
+        assert_eq!(error.exit_code(), DEFAULT_FAILURE);
+        assert_disposable_context(&error.to_string(), &fixture.root);
+        assert_eq!(
+            fs::read_to_string(fixture.root.join("target/proof-image/build.status")).unwrap(),
+            "signal\n"
         );
     }
 
@@ -855,6 +886,26 @@ mod tests {
             stdout: stdout.to_vec(),
             stderr: stderr.to_vec(),
         }
+    }
+
+    fn terminated(stdout: &[u8], stderr: &[u8]) -> ProcessOutput {
+        ProcessOutput {
+            success: false,
+            code: None,
+            stdout: stdout.to_vec(),
+            stderr: stderr.to_vec(),
+        }
+    }
+
+    fn assert_disposable_context(diagnostic: &str, root: &Path) {
+        let context = root.join("target/proof-image/context");
+        assert!(
+            diagnostic.ends_with(&format!(
+                "Clean up only this lane's disposable build context, {}, and rerun",
+                context.display()
+            )),
+            "unsafe cleanup diagnostic: {diagnostic}"
+        );
     }
 
     struct Fixture {
