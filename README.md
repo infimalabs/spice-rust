@@ -3,8 +3,8 @@
 ## Install and start
 
 Spice is this repository's installed appliance. Preview and apply its
-digest-bound install plan, then activate the installed hooks once per checkout
-or linked worktree:
+digest-bound install plan, then activate the installed hooks once for the
+repository:
 
 ```sh
 cargo run --locked -p spice -- install
@@ -12,12 +12,13 @@ cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
 ./scripts/install-hooks.sh
 ```
 
-The plan publishes `.spice/bin/spice`, the operator skill, and the
-`pre-commit`, `commit-msg`, and `reference-transaction` hooks under
-`.spice/git-hooks`. Start Spice with:
+The plan publishes the executable, operator skill, and the `pre-commit`,
+`commit-msg`, and `reference-transaction` hooks once under the Git common
+directory's `.spice-install`. Every linked worktree uses those same assets.
+Start Spice with:
 
 ```sh
-.spice/bin/spice up
+"$(git rev-parse --path-format=absolute --git-common-dir)/.spice-install/bin/spice" up
 ```
 
 That resident also serves the Canvas web app, whose HTML, JavaScript,
