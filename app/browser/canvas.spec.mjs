@@ -308,6 +308,61 @@ async function assertAgentConversation(page, fixture, worktrees) {
   for (const member of seated) {
     assert.ok(packedMembers.has(member.lane), "every worktree member reaches the lane plane");
   }
+
+  const scroller = plane;
+  const compensationViewport = page.viewportSize();
+  await page.setViewportSize({ width: compensationViewport.width, height: 360 });
+  await scroller.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  const beforeCompensation = await scroller.evaluate((element) => {
+    return {
+      scrollTop: element.scrollTop,
+      maxRow: Number(element.dataset.maxRow),
+    };
+  });
+  assert.ok(beforeCompensation.scrollTop > 80, "the compensation probe begins in a scrolled pane");
+  const compensationMessage = [
+    "mosaic scroll compensation probe",
+    ...Array.from({ length: 72 }, (_, index) => `- exact row delta ${index + 1}`),
+  ].join("\n");
+  const compensationLane = console.locator(
+    `.team-agent[data-agent-lane="${seated[0].lane}"]`,
+  );
+  await compensationLane.getByRole("textbox").fill(compensationMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  const compensationCard = console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
+    .filter({ hasText: "mosaic scroll compensation probe" });
+  await compensationCard.waitFor({ timeout: 10_000 });
+  await page.waitForFunction((before) => {
+    const element = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+    const maxRow = Number(element?.dataset.maxRow);
+    return maxRow > before.maxRow;
+  }, beforeCompensation);
+  const afterCompensation = await scroller.evaluate((element) => {
+    return {
+      scrollTop: element.scrollTop,
+      maxRow: Number(element.dataset.maxRow),
+      module: Number(element.dataset.module),
+    };
+  });
+  assert.ok(afterCompensation.maxRow > beforeCompensation.maxRow);
+  assert.equal(
+    afterCompensation.scrollTop,
+    beforeCompensation.scrollTop
+      + (afterCompensation.maxRow - beforeCompensation.maxRow) * afterCompensation.module,
+    `incremental placement compensates by exactly the added lattice rows: ${JSON.stringify({
+      beforeCompensation,
+      afterCompensation,
+    })}`,
+  );
+  await page.setViewportSize(compensationViewport);
+  const compensationInbox = await reply(fixture, ["inbox", seated[0].lane]);
+  const compensationDirective = compensationInbox.body.lanes[0].pending.find(
+    (directive) => directive.text === compensationMessage,
+  );
+  assert.ok(compensationDirective, "the compensation probe reached the real inbox");
+  await reply(fixture, ["steer", "cancel", compensationDirective.directive]);
+  await compensationCard.waitFor({ state: "detached", timeout: 10_000 });
   await page.locator('.task-pill[data-task-stem="app"]').waitFor();
   await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
   assert.match(await page.locator('.task-pill[data-task-stem="app"]').innerText(), /\d+·\d+·\d+/);
