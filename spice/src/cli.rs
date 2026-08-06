@@ -719,10 +719,11 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "review"],
-        "task review HANDLE [--finding TEXT] [--note TEXT]",
+        "task review HANDLE [--finding TEXT] [--note TEXT] \
+         [--then FOLLOWUP...] [--followup HANDLE...]",
         Lane,
         Command,
-        [TaskReviewed],
+        [TaskReviewed, TaskAdded, TaskEdited],
         [Resident, LaneCapability, Toolful],
         TASK_GIT_TOOLS,
         Reply,
