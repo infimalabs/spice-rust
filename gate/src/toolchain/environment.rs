@@ -21,6 +21,7 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use regex::Regex;
+use tree_sitter::{Language, Parser};
 
 use super::{ENV_NAME_LITERAL_MARKER, PACKAGED_ENV_PROFILE, column_of};
 
@@ -104,18 +105,6 @@ const CONTEXT_NAME_TEMPLATE: &str = QUOTED_HOLE;
 
 /// The JavaScript idiom that binds several environment names in one pattern.
 const DESTRUCTURED_TEMPLATE: &str = r"\{(?P<body>[^}]+)\}\s*=\s*process\.env\b";
-
-/// A Rust `concat!` made only from two or more environment-token fragments.
-const RUST_CONCAT_TEMPLATE: &str = concat!(
-    r#"(?s)\bconcat\s*!\s*\(\s*(?P<body>"#,
-    r#"(?:"[A-Z0-9_]+"\s*,\s*)+"[A-Z0-9_]+"\s*,?\s*)\)"#,
-);
-
-/// One token fragment inside a literal-only Rust concatenation.
-const RUST_CONCAT_PART_TEMPLATE: &str = r#""(?P<part>[A-Z0-9_]+)""#;
-
-/// The Rust macro name whose exact source offset must be structural code.
-const RUST_CONCAT_NAME: &str = "concat";
 
 /// One environment access one line commits, at the column it commits it.
 pub(super) struct Access {
@@ -347,27 +336,10 @@ pub(super) fn references_in(
     }
 
     let statements = statement_spans(&lines);
-    for captures in rust_concatenations().captures_iter(text) {
-        let Some(whole) = captures.get(0) else {
-            continue;
-        };
-        let Some(body) = captures.name("body") else {
-            continue;
-        };
-        let Some(start) = source_line(text, whole.start()) else {
-            continue;
-        };
-        let Some(end) = source_line(text, whole.end()) else {
-            continue;
-        };
-        if !is_structural_rust_concat(text, whole.start()) {
-            continue;
-        }
-        let name: String = rust_concat_parts()
-            .captures_iter(body.as_str())
-            .filter_map(|part| part.name("part"))
-            .map(|part| part.as_str())
-            .collect();
+    for concatenation in rust_concatenations(text) {
+        let start = concatenation.start;
+        let end = concatenation.end;
+        let name = concatenation.name;
         if !is_inferred_reference(&name) {
             continue;
         }
@@ -389,16 +361,108 @@ pub(super) fn references_in(
     found
 }
 
-/// One source byte offset as a one-based line, if it fits the report schema.
-fn source_line(text: &str, offset: usize) -> Option<u32> {
-    u32::try_from(text[..offset].bytes().filter(|byte| *byte == b'\n').count() + 1).ok()
+/// One literal-only Rust concatenation recovered from the syntax tree.
+struct RustConcatenation {
+    start: u32,
+    end: u32,
+    name: String,
 }
 
-/// Whether one matched `concat` token begins in code rather than prose.
-fn is_structural_rust_concat(text: &str, start: usize) -> bool {
-    let line_start = text[..start].rfind('\n').map_or(0, |newline| newline + 1);
-    text.get(line_start..start + RUST_CONCAT_NAME.len())
-        .is_some_and(|prefix| structural_line(prefix).ends_with(RUST_CONCAT_NAME))
+/// Every literal-only `concat!` in executable Rust syntax.
+fn rust_concatenations(text: &str) -> Vec<RustConcatenation> {
+    let mut parser = rust_parser();
+    let tree = parser
+        .parse(text, None)
+        .expect("an unbounded Rust parse completes");
+    let mut found = Vec::new();
+    let mut pending = vec![tree.root_node()];
+    while let Some(node) = pending.pop() {
+        let mut cursor = node.walk();
+        pending.extend(node.children(&mut cursor));
+        if node.kind() != "macro_invocation" {
+            continue;
+        }
+        let Some(macro_name) = node.child_by_field_name("macro") else {
+            continue;
+        };
+        let Some(spelling) = text.get(macro_name.byte_range()) else {
+            continue;
+        };
+        if spelling.rsplit("::").next() != Some("concat") {
+            continue;
+        }
+        let mut cursor = node.walk();
+        let Some(body) = node
+            .named_children(&mut cursor)
+            .find(|child| child.kind() == "token_tree")
+        else {
+            continue;
+        };
+        let mut parts = Vec::new();
+        let mut wants_part = true;
+        let mut valid = true;
+        let mut cursor = body.walk();
+        for token in body.children(&mut cursor) {
+            match token.kind() {
+                "(" | ")" | "[" | "]" | "{" | "}" => {}
+                "line_comment" | "block_comment" => {}
+                "," if !wants_part => wants_part = true,
+                "string_literal" | "raw_string_literal" if wants_part => {
+                    let mut cursor = token.walk();
+                    let mut children = token.named_children(&mut cursor);
+                    let Some(content) = children.next() else {
+                        valid = false;
+                        break;
+                    };
+                    if content.kind() != "string_content" || children.next().is_some() {
+                        valid = false;
+                        break;
+                    }
+                    let Some(content) = text.get(content.byte_range()) else {
+                        valid = false;
+                        break;
+                    };
+                    if content.is_empty() || !content.bytes().all(is_environment_fragment_byte) {
+                        valid = false;
+                        break;
+                    }
+                    parts.push(content);
+                    wants_part = false;
+                }
+                _ => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if !valid || parts.len() < 2 {
+            continue;
+        }
+        let name = parts.concat();
+        let Ok(start) = u32::try_from(node.start_position().row + 1) else {
+            continue;
+        };
+        let Ok(end) = u32::try_from(node.end_position().row + 1) else {
+            continue;
+        };
+        found.push(RustConcatenation { start, end, name });
+    }
+    found
+}
+
+/// One parser bound to the packaged Rust grammar.
+fn rust_parser() -> Parser {
+    let mut parser = Parser::new();
+    let language = Language::new(tree_sitter_rust::LANGUAGE);
+    parser
+        .set_language(&language)
+        .expect("packaged Rust grammar is compatible");
+    parser
+}
+
+/// Whether one byte can belong to an environment-name literal fragment.
+fn is_environment_fragment_byte(byte: u8) -> bool {
+    byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b"_"[0]
 }
 
 /// Whether a reconstructed literal is one the ordinary ledger would infer.
@@ -688,22 +752,6 @@ fn destructured() -> &'static Regex {
     static DESTRUCTURED: OnceLock<Regex> = OnceLock::new();
     DESTRUCTURED.get_or_init(|| {
         Regex::new(DESTRUCTURED_TEMPLATE).expect("compiled destructuring pattern is valid")
-    })
-}
-
-/// The compiled literal-only Rust concatenation reader.
-fn rust_concatenations() -> &'static Regex {
-    static CONCATENATIONS: OnceLock<Regex> = OnceLock::new();
-    CONCATENATIONS.get_or_init(|| {
-        Regex::new(RUST_CONCAT_TEMPLATE).expect("compiled Rust concat pattern is valid")
-    })
-}
-
-/// The compiled reader for one fragment inside a Rust concatenation.
-fn rust_concat_parts() -> &'static Regex {
-    static PARTS: OnceLock<Regex> = OnceLock::new();
-    PARTS.get_or_init(|| {
-        Regex::new(RUST_CONCAT_PART_TEMPLATE).expect("compiled Rust concat part pattern is valid")
     })
 }
 

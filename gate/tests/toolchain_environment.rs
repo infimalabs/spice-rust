@@ -230,7 +230,8 @@ fn the_environment_ledger_reassembles_a_wrapped_rust_concat() {
         concat!(
             "pub fn lane() {\n",
             "    let _ = std::env::var(concat!(\n",
-            "        \"SPICE\",\n",
+            "        \"SPICE\", // the comment is legal macro whitespace\n",
+            "        /* and block comments are legal here too */\n",
             "        \"_SPLIT_LANE\",\n",
             "    ));\n",
             "}\n"
