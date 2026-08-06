@@ -55,17 +55,21 @@ fn lane(id: &str, worktree: &str) -> LaneRow {
     }
 }
 
-fn inbox(id: &str, texts: &[&str]) -> LaneInbox {
-    let pending = texts
+fn inbox(id: &str, directives: &[(&str, Option<&str>)]) -> LaneInbox {
+    let pending = directives
         .iter()
         .enumerate()
-        .map(|(index, text)| {
-            serde_json::json!({
+        .map(|(index, (text, preview))| {
+            let mut directive = serde_json::json!({
                 "directive": OCCUPANT,
                 "key": format!("key{index}"),
                 "text": text,
                 "expires": spell(600_000),
-            })
+            });
+            if let Some(preview) = preview {
+                directive["preview"] = serde_json::Value::String((*preview).to_owned());
+            }
+            directive
         })
         .collect::<Vec<_>>();
     serde_json::from_value(serde_json::json!({
@@ -130,7 +134,13 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
 #[test]
 fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     let lanes = [lane(LANE_A, "main-c"), lane(LANE_B, "main-g")];
-    let waiting = [inbox(LANE_A, &["first direction", "second direction"])];
+    let waiting = [inbox(
+        LANE_A,
+        &[
+            ("first direction", Some("first direction")),
+            ("second direction", Some("second direction")),
+        ],
+    )];
     let tasks = [task("FIDELIT-1kKRSfyV", "review", LANE_A, 7, "active")];
 
     let rows = standings(&lanes, &waiting, &tasks, at(0));
@@ -156,13 +166,33 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
 }
 
 #[test]
-fn the_headline_is_the_newest_waiting_directive_on_one_line() {
+fn the_headline_is_the_newest_producer_preview() {
     let lanes = [lane(LANE_A, "main-c")];
-    let waiting = [inbox(LANE_A, &["older direction", "newer\ndirection"])];
+    let waiting = [inbox(
+        LANE_A,
+        &[
+            ("older direction", Some("older direction")),
+            (
+                "> quoted context\n\nnewer author words",
+                Some("newer author words"),
+            ),
+        ],
+    )];
 
     let rows = standings(&lanes, &waiting, &[], at(0));
 
-    assert_eq!(rows[0].headline.as_deref(), Some("newer\\ndirection"));
+    assert_eq!(rows[0].headline.as_deref(), Some("newer author words"));
+}
+
+#[test]
+fn absent_producer_preview_does_not_reinterpret_the_directive_text() {
+    let lanes = [lane(LANE_A, "main-c")];
+    let waiting = [inbox(LANE_A, &[("text the client must not parse", None)])];
+
+    let rows = standings(&lanes, &waiting, &[], at(0));
+
+    assert_eq!(rows[0].pending, 1);
+    assert_eq!(rows[0].headline, None);
 }
 
 #[test]
