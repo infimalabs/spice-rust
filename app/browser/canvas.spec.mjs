@@ -21,6 +21,20 @@ const sessionRecord = JSON.stringify({
   session_id: "018f7777-7777-7444-8888-999999999999",
 });
 const staleEpoch = "018f9999-9999-7444-8888-999999999999";
+const nestedQuoteMessage = [
+  "> > The final review found no alternate execution path.",
+  "> >",
+  "> > `cargo xtask verify` is green.",
+  ">",
+  "> Why it matters: nested context remains visible.",
+  "",
+  "The author words belong in the composer band.",
+].join("\n");
+const nestedQuotePreview = "The author words belong in the composer band.";
+const entirelyQuotedMessage = [
+  "> > Borrowed context has no authored preview.",
+  "> > A second borrowed line stays reachable.",
+].join("\n");
 
 const axisPanes = new Map([
   ["Magnitude", ["Effort", "Pressure", "Residue", "Consent Volume"]],
@@ -147,7 +161,7 @@ async function reply(fixture, args) {
 
 async function configureFixture(fixture, linkedRoot) {
   await execute("git", ["init", "--quiet"], { cwd: fixture });
-  await cp(join(root, "dist/stage-local"), join(fixture, "dist/stage-local"), { recursive: true });
+  await cp(join(root, "dist/stage-app"), join(fixture, "dist/stage-app"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
     "#!/bin/sh",
@@ -181,7 +195,7 @@ async function configureFixture(fixture, linkedRoot) {
     "rows = 2",
     "",
   ].join("\n"));
-  await writeFile(join(fixture, ".gitignore"), ["dist/stage-local", "",].join("\n"));
+  await writeFile(join(fixture, ".gitignore"), ["dist/stage-app", "",].join("\n"));
   await execute("git", ["add", ".gitignore", "fake-claude", "spice.toml"], { cwd: fixture });
   await execute("git", [
     "-c", "user.name=Canvas Fixture",
@@ -411,7 +425,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
     "browser direction survives streaming",
     "## Gate contract\n\n- green on the integrated tip\n- exact checks retained",
     "> The reference viewport keeps **all agent status** visible.\n>\n> Density remains readable.\n\n`1000×568` stays bounded.",
-    "> > The final review found no alternate execution path.\n> >\n> > `cargo xtask verify` is green.\n>\n> Why it matters: nested context remains visible.\n\n### Result\n\nThe Mosaic card grows with its Markdown.",
+    nestedQuoteMessage,
   ];
   const messageLabels = [
     messages[0],
@@ -428,6 +442,13 @@ async function assertAgentConversation(page, fixture, worktrees) {
       .filter({ hasText: messageLabels[index] })
       .waitFor({ timeout: 10_000 });
   }
+  const quoteLane = console.locator(`.team-agent[data-agent-lane="${seated[3].lane}"]`);
+  await quoteLane.getByRole("textbox").fill(entirelyQuotedMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[3].lane}"]`)
+    .filter({ hasText: "Borrowed context has no authored preview." })
+    .waitFor({ timeout: 10_000 });
   assert.ok(await console.locator(".mosaic-message-card h2").count(), "cards render headings");
   assert.ok(await console.locator(".mosaic-message-card ul li").count(), "cards render lists");
   assert.ok(
@@ -465,7 +486,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
-  return seated[0].lane;
+  return { lane: seated[0].lane, quoteLane: seated[3].lane };
 }
 
 async function assertFourAgentDensity(console) {
@@ -562,7 +583,42 @@ async function assertMosaicComposer(page, fixture, seeded) {
   await team.getByRole("tab", { name: /^Compose/ }).click();
   const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);
   const activity = team.locator(`.mosaic-message-card[data-agent-lane="${seeded.lane}"]`);
+  const quoteLane = page.locator(`.team-agent[data-agent-lane="${seeded.quoteLane}"]`);
+  const quoteActivity = team.locator(
+    `.mosaic-message-card[data-agent-lane="${seeded.quoteLane}"]`,
+  );
   await activity.filter({ hasText: "browser direction survives streaming" }).waitFor();
+
+  await quoteActivity
+    .filter({ hasText: nestedQuotePreview })
+    .getByRole("button", { name: "Quote this message" })
+    .click();
+  let previewBand = quoteLane.locator(".composer-quote-band");
+  await previewBand.waitFor();
+  let previewLabel = await previewBand.locator("header span").innerText();
+  assert.equal(previewLabel, nestedQuotePreview);
+  assert.doesNotMatch(previewLabel, /[<>]/, "the producer preview contains no quote marker");
+  assert.equal(
+    await previewBand.getAttribute("title"),
+    nestedQuoteMessage,
+    "the complete nested message remains reachable from the band",
+  );
+  await previewBand.getByRole("button", { name: "Remove quoted composer" }).click();
+  await previewBand.waitFor({ state: "detached" });
+
+  await quoteActivity
+    .filter({ hasText: "Borrowed context has no authored preview." })
+    .getByRole("button", { name: "Quote this message" })
+    .click();
+  previewBand = quoteLane.locator(".composer-quote-band");
+  await previewBand.waitFor();
+  previewLabel = await previewBand.locator("header span").innerText();
+  assert.equal(previewLabel, "quoted message", "an absent preview has a visible placeholder");
+  assert.ok(previewLabel.trim(), "the absent-preview band is not blank");
+  assert.doesNotMatch(previewLabel, /[<>]/);
+  assert.equal(await previewBand.getAttribute("title"), entirelyQuotedMessage);
+  await previewBand.getByRole("button", { name: "Remove quoted composer" }).click();
+  await previewBand.waitFor({ state: "detached" });
 
   await activity
     .filter({ hasText: "browser direction survives streaming" })
@@ -982,7 +1038,7 @@ try {
   lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(lightPage, "light");
-  seeded.lane = await assertAgentConversation(lightPage, fixture, worktrees);
+  Object.assign(seeded, await assertAgentConversation(lightPage, fixture, worktrees));
   const reference = await browser.newContext({
     colorScheme: "dark",
     viewport: { width: 1000, height: 568 },
