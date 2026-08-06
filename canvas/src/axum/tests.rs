@@ -919,7 +919,7 @@ fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    let stage = root.join(crate::DEV_STAGE);
+    let stage = root.join(crate::LOCAL_STAGE);
     std::fs::create_dir_all(&stage).expect("fixture stage");
     for asset in EMBEDDED_APP.assets() {
         std::fs::write(
