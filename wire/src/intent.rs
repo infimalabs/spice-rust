@@ -185,6 +185,25 @@ pub struct TaskReview {
         deserialize_with = "crate::optional::present"
     )]
     pub note: Option<String>,
+    /// Follow-up statements this review creates behind the reviewed task.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub then: Vec<ReviewFollowup>,
+    /// Existing tasks wired to follow the reviewed task.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub followup: Vec<TaskHandle>,
+}
+
+/// One follow-up statement a review creates, paired with its minted handle.
+///
+/// The caller mints the handle and witnesses its absence, the way `task add`
+/// does, so the whole batch is decided before the review writes anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewFollowup {
+    /// Handle minted for the statement.
+    pub task: TaskHandle,
+    /// The statement to create.
+    pub add: TaskAdd,
 }
 
 /// Seat a reviewer under the anti-self-review rule.

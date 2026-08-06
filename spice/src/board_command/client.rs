@@ -878,9 +878,12 @@ fn client_review(
 ) -> Outcome<CommandAnswer> {
     mutate_task_from_board(repository, contract, matches, |board, task, heads| {
         let (lane, occupant) = actor_seat(board)?;
+        let mut expected = progress_witnesses(board, heads, lane, occupant, true)?;
+        let then = plan_followups(board, matches, &mut expected)?;
+        let followup = plan_followup_edges(board, matches, &task, &mut expected)?;
         Ok((
             CommandKind::TaskReview,
-            progress_witnesses(board, heads, lane, occupant, true)?,
+            expected,
             serde_json::to_value(TaskReview {
                 task,
                 finding: matches
@@ -888,6 +891,8 @@ fn client_review(
                     .cloned()
                     .unwrap_or_default(),
                 note: matches.get_one::<String>("note").cloned(),
+                then,
+                followup,
             })
             .expect("typed intent encodes"),
         ))

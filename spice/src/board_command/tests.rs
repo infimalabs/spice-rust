@@ -927,6 +927,11 @@ mod tests {
             true,
         )
         .expect("assigned review has exact witnesses");
+        let tracked: TaskHandle = "FOLLOW-1kKRRsDP".parse().expect("follow-up handle");
+        let mut expected = expected;
+        expected.push(Witness::Absence {
+            task: tracked.clone(),
+        });
         assert_committed(issue(
             bus,
             epoch,
@@ -937,6 +942,19 @@ mod tests {
                 task: task.clone(),
                 finding: "missing negative-path evidence".to_owned(),
                 note: Some("recorded for the next authored correction".to_owned()),
+                then: vec![ReviewFollowup {
+                    task: tracked,
+                    add: TaskAdd {
+                        title: "Cover the negative path the review named".to_owned(),
+                        project: None,
+                        description: None,
+                        acceptance: Vec::new(),
+                        origin: None,
+                        flow: None,
+                        depends: Vec::new(),
+                    },
+                }],
+                followup: Vec::new(),
             },
         ));
     }
@@ -965,6 +983,97 @@ mod tests {
                     .is_some_and(|finding| finding.contains("negative-path evidence"))
         }));
         settled
+    }
+
+    /// A finding must name what will carry it, and the word clean must not.
+    ///
+    /// The two halves share one fixture on purpose: the refusal has to leave
+    /// the claim exactly where it was, or the clean review that follows it
+    /// could not be issued against the same witnesses.
+    #[test]
+    fn an_unclean_review_needs_follow_up_tracking_and_clean_does_not() {
+        let (root, bus, epoch, seats) = fixture("review-followup", 2);
+        let lane_one = Actor::Lane(seats[0].lane);
+        let lane_two = Actor::Lane(seats[1].lane);
+        assert_lane_resolution(&bus, epoch, &seats, &lane_one);
+        let task = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "TRACK-track001",
+            "Track what a finding asks for",
+            None,
+        );
+        advance_task_to_review(&bus, epoch, &seats[0], &lane_one, &task);
+        let reviewable = board(&bus, epoch, lane_two.clone());
+        assert_committed(issue(
+            &bus,
+            epoch,
+            lane_two.clone(),
+            CommandKind::ClaimWin,
+            claim_expected(&reviewable, &task, &seats[1]),
+            &ClaimWin {
+                rule: "next".parse().expect("allocator rule"),
+            },
+        ));
+        let assigned = board(&bus, epoch, lane_two.clone());
+        let expected = progress_witnesses(
+            &assigned,
+            at(&assigned, &task),
+            seats[1].lane,
+            seats[1].occupant,
+            true,
+        )
+        .expect("assigned review has exact witnesses");
+
+        let untracked = issue(
+            &bus,
+            epoch,
+            lane_two.clone(),
+            CommandKind::TaskReview,
+            expected.clone(),
+            &TaskReview {
+                task: task.clone(),
+                finding: "the negative path has no test".to_owned(),
+                note: None,
+                then: Vec::new(),
+                followup: Vec::new(),
+            },
+        );
+        assert!(
+            matches!(
+                untracked,
+                Outcome::Refusal(Refusal { ref reason, .. })
+                    if reason == "review::followup-required"
+            ),
+            "a finding landed with nothing tracking it: {untracked:?}",
+        );
+
+        // The predecessor default and its allocator hint both spell the
+        // verdict this way, so it has to settle the task clean rather than
+        // demand follow-up tracking for a review that asked for nothing.
+        assert_committed(issue(
+            &bus,
+            epoch,
+            lane_two,
+            CommandKind::TaskReview,
+            expected,
+            &TaskReview {
+                task: task.clone(),
+                finding: "CLEAN".to_owned(),
+                note: None,
+                then: Vec::new(),
+                followup: Vec::new(),
+            },
+        ));
+        let settled = board(&bus, epoch, Actor::Operator);
+        let heads = at(&settled, &task);
+        assert_eq!(heads.workflow.body.status, "completed");
+        assert_eq!(
+            heads.workflow.body.review, "clean",
+            "the word clean recorded a finding named after the verdict"
+        );
+        clean(&root, bus);
     }
 
     fn assert_restart_preserves(
