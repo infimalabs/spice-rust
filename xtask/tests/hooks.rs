@@ -345,6 +345,7 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
     assert_stale_entry_point_is_republished(scratch, entry_point);
     assert_unusable_entry_point_is_repaired(scratch, entry_point);
     assert_guard_audit_refuses_a_foreign_guard(scratch, entry_point);
+    assert_an_absent_entry_point_aborts_ref_updates(scratch, entry_point);
     let shared_hooks = common_hooks(scratch);
     assert_eq!(
         configured_hooks(scratch),
@@ -687,6 +688,52 @@ fn assert_guard_audit_refuses_a_foreign_guard(scratch: &Scratch, source: &Path) 
     );
     xtask::audit_entry_point(scratch.path(), &mut Vec::new())
         .expect("the restored stamp is this build's");
+}
+
+/// An absent entry point aborts ref updates rather than degrading, which is
+/// what makes activation a precondition of the install rather than a polish
+/// step, and is now written in `README.md` where operators read it.
+///
+/// The claim is worth pinning because the alternative is plausible enough to
+/// have been assumed: a hook that could not find its program might exit zero
+/// and let the update through, which is how most optional tooling behaves and
+/// is exactly the failure the guard must not have. Restoring afterwards also
+/// records that absence self-heals -- the read fails and the copy is rewritten
+/// -- so only the wrong-mode case above needed code to repair it.
+fn assert_an_absent_entry_point_aborts_ref_updates(scratch: &Scratch, source: &Path) {
+    let published = published_entry_point(scratch.path());
+    fs::remove_file(&published).expect("remove the published entry point");
+    let probe = "refs/heads/entry-point-absence-probe";
+    let aborted = Command::new("git")
+        .args(["update-ref", probe, &rev_parse(scratch, "refs/heads/main")])
+        .current_dir(scratch.path())
+        .output()
+        .expect("attempt a reference update with no entry point published");
+    assert_ne!(
+        aborted.status.code(),
+        Some(0),
+        "an absent entry point aborts rather than admitting: {}",
+        streams(&aborted)
+    );
+    assert!(
+        String::from_utf8_lossy(&aborted.stderr).contains("aborted by hook"),
+        "Git names the hook as the abort's cause: {}",
+        streams(&aborted)
+    );
+    let listed = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", probe])
+        .current_dir(scratch.path())
+        .output()
+        .expect("look for the reference the aborted update would have created");
+    assert!(
+        !listed.status.success(),
+        "the aborted update left no reference behind: {}",
+        streams(&listed)
+    );
+
+    xtask::activate_hooks(scratch.path(), source, &mut Vec::new())
+        .expect("activation republishes an absent entry point");
+    assert_eq!(mode(&published), 0o755);
 }
 
 fn published_guard_stamp(root: &Path) -> PathBuf {

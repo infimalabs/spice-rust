@@ -500,3 +500,23 @@ impl std::error::Error for HookActivationError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::digest;
+
+    /// The stamp is a detector only if editing the guard moves it, so the edits
+    /// it must not be blind to are pinned here rather than assumed from the
+    /// algorithm's name.
+    ///
+    /// A fold without position -- an XOR, a sum -- agrees with itself across a
+    /// transposition, and a fix that reorders two admissions would then publish
+    /// as current forever. The second case is the same argument for length: a
+    /// guard whose only change is a deleted trailing clause must still move.
+    #[test]
+    fn the_stamp_moves_for_edits_the_guard_can_receive() {
+        assert_ne!(digest(b"refuse then admit"), digest(b"admit then refuse"));
+        assert_ne!(digest(b"admit unless upstream"), digest(b"admit unless"));
+        assert_ne!(digest(b""), digest(b"\0"));
+    }
+}
