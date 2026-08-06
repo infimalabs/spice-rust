@@ -90,8 +90,8 @@ fn prepare_build_context<R: Runner>(
     output: &mut impl Write,
     diagnostic: &mut impl Write,
 ) -> Result<(), ProofImageError> {
-    remove_context(&context)?;
-    create_directory(&context)?;
+    remove_context(context)?;
+    create_directory(context)?;
     create_directory(
         archive
             .parent()
