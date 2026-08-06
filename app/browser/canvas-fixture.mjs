@@ -48,6 +48,34 @@ const activityRecord = JSON.stringify({
     },
   },
 });
+const triggeredActivityRecord = JSON.stringify({
+  type: "assistant",
+  message: {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "text", text: "newest lane prose witness" }],
+    usage: {
+      input_tokens: 1,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      output_tokens: 1,
+    },
+  },
+});
+const toolActivityRecord = JSON.stringify({
+  type: "assistant",
+  message: {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "tool_use", id: "lane-status-tool", name: "Bash", input: {} }],
+    usage: {
+      input_tokens: 1,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      output_tokens: 1,
+    },
+  },
+});
 
 export async function buildResident() {
   try {
@@ -250,6 +278,55 @@ export async function assertHeldTaskCount(team, fixture, lane) {
   await badge.waitFor({ state: "detached" });
   await lifetime.fill("0");
   await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
+
+  // The status strip follows one chronology across unlike transcript shapes.
+  // The first one-shot fixture record is a real Claude tool_use block decoded
+  // by the production capture path, not prose styled to resemble a tool.
+  const ticker = team.locator(".ticker");
+  await writeFile(join(fixture, ".spice-tool-trigger"), "emit\n");
+  const toolLine = "tool: Bash";
+  await ticker.filter({ hasText: toolLine }).waitFor({ timeout: 15_000 });
+  assertNewestLaneActivity(await ticker.innerText(), toolLine);
+
+  // The fake resident agent consumes this one-shot trigger in its real
+  // transcript process. Capture then publishes a normal prose stream frame,
+  // which is newer than the tool above and must replace it for the whole team.
+  await writeFile(join(fixture, ".spice-prose-trigger"), "emit\n");
+  const proseLine = "assistant: newest lane prose witness";
+  await ticker.filter({ hasText: proseLine }).waitFor({ timeout: 15_000 });
+  assertNewestLaneActivity(await ticker.innerText(), proseLine);
+
+  // Falsification: restore the exact old receipt shape in the production DOM
+  // and run the same assertion. It must reject the regression before the
+  // observed activity line is restored for the remainder of the fixture.
+  const observed = await ticker.innerText();
+  await ticker.evaluate((node) => {
+    node.textContent = "Lane snapshot: 4 lanes";
+  });
+  const restoredReceipt = await ticker.innerText();
+  assert.equal(
+    restoredReceipt,
+    "Lane snapshot: 4 lanes",
+    "the old receipt is restored in the DOM",
+  );
+  assert.throws(
+    () => assertNewestLaneActivity(restoredReceipt, proseLine),
+    /newest lane activity/,
+    "the production assertion rejects the former snapshot receipt",
+  );
+  await ticker.evaluate((node, text) => {
+    node.textContent = text;
+  }, observed);
+  assertNewestLaneActivity(await ticker.innerText(), proseLine);
+}
+
+function assertNewestLaneActivity(actual, expected) {
+  assert.doesNotMatch(
+    actual,
+    /(?:Board|Lane) snapshot|Steering inbox/,
+    "newest lane activity excludes protocol snapshot receipts",
+  );
+  assert.equal(actual, expected, "newest lane activity wins across tool and prose shapes");
 }
 
 export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
@@ -263,12 +340,27 @@ export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
     "name=${PWD##*/}",
     `printf '%s\\n' '${sessionRecord}'`,
     concatAgentRecord(),
+    "periodic=0",
     'case "$PWD" in',
-    "  *lane-2)",
-    `    while :; do sleep 20; printf '%s\\n' '${activityRecord}'; done`,
-    "    ;;",
-    "  *) while :; do sleep 1; done ;;",
+    "  *lane-2) periodic=1 ;;",
     "esac",
+    "elapsed=0",
+    "while :; do",
+    "  if [ -f .spice-tool-trigger ]; then",
+    "    rm -f .spice-tool-trigger",
+    `    printf '%s\\n' '${toolActivityRecord}'`,
+    "  fi",
+    "  if [ -f .spice-prose-trigger ]; then",
+    "    rm -f .spice-prose-trigger",
+    `    printf '%s\\n' '${triggeredActivityRecord}'`,
+    "  fi",
+    "  sleep 1",
+    "  elapsed=$((elapsed + 1))",
+    "  if [ \"$periodic\" -eq 1 ] && [ \"$elapsed\" -ge 20 ]; then",
+    `    printf '%s\\n' '${activityRecord}'`,
+    "    elapsed=0",
+    "  fi",
+    "done",
     "",
   ].join("\n"));
   await chmod(vendor, 0o700);
@@ -296,7 +388,10 @@ export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
     "rows = 2",
     "",
   ].join("\n"));
-  await writeFile(join(fixture, ".gitignore"), ["dist/stage-app", "",].join("\n"));
+  await writeFile(
+    join(fixture, ".gitignore"),
+    ["dist/stage-app", ".spice-tool-trigger", ".spice-prose-trigger", ""].join("\n"),
+  );
   await execute("git", ["add", ".gitignore", "fake-claude", "spice.toml"], { cwd: fixture });
   await execute("git", [
     "-c", "user.name=Canvas Fixture",
