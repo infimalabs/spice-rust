@@ -38,6 +38,7 @@ import {
   CONNECT_MS,
   RECONNECT_MS,
   TRANSITION_MS,
+  WAIT_PROBE_MS,
   waitForLocator as waitForElement,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
@@ -68,6 +69,41 @@ const teamLaneIds = [
   "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003",
 ];
 const staleEpoch = "018f9999-9999-7444-8888-999999999999";
+
+async function waitAtFirstSpecCaller(page) {
+  return waitForPage(page, "first call-site self-check", WAIT_PROBE_MS, () => false)
+    .then(() => null, (error) => error);
+}
+
+async function waitAtSecondSpecCaller(page) {
+  const absent = page.locator('[data-wait-call-site-self-check="absent"]');
+  return waitForElement(page, "second call-site self-check", WAIT_PROBE_MS, absent)
+    .then(() => null, (error) => error);
+}
+
+function reportedWaitSite(failure) {
+  assert.ok(failure, "a call-site self-check that cannot be satisfied must fail");
+  const site = failure.message.split("\n").find((line) => line.startsWith("  site: "));
+  assert.ok(site, "the call-site self-check reports the frame that armed it");
+  return site;
+}
+
+async function assertDistinctWaitCallSites(page) {
+  const first = reportedWaitSite(await waitAtFirstSpecCaller(page));
+  const second = reportedWaitSite(await waitAtSecondSpecCaller(page));
+  assert.match(
+    first,
+    /site: at waitAtFirstSpecCaller \(file:.*canvas\.spec\.mjs:\d+:\d+\)/,
+    "the first wait reports its named spec caller",
+  );
+  assert.match(
+    second,
+    /site: at waitAtSecondSpecCaller \(file:.*canvas\.spec\.mjs:\d+:\d+\)/,
+    "the second wait reports its named spec caller",
+  );
+  assert.notEqual(first, second, "two waits armed at different spec sites remain distinguishable");
+}
+
 const nestedQuoteMessage = [
   "> > The final review found no alternate execution path.", "> >",
   "> > `cargo xtask verify` is green.",
@@ -1249,6 +1285,7 @@ try {
   lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(lightPage, "light");
+  await assertDistinctWaitCallSites(lightPage);
   const hiddenStatusReport = await assertWaitReporting(lightPage, resident);
   Object.assign(seeded, await assertAgentConversation(lightPage, fixture, worktrees));
   const reference = await browser.newContext({
