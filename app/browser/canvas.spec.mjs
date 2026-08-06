@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 import { assertComposerShards } from "./composer-shards.mjs";
+import { assertComposerThumbs } from "./composer-thumbs.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
@@ -1012,17 +1013,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
   );
   await quotedComposer.getByRole("textbox").fill("canvas quote reply");
   assert.equal(await composer.getByRole("textbox").inputValue(), "");
-  const pixel = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-    "base64",
-  );
-  await composer.locator('input[type="file"]').setInputFiles([
-    { name: "pixel.png", mimeType: "image/png", buffer: pixel },
-    { name: "pixel-copy.png", mimeType: "image/png", buffer: pixel },
-  ]);
-  const attachmentControls = composer.locator(".composer-attachment-list");
-  await attachmentControls.getByRole("img", { name: "pixel.png" }).waitFor();
-  await attachmentControls.getByRole("img", { name: "pixel-copy.png" }).waitFor();
+  await assertComposerThumbs(page, composer, ["pixel.png", "pixel-copy.png"]);
   assert.equal(
     await composer.getByLabel("Markdown preview").locator("img").count(),
     2,

@@ -17,7 +17,6 @@
 .composer-quote-stack { display: contents; }
 
 .composer-shard--quote .composer-shard-heading > button,
-.composer-attachment-chip button,
 .mosaic-message-card footer button {
   display: grid;
   place-items: center;
@@ -28,26 +27,6 @@
   padding: 0;
   border-radius: 50%;
 }
-
-.composer-attachment-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.composer-attachment-chip {
-  position: relative;
-  display: inline-flex;
-  width: 46px;
-  height: 46px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-muted);
-}
-
-.composer-attachment-chip img { width: 100%; height: 100%; object-fit: cover; }
-.composer-attachment-chip button { position: absolute; top: 2px; right: 2px; background: var(--panel); }
 
 .composer-issue { margin: 0; color: var(--danger); font-size: .76rem; }
 
@@ -98,23 +77,6 @@
 .markdown-body img {
   display: block; max-width: 100%; max-height: 20rem; margin: .5em 0;
   border: 1px solid var(--line); border-radius: 5px; object-fit: contain;
-}
-.mosaic-composer-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: .74rem;
-}
-.image-picker {
-  min-height: 32px;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--panel);
-  color: var(--ink);
-  cursor: pointer;
-  font-weight: 650;
 }
 .composer-send {
   margin-left: auto;
@@ -447,9 +409,11 @@
   background: color-mix(in srgb, var(--accent) 5%, var(--panel));
 }
 
+/* The heading row carries a variable number of children — deep link, title,
+   draft thumbnails, and the primary-only hamburger — so it flexes rather than
+   naming fixed columns a quote shard would leave empty. */
 .composer-shard-heading {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 22px;
+  display: flex;
   align-items: center;
   gap: 4px;
   padding-bottom: 4px;
@@ -459,6 +423,8 @@
   font-size: .56rem;
 }
 .composer-shard-heading strong {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   color: var(--identity, var(--ink));
   font-size: .58rem;
@@ -474,6 +440,36 @@
 .composer-shard-age {
   color: var(--accent);
 }
+
+/* A third of the message-card thumbnail, keeping its border, radius, and crop
+   so a draft image reads as the same object at heading scale. The strip is
+   bounded and scrolls, so attachments never push the title out of the row. */
+.composer-shard-thumbs {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 3px;
+  min-width: 0;
+  max-width: 42%;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+}
+.composer-shard-thumb {
+  display: block;
+  flex: none;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.composer-shard-thumb img {
+  display: block;
+  width: 24px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  object-fit: cover;
+}
+.composer-shard-thumb:hover img { border-color: var(--accent); }
 .composer-shard-heading > button,
 .agent-action-menu > summary {
   display: grid;
@@ -569,8 +565,6 @@
   font-size: .72rem;
   line-height: 1.35;
 }
-.team-surface .mosaic-composer-actions { gap: 5px; font-size: .62rem; }
-.team-surface .image-picker { min-height: 25px; padding: 4px 6px; font-size: .62rem; }
 .team-surface .composer-markdown { padding: 6px 7px; font-size: .68rem; }
 
 /* The lineage control stack is sized against the Python Spice reference, which

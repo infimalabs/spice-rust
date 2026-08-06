@@ -14,9 +14,9 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    agent_message_source_id, choose_images, directive_source_id, drop_on_lane, focus_after_render,
+    agent_message_source_id, directive_source_id, drop_on_lane, focus_after_render,
     keyboard_submit, paste_images, primary_textarea_id, render_agent_message_card,
-    render_attachments, render_directive_card, render_markdown, render_quote_shards, update_body,
+    render_directive_card, render_markdown, render_quote_shards, render_shard_thumbs, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -643,6 +643,7 @@ fn render_composer_body(
                 renew_enabled,
                 renew.clone(),
                 stream,
+                render_shard_thumbs(lane_key, draft, drafts),
             )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
@@ -669,7 +670,6 @@ fn render_composer_body(
                 {onkeydown}
                 {onpaste}
             ></textarea>
-            {render_attachments(lane_key, draft, drafts)}
             if let Some(issue) = &draft.issue {
                 <p class="composer-issue" role="status">{issue.clone()}</p>
             }
@@ -678,7 +678,6 @@ fn render_composer_body(
                     {render_markdown(&markdown)}
                 </div>
             }
-            {render_image_picker(lane, lane_key, draft, drafts)}
         </div>
     }
 }
@@ -690,6 +689,7 @@ fn render_composer_heading(
     renew_enabled: bool,
     renew: Callback<MouseEvent>,
     stream: ComposerStreamLink,
+    thumbs: Html,
 ) -> Html {
     let activity = standing
         .headline
@@ -713,6 +713,7 @@ fn render_composer_heading(
                     .unwrap_or_else(|| "now".to_owned())
             }</a>
             <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
+            {thumbs}
             <details class="agent-action-menu">
                 <summary aria-label={format!("Actions for {}", standing.label)}>{"☰"}</summary>
                 <div
@@ -726,30 +727,6 @@ fn render_composer_heading(
                 </div>
             </details>
         </header>
-    }
-}
-
-fn render_image_picker(
-    lane: CanonicalUuid,
-    lane_key: &str,
-    draft: &ComposerDraft,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-) -> Html {
-    let input_id = format!("mosaic-images-{lane}");
-    let onchange = choose_images(lane_key.to_owned(), drafts.clone());
-    html! {
-        <div class="mosaic-composer-actions">
-            <input
-                id={input_id.clone()}
-                class="visually-hidden"
-                type="file"
-                accept="image/*"
-                multiple=true
-                {onchange}
-            />
-            <label class="image-picker" for={input_id}>{"Images"}</label>
-            <span>{format!("{}/{}", draft.attachments.len(), MAX_ATTACHMENTS)}</span>
-        </div>
     }
 }
 
