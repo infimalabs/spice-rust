@@ -177,7 +177,7 @@ fn run_trunk(
     let cargo_home = environment
         .cargo_home()
         .ok_or(AppBuildError::MissingCargoHome)?;
-    prepare_app_build(&build_root, &worktree_identity, source_identity)?;
+    prepare_app_build(&build_root, &worktree_identity)?;
     writeln!(output, "[app] trunk 0.21.14 -> {}", stage.display())
         .map_err(AppBuildError::Output)?;
     let rustflags = remapped_rustflags(root, &cargo_home)?;
@@ -198,35 +198,20 @@ fn run_trunk(
     Ok(())
 }
 
-fn app_build_namespace(worktree_identity: &Digest, source_identity: &Digest) -> String {
-    format!("xtask-app-{worktree_identity}-{source_identity}")
+fn app_build_namespace(worktree_identity: &Digest) -> String {
+    format!("xtask-app-{worktree_identity}")
 }
 
-fn app_build_directory(
-    build_root: &Path,
-    worktree_identity: &Digest,
-    source_identity: &Digest,
-) -> PathBuf {
-    build_root.join(format!(
-        "{}-build",
-        app_build_namespace(worktree_identity, source_identity)
-    ))
+fn app_build_directory(build_root: &Path, worktree_identity: &Digest) -> PathBuf {
+    build_root.join(format!("{}-build", app_build_namespace(worktree_identity)))
 }
 
-fn app_target_directory(
-    build_root: &Path,
-    worktree_identity: &Digest,
-    source_identity: &Digest,
-) -> PathBuf {
-    build_root.join(app_build_namespace(worktree_identity, source_identity))
+fn app_target_directory(build_root: &Path, worktree_identity: &Digest) -> PathBuf {
+    build_root.join(app_build_namespace(worktree_identity))
 }
 
-fn prepare_app_build(
-    build_root: &Path,
-    worktree_identity: &Digest,
-    source_identity: &Digest,
-) -> Result<(), AppBuildError> {
-    let build = app_build_directory(build_root, worktree_identity, source_identity);
+fn prepare_app_build(build_root: &Path, worktree_identity: &Digest) -> Result<(), AppBuildError> {
+    let build = app_build_directory(build_root, worktree_identity);
     fs::create_dir_all(&build).map_err(|source| AppBuildError::Io {
         path: build,
         source,
@@ -242,8 +227,8 @@ fn trunk_command(
     worktree_identity: &Digest,
     source_identity: &Digest,
 ) -> Command {
-    let target = app_target_directory(build_root, worktree_identity, source_identity);
-    let build = app_build_directory(build_root, worktree_identity, source_identity);
+    let target = app_target_directory(build_root, worktree_identity);
+    let build = app_build_directory(build_root, worktree_identity);
     let mut command = Command::new("trunk");
     command
         .current_dir(root.join("app"))
@@ -605,15 +590,11 @@ mod tests {
         assert_eq!(environment.len(), 9);
         assert_eq!(
             environment.get("CARGO_TARGET_DIR"),
-            Some(&Some(format!(
-                "/cargo-target/xtask-app-{worktree}-{sources}"
-            )))
+            Some(&Some(format!("/cargo-target/xtask-app-{worktree}")))
         );
         assert_eq!(
             environment.get("CARGO_BUILD_BUILD_DIR"),
-            Some(&Some(format!(
-                "/cargo-target/xtask-app-{worktree}-{sources}-build"
-            )))
+            Some(&Some(format!("/cargo-target/xtask-app-{worktree}-build")))
         );
         assert_eq!(
             environment.get("SPICE_APP_SOURCE_IDENTITY"),
@@ -640,6 +621,71 @@ mod tests {
         );
     }
 
+    #[test]
+    fn source_edits_reuse_one_worktree_cache_namespace() {
+        let outer = fixture("stable-app-target");
+        let worktree = Digest::compute(Domain::DistInventory, b"stable worktree");
+        let first_source = Digest::compute(Domain::DistInventory, b"first source revision");
+        let second_source = Digest::compute(Domain::DistInventory, b"second source revision");
+        let command = |source| {
+            trunk_command(
+                Path::new("/workspace"),
+                &outer,
+                OsStr::new("/cargo-home"),
+                Path::new("/stage"),
+                "remapped-flags".to_owned(),
+                &worktree,
+                source,
+            )
+        };
+        let environment = |command: &Command| {
+            command
+                .get_envs()
+                .map(|(key, value)| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        value.map(|value| value.to_string_lossy().into_owned()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        let first = environment(&command(&first_source));
+        let second = environment(&command(&second_source));
+
+        for name in ["CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR"] {
+            assert_eq!(first.get(name), second.get(name), "{name} changed on edit");
+        }
+        assert_ne!(
+            first.get("SPICE_APP_SOURCE_IDENTITY"),
+            second.get("SPICE_APP_SOURCE_IDENTITY"),
+            "source identity did not change on edit"
+        );
+
+        prepare_app_build(&outer, &worktree).expect("prepare first source build");
+        fs::create_dir_all(app_target_directory(&outer, &worktree))
+            .expect("cargo creates the target namespace");
+        prepare_app_build(&outer, &worktree).expect("prepare second source build");
+        let mut children = fs::read_dir(&outer)
+            .expect("read outer target")
+            .map(|entry| entry.expect("read target child").file_name())
+            .collect::<Vec<_>>();
+        children.sort();
+        assert_eq!(
+            children,
+            [
+                app_target_directory(&outer, &worktree)
+                    .file_name()
+                    .expect("target has a name")
+                    .to_owned(),
+                app_build_directory(&outer, &worktree)
+                    .file_name()
+                    .expect("build directory has a name")
+                    .to_owned(),
+            ]
+        );
+        fs::remove_dir_all(outer).expect("remove stable-target fixture");
+    }
+
     /// A shared ambient target is only an outer allocation. Each worktree gets
     /// a distinct inner target even when both build the exact same sources.
     #[test]
@@ -655,13 +701,12 @@ mod tests {
             worktree_identity(&worktree_a).expect("identify first worktree"),
             worktree_identity(&worktree_b).expect("identify second worktree"),
         ];
-        let sources = fixture_source();
         let barrier = Arc::new(Barrier::new(2));
         let workers = worktrees
             .into_iter()
             .zip([b"worktree A wasm".as_slice(), b"worktree B wasm".as_slice()])
             .map(|(worktree, bytes)| {
-                let target = app_target_directory(&outer, &worktree, &sources);
+                let target = app_target_directory(&outer, &worktree);
                 let barrier = Arc::clone(&barrier);
                 let bytes = bytes.to_vec();
                 std::thread::spawn(move || {
