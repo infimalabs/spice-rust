@@ -16,10 +16,13 @@
 //! a `reset --hard` onto an upstream-merged parent is refused, and leaves HEAD
 //! unmoved while the index and worktree hold the abandoned rewind's target
 //! content. The branch survives; the tree does not. That asymmetry is why the
-//! `ProtectedHistory` refusal carries a recovery rather than merely reporting
-//! that it refused. The recovery is `git reset --hard HEAD`, which this guard
-//! admits because such an update leaves the reference where it already is, so
-//! `abandoned_upstream_commits` finds nothing to protect.
+//! `ProtectedHistory` refusal reports that the queued target and the current
+//! index and worktree agree, but it deliberately prescribes no destructive
+//! recovery. That observable state is consistent with `reset --hard` having
+//! written the tree, but a soft or mixed rewind can present the same state when
+//! the index and worktree already matched its target. The hook is told neither
+//! command nor intent, so the operator has to inspect the retained state before
+//! deciding what, if anything, to restore.
 //!
 //! That damage is not what every refused command leaves behind, so the refusal
 //! reads the state rather than assuming the worst of it. A refused
@@ -282,7 +285,8 @@ fn is_ancestor(
 /// What the refused command had already done to the working tree.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorktreeDamage {
-    /// The command wrote the working tree before any hook could veto it.
+    /// The queued target matches the index and worktree, consistently with a
+    /// rewrite but not proving one occurred.
     Rewritten,
     /// The command left the files on disk as they were.
     Untouched,
@@ -311,10 +315,9 @@ pub enum WorktreeDamage {
 /// files on disk, so the worktree still disagrees with the rewind target.
 ///
 /// The bound worth naming: a `--soft` or `--mixed` rewind onto a commit whose
-/// content the working tree already happens to match is reported as rewritten.
-/// The report stays true where it matters, since the files really do hold the
-/// target's content and the named recovery really does restore agreement with the
-/// commits that were kept.
+/// content the index and worktree already happen to match is reported as
+/// rewritten. The refusal text therefore treats this arm as an ambiguous
+/// observable state and never prescribes a destructive reset from it.
 fn worktree_damage(
     repository: &Path,
     update: &RefUpdate<'_>,
@@ -446,11 +449,13 @@ impl fmt::Display for ReferenceTransactionError {
                 )?;
                 match damage {
                     WorktreeDamage::Rewritten => formatter.write_str(concat!(
-                        "This refusal protected the branch, not the tree: HEAD was not ",
-                        "moved, but the rewind had already written the index and worktree ",
-                        "before any hook could run, so they now disagree with the commits ",
-                        "that were kept. Restore them with `git reset --hard HEAD`, which ",
-                        "this guard admits."
+                        "This refusal protected the branch, not necessarily the tree: HEAD ",
+                        "was not moved, and the index and worktree match the refused rewind ",
+                        "target. A hard rewind may have written them before any hook could ",
+                        "run, but a soft or mixed rewind can look identical when that content ",
+                        "was already present. Inspect `git status`, `git diff`, and ",
+                        "`git diff --cached` before choosing any recovery; do not use a ",
+                        "destructive reset based only on this diagnostic."
                     )),
                     WorktreeDamage::Untouched => formatter.write_str(concat!(
                         "HEAD was not moved and this command did not write the working ",
