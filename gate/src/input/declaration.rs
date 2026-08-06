@@ -325,7 +325,6 @@ pub struct GateSet {
 
 impl GateSet {
     fn current() -> Result<Self, GateSetError> {
-        let metric = current_long_lines_metric()?;
         let camp_metrics = current_camp_metrics()?;
         let camp = Camp::new([SharedBound::new(
             CAMP_BOUND,
@@ -337,14 +336,14 @@ impl GateSet {
         let kill = KillDeclaration::current().map_err(GateSetError::Kill)?;
 
         Self::admit(
-            vec![MetricDeclaration::new("awk", metric)],
+            vec![],
             camp_metrics,
             camp,
             kill,
-            vec![
-                FloorDeclaration::new("rust.long-lines", FloorKind::Measurement),
-                FloorDeclaration::new("rust.mutation-survivors", FloorKind::Mutation),
-            ],
+            vec![FloorDeclaration::new(
+                "rust.mutation-survivors",
+                FloorKind::Mutation,
+            )],
             vec![ToolDeclaration::awk()],
         )
     }
@@ -488,21 +487,6 @@ impl GateSet {
     pub fn digest(&self) -> Digest {
         Digest::compute(Domain::GateSet, self.render().as_bytes())
     }
-}
-
-fn current_long_lines_metric() -> Result<Metric, GateSetError> {
-    let program =
-        format!("length($0) > {LONG_LINE_LIMIT} {{ debt += 1 }} END {{ print debt + 0 }}");
-    let parser = Parser::new(AWK, [program]).map_err(GateSetError::Metric)?;
-    Metric::new(
-        "rust.long-lines",
-        "rust",
-        format!("source lines longer than {LONG_LINE_LIMIT} bytes"),
-        parser,
-        "*.rs",
-        "",
-    )
-    .map_err(GateSetError::Metric)
 }
 
 fn current_camp_metrics() -> Result<Vec<MetricDeclaration>, GateSetError> {

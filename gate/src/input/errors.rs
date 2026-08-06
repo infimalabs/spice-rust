@@ -313,6 +313,8 @@ pub enum BaselineError {
         field: String,
         /// Retired name.
         name: String,
+        /// Baseline release that owned the executable scalar state.
+        owner: u64,
     },
     /// A name outside the compiled current set was found.
     Unknown {
@@ -379,9 +381,14 @@ impl fmt::Display for BaselineError {
                 "{} field {field} floor {name:?} sorts before {previous:?}",
                 path.display()
             ),
-            Self::Retired { path, field, name } => write!(
+            Self::Retired {
+                path,
+                field,
+                name,
+                owner,
+            } => write!(
                 formatter,
-                "{} field {field} names retired floor {name:?}",
+                "{} field {field} names retired floor {name:?} owned by baseline version {owner}",
                 path.display()
             ),
             Self::Unknown { path, field, name } => write!(

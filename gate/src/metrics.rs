@@ -22,7 +22,7 @@ pub(crate) use acquire::acquire_metrics_with_bounds;
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{MetricAcquisitionError, MetricSource, acquire_metrics};
 #[cfg(not(target_arch = "wasm32"))]
-pub use baseline::{BaselineCapture, MagicBaselines};
+pub use baseline::{BaselineCapture, CommittedTexts};
 pub use declaration::{
     ArmDeclaration, KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
     RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, RustDocMarkdownCitationAllowance,

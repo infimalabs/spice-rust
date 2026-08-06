@@ -61,7 +61,7 @@ const AWK: &str = "/usr/bin/awk";
 const AWK_PROBE: &str = "BEGIN { print \"spice-gate-awk-v1\" }";
 const AWK_PROBE_OUTPUT: &str = "spice-gate-awk-v1";
 const DEFAULT_SKIP: &[&str] = &[".git/", "target/"];
-const RETIRED_FLOORS: &[&str] = &["rust.kill-rate"];
+const RETIRED_FLOORS: &[(&str, u64)] = &[("rust.kill-rate", 1), ("rust.long-lines", 1)];
 
 include!("input/declaration.rs");
 include!("input/baseline.rs");
