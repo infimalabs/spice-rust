@@ -2,21 +2,78 @@
 
 use super::*;
 
+/// Where the rail can send the operator.
+///
+/// [`Axis`] is a closed vocabulary of questions asked *about the journal*, and
+/// its own documentation says a new plane becomes a pane on one of the four
+/// rather than a fifth view. The mosaic is not a plane and does not belong
+/// inside it: it answers who is running right now and how to redirect them,
+/// which no pane derives and no admitted snapshot alone can answer. So it
+/// stands beside the axes as a second kind of destination. Adding it as an
+/// `Axis` variant would have demanded a pane registry row for a surface that
+/// has no panes, and would have widened a vocabulary whose closure is what
+/// makes the pane match exhaustive.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Destination {
+    /// One of the four derived read axes.
+    Axis(Axis),
+    /// The live operating surface: lanes, their latest word, and steering.
+    Mosaic,
+}
+
+impl Destination {
+    /// The rail label for this destination.
+    fn label(self) -> String {
+        match self {
+            Self::Axis(axis) => title(axis.as_str()),
+            Self::Mosaic => "Mosaic".to_owned(),
+        }
+    }
+
+    /// The tooltip for this destination.
+    const fn question(self) -> &'static str {
+        match self {
+            Self::Axis(axis) => axis.question(),
+            Self::Mosaic => "Who is running, and what are they saying?",
+        }
+    }
+}
+
+/// The note composer, carried as one value.
+///
+/// The task handle, the note buffer and the submit that joins them are three
+/// fields of one control; passing them separately is what lets a caller wire a
+/// buffer to a different submit than the one reading it.
+#[derive(Clone)]
+pub(super) struct Notes {
+    pub(super) task: UseStateHandle<String>,
+    pub(super) text: UseStateHandle<String>,
+    pub(super) submit: Callback<SubmitEvent>,
+}
+
+/// Everything the top bar owns.
+///
+/// Speech playback, its status and its toggle are one control, and refresh sits
+/// beside them in the same bar; grouping them keeps the render signatures at a
+/// size where the argument list is still readable as a list.
+#[derive(Clone)]
+pub(super) struct Topbar {
+    pub(super) speech: UseStateHandle<wire::SpeechPlayback>,
+    pub(super) status: UseStateHandle<SpeechStatus>,
+    pub(super) toggle: Callback<MouseEvent>,
+    pub(super) refresh: Callback<MouseEvent>,
+}
+
 pub(super) fn render_canvas(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
-    axis: &UseStateHandle<Axis>,
+    destination: &UseStateHandle<Destination>,
     sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-    refresh: Callback<MouseEvent>,
-    speech: &UseStateHandle<wire::SpeechPlayback>,
-    speech_status: &UseStateHandle<SpeechStatus>,
-    toggle_speech: Callback<MouseEvent>,
+    notes: &Notes,
+    topbar: &Topbar,
     steering: &super::watchband::Steering,
 ) -> Html {
-    let active_axis = **axis;
+    let active = **destination;
     let cursor = (**surface)
         .as_ref()
         .and_then(CanvasRuntime::resume)
@@ -24,45 +81,44 @@ pub(super) fn render_canvas(
         .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="shell">
-            {render_rail(axis, active_axis, &cursor)}
-            {render_workspace(
-                connection,
-                surface,
-                active_axis,
-                sender,
-                note_task,
-                note_text,
-                submit_note,
-                refresh,
-                speech,
-                speech_status,
-                toggle_speech,
-                steering,
-            )}
+            {render_rail(destination, active, &cursor)}
+            {render_workspace(connection, surface, active, sender, notes, topbar, steering)}
         </div>
     }
 }
 
-pub(super) fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor: &str) -> Html {
+pub(super) fn render_rail(
+    destination: &UseStateHandle<Destination>,
+    active: Destination,
+    cursor: &str,
+) -> Html {
+    // The mosaic trails the four axes rather than leading them so the reading
+    // order the rail has always had is undisturbed, and it is a separate list
+    // because it answers a different kind of question than the axes above it.
+    let candidates = Axis::ALL
+        .iter()
+        .copied()
+        .map(Destination::Axis)
+        .chain(std::iter::once(Destination::Mosaic));
     html! {
         <aside class="rail">
             <div class="brand">
                 <span class="brand-mark">{"SP"}</span>
                 <span class="brand-name">{"Spice Canvas"}</span>
             </div>
-            <nav class="axis-nav" aria-label="Canvas axes">
-                {for Axis::ALL.iter().copied().map(|candidate| {
-                    let axis = axis.clone();
-                    let selected = candidate == active_axis;
+            <nav class="axis-nav" aria-label="Canvas destinations">
+                {for candidates.map(|candidate| {
+                    let destination = destination.clone();
+                    let selected = candidate == active;
                     html! {
                         <button
                             class="axis-button"
                             aria-current={selected.then_some("page")}
                             title={candidate.question()}
-                            onclick={Callback::from(move |_| axis.set(candidate))}
+                            onclick={Callback::from(move |_| destination.set(candidate))}
                         >
                             <span class="axis-glyph"></span>
-                            <span class="axis-label">{title(candidate.as_str())}</span>
+                            <span class="axis-label">{candidate.label()}</span>
                         </button>
                     }
                 })}
@@ -75,15 +131,10 @@ pub(super) fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor
 pub(super) fn render_workspace(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
-    active_axis: Axis,
+    active: Destination,
     sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-    refresh: Callback<MouseEvent>,
-    speech: &wire::SpeechPlayback,
-    speech_status: &SpeechStatus,
-    toggle_speech: Callback<MouseEvent>,
+    notes: &Notes,
+    topbar: &Topbar,
     steering: &super::watchband::Steering,
 ) -> Html {
     let runtime = (**surface).as_ref();
@@ -112,16 +163,19 @@ pub(super) fn render_workspace(
                     <span class="status-copy">{connection.label()}</span>
                 </div>
                 <div class="topbar-actions">
-                    {speech_control(speech, speech_status, toggle_speech)}
-                    <button class="refresh" type="button" onclick={refresh}>{"Refresh"}</button>
+                    {speech_control(&topbar.speech, &topbar.status, topbar.toggle.clone())}
+                    <button
+                        class="refresh"
+                        type="button"
+                        onclick={topbar.refresh.clone()}
+                    >{"Refresh"}</button>
                 </div>
             </header>
-            <main class="content">
-                {super::watchband::render(surface, steering)}
+            <main class={active_content_class(active)}>
                 <div class="page-heading">
                     <div>
-                        <h1>{title(active_axis.as_str())}</h1>
-                        <p>{active_axis.question()}</p>
+                        <h1>{active.label()}</h1>
+                        <p>{active.question()}</p>
                     </div>
                 </div>
                 <section class="metrics" aria-label="Current resident metrics">
@@ -134,22 +188,38 @@ pub(super) fn render_workspace(
                     )}
                     {metric("Journal", cursor, "admitted stream cursor".to_owned())}
                 </section>
-                <div class="pane-strip" aria-label="Panes on this axis">
-                    {for active_axis.panes().map(|pane| html! {
-                        <span class="pane-chip">{title(pane.as_str())}</span>
-                    })}
-                </div>
-                {render_axis(
-                    active_axis,
-                    surface,
-                    connection,
-                    sender,
-                    note_task,
-                    note_text,
-                    submit_note,
-                )}
+                {match active {
+                    Destination::Mosaic => super::watchband::render(surface, steering),
+                    Destination::Axis(axis) => html! {
+                        <>
+                            <div class="pane-strip" aria-label="Panes on this axis">
+                                {for axis.panes().map(|pane| html! {
+                                    <span class="pane-chip">{title(pane.as_str())}</span>
+                                })}
+                            </div>
+                            {render_axis(
+                                axis,
+                                surface,
+                                connection,
+                                sender,
+                                notes,
+                            )}
+                        </>
+                    },
+                }}
             </main>
         </div>
+    }
+}
+
+/// The content class for a destination.
+///
+/// The mosaic is a desktop operating surface with its own scroll and density,
+/// so it carries a second class rather than reusing the axis page's spacing.
+const fn active_content_class(active: Destination) -> &'static str {
+    match active {
+        Destination::Axis(_) => "content",
+        Destination::Mosaic => "content content--mosaic",
     }
 }
 
@@ -201,13 +271,11 @@ pub(super) fn render_axis(
     surface: &SurfaceData,
     connection: &Connection,
     sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
+    notes: &Notes,
 ) -> Html {
     match axis {
         Axis::Magnitude => render_magnitude(surface),
-        Axis::Flow => render_flow(surface, note_task, note_text, submit_note),
+        Axis::Flow => render_flow(surface, &notes.task, &notes.text, notes.submit.clone()),
         Axis::Topology => render_topology(surface),
         Axis::Chronology => render_chronology(surface, sender, connection),
     }

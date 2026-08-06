@@ -147,7 +147,9 @@ struct ResponseIdentity {
 fn canvas_app() -> Html {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
-    let axis = use_state(|| Axis::Flow);
+    // The mosaic opens first because it is the surface the operator works from;
+    // the axes are what they consult when a read is what they wanted.
+    let destination = use_state(|| view::Destination::Mosaic);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let focus = use_state(|| None::<CanonicalUuid>);
@@ -245,15 +247,19 @@ fn canvas_app() -> Html {
     render_canvas(
         &connection,
         &surface,
-        &axis,
+        &destination,
         &sender,
-        &note_task,
-        &note_text,
-        submit_note,
-        refresh,
-        &speech,
-        &speech_status,
-        toggle_speech,
+        &view::Notes {
+            task: note_task,
+            text: note_text,
+            submit: submit_note,
+        },
+        &view::Topbar {
+            speech,
+            status: speech_status,
+            toggle: toggle_speech,
+            refresh,
+        },
         &watchband::Steering {
             focus,
             compose,
