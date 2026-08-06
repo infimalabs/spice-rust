@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
+import { assertReferenceControlStack } from "./control-reference.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
   assertEndpointProbeStates,
@@ -313,6 +314,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
   await lifetime.fill("0");
   await console.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  await assertReferenceControlStack(page, console, artifacts);
   const messages = [
     "browser direction survives streaming",
     "## Gate contract\n\n- green on the integrated tip\n- exact checks retained",
