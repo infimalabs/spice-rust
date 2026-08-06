@@ -74,9 +74,13 @@ function measureReference(surface) {
     probe.style.color = "";
     return resolved;
   };
+  probe.style.color = "var(--accent-2)";
+  const armedAccent = getComputedStyle(probe).color;
+  probe.style.color = "";
   const stateBorder = { quiet: mix("--accent-2"), drain: mix("--warning") };
   probe.remove();
   return {
+    armedAccent,
     stateBorder,
     surface: {
       width: surface.getBoundingClientRect().width,
@@ -259,6 +263,11 @@ function assertReferenceGeometry(geometry) {
   assert.equal(Math.round(geometry.speech.height), 36, "Quiet uses the reference range capsule");
   assert.equal(Math.round(geometry.lifetime.height), 36, "Drain uses the reference range capsule");
   assert.equal(Math.round(geometry.send.height), 36, "the Drain action shares one item height");
+  assert.equal(
+    geometry.armedAccent,
+    darkPalette.quiet,
+    "the Rust armed accent keeps its named periwinkle divergence",
+  );
   assert.equal(geometry.speech.border, geometry.stateBorder.quiet, "Quiet uses cool periwinkle");
   assert.equal(geometry.lifetime.border, geometry.stateBorder.drain, "Drain uses amber/gold");
   assert.equal(geometry.send.background, darkPalette.drain, "Drain submit is filled amber");
