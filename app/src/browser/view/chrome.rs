@@ -290,7 +290,7 @@ fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
 
 /// The newest command outcome, folded onto one line.
 pub(in crate::browser) fn render_ticker(surface: &SurfaceData) -> Html {
-    let Some(event) = surface.as_ref().and_then(|runtime| runtime.events().last()) else {
+    let Some(event) = surface.as_ref().and_then(|runtime| runtime.newest_event()) else {
         return Html::default();
     };
     let detail = if event.detail().is_empty() {

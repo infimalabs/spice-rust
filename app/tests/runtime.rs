@@ -1047,6 +1047,28 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
 }
 
 #[test]
+fn the_second_command_outcome_is_the_ticker_source() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    for outcome in [
+        r#"{"kind":"refusal","reason":"task::first","remedy":"use the first remedy"}"#,
+        r#"{"kind":"fault","class":"protocol","reason":"command::second","detail":"second detail"}"#,
+    ] {
+        let bytes = format!(r#"{{"v":1,"id":"{REQUEST}","epoch":"{EPOCH}","outcome":{outcome}}}"#);
+        let admitted: app::Admitted<Response<wire::intent::TaskAnswer>> = session
+            .admit_frame(bytes.as_bytes())
+            .expect("response is admitted");
+        runtime.apply_note(&admitted, "SPICE-aBcD");
+    }
+
+    let ticker = runtime.newest_event().expect("the ticker has one source");
+    assert_eq!(ticker.class(), "fault");
+    assert_eq!(ticker.title(), "command::second");
+    assert_eq!(ticker.detail(), "second detail");
+}
+
+#[test]
 fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);

@@ -500,6 +500,12 @@ impl CanvasRuntime {
         &self.events
     }
 
+    /// Newest retained command outcome, which drives the Canvas ticker.
+    #[must_use]
+    pub fn newest_event(&self) -> Option<&RuntimeEvent> {
+        self.events.first()
+    }
+
     #[must_use]
     pub fn fact_pages(&self) -> Vec<ReadPane<'_, FactRow>> {
         self.fact_pages
