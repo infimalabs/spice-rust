@@ -52,7 +52,7 @@ export async function assertComposerShards({
   const quoteStack = quoteLane.locator(".agent-composer-stack");
   const quotePrimary = quoteStack.locator(".composer-shard--primary");
   const primaryHeading = team.locator(
-    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary .composer-shard-heading strong`,
+    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary .composer-shard-heading > strong`,
   );
   assert.equal(
     await primaryHeading.innerText(),
