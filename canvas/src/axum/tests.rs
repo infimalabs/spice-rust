@@ -1,3 +1,4 @@
+use std::net::Ipv6Addr;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -532,7 +533,7 @@ async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
     let address = server.local_addr().expect("local address");
     let discovery = server.discovery(operator()).expect("operator discovery");
 
-    assert!(is_loopback(address));
+    assert!(address.ip().is_loopback());
     assert_eq!(discovery.endpoint, format!("http://{address}"));
     assert_eq!(discovery.epoch, epoch());
 }
@@ -566,7 +567,10 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
     .await
     .expect("binds every address");
     let address = server.local_addr().expect("local address");
-    assert!(!is_loopback(address), "a wildcard bind is not loopback");
+    assert!(
+        !address.ip().is_loopback(),
+        "a wildcard bind is not loopback"
+    );
     assert!(
         !format!("{:?}", server.state.access).contains("correct-horse"),
         "the access contract never debugs its credential"
@@ -667,6 +671,60 @@ async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
     .await
     .expect_err("remote unauthenticated access is refused before the OS bind");
     assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+}
+
+/// IPv6 loopback is loopback, and one definition has to say so at both gates.
+///
+/// The resident decides consent and token requirements with the standard
+/// `IpAddr::is_loopback`, which is true for `::1`, so `spice up --host ::1`
+/// arrives here carrying [`Access::local`]. A second, narrower definition on
+/// this side would refuse the very address the resident just admitted, and the
+/// operator would be told their machine-local bind is remote.
+///
+/// The wildcards are asserted in the same test because the positive alone
+/// cannot fail a predicate that simply answers loopback to everything, and
+/// they are two families rather than two spellings of one: a rule that reads
+/// only `Ipv4Addr` would still admit `::`.
+#[tokio::test(flavor = "current_thread")]
+async fn ipv6_loopback_binds_unauthenticated_while_both_wildcards_refuse() {
+    let (server, _control) = Server::bind_with_capacity(
+        Binding::new(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+            Access::local(),
+        ),
+        epoch(),
+        Capabilities::default(),
+        embedded(),
+        speech(),
+        None,
+        1,
+    )
+    .await
+    .expect("IPv6 loopback is reachable from this machine alone");
+    let address = server.local_addr().expect("local address");
+    assert!(address.ip().is_loopback(), "{address} is loopback");
+
+    for wildcard in [
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+    ] {
+        let error = Server::bind_with_capacity(
+            Binding::new(SocketAddr::new(wildcard, 0), Access::local()),
+            epoch(),
+            Capabilities::default(),
+            embedded(),
+            speech(),
+            None,
+            1,
+        )
+        .await
+        .expect_err("a wildcard bind is not loopback");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "{wildcard} bound without authentication"
+        );
+    }
 }
 
 async fn request(address: SocketAddr, host: &str, path: &str) -> Vec<u8> {

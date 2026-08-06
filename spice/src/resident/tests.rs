@@ -158,6 +158,33 @@ fn remote_listening_requires_explicit_consent_and_a_url_safe_token() {
     );
 }
 
+/// `::1` is loopback here and at the listener, because one predicate says so.
+///
+/// This gate and the canvas one both ask [`std::net::IpAddr::is_loopback`]. A
+/// narrowing on either side would split one decision in two: this side would
+/// admit `--host ::1` with no token, and the listener would refuse the address
+/// it had just admitted, telling the operator a machine-local bind is remote.
+///
+/// The wildcard cases sit beside the loopback one deliberately. An `is_ok` on
+/// `::1` alone passes just as well against a gate that admits everything, and
+/// `::` is the address that a rule reading only `Ipv4Addr` would wave through.
+#[test]
+fn ipv6_loopback_needs_no_consent_or_token_while_its_wildcard_needs_both() {
+    assert!(
+        access_for(&["spice", "up", "--host", "::1"]).is_ok(),
+        "IPv6 loopback is reachable from this machine alone"
+    );
+
+    assert_eq!(
+        access_refusal_for(&["spice", "up", "--host", "::"]),
+        "resident::insecure-bind-consent-required"
+    );
+    assert_eq!(
+        access_refusal_for(&["spice", "up", "--host", "::", "--allow-insecure-bind"]),
+        "resident::auth-token-required"
+    );
+}
+
 #[test]
 fn runtime_paths_follow_the_repository_common_directory() {
     let root = fixture("main");
