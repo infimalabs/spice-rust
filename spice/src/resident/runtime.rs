@@ -780,8 +780,11 @@ async fn run_surface(
 /// serving. The surface is up either way, and refusing to run because the
 /// operator cannot be handed a URL would trade a working appliance for a
 /// cosmetic one.
+///
 /// Only an endpoint reaches the endpoint stream; a failure to produce one is a
-/// diagnostic and goes where the other diagnostics went.
+/// diagnostic and goes where the other diagnostics went. A shell that reads the
+/// endpoint stream to dial it cannot tell a URL from a sentence explaining why
+/// there is not one, so it sees an empty capture instead.
 fn announce_canvas(
     discovery_path: &Path,
     open: bool,
