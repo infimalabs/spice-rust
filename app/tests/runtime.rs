@@ -123,6 +123,7 @@ fn board_task(handle: &str, id: &str, title: &str, project: &str) -> wire::inten
     };
     wire::intent::BoardTask {
         visibility,
+        origin_thread: "operator".to_owned(),
         presentation_title: title.to_owned(),
         statement: wire::intent::Positioned {
             position: seq(1),

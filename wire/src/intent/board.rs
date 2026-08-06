@@ -166,6 +166,8 @@ impl BoardStatement {
 pub struct BoardTask {
     /// Classification derived during board admission from captured policy.
     pub visibility: ProjectVisibility,
+    /// Server-resolved actor thread that created this task.
+    pub origin_thread: String,
     /// Actor-facing title derived from that classification.
     pub presentation_title: String,
     /// Current statement evidence projected without authored title prose.
@@ -214,6 +216,7 @@ impl BoardTask {
     #[must_use]
     pub fn from_authoritative(
         visibility: ProjectVisibility,
+        origin_thread: String,
         statement: Positioned<crate::TaskHead>,
         workflow: Positioned<crate::WorkflowHead>,
         claim: Option<Positioned<crate::ClaimHead>>,
@@ -226,6 +229,7 @@ impl BoardTask {
         };
         Self {
             visibility,
+            origin_thread,
             presentation_title,
             statement,
             workflow,

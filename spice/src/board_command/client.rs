@@ -262,11 +262,7 @@ fn list_scope_matches(board: &BoardAnswer, task: &BoardTask, options: &TaskListO
 fn actor_route_matches(board: &BoardAnswer, task: &BoardTask) -> bool {
     let statement = &task.statement.body;
     statement.project == board.actor_route.project
-        || statement
-            .provenance
-            .as_str()
-            .strip_prefix("origin_thread:")
-            == Some(board.actor_route.origin_thread.as_str())
+        || task.origin_thread == board.actor_route.origin_thread
         || (!task.visibility.is_hidden()
             && board.project_policy.public_stems.iter().any(|stem| {
                 statement.project == *stem

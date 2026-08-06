@@ -212,6 +212,76 @@ mod tests {
         residency_witness(answer, seat.lane, seat.occupant)
     }
 
+    fn declare_session(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        seat: &Seat,
+        identity: CanonicalUuid,
+        group: u32,
+    ) {
+        let before = board(bus, epoch, Actor::Operator);
+        let mut residency = before.residency.body;
+        let row = residency
+            .lanes
+            .iter_mut()
+            .find(|row| row.lane == seat.lane)
+            .expect("fixture lane");
+        let session = wire::LaneSession {
+            lane: row.lane,
+            occupant: row.occupant.expect("fixture occupant"),
+            worktree: row.worktree.clone(),
+            vendor: row.vendor.clone(),
+            epoch,
+            stream: "stdout".to_owned(),
+            identity: identity.to_string(),
+            locus: wire::TapeLocus {
+                member: 0,
+                offset: u64::from(group),
+                length: 1,
+            },
+        };
+        row.session = Some(session.clone());
+        let origin = format!("resident:{epoch}")
+            .parse()
+            .expect("resident fixture origin");
+        let now = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
+        let mut write =
+            JournalWrite::new(Actor::Spice, origin, now, Producer::ResidentRecognition);
+        let declared = write
+            .fact(
+                wire::body::LaneSessionDeclared {
+                    lane: session.lane,
+                    occupant: session.occupant,
+                    worktree: session.worktree,
+                    vendor: session.vendor,
+                    epoch: session.epoch,
+                    stream: session.stream,
+                    identity: session.identity,
+                    member: session.locus.member,
+                    offset: session.locus.offset,
+                    length: session.locus.length,
+                },
+                FactCause::Existing(before.residency.position),
+            )
+            .expect("session declaration fact builds");
+        let started = write
+            .fact(
+                wire::body::LaneStarted {
+                    lane: seat.lane,
+                    occupant: seat.occupant,
+                    epoch,
+                    group,
+                },
+                FactCause::Pending(declared),
+            )
+            .expect("lane-started fact builds");
+        write.residency_head(started, move |_| residency);
+        assert!(matches!(
+            bus.commit(write).expect("session declaration commits"),
+            CommitOutcome::Committed(_)
+        ));
+    }
+
     fn claim_expected(answer: &BoardAnswer, task: &TaskHandle, seat: &Seat) -> Vec<Witness> {
         let heads = at(answer, task);
         vec![
@@ -302,6 +372,7 @@ mod tests {
             ]
         );
         assert_eq!(statement.provenance, origin);
+        assert_eq!(at(&answer, &task).origin_thread, "operator");
 
         let status = task_status(&answer).expect("validated board yields status");
         for expected in [
@@ -347,6 +418,12 @@ mod tests {
         );
         let mut answer = board(&bus, epoch, Actor::Operator);
         let template = at(&answer, &public).clone();
+        answer
+            .tasks
+            .iter_mut()
+            .find(|task| task.statement.body.handle == public)
+            .expect("public route row")
+            .origin_thread = "someone_else".to_owned();
 
         let mut actor_private = template.clone();
         actor_private.statement.body.handle = "CLI-route0002"
@@ -357,6 +434,7 @@ mod tests {
         actor_private.statement.body.provenance = "task:CLI-route0002"
             .parse()
             .expect("actor-private fixture origin");
+        actor_private.origin_thread = "someone_else".to_owned();
         actor_private.presentation_title = "Actor-private route row".to_owned();
 
         let mut origin_thread = template.clone();
@@ -365,12 +443,10 @@ mod tests {
             .expect("origin-thread fixture handle");
         origin_thread.statement.body.uuid = uuid(8_003);
         origin_thread.statement.body.project = "external.route".to_owned();
-        origin_thread.statement.body.provenance = format!(
-            "origin_thread:{}",
-            answer.actor_route.origin_thread
-        )
-        .parse()
-        .expect("origin-thread fixture origin");
+        origin_thread.statement.body.provenance = "task:CLI-route0003"
+            .parse()
+            .expect("origin-thread fixture provenance");
+        origin_thread.origin_thread = answer.actor_route.origin_thread.clone();
         origin_thread.presentation_title = "Origin-thread route row".to_owned();
 
         let mut outside = template;
@@ -379,9 +455,10 @@ mod tests {
             .expect("outside fixture handle");
         outside.statement.body.uuid = uuid(8_004);
         outside.statement.body.project = "agent.someone_else.task".to_owned();
-        outside.statement.body.provenance = "origin_thread:someone_else"
+        outside.statement.body.provenance = "task:CLI-route0004"
             .parse()
-            .expect("outside fixture origin");
+            .expect("outside fixture provenance");
+        outside.origin_thread = "someone_else".to_owned();
         outside.presentation_title = "Outside route row".to_owned();
 
         answer
@@ -460,6 +537,38 @@ mod tests {
             actor_route(&Actor::Lane(seats[0].lane), &residency).is_err(),
             "a current malformed session route must fail instead of falling back"
         );
+        clean(&root, bus);
+    }
+
+    #[test]
+    fn lane_task_origin_thread_comes_from_its_durable_creation_session() {
+        let (root, bus, epoch, seats) = fixture("task-origin-session", 1);
+        let first_identity = uuid(9_101);
+        declare_session(&bus, epoch, &seats[0], first_identity, 101);
+        let first = add(
+            &bus,
+            epoch,
+            Actor::Lane(seats[0].lane),
+            "CLI-origin001",
+            "Retain the creating session",
+            Some("todo"),
+        );
+        let second_identity = uuid(9_102);
+        declare_session(&bus, epoch, &seats[0], second_identity, 102);
+        let second = add(
+            &bus,
+            epoch,
+            Actor::Lane(seats[0].lane),
+            "CLI-origin002",
+            "Retain the successor session",
+            Some("todo"),
+        );
+        let answer = board(&bus, epoch, Actor::Lane(seats[0].lane));
+        let first_actor = first_identity.get().simple().to_string();
+        let second_actor = second_identity.get().simple().to_string();
+        assert_eq!(answer.actor_route.origin_thread, second_actor);
+        assert_eq!(at(&answer, &first).origin_thread, first_actor);
+        assert_eq!(at(&answer, &second).origin_thread, second_actor);
         clean(&root, bus);
     }
 
