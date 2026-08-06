@@ -56,6 +56,15 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join(".git")).expect("fixture Git directory");
+        let app = root.join(canvas::LANE_STAGE);
+        fs::create_dir_all(&app).expect("fixture app stage");
+        for asset in canvas::APP.assets() {
+            fs::write(
+                app.join(asset.file()),
+                format!("release fixture {}", asset.file()),
+            )
+            .expect("fixture app asset");
+        }
         let runtime = root.join(".git/.spice");
         let journal = runtime.join("data/spicejournal.sqlite3");
         let canvas = runtime.join("canvas");
@@ -268,7 +277,9 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
 fn publish_stage(root: &Path) -> Digest {
     let stage = root.join("dist/stage");
     let source = Digest::compute(Domain::DistArtifact, b"release source");
-    let embedded = canvas::EMBEDDED_APP.digest();
+    let embedded = canvas::AppSource::resolve(root)
+        .and_then(|source| source.digest())
+        .expect("fixture app digests");
     let app = Digest::compute(Domain::DistArtifact, b"release app");
     let current = proof::compiled_target().expect("fixture runs on a release host");
     let native = Digest::compute(

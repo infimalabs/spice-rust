@@ -18,7 +18,6 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 #[cfg(not(target_arch = "wasm32"))]
 mod board_command;
 #[cfg(not(target_arch = "wasm32"))]
-mod canvas_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod command_client;
 #[cfg(not(target_arch = "wasm32"))]
@@ -242,7 +241,6 @@ fn dispatch_native_repository_queries(
         ["journal", "verify"] => deliver(&journal_command::verify(contract), form),
         ["fold"] => deliver(&journal_command::folds(contract), form),
         ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
-        ["canvas"] => deliver(&canvas_command::open(), form),
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         _ => {}
@@ -346,10 +344,6 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
         ["restore", "verify"] => (
             "restore::target-unsupported",
             "reading and verifying a restore archive is unavailable on wasm32",
-        ),
-        ["canvas"] => (
-            "canvas::target-unsupported",
-            "repository discovery and platform browser launch are unavailable on wasm32",
         ),
         ["config", "migrate-tasks"] => (
             "task-migration::target-unsupported",
@@ -502,6 +496,18 @@ fn version_outcome() -> Outcome<wire::Version> {
         Ok(state) => state,
         Err(error) => return state_failure(&error).outcome(),
     };
+    let app = match canvas::AppSource::resolve(repository.worktree_root())
+        .and_then(|source| source.digest())
+    {
+        Ok(digest) => digest,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "version::app-unavailable".to_owned(),
+                detail: error.to_string(),
+            });
+        }
+    };
     let reader = match journal::JournalReader::open(state.journal()) {
         Ok(reader) => reader,
         Err(error) => return journal_version_failure(error),
@@ -517,7 +523,7 @@ fn version_outcome() -> Outcome<wire::Version> {
             binary,
             wire: wire::WireVersion::CURRENT,
             journal,
-            app: canvas::EMBEDDED_APP.digest(),
+            app,
         },
     })
 }

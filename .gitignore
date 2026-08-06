@@ -8,7 +8,6 @@
 /dist/stage/objects/
 /dist/stage/targets/
 
-# Locally built browser app; `cargo xtask local-app` writes it and the resident
-# serves it in place of the compiled bytes. Never committed: only the sealed
-# image may write the reproducible stage beside it.
-/dist/stage-local/
+# The one browser app stage. Every lane builds it natively with
+# `cargo xtask build-app`; the resident refuses to start without it.
+/dist/stage-lane/

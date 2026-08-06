@@ -6,6 +6,8 @@ use super::*;
 static NEXT: AtomicU64 = AtomicU64::new(0);
 const COMMIT: &str = "1111111111111111111111111111111111111111";
 const MOVED: &str = "2222222222222222222222222222222222222222";
+const TEST_WASM: &[u8] = b"lane-built wasm";
+const TEST_HTML: &[u8] = b"lane-built shell";
 
 struct Fixture {
     root: PathBuf,
@@ -19,16 +21,9 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join("dist/stage")).expect("fixture stage directory");
-        fs::write(
-            root.join(APP_ARTIFACT),
-            include_bytes!("../../../dist/stage/app_bg.wasm"),
-        )
-        .expect("copy real staged Wasm");
-        fs::write(
-            root.join(EMBEDDED_ARTIFACT),
-            include_bytes!("../../../dist/stage/canvas-app.html"),
-        )
-        .expect("copy real embedded shell");
+        fs::create_dir_all(root.join("dist/stage-lane")).expect("fixture app directory");
+        fs::write(root.join(APP_ARTIFACT), TEST_WASM).expect("write lane-built Wasm");
+        fs::write(root.join(EMBEDDED_ARTIFACT), TEST_HTML).expect("write lane-built shell");
         Self { root }
     }
 
@@ -195,7 +190,7 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
                 .collect::<Vec<_>>(),
             ["app-build", "embed-build", "native-build"]
         );
-        assert_eq!(build_records[0].arguments, [OsString::from("check-app")]);
+        assert_eq!(build_records[0].arguments, [OsString::from("build-app")]);
         assert_eq!(build_records[0].program, programs.xtask);
         assert_eq!(
             build_records[1].arguments,
@@ -233,17 +228,11 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
         }));
         assert_eq!(
             build.staged.payload.app,
-            Digest::compute(
-                Domain::DistArtifact,
-                include_bytes!("../../../dist/stage/app_bg.wasm")
-            )
+            Digest::compute(Domain::DistArtifact, TEST_WASM)
         );
         assert_eq!(
             build.staged.payload.embedded_app,
-            Digest::compute(
-                Domain::DistArtifact,
-                include_bytes!("../../../dist/stage/canvas-app.html")
-            )
+            Digest::compute(Domain::DistArtifact, TEST_HTML)
         );
         let native = fs::read(env::current_exe().expect("test executable"))
             .expect("read real compiled executable");
@@ -310,7 +299,7 @@ fn system_executor_overrides_machine_local_cargo_build_state() {
         "the resolved RUSTC already outranks CARGO_BUILD_RUSTC"
     );
     // Pinned to the resolved answer rather than left absent: absence would
-    // let the one child that reads this variable — `xtask check-app` — pick
+    // let the one child that reads this variable — `xtask build-app` — pick
     // a build root of its own.
     assert_eq!(
         value("CARGO_TARGET_DIR"),

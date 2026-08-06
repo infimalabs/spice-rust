@@ -48,7 +48,7 @@ pub(super) fn publish_lane_surface(
         environment_fault("canvas::lane-directory-unavailable", &error.to_string())
     })?;
     publish_lane_discovery(paths, operator, lane, capability)?;
-    let seal = steer::Key::for_directive(capability);
+    let seal = steer::Key::for_identity(capability);
     if let Err(error) = steer::inbox::publish(&paths.inbox, lane, &seal, &[]) {
         remove_lane_surface(paths, lane);
         return Err(environment_fault(
@@ -124,7 +124,7 @@ fn publish_lane_inbox(
     lane: &wire::LaneResidency,
     ledger: &steer::Ledger,
 ) -> CommandResult<()> {
-    let seal = steer::Key::for_directive(lane_capability(lane)?);
+    let seal = steer::Key::for_identity(lane_capability(lane)?);
     steer::inbox::publish(&paths.inbox, lane.lane, &seal, &ledger.pending(lane.lane))
         .map_err(|error| environment_fault("steer::inbox-unwritable", &error.to_string()))
 }
@@ -260,19 +260,20 @@ pub(super) fn send(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let key = steer::Key::for_directive(command.id());
-    if snapshot.ledger.directive(command.id()).is_some()
-        || snapshot.ledger.disposition(&key).is_some()
-    {
+    if snapshot.ledger.directive(command.id()).is_some() {
         return refusal(
             "steer::identity-taken",
-            Some("unused directive identity and key".to_owned()),
-            Some(format!("{}:{key}", command.id())),
+            Some("unused directive identity".to_owned()),
+            Some(command.id().to_string()),
             "submit a new command identity",
         );
     }
     let at = match current_instant() {
         Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    let key = match mint_key(&snapshot.ledger, at) {
+        Ok(key) => key,
         Err(outcome) => return outcome,
     };
     let expires = match expiry(at, config.expiry().get()) {
@@ -850,6 +851,29 @@ fn refusal(
 fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {
     Instant::new(jiff::Timestamp::now())
         .map_err(|error| typed_environment_fault("resident::clock-invalid", &error.to_string()))
+}
+
+/// Mints the first unused key at or after the current millisecond.
+///
+/// The journal guard repeats the collision check at commit time. Advancing a
+/// millisecond here matches the predecessor when a durable key already owns
+/// the clock's current millisecond.
+fn mint_key(ledger: &steer::Ledger, at: Instant) -> Result<steer::Key, Outcome<CommandAnswer>> {
+    let mut millis = at.get().as_millisecond();
+    loop {
+        let key = steer::Key::for_millis(millis).map_err(|error| {
+            typed_environment_fault("steer::key-clock-invalid", &error.to_string())
+        })?;
+        if ledger.disposition(&key).is_none() {
+            return Ok(key);
+        }
+        millis = millis.checked_add(1).ok_or_else(|| {
+            typed_environment_fault(
+                "steer::key-clock-invalid",
+                "epoch millisecond overflowed while advancing past a collision",
+            )
+        })?;
+    }
 }
 
 fn expiry(at: Instant, duration: std::time::Duration) -> Result<Instant, Outcome<CommandAnswer>> {
