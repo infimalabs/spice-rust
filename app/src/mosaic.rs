@@ -450,12 +450,12 @@ pub fn replay_liquid(cards: &[Card], track_count: usize, freeze_depth: usize) ->
 /// Grow one card downward and move every transitively lower overlapping card.
 #[must_use]
 pub fn ripple_rows(cards: &[Card], creation_index: usize, delta: i32) -> Vec<Card> {
-    let Some(growing) = cards
+    let growing = cards
         .iter()
         .find(|card| card.creation_index == creation_index)
-    else {
-        return cards.to_vec();
-    };
+        .unwrap_or_else(|| {
+            panic!("Mosaic creation index {creation_index} is absent from the card set")
+        });
     let mut shifted = BTreeMap::new();
     let mut seen = BTreeSet::from([creation_index]);
     let mut stack = vec![growing.creation_index];
@@ -493,12 +493,12 @@ pub fn ripple_rows(cards: &[Card], creation_index: usize, delta: i32) -> Vec<Car
 /// Resolve a frozen card resize, retaining its reservation for shrinkage.
 #[must_use]
 pub fn resolve_frozen_resize(cards: &[Card], creation_index: usize, new_rows: i32) -> Vec<Card> {
-    let Some(card) = cards
+    let card = cards
         .iter()
         .find(|card| card.creation_index == creation_index)
-    else {
-        return cards.to_vec();
-    };
+        .unwrap_or_else(|| {
+            panic!("Mosaic creation index {creation_index} is absent from the card set")
+        });
     if new_rows <= card.rows {
         cards.to_vec()
     } else {

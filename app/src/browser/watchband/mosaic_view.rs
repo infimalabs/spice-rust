@@ -124,6 +124,13 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     );
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(measurement_width));
     let plane = arrange_activity(&properties.cards, &measurements, measurement_width);
+    let max_row = plane.as_ref().map(|plane| plane.max_row);
+    use_plane_scroll(
+        host.clone(),
+        max_row,
+        geometry.module,
+        properties.cards.len(),
+    );
     let rendered_cards = render_activity_cards(
         properties,
         &measurements,
@@ -144,6 +151,8 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
             data-lineage-members={properties.members.to_string()}
             data-lanes={geometry.lane_count.to_string()}
             data-plane-rows={plane_rows.to_string()}
+            data-max-row={max_row.unwrap_or_default().to_string()}
+            data-module={geometry.module.to_string()}
             data-track-count={crate::mosaic::TRACK_COUNT.to_string()}
             data-base-span={geometry.base_span.to_string()}
             data-tall-threshold={crate::mosaic::TALL_THRESHOLD_PX.to_string()}
@@ -158,6 +167,36 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
             {rendered_cards}
         </section>
     }
+}
+
+#[hook]
+fn use_plane_scroll(host: NodeRef, max_row: Option<i32>, module: i32, card_count: usize) {
+    let scroll_state = use_mut_ref(|| None::<(i32, i32, usize)>);
+    use_effect_with(
+        (host, max_row, module, card_count),
+        move |(host, max_row, module, card_count)| {
+            let Some(max_row) = *max_row else {
+                return;
+            };
+            let previous = *scroll_state.borrow();
+            if let Some((previous_max_row, previous_module, previous_card_count)) = previous
+                && let Some(scroller) = host.cast::<web_sys::Element>()
+            {
+                let scroll_top = f64::from(scroller.scroll_top());
+                let replaying = *module != previous_module || *card_count <= previous_card_count;
+                if let Some(delta) = crate::mosaic::scroll_compensation(
+                    previous_max_row,
+                    max_row,
+                    *module,
+                    crate::mosaic::pane_is_scrolled(scroll_top, None),
+                    replaying,
+                ) {
+                    scroller.set_scroll_top((scroll_top + delta).round() as i32);
+                }
+            }
+            *scroll_state.borrow_mut() = Some((max_row, *module, *card_count));
+        },
+    );
 }
 
 #[hook]
