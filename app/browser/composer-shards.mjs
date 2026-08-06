@@ -56,18 +56,13 @@ export async function assertComposerShards({
   );
   assert.equal(
     await primaryHeading.innerText(),
-    seeded.activityHeadline,
-    "the primary shard heading shows the agent's current activity headline",
-  );
-  assert.notEqual(
-    await primaryHeading.innerText(),
-    seeded.agentName,
-    "the visible activity headline cannot silently revert to the agent name",
+    seeded.primaryProse,
+    "COMPOSE-1kKbxl51: the seeded primary heading leads with its latest exact-lane agent prose",
   );
   assert.equal(
     await primaryHeading.getAttribute("title"),
-    seeded.agentName,
-    "the primary shard keeps the agent name discoverable from its activity heading",
+    seeded.primaryProse,
+    "COMPOSE-1kKbxl51: the complete seeded-lane prose survives one-line truncation",
   );
   assert.equal(
     await quoteStack.locator(".composer-shard").count(),
