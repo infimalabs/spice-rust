@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { installActivityReplay } from "./activity-replay.mjs";
 import { assertComposerShards, assertNoDraftPreview } from "./composer-shards.mjs";
 import { assertComposerImageIndicators } from "./composer-image-indicators.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
@@ -174,7 +175,7 @@ async function assignTeamLaneIds(page) {
   }, teamLaneIds);
 }
 
-async function assertAgentConversation(page, fixture, worktrees) {
+async function assertAgentConversation(page, fixture, worktrees, activityReplay) {
   const teamWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
   await chooseCanvasView(page, "Agents");
@@ -464,6 +465,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   await assertHeldTaskCount(console, fixture, seated[0].lane);
+  await activityReplay.assertOlderToolIgnored(page, console);
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);
@@ -1313,6 +1315,7 @@ try {
     colorScheme: "light",
     viewport: { width: 1440, height: 900 },
   });
+  const activityReplay = await installActivityReplay(light);
   await installBrowserSpeech(light);
   await installSocketControl(light);
   const lightPage = await light.newPage();
@@ -1322,7 +1325,10 @@ try {
   await assertCanvas(lightPage, "light");
   await assertDistinctWaitCallSites(lightPage);
   const hiddenStatusReport = await assertWaitReporting(lightPage, resident);
-  Object.assign(seeded, await assertAgentConversation(lightPage, fixture, worktrees));
+  Object.assign(
+    seeded,
+    await assertAgentConversation(lightPage, fixture, worktrees, activityReplay),
+  );
   await assertTeamMenu(lightPage, fixture);
   const reference = await browser.newContext({
     colorScheme: "dark",

@@ -982,8 +982,9 @@ impl CanvasRuntime {
         {
             return;
         }
-        self.activities
-            .retain(|existing| existing.lane != activity.lane);
+        // Keep the bounded arrival history, not only one row per lane. The
+        // renderer takes the first matching row, while this history lets a
+        // reconnect recognize an older identity replayed after newer work.
         self.activities.insert(0, activity);
         if self.message_limit > 0 {
             self.activities.truncate(self.message_limit);
