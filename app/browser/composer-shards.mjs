@@ -146,7 +146,7 @@ export async function assertComposerShards({
   );
   assert.ok(
     stackOverflow.scrollHeight > stackOverflow.clientHeight,
-    `multiple draft shards make the agent stack scroll: ${JSON.stringify(stackOverflow)}`,
+    `multiple draft shards overflow the bounded agent stack: ${JSON.stringify(stackOverflow)}`,
   );
 
   previewShard = quoteLane.locator(".composer-shard--quote").first();
