@@ -186,7 +186,7 @@ fn render_canvas_menu(
                 <span>{"Spice"}</span>
             </summary>
             <div class="canvas-menu-panel">
-                {super::team_menu::render(
+                {super::lineage_menu::render(
                     **mosaic,
                     active_axis,
                     axis_count(active_axis, runtime),

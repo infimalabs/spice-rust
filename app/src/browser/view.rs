@@ -3,7 +3,7 @@
 use super::*;
 
 pub(super) mod chrome;
-mod team_menu;
+mod lineage_menu;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
