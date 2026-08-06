@@ -36,6 +36,27 @@ fn listen_refusal_for(argv: &[&str]) -> String {
     }
 }
 
+fn access_for(argv: &[&str]) -> CommandResult<canvas::axum::Access> {
+    let matches = spice::cli::command()
+        .try_get_matches_from(argv)
+        .expect("declared up operands parse");
+    let leaf = spice::cli::selected_matches(&matches);
+    let listen = requested_listen(leaf)?;
+    requested_access(leaf, listen)
+}
+
+fn access_refusal(argv: &[&str]) -> Refusal {
+    match access_for(argv) {
+        Ok(access) => panic!("{argv:?} must not admit {access:?}"),
+        Err(Outcome::Refusal(refusal)) => refusal,
+        Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
+    }
+}
+
+fn access_refusal_for(argv: &[&str]) -> String {
+    access_refusal(argv).reason
+}
+
 /// The surface listens on exactly what the operator named, or on one fixed
 /// default it can be told about in advance.
 ///
@@ -91,6 +112,49 @@ fn an_unbindable_listen_request_is_refused_by_name() {
     assert_eq!(
         listen_refusal_for(&["spice", "up", "--port", "http"]),
         "resident::port-invalid"
+    );
+}
+
+#[test]
+fn remote_listening_requires_explicit_consent_and_a_url_safe_token() {
+    assert_eq!(
+        access_refusal_for(&["spice", "up", "--host", "0.0.0.0"]),
+        "resident::insecure-bind-consent-required"
+    );
+    assert_eq!(
+        access_refusal_for(&["spice", "up", "--host", "0.0.0.0", "--allow-insecure-bind",]),
+        "resident::auth-token-required"
+    );
+    let invalid = access_refusal(&[
+        "spice",
+        "up",
+        "--host",
+        "0.0.0.0",
+        "--allow-insecure-bind",
+        "--auth-token",
+        "too-short-token",
+    ]);
+    assert_eq!(invalid.reason, "resident::auth-token-invalid");
+    assert_eq!(
+        invalid.observed, None,
+        "a refused credential is never echoed"
+    );
+    assert!(
+        access_for(&[
+            "spice",
+            "up",
+            "--host",
+            "0.0.0.0",
+            "--allow-insecure-bind",
+            "--auth-token",
+            "correct-horse-battery-staple",
+        ])
+        .is_ok(),
+        "explicit consent and a caller-held token admit the remote bind"
+    );
+    assert!(
+        access_for(&["spice", "up"]).is_ok(),
+        "the stable loopback default remains frictionless"
     );
 }
 

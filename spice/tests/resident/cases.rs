@@ -1207,9 +1207,9 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
 /// other directory. A resident that skipped the resolve would reach readiness
 /// here, and one that looked elsewhere would never see this stage.
 #[test]
-fn resident_process_refuses_a_local_app_stage_that_cannot_serve_the_whole_app() {
+fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app() {
     let fixture = Fixture::new("app-source");
-    let stage = fixture.root.join(canvas::DEV_STAGE);
+    let stage = fixture.root.join(canvas::LOCAL_STAGE);
     fs::create_dir_all(&stage).expect("fixture stage");
     fs::write(
         stage.join("canvas-app.html"),
@@ -1249,7 +1249,7 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_serve_the_whole_app() 
         );
     }
     assert!(
-        detail.contains("cargo xtask dev-app"),
+        detail.contains("cargo xtask local-app"),
         "the refusal does not say how to build the stage: {detail}"
     );
     assert!(
@@ -1273,7 +1273,7 @@ fn resident_text_startup_names_the_compiled_or_exact_local_app_source() {
     );
 
     let local = Fixture::new("local-app-announcement");
-    let stage = local.root.join(canvas::DEV_STAGE);
+    let stage = local.root.join(canvas::LOCAL_STAGE);
     fs::create_dir_all(&stage).expect("local app stage");
     for asset in canvas::EMBEDDED_APP.assets() {
         fs::write(stage.join(asset.file()), asset.bytes()).expect("local app asset");

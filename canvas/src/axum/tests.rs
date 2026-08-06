@@ -324,7 +324,7 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, _control) = Server::bind_streaming(
-        LOOPBACK_EPHEMERAL,
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
         embedded(),
@@ -390,7 +390,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, _control) = Server::bind_streaming(
-        LOOPBACK_EPHEMERAL,
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities.clone(),
         embedded(),
@@ -444,7 +444,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, mut control) = Server::bind_streaming(
-        LOOPBACK_EPHEMERAL,
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
         embedded(),
@@ -552,7 +552,10 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, _control) = Server::bind_with_capacity(
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+        Binding::new(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            Access::authenticated("correct-horse-battery-staple".to_owned()),
+        ),
         epoch(),
         capabilities,
         embedded(),
@@ -564,6 +567,10 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
     .expect("binds every address");
     let address = server.local_addr().expect("local address");
     assert!(!is_loopback(address), "a wildcard bind is not loopback");
+    assert!(
+        !format!("{:?}", server.state.access).contains("correct-horse"),
+        "the access contract never debugs its credential"
+    );
 
     // Nothing routable can be published for a bind with no address of its own,
     // so the local clients that read this document keep a dialable one.
@@ -577,15 +584,54 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
     let task = tokio::spawn(server.up());
     let remote = format!("10.0.0.5:{}", address.port());
 
-    let admitted = request(dial, &remote, "/bootstrap").await;
+    let unauthenticated = request(dial, &remote, "/bootstrap").await;
+    assert!(unauthenticated.starts_with(b"HTTP/1.1 401 Unauthorized\r\n"));
+    let wrong = request(dial, &remote, "/bootstrap?auth=wrong-token-value").await;
+    assert!(wrong.starts_with(b"HTTP/1.1 401 Unauthorized\r\n"));
+
+    let admitted = request(
+        dial,
+        &remote,
+        "/bootstrap?auth=correct-horse-battery-staple",
+    )
+    .await;
     assert!(admitted.starts_with(b"HTTP/1.1 200 OK\r\n"));
     let bootstrap: wire::CanvasBootstrap =
         wire::decode(response_body(&admitted)).expect("bootstrap decodes");
     assert_eq!(bootstrap.endpoint, format!("http://{remote}"));
 
+    let rejected = remote_websocket(dial, &remote, None)
+        .await
+        .expect_err("an unauthenticated remote socket is refused");
+    assert!(
+        matches!(&rejected, tokio_tungstenite::tungstenite::Error::Http(response)
+            if response.status() == StatusCode::UNAUTHORIZED),
+        "remote socket refusal is authentication-specific: {rejected:?}"
+    );
+    let capability = bootstrap.capability.to_string();
+    let mut socket = remote_websocket(dial, &remote, Some(&capability))
+        .await
+        .expect("the bootstrapped capability authenticates the remote socket");
+    send_client(
+        &mut socket,
+        &wire::Hello {
+            wire: wire::WireVersion::CURRENT,
+            capability: bootstrap.capability,
+            epoch: bootstrap.epoch,
+        },
+    )
+    .await;
+    let _: wire::Accepted = wire::decode(&next_frame(&mut socket).await)
+        .expect("the authenticated VPN workflow opens one current session");
+
     // The port is all a wildcard bind can check, so a host naming another one
     // is not this surface however it was routed here.
-    let elsewhere = request(dial, "10.0.0.5:1", "/bootstrap").await;
+    let elsewhere = request(
+        dial,
+        "10.0.0.5:1",
+        "/bootstrap?auth=correct-horse-battery-staple",
+    )
+    .await;
     assert!(elsewhere.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
 
     // Same host, another site's origin: the check that survives the wildcard.
@@ -593,10 +639,34 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
         text: "spoken from somewhere else".to_owned(),
     })
     .expect("request encodes");
-    let foreign = speech_request(dial, &remote, "https://attacker.example", &body).await;
+    let foreign = speech_request_to(
+        "/speech?auth=correct-horse-battery-staple",
+        dial,
+        &remote,
+        "https://attacker.example",
+        &body,
+    )
+    .await;
     assert!(foreign.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
 
     task.abort();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
+    let unavailable: SocketAddr = "192.0.2.1:9".parse().expect("documentation address");
+    let error = Server::bind_with_capacity(
+        Binding::new(unavailable, Access::local()),
+        epoch(),
+        Capabilities::default(),
+        embedded(),
+        speech(),
+        None,
+        1,
+    )
+    .await
+    .expect_err("remote unauthenticated access is refused before the OS bind");
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
 }
 
 async fn request(address: SocketAddr, host: &str, path: &str) -> Vec<u8> {
@@ -617,13 +687,45 @@ async fn request(address: SocketAddr, host: &str, path: &str) -> Vec<u8> {
     response
 }
 
+async fn remote_websocket(
+    address: SocketAddr,
+    host: &str,
+    auth: Option<&str>,
+) -> Result<ClientSocket, tokio_tungstenite::tungstenite::Error> {
+    let path = auth.map_or_else(
+        || "/socket".to_owned(),
+        |auth| format!("/socket?auth={auth}"),
+    );
+    let mut request = format!("ws://{address}{path}")
+        .into_client_request()
+        .expect("remote socket request");
+    request
+        .headers_mut()
+        .insert(HOST, host.parse().expect("remote Host"));
+    request.headers_mut().insert(
+        ORIGIN,
+        format!("http://{host}").parse().expect("remote Origin"),
+    );
+    connect_async(request).await.map(|opened| opened.0)
+}
+
 async fn speech_request(address: SocketAddr, host: &str, origin: &str, body: &[u8]) -> Vec<u8> {
+    speech_request_to("/speech", address, host, origin, body).await
+}
+
+async fn speech_request_to(
+    path: &str,
+    address: SocketAddr,
+    host: &str,
+    origin: &str,
+    body: &[u8],
+) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(address)
         .await
         .expect("connect to canvas");
     let head = format!(
         concat!(
-            "POST /speech HTTP/1.1\r\n",
+            "POST {path} HTTP/1.1\r\n",
             "Host: {host}\r\n",
             "Origin: {origin}\r\n",
             "Content-Type: application/json\r\n",
@@ -631,6 +733,7 @@ async fn speech_request(address: SocketAddr, host: &str, origin: &str, body: &[u
             "Connection: close\r\n\r\n",
         ),
         body.len(),
+        path = path,
         host = host,
         origin = origin,
     );
@@ -821,7 +924,7 @@ fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    let stage = root.join(crate::DEV_STAGE);
+    let stage = root.join(crate::LOCAL_STAGE);
     std::fs::create_dir_all(&stage).expect("fixture stage");
     for asset in EMBEDDED_APP.assets() {
         std::fs::write(
@@ -838,7 +941,7 @@ async fn live_server_serves_a_local_stage_and_refuses_when_it_goes_away() {
     let (root, stage) = local_worktree();
     let app = crate::AppSource::resolve(&root).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(
-        LOOPBACK_EPHEMERAL,
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         Capabilities::default(),
         app,
@@ -1136,7 +1239,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
-        LOOPBACK_EPHEMERAL,
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
         embedded(),
@@ -1224,7 +1327,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, _control) = Server::bind_with_capacity(
-        LOOPBACK_EPHEMERAL,
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
         embedded(),
@@ -1430,6 +1533,7 @@ fn unknown_capability_refuses_without_echoing_the_credential() {
 fn host_and_origin_must_name_the_published_endpoint() {
     let state = SurfaceState {
         authority: Authority::Only("127.0.0.1:48123".to_owned()),
+        access: Access::local(),
         origin: "http://127.0.0.1:48123".to_owned(),
         epoch: epoch(),
         capabilities: Capabilities::default(),
