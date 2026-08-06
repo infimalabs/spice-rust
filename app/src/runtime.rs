@@ -715,3 +715,109 @@ fn continuation<T>(
         }]
     })
 }
+
+/// Which cached reads a batch of admitted facts has invalidated.
+///
+/// The stream carries facts, not snapshots: it advances the journal cursor and
+/// leaves every read the surface is drawn from exactly as stale as it was.
+/// That was survivable while the four axes were the whole surface and the
+/// operator was reading history, and it is not survivable for the watchband,
+/// which claims to show what a lane is doing right now. Uncorrected, the shell
+/// reports itself online with a current cursor while a tile shows a directive
+/// two events old — worse than showing nothing, because the staleness is
+/// invisible.
+///
+/// This lives beside [`CanvasRuntime::apply_board`], [`CanvasRuntime::apply_lanes`]
+/// and [`CanvasRuntime::apply_inbox`] — the three reads it names — rather than
+/// in the socket loop that acts on it, so it can be tested off `wasm32`.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stale {
+    board: bool,
+    lanes: bool,
+    inbox: bool,
+    consent: bool,
+}
+
+impl Stale {
+    /// Widen this set by whatever one admitted fact invalidated.
+    ///
+    /// The mapping is read off the kind's own wire spelling rather than
+    /// declared as a second table over [`FactKind`]. The vocabulary already
+    /// namespaces every kind — `steer::sent`, `lane::seated`, `task::added`,
+    /// `claim::won` — and that prefix is exactly the question "which read went
+    /// stale". Matching the variants one by one would be a second registry to
+    /// hold in step with the first, and the failure mode when it drifted would
+    /// be a new kind that silently refreshes nothing.
+    pub fn widen(&mut self, kind: FactKind) {
+        match kind.as_str().split_once("::") {
+            Some(("steer", _)) => self.inbox = true,
+            Some(("lane", _)) => self.lanes = true,
+            Some(("task", _)) => self.board = true,
+            // A claim binds a task to a lane, so both sides of that join move.
+            Some(("claim", _)) => {
+                self.board = true;
+                self.lanes = true;
+            }
+            Some(("consent", _)) => self.consent = true,
+            _ => {}
+        }
+    }
+
+    /// Whether the board read went stale.
+    #[must_use]
+    pub const fn board(self) -> bool {
+        self.board
+    }
+
+    /// Whether the lane read went stale.
+    #[must_use]
+    pub const fn lanes(self) -> bool {
+        self.lanes
+    }
+
+    /// Whether the steering inbox read went stale.
+    #[must_use]
+    pub const fn inbox(self) -> bool {
+        self.inbox
+    }
+
+    /// Whether the consent queue read went stale.
+    #[must_use]
+    pub const fn consent(self) -> bool {
+        self.consent
+    }
+
+    /// Whether anything needs re-reading at all.
+    #[must_use]
+    pub const fn any(self) -> bool {
+        self.board || self.lanes || self.inbox || self.consent
+    }
+}
+
+/// The reads one admitted stream frame invalidated.
+///
+/// Two frames carry facts and both count. [`StreamFrame::Fact`] is the live
+/// push an established subscription receives one event at a time, and it is the
+/// case the watchband exists for: it is always the tail, so it always widens.
+/// [`StreamFrame::Facts`] is the paged backlog, and only its last page counts —
+/// a subscription walks its history as a run of pages each carrying facts that
+/// would widen this set, so honouring every page would issue a round of reads
+/// per page of history to learn a state the final page already implies.
+///
+/// [`StreamFrame::Thread`] carries facts too and is deliberately absent: a
+/// thread page is a causal walk backwards through history, not an advance, so
+/// nothing it contains says a current read is out of date.
+#[must_use]
+pub fn stale_reads(admitted: &Admitted<StreamFrame>) -> Stale {
+    let mut stale = Stale::default();
+    match admitted.get() {
+        StreamFrame::Fact { fact, .. } => stale.widen(fact.kind()),
+        StreamFrame::Facts { packed, .. } if packed.overflow.is_none() => {
+            for row in &packed.rows {
+                stale.widen(row.kind());
+            }
+        }
+        _ => {}
+    }
+    stale
+}

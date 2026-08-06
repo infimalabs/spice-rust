@@ -19,7 +19,10 @@ use wire::{
 };
 use yew::prelude::*;
 
-use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
+use crate::{
+    Axis, CanvasRuntime, ChainEnd, Principal, Session, Stale, SteerPane, StreamDirective,
+    stale_reads,
+};
 
 mod view;
 mod watchband;
@@ -432,8 +435,10 @@ async fn run_connection(
                     .ok_or_else(|| "resident closed the socket".to_owned())?
                     .map_err(websocket_error)?;
                 let bytes = binary_message(frame)?;
-                let directives = handle_incoming(&session, surface, data, &mut pending, &bytes)?;
+                let (directives, stale) =
+                    handle_incoming(&session, surface, data, &mut pending, &bytes)?;
                 relay_directives(&principal, &mut writer, directives).await?;
+                send_stale(&principal, &mut writer, &mut pending, stale).await?;
             },
             action = action => {
                 let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
@@ -837,19 +842,20 @@ fn handle_incoming(
     data: &Rc<RefCell<SurfaceData>>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
-) -> Result<Vec<StreamDirective>, String> {
+) -> Result<(Vec<StreamDirective>, Stale), String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
         let admitted = session
             .admit_stream(bytes)
             .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+        let stale = stale_reads(&admitted);
         let directives = data
             .borrow_mut()
             .as_mut()
             .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
             .apply_stream(&admitted);
         surface.set(data.borrow().clone());
-        return Ok(directives);
+        return Ok((directives, stale));
     }
 
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
@@ -882,7 +888,81 @@ fn handle_incoming(
         }
     }
     surface.set(data.clone());
-    Ok(Vec::new())
+    Ok((Vec::new(), Stale::default()))
+}
+
+/// Re-read what a stream advance invalidated.
+///
+/// A read already in flight is not reissued. Facts arrive in bursts — one
+/// command can append several — and without this a burst would put one
+/// redundant read on the socket per fact, all of them answering with the same
+/// snapshot.
+async fn send_stale(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    stale: Stale,
+) -> Result<(), String> {
+    if !stale.any() {
+        return Ok(());
+    }
+    if stale.board() && !awaiting(pending, |kind| matches!(kind, PendingKind::Board)) {
+        send_if_offered(
+            principal,
+            writer,
+            pending,
+            PendingKind::Board,
+            CommandKind::BoardRead,
+            vec![],
+            BoardRead { family: None },
+        )
+        .await?;
+    }
+    if stale.lanes() && !awaiting(pending, |kind| matches!(kind, PendingKind::Lanes)) {
+        send_if_offered(
+            principal,
+            writer,
+            pending,
+            PendingKind::Lanes,
+            CommandKind::LaneRead,
+            vec![],
+            LaneRead {},
+        )
+        .await?;
+    }
+    if stale.inbox() && !awaiting(pending, |kind| matches!(kind, PendingKind::Inbox)) {
+        send_if_offered(
+            principal,
+            writer,
+            pending,
+            PendingKind::Inbox,
+            CommandKind::SteerInbox,
+            vec![],
+            SteerInbox { lane: None },
+        )
+        .await?;
+    }
+    if stale.consent() && !awaiting(pending, |kind| matches!(kind, PendingKind::Consent)) {
+        send_if_offered(
+            principal,
+            writer,
+            pending,
+            PendingKind::Consent,
+            CommandKind::ConsentRead,
+            vec![],
+            ConsentRead {},
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Whether a read of this kind is already outstanding.
+fn awaiting(
+    pending: &BTreeMap<CanonicalUuid, PendingKind>,
+    want: impl Fn(&PendingKind) -> bool,
+) -> bool {
+    pending.values().any(want)
 }
 
 fn admit_response<T: for<'de> Deserialize<'de>>(

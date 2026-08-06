@@ -1,6 +1,6 @@
 //! The real canvas runtime retains only admitted, capability-scoped state.
 
-use app::{CanvasRuntime, ChainEnd, Session, StreamDirective, StreamTerminal};
+use app::{CanvasRuntime, ChainEnd, Session, Stale, StreamDirective, StreamTerminal, stale_reads};
 use wire::{CanonicalUuid, CommandKind, Response, Seq, StreamFrame, ViewSubject};
 
 const OPERATOR: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -478,6 +478,208 @@ fn stream_overflow_is_terminal_and_remains_distinct_in_chronology() {
         })
     );
     assert_eq!(runtime.events()[0].class(), "overflow");
+}
+
+/// One durable envelope around a fact body, at a position nothing else uses.
+fn envelope(
+    position: u64,
+    actor: &str,
+    origin: &str,
+    fact: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "v": 1,
+        "seq": position,
+        "at": "2030-04-12T18:44:09.271Z",
+        "actor": actor,
+        "origin": origin,
+        "fact": fact,
+    })
+}
+
+/// Which cached read each fact invalidates, as `[board, lanes, inbox, consent]`.
+///
+/// This inventory is written out here rather than read back off the mapping it
+/// checks, so deleting an arm fails instead of agreeing with itself. Every
+/// namespace appears twice under different kinds and different producers: a
+/// mapping keyed on one exact kind rather than on the namespace fails on the
+/// sibling instead of passing on the twin. Four kinds from namespaces no read
+/// is drawn from close the other side — a rule that simply refreshed
+/// everything on every fact would pass all the rows above and fail these.
+fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
+    let expires = "2030-04-12T19:44:09.271Z";
+    vec![
+        (
+            serde_json::json!({
+                "kind": "steer::sent",
+                "directive": REQUEST,
+                "key": "QmTKOamJ",
+                "lane": LANE,
+                "text": "look at the tile",
+                "expires": expires,
+            }),
+            [false, false, true, false],
+        ),
+        (
+            serde_json::json!({"kind": "steer::canceled", "key": "QmTKOamJ", "lane": LANE}),
+            [false, false, true, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "lane::seated",
+                "lane": LANE,
+                "worktree": "/tmp/lane",
+                "life": "continuous",
+                "vendor": "codex",
+            }),
+            [false, true, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "lane::exited", "lane": LANE, "occupant": REQUEST, "code": 0}),
+            [false, true, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify"}),
+            [true, false, false, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "task::done",
+                "task": "SPICE-aBcD",
+                "validation": "the suite is green",
+            }),
+            [true, false, false, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "claim::won",
+                "task": "SPICE-aBcD",
+                "actor": "operator",
+                "lane": LANE,
+                "occupant": REQUEST,
+                "epoch": EPOCH,
+                "until": expires,
+            }),
+            [true, true, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "claim::freed", "task": "SPICE-aBcD", "actor": "operator"}),
+            [true, true, false, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "consent::asked",
+                "request": REQUEST,
+                "lane": LANE,
+                "operation": "write /etc/hosts",
+            }),
+            [false, false, false, true],
+        ),
+        (
+            serde_json::json!({
+                "kind": "consent::granted",
+                "request": REQUEST,
+                "lane": LANE,
+                "rule": "operator",
+            }),
+            [false, false, false, true],
+        ),
+        (
+            serde_json::json!({"kind": "up::dark", "epoch": EPOCH}),
+            [false, false, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "vendor::armed", "vendor": "codex", "version": "0.1.0"}),
+            [false, false, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "taste::cleared", "taste": "loud", "locus": "app/src"}),
+            [false, false, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "journal::migrated", "from": 1, "to": 2, "epoch": EPOCH}),
+            [false, false, false, false],
+        ),
+    ]
+}
+
+#[test]
+fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
+    let session = session(OPERATOR, EPOCH);
+    for (fact, expected) in staleness_inventory() {
+        let kind = fact["kind"]
+            .as_str()
+            .expect("fixture names its kind")
+            .to_owned();
+        let pushed = fact_frame(envelope(41, "spice", &format!("lane:{LANE}"), &fact));
+        let stale = stale_reads(&admitted_stream(&session, &pushed));
+        assert_eq!(
+            [stale.board(), stale.lanes(), stale.inbox(), stale.consent()],
+            expected,
+            "{kind} invalidated the wrong reads"
+        );
+        assert_eq!(
+            stale.any(),
+            expected.contains(&true),
+            "{kind} disagrees with its own summary"
+        );
+    }
+}
+
+#[test]
+fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
+    let session = session(OPERATOR, EPOCH);
+    let sent = serde_json::json!({
+        "kind": "steer::sent",
+        "directive": REQUEST,
+        "key": "QmTKOamJ",
+        "lane": LANE,
+        "text": "look at the tile",
+        "expires": "2030-04-12T19:44:09.271Z",
+    });
+    let won = serde_json::json!({
+        "kind": "claim::won",
+        "task": "SPICE-aBcD",
+        "actor": "operator",
+        "lane": LANE,
+        "occupant": REQUEST,
+        "epoch": EPOCH,
+        "until": "2030-04-12T19:44:09.271Z",
+    });
+    let lane = format!("lane:{LANE}");
+    let ascending = [
+        envelope(41, "spice", &lane, &sent),
+        envelope(42, "operator", "task:SPICE-aBcD", &won),
+    ];
+
+    let tail = admitted_stream(&session, &packed_frame("facts", &ascending, None, 42));
+    let stale = stale_reads(&tail);
+    assert_eq!(
+        [stale.board(), stale.lanes(), stale.inbox(), stale.consent()],
+        [true, true, true, false],
+        "a page widens to the union of its rows and no further"
+    );
+
+    let continued = admitted_stream(
+        &session,
+        &packed_frame("facts", &ascending, Some((7, 43)), 99),
+    );
+    assert_eq!(
+        stale_reads(&continued),
+        Stale::default(),
+        "a page that continues defers to the page that ends the backlog"
+    );
+
+    let descending = [
+        envelope(42, "operator", "task:SPICE-aBcD", &won),
+        envelope(41, "spice", &lane, &sent),
+    ];
+    let thread = admitted_stream(&session, &packed_frame("thread", &descending, None, 42));
+    assert_eq!(
+        stale_reads(&thread),
+        Stale::default(),
+        "a causal walk is history rather than an advance"
+    );
 }
 
 #[test]
