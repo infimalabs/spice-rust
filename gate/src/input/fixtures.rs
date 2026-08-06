@@ -90,10 +90,10 @@ mod tests {
         ));
 
         let mut duplicate_metric = current.clone();
-        duplicate_metric.camp_metrics[0].metric = duplicate_metric.metrics[0].metric.clone();
+        duplicate_metric.camp_metrics[1].metric = duplicate_metric.camp_metrics[0].metric.clone();
         assert!(matches!(
             readmit(duplicate_metric),
-            Err(GateSetError::DuplicateMetric { ref metric }) if metric == "rust.long-lines"
+            Err(GateSetError::DuplicateMetric { ref metric }) if metric == "rust.max-line.camp"
         ));
 
         let mut missing = current.clone();
@@ -104,7 +104,7 @@ mod tests {
                 ref metric,
                 ref tool,
                 ref parser_program,
-            }) if metric == "rust.long-lines" && tool == "awk" && parser_program == AWK
+            }) if metric == "rust.max-line.camp" && tool == "awk" && parser_program == AWK
         ));
 
         let mut duplicate_name = current.clone();
@@ -134,7 +134,7 @@ mod tests {
                 ref tool,
                 ref parser_program,
                 ref tool_program,
-            }) if metric == "rust.long-lines" && tool == "awk"
+            }) if metric == "rust.max-line.camp" && tool == "awk"
                 && parser_program == AWK && tool_program == "/bin/sh"
         ));
 

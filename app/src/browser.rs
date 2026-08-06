@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, SteerInbox, SteerSend, TaskAnswer,
     TaskNote,
@@ -21,11 +22,14 @@ use wire::{
 };
 use yew::prelude::*;
 
+use crate::compose::{self, Notice};
 use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
 
+mod composer;
 mod view;
 
-use view::render_canvas;
+use composer::ComposerDrafts;
+use view::{CanvasRender, render_canvas};
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
@@ -109,11 +113,6 @@ enum ClientAction {
         life: String,
         vendor: wire::Name,
     },
-    Steer {
-        lane: CanonicalUuid,
-        occupant: CanonicalUuid,
-        message: String,
-    },
     Note {
         task: TaskHandle,
         note: String,
@@ -122,6 +121,13 @@ enum ClientAction {
         request: CanonicalUuid,
         rule: wire::Name,
         answer: Answer,
+    },
+    Steer {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        epoch: CanonicalUuid,
+        message: String,
+        attachments: Vec<DirectiveAttachment>,
     },
 }
 
@@ -149,6 +155,7 @@ fn canvas_app() -> Html {
     let surface = use_state(SurfaceData::default);
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
+    let composer_drafts = use_reducer(ComposerDrafts::default);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
@@ -210,21 +217,22 @@ fn canvas_app() -> Html {
         speech_controller.clone(),
     );
 
-    render_canvas(
-        &connection,
-        &surface,
-        &axis,
-        &mosaic,
-        &sender,
-        &agents,
-        &note_task,
-        &note_text,
+    render_canvas(CanvasRender {
+        connection: &connection,
+        surface: &surface,
+        axis: &axis,
+        mosaic: &mosaic,
+        composer_drafts: &composer_drafts,
+        sender: &sender,
+        agents: &agents,
+        note_task: &note_task,
+        note_text: &note_text,
         submit_note,
         refresh,
-        &speech,
-        &speech_status,
+        speech: &speech,
+        speech_status: &speech_status,
         toggle_speech,
-    )
+    })
 }
 
 #[hook]
@@ -237,19 +245,30 @@ fn use_agent_controls(
     let seat_vendor = use_state(|| "codex".to_owned());
     let seat_life = use_state(|| "steer".to_owned());
     let steer_text = use_state(String::new);
+    let seat_notice = use_state(Notice::none);
+    let steer_notice = use_state(Notice::none);
     view::AgentControls {
         submit_seat: seat_submit(
             sender.clone(),
             seat_worktree.clone(),
             seat_vendor.clone(),
             seat_life.clone(),
+            seat_notice.clone(),
         ),
-        submit_steer: steer_submit(sender, surface, selected_lane.clone(), steer_text.clone()),
+        submit_steer: steer_submit(
+            sender,
+            surface,
+            selected_lane.clone(),
+            steer_text.clone(),
+            steer_notice.clone(),
+        ),
         selected_lane,
         seat_worktree,
         seat_vendor,
         seat_life,
         steer_text,
+        seat_notice,
+        steer_notice,
     }
 }
 
@@ -258,25 +277,24 @@ fn seat_submit(
     worktree: UseStateHandle<String>,
     vendor: UseStateHandle<String>,
     life: UseStateHandle<String>,
+    notice: UseStateHandle<Notice>,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        let worktree = worktree.trim().to_owned();
-        let life = life.trim().to_ascii_lowercase();
-        let Ok(vendor) = vendor.trim().parse::<wire::Name>() else {
-            return;
-        };
-        if worktree.is_empty() || life.is_empty() {
-            return;
+        match compose::seat(&worktree, &vendor, &life) {
+            Ok(seat) => {
+                notice.set(Notice::none());
+                send_action(
+                    &sender,
+                    ClientAction::Seat {
+                        worktree: seat.worktree,
+                        life: seat.life,
+                        vendor: seat.vendor,
+                    },
+                );
+            }
+            Err(refusal) => notice.set(refusal.into()),
         }
-        send_action(
-            &sender,
-            ClientAction::Seat {
-                worktree,
-                life,
-                vendor,
-            },
-        );
     })
 }
 
@@ -285,33 +303,36 @@ fn steer_submit(
     surface: UseStateHandle<SurfaceData>,
     selected_lane: UseStateHandle<String>,
     message: UseStateHandle<String>,
+    notice: UseStateHandle<Notice>,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        let text = message.trim().to_owned();
         let selected = selected_lane.parse::<CanonicalUuid>().ok();
-        let Some((lane, occupant)) = selected_occupant(&surface, selected) else {
-            return;
-        };
-        if text.is_empty() {
-            return;
+        let seated = selected_occupant(&surface, selected);
+        match compose::steer(&message, seated) {
+            Ok(((lane, occupant, epoch), text)) => {
+                notice.set(Notice::none());
+                send_action(
+                    &sender,
+                    ClientAction::Steer {
+                        lane,
+                        occupant,
+                        epoch,
+                        message: text,
+                        attachments: Vec::new(),
+                    },
+                );
+                message.set(String::new());
+            }
+            Err(refusal) => notice.set(refusal.into()),
         }
-        send_action(
-            &sender,
-            ClientAction::Steer {
-                lane,
-                occupant,
-                message: text,
-            },
-        );
-        message.set(String::new());
     })
 }
 
 fn selected_occupant(
     surface: &SurfaceData,
     selected: Option<CanonicalUuid>,
-) -> Option<(CanonicalUuid, CanonicalUuid)> {
+) -> Option<(CanonicalUuid, CanonicalUuid, CanonicalUuid)> {
     surface
         .as_ref()
         .and_then(CanvasRuntime::lanes)
@@ -319,8 +340,11 @@ fn selected_occupant(
             selected
                 .and_then(|selected| lanes.lanes.iter().find(|row| row.lane == selected))
                 .or_else(|| lanes.lanes.first())
+                .and_then(|row| {
+                    row.occupant
+                        .map(|occupant| (row.lane, occupant, lanes.epoch))
+                })
         })
-        .and_then(|row| row.occupant.map(|occupant| (row.lane, occupant)))
 }
 
 fn speech_toggle(
@@ -507,21 +531,27 @@ async fn run_connection(
 async fn open_socket(
     speech: &UseStateHandle<wire::SpeechPlayback>,
 ) -> Result<(Session, SocketWriter, SocketReader), String> {
-    let discovery: wire::CanvasBootstrap = Request::get("/bootstrap")
-        .send()
-        .await
-        .map_err(|error| format!("bootstrap request failed: {error}"))?
-        .json()
-        .await
-        .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
+    let discovery: wire::CanvasBootstrap = Request::get(&authenticated_path(
+        "/bootstrap",
+        browser_auth_token()?.as_deref(),
+    ))
+    .send()
+    .await
+    .map_err(|error| format!("bootstrap request failed: {error}"))?
+    .json()
+    .await
+    .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
     speech.set(discovery.speech.clone());
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery
         .endpoint
         .strip_prefix("http://")
-        .ok_or_else(|| "bootstrap endpoint was not loopback HTTP".to_owned())?;
-    let socket = WebSocket::open(&format!("ws://{endpoint}/socket"))
-        .map_err(|error| format!("socket did not open: {error}"))?;
+        .ok_or_else(|| "bootstrap endpoint was not the current HTTP origin".to_owned())?;
+    let socket = WebSocket::open(&format!(
+        "ws://{endpoint}/socket?auth={}",
+        discovery.capability
+    ))
+    .map_err(|error| format!("socket did not open: {error}"))?;
     let (mut writer, reader) = socket.split();
     writer
         .send(Message::Bytes(
@@ -616,32 +646,6 @@ async fn dispatch_action(
             )
             .await
         }
-        ClientAction::Steer {
-            lane,
-            occupant,
-            message,
-        } => {
-            let body = SteerSend {
-                lane,
-                message,
-                attachments: vec![],
-            };
-            let expected = vec![Witness::Residency {
-                lane,
-                occupant,
-                epoch: principal.epoch(),
-            }];
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::SteerSend,
-                CommandKind::SteerSend,
-                expected,
-                body,
-            )
-            .await
-        }
         ClientAction::Note { task, note } => {
             let body = TaskNote {
                 task: task.clone(),
@@ -683,15 +687,46 @@ async fn dispatch_action(
             )
             .await
         }
+        ClientAction::Steer {
+            lane,
+            occupant,
+            epoch,
+            message,
+            attachments,
+        } => {
+            let body = SteerSend {
+                lane,
+                message,
+                attachments,
+            };
+            let expected = vec![Witness::Residency {
+                lane,
+                occupant,
+                epoch,
+            }];
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::SteerSend,
+                CommandKind::SteerSend,
+                expected,
+                body,
+            )
+            .await
+        }
     }
 }
 
 async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u8>, String> {
-    let request = Request::post("/speech")
-        .json(&wire::SpeechRequest {
-            text: text.to_owned(),
-        })
-        .map_err(|error| format!("speech request could not be encoded: {error}"))?;
+    let request = Request::post(&authenticated_path(
+        "/speech",
+        browser_auth_token()?.as_deref(),
+    ))
+    .json(&wire::SpeechRequest {
+        text: text.to_owned(),
+    })
+    .map_err(|error| format!("speech request could not be encoded: {error}"))?;
     let response = request
         .send()
         .await
@@ -720,6 +755,22 @@ async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u
         return Err("speech renderer returned empty audio".to_owned());
     }
     Ok(bytes)
+}
+
+fn browser_auth_token() -> Result<Option<String>, String> {
+    let hash = web_sys::window()
+        .ok_or_else(|| "browser window is unavailable".to_owned())?
+        .location()
+        .hash()
+        .map_err(|_| "browser URL fragment is unavailable".to_owned())?;
+    Ok(hash
+        .strip_prefix('#')
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned))
+}
+
+fn authenticated_path(path: &str, token: Option<&str>) -> String {
+    token.map_or_else(|| path.to_owned(), |token| format!("{path}?auth={token}"))
 }
 
 fn bounded_speech_error(error: &str) -> String {

@@ -232,6 +232,17 @@ impl AppSource {
     }
 }
 
+impl fmt::Display for AppSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Embedded => formatter.write_str("compiled app"),
+            Self::Directory(directory) => {
+                write!(formatter, "local app at {}", directory.display())
+            }
+        }
+    }
+}
+
 /// One asset resolved for one request, from whichever source supplied it.
 pub struct ResolvedAsset {
     bytes: Cow<'static, [u8]>,
@@ -512,6 +523,7 @@ mod tests {
         let source = AppSource::resolve(&root).expect("an absent stage resolves");
 
         assert_eq!(source, AppSource::Embedded);
+        assert_eq!(source.to_string(), "compiled app");
         let resolved = source
             .asset("/")
             .expect("compiled bytes are always readable")
@@ -536,6 +548,10 @@ mod tests {
         let source = AppSource::resolve(&root).expect("a complete stage resolves");
 
         assert_eq!(source, AppSource::Directory(stage.clone()));
+        assert_eq!(
+            source.to_string(),
+            format!("local app at {}", stage.display())
+        );
         let resolved = source
             .asset("/")
             .expect("staged files are readable")

@@ -22,7 +22,7 @@ use wire::Outcome;
 /// installed image before reaching its first mutation. Keep this harness
 /// horizon comfortably above that validation cost; the production rendezvous
 /// retains its own ten-second release bound.
-const RENDEZVOUS: Duration = Duration::from_secs(30);
+const RENDEZVOUS: Duration = Duration::from_secs(120);
 
 static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 

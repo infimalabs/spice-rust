@@ -512,6 +512,35 @@ fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_dispos
     assert_eq!(event.detail(), "1kKQtLsP / acked");
 }
 
+/// A seating receipt names the lane and both dispositions it moved between.
+///
+/// This is the only confirmation the operator gets that the seat form did
+/// anything: the lane list refreshes on its own schedule, so between the click
+/// and that refresh the receipt is the whole answer. All three fields are
+/// resident-authored and each is load-bearing — the lane says which of several
+/// rows moved, and `absent` to `occupied` is what distinguishes a fresh seat
+/// from a wake of a lane that was merely vacant.
+#[test]
+fn a_seating_receipt_names_the_lane_and_the_dispositions_it_moved_between() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let body = format!(r#"{{"lane":"{LANE}","from":"absent","to":"occupied"}}"#);
+    let reply = format!(r#"{{"kind":"reply","cursor":17,"body":{body}}}"#);
+    let bytes = format!(r#"{{"v":1,"id":"{REQUEST}","epoch":"{EPOCH}","outcome":{reply}}}"#);
+    let admitted: app::Admitted<Response<wire::intent::LaneChangeAnswer>> = session
+        .admit_frame(bytes.as_bytes())
+        .expect("response is admitted");
+    runtime.apply_lane_change(&admitted);
+
+    let event = runtime.events().first().expect("seating records one event");
+    assert_eq!(event.title(), "Agent seated");
+    assert_eq!(
+        event.detail(),
+        format!("{LANE} moved from absent to occupied")
+    );
+}
+
 #[test]
 fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
     let session = session(OPERATOR, EPOCH);
@@ -538,4 +567,35 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
             .collect::<Vec<_>>(),
         vec!["fault", "refusal", "reply"]
     );
+}
+
+#[test]
+fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "outcome": {
+            "kind": "reply",
+            "cursor": 41,
+            "body": {
+                "directive": LANE,
+                "key": "1kQTest",
+                "disposition": "live",
+            },
+        },
+    }))
+    .expect("steer response serializes");
+    let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
+        .admit_frame(&bytes)
+        .expect("steer response is admitted");
+
+    runtime.apply_steer(&admitted);
+
+    assert_eq!(runtime.events()[0].class(), "reply");
+    assert_eq!(runtime.events()[0].title(), "Direction sent");
+    assert_eq!(runtime.events()[0].detail(), "1kQTest / live");
 }
