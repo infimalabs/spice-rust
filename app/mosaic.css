@@ -311,8 +311,9 @@
 
 .team-surface {
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
-  /* Match the predecessor's weighted swimlanes: a four-agent lineage receives
-     four shares and the only visible lineage consumes the available row. */
+  /* Match the predecessor's weighted swimlanes: each lineage receives one
+     share per member, up to the six-member visual contract, while the fleet
+     can carry any number of sibling lineage surfaces. */
   flex: var(--lineage-weight, 4) 1 0;
   width: auto;
   min-width: min(20em, 100%);

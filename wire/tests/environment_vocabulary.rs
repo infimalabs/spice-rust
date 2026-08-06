@@ -37,9 +37,9 @@ struct EnvironmentPolicy {
 /// asserting the child sees none of them. The agent shadow owns three more Git
 /// configuration references, and the hygiene acquisition fixture fixes
 /// `TMPDIR` at private writable scratch. The browser build also injects its
-/// source identity without making it a runtime Doctor variable. Those
-/// references oblige the ledger to account all eight names. They are named
-/// here rather than added to
+/// source identity without making that build-time stamp a runtime Doctor
+/// variable. Those references oblige the ledger to account all eight names.
+/// They are named here rather than added to
 /// [`SpiceVariable`], because Doctor reports the variables Spice owns and a row
 /// for one of these would claim ownership Spice does not have.
 const FOREIGN_TRACKED_NAMES: &[&str] = &[
