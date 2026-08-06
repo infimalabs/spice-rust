@@ -3985,6 +3985,7 @@ dependencies = [
  "proof",
  "serde",
  "serde_json",
+ "sha2",
  "sill",
  "spice",
  "wire",

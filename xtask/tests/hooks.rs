@@ -279,15 +279,8 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
         scratch,
         &["worktree", "add", "--quiet", "--detach", "linked", "HEAD"],
     );
-    let cutover = scratch.executable(
-        "scripts/install-hooks.sh",
-        include_bytes!("../../scripts/install-hooks.sh"),
-    );
-    let activated = Command::new(cutover)
-        .current_dir(scratch.path())
-        .output()
-        .expect("run explicit hook cutover");
-    assert_success(&activated, "hook cutover");
+    let mut activated = Vec::new();
+    xtask::activate_hooks(scratch.path(), &mut activated).expect("run explicit hook cutover");
     let shared_hooks = common_hooks(scratch);
     assert_eq!(
         configured_hooks(scratch),
@@ -303,7 +296,7 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
     );
     assert!(!linked.join(".spice-install").exists());
     assert!(
-        String::from_utf8(activated.stdout)
+        String::from_utf8(activated)
             .unwrap()
             .contains("activated Spice hooks")
     );

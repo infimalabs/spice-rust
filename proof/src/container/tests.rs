@@ -410,9 +410,10 @@ exit 0
 
     /// A prune is the usual reason the image is gone, and it takes the image
     /// from every lane at once. The refusal therefore has to carry the whole
-    /// recovery, not just the loader: a lane told only to run `load.sh` still
-    /// has to guess which archive, and the guess it makes under time pressure
-    /// is `build.sh`, which is the emulated build this refusal exists to avoid.
+    /// recovery, not just the loader: a lane told only to run the load action
+    /// still has to guess which archive, and the guess it makes under time
+    /// pressure is the build action, which is the emulated build this refusal
+    /// exists to avoid.
     #[test]
     fn a_pruned_image_names_the_loader_and_the_archive_it_takes() {
         let sealed = format!("registry.example/proof@sha256:{}", "4".repeat(64));
@@ -427,9 +428,9 @@ exit 0
 
         let refusal = error.to_string();
         for named in [
-            "dist/proof-image/load.sh",
+            "cargo xtask proof-image load",
             "target/proof-image/spice-proof-image.tar",
-            "dist/proof-image/build.sh",
+            "cargo xtask proof-image build",
             "prune",
         ] {
             assert!(

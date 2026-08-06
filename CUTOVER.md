@@ -141,7 +141,7 @@ target/debug/spice --json config policy.admission |
   tee "$CUTOVER_EVIDENCE/native-admission-policy.json"
 cargo metadata --no-deps --offline --format-version 1 \
   > "$CUTOVER_EVIDENCE/native-admission-metadata.json"
-./scripts/install-hooks.sh
+cargo xtask activate-hooks
 test "$(git config --get core.hooksPath)" = "$CUTOVER_HOOKS"
 ```
 

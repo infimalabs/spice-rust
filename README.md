@@ -9,7 +9,7 @@ repository:
 ```sh
 cargo run --locked -p spice -- install
 cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
-./scripts/install-hooks.sh
+cargo xtask activate-hooks
 ```
 
 The plan publishes the executable, operator skill, and the `pre-commit`,
@@ -62,7 +62,7 @@ before `#`.
 The one-time predecessor shutdown and empty-authority start are specified in
 [CUTOVER.md](CUTOVER.md).
 
-The activation script refuses unless all three hooks are executable. The
+The activation command refuses unless all three hooks are executable. The
 pre-commit hook runs the canonical verifier, which performs
 formatting, Clippy, native and browser-target builds, deterministic app
 verification, workspace tests, doctests, the machine-readable
@@ -81,12 +81,14 @@ Run the same verification outside a commit, and before handing work to
 another agent, with:
 
 ```sh
-./scripts/verify.sh
+cargo xtask verify
 ```
 
-The script changes to the repository root and then executes
-`cargo xtask verify`; it is a location-independent wrapper over that one
-verifier, not a second suite.
+The command discovers the repository from the current directory and runs the
+one canonical verifier; there is no wrapper or second suite.
+
+[SHELL.md](SHELL.md) inventories the few shell-bound entrypoints that remain
+and every orchestration script retired into these Rust commands.
 
 The `gate` integration tests enforce repository contracts from stable product
 inputs. Lattice conformance compares every local path dependency in
