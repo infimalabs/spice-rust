@@ -335,6 +335,76 @@ async function assertAuthoritySurface(page, seeded) {
   assert.match(trustText, /granted/);
 }
 
+async function assertMosaicComposer(page, fixture, seeded) {
+  await page.getByRole("button", { name: "Mosaic", exact: true }).click();
+  await page.getByRole("heading", { name: "Mosaic", exact: true }).waitFor();
+  const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
+  await lane.getByText("browser direction survives streaming", { exact: true }).waitFor();
+
+  await lane.getByRole("button", { name: "Quote reply" }).click();
+  const composer = lane.locator(".mosaic-composer");
+  await composer.getByLabel("Markdown preview").waitFor();
+  assert.match(
+    await composer.getByLabel("Markdown preview").innerText(),
+    /> browser direction survives streaming/,
+  );
+  await composer.getByRole("textbox").fill("canvas quote reply");
+  const pixel = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await composer.locator('input[type="file"]').setInputFiles([
+    { name: "pixel.png", mimeType: "image/png", buffer: pixel },
+    { name: "pixel-copy.png", mimeType: "image/png", buffer: pixel },
+  ]);
+  await composer.getByRole("img", { name: "pixel.png" }).waitFor();
+  await composer.getByRole("img", { name: "pixel-copy.png" }).waitFor();
+  await composer.getByRole("button", { name: "Send" }).click();
+
+  await page.getByRole("button", { name: "Canvas", exact: true }).click();
+  await page.getByRole("button", { name: "Chronology" }).click();
+  await page.getByText(/Direction sent as/).waitFor({ timeout: 10_000 });
+  const quoted = await reply(fixture, ["inbox", seeded.lane]);
+  const quotedDirective = quoted.body.lanes[0].pending.find(
+    (directive) => directive.text.includes("canvas quote reply"),
+  );
+  assert.ok(quotedDirective, "quote reply reaches the lane inbox");
+  assert.match(quotedDirective.text, /> browser direction survives streaming/);
+  assert.equal(quotedDirective.attachments.length, 2);
+  assert.deepEqual(
+    quotedDirective.attachments.map((attachment) => attachment.name).sort(),
+    ["pixel-copy.png", "pixel.png"],
+  );
+  for (const attachment of quotedDirective.attachments) {
+    assert.equal(attachment.content_type, "image/png");
+    assert.match(attachment.data_url, /^data:image\/png;base64,/);
+  }
+
+  const sentCount = await page.getByText(/Direction sent as/).count();
+  await page.getByRole("button", { name: "Mosaic", exact: true }).click();
+  await lane.evaluate((target) => {
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", "dragged card direction");
+    target.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+  });
+  await page.getByRole("button", { name: "Canvas", exact: true }).click();
+  await page.getByRole("button", { name: "Chronology" }).click();
+  await page.waitForFunction((count) => [...document.querySelectorAll(".event strong")]
+    .filter((element) => element.textContent?.includes("Direction sent as")).length > count,
+  sentCount);
+  const dropped = await reply(fixture, ["inbox", seeded.lane]);
+  assert.ok(
+    dropped.body.lanes[0].pending.some(
+      (directive) => directive.text === "> dragged card direction",
+    ),
+    "dropping text on a lane sends quoted steering",
+  );
+}
+
 async function assertPackedHistory(page, extent, linked = false) {
   await page.getByRole("button", { name: "Chronology" }).click();
   const journal = page.locator('[data-pane="commands"]');
@@ -669,6 +739,7 @@ try {
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(lightPage, "light");
   await assertAuthoritySurface(lightPage, seeded);
+  await assertMosaicComposer(lightPage, fixture, seeded);
   await assertPackedHistory(lightPage, seeded.extent, true);
   await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
   await assertSystemSpeech(lightPage);

@@ -11,8 +11,10 @@ use gloo_timers::future::TimeoutFuture;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, LaneRead, SteerInbox, TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, DirectiveAnswer, LaneRead, SteerInbox, SteerSend,
+    TaskAnswer, TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
@@ -21,9 +23,11 @@ use yew::prelude::*;
 
 use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
 
+mod composer;
 mod view;
 
-use view::render_canvas;
+use composer::ComposerDrafts;
+use view::{CanvasRender, render_canvas};
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
@@ -99,6 +103,13 @@ impl Connection {
 
 type SurfaceData = Option<CanvasRuntime>;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum WorkspaceView {
+    #[default]
+    Canvas,
+    Mosaic,
+}
+
 #[derive(Clone)]
 enum ClientAction {
     Refresh,
@@ -111,6 +122,13 @@ enum ClientAction {
         rule: wire::Name,
         answer: Answer,
     },
+    Steer {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        epoch: CanonicalUuid,
+        message: String,
+        attachments: Vec<DirectiveAttachment>,
+    },
 }
 
 #[derive(Clone)]
@@ -122,6 +140,7 @@ enum PendingKind {
     Policy,
     Note(TaskHandle),
     ConsentDecision,
+    Steer,
 }
 
 #[derive(Deserialize)]
@@ -134,6 +153,8 @@ fn canvas_app() -> Html {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
     let axis = use_state(|| Axis::Flow);
+    let workspace_view = use_state(WorkspaceView::default);
+    let composer_drafts = use_reducer(ComposerDrafts::default);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
@@ -194,19 +215,21 @@ fn canvas_app() -> Html {
         speech_controller.clone(),
     );
 
-    render_canvas(
-        &connection,
-        &surface,
-        &axis,
-        &sender,
-        &note_task,
-        &note_text,
+    render_canvas(CanvasRender {
+        connection: &connection,
+        surface: &surface,
+        axis: &axis,
+        workspace_view: &workspace_view,
+        composer_drafts: &composer_drafts,
+        sender: &sender,
+        note_task: &note_task,
+        note_text: &note_text,
         submit_note,
         refresh,
-        &speech,
-        &speech_status,
+        speech: &speech,
+        speech_status: &speech_status,
         toggle_speech,
-    )
+    })
 }
 
 fn speech_toggle(
@@ -517,6 +540,34 @@ async fn dispatch_action(
             )
             .await
         }
+        ClientAction::Steer {
+            lane,
+            occupant,
+            epoch,
+            message,
+            attachments,
+        } => {
+            let body = SteerSend {
+                lane,
+                message,
+                attachments,
+            };
+            let expected = vec![Witness::Residency {
+                lane,
+                occupant,
+                epoch,
+            }];
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::Steer,
+                CommandKind::SteerSend,
+                expected,
+                body,
+            )
+            .await
+        }
     }
 }
 
@@ -788,6 +839,11 @@ fn handle_incoming(
             let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
                 admit_response(session, bytes)?;
             runtime.apply_decision(&admitted);
+        }
+        PendingKind::Steer => {
+            let admitted: crate::Admitted<Response<DirectiveAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_steer(&admitted);
         }
     }
     surface.set(data.clone());

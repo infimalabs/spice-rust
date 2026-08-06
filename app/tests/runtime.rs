@@ -507,3 +507,22 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
         vec!["fault", "refusal", "reply"]
     );
 }
+
+#[test]
+fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = format!(
+        r#"{{"v":1,"id":"{REQUEST}","epoch":"{EPOCH}","outcome":{{"kind":"reply","cursor":41,"body":{{"directive":"{LANE}","key":"1kQTest","disposition":"live"}}}}}}"#,
+    );
+    let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
+        .admit_frame(bytes.as_bytes())
+        .expect("steer response is admitted");
+
+    runtime.apply_steer(&admitted);
+
+    assert_eq!(runtime.events()[0].class(), "reply");
+    assert_eq!(runtime.events()[0].title(), "Direction sent as 1kQTest");
+    assert!(runtime.events()[0].detail().contains(LANE));
+}

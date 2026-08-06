@@ -2,41 +2,33 @@
 
 use super::*;
 
-pub(super) fn render_canvas(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    axis: &UseStateHandle<Axis>,
-    sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-    refresh: Callback<MouseEvent>,
-    speech: &UseStateHandle<wire::SpeechPlayback>,
-    speech_status: &UseStateHandle<SpeechStatus>,
-    toggle_speech: Callback<MouseEvent>,
-) -> Html {
-    let active_axis = **axis;
-    let cursor = (**surface)
+pub(super) struct CanvasRender<'a> {
+    pub connection: &'a UseStateHandle<Connection>,
+    pub surface: &'a UseStateHandle<SurfaceData>,
+    pub axis: &'a UseStateHandle<Axis>,
+    pub workspace_view: &'a UseStateHandle<WorkspaceView>,
+    pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
+    pub sender: &'a SenderHandle,
+    pub note_task: &'a UseStateHandle<String>,
+    pub note_text: &'a UseStateHandle<String>,
+    pub submit_note: Callback<SubmitEvent>,
+    pub refresh: Callback<MouseEvent>,
+    pub speech: &'a UseStateHandle<wire::SpeechPlayback>,
+    pub speech_status: &'a UseStateHandle<SpeechStatus>,
+    pub toggle_speech: Callback<MouseEvent>,
+}
+
+pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
+    let active_axis = **render.axis;
+    let cursor = (**render.surface)
         .as_ref()
         .and_then(CanvasRuntime::resume)
         .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="shell">
-            {render_rail(axis, active_axis, &cursor)}
-            {render_workspace(
-                connection,
-                surface,
-                active_axis,
-                sender,
-                note_task,
-                note_text,
-                submit_note,
-                refresh,
-                speech,
-                speech_status,
-                toggle_speech,
-            )}
+            {render_rail(render.axis, active_axis, &cursor)}
+            {render_workspace(&render, active_axis)}
         </div>
     }
 }
@@ -70,20 +62,8 @@ pub(super) fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor
     }
 }
 
-pub(super) fn render_workspace(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    active_axis: Axis,
-    sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-    refresh: Callback<MouseEvent>,
-    speech: &wire::SpeechPlayback,
-    speech_status: &SpeechStatus,
-    toggle_speech: Callback<MouseEvent>,
-) -> Html {
-    let runtime = (**surface).as_ref();
+pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
+    let runtime = (**render.surface).as_ref();
     let task_count = runtime
         .and_then(CanvasRuntime::board)
         .map_or(0, |board| board.tasks.len());
@@ -104,48 +84,90 @@ pub(super) fn render_workspace(
         <div class="workspace">
             <header class="topbar">
                 <div class="mobile-brand">{"Spice Canvas"}</div>
-                <div class={connection.class()}>
+                {render_workspace_tabs(render.workspace_view)}
+                <div class={render.connection.class()}>
                     <span class="status-dot"></span>
-                    <span class="status-copy">{connection.label()}</span>
+                    <span class="status-copy">{render.connection.label()}</span>
                 </div>
                 <div class="topbar-actions">
-                    {speech_control(speech, speech_status, toggle_speech)}
-                    <button class="refresh" type="button" onclick={refresh}>{"Refresh"}</button>
+                    {speech_control(
+                        render.speech,
+                        render.speech_status,
+                        render.toggle_speech.clone(),
+                    )}
+                    <button
+                        class="refresh"
+                        type="button"
+                        onclick={render.refresh.clone()}
+                    >{"Refresh"}</button>
                 </div>
             </header>
             <main class="content">
-                <div class="page-heading">
-                    <div>
-                        <h1>{title(active_axis.as_str())}</h1>
-                        <p>{active_axis.question()}</p>
-                    </div>
-                </div>
-                <section class="metrics" aria-label="Current resident metrics">
-                    {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
-                    {metric("Lanes", lane_count.to_string(), resident_state(surface))}
-                    {metric(
-                        "Consent",
-                        pending_count.to_string(),
-                        "pending decisions".to_owned(),
+                if **render.workspace_view == WorkspaceView::Mosaic {
+                    {composer::render_mosaic(
+                        render.surface,
+                        render.sender,
+                        render.composer_drafts,
                     )}
-                    {metric("Journal", cursor, "admitted stream cursor".to_owned())}
-                </section>
-                <div class="pane-strip" aria-label="Panes on this axis">
-                    {for active_axis.panes().map(|pane| html! {
-                        <span class="pane-chip">{title(pane.as_str())}</span>
-                    })}
-                </div>
-                {render_axis(
-                    active_axis,
-                    surface,
-                    connection,
-                    sender,
-                    note_task,
-                    note_text,
-                    submit_note,
-                )}
+                } else {
+                    <>
+                    <div class="page-heading">
+                        <div>
+                            <h1>{title(active_axis.as_str())}</h1>
+                            <p>{active_axis.question()}</p>
+                        </div>
+                    </div>
+                    <section class="metrics" aria-label="Current resident metrics">
+                        {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
+                        {metric(
+                            "Lanes",
+                            lane_count.to_string(),
+                            resident_state(render.surface),
+                        )}
+                        {metric(
+                            "Consent",
+                            pending_count.to_string(),
+                            "pending decisions".to_owned(),
+                        )}
+                        {metric("Journal", cursor, "admitted stream cursor".to_owned())}
+                    </section>
+                    <div class="pane-strip" aria-label="Panes on this axis">
+                        {for active_axis.panes().map(|pane| html! {
+                            <span class="pane-chip">{title(pane.as_str())}</span>
+                        })}
+                    </div>
+                    {render_axis(
+                        active_axis,
+                        render.surface,
+                        render.connection,
+                        render.sender,
+                        render.note_task,
+                        render.note_text,
+                        render.submit_note.clone(),
+                    )}
+                    </>
+                }
             </main>
         </div>
+    }
+}
+
+fn render_workspace_tabs(workspace_view: &UseStateHandle<WorkspaceView>) -> Html {
+    let canvas_view = workspace_view.clone();
+    let mosaic_view = workspace_view.clone();
+    html! {
+        <nav class="workspace-tabs" aria-label="Workspace views">
+            <button
+                type="button"
+                aria-current={(**workspace_view == WorkspaceView::Canvas).then_some("page")}
+                onclick={Callback::from(move |_| canvas_view.set(WorkspaceView::Canvas))}
+            >{"Canvas"}</button>
+            <button
+                type="button"
+                aria-current={(**workspace_view == WorkspaceView::Mosaic).then_some("page")}
+                onclick={Callback::from(move |_| mosaic_view.set(WorkspaceView::Mosaic))}
+            >{"Mosaic"}</button>
+        </nav>
     }
 }
 

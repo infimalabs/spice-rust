@@ -585,6 +585,15 @@ impl CanvasRuntime {
         });
     }
 
+    pub fn apply_steer(&mut self, admitted: &Admitted<Response<wire::intent::DirectiveAnswer>>) {
+        self.apply_response(admitted, |_runtime, answer| {
+            (
+                format!("Direction sent as {}", answer.key),
+                format!("{} / {:?}", answer.directive, answer.disposition),
+            )
+        });
+    }
+
     fn apply_response<T>(
         &mut self,
         admitted: &Admitted<Response<T>>,
