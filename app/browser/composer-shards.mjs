@@ -57,6 +57,31 @@ export async function assertComposerShards({
     await quoteStack.locator(".composer-shard").count(),
     "every primary or quote-created shard carries a top-left deep link",
   );
+  // Counting the links leaves the primary shard's own link unproven: pointed at
+  // a bare "#" it still counts, so the target has to be followed the same way
+  // the draft shard's is below.
+  const primaryLink = quotePrimary.locator("header > .composer-shard-link:first-child");
+  const primaryHref = await primaryLink.getAttribute("href");
+  assert.equal(
+    primaryHref,
+    `#agent-stream-${seeded.quoteLane}`,
+    "the primary shard links to this agent's own stream position",
+  );
+  await primaryLink.click();
+  assert.equal(await page.evaluate(() => window.location.hash), primaryHref);
+  const primaryAnchor = page.locator(primaryHref);
+  // Counted rather than waited for, so a link pointing at an id nothing renders
+  // names itself here instead of expiring as an anonymous locator timeout.
+  assert.equal(
+    await primaryAnchor.count(),
+    1,
+    "the primary deep link resolves to a live stream anchor",
+  );
+  assert.equal(
+    await primaryAnchor.evaluate((anchor) => anchor.matches(":target")),
+    true,
+    "following the primary deep link targets that stream anchor",
+  );
 
   const sourceLink = previewShard.locator("header > .composer-shard-link:first-child");
   const sourceHref = await sourceLink.getAttribute("href");
