@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
-import { assertComposerShards } from "./composer-shards.mjs";
+import { assertComposerShards, assertNoDraftPreview } from "./composer-shards.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
@@ -15,6 +15,7 @@ import {
   assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
   assertGenerationOnline,
+  assertHeldTaskCount,
   assertOfflineObserved,
   assertLineageLifeIsolation,
   assertResidentLossObserved,
@@ -423,13 +424,19 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
+  await assertHeldTaskCount(console, fixture, seated[0].lane);
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);
   }
   const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
   await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
-  return { lane: seated[0].lane, quoteLane: seated[3].lane };
+  return {
+    lane: seated[0].lane,
+    quoteLane: seated[3].lane,
+    agentName: agentNames[0],
+    activityHeadline: messages[0],
+  };
 }
 
 function elapsedLabel(millis) {
@@ -996,6 +1003,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     nestedQuotePreview,
     nestedQuoteMessage,
     entirelyQuotedMessage,
+    latestPrimaryProse: "Canvas message reports CONTROL-1kKbC3j4 from lane-4",
   });
 
   await activity
@@ -1005,11 +1013,14 @@ async function assertMosaicComposer(page, fixture, seeded) {
   const composer = lane.locator(".composer-shard--primary");
   const quotedComposer = lane.locator(".composer-shard--quote");
   await quotedComposer.waitFor();
-  await composer.getByLabel("Markdown preview").waitFor();
+  // Quoting still carries its context, but on the shard that owns it rather
+  // than inside a rendered copy of the draft.
   assert.equal(
-    await composer.locator("blockquote").innerText(),
+    await quotedComposer.getAttribute("title"),
     "browser direction survives streaming",
+    "the quoted message stays reachable from the shard it minted",
   );
+  await assertNoDraftPreview(lane, 2);
   await quotedComposer.getByRole("textbox").fill("canvas quote reply");
   assert.equal(await composer.getByRole("textbox").inputValue(), "");
   const pixel = Buffer.from(
@@ -1023,11 +1034,9 @@ async function assertMosaicComposer(page, fixture, seeded) {
   const attachmentControls = composer.locator(".composer-attachment-list");
   await attachmentControls.getByRole("img", { name: "pixel.png" }).waitFor();
   await attachmentControls.getByRole("img", { name: "pixel-copy.png" }).waitFor();
-  assert.equal(
-    await composer.getByLabel("Markdown preview").locator("img").count(),
-    2,
-    "draft images are appended to the generated Markdown preview",
-  );
+  // Attaching images is where a preview used to appear; the chips above are the
+  // whole of what the operator sees, and the draft stays unrendered.
+  await assertNoDraftPreview(lane, 2);
   await page.screenshot({
     path: join(artifacts, "canvas-light-mosaic-composer.png"),
     fullPage: true,

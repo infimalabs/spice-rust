@@ -16,7 +16,7 @@ mod state;
 use composer::{
     agent_message_source_id, choose_images, directive_source_id, drop_on_lane, focus_after_render,
     keyboard_submit, paste_images, primary_textarea_id, render_agent_message_card,
-    render_attachments, render_directive_card, render_markdown, render_quote_shards, update_body,
+    render_attachments, render_directive_card, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -268,6 +268,7 @@ fn render_compose(
                 <div class="team-agents">
                     {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
                         let stream = primary_stream_link(&cards, lineage, member.lane, standing);
+                        let prose = latest_agent_prose(&cards, member.lane);
                         render_agent_composer(
                             member,
                             standing,
@@ -277,6 +278,7 @@ fn render_compose(
                             sender,
                             drafts,
                             stream,
+                            prose,
                         )
                     })}
                 </div>
@@ -516,6 +518,19 @@ fn primary_stream_link(
     )
 }
 
+fn latest_agent_prose(cards: &[ActivityCard], lane: CanonicalUuid) -> String {
+    cards
+        .iter()
+        .rev()
+        .find_map(|card| match card {
+            ActivityCard::Agent {
+                member, message, ..
+            } if member.lane == lane => watchband::first_nonquoted_prose(&message.text),
+            ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
+        })
+        .unwrap_or_else(|| "No agent prose yet".to_owned())
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one member composer needs its standing and shared lineage interaction handles"
@@ -529,6 +544,7 @@ fn render_agent_composer(
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     stream: ComposerStreamLink,
+    prose: String,
 ) -> Html {
     let lane_id = member.lane;
     let lane_key = lane_id.to_string();
@@ -584,6 +600,7 @@ fn render_agent_composer(
                 (!send_enabled).then_some("team-agent--vacant"),
             )}
             data-agent-lane={lane_id.to_string()}
+            data-accent={standing.accent.to_string()}
             title={watchband::standing_title(standing)}
             {ondragover}
             {ondrop}
@@ -604,6 +621,7 @@ fn render_agent_composer(
                     renew_enabled,
                     renew,
                     stream,
+                    prose,
                 )}
                 {render_quote_shards(&lane_key, &draft, drafts, onkeydown)}
             </div>
@@ -626,8 +644,8 @@ fn render_composer_body(
     renew_enabled: bool,
     renew: Callback<MouseEvent>,
     stream: ComposerStreamLink,
+    prose: String,
 ) -> Html {
-    let markdown = compose(draft);
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
     let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
     html! {
@@ -641,23 +659,14 @@ fn render_composer_body(
                 lane_key,
                 standing,
                 renew_enabled,
-                renew.clone(),
+                renew,
                 stream,
+                prose,
             )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
                 <span>{standing.liveness.as_str()}</span>
             </div>
-            <button
-                class="agent-renew-request"
-                type="button"
-                disabled={!renew_enabled}
-                title="Ask this agent to renew its current task lease"
-                onclick={renew}
-            >
-                <strong>{"Renew this agent"}</strong>
-                <span>{"request renewal"}</span>
-            </button>
             <textarea
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for {lane}")}
@@ -673,11 +682,6 @@ fn render_composer_body(
             if let Some(issue) = &draft.issue {
                 <p class="composer-issue" role="status">{issue.clone()}</p>
             }
-            if !markdown.is_empty() {
-                <div class="composer-markdown markdown-body" aria-label="Markdown preview">
-                    {render_markdown(&markdown)}
-                </div>
-            }
             {render_image_picker(lane, lane_key, draft, drafts)}
         </div>
     }
@@ -690,12 +694,8 @@ fn render_composer_heading(
     renew_enabled: bool,
     renew: Callback<MouseEvent>,
     stream: ComposerStreamLink,
+    prose: String,
 ) -> Html {
-    let activity = standing
-        .headline
-        .as_deref()
-        .or(standing.handle.as_deref())
-        .unwrap_or(&standing.disposition);
     let focus_lane = lane_key.to_owned();
     let focus = Callback::from(move |_| {
         focus_after_render(primary_textarea_id(&focus_lane));
@@ -712,7 +712,8 @@ fn render_composer_heading(
                     .map(watchband::elapsed_label)
                     .unwrap_or_else(|| "now".to_owned())
             }</a>
-            <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
+            <strong class="composer-shard-prose" title={prose.clone()}>{prose}</strong>
+            <span class="composer-shard-image-indicators"></span>
             <details class="agent-action-menu">
                 <summary aria-label={format!("Actions for {}", standing.label)}>{"☰"}</summary>
                 <div
@@ -720,8 +721,15 @@ fn render_composer_heading(
                     data-agent-drawer-target-id={lane.to_string()}
                 >
                     <button type="button" onclick={focus}>{"Focus message editor"}</button>
-                    <button type="button" disabled={!renew_enabled} onclick={renew}>
-                        {"Renew this agent"}
+                    <button
+                        class="agent-renew-request"
+                        type="button"
+                        disabled={!renew_enabled}
+                        title="Ask this agent to renew its current task lease"
+                        onclick={renew}
+                    >
+                        <strong>{"Renew this agent"}</strong>
+                        <span>{"request renewal"}</span>
                     </button>
                 </div>
             </details>
