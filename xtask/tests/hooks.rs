@@ -312,6 +312,18 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
         scratch,
         &["worktree", "add", "--quiet", "--detach", "linked", "HEAD"],
     );
+    // Before the cutover nothing execs the published copy, so a stale one
+    // enforces nothing and the audit owes no refusal. It has to say that rather
+    // than pass quietly, or an inert repository and a current one look alike.
+    let mut inert = Vec::new();
+    xtask::audit_entry_point(scratch.path(), &mut inert)
+        .expect("an unactivated repository owes no guard refusal");
+    let inert = String::from_utf8(inert).unwrap();
+    assert!(
+        inert.contains("not activated"),
+        "the audit names the inert case: {inert}"
+    );
+
     let mut activated = Vec::new();
     // The binary Cargo built for this test, not `current_exe`: in an
     // integration test that would be the harness, and publishing the harness
@@ -331,6 +343,8 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
         published_entry_point(scratch.path())
     );
     assert_stale_entry_point_is_republished(scratch, entry_point);
+    assert_unusable_entry_point_is_repaired(scratch, entry_point);
+    assert_guard_audit_refuses_a_foreign_guard(scratch, entry_point);
     let shared_hooks = common_hooks(scratch);
     assert_eq!(
         configured_hooks(scratch),
@@ -576,6 +590,110 @@ fn assert_stale_entry_point_is_republished(scratch: &Scratch, source: &Path) {
         fs::read(source).expect("entry point source reads"),
         "a stale copy is replaced by the bytes activation was handed"
     );
+}
+
+/// Byte-identical is not the same as usable, and Git needs the second one.
+///
+/// Activation's current-check compares bytes, so a copy left unexecutable by an
+/// interrupted publish, a restrictive umask, or a restore from an archive reads
+/// as current and activation would walk past it. Git then fails *every*
+/// reference transaction in the repository, including the ones the guard exists
+/// to allow. Clearing the bit on the copy the previous assertion just
+/// republished isolates the mode: those bytes are already the ones activation
+/// holds, so nothing but the mode is left for a passing run to be crediting.
+fn assert_unusable_entry_point_is_repaired(scratch: &Scratch, source: &Path) {
+    let published = published_entry_point(scratch.path());
+    fs::set_permissions(&published, fs::Permissions::from_mode(0o644))
+        .expect("clear the published entry point's executable bit");
+    xtask::activate_hooks(scratch.path(), source, &mut Vec::new())
+        .expect("re-run activation over an unexecutable entry point");
+    assert_eq!(
+        mode(&published),
+        0o755,
+        "activation restores an entry point Git can exec"
+    );
+
+    // Creation is the one transaction the guard admits without looking at
+    // history, which makes it the probe whose failure can only mean the hook
+    // never ran: an unexecutable target fails the exec, the hook script exits
+    // nonzero, and Git aborts an update that abandons nothing at all. The probe
+    // reference is left in place afterwards on purpose -- deleting it would
+    // point the guard at upstream-merged commits and be refused, which is the
+    // guard doing its job rather than a cleanup worth arranging around.
+    let probe = "refs/heads/entry-point-repair-probe";
+    let head = rev_parse(scratch, "refs/heads/main");
+    let created = Command::new("git")
+        .args(["update-ref", probe, &head])
+        .current_dir(scratch.path())
+        .output()
+        .expect("create the entry point probe reference");
+    assert_success(
+        &created,
+        "create a reference through the repaired entry point",
+    );
+    assert_eq!(
+        rev_parse(scratch, probe),
+        head,
+        "the admitted transaction was committed rather than aborted"
+    );
+}
+
+/// Activation is the only writer of the guard stamp, so the audit is what makes
+/// a stale publication visible to anyone who did not just run activation.
+///
+/// The three states are distinct answers and each is asserted separately: a
+/// stamp equal to this build passes and names the digit string it matched, a
+/// stamp from some other build is refused naming both digests, and no stamp at
+/// all is refused too. Without the last one a repository that never published
+/// would be indistinguishable from a current one. Re-activating at the end both
+/// restores the stamp for the assertions that follow and proves the
+/// already-current branch of activation stamps as well, which is the branch a
+/// second lane running activation over the first lane's copy takes.
+fn assert_guard_audit_refuses_a_foreign_guard(scratch: &Scratch, source: &Path) {
+    let stamp = published_guard_stamp(scratch.path());
+    let published = fs::read_to_string(&stamp).expect("activation stamps the guard it published");
+    let published = published.trim().to_owned();
+
+    let mut current = Vec::new();
+    xtask::audit_entry_point(scratch.path(), &mut current)
+        .expect("a freshly published guard is this build's");
+    let current = String::from_utf8(current).unwrap();
+    assert!(
+        current.contains(&published),
+        "the audit names the guard it matched: {current}"
+    );
+
+    fs::write(&stamp, "0123456789abcdef\n").expect("stamp a guard from some other build");
+    let foreign = xtask::audit_entry_point(scratch.path(), &mut Vec::new())
+        .expect_err("a guard from another build is refused")
+        .to_string();
+    assert!(foreign.contains("0123456789abcdef"), "{foreign}");
+    assert!(foreign.contains(&published), "{foreign}");
+    assert!(foreign.contains("cargo xtask activate-hooks"), "{foreign}");
+
+    fs::remove_file(&stamp).expect("remove the published guard stamp");
+    let unstamped = xtask::audit_entry_point(scratch.path(), &mut Vec::new())
+        .expect_err("an entry point published before stamping existed is refused")
+        .to_string();
+    assert!(unstamped.contains("no stamp"), "{unstamped}");
+
+    xtask::activate_hooks(scratch.path(), source, &mut Vec::new())
+        .expect("re-run activation over an already-current entry point");
+    assert_eq!(
+        fs::read_to_string(&stamp)
+            .expect("the already-current branch stamps too")
+            .trim(),
+        published
+    );
+    xtask::audit_entry_point(scratch.path(), &mut Vec::new())
+        .expect("the restored stamp is this build's");
+}
+
+fn published_guard_stamp(root: &Path) -> PathBuf {
+    let repository = Repository::discover(root).expect("discover hook repository");
+    repository
+        .common_dir()
+        .join(".spice-install/bin/xtask.guard")
 }
 
 /// The published copy is what the hook names, so the guarantee is read off that
