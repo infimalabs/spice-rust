@@ -348,9 +348,20 @@ fn render_quote_bands(
                         index,
                     });
                 });
+                // The band names the quoted author's own words. Their message
+                // often opens on material they were themselves quoting, and the
+                // first line of that is a run of angle brackets belonging to
+                // someone else, which tells the reader nothing about what this
+                // card said. The whole quote stays reachable on the title.
+                let shown = crate::composer_markdown::preview(quote);
+                let shown = if shown.is_empty() {
+                    "quoted message".to_owned()
+                } else {
+                    shown
+                };
                 html! {
-                    <div class="composer-quote-band">
-                        <span>{quote.lines().next().unwrap_or("quoted message")}</span>
+                    <div class="composer-quote-band" title={quote.clone()}>
+                        <span>{shown}</span>
                         <button
                             type="button"
                             aria-label="Remove quote"
