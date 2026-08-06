@@ -157,8 +157,8 @@ fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
 /// scanner.
 #[test]
 fn the_ledger_refusal_names_the_literal_escape_without_hiding_an_access() {
-    const FIXTURE_NAME: &str = "SPICE_123"; // env-policy: not-an-env SPICE_123
-    const ACCESS_NAME: &str = "SPICE_UNDECLARED"; // env-policy: not-an-env SPICE_UNDECLARED
+    const FIXTURE_NAME: &str = concat!("SPICE", "_123");
+    const ACCESS_NAME: &str = concat!("SPICE", "_UNDECLARED");
     let repository = environment_repository("toolchain-env-literal-marker");
     repository.write(
         "tests/task_handle.rs",

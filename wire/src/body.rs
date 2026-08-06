@@ -556,6 +556,17 @@ pub struct LaneSeated {
     pub vendor: Name,
 }
 
+/// One Canvas lineage adopted a shared task-subscription life.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageConfigured {
+    /// Stable Canvas lineage identifying the configured group.
+    pub lineage_id: CanonicalUuid,
+    /// Prior life shared by every member before this transaction.
+    pub from: String,
+    /// Authoritative life shared by every member after this transaction.
+    pub life: String,
+}
+
 /// A selected vendor record declared the exact resumable lane session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneSessionDeclared {

@@ -14,8 +14,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, SteerInbox, SteerSend, TaskAnswer,
-    TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, LineageConfigure, LineageLife,
+    SteerInbox, SteerSend, TaskAnswer, TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
@@ -30,7 +30,7 @@ use crate::{
 mod composer;
 mod view;
 
-use composer::{ComposerDrafts, LineageLives, LineageMode};
+use composer::{ComposerDrafts, LineageControlAction, LineageControls, LineageMode};
 use view::{CanvasRender, render_canvas};
 
 /// Source identity injected by `cargo xtask app` and verified before publish.
@@ -123,6 +123,10 @@ enum ClientAction {
         life: String,
         vendor: wire::Name,
     },
+    ConfigureLineage {
+        lineage: CanonicalUuid,
+        life: LineageLife,
+    },
     Note {
         task: TaskHandle,
         note: String,
@@ -157,6 +161,7 @@ enum PendingKind {
     Consent,
     Policy,
     LaneSeat,
+    LineageConfigure(CanonicalUuid),
     /// Direction in flight, carrying the lane it was aimed at.
     ///
     /// The receipt names that lane, and the only moment it is known for certain
@@ -183,7 +188,7 @@ fn canvas_app() -> Html {
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
     let lineage_mode = use_state(|| LineageMode::Compose);
-    let lineage_lives = use_reducer(LineageLives::default);
+    let lineage_controls = use_reducer(LineageControls::default);
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
@@ -206,11 +211,19 @@ fn canvas_app() -> Html {
         let surface = surface.clone();
         let sender = sender.clone();
         let speech = speech.clone();
+        let lineage_controls = lineage_controls.clone();
         use_effect_with((), move |()| {
             let active = Rc::new(Cell::new(true));
             let (tx, rx) = mpsc::unbounded();
             *sender.borrow_mut() = Some(tx);
-            spawn_local(run_surface(active.clone(), connection, surface, speech, rx));
+            spawn_local(run_surface(
+                active.clone(),
+                connection,
+                surface,
+                speech,
+                lineage_controls,
+                rx,
+            ));
             move || {
                 active.set(false);
                 sender.borrow_mut().take();
@@ -268,7 +281,7 @@ fn canvas_app() -> Html {
         axis: &axis,
         mosaic: &mosaic,
         lineage_mode: &lineage_mode,
-        lineage_lives: &lineage_lives,
+        lineage_controls: &lineage_controls,
         composer_drafts: &composer_drafts,
         sender: &sender,
         agents: &agents,
@@ -456,6 +469,7 @@ async fn run_surface(
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
     speech: UseStateHandle<wire::SpeechPlayback>,
+    lineage_controls: UseReducerHandle<LineageControls>,
     mut actions: UnboundedReceiver<ClientAction>,
 ) {
     let data = Rc::new(RefCell::new(SurfaceData::default()));
@@ -463,8 +477,16 @@ async fn run_surface(
         if matches!(&*connection, Connection::Starting) {
             connection.set(Connection::Connecting);
         }
-        let result =
-            run_connection(&active, &connection, &surface, &speech, &data, &mut actions).await;
+        let result = run_connection(
+            &active,
+            &connection,
+            &surface,
+            &speech,
+            &lineage_controls,
+            &data,
+            &mut actions,
+        )
+        .await;
         if !active.get() {
             break;
         }
@@ -492,6 +514,7 @@ async fn run_connection(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
     speech: &UseStateHandle<wire::SpeechPlayback>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
     data: &Rc<RefCell<SurfaceData>>,
     actions: &mut UnboundedReceiver<ClientAction>,
 ) -> Result<(), String> {
@@ -512,7 +535,14 @@ async fn run_connection(
                     .map_err(websocket_error)?;
                 let bytes = binary_message(frame)?;
                 let (directives, refresh) =
-                    handle_incoming(&session, surface, data, &mut pending, &bytes)?;
+                    handle_incoming(
+                        &session,
+                        surface,
+                        lineage_controls,
+                        data,
+                        &mut pending,
+                        &bytes,
+                    )?;
                 relay_directives(&principal, &mut writer, directives).await?;
                 if refresh {
                     send_refresh(&principal, &mut writer, &mut pending).await?;
@@ -650,47 +680,17 @@ async fn dispatch_action(
             )
             .await
         }
+        ClientAction::ConfigureLineage { lineage, life } => {
+            send_lineage_configuration(principal, writer, pending, lineage, life).await
+        }
         ClientAction::Note { task, note } => {
-            let body = TaskNote {
-                task: task.clone(),
-                note,
-            };
-            let expected = vec![Witness::Existence { task: task.clone() }];
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::Note(task),
-                CommandKind::TaskNote,
-                expected,
-                body,
-            )
-            .await
+            send_task_note(principal, writer, pending, task, note).await
         }
         ClientAction::Consent {
             request,
             rule,
             answer,
-        } => {
-            let body = wire::intent::ConsentDecide { request, answer };
-            let expected = vec![
-                Witness::Consent {
-                    request,
-                    answer: Answer::Asked,
-                },
-                Witness::Rule { name: rule },
-            ];
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::ConsentDecision,
-                CommandKind::ConsentDecide,
-                expected,
-                body,
-            )
-            .await
-        }
+        } => send_consent_decision(principal, writer, pending, request, rule, answer).await,
         ClientAction::Steer {
             lane,
             occupant,
@@ -721,6 +721,80 @@ async fn dispatch_action(
             .await
         }
     }
+}
+
+async fn send_lineage_configuration(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    lineage: CanonicalUuid,
+    life: LineageLife,
+) -> Result<(), String> {
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::LineageConfigure(lineage),
+        CommandKind::LineageConfigure,
+        vec![],
+        LineageConfigure {
+            lineage_id: lineage,
+            life,
+        },
+    )
+    .await
+}
+
+async fn send_task_note(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    task: TaskHandle,
+    note: String,
+) -> Result<(), String> {
+    let body = TaskNote {
+        task: task.clone(),
+        note,
+    };
+    let expected = vec![Witness::Existence { task: task.clone() }];
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::Note(task),
+        CommandKind::TaskNote,
+        expected,
+        body,
+    )
+    .await
+}
+
+async fn send_consent_decision(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    request: CanonicalUuid,
+    rule: wire::Name,
+    answer: Answer,
+) -> Result<(), String> {
+    let body = wire::intent::ConsentDecide { request, answer };
+    let expected = vec![
+        Witness::Consent {
+            request,
+            answer: Answer::Asked,
+        },
+        Witness::Rule { name: rule },
+    ];
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::ConsentDecision,
+        CommandKind::ConsentDecide,
+        expected,
+        body,
+    )
+    .await
 }
 
 async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u8>, String> {
@@ -970,6 +1044,7 @@ async fn send_stream_request(
 fn handle_incoming(
     session: &Session,
     surface: &UseStateHandle<SurfaceData>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
     data: &Rc<RefCell<SurfaceData>>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
@@ -1003,7 +1078,15 @@ fn handle_incoming(
             false
         }
         PendingKind::Lanes => {
-            runtime.apply_lanes(&admit_response(session, bytes)?);
+            let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
+                admit_response(session, bytes)?;
+            if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
+                lineage_controls.dispatch(LineageControlAction::SyncLanes {
+                    answer: reply.body.clone(),
+                    settle: false,
+                });
+            }
+            runtime.apply_lanes(&admitted);
             false
         }
         PendingKind::Inbox => {
@@ -1023,6 +1106,9 @@ fn handle_incoming(
                 admit_response(session, bytes)?;
             runtime.apply_lane_change(&admitted);
             true
+        }
+        PendingKind::LineageConfigure(lineage) => {
+            apply_lineage_configuration(session, lineage_controls, runtime, lineage, bytes)?
         }
         PendingKind::Steer { lane, resolve } => {
             let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
@@ -1048,6 +1134,42 @@ fn handle_incoming(
     };
     surface.set(data.clone());
     Ok((Vec::new(), refresh))
+}
+
+fn apply_lineage_configuration(
+    session: &Session,
+    lineage_controls: &UseReducerHandle<LineageControls>,
+    runtime: &mut CanvasRuntime,
+    lineage: CanonicalUuid,
+    bytes: &[u8],
+) -> Result<bool, String> {
+    let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
+        admit_response(session, bytes)?;
+    let refresh = match &admitted.get().outcome {
+        wire::Outcome::Reply(reply) => {
+            lineage_controls.dispatch(LineageControlAction::SyncLanes {
+                answer: reply.body.clone(),
+                settle: true,
+            });
+            false
+        }
+        wire::Outcome::Refusal(refusal) => {
+            lineage_controls.dispatch(LineageControlAction::SettleIssue {
+                lineage,
+                issue: format!("{}: {}", refusal.reason, refusal.remedy),
+            });
+            true
+        }
+        wire::Outcome::Fault(fault) => {
+            lineage_controls.dispatch(LineageControlAction::SettleIssue {
+                lineage,
+                issue: format!("{}: {}", fault.reason, fault.detail),
+            });
+            true
+        }
+    };
+    runtime.apply_lanes(&admitted);
+    Ok(refresh)
 }
 
 fn admit_response<T: for<'de> Deserialize<'de>>(

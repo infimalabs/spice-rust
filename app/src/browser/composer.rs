@@ -9,10 +9,13 @@ use super::*;
 use crate::composer_drafts::ComposerDraft;
 use crate::watchband::{self, Standing};
 
+mod controls;
 mod state;
 
-use state::{ComposerAction, LineageLifeAction};
-pub(super) use state::{ComposerDrafts, LineageLives};
+pub(super) use controls::{LineageControlAction, LineageControls};
+use controls::{LineageLife, LineageSpeech, render_lineage_controls};
+use state::ComposerAction;
+pub(super) use state::ComposerDrafts;
 
 const MAX_ATTACHMENTS: usize = 8;
 const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
@@ -39,48 +42,6 @@ impl LineageMode {
     }
 }
 
-/// One policy shared by every agent member in the visual lane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LineageLife {
-    Steer,
-    Drive,
-    Drain,
-}
-
-impl LineageLife {
-    const ALL: [Self; 3] = [Self::Steer, Self::Drive, Self::Drain];
-
-    pub(super) fn from_wire(value: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|candidate| candidate.label().eq_ignore_ascii_case(value))
-    }
-
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Steer => "Steer",
-            Self::Drive => "Drive",
-            Self::Drain => "Drain",
-        }
-    }
-
-    const fn help(self) -> &'static str {
-        match self {
-            Self::Steer => "Manual task filters",
-            Self::Drive => "Auto-subscribe to projects this team creates or claims",
-            Self::Drain => "Boundary dissolved: see all assignable work",
-        }
-    }
-
-    const fn index(self) -> usize {
-        match self {
-            Self::Steer => 0,
-            Self::Drive => 1,
-            Self::Drain => 2,
-        }
-    }
-}
-
 /// Render every live lineage as one packed surface.
 ///
 /// This is the sole Mosaic execution path: each lineage owns exactly one
@@ -91,7 +52,7 @@ pub(super) fn render_lineage(
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     mode: &UseStateHandle<LineageMode>,
-    lives: &UseReducerHandle<LineageLives>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
     controls: &view::AgentControls,
 ) -> Html {
     let Some(runtime) = surface.as_ref() else {
@@ -110,6 +71,7 @@ pub(super) fn render_lineage(
         .unwrap_or(&[]);
     let standings = watchband::standings(&lanes.lanes, waiting, tasks, js_sys::Date::now() as i64);
     let can_send = runtime.offers(CommandKind::SteerSend);
+    let can_configure = runtime.offers(CommandKind::LineageConfigure);
     if lanes.lanes.is_empty() {
         let empty_lineage = crate::runtime::LaneRow {
             lane: lanes.epoch,
@@ -139,14 +101,6 @@ pub(super) fn render_lineage(
                     .filter(|standing| standing.lineage_id == lineage.lane)
                     .cloned()
                     .collect::<Vec<_>>();
-                let life = lives.selected(lineage);
-                let update_life = {
-                    let lives = lives.clone();
-                    let lineage = lineage.lane;
-                    Callback::from(move |life| {
-                        lives.dispatch(LineageLifeAction::Set { lineage, life });
-                    })
-                };
                 html! {
                     <section
                         class="team-surface"
@@ -166,8 +120,8 @@ pub(super) fn render_lineage(
                                     sender,
                                     drafts,
                                     mode,
-                                    life,
-                                    update_life,
+                                    lineage_controls,
+                                    can_configure,
                                     controls,
                                 ),
                                 LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => html! {
@@ -277,20 +231,26 @@ fn render_compose(
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     mode: &UseStateHandle<LineageMode>,
-    life: LineageLife,
-    update_life: Callback<LineageLife>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
+    can_configure: bool,
     controls: &view::AgentControls,
 ) -> Html {
     if lineage.members.is_empty() {
         return empty("No agents are assigned. Open Info to add one.");
     }
+    let server_life = lineage
+        .host()
+        .map_or("steer", |member| member.life.as_str());
+    let control = lineage_controls.current(lineage.lane, server_life);
     let submit = submit_lineage_callback(&lineage.members, epoch, sender.clone(), drafts.clone());
-    let ready = lineage.members.iter().any(|member| {
-        member.occupant.is_some()
-            && drafts
-                .get(&member.lane.to_string())
-                .is_some_and(|draft| !compose_markdown(draft).trim().is_empty())
-    });
+    let ready = can_send
+        && !control.pending_life
+        && lineage.members.iter().any(|member| {
+            member.occupant.is_some()
+                && drafts
+                    .get(&member.lane.to_string())
+                    .is_some_and(|draft| !compose_markdown(draft).trim().is_empty())
+        });
     html! {
         <div class="team-compose">
             <form class="team-composer" onsubmit={submit.clone()}>
@@ -308,10 +268,18 @@ fn render_compose(
                         )
                     })}
                 </div>
-                {render_lineage_controls(life, update_life, ready)}
+                {render_lineage_controls(
+                    lineage.lane,
+                    server_life,
+                    &control,
+                    lineage_controls,
+                    sender,
+                    can_configure,
+                    ready,
+                )}
             </form>
             {view::chrome::render_ticker(surface)}
-            {render_activity(runtime, lineage, drafts, controls, life)}
+            {render_activity(runtime, lineage, drafts, controls, control.speech, control.life)}
         </div>
     }
 }
@@ -321,6 +289,7 @@ fn render_activity(
     lineage: &crate::runtime::LaneRow,
     drafts: &UseReducerHandle<ComposerDrafts>,
     controls: &view::AgentControls,
+    speech: LineageSpeech,
     life: LineageLife,
 ) -> Html {
     let member_targets = lineage
@@ -364,6 +333,11 @@ fn render_activity(
         }))
         .collect::<Vec<_>>();
     let empty = cards.is_empty();
+    let speak = if speech == LineageSpeech::Quiet {
+        Callback::from(|_: String| {})
+    } else {
+        controls.speak.clone()
+    };
     html! {
         <div
             class="team-activity-grid"
@@ -381,7 +355,8 @@ fn render_activity(
                 members={lineage.members.len()}
                 {cards}
                 drafts={drafts.clone()}
-                speak={controls.speak.clone()}
+                {speak}
+                {speech}
             />
         </div>
     }
@@ -408,6 +383,7 @@ struct MosaicPlaneProps {
     cards: Vec<ActivityCard>,
     drafts: UseReducerHandle<ComposerDrafts>,
     speak: Callback<String>,
+    speech: LineageSpeech,
 }
 
 /// One component per lineage lane is deliberate: every lane owns one width,
@@ -417,6 +393,52 @@ struct MosaicPlaneProps {
 fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let host = use_node_ref();
     let width = use_element_width(host.clone());
+    let narration = use_mut_ref(|| (false, BTreeMap::<String, ()>::new()));
+    {
+        let narration = narration.clone();
+        let speak = properties.speak.clone();
+        let speech = properties.speech;
+        let messages = properties
+            .cards
+            .iter()
+            .filter_map(|card| match card {
+                ActivityCard::Agent { message, .. } => Some((
+                    format!(
+                        "{}:{}:{}:{}:{}",
+                        message.lane,
+                        message.locus.member,
+                        message.locus.offset,
+                        message.locus.length,
+                        message.locus.event,
+                    ),
+                    message.text.clone(),
+                )),
+                ActivityCard::Directive { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        use_effect_with((speech, messages), move |(speech, messages)| {
+            let mut narration = narration.borrow_mut();
+            if !narration.0 {
+                narration.0 = true;
+                for (key, _) in messages {
+                    narration.1.insert(key.clone(), ());
+                }
+                return;
+            }
+            let newest = messages
+                .iter()
+                .rev()
+                .find_map(|(key, text)| (!narration.1.contains_key(key)).then_some(text.clone()));
+            for (key, _) in messages {
+                narration.1.insert(key.clone(), ());
+            }
+            if *speech == LineageSpeech::Narrate
+                && let Some(text) = newest
+            {
+                speak.emit(text);
+            }
+        });
+    }
     let geometry = crate::mosaic::Geometry::new(16.0, *width);
     let candidate_sets = properties
         .cards
@@ -775,54 +797,6 @@ fn render_agent_composer(
                     </div>
             </div>
         </section>
-    }
-}
-
-fn render_lineage_controls(
-    selected: LineageLife,
-    update: Callback<LineageLife>,
-    ready: bool,
-) -> Html {
-    html! {
-        <aside class="team-composer-controls">
-            <label class={classes!(
-                "team-lifetime",
-                (selected == LineageLife::Steer).then_some("armed"),
-                (selected == LineageLife::Drain).then_some("maxed"),
-            )}>
-                <input
-                    type="range"
-                    min="0"
-                    max="2"
-                    step="1"
-                    value={selected.index().to_string()}
-                    aria-label={format!("Task subscription policy: {}", selected.help())}
-                    title={selected.help()}
-                    oninput={Callback::from(move |event: InputEvent| {
-                        let input: HtmlInputElement = event.target_unchecked_into();
-                        if let Some(life) = input
-                            .value()
-                            .parse::<usize>()
-                            .ok()
-                            .and_then(|index| LineageLife::ALL.get(index).copied())
-                        {
-                            update.emit(life);
-                        }
-                    })}
-                />
-                <span>{selected.label()}</span>
-            </label>
-            <button
-                class={classes!(
-                    "team-send",
-                    (selected == LineageLife::Steer).then_some("armed"),
-                    (selected == LineageLife::Drain).then_some("maxed"),
-                )}
-                type="submit"
-                disabled={!ready}
-                title={format!("Send with {}: {}", selected.label(), selected.help())}
-            >{selected.label()}</button>
-        </aside>
     }
 }
 

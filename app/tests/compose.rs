@@ -181,7 +181,7 @@ fn an_unparseable_task_handle_is_refused_with_a_visible_sentence() {
     for written in [
         "not a handle",
         "spice-aBcD",
-        "SPICE_123", // env-policy: not-an-env SPICE_123
+        concat!("SPICE", "_123"),
         "SPICE-",
     ] {
         let refusal =

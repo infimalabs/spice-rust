@@ -12,7 +12,7 @@ use sill::WaitOutcome;
 use spice::repository::Repository;
 use wire::intent::{
     CommandAnswer, LaneAction, LaneAnswer, LaneChangeAnswer, LaneRecall, LaneSeat, LaneState,
-    RecallAnswer, RecallEntry, RecallProvenance,
+    LineageConfigure, RecallAnswer, RecallEntry, RecallProvenance,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
@@ -185,6 +185,103 @@ pub(super) fn seat(
             compensate_seat(paths, seats, runtime, request.lane, prepared.capability);
             typed_outcome(outcome)
         }
+    }
+}
+
+/// Commit one task-subscription life across every member of a Canvas lineage.
+///
+/// `drain` here is a policy spelling. Occupant teardown remains exclusively
+/// owned by `lane::state { action: drain }`, so this transaction changes no
+/// seat, capability, session, occupant, or disposition field.
+pub(super) fn configure(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    command: &wire::AdmittedCommand,
+    request: &LineageConfigure,
+) -> Outcome<CommandAnswer> {
+    let observed = match current_residency(bus, epoch) {
+        Ok(head) => head,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let members = observed
+        .body()
+        .lanes
+        .iter()
+        .filter(|row| row.lineage_id == request.lineage_id)
+        .collect::<Vec<_>>();
+    if members.is_empty() {
+        return lane_refusal(
+            "lineage::missing",
+            Some("one current Canvas lineage".to_owned()),
+            Some(request.lineage_id.to_string()),
+            "read lane state and retry with a current lineage identity",
+        );
+    }
+    let from = members
+        .first()
+        .map(|row| row.life.clone())
+        .filter(|life| members.iter().all(|row| row.life == *life))
+        .unwrap_or_else(|| "mixed".to_owned());
+    let life = request.life.as_str().to_owned();
+    let mut next = observed.body().clone();
+    for row in next
+        .lanes
+        .iter_mut()
+        .filter(|row| row.lineage_id == request.lineage_id)
+    {
+        row.life.clone_from(&life);
+    }
+    let lane_answer = match answer(&next, None, seats) {
+        Ok(answer) => answer,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let mut write = match write(
+        command.actor().clone(),
+        epoch,
+        Producer::ResidentRecognition,
+    ) {
+        Ok(write) => write,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    guard_residency(&mut write, &observed);
+    let fact = match write.fact(
+        wire::body::LineageConfigured {
+            lineage_id: request.lineage_id,
+            from,
+            life,
+        },
+        FactCause::Existing(observed.position()),
+    ) {
+        Ok(fact) => fact,
+        Err(error) => {
+            return typed_store_fault("lineage::fact-invalid", &error.to_string());
+        }
+    };
+    write.residency_head(fact, move |_| next);
+    if let Err(error) = write.command_result(
+        Command {
+            v: wire::WireVersion::CURRENT,
+            id: command.id(),
+            epoch: command.epoch(),
+            kind: command.kind(),
+            expected: command.expected().to_vec(),
+            body: request.clone(),
+        },
+        epoch,
+        lane_answer.clone(),
+    ) {
+        return typed_store_fault("lineage::receipt-invalid", &error.to_string());
+    }
+    match commit(bus, write) {
+        Ok(committed) => Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(committed.first()),
+                last: seq(committed.last()),
+            }),
+            body: CommandAnswer::Lane(Box::new(lane_answer)),
+        }),
+        Err(outcome) => typed_outcome(outcome),
     }
 }
 

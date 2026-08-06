@@ -543,6 +543,101 @@ fn capture_failure_vacates_and_durably_degrades_the_exact_occupant() {
     fs::remove_dir_all(root).expect("capture fixture cleanup");
 }
 
+#[test]
+fn lineage_configuration_changes_shared_life_without_touching_occupants() {
+    let (root, paths) = resident_fixture("lineage-configuration");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface =
+        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(1);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let lineage = test_uuid(2);
+    let first_lane = test_uuid(3);
+    let first_occupant = test_uuid(4);
+    let second_lane = test_uuid(5);
+    let second_occupant = test_uuid(6);
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            first_lane,
+            first_occupant,
+            process_spec("sleep 0.05", Duration::from_secs(5)),
+        )
+        .expect("first supervised occupant starts");
+    seats
+        .seat(
+            second_lane,
+            second_occupant,
+            process_spec("sleep 0.05", Duration::from_secs(5)),
+        )
+        .expect("second supervised occupant starts");
+    seed_lane_in_lineage(&bus, epoch, first_lane, lineage, first_occupant);
+    seed_lane_in_lineage(&bus, epoch, second_lane, lineage, second_occupant);
+
+    let request = wire::intent::LineageConfigure {
+        lineage_id: lineage,
+        life: wire::intent::LineageLife::Drain,
+    };
+    let command = Command {
+        v: wire::WireVersion::CURRENT,
+        id: test_uuid(7),
+        epoch,
+        kind: CommandKind::LineageConfigure,
+        expected: Vec::new(),
+        body: serde_json::to_value(&request).expect("lineage configuration encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("operator lineage configuration admits");
+
+    let Outcome::Reply(reply) =
+        super::lane_surface::configure(&bus, epoch, &seats, &command, &request)
+    else {
+        panic!("lineage configuration replies");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
+    let CommandAnswer::Lane(answer) = reply.body else {
+        panic!("lineage configuration returns the authoritative lane table");
+    };
+    assert_eq!(answer.lanes.len(), 2);
+    assert!(answer.lanes.iter().all(|row| row.lineage_id == lineage));
+    assert!(answer.lanes.iter().all(|row| row.life == "drain"));
+    assert_eq!(answer.lanes[0].occupant, Some(first_occupant));
+    assert_eq!(answer.lanes[1].occupant, Some(second_occupant));
+    assert!(
+        answer.lanes.iter().all(|row| row.disposition == "occupied"),
+        "task-subscription drain never performs LaneAction::Drain",
+    );
+    assert!(seats.occupied(first_lane));
+    assert!(seats.occupied(second_lane));
+    let snapshot = bus.canvas_snapshot().expect("configured journal reads");
+    let configured = snapshot
+        .facts()
+        .facts()
+        .iter()
+        .find(|fact| fact.fact.kind() == wire::FactKind::LineageConfigured)
+        .expect("lineage configuration is durable");
+    assert_eq!(
+        configured.fact.body().get("lineage_id"),
+        Some(&serde_json::Value::String(lineage.to_string())),
+    );
+    for lane in [first_lane, second_lane] {
+        seats
+            .vacate(lane)
+            .expect("configured occupant remains supervised")
+            .wait()
+            .expect("fixture occupant exits");
+    }
+    bus.verify().expect("configured authority verifies");
+    bus.shutdown().expect("fixture bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
 fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
     let root = fixture(name);
     fs::create_dir_all(root.join(".git")).expect("git directory");
@@ -572,11 +667,21 @@ fn process_spec(command: &str, runtime: Duration) -> Spec {
 }
 
 fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: CanonicalUuid) {
+    seed_lane_in_lineage(bus, epoch, lane, lane, occupant);
+}
+
+fn seed_lane_in_lineage(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    lineage_id: CanonicalUuid,
+    occupant: CanonicalUuid,
+) {
     let current = current_residency(bus, epoch).expect("current residency");
     let mut head = current.body().clone();
     head.lanes.push(wire::LaneResidency {
         lane,
-        lineage_id: lane,
+        lineage_id,
         name: None,
         worktree: "/fixture".to_owned(),
         life: "drive".to_owned(),
@@ -594,7 +699,7 @@ fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: Can
         .fact(
             wire::body::LaneSeated {
                 lane,
-                lineage_id: lane,
+                lineage_id,
                 capability: test_uuid(9),
                 name: None,
                 worktree: "/fixture".to_owned(),
