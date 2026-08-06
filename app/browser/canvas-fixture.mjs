@@ -359,6 +359,34 @@ export function monitorPage(page) {
 /// earlier ten seconds bounded nothing that was ever slow.
 export const TRANSITION_MS = 2_000;
 
+/// Bound for a wait on the page connecting, which it has not been handed yet.
+///
+/// Coming online is not the same class as the transitions above and must not
+/// borrow their bound. `TRANSITION_MS` is justified by the page already holding
+/// the input, so the only cost left is a render; a connection instead has to
+/// complete a handshake the client itself puts a deadline on, at
+/// `CONNECTION_HANDSHAKE_TIMEOUT_MILLIS` of 5000ms in `app/src/browser.rs:42`.
+/// A test bound under that would expire before the client's own deadline, so a
+/// red would mean the suite is stricter than the contract rather than that
+/// anything is broken. Six seconds is that deadline plus a second of render, and
+/// the measurement says the slack is never spent: 25 cycles at load average 8 to
+/// 9 put a cold connect after `networkidle` at 1ms minimum, 2ms median and 3ms
+/// maximum, because the socket is already up by the time that wait arms.
+export const CONNECT_MS = 6_000;
+
+/// Bound for a wait on the page reconnecting after its socket closed.
+///
+/// This one has a floor written into the client. `app/src/browser.rs:505` sleeps
+/// `RECONNECT_DELAY_MILLIS`, a flat 1200ms in `app/src/browser.rs:43` with no
+/// backoff, before every retry, so no reconnect can be observed sooner and any
+/// bound near the offline flip's 2ms would fail every single time. The
+/// measurement lands exactly where that predicts and barely varies: 1283ms
+/// minimum, 1287ms median and 1290ms maximum over 25 cycles, the flat 1200ms
+/// delay plus 83ms to 90ms of real handshake. Eight seconds
+/// is the delay plus one whole handshake attempt at its own 5000ms deadline plus
+/// slack, which is the longest a single successful retry can take.
+export const RECONNECT_MS = 8_000;
+
 export async function chooseCanvasView(page, name) {
   const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
   if (!(await button.isVisible())) {
@@ -703,20 +731,15 @@ export async function assertResidentRestart(fixture, page, previous) {
   );
   await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(page, "Chronology");
-  await observedWait(
+  // This is a cold connect, not a reconnect: the line above navigates afresh and
+  // waits for `networkidle`, so the client is not sitting out `RECONNECT_DELAY`
+  // and the page has a live socket before this wait arms. Bounding it as a
+  // reconnect would hide a genuinely stalled restart behind the retry delay.
+  await assertGenerationOnline(
     page,
-    "canvas reports online again after the resident restarts",
-    () => page.waitForSelector(".status.online", { timeout: 10_000 }),
-    { resident },
-  );
-  await observedWait(
-    page,
-    "canvas adopts the generation the restarted resident published",
-    () =>
-      page.waitForFunction(
-        (epoch) => document.querySelector(".status-copy")?.textContent?.includes(epoch),
-        resident.discovery.epoch,
-      ),
+    resident.discovery.epoch,
+    "the resident restarts",
+    CONNECT_MS,
     { resident },
   );
   return resident;
@@ -724,11 +747,14 @@ export async function assertResidentRestart(fixture, page, previous) {
 
 /// Wait for the canvas to report offline, on the one bound that was measured.
 ///
-/// Three call sites share this: the resident stopping, a stale generation being
-/// refused, and the fixture closing the socket from inside the page. All three
-/// are the same class of transition -- the page has already been handed the
-/// input by the time the wait arms -- so all three take `TRANSITION_MS` rather
-/// than a bound chosen per site to outlast whatever last went wrong there.
+/// Four call sites share this: the resident stopping, a stale generation being
+/// refused, the fixture closing the socket from inside the page, and a malformed
+/// bootstrap being rejected. All four are the same class of transition -- the
+/// page has already been handed the input by the time the wait arms -- so all
+/// four take `TRANSITION_MS` rather than a bound chosen per site to outlast
+/// whatever last went wrong there. Coming back is a different class and takes
+/// `CONNECT_MS` or `RECONNECT_MS` through the helpers below, because a wait that
+/// has to sit through a handshake cannot be bounded by one that does not.
 /// Every one of them reports through the instrument, because a bare
 /// `TimeoutError` on `.status.offline` cannot say whether the page never
 /// processed the close or the status was never on screen to carry the class.
@@ -737,6 +763,45 @@ export async function assertOfflineObserved(page, cause, context = {}) {
     page,
     `canvas reports offline after ${cause}`,
     () => page.waitForSelector(".status.offline", { timeout: TRANSITION_MS }),
+    context,
+  );
+}
+
+/// Wait for the canvas to report online, on the bound its class was measured at.
+///
+/// The bound is an argument rather than a default because the two classes are
+/// three orders of magnitude apart -- a cold connect lands in 2ms and a live
+/// reconnect cannot land before 1200ms -- so a helper that picked one for the
+/// caller would silently hand every site the wrong one. Naming `CONNECT_MS` or
+/// `RECONNECT_MS` at the call site is the whole point: it says which transition
+/// the site believes it is waiting on, and that belief is now checkable.
+export async function assertOnlineObserved(page, cause, bound, context = {}) {
+  await observedWait(
+    page,
+    `canvas reports online after ${cause}`,
+    () => page.waitForSelector(".status.online", { timeout: bound }),
+    context,
+  );
+}
+
+/// Wait for the canvas to come online and adopt the generation it was given.
+///
+/// Online is not enough on its own: a socket can be up against the generation
+/// the page was already carrying, so the status class alone cannot tell a resumed
+/// connection from an adopted one. Both waits are one helper because both call
+/// sites need both, and neither is meaningful without the other -- a page that is
+/// online but still showing the old epoch has not resumed, and an epoch that
+/// appears without the status coming online is not a connection.
+export async function assertGenerationOnline(page, epoch, cause, bound, context = {}) {
+  await assertOnlineObserved(page, cause, bound, context);
+  await observedWait(
+    page,
+    `canvas adopts the generation published when ${cause}`,
+    () =>
+      page.waitForFunction(
+        (expected) => document.querySelector(".status-copy")?.textContent?.includes(expected),
+        epoch,
+      ),
     context,
   );
 }
@@ -1029,7 +1094,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   const unavailableMonitor = monitorPage(unavailablePage);
   await unavailablePage.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(unavailablePage, "Flow");
-  await unavailablePage.waitForSelector(".status.online");
+  await assertOnlineObserved(unavailablePage, "the page loads with speech unavailable", CONNECT_MS);
   await unavailablePage.locator(".speech-button").click();
   await unavailablePage.locator('.speech-button[data-state="error"]').waitFor();
   assert.match(await unavailablePage.locator(".speech-button").getAttribute("title"), /Zoe.*unavailable/);
@@ -1044,7 +1109,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   await routeSpeechBootstrap(disabled, { backend: "disabled" });
   await disabled.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(disabled, "Flow");
-  await disabled.waitForSelector(".status.online");
+  await assertOnlineObserved(disabled, "the page loads with speech disabled", CONNECT_MS);
   assert.equal(await disabled.locator(".speech-button").count(), 0, "disabled hides playback");
   disabledMonitor.assertClean();
   await disabled.close();
@@ -1059,7 +1124,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   });
   await externalUnavailable.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(externalUnavailable, "Flow");
-  await externalUnavailable.waitForSelector(".status.online");
+  await assertOnlineObserved(externalUnavailable, "no external backend is offered", CONNECT_MS);
   const unavailableButton = externalUnavailable.locator(".speech-button");
   assert.equal(await unavailableButton.getAttribute("aria-label"), "Speech unavailable");
   assert.equal(await unavailableButton.isDisabled(), true);
@@ -1085,7 +1150,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   });
   await external.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(external, "Flow");
-  await external.waitForSelector(".status.online");
+  await assertOnlineObserved(external, "the page loads against the external backend", CONNECT_MS);
   const externalButton = external.locator(".speech-button");
   await externalButton.click();
   await external.locator('.speech-button[data-state="playing"]').waitFor();
@@ -1104,7 +1169,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   await routeSpeechBootstrap(malformed, { backend: "system", voice: "Zoe (Premium)" });
   await malformed.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(malformed, "Chronology");
-  await malformed.waitForSelector(".status.offline");
+  await assertOfflineObserved(malformed, "a malformed bootstrap is rejected");
   assert.match(await malformed.locator(".status-copy").innerText(), /bootstrap response was invalid/);
   assert.equal(await malformed.locator(".speech-button").count(), 0);
   assert.match(await malformed.locator(".event.fault").innerText(), /bootstrap response was invalid/);
