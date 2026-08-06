@@ -323,6 +323,20 @@ fn a_configured_agent_name_wins_while_an_unconfigured_lane_uses_the_worktree_lea
 }
 
 #[test]
+fn configured_agent_names_distinguish_two_lanes_that_share_one_worktree() {
+    let mut ava = lane(LANE_A, "/fleet/shared");
+    ava.members[0].name = Some("Ava".to_owned());
+    let mut matilda = lane(LANE_B, "/fleet/shared");
+    matilda.members[0].name = Some("Matilda".to_owned());
+
+    let rows = standings(&[ava, matilda], &[], &[], at(0));
+
+    assert_eq!(rows[0].label, "Ava");
+    assert_eq!(rows[1].label, "Matilda");
+    assert_eq!(rows[0].worktree, rows[1].worktree);
+}
+
+#[test]
 fn elapsed_names_one_unit_at_each_boundary() {
     assert_eq!(elapsed_label(-5_000), "now");
     assert_eq!(elapsed_label(999), "now");
