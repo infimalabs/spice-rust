@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { watch } from "node:fs";
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { unwatchFile, watchFile } from "node:fs";
+import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,9 +41,10 @@ function waitForDiscovery(child, canvas, timeout = 30_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
     let lastError;
-    const watcher = watch(dirname(canvas), (_event, name) => {
-      if (name?.endsWith("canvas")) readPublishedDiscovery();
-    });
+    const published = (current, previous) => {
+      if (current.ino !== previous.ino || current.size !== previous.size) readPublishedDiscovery();
+    };
+    watchFile(canvas, { interval: 50 }, published);
     const deadline = setTimeout(() => {
       finish(new Error("timed out waiting for resident canvas discovery", { cause: lastError }));
     }, timeout);
@@ -55,7 +56,7 @@ function waitForDiscovery(child, canvas, timeout = 30_000) {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
-      watcher.close();
+      unwatchFile(canvas, published);
       child.off("exit", residentExit);
       if (error) rejectDiscovery(error);
       else resolveDiscovery(discovery);
@@ -77,7 +78,6 @@ function waitForDiscovery(child, canvas, timeout = 30_000) {
       );
     }
 
-    watcher.on("error", finish);
     child.once("exit", residentExit);
     readPublishedDiscovery();
   });
@@ -168,6 +168,9 @@ async function configureFixture(fixture) {
     "[lane]",
     'lease = "30s"',
     'vendor = "claude"',
+    "",
+    "[tasks]",
+    'stems = ["app", "canvas"]',
     "",
     "[vendor.claude]",
     `binary = ${JSON.stringify(vendor)}`,
@@ -324,7 +327,16 @@ async function assertAgentConversation(page, fixture) {
   await console.getByRole("button", { name: "Seat agent" }).click();
 
   const tab = console.locator(".agent-tab");
-  await tab.waitFor({ timeout: 15_000 });
+  try {
+    await tab.waitFor({ timeout: 15_000 });
+  } catch (error) {
+    await page.getByRole("button", { name: "Chronology" }).click();
+    const rendered = await page.locator("body").innerText();
+    const lanes = await invoke(fixture, ["lane"]);
+    throw new Error(`Canvas seat did not create a lane: lanes=${JSON.stringify(lanes)} body=${JSON.stringify(rendered)}`, {
+      cause: error,
+    });
+  }
   const lanes = await reply(fixture, ["lane"]);
   const seated = lanes.body.lanes.find((lane) => lane.worktree === fixture);
   assert.ok(seated, "the Canvas seat control creates a lane in the requested worktree");
@@ -656,6 +668,7 @@ async function assertSpeechVariants(browser, endpoint) {
   });
   await external.goto(endpoint, { waitUntil: "networkidle" });
   await external.waitForSelector(".status.online");
+  await external.getByRole("button", { name: "Flow" }).click();
   const externalButton = external.locator(".speech-button");
   await externalButton.click();
   await external.locator('.speech-button[data-state="playing"]').waitFor();
@@ -684,7 +697,7 @@ async function assertSpeechVariants(browser, endpoint) {
   await variants.close();
 }
 
-const fixture = await mkdtemp(join(tmpdir(), "spice-canvas-browser-"));
+const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
 await mkdir(join(fixture, ".git"));
 await mkdir(artifacts, { recursive: true });
 await configureFixture(fixture);
