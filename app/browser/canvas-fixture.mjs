@@ -703,9 +703,18 @@ export async function assertEndpointProbeStates() {
 }
 
 /// Name the frame that armed the wait, so a shared selector is still locatable.
+const waitWrapperNames = [
+  "observedWait",
+  "observedBoundedWait",
+  "waitForPageFunction",
+  "waitForLocator",
+];
+
 function callSite(marker) {
   const frames = (marker.stack ?? "").split("\n").slice(1);
-  const caller = frames.find((frame) => !frame.includes("observedWait"));
+  const caller = frames.find((frame) => {
+    return !waitWrapperNames.some((wrapper) => frame.includes(`${wrapper} (`));
+  });
   return caller?.trim() ?? "<call site unavailable>";
 }
 
@@ -759,7 +768,11 @@ export async function assertWaitReporting(page, resident) {
   const elapsed = performance.now() - started;
   assert.ok(failure, "a wait that cannot be satisfied must fail");
   assert.match(failure.message, /canvas wait failed: instrument self-check/);
-  assert.match(failure.message, /site: .*canvas-fixture\.mjs/);
+  assert.match(
+    failure.message,
+    /site: at assertWaitReporting \(file:.*canvas-fixture\.mjs:\d+:\d+\)/,
+    "the report names the self-check that armed the wait rather than an instrument wrapper",
+  );
   assert.match(failure.message, /"endpointState":/, "the report probes the resident endpoint");
   assert.ok(failure.cause, "the original timeout survives as the cause");
   assert.ok(elapsed >= WAIT_PROBE_MS, "the page-function probe reaches its named bound");
@@ -885,7 +898,7 @@ function requireBound(bound, helper) {
 }
 
 /// Bound used only by the executable never-satisfied instrumentation probe.
-const WAIT_PROBE_MS = 250;
+export const WAIT_PROBE_MS = 250;
 const reportBrowserWaits = process.env.SPICE_BROWSER_WAIT_REPORT === "1";
 
 /// Run one browser wait with a positive bound, actionable failure, and receipt.
