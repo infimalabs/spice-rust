@@ -5,7 +5,7 @@ use crate::observe::{Observation, ObservationFailure};
 use crate::spec::ProcessGroup;
 use crate::spec::Spec;
 #[cfg(unix)]
-use crate::surface::process_state::{self, process_group_terminal};
+use crate::surface::process_state;
 use std::error::Error;
 use std::fmt;
 #[cfg(unix)]
@@ -531,8 +531,22 @@ impl Running {
         }
     }
 
+    /// Decide whether the child's exit also settles the process group it led.
+    ///
+    /// This probe runs before [`Self::terminate_and_reap`] sends anything, so it
+    /// cannot forgive an unreadable answer the way [`resolve_signal`] and
+    /// [`wait_for_exit_notice`] do after a signal was already delivered. That
+    /// would skip termination and could leak a live descendant. Instead, one
+    /// immediate bounded re-probe gives a group racing toward absence a second
+    /// chance to establish its end; a live or still-unreadable answer remains
+    /// unsettled and enters the termination path. The bound avoids turning an
+    /// unreadable kernel into an unbounded pre-kill wait, while the second read
+    /// avoids spending the full SIGTERM grace and reap deadline when the first
+    /// answer was transient and an already-ended group is now observable.
     fn execution_group_terminal(&self) -> bool {
-        !self.requires_group_terminal() || process_group_terminal(self.pid)
+        execution_group_terminal_against(self.requires_group_terminal(), || {
+            process_state::process_group_state(self.pid)
+        })
     }
 
     fn requires_group_terminal(&self) -> bool {
@@ -635,6 +649,25 @@ impl Running {
             owner: self.spec.wait.owner().to_owned(),
             operation,
             source,
+        }
+    }
+}
+
+/// The pre-kill group decision, separated so a fixture can supply the answer
+/// the kernel cannot be made to give on demand.
+#[cfg(unix)]
+fn execution_group_terminal_against(
+    requires_group_terminal: bool,
+    mut observe: impl FnMut() -> process_state::ProcessState,
+) -> bool {
+    if !requires_group_terminal {
+        return true;
+    }
+    match observe() {
+        process_state::ProcessState::Terminal => true,
+        process_state::ProcessState::Live => false,
+        process_state::ProcessState::Indeterminate => {
+            matches!(observe(), process_state::ProcessState::Terminal)
         }
     }
 }
@@ -788,8 +821,8 @@ fn abort_process(context: &FailureContext) -> Result<(), IoFailure> {
 /// Both paths can share that rule because both are reached only after the
 /// signal was already delivered, so forgiving an unread kernel ends a wait and
 /// never skips a kill. [`Running::execution_group_terminal`] reads the same
-/// probe before the kill rather than after and therefore keeps the older
-/// collapse; that is a separate decision, open under SPAWN-1kKZ11FN.
+/// probe before the kill rather than after, so it re-probes once and treats a
+/// live or still-unreadable answer as grounds to enter termination.
 #[cfg(unix)]
 fn wait_for_exit_notice(
     pid: u32,
