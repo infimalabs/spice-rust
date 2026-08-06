@@ -1,3 +1,4 @@
+use std::net::Ipv6Addr;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -8,7 +9,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 use super::*;
-use crate::EMBEDDED_APP;
+use crate::APP;
 
 type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -122,9 +123,24 @@ fn speech() -> crate::SpeechConfig {
     crate::SpeechConfig::default()
 }
 
-/// The app source every test but the app-source ones binds with.
-fn embedded() -> crate::AppSource {
-    crate::AppSource::Embedded
+/// One complete lane-built app shared by tests that do not inspect its bytes.
+fn app() -> crate::AppSource {
+    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let root = ROOT.get_or_init(|| {
+        let root =
+            std::env::temp_dir().join(format!("spice-canvas-test-app-{}", std::process::id()));
+        let stage = root.join(crate::APP_STAGE);
+        std::fs::create_dir_all(&stage).expect("fixture app stage");
+        for asset in APP.assets() {
+            std::fs::write(
+                stage.join(asset.file()),
+                format!("test app {}", asset.file()),
+            )
+            .expect("fixture app asset");
+        }
+        root
+    });
+    crate::AppSource::resolve(root).expect("fixture app resolves")
 }
 
 async fn websocket(address: SocketAddr) -> ClientSocket {
@@ -326,7 +342,7 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
-        embedded(),
+        app(),
         speech(),
         bus.reader(),
         8,
@@ -392,7 +408,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities.clone(),
-        embedded(),
+        app(),
         speech(),
         bus.reader(),
         8,
@@ -446,7 +462,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
-        embedded(),
+        app(),
         speech(),
         bus.reader(),
         8,
@@ -519,154 +535,7 @@ async fn wait_for_admission(
     .expect("admission observer remains open");
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
-    let capabilities = Capabilities::default();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, embedded(), speech())
-        .await
-        .expect("binds");
-    let address = server.local_addr().expect("local address");
-    let discovery = server.discovery(operator()).expect("operator discovery");
-
-    assert!(is_loopback(address));
-    assert_eq!(discovery.endpoint, format!("http://{address}"));
-    assert_eq!(discovery.epoch, epoch());
-}
-
-/// A surface bound off loopback answers to the address the operator dialed.
-///
-/// This is the remote case the whole flag exists for: the operator's browser is
-/// on another machine, so the `Host` it sends is a routable address this
-/// process never chose and cannot enumerate. The wildcard bind therefore admits
-/// it by port, hands the bootstrap that same address back so the socket the
-/// page opens reaches here rather than the browser's own loopback, and still
-/// refuses a request carrying another site's origin.
-#[tokio::test(flavor = "current_thread")]
-async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin() {
-    let capabilities = Capabilities::default();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
-    let (server, _control) = Server::bind_with_capacity(
-        Binding::new(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-            Access::authenticated("correct-horse-battery-staple".to_owned()),
-        ),
-        epoch(),
-        capabilities,
-        embedded(),
-        speech(),
-        None,
-        1,
-    )
-    .await
-    .expect("binds every address");
-    let address = server.local_addr().expect("local address");
-    assert!(!is_loopback(address), "a wildcard bind is not loopback");
-    assert!(
-        !format!("{:?}", server.state.access).contains("correct-horse"),
-        "the access contract never debugs its credential"
-    );
-
-    // Nothing routable can be published for a bind with no address of its own,
-    // so the local clients that read this document keep a dialable one.
-    let discovery = server.discovery(operator()).expect("operator discovery");
-    assert_eq!(
-        discovery.endpoint,
-        format!("http://127.0.0.1:{}", address.port())
-    );
-
-    let dial = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), address.port());
-    let task = tokio::spawn(server.up());
-    let remote = format!("10.0.0.5:{}", address.port());
-
-    let unauthenticated = request(dial, &remote, "/bootstrap").await;
-    assert!(unauthenticated.starts_with(b"HTTP/1.1 401 Unauthorized\r\n"));
-    let wrong = request(dial, &remote, "/bootstrap?auth=wrong-token-value").await;
-    assert!(wrong.starts_with(b"HTTP/1.1 401 Unauthorized\r\n"));
-
-    let admitted = request(
-        dial,
-        &remote,
-        "/bootstrap?auth=correct-horse-battery-staple",
-    )
-    .await;
-    assert!(admitted.starts_with(b"HTTP/1.1 200 OK\r\n"));
-    let bootstrap: wire::CanvasBootstrap =
-        wire::decode(response_body(&admitted)).expect("bootstrap decodes");
-    assert_eq!(bootstrap.endpoint, format!("http://{remote}"));
-
-    let rejected = remote_websocket(dial, &remote, None)
-        .await
-        .expect_err("an unauthenticated remote socket is refused");
-    assert!(
-        matches!(&rejected, tokio_tungstenite::tungstenite::Error::Http(response)
-            if response.status() == StatusCode::UNAUTHORIZED),
-        "remote socket refusal is authentication-specific: {rejected:?}"
-    );
-    let capability = bootstrap.capability.to_string();
-    let mut socket = remote_websocket(dial, &remote, Some(&capability))
-        .await
-        .expect("the bootstrapped capability authenticates the remote socket");
-    send_client(
-        &mut socket,
-        &wire::Hello {
-            wire: wire::WireVersion::CURRENT,
-            capability: bootstrap.capability,
-            epoch: bootstrap.epoch,
-        },
-    )
-    .await;
-    let _: wire::Accepted = wire::decode(&next_frame(&mut socket).await)
-        .expect("the authenticated VPN workflow opens one current session");
-
-    // The port is all a wildcard bind can check, so a host naming another one
-    // is not this surface however it was routed here.
-    let elsewhere = request(
-        dial,
-        "10.0.0.5:1",
-        "/bootstrap?auth=correct-horse-battery-staple",
-    )
-    .await;
-    assert!(elsewhere.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
-
-    // Same host, another site's origin: the check that survives the wildcard.
-    let body = wire::encode(&wire::SpeechRequest {
-        text: "spoken from somewhere else".to_owned(),
-    })
-    .expect("request encodes");
-    let foreign = speech_request_to(
-        "/speech?auth=correct-horse-battery-staple",
-        dial,
-        &remote,
-        "https://attacker.example",
-        &body,
-    )
-    .await;
-    assert!(foreign.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
-
-    task.abort();
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
-    let unavailable: SocketAddr = "192.0.2.1:9".parse().expect("documentation address");
-    let error = Server::bind_with_capacity(
-        Binding::new(unavailable, Access::local()),
-        epoch(),
-        Capabilities::default(),
-        embedded(),
-        speech(),
-        None,
-        1,
-    )
-    .await
-    .expect_err("remote unauthenticated access is refused before the OS bind");
-    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-}
+mod binding;
 
 async fn request(address: SocketAddr, host: &str, path: &str) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(address)
@@ -771,7 +640,7 @@ async fn speech_endpoint_executes_only_the_server_owned_argv_contract() {
     let (server, _control) = Server::bind(
         epoch(),
         Capabilities::default(),
-        embedded(),
+        app(),
         external_speech(&["/bin/cat"]),
     )
     .await
@@ -817,7 +686,7 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
         external_speech(&[]),
         external_speech(&["/definitely/missing/spice-speech"]),
     ] {
-        let (server, _control) = Server::bind(epoch(), Capabilities::default(), embedded(), speech)
+        let (server, _control) = Server::bind(epoch(), Capabilities::default(), app(), speech)
             .await
             .expect("binds");
         let address = server.local_addr().expect("local address");
@@ -845,7 +714,7 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
     let (server, _control) = Server::bind(
         epoch(),
         Capabilities::default(),
-        embedded(),
+        app(),
         external_speech(&["/bin/cat"]),
     )
     .await
@@ -874,8 +743,8 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
-    let (server, _control) = Server::bind(epoch(), Capabilities::default(), embedded(), speech())
+async fn live_server_serves_the_lane_app_and_refuses_another_host() {
+    let (server, _control) = Server::bind(epoch(), Capabilities::default(), app(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -893,7 +762,7 @@ async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
             .windows(b"img-src 'self' data:".len())
             .any(|window| window == b"img-src 'self' data:")
     );
-    assert_eq!(&admitted[split..], EMBEDDED_APP.bytes());
+    assert_eq!(&admitted[split..], b"test app canvas-app.html");
 
     let script = request(address, &address.to_string(), "/app.module").await;
     assert!(script.starts_with(b"HTTP/1.1 200 OK\r\n"));
@@ -915,8 +784,8 @@ async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
 
 /// A worktree holding a complete development stage, and that stage's path.
 ///
-/// The bytes name their own file so a route read from the wrong one is visible
-/// in the assertion rather than merely non-embedded.
+/// The bytes name their own file so a route served from the wrong one is
+/// visible in the assertion.
 fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -925,9 +794,9 @@ fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    let stage = root.join(crate::LOCAL_STAGE);
+    let stage = root.join(crate::APP_STAGE);
     std::fs::create_dir_all(&stage).expect("fixture stage");
-    for asset in EMBEDDED_APP.assets() {
+    for asset in APP.assets() {
         std::fs::write(
             stage.join(asset.file()),
             format!("locally built {}", asset.file()),

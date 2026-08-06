@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { unwatchFile, watchFile } from "node:fs";
-import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -146,6 +146,7 @@ async function reply(fixture, args) {
 }
 
 async function configureFixture(fixture) {
+  await cp(join(root, "dist/stage-app"), join(fixture, "dist/stage-app"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
     "#!/bin/sh",
@@ -262,7 +263,7 @@ async function assertCanvas(page, scheme) {
   await assert.doesNotReject(() => page.locator(".brand-name:visible, .mobile-brand:visible").waitFor());
   await assert.doesNotReject(() => page.getByRole("heading", { name: "Agents", exact: true }).waitFor());
   await page.waitForFunction(() => {
-    const cursor = document.querySelector(".rail-meta")?.textContent ?? "";
+    const cursor = document.querySelector(".bar-meta")?.textContent ?? "";
     return /cursor \d+/.test(cursor);
   });
 
@@ -272,7 +273,7 @@ async function assertCanvas(page, scheme) {
     const rootStyle = root ? getComputedStyle(root) : null;
     const canvasBox = canvas?.getBoundingClientRect();
     const workspaceBox = document.querySelector(".workspace")?.getBoundingClientRect();
-    const railBox = document.querySelector(".rail")?.getBoundingClientRect();
+    const barBox = document.querySelector(".commandbar")?.getBoundingClientRect();
     return {
       appChildren: root?.childElementCount ?? 0,
       bodyWidth: document.body.scrollWidth,
@@ -280,8 +281,7 @@ async function assertCanvas(page, scheme) {
       canvasHeight: Math.round(canvasBox?.height ?? 0),
       ink: rootStyle?.color ?? "",
       background: getComputedStyle(document.body).backgroundColor,
-      mobileNavOverlap: window.innerWidth <= 560
-        && (workspaceBox?.bottom ?? 0) > (railBox?.top ?? window.innerHeight),
+      barOverlap: (barBox?.bottom ?? 0) > (workspaceBox?.top ?? 0) + 1,
       overflowingControls: [...document.querySelectorAll("button, .pane-chip")]
         .filter((element) => {
           const style = getComputedStyle(element);
@@ -295,7 +295,7 @@ async function assertCanvas(page, scheme) {
   assert.ok(pixels.canvasHeight > 300, "primary canvas has visible content");
   assert.ok(pixels.bodyWidth <= pixels.viewportWidth, "page has no viewport overflow");
   assert.notEqual(pixels.ink, pixels.background, "foreground and background pixels differ");
-  assert.equal(pixels.mobileNavOverlap, false, "mobile workspace stops above bottom navigation");
+  assert.equal(pixels.barOverlap, false, "the workspace starts below the command bar");
   assert.deepEqual(pixels.overflowingControls, [], "controls and pane labels fit their bounds");
 
   for (const [axis, panes] of axisPanes) {
@@ -362,16 +362,20 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(await tab.getAttribute("data-lane"), seated.lane);
 
   const message = "browser direction survives streaming";
-  await console.getByLabel("Message").fill(message);
+  await console.getByRole("textbox", { name: "Message", exact: true }).fill(message);
   await console.getByRole("button", { name: "Send direction" }).click();
   const outgoing = console.locator(".message.outgoing").filter({ hasText: message });
   await outgoing.waitFor({ timeout: 10_000 });
-  assert.match(await outgoing.innerText(), /pending/);
 
   const inbox = await reply(fixture, ["inbox", seated.lane]);
   assert.equal(inbox.body.lanes.length, 1);
   assert.equal(inbox.body.lanes[0].pending.length, 1);
   assert.equal(inbox.body.lanes[0].pending[0].text, message);
+  assert.equal(
+    await outgoing.locator(".message-key").innerText(),
+    inbox.body.lanes[0].pending[0].key,
+  );
+  assert.match(await outgoing.locator(".message-age").innerText(), / left$/);
   await assertMosaicPacking(page, console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   return seated.lane;
@@ -383,13 +387,28 @@ async function assertMosaicPacking(page, console) {
   assert.ok(laneCount >= 1 && laneCount <= 6, "geometry exposes a legal base-lane count");
   const targetCards = laneCount * 2 + 1;
   for (let index = 1; index < targetCards; index += 1) {
-    await console.getByLabel("Message").fill(`mosaic placement ${index}`);
+    await console
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill(`mosaic placement ${index}`);
     await console.getByRole("button", { name: "Send direction" }).click();
   }
   const cards = console.locator(".mosaic-card");
   await cards.nth(targetCards - 1).waitFor({ timeout: 15_000 });
   assert.equal(await cards.count(), targetCards);
   assert.equal(await cards.first().getAttribute("data-state"), "frozen");
+  const keys = await cards.locator(".message-key").allTextContents();
+  assert.deepEqual(keys, [...keys].sort(), "Canvas journal order agrees with steering key order");
+  assert.deepEqual(
+    await cards.evaluateAll((elements) => elements.map((element) => element.dataset.key)),
+    keys,
+    "each packed card binds its visible key to its machine-readable identity",
+  );
+  const ages = cards.locator(".message-age");
+  assert.ok(
+    (await ages.allTextContents()).every((age) => age.endsWith(" left")),
+    "spatially packed keys carry the age that orders them",
+  );
+  assert.equal(await ages.count(), targetCards);
 
   const placements = await cards.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();
@@ -423,7 +442,9 @@ async function assertMosaicPacking(page, console) {
 
   await feed.evaluate((element) => element.scrollTo(0, element.scrollHeight));
   const before = await feed.evaluate((element) => element.scrollTop);
-  await console.getByLabel("Message").fill("mosaic scroll compensation");
+  await console
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("mosaic scroll compensation");
   await console.getByRole("button", { name: "Send direction" }).click();
   await cards.nth(targetCards).waitFor({ timeout: 10_000 });
   const after = await feed.evaluate((element) => element.scrollTop);
@@ -461,7 +482,7 @@ async function assertAuthoritySurface(page, seeded) {
 }
 
 async function assertMosaicComposer(page, fixture, seeded) {
-  await page.getByRole("button", { name: "Mosaic", exact: true }).click();
+  await page.getByRole("button", { name: /^Mosaic/ }).click();
   await page.getByRole("heading", { name: "Mosaic", exact: true }).waitFor();
   const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
   await lane.getByText("browser direction survives streaming", { exact: true }).waitFor();

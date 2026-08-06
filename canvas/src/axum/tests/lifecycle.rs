@@ -11,7 +11,7 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, embedded(), speech())
+    let (server, _control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -52,7 +52,7 @@ async fn authenticated_session_routes_multiple_typed_commands_and_correlates_ans
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) = Server::bind(epoch(), capabilities, embedded(), speech())
+    let (server, mut control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -76,7 +76,7 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, embedded(), speech())
+    let (server, _control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let state = Arc::clone(&server.state);
@@ -121,7 +121,7 @@ async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining(
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, embedded(), speech())
+    let (server, _control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let state = Arc::clone(&server.state);
@@ -148,7 +148,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     capabilities
         .insert(lane_capability, wire::Actor::Lane(lane))
         .expect("lane capability");
-    let (server, mut control) = Server::bind(epoch(), capabilities, embedded(), speech())
+    let (server, mut control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -209,7 +209,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     replacement
         .insert(operator(), wire::Actor::Lane(lane))
         .expect("replacement generation capability");
-    let (server, _control) = Server::bind(replacement_epoch, replacement, embedded(), speech())
+    let (server, _control) = Server::bind(replacement_epoch, replacement, app(), speech())
         .await
         .expect("replacement binds");
     let address = server.local_addr().expect("replacement address");
@@ -267,7 +267,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
-        embedded(),
+        app(),
         speech(),
         None,
         1,
@@ -355,7 +355,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
-        embedded(),
+        app(),
         speech(),
         None,
         1,
@@ -562,7 +562,7 @@ fn host_and_origin_must_name_the_published_endpoint() {
         origin: LOOPBACK_ORIGIN.to_owned(),
         epoch: epoch(),
         capabilities: Capabilities::default(),
-        app: embedded(),
+        app: app(),
         speech: speech(),
         speech_slot: Semaphore::new(1),
         admission: Mutex::new(Admission::Open),

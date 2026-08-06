@@ -4,13 +4,43 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::{DemoAnswer, Outcome, ReplyPosition};
 
+#[path = "support/staged_app.rs"]
+mod staged_app;
+
 const SEED_COMMIT: &str = "a53ad58b1356a5f7abea7437975321850e04b217";
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+static BUILD_LANE_APP: Mutex<()> = Mutex::new(());
+
+struct SeededBuildLaneApp(Option<PathBuf>);
+
+impl SeededBuildLaneApp {
+    fn new() -> Self {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let worktree = manifest
+            .parent()
+            .expect("spice crate has a workspace parent");
+        let stage = worktree.join(canvas::APP_STAGE);
+        if stage.exists() {
+            return Self(None);
+        }
+        staged_app::seed(worktree);
+        Self(Some(stage))
+    }
+}
+
+impl Drop for SeededBuildLaneApp {
+    fn drop(&mut self) {
+        if let Some(stage) = self.0.take() {
+            fs::remove_dir_all(stage).expect("remove generated build lane app fixture");
+        }
+    }
+}
 
 struct Fixture {
     scratch: PathBuf,
@@ -67,6 +97,8 @@ impl Fixture {
         arguments: &[&str],
         environment: &[(&str, &Path)],
     ) -> std::process::Output {
+        let _app_lock = BUILD_LANE_APP.lock().expect("build lane app fixture lock");
+        let _app = SeededBuildLaneApp::new();
         let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
         command
             .args(arguments)
@@ -147,6 +179,13 @@ fn seed_only_process_is_anchored_recoverable_and_ambient_inert() {
         fs::read(root.join("spice.toml")).expect("read seeded config"),
         b"[tasks]\nstems = [\"rim\"]\n"
     );
+    for asset in canvas::APP.assets() {
+        assert!(
+            root.join(canvas::APP_STAGE).join(asset.file()).is_file(),
+            "demo seed omitted {}",
+            asset.file()
+        );
+    }
     let transcript = fs::read_to_string(&reply.body.transcript).expect("read canned transcript");
     let turns = transcript
         .lines()

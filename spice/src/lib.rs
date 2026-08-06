@@ -2,14 +2,8 @@
 
 #![forbid(unsafe_code)]
 
-/// The canvas this appliance carries, re-exported for the build tooling.
-///
-/// `Cargo.lock` is one of the inputs the committed app stage records itself
-/// against, so a crate naming `canvas` as a new dependency invalidates that
-/// stage and demands a rebuild in the sealed image. Reaching it through a
-/// dependency that is already declared costs no manifest edit, which is what
-/// lets `cargo xtask local-app` name [`canvas::LOCAL_STAGE`] rather than restate
-/// the path the resident will read.
+/// The canvas this appliance serves, re-exported so the lane-local builder and
+/// resident share the one [`canvas::APP_STAGE`] path.
 pub use canvas;
 
 pub mod agent_launch;

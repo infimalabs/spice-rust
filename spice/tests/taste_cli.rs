@@ -14,6 +14,8 @@ use wire::{Actor, FactKind, Instant, Outcome, Producer, ReplyPosition};
 
 #[path = "support/readiness.rs"]
 mod readiness;
+#[path = "support/staged_app.rs"]
+mod staged_app;
 
 use readiness::Readiness;
 
@@ -52,6 +54,7 @@ impl Fixture {
         ));
         fs::create_dir_all(requested.join(".git")).expect("fixture Git directory");
         let root = fs::canonicalize(requested).expect("fixture root canonicalizes");
+        staged_app::seed(&root);
         fs::write(root.join("spice.toml"), POLICY).expect("tracked taste policy");
         let runtime = root.join(".git/.spice");
         let fixture = Self {

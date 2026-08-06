@@ -575,7 +575,7 @@ impl Server {
         capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
         let Binding { requested, access } = binding;
-        if !is_loopback(requested) && !access.is_authenticated() {
+        if !requested.ip().is_loopback() && !access.is_authenticated() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "a non-loopback canvas listener requires authenticated access",
@@ -671,7 +671,7 @@ async fn app(
     if admit_headers(&state, &headers, false).is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let asset = match state.app.asset(uri.path()) {
+    let asset = match state.app.served(uri.path()) {
         Ok(Some(asset)) => asset,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         // The source was whole when this generation started, so a read that
@@ -687,10 +687,7 @@ async fn app(
     };
     let content_type = asset.content_type();
     let digest = asset.digest();
-    let mut response = Response::new(match asset.into_bytes() {
-        std::borrow::Cow::Borrowed(bytes) => Body::from(bytes),
-        std::borrow::Cow::Owned(bytes) => Body::from(bytes),
-    });
+    let mut response = Response::new(Body::from(asset.into_bytes()));
     response
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -919,12 +916,6 @@ fn install_browser_headers(response: &mut Response) {
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
     );
-}
-
-/// Whether an address is reachable from this machine alone.
-#[must_use]
-pub const fn is_loopback(address: SocketAddr) -> bool {
-    matches!(address.ip(), IpAddr::V4(ip) if ip.is_loopback())
 }
 
 #[cfg(test)]

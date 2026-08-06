@@ -323,7 +323,10 @@ fn version_reports_the_running_artifacts_and_finalized_schema_in_both_forms() {
     );
     assert_eq!(text_body.wire, wire::WireVersion::CURRENT);
     assert_eq!(text_body.journal, journal::SCHEMA_VERSION);
-    assert_eq!(text_body.app, canvas::EMBEDDED_APP.digest());
+    assert_eq!(
+        text_body.app,
+        wire::Digest::compute(wire::Domain::DistArtifact, b"version test canvas-app.html")
+    );
     assert_eq!(text.out.iter().filter(|byte| **byte == b'\n').count(), 1);
     assert_eq!(json.out.iter().filter(|byte| **byte == b'\n').count(), 1);
     assert_eq!(directory_state(repository.path()), before);
@@ -628,6 +631,15 @@ impl RepositoryScratch {
                 Ok(()) => {
                     fs::create_dir_all(path.join(".git/.spice/data"))
                         .expect("create repository-common Spice state");
+                    let stage = path.join(canvas::APP_STAGE);
+                    fs::create_dir_all(&stage).expect("create version app stage");
+                    for asset in canvas::APP.assets() {
+                        fs::write(
+                            stage.join(asset.file()),
+                            format!("version test {}", asset.file()),
+                        )
+                        .expect("write version app asset");
+                    }
                     return Self { path };
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
