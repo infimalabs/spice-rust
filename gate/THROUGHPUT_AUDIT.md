@@ -88,8 +88,8 @@ per arm.
 | `javascript-unused` | 65.377 ms | No catch found | Defer to post-cutover. |
 | `csharp-unused-candidates` | 4.868 ms | No C# input; no catch found | Remove until C# exists in the port. |
 | `python-typecheck` | 0.004 ms | No Python input; no catch found | Remove until Python exists in the port. |
-| `env-policy` | 0.006 ms | Caught a regression where three `env-policy: allow` markers stopped suppressing their intended accesses | Keep as the one demonstrated cheap changed-path scanner. Re-measure with an applicable staged path. |
-| `env-name-ledger` | 1.375 s | Caught unaccounted/stale vocabulary, but also blocked every lane on `SPICE_123`, a task-handle negative fixture mistaken for an env read | Move out of pre-commit until its jurisdiction and false-positive policy are repaired. Run in verify/CI meanwhile. |
+| `env-policy` | 0.006 ms | No distinct catch found; the reported three-name event was an `env-name-ledger` refusal, not this arm | Defer to post-cutover. Reconsider only after an applicable-path benchmark and a demonstrated catch. |
+| `env-name-ledger` | 1.375 s | Caught `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` missing from `spice.toml`, but also blocked every lane on `SPICE_123`, a task-handle negative fixture mistaken for an env read | Move out of pre-commit until its jurisdiction and false-positive policy are repaired. Run in verify/CI meanwhile. |
 | `file-shape` | 196.425 ms | Caught a new bound breach and caused work to split files; no functional defect was demonstrated | Defer to post-cutover. It is a structure preference with cross-lane coupling. |
 | `complexity` | **3.544 s** | Caught an 80-line test routine, but also mis-measured a bodyless `extern "C"` declaration through EOF | Defer to post-cutover. The observed catches were shape debt, not behavior defects. |
 | `magic-numbers` | 1.137 s | No catch found | Defer to post-cutover. |
@@ -99,6 +99,13 @@ per arm.
 | `python-unused` | 0.001 ms | Not applicable: selected Python files = 0 | Remove until Python returns. |
 | `assertion-free-tests` | <0.001 ms | Not applicable: selected Python files = 0 | Remove until Python returns. |
 | `private-internals` | <0.001 ms | Not applicable: selected Python files = 0 | Remove until Python returns. |
+
+`VERIFY-1kKFmwQ8` records the three-Git-name event precisely: each access still
+carried an `env-policy: allow` marker that the environment-access arm honored,
+while the separate environment-name ledger has no waiver concept and refused
+because `spice.toml` did not account `GIT_DIR`, `GIT_WORK_TREE`, or
+`GIT_INDEX_FILE`. The event is therefore evidence for `env-name-ledger`, not an
+`env-policy` catch.
 
 ## Complexity, file shape, and the flex slice
 
@@ -147,11 +154,12 @@ inflate an unrelated routine.
 
 The immediate pre-commit contract should be intentionally small:
 
-- Keep only `env-policy`, the demonstrated cheap changed-path catch, after an
-  applicable-path benchmark.
-- Do not acquire core, metrics, or hygiene families for a hook profile that has
-  no retained arm in those families. The current eager capture would otherwise
-  pay most of their cost even after rows were hidden.
+- Retire the blocking battery from pre-commit for cutover. None of its 27 arms
+  has both a demonstrated functional-defect catch and a cost/jurisdiction
+  profile strong enough to retain on every commit.
+- Do not acquire core, toolchain, metrics, or hygiene families for a hook
+  profile with no retained arms. The current eager capture would otherwise pay
+  most of their cost even after rows were hidden.
 - Do not emit the complete success report. Print a compact success receipt and
   retain detailed evidence only for failures or an explicit audit command.
 - Run Clippy, the selected-tree canvas check, the environment ledger, and the
