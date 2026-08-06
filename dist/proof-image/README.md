@@ -53,10 +53,10 @@ report that names either field and not the other is refused outright, because
 the tuple that matters is the one whose `-Cmetadata` the bytes carry — what the
 `xtask` binary itself was compiled for is a different question, and not the one
 the stage is identified by.
-The release is read from `rust-toolchain.toml` alone, and the two other
-places that declare it — `rust-version` in the workspace manifest and
-`RUSTUP_TOOLCHAIN` above — are held equal to it by a test rather than read, so
-a bump that moves one of them and not the others fails here instead of compiling
+The release is read from `rust-toolchain.toml` alone, and the two other places
+that declare it — `rust-version` in the workspace manifest and
+`RUSTUP_TOOLCHAIN` above — are held equal to it by a test rather than read, so a
+bump that moves one of them and not the others fails here instead of compiling
 the stage under a release nothing pinned. What neither guard reads is the image,
 so another host reporting that exact tuple under the pinned release is admitted
 too; what they foreclose is the quiet substitution, because no macOS or musl
@@ -65,45 +65,28 @@ halves are compared as strings the compiler handed over rather than asserted by
 a `cfg!` predicate over what this binary was compiled for, so every lane can
 drive the whole decision: the musl and `gnux32` neighbours are refused in a test
 on macOS hosts that cannot compile for either, and — the case a predicate could
-never reach off the image — the owning tuple is admitted in one too. Stage from
-the repository root with the workspace writable, the image's Cargo home named
-explicitly, and the build root on a writable mount, because the app build writes
-nothing under the workspace:
+never reach off the image — the owning tuple is admitted in one too.
+
+From a development lane's repository root, use the one repository-owned entry
+point:
 
 ```sh
-docker run --rm --platform linux/amd64 --network none \
-  -v "$PWD:/workspace" -v spice-stage-target:/cargo-target \
-  -e CARGO_HOME=/usr/local/cargo -e CARGO_TARGET_DIR=/cargo-target \
-  "$(cat dist/proof-image/identity.txt)" cargo xtask stage-app
+dist/proof-image/stage-app.sh
 ```
 
-The run records what it compiled by asking `git` inside that mount, so stage
-from a checkout whose repository is under `$PWD`. A linked worktree's `.git`
-names a directory outside it, and the run then refuses by name instead of
-recording a listing no index ever answered for.
+The runner resolves its own worktree root and absolute Git common directory. It
+mounts the worktree read-write at `/workspace`, then mounts the common directory
+at the same absolute path read-only, so the worktree's `.git` pointer resolves
+without giving the container write access to the object store, index, refs, or
+other lanes' metadata. It reads the image from `identity.txt`, disables container
+networking, and uses the shared `spice-stage-target` volume for build output.
 
-That refusal is the normal case rather than an edge one, so plan for it before
-touching `wire/` or `app/`. Every development lane is a linked worktree sharing
-one bare repository, and its `.git` is a file reading `gitdir:` followed by a
-path outside the mount; `git ls-files` inside the container answers `fatal: not
-a git repository` for all of them. Stage from a throwaway clone of the commit
-instead — `git clone --branch <branch> <bare> /tmp/<name>` gives a real `.git`
-directory under `$PWD`, and because the clone is checked out at the same commit
-its tree is byte-identical, so the listing git answers for there is the listing
-the lane would have produced. Copy `dist/stage` and `dist/stage-sources.txt`
-back into the lane and commit them there.
-
-Commit the change that drifted the stage *before* cloning, because a clone can
-only see what was committed. Stage from a clone while the lane still holds the
-drift uncommitted and the run will faithfully record the tree without it; you
-then copy back a listing that describes sources the lane does not have, and
-`check-app` refuses again naming the same file. That is a loud failure rather
-than a quiet one, but it costs a second round trip to read as anything other
-than the restage having silently failed. What not to do is bind-mount the bare
-repository at its absolute path so the `gitdir:` pointer resolves: that would
-satisfy the check while handing an emulated container write access to the object
-store every lane shares, which is a far worse trade than cloning a second
-working tree.
+One atomic `.spice-stage-app.lock` directory in the Git common directory covers
+the Docker child lifetime. A second lane refuses before launching Docker; it
+does not wait, retry, or select another staging route. This serializes the
+release-profile build across every linked worktree that shares the repository
+while keeping `dist/stage` and `dist/stage-sources.txt` writes in the lane that
+requested them.
 
 `cargo xtask check-app` runs everywhere and splits its answer accordingly. Every
 host rebuilds the app and compares the staged inventory, which is the part a

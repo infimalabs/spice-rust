@@ -17,7 +17,7 @@ use std::process::Command;
 
 use crate::release::ReleaseEnvironment;
 use crate::stage_sources::{
-    STAGE_INSTRUCTIONS, STAGE_SOURCE_LISTING, compare_stage_sources, record_stage_sources,
+    STAGE_RUNNER, STAGE_SOURCE_LISTING, compare_stage_sources, record_stage_sources,
 };
 use crate::toolchain;
 
@@ -554,9 +554,8 @@ impl fmt::Display for AppBuildError {
             Self::UnreadableSourceIndex(reason) => write!(
                 formatter,
                 "the tracked build inputs could not be read, so what the stage was built \
-                 from cannot be stated: {reason}; mounting a linked worktree is the usual \
-                 cause, because its repository sits outside the mount, and \
-                 {STAGE_INSTRUCTIONS} says what to mount instead"
+                 from cannot be stated: {reason}; renew through {STAGE_RUNNER}, which mounts \
+                 the linked worktree's common Git directory read-only"
             ),
             Self::UntrackedSourceInput(input) => write!(
                 formatter,
@@ -567,10 +566,8 @@ impl fmt::Display for AppBuildError {
                 formatter,
                 "the committed app stage was not built from the sources now in the tree: \
                  {} changed since {STAGE_SOURCE_LISTING} recorded them; restage with \
-                 cargo xtask stage-app in image {}, which is the one environment allowed \
-                 to write the stage, from a checkout whose repository is under the mount \
-                 as {STAGE_INSTRUCTIONS} describes, because that run refuses a linked \
-                 worktree",
+                 {STAGE_RUNNER}, which runs image {} as the one environment allowed to \
+                 write the stage and mounts linked-worktree Git state read-only",
                 paths.join(", "),
                 proof::DEFAULT_IMAGE
             ),

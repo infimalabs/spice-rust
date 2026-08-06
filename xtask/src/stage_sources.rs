@@ -45,15 +45,11 @@ const STAGE_SOURCE_INPUTS: [&str; 7] = [
 /// Where the identity of those inputs is recorded, beside the stage it explains.
 pub(crate) const STAGE_SOURCE_LISTING: &str = "dist/stage-sources.txt";
 
-/// Where the staging run is written out, including what a lane must do first.
+/// The one entry point allowed to renew the committed stage.
 ///
-/// Naming the image and the command is not yet enough to act on. Every
-/// development lane is a linked worktree, and the staging run asks `git` inside
-/// the mount, which cannot resolve a `.git` that points outside it — so the
-/// documented invocation refuses from the place the refusal is read. The way
-/// through is a clone of the same commit, and the refusal is the only moment a
-/// lane is looking, so it says where that is written down.
-pub(crate) const STAGE_INSTRUCTIONS: &str = "dist/proof-image/README.md";
+/// It names the pinned image, linked-worktree Git mount, shared build volume,
+/// and repository-common serialization lock in one executable contract.
+pub(crate) const STAGE_RUNNER: &str = "dist/proof-image/stage-app.sh";
 
 /// Record beside the stage the identity of the inputs this run compiled.
 pub(crate) fn record_stage_sources(root: &Path) -> Result<(), AppBuildError> {
@@ -459,14 +455,12 @@ mod tests {
             matches!(&error, AppBuildError::UnreadableSourceIndex(reason) if reason.contains(GIT)),
             "a tree with no index answered with something other than an unread one: {error}",
         );
-        // This is the refusal a lane actually reaches: every lane is a linked
-        // worktree, so mounting one and running the documented command lands
-        // here rather than on the stale-stage refusal that names the procedure.
-        // Git's own words explain nothing about mounts, so the way out is said
-        // here too, or the reader is stranded at the one door they came through.
+        // Git's own words explain nothing about mounts, so the single runner is
+        // named here too. It supplies the linked-worktree repository mount that
+        // a direct container invocation omitted.
         assert!(
-            error.to_string().contains(STAGE_INSTRUCTIONS),
-            "the refusal a mounted worktree reaches never named {STAGE_INSTRUCTIONS}: {error}",
+            error.to_string().contains(STAGE_RUNNER),
+            "the unreadable-index refusal never named {STAGE_RUNNER}: {error}",
         );
         fs::remove_dir_all(root).expect("remove fixture");
     }
@@ -562,15 +556,7 @@ mod tests {
     /// The refusal is all a host that cannot reproduce the bytes ever sees, so
     /// it carries the whole answer: what moved, where the claim it broke is
     /// recorded, the one command and environment that can renew it, and where
-    /// the rest of the procedure is written down.
-    ///
-    /// That last one is load-bearing rather than a courtesy. The command and the
-    /// image alone read as sufficient and are not: every lane is a linked
-    /// worktree, and the staging run refuses one, so a reader who acts on the
-    /// first three fields is turned away with a message about `git` that names
-    /// nothing in this one. The inventory is written out here rather than
-    /// derived from the refusal, so deleting a field from the message fails
-    /// here instead of quietly shrinking what a stranded host is told.
+    /// the one executable entry point that renews it.
     #[test]
     fn a_stale_stage_names_what_moved_and_how_to_renew_it() {
         let refusal = AppBuildError::StaleStage(vec!["wire/src/ident.rs".to_owned()]).to_string();
@@ -578,9 +564,8 @@ mod tests {
         for expected in [
             "wire/src/ident.rs",
             STAGE_SOURCE_LISTING,
-            "cargo xtask stage-app",
             proof::DEFAULT_IMAGE,
-            STAGE_INSTRUCTIONS,
+            STAGE_RUNNER,
         ] {
             assert!(
                 refusal.contains(expected),
