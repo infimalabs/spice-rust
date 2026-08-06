@@ -870,7 +870,6 @@ fn assert_recall(
             .iter()
             .all(|entry| { entry.seq <= json.barrier && entry.lane == Some(lane) })
     );
-    assert!(json.residency.lanes[0].capabilities.is_empty());
     let encoded = String::from_utf8(wire::encode(&json).expect("recall encodes"))
         .expect("recall is UTF-8 JSON");
     assert!(!encoded.contains(&capability.to_string()));

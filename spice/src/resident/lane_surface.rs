@@ -2,7 +2,7 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant as Monotonic};
 
 use bus::Bus;
 use journal::{FactCause, JournalWrite};
@@ -131,15 +131,20 @@ pub(super) fn read(
     bus: &Bus,
     _paths: &RuntimePaths,
     epoch: CanonicalUuid,
+    seats: &Seats,
     _command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
     let head = match current_residency(bus, epoch) {
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let answer = match answer(head.body(), None, seats) {
+        Ok(answer) => answer,
+        Err(outcome) => return typed_outcome(outcome),
+    };
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(head.position()),
-        body: CommandAnswer::Lane(Box::new(answer(head.body(), None))),
+        body: CommandAnswer::Lane(Box::new(answer)),
     })
 }
 
@@ -189,6 +194,18 @@ fn admit_seat(
     epoch: CanonicalUuid,
     request: &LaneSeat,
 ) -> Result<journal::JournalHead<wire::ResidencyHead>, Outcome<CommandAnswer>> {
+    if request
+        .name
+        .as_ref()
+        .is_some_and(|name| name.is_empty() || name.trim() != name)
+    {
+        return Err(lane_refusal(
+            "lane::name-invalid",
+            Some("one nonblank display name without surrounding whitespace".to_owned()),
+            request.name.clone(),
+            "trim the agent display name or leave it unconfigured",
+        ));
+    }
     if !matches!(request.life.as_str(), "steer" | "drive" | "drain") {
         return Err(lane_refusal(
             "lane::life-invalid",
@@ -352,7 +369,7 @@ pub(super) fn state(
 pub(super) fn capture_record(
     bus: &Bus,
     epoch: CanonicalUuid,
-    seats: &Seats,
+    seats: &mut Seats,
     record: &CaptureRecord,
 ) -> CommandResult<()> {
     if !seats
@@ -442,6 +459,8 @@ pub(super) fn capture_record(
         }
         commit(bus, write)?;
     }
+    let admitted = seats.observe_activity(record.lane, record.occupant, Monotonic::now());
+    debug_assert!(admitted, "the current capture record remains supervised");
     Ok(())
 }
 
@@ -502,6 +521,7 @@ pub(super) fn recall(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
+    seats: &Seats,
     command: &wire::AdmittedCommand,
     request: &LaneRecall,
 ) -> Outcome<CommandAnswer> {
@@ -572,11 +592,15 @@ pub(super) fn recall(
             provenance,
         });
     }
+    let residency = match answer(head.body(), selected, seats) {
+        Ok(answer) => answer,
+        Err(outcome) => return typed_outcome(outcome),
+    };
     let body = RecallAnswer {
         barrier,
         repository: paths.worktree.display().to_string(),
         lane: selected,
-        residency: answer(head.body(), selected),
+        residency,
         recent,
     };
     Outcome::Reply(Reply {

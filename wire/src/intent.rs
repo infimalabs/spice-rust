@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::body::{ConsentQueueCause, DirectiveAttachment, TranscriptLocus};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
-use crate::head::{LaneResidency, ResidentState, TapeLocus, TrustState};
+use crate::head::{ResidentState, TapeLocus, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
@@ -328,6 +328,13 @@ pub struct LaneSeat {
     pub lane: CanonicalUuid,
     /// Canvas lineage whose lane receives the member.
     pub lineage_id: CanonicalUuid,
+    /// Operator-configured agent display name, absent when unconfigured.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub name: Option<String>,
     /// Worktree path the operator created.
     pub worktree: String,
     /// Closed lane-life spelling selected for this seat.
@@ -640,6 +647,68 @@ pub struct StateAnswer {
     pub to: ResidentState,
 }
 
+/// Dynamic liveness of one lane at the read barrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LaneLiveness {
+    /// The occupant was seated or emitted selected-record activity recently.
+    Running,
+    /// The supervised occupant has been quiet for the complete stale horizon.
+    RunningStale,
+    /// No occupant is supervised in this durable seat.
+    Vacant,
+}
+
+impl LaneLiveness {
+    /// Exact operator-facing wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::RunningStale => "running-stale",
+            Self::Vacant => "vacant",
+        }
+    }
+}
+
+/// One capability-free lane row returned by [`LaneRead`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneAnswerRow {
+    /// Stable independently steerable member identity.
+    pub lane: CanonicalUuid,
+    /// Canvas lineage whose lane contains this member.
+    pub lineage_id: CanonicalUuid,
+    /// Operator-configured agent display name, absent when unconfigured.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub name: Option<String>,
+    /// Canonical worktree bound to the lane.
+    pub worktree: String,
+    /// Closed lane-life spelling governing re-seating.
+    pub life: String,
+    /// Vendor selected for occupants of this lane.
+    pub vendor: Name,
+    /// Current occupant, absent between seats.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub occupant: Option<CanonicalUuid>,
+    /// Occupant ancestry, oldest first.
+    pub lineage: Vec<CanonicalUuid>,
+    /// Whether this seat has resumable session authority without exposing it.
+    pub bound: bool,
+    /// Durable occupancy disposition.
+    pub disposition: String,
+    /// Dynamic supervised live/quiet projection at this read barrier.
+    pub liveness: LaneLiveness,
+}
+
 /// Current lane state read at one resident barrier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -649,7 +718,7 @@ pub struct LaneAnswer {
     /// Resident state at the read barrier.
     pub state: ResidentState,
     /// Current lane rows in stable lane order.
-    pub lanes: Vec<LaneResidency>,
+    pub lanes: Vec<LaneAnswerRow>,
 }
 
 /// The answer a lane seating or lifecycle command returns.

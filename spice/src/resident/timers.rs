@@ -492,6 +492,7 @@ mod tests {
             lanes: vec![LaneResidency {
                 lane,
                 lineage_id: lane,
+                name: None,
                 worktree: "/fixture".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),

@@ -274,6 +274,13 @@ pub struct LaneResidency {
     pub lane: CanonicalUuid,
     /// Canvas lineage whose lane contains this member.
     pub lineage_id: CanonicalUuid,
+    /// Operator-configured agent display name, absent on pre-field seats.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub name: Option<String>,
     /// Canonical worktree permanently bound to the lane.
     pub worktree: String,
     /// Closed lane-life spelling governing re-seating.

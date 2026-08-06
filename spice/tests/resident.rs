@@ -902,6 +902,7 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
     next.lanes.push(wire::LaneResidency {
         lane,
         lineage_id: lane,
+        name: None,
         worktree: fixture.root.display().to_string(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -927,6 +928,7 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
                 lane,
                 lineage_id: lane,
                 capability,
+                name: None,
                 worktree: fixture.root.display().to_string(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
