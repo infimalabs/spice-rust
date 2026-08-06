@@ -449,6 +449,9 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .56rem;
 }
+.composer-shard--primary .composer-shard-heading {
+  grid-template-columns: auto minmax(0, 1fr) auto 22px;
+}
 .composer-shard-heading strong {
   overflow: hidden;
   color: var(--identity, var(--ink));
@@ -463,8 +466,9 @@
   text-underline-offset: 2px;
 }
 .composer-shard-age {
-  color: var(--accent);
+  color: var(--identity, var(--accent));
 }
+.composer-shard-image-indicators:empty { display: none; }
 .composer-shard-heading > button,
 .agent-action-menu > summary {
   display: grid;

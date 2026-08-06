@@ -996,6 +996,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     nestedQuotePreview,
     nestedQuoteMessage,
     entirelyQuotedMessage,
+    latestPrimaryProse: "Canvas message reports CONTROL-1kKbC3j4 from lane-4",
   });
 
   await activity
