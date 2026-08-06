@@ -36,18 +36,18 @@ fn listen_refusal_for(argv: &[&str]) -> String {
     }
 }
 
-fn access_for(argv: &[&str]) -> CommandResult<canvas::axum::Access> {
+fn access_for(argv: &[&str]) -> CommandResult<()> {
     let matches = spice::cli::command()
         .try_get_matches_from(argv)
         .expect("declared up operands parse");
     let leaf = spice::cli::selected_matches(&matches);
     let listen = requested_listen(leaf)?;
-    requested_access(leaf, listen)
+    requested_access(leaf, listen).map(|_| ())
 }
 
 fn access_refusal(argv: &[&str]) -> Refusal {
     match access_for(argv) {
-        Ok(access) => panic!("{argv:?} must not admit {access:?}"),
+        Ok(()) => panic!("{argv:?} must not admit access"),
         Err(Outcome::Refusal(refusal)) => refusal,
         Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
     }
@@ -772,6 +772,7 @@ fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
 
     announce_canvas(
         &path,
+        None,
         false,
         || {},
         |endpoint| {
@@ -805,6 +806,7 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
 
     announce_canvas(
         &path,
+        None,
         true,
         || {},
         |endpoint| {
@@ -825,6 +827,44 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
         "an opened endpoint is not a diagnostic: {}",
         String::from_utf8_lossy(&diagnostics)
     );
+    fs::remove_dir_all(&root).expect("announcement fixture cleanup");
+}
+
+/// An authenticated opening keeps its bearer outside the HTTP origin.
+#[test]
+fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
+    const TOKEN: &str = "correct-horse-battery-staple";
+
+    let (root, path, discovery) = published_discovery("announce-authenticated", 48234);
+    let mut dialled = None;
+    let mut announced = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    announce_canvas(
+        &path,
+        Some(TOKEN),
+        true,
+        || {},
+        |endpoint| {
+            dialled = Some(endpoint.to_owned());
+            Ok(())
+        },
+        &mut announced,
+        &mut diagnostics,
+    );
+
+    let opening = format!("{}#{TOKEN}", discovery.endpoint);
+    assert_eq!(dialled.as_deref(), Some(opening.as_str()));
+    assert_eq!(
+        String::from_utf8(announced).expect("announcement is text"),
+        format!("canvas endpoint: {opening}\n")
+    );
+    assert_eq!(
+        opening.split_once('#').expect("opening has fragment").0,
+        discovery.endpoint,
+        "the token must not become part of the HTTP origin"
+    );
+    assert!(diagnostics.is_empty());
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
 }
 
@@ -853,6 +893,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 
     announce_canvas(
         &path,
+        None,
         true,
         || {
             replacement
@@ -951,6 +992,7 @@ fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
 
     announce_canvas(
         &path,
+        None,
         true,
         || {},
         |endpoint| {

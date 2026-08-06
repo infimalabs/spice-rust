@@ -209,14 +209,22 @@ pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
 
 pub(crate) struct CanvasBinding {
     listen: SocketAddr,
-    access: canvas::axum::Access,
+    access: CanvasAccess,
+}
+
+struct CanvasAccess {
+    policy: canvas::axum::Access,
+    token: Option<String>,
 }
 
 impl CanvasBinding {
     pub(crate) fn local(listen: SocketAddr) -> Self {
         Self {
             listen,
-            access: canvas::axum::Access::local(),
+            access: CanvasAccess {
+                policy: canvas::axum::Access::local(),
+                token: None,
+            },
         }
     }
 }
@@ -271,7 +279,7 @@ fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
 fn requested_access(
     leaf: &clap::ArgMatches,
     listen: SocketAddr,
-) -> CommandResult<canvas::axum::Access> {
+) -> CommandResult<CanvasAccess> {
     let token = leaf.get_one::<String>("auth-token").cloned();
     if let Some(token) = token.as_deref()
         && !auth_token_is_valid(token)
@@ -299,7 +307,10 @@ fn requested_access(
             "add --auth-token TOKEN and open the remote URL with #TOKEN",
         ));
     }
-    Ok(token.map_or_else(canvas::axum::Access::local, canvas::axum::Access::authenticated))
+    let policy = token.as_ref().map_or_else(canvas::axum::Access::local, |token| {
+        canvas::axum::Access::authenticated(token.clone())
+    });
+    Ok(CanvasAccess { policy, token })
 }
 
 fn auth_token_is_valid(token: &str) -> bool {
@@ -682,9 +693,10 @@ async fn run_surface(
         progress,
         endpoint,
     } = launch;
-    let listen = binding.listen;
+    let CanvasBinding { listen, access } = binding;
+    let CanvasAccess { policy, token } = access;
     let (server, control) = canvas::axum::Server::bind_streaming(
-        canvas::axum::Binding::new(listen, binding.access),
+        canvas::axum::Binding::new(listen, policy),
         epoch,
         capabilities.clone(),
         app,
@@ -727,6 +739,7 @@ async fn run_surface(
     let _ = writeln!(progress, "canvas app source: {app_description}");
     announce_canvas(
         &paths.canvas,
+        token.as_deref(),
         open,
         || {},
         crate::command_client::system_browser,
@@ -776,6 +789,11 @@ async fn run_surface(
 /// the whole reason there is no separate opener command: one reader admits the
 /// endpoint, and `up` is simply its first caller.
 ///
+/// Authenticated access decorates that admitted endpoint only after admission.
+/// The token stays in the URL fragment for announcement and browser launch, so
+/// it neither changes the discovery origin nor crosses in the browser's HTTP
+/// origin.
+///
 /// A resident whose own discovery fails that admission says so and keeps
 /// serving. The surface is up either way, and refusing to run because the
 /// operator cannot be handed a URL would trade a working appliance for a
@@ -787,6 +805,7 @@ async fn run_surface(
 /// there is not one, so it sees an empty capture instead.
 fn announce_canvas(
     discovery_path: &Path,
+    auth_token: Option<&str>,
     open: bool,
     before_current_check: impl FnOnce(),
     browser: impl FnOnce(&str) -> Result<(), String>,
@@ -796,12 +815,26 @@ fn announce_canvas(
     let result = crate::command_client::open_canvas_result_with(
         discovery_path,
         before_current_check,
-        |endpoint| if open { browser(endpoint) } else { Ok(()) },
+        |endpoint| {
+            if open {
+                browser(&canvas_opening(endpoint, auth_token))
+            } else {
+                Ok(())
+            }
+        },
     );
     let _ = match result {
-        Ok(opened) => writeln!(announcement, "canvas endpoint: {}", opened.endpoint),
+        Ok(opened) => writeln!(
+            announcement,
+            "canvas endpoint: {}",
+            canvas_opening(&opened.endpoint, auth_token)
+        ),
         Err(fault) => writeln!(diagnostic, "canvas unavailable: {}", fault.reason),
     };
+}
+
+fn canvas_opening(endpoint: &str, auth_token: Option<&str>) -> String {
+    auth_token.map_or_else(|| endpoint.to_owned(), |token| format!("{endpoint}#{token}"))
 }
 
 fn surface_capabilities(
