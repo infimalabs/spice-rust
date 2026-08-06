@@ -239,7 +239,7 @@ export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
 function concatAgentRecord() {
   const prefix = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\","
     + "\"role\":\"assistant\",\"content\":[{\"type\":\"text\","
-    + "\"text\":\"Canvas message from ";
+    + "\"text\":\"Canvas message reports CONTROL-1kKbC3j4 from ";
   const suffix = "\"}],\"usage\":{\"input_tokens\":1,\"cache_read_input_tokens\":0,"
     + "\"cache_creation_input_tokens\":0,\"output_tokens\":1}}}";
   return `printf '%s%s%s\\n' '${prefix}' "$name" '${suffix}'`;
