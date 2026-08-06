@@ -1,9 +1,10 @@
 use std::cell::Cell;
 
 use app::mosaic::{
-    Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, Reservation, TRACK_COUNT, burial_depth,
-    content_box_width, css_row_start, extent, full_replay, pack, pane_is_scrolled, replay_liquid,
-    resolve_frozen_resize, ripple_rows, scroll_compensation, span_candidates,
+    Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, Reservation, TALL_THRESHOLD_PX,
+    TRACK_COUNT, burial_depth, content_box_width, css_row_start, extent, full_replay, pack,
+    pane_is_scrolled, replay_liquid, resolve_frozen_resize, ripple_rows, scroll_compensation,
+    span_candidates,
 };
 
 fn candidates(span: usize, rows: i32) -> Vec<Candidate> {
@@ -112,6 +113,33 @@ fn wide_measurement_occurs_only_for_a_tall_card_and_at_most_once() {
     });
     assert_eq!(calls.get(), 1);
     assert_eq!(measured.len(), 1);
+}
+
+#[test]
+fn candidate_policy_depends_on_measured_height_not_card_class() {
+    let geometry = Geometry::new(16.0, 1440.0);
+    let candidates_for = |_: &str, base_height: f64| {
+        let calls = Cell::new(0);
+        let candidates = span_candidates(&geometry, |span| {
+            calls.set(calls.get() + 1);
+            if span == geometry.base_span {
+                base_height
+            } else {
+                180.0
+            }
+        });
+        (candidates, calls.get())
+    };
+
+    let agent = candidates_for("agent-message", TALL_THRESHOLD_PX);
+    let directive = candidates_for("directive-with-attachment", TALL_THRESHOLD_PX);
+    assert_eq!(agent, directive);
+    assert_eq!(agent.1, 2);
+
+    let subthreshold = candidates_for("directive", TALL_THRESHOLD_PX - 1.0);
+    assert_eq!(subthreshold.1, 1);
+    assert_eq!(subthreshold.0.len(), 1);
+    assert_eq!(subthreshold.0[0].span, geometry.base_span);
 }
 
 #[test]

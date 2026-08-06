@@ -8,7 +8,6 @@
   .metric:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
   .metric:nth-child(4) { border-top: 1px solid var(--line); }
   .split { grid-template-columns: 1fr; }
-  .mosaic-message-grid { columns: 1; }
   .seat-panel { border-top: 1px solid var(--line); border-left: 0; }
 }
 
