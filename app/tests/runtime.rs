@@ -1,6 +1,9 @@
 //! The real canvas runtime retains only admitted, capability-scoped state.
 
-use app::{CanvasRuntime, ChainEnd, Session, Stale, StreamDirective, StreamTerminal, stale_reads};
+use app::{
+    CanvasRuntime, ChainEnd, LaneStatus, Session, Stale, StreamDirective, StreamTerminal,
+    stale_reads,
+};
 use wire::{CanonicalUuid, CommandKind, Response, Seq, StreamFrame, ViewSubject};
 
 const OPERATOR: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -11,6 +14,8 @@ const NEXT_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163ca";
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c2";
 const REQUEST: &str = "018f82d4-6f59-7d06-92e3-bce9131163c4";
 const SECRET_LANE_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163cc";
+const SECOND_LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163cd";
+const THIRD_LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163ce";
 
 fn uuid(text: &str) -> CanonicalUuid {
     text.parse().expect("fixture uuid is canonical")
@@ -180,6 +185,50 @@ fn board_response(
     session
         .admit_frame(&bytes)
         .expect("board response is admitted")
+}
+
+/// One admitted lane roster, one row per `(lane, occupant, session)` triple.
+///
+/// The session body is the resident's real one rather than a placeholder,
+/// because `bound` is derived from its presence and a shape the wire refuses
+/// would prove the mapping against a row that never crosses.
+fn lane_response(rows: &[(&str, Option<&str>, bool)]) -> String {
+    let lanes = rows
+        .iter()
+        .map(|(lane, occupant, bound)| {
+            let mut row = serde_json::json!({
+                "lane": lane,
+                "worktree": format!("/tmp/worktree-{}", &lane[..8]),
+                "life": "steer",
+                "vendor": "claude",
+                "lineage": [],
+                "capabilities": [],
+                "disposition": if occupant.is_some() { "occupied" } else { "vacant" },
+            });
+            if let Some(occupant) = occupant {
+                row["occupant"] = serde_json::json!(occupant);
+            }
+            if *bound {
+                row["session"] = serde_json::json!({
+                    "lane": lane,
+                    "occupant": OPERATOR,
+                    "worktree": format!("/tmp/worktree-{}", &lane[..8]),
+                    "vendor": "claude",
+                    "epoch": EPOCH,
+                    "stream": "stdout",
+                    "identity": "018f7777-7777-7444-8888-999999999999",
+                    "locus": {"member": 0, "offset": 0, "length": 12},
+                });
+            }
+            row
+        })
+        .collect::<Vec<_>>();
+    let body = serde_json::json!({
+        "kind": "reply",
+        "cursor": 41,
+        "body": {"epoch": EPOCH, "state": "seated", "lanes": lanes},
+    });
+    serde_json::json!({"v": 1, "id": REQUEST, "epoch": EPOCH, "outcome": body}).to_string()
 }
 
 fn fact_frame(fact: serde_json::Value) -> Vec<u8> {
@@ -679,6 +728,79 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
         stale_reads(&thread),
         Stale::default(),
         "a causal walk is history rather than an advance"
+    );
+}
+
+/// The tile ladder is the predecessor's, and every rung has its own cause.
+///
+/// The four rungs are read from three independent inputs — queued direction,
+/// a live occupant, and a declared session — so the fixture varies one at a
+/// time rather than presenting four lanes that differ in every field. The
+/// labels are written out here rather than read back from [`LaneStatus`],
+/// because a test that asks the enum what its wording is passes after the
+/// wording changes.
+///
+/// The rank is asserted through a shuffled sort because the strip orders its
+/// tiles by `Ord` alone: a ladder that named the four states in the right
+/// order but derived the wrong comparison would still put the lane waiting on
+/// the operator at the far end of the strip.
+#[test]
+fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_seat() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = lane_response(&[
+        (SECOND_LANE, None, false),
+        (LANE, Some(OPERATOR), false),
+        (THIRD_LANE, None, true),
+    ]);
+    let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(bytes.as_bytes())
+        .expect("lane answer is admitted");
+    runtime.apply_lanes(&admitted);
+
+    let lanes = runtime
+        .lanes()
+        .expect("the roster is retained")
+        .lanes
+        .clone();
+    let [never_seated, occupied, seated_before] = <[_; 3]>::try_from(lanes)
+        .unwrap_or_else(|rows| panic!("three rows survive admission, got {}", rows.len()));
+    assert_eq!(never_seated.status(0), LaneStatus::Unbound);
+    assert_eq!(
+        seated_before.status(0),
+        LaneStatus::Bound,
+        "a seat with a declared session is bound rather than unbound once its occupant leaves"
+    );
+    assert_eq!(occupied.status(0), LaneStatus::Running);
+    assert_eq!(occupied.status(2), LaneStatus::Queued);
+    assert_eq!(
+        never_seated.status(1),
+        LaneStatus::Queued,
+        "queued direction outranks liveness even in a seat nobody has ever occupied"
+    );
+
+    assert_eq!(LaneStatus::Queued.label(), "steering queued");
+    assert_eq!(LaneStatus::Running.label(), "agent running");
+    assert_eq!(LaneStatus::Bound.label(), "agent bound");
+    assert_eq!(LaneStatus::Unbound.label(), "agent unbound");
+
+    let mut strip = vec![
+        LaneStatus::Unbound,
+        LaneStatus::Running,
+        LaneStatus::Bound,
+        LaneStatus::Queued,
+    ];
+    strip.sort_unstable();
+    assert_eq!(
+        strip,
+        vec![
+            LaneStatus::Queued,
+            LaneStatus::Running,
+            LaneStatus::Bound,
+            LaneStatus::Unbound,
+        ],
+        "the strip reads left to right as the predecessor's targetChoiceStatusValues"
     );
 }
 
