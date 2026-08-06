@@ -10,8 +10,21 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 
 #[derive(Debug)]
 pub(super) struct ClosingListener {
-    pub(super) listener: tokio::net::TcpListener,
-    pub(super) connections: CancellationToken,
+    listener: tokio::net::TcpListener,
+    connections: CancellationToken,
+}
+
+impl ClosingListener {
+    pub(super) fn new(listener: tokio::net::TcpListener, connections: CancellationToken) -> Self {
+        Self {
+            listener,
+            connections,
+        }
+    }
+
+    pub(super) fn bound_address(&self) -> std::io::Result<SocketAddr> {
+        self.listener.local_addr()
+    }
 }
 
 impl ::axum::serve::Listener for ClosingListener {

@@ -253,9 +253,7 @@ fn requested_access(
 ) -> CommandResult<canvas::axum::Access> {
     let token = leaf.get_one::<String>("auth-token").cloned();
     if let Some(token) = token.as_deref()
-        && (token.len() < AUTH_TOKEN_MIN_BYTES
-            || token.len() > AUTH_TOKEN_MAX_BYTES
-            || !token.bytes().all(is_token_byte))
+        && !auth_token_is_valid(token)
     {
         return Err(access_refusal(
             "resident::auth-token-invalid",
@@ -281,6 +279,11 @@ fn requested_access(
         ));
     }
     Ok(token.map_or_else(canvas::axum::Access::local, canvas::axum::Access::authenticated))
+}
+
+fn auth_token_is_valid(token: &str) -> bool {
+    (AUTH_TOKEN_MIN_BYTES..=AUTH_TOKEN_MAX_BYTES).contains(&token.len())
+        && token.bytes().all(is_token_byte)
 }
 
 const fn is_token_byte(byte: u8) -> bool {

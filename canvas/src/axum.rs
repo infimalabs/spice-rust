@@ -590,10 +590,7 @@ impl Server {
         let (admission_observed, _) = watch::channel(None);
         Ok((
             Self {
-                listener: ClosingListener {
-                    listener,
-                    connections: connections.clone(),
-                },
+                listener: ClosingListener::new(listener, connections.clone()),
                 state: Arc::new(SurfaceState {
                     authority,
                     access,
@@ -620,7 +617,7 @@ impl Server {
 
     /// Bound address, which is what was asked for with the port resolved.
     pub fn local_addr(&self) -> Result<SocketAddr, std::io::Error> {
-        self.listener.listener.local_addr()
+        self.listener.bound_address()
     }
 
     /// Discovery document for the registered operator capability.

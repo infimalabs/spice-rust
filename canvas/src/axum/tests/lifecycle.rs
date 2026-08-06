@@ -2,6 +2,9 @@
 
 use super::*;
 
+const LOOPBACK_AUTHORITY: &str = "127.0.0.1:48123";
+const LOOPBACK_ORIGIN: &str = "http://127.0.0.1:48123";
+
 #[tokio::test(flavor = "current_thread")]
 async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     let capabilities = Capabilities::default();
@@ -554,9 +557,9 @@ fn unknown_capability_refuses_without_echoing_the_credential() {
 #[test]
 fn host_and_origin_must_name_the_published_endpoint() {
     let state = SurfaceState {
-        authority: Authority::Only("127.0.0.1:48123".to_owned()),
+        authority: Authority::Only(LOOPBACK_AUTHORITY.to_owned()),
         access: Access::local(),
-        origin: "http://127.0.0.1:48123".to_owned(),
+        origin: LOOPBACK_ORIGIN.to_owned(),
         epoch: epoch(),
         capabilities: Capabilities::default(),
         app: app(),
@@ -576,9 +579,12 @@ fn host_and_origin_must_name_the_published_endpoint() {
     headers.insert(ORIGIN, HeaderValue::from_static("https://attacker.example"));
     assert!(admit_headers(&state, &headers, true).is_err());
 
-    headers.insert(HOST, HeaderValue::from_static("127.0.0.1:48123"));
-    headers.insert(ORIGIN, HeaderValue::from_static("http://127.0.0.1:48123"));
-    assert_eq!(admit_headers(&state, &headers, true), Ok("127.0.0.1:48123"));
+    headers.insert(HOST, HeaderValue::from_static(LOOPBACK_AUTHORITY));
+    headers.insert(ORIGIN, HeaderValue::from_static(LOOPBACK_ORIGIN));
+    assert_eq!(
+        admit_headers(&state, &headers, true),
+        Ok(LOOPBACK_AUTHORITY)
+    );
 
     // A specific bind admits its own name alone, so a second address of this
     // machine is refused even though the surface is listening on this port.

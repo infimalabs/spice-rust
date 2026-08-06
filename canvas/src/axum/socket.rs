@@ -3,6 +3,10 @@
 use super::*;
 use ::axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 
+const CAPABILITY_REPLACED_REASON: &str = "stream::capability-replaced";
+const CAPABILITY_REPLACED_DETAIL: &str =
+    "the capability that authenticated this stream is no longer current";
+
 pub(super) async fn socket(
     State(state): State<Arc<SurfaceState>>,
     RawQuery(query): RawQuery,
@@ -417,8 +421,8 @@ async fn send_replaced(
         epoch,
         id,
         wire::FaultClass::Protocol,
-        "stream::capability-replaced",
-        "the capability that authenticated this stream is no longer current",
+        CAPABILITY_REPLACED_REASON,
+        CAPABILITY_REPLACED_DETAIL,
     );
     send_encoded(socket, &frame).await;
 }
