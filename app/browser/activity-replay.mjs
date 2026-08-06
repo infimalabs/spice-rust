@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 
 const newerProse = "assistant: newest lane prose witness";
+const olderTool = "Bash: git status --short";
 
 function decodeServerFrame(message) {
   return JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
@@ -22,7 +23,7 @@ export async function installActivityReplay(context) {
       if (
         frame.stream === "message" &&
         frame.message?.activity === "tool" &&
-        frame.message.text === "Bash"
+        frame.message.text === olderTool
       ) {
         captured = { frame, message, socket };
       }
