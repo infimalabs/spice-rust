@@ -8,6 +8,7 @@ const COMMIT: &str = "1111111111111111111111111111111111111111";
 const MOVED: &str = "2222222222222222222222222222222222222222";
 const TEST_WASM: &[u8] = b"lane-built wasm";
 const TEST_HTML: &[u8] = b"lane-built shell";
+const GENERATION: &str = "6666666666666666666666666666666666666666666666666666666666666666";
 
 struct Fixture {
     root: PathBuf,
@@ -21,9 +22,21 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join("dist/stage")).expect("fixture stage directory");
-        fs::create_dir_all(root.join("dist/stage-dev")).expect("fixture app directory");
-        fs::write(root.join(APP_ARTIFACT), TEST_WASM).expect("write lane-built Wasm");
-        fs::write(root.join(EMBEDDED_ARTIFACT), TEST_HTML).expect("write lane-built shell");
+        let app = root
+            .join(spice::canvas::DEV_STAGE)
+            .join(spice::canvas::DEV_STAGE_GENERATIONS)
+            .join(GENERATION);
+        fs::create_dir_all(&app).expect("fixture app generation");
+        fs::write(app.join("app_bg.wasm"), TEST_WASM).expect("write lane-built Wasm");
+        fs::write(app.join("canvas-app.html"), TEST_HTML).expect("write lane-built shell");
+        fs::write(app.join("app.module"), b"lane-built module").expect("write lane module");
+        fs::write(app.join("style.css"), b"lane-built style").expect("write lane style");
+        fs::write(
+            root.join(spice::canvas::DEV_STAGE)
+                .join(spice::canvas::DEV_STAGE_CURRENT),
+            format!("{GENERATION}\n"),
+        )
+        .expect("write lane app pointer");
         Self { root }
     }
 
@@ -610,7 +623,7 @@ fn a_refusing_build_command_publishes_no_pointer_over_the_previous_one() {
         "the refusal has to stop the first build step, not be noticed later"
     );
     assert!(
-        fs::read(fixture.root.join(APP_ARTIFACT)).is_ok(),
+        read_lane_app_asset(&fixture.root, "/app_bg.wasm").is_ok(),
         "the artifact the ignored status would have published must still be readable"
     );
 }

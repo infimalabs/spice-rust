@@ -14,7 +14,8 @@ pub mod thread;
 pub mod view;
 
 pub use asset::{
-    APP, App, AppAsset, AppSource, AppSourceError, DEV_STAGE, Discovery, PublishError, ServedAsset,
+    APP, APP_GENERATION_ROUTE, App, AppAsset, AppGeneration, AppSource, AppSourceError, DEV_STAGE,
+    DEV_STAGE_CURRENT, DEV_STAGE_GENERATIONS, Discovery, PublishError, ServedAsset,
 };
 pub use config::{Config, ConfigError};
 pub use speech::{SpeechBackend, SpeechConfig, SpeechConfigError};

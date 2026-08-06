@@ -1211,12 +1211,19 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
     let fixture = Fixture::new("app-source");
     let stage = fixture.root.join(canvas::DEV_STAGE);
     fs::remove_dir_all(&stage).expect("remove complete fixture app");
-    fs::create_dir_all(&stage).expect("fixture stage");
+    let identity = "5555555555555555555555555555555555555555555555555555555555555555";
+    let generation = stage.join(canvas::DEV_STAGE_GENERATIONS).join(identity);
+    fs::create_dir_all(&generation).expect("fixture generation");
     fs::write(
-        stage.join("canvas-app.html"),
+        generation.join("canvas-app.html"),
         b"locally built canvas-app.html",
     )
     .expect("fixture asset");
+    fs::write(
+        stage.join(canvas::DEV_STAGE_CURRENT),
+        format!("{identity}\n"),
+    )
+    .expect("fixture pointer");
 
     let mut resident = RunningResident::spawn(&fixture);
     // Bounded rather than a bare wait: a resident that never resolved this

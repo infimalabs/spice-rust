@@ -23,8 +23,10 @@ cargo xtask dev-app
 ```
 
 That resident serves the HTML, JavaScript, stylesheet, and WASM built in this
-worktree's ignored `dist/stage-dev`. It refuses to start when that four-file
-stage is absent or incomplete. Open it with:
+worktree's ignored `dist/stage-dev` generation store. `dev-app` finalizes all
+four files away from the served path and atomically publishes one immutable
+generation, so rebuilding cannot mix a page's assets. The resident refuses to
+start when no complete generation is active. Open it with:
 
 ```sh
 .spice/bin/spice canvas

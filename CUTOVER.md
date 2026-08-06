@@ -178,8 +178,9 @@ cd "$CUTOVER_REPO"
 "$CUTOVER_BIN" --json board
 ```
 
-The Canvas web app is built natively into ignored `dist/stage-dev`, and `up`
-serves only those lane-local assets. From terminal B, open the app:
+The Canvas web app is built natively into ignored `dist/stage-dev`; one atomic
+pointer selects a complete immutable generation, and `up` serves only those
+lane-local assets. From terminal B, open the app:
 
 ```sh
 .spice/bin/spice --json canvas | tee "$CUTOVER_EVIDENCE/canvas.json"
