@@ -207,6 +207,8 @@ pub(super) fn render_directive_card(
             data-directive={directive.directive.to_string()}
             data-card-kind="directive"
             data-agent-lane={lane.to_string()}
+            data-accent={correspondent.accent.to_string()}
+            data-accent-slot={correspondent.accent.to_string()}
             data-state={layout.lifecycle.as_str()}
             data-track={layout.track.to_string()}
             data-span={layout.span.to_string()}
