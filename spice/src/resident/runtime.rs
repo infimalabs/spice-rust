@@ -705,6 +705,12 @@ async fn run_surface(
     let discovery = server
         .discovery(operator)
         .map_err(|error| environment_fault("canvas::discovery-invalid", &error.to_string()))?;
+    let message_publisher = server.message_publisher().ok_or_else(|| {
+        environment_fault(
+            "canvas::message-surface-unavailable",
+            "the streaming canvas server has no transcript message publisher",
+        )
+    })?;
     let published = PublishedDiscovery {
         path: paths.canvas.clone(),
         lane_root: paths.lane_canvas.clone(),
@@ -753,6 +759,7 @@ async fn run_surface(
         published,
         shutdown,
         server_task,
+        message_publisher,
         records,
         failures,
         timers.drive(bus, timer_commits),
@@ -838,6 +845,7 @@ async fn drive_surface(
     published: PublishedDiscovery,
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
+    message_publisher: canvas::stream::MessagePublisher,
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
     mut failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
     timer: impl std::future::Future<Output = CommandResult<()>>,
@@ -860,7 +868,13 @@ async fn drive_surface(
                     "lane::capture-records-closed",
                     "lane capture record receiver closed",
                 ))?;
+                let current = seats
+                    .occupant(record.lane)
+                    .is_some_and(|occupant| occupant.occupant() == record.occupant);
                 lane_surface::capture_record(bus, epoch, seats, &record)?;
+                if current {
+                    publish_agent_messages(&message_publisher, &record)?;
+                }
             }
             failure = failures.recv() => {
                 let failure = failure.ok_or_else(|| environment_fault(
@@ -875,6 +889,36 @@ async fn drive_surface(
             }
         }
     }
+}
+
+fn publish_agent_messages(
+    publisher: &canvas::stream::MessagePublisher,
+    record: &lane::capture::CaptureRecord,
+) -> CommandResult<()> {
+    for (event, decoded) in record.decoded.events().iter().enumerate() {
+        let listen::Event::Prose(prose) = decoded else {
+            continue;
+        };
+        let event = u32::try_from(event).map_err(|error| {
+            store_fault("canvas::message-locus-invalid", &error.to_string())
+        })?;
+        publisher
+            .publish(wire::AgentMessage {
+                lane: record.lane,
+                author: record.occupant,
+                locus: wire::MessageLocus {
+                    member: prose.locus.member,
+                    offset: prose.locus.offset,
+                    length: prose.locus.length,
+                    event,
+                },
+                text: prose.text.clone(),
+            })
+            .map_err(|error| {
+                store_fault("canvas::message-publish-failed", &error.to_string())
+            })?;
+    }
+    Ok(())
 }
 
 async fn dispatch_control(

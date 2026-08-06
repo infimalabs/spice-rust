@@ -224,12 +224,22 @@ pub(super) fn render_ticker(surface: &SurfaceData) -> Html {
 
 /// One packed card: the lattice decides where, this says what.
 pub(super) fn render_mosaic_card(
-    (directive, card): (&wire::intent::PendingDirective, &crate::mosaic::Card),
+    (message, card): (&wire::AgentMessage, &crate::mosaic::Card),
     max_row: i32,
-    correspondent: &Correspondent,
+    actions: &CardActions,
 ) -> Html {
     let state = card.lifecycle.as_str();
-    let text = directive.text.clone();
+    let text = message.text.clone();
+    let key = format!(
+        "{}:{}:{}:{}:{}",
+        message.lane,
+        message.locus.member,
+        message.locus.offset,
+        message.locus.length,
+        message.locus.event,
+    );
+    let author = crate::watchband::short(message.author);
+    let accent = crate::watchband::accent(message.author);
     // A card is a quotable source as well as a rendered message: the operator
     // drags one onto a lane to carry its text into that lane's composer. The
     // payload is the card's own text, so this needs nothing the card does not
@@ -243,12 +253,13 @@ pub(super) fn render_mosaic_card(
     });
     html! {
         <article
-            class={classes!("message", "outgoing", "mosaic-card", state)}
+            class={classes!("message", "incoming", "mosaic-card", state)}
             draggable="true"
             {ondragstart}
             data-state={state}
-            data-key={directive.key.clone()}
-            data-accent={correspondent.accent.to_string()}
+            data-key={key.clone()}
+            data-author={message.author.to_string()}
+            data-accent={accent.to_string()}
             data-track={card.track.to_string()}
             data-span={card.span.to_string()}
             data-base={card.base.to_string()}
@@ -256,41 +267,31 @@ pub(super) fn render_mosaic_card(
             data-rows={card.rows.to_string()}
         >
             <p>{text.clone()}</p>
-            {render_attachments(&directive.attachments)}
             <footer class="message-meta">
-                <span class="message-key">{directive.key.clone()}</span>
-                <span class="message-age" title={directive.expires.to_string()}>
-                    {format!(
-                        "{} left",
-                        watchband::elapsed_label(
-                            directive.expires.get().as_millisecond() - now_millis(),
-                        ),
-                    )}
-                </span>
-                <span class="message-author">{correspondent.name.clone()}</span>
-                {render_card_actions(&text, correspondent)}
+                <span class="message-key">{format!(
+                    "m{}:{}#{}",
+                    message.locus.member,
+                    message.locus.offset,
+                    message.locus.event,
+                )}</span>
+                <span class="message-author">{author}</span>
+                {render_card_actions(&text, actions)}
             </footer>
             <span class="accent-rail" aria-hidden="true"></span>
         </article>
     }
 }
 
-/// Who the card is addressed to, and the colour that says so.
-///
-/// A pending directive carries no author of its own: the operator wrote every
-/// one of them. What distinguishes cards is the lane they are waiting on, so
-/// that is what the accent and the footer name.
+/// Lane-bound actions available on every agent-authored message card.
 #[derive(Clone, PartialEq)]
-pub(super) struct Correspondent {
-    pub(super) name: String,
-    pub(super) accent: usize,
+pub(super) struct CardActions {
     pub(super) speak: Callback<String>,
     pub(super) quote: Callback<String>,
 }
 
-fn render_card_actions(text: &str, correspondent: &Correspondent) -> Html {
-    let speak = correspondent.speak.clone();
-    let quote = correspondent.quote.clone();
+fn render_card_actions(text: &str, actions: &CardActions) -> Html {
+    let speak = actions.speak.clone();
+    let quote = actions.quote.clone();
     let spoken = text.to_owned();
     let quoted = text.to_owned();
     let copied = text.to_owned();
@@ -334,27 +335,5 @@ fn copy_text(text: &str) {
         .and_then(|write| write.dyn_into::<js_sys::Function>().ok());
     if let Some(write) = write {
         let _ = write.call1(&clipboard, &JsValue::from_str(text));
-    }
-}
-
-pub(super) fn render_attachments(attachments: &[wire::body::DirectiveAttachment]) -> Html {
-    if attachments.is_empty() {
-        return Html::default();
-    }
-    html! {
-        <div class="message-attachments">
-            {for attachments.iter().map(|attachment| {
-                if attachment.content_type.starts_with("image/") {
-                    html! {
-                        <figure>
-                            <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
-                            <figcaption>{attachment.name.clone()}</figcaption>
-                        </figure>
-                    }
-                } else {
-                    html! { <span class="message-attachment">{attachment.name.clone()}</span> }
-                }
-            })}
-        </div>
     }
 }

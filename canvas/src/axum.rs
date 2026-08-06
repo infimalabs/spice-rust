@@ -625,6 +625,18 @@ impl Server {
         self.listener.bound_address()
     }
 
+    /// Writer for agent prose on a streaming surface.
+    ///
+    /// Non-streaming test and compatibility surfaces have no transcript view,
+    /// so they return `None` rather than accepting messages nobody can read.
+    #[must_use]
+    pub fn message_publisher(&self) -> Option<crate::stream::MessagePublisher> {
+        self.state
+            .stream
+            .as_ref()
+            .map(crate::stream::Source::message_publisher)
+    }
+
     /// Discovery document for the registered operator capability.
     pub fn discovery(&self, capability: wire::CanonicalUuid) -> Result<Discovery, CapabilityError> {
         if !self.state.capabilities.is_operator(capability) {

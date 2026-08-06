@@ -772,6 +772,57 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
 }
 
+#[test]
+fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
+    let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
+        .expect("message bus starts");
+    let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
+    let publisher = source.message_publisher();
+    let mut updates = source.subscribe_messages();
+    let locus = listen::Locus::new(4, 120, 48);
+    let record = lane::capture::CaptureRecord {
+        lane: test_uuid(5),
+        occupant: test_uuid(6),
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events(vec![
+            listen::Event::Reasoning(listen::Reasoning {
+                content: listen::ReasoningContent::Opaque,
+                locus,
+            }),
+            listen::Event::Prose(listen::Prose {
+                text: "agent-authored answer".to_owned(),
+                phase: None,
+                locus,
+            }),
+        ]),
+    };
+
+    publish_agent_messages(&publisher, &record).expect("capture projects");
+
+    let message = updates.try_recv().expect("prose publishes once");
+    assert_eq!(message.lane, record.lane);
+    assert_eq!(message.author, record.occupant);
+    assert_eq!(message.text, "agent-authored answer");
+    assert_eq!(
+        message.locus,
+        wire::MessageLocus {
+            member: 4,
+            offset: 120,
+            length: 48,
+            event: 1,
+        }
+    );
+    assert!(matches!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    drop(source);
+    bus.shutdown().expect("message bus stops");
+}
+
 /// A generation that was never published is a diagnostic, not a silent start.
 ///
 /// This is the operator's first start, before anything has been published, and
