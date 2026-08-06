@@ -474,9 +474,11 @@ async function assertAgentConversation(page, fixture, worktrees) {
     quoteLane: seated[3].lane,
     primaryHeadings: seated.map((lane, index) => ({
       lane: lane.lane,
-      prose: index === 1
-        ? "periodic live witness"
-        : `Canvas message reports CONTROL-1kKbC3j4 from ${basename(teamWorktrees[index])}`,
+      prose: index === 0
+        ? "newest lane prose witness"
+        : index === 1
+          ? "periodic live witness"
+          : `Canvas message reports CONTROL-1kKbC3j4 from ${basename(teamWorktrees[index])}`,
     })),
   };
 }
@@ -1184,18 +1186,16 @@ async function assertPackedHistory(page, extent, linked = false) {
   // tree that re-ran green, and CAUSAL_HEADERS is 1024, so position 14 was never
   // eviction.
   //
-  // The rejection is dropped on purpose. This wait exists to let the walk root;
-  // the assertion below is what must fail, because it names the label actually
-  // on screen -- `dangling at 14`, or `cycle at N` -- where a thrown timeout
-  // would report only that something took too long.
+  // Keep the wait rejection: a walk that genuinely remains dangling or cyclic
+  // is a defect, and neither terminal state is an acceptable substitute for a
+  // root. The exact assertion keeps the final observation equally strict.
   const terminal = thread.locator(".section-count");
-  await waitForPage(page, "the causal walk reaches its rooted terminal", TRANSITION_MS, () => (
-    document.querySelector('[data-pane="lineage"] .section-count')?.textContent?.includes("root")
-      ?? false
-  )).catch(() => {});
-  assert.match(
+  await waitForPage(page, "the causal walk reaches root", TRANSITION_MS, () => (
+    document.querySelector('[data-pane="lineage"] .section-count')?.textContent === "root"
+  ));
+  assert.equal(
     await terminal.innerText(),
-    /root/,
+    "root",
     "the causal walk reaches root before its terminal label is read",
   );
   const threadRows = await thread.locator("tbody tr").allTextContents();
