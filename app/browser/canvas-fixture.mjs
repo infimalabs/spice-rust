@@ -156,11 +156,12 @@ function decodeOutcome(stdout, stderr = "") {
   return JSON.parse(text);
 }
 
-async function invoke(fixture, args) {
+async function invoke(fixture, args, lane) {
   try {
     const result = await execute(binary, ["--json", ...args], {
       cwd: fixture,
       timeout: 20_000,
+      ...(lane ? { env: { ...process.env, SPICE_LANE: lane } } : {}),
     });
     return decodeOutcome(result.stdout, result.stderr);
   } catch (error) {
@@ -175,6 +176,80 @@ export async function reply(fixture, args) {
   const outcome = await invoke(fixture, args);
   assert.equal(outcome.kind, "reply", `${args.join(" ")} replies: ${JSON.stringify(outcome)}`);
   return outcome;
+}
+
+// Run a fixture command under a seated lane's own identity.
+//
+// A claim records the lane it was won by, read from SPICE_LANE
+// (`ambient_lane_identity`, spice/src/command_client.rs:647), and the watchband
+// joins a task to a member through exactly that edge (`held_task`,
+// app/src/watchband.rs:129). So a claim won by the operator never reaches a
+// rendered standing, and this is what lets a fixture put a real held handle on
+// a card the browser is looking at.
+export async function replyAsLane(fixture, lane, args) {
+  const outcome = await invoke(fixture, args, lane);
+  assert.equal(outcome.kind, "reply", `${args.join(" ")} as ${lane}: ${JSON.stringify(outcome)}`);
+  return outcome;
+}
+
+// Observe the one navigation tab the operator reference qualifies by a count.
+//
+// The reference image shows "Filters 27", and `badge` renders nothing at zero
+// (app/src/watchband.rs:205), so a fixture in which no lane holds a task shows
+// no badge at all and the count stays unproven no matter how many tabs are
+// clicked. `mode_badge` counts standings carrying a handle, so raising it means
+// really claiming: this takes the badge from absent to 1 and back, and reads
+// the held handle off the card, which is the same third placeholder line the
+// reference shows a card wearing.
+export async function assertHeldTaskCount(team, fixture, lane) {
+  const badge = team.getByRole("tab", { name: /^Filters/ }).locator(".team-mode-badge");
+  assert.equal(await badge.count(), 0, "Filters wears no badge while no lane holds a task");
+  // Three independent things gate a held task and every one of them refuses as
+  // the same `board::allocator-empty`, so each must be satisfied deliberately:
+  //
+  // 1. the board must carry an eligible task, and `task add` without an
+  //    `--acceptance` starts in `plan`, which `workable` never selects;
+  // 2. the lineage policy must subscribe to the allocator at all, and `steer`
+  //    scopes selection to `Manual` (wire/src/intent.rs:395), which admits only
+  //    operator-pinned projects -- this fixture pins none;
+  // 3. under `drive` the scope is `ManualAndAutoProject`, and a project is
+  //    learned automatically only from facts a *lane* wrote:
+  //    `project_subscription_history` skips `Actor::Operator | Actor::Spice`
+  //    outright (board/src/next.rs:45). A task the operator adds is therefore
+  //    invisible to allocation even while it is otherwise perfectly eligible.
+  //
+  // So the task is added under the lane's own identity, which both makes it
+  // eligible and teaches the lane's lineage the project it lives in.
+  const lifetime = team.locator('.team-lifetime input[type="range"]');
+  await lifetime.fill("1");
+  await team.getByRole("button", { name: "Drive", exact: true }).waitFor();
+  await replyAsLane(fixture, lane, [
+    "task",
+    "add",
+    "Held task witness",
+    "--project",
+    "app.browser",
+    "--acceptance",
+    "the watchband counts the lane holding this task",
+  ]);
+  const won = await replyAsLane(fixture, lane, ["task", "next"]);
+  // A claim answers with the task and the actor now holding it
+  // (`ClaimAnswer`, wire/src/intent.rs:535), and an actor crosses as text under
+  // a `lane:` prefix (wire/src/envelope.rs:87). Both are read back off the
+  // render below, so this observation fails if the badge counts a standing the
+  // claim never reached rather than passing on any task-shaped spelling.
+  assert.equal(won.body.holder, `lane:${lane}`, "the claim binds to the lane that made it");
+  await badge.waitFor();
+  assert.equal(await badge.innerText(), "1", "Filters counts the lane now holding a task");
+  const seat = team.locator(`.team-agent[data-agent-lane="${lane}"]`);
+  const placeholder = await seat.getByRole("textbox").getAttribute("placeholder");
+  const [handle, phase] = placeholder.split("\n").at(-1).split(", ");
+  assert.equal(handle, won.body.task, `the held card names the claimed task: ${placeholder}`);
+  assert.ok(phase, `the held card names the phase it holds: ${placeholder}`);
+  await replyAsLane(fixture, lane, ["task", "free", handle]);
+  await badge.waitFor({ state: "detached" });
+  await lifetime.fill("0");
+  await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
 }
 
 export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
