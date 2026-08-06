@@ -132,7 +132,8 @@ admits only the current hello containing wire version, capability, and
 resident epoch; mismatch refuses while naming both artifacts. The journal
 stores one current schema and performs one forward migration at open before
 the resident mints its epoch. The browser is built per worktree into the one
-ignored lane stage; resident startup refuses unless that complete stage exists.
+ignored lane stage; an atomic pointer selects one complete immutable
+generation, and resident startup refuses unless that generation exists.
 
 The split matches three different replacement events: a client can be stale
 while durable data remains current; durable data can require migration while

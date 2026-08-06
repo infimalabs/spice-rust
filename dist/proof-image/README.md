@@ -28,4 +28,5 @@ disabled network boundary.
 
 This image does not build or own the interactive Canvas stage. Every lane
 builds that stage natively with `cargo xtask app` into ignored
-`dist/stage-app`, and its resident serves only those worktree-local bytes.
+`dist/stage-app`; the command atomically publishes one complete immutable
+generation, and its resident serves only those worktree-local bytes.

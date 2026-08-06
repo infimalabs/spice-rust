@@ -29,8 +29,6 @@ const GRACE: Duration = Duration::from_secs(5);
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 const PINNED_TRUNK: &str = "trunk 0.21.14";
 const PINNED_MUTANTS: &str = "cargo-mutants 27.1.0";
-const APP_ARTIFACT: &str = "dist/stage-app/app_bg.wasm";
-const EMBEDDED_ARTIFACT: &str = "dist/stage-app/canvas-app.html";
 
 /// One complete bounded command observation from a target build.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -400,11 +398,11 @@ struct CommandBuilder<'a, E> {
 impl<E: Executor> Builder for CommandBuilder<'_, E> {
     fn build_app(&mut self) -> Result<Vec<u8>, BuildError> {
         self.run(CommandSpec::new("app-build", &self.programs.xtask, ["app"]))?;
-        read_regular(&self.root.join(APP_ARTIFACT)).map_err(build_error)
+        read_lane_app_asset(self.root, "/app_bg.wasm")
     }
 
     fn embed_app(&mut self, app: &[u8]) -> Result<Vec<u8>, BuildError> {
-        let observed = read_regular(&self.root.join(APP_ARTIFACT)).map_err(build_error)?;
+        let observed = read_lane_app_asset(self.root, "/app_bg.wasm")?;
         if observed != app {
             return Err(BuildError::new(
                 "staged app changed between app and embedding commands",
@@ -415,7 +413,7 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
             &self.programs.cargo,
             cargo_build_arguments("canvas", self.target, self.target_dir),
         ))?;
-        read_regular(&self.root.join(EMBEDDED_ARTIFACT)).map_err(build_error)
+        read_lane_app_asset(self.root, "/")
     }
 
     fn build_native(
@@ -429,7 +427,7 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
                 self.target
             )));
         }
-        let observed = read_regular(&self.root.join(EMBEDDED_ARTIFACT)).map_err(build_error)?;
+        let observed = read_lane_app_asset(self.root, "/")?;
         if observed != embedded_app {
             return Err(BuildError::new(
                 "embedded app changed between embedding and native commands",
@@ -443,6 +441,18 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
         read_regular(&self.target_dir.join(target.as_str()).join("release/spice"))
             .map_err(build_error)
     }
+}
+
+fn read_lane_app_asset(root: &Path, route: &str) -> Result<Vec<u8>, BuildError> {
+    let source = spice::canvas::AppSource::resolve(root).map_err(build_error)?;
+    let generation = source.current_generation().map_err(build_error)?;
+    let asset = spice::canvas::APP
+        .asset(route)
+        .ok_or_else(|| BuildError::new(format!("lane app route {route} is absent")))?;
+    generation
+        .served(asset)
+        .map(spice::canvas::ServedAsset::into_bytes)
+        .map_err(build_error)
 }
 
 fn cargo_build_arguments(package: &str, target: ReleaseTarget, target_dir: &Path) -> Vec<OsString> {

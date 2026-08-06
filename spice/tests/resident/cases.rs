@@ -1199,24 +1199,31 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
     );
 }
 
-/// The resident reads its own worktree for a locally built app, and a stage
-/// that cannot supply the whole app stops it before the endpoint is published.
+/// The resident reads its own worktree for a lane-built app, and a stage
+/// that cannot serve the whole app stops it before the endpoint is published.
 ///
-/// This is the half of the local app loop that lives outside `canvas`: that
+/// This is the half of the lane app loop that lives outside `canvas`: that
 /// the source is resolved at all, and against this worktree rather than some
 /// other directory. A resident that skipped the resolve would reach readiness
 /// here, and one that looked elsewhere would never see this stage.
 #[test]
-fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app() {
+fn resident_process_refuses_an_app_stage_that_cannot_supply_the_whole_app() {
     let fixture = Fixture::new("app-source");
     let stage = fixture.root.join(canvas::APP_STAGE);
     fs::remove_dir_all(&stage).expect("remove complete fixture app");
-    fs::create_dir_all(&stage).expect("fixture stage");
+    let identity = "5555555555555555555555555555555555555555555555555555555555555555";
+    let generation = stage.join(canvas::APP_STAGE_GENERATIONS).join(identity);
+    fs::create_dir_all(&generation).expect("fixture generation");
     fs::write(
-        stage.join("canvas-app.html"),
+        generation.join("canvas-app.html"),
         b"locally built canvas-app.html",
     )
     .expect("fixture asset");
+    fs::write(
+        stage.join(canvas::APP_STAGE_CURRENT),
+        format!("{identity}\n"),
+    )
+    .expect("fixture pointer");
 
     let mut resident = RunningResident::spawn(&fixture);
     // Bounded rather than a bare wait: a resident that never resolved this
@@ -1227,19 +1234,19 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
         resident.child.as_mut().expect("resident child"),
         &fixture.runtime,
         readiness::ARRIVAL_HORIZON,
-        "resident refusal of a partial local app stage",
+        "resident refusal of a partial lane app stage",
         || false,
     );
     assert!(
         matches!(ending, Readiness::Exited),
-        "the resident stayed up with a stage that cannot supply the whole app"
+        "the resident served on with a stage it cannot serve the whole app from"
     );
     let up = resident.wait();
 
     assert_eq!(up.status.code(), Some(FAULT_EXIT));
     let refusal = outcome(&up);
     let Outcome::Fault(fault) = &refusal else {
-        panic!("a partial local stage answered {refusal:?}");
+        panic!("a partial app stage answered {refusal:?}");
     };
     let detail = &fault.detail;
     assert_eq!(fault.reason, "canvas::app-source-invalid");
@@ -1255,23 +1262,49 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
     );
     assert!(
         !fixture.canvas().is_file(),
-        "the endpoint was published for an app the resident cannot supply"
+        "the endpoint was published for an app the resident cannot serve"
     );
 }
 
 #[test]
 fn resident_text_startup_names_the_exact_lane_app_source() {
-    let local = Fixture::new("local-app-announcement");
-    let stage = local.root.join(canvas::APP_STAGE);
-    let mut resident = RunningResident::spawn_text(&local);
-    resident.assert_ready(&local);
-    let down = invoke(&local, "down");
-    assert!(down.status.success(), "local resident down failed");
+    let lane = Fixture::new("app-announcement");
+    let stage = lane.root.join(canvas::APP_STAGE);
+    let mut resident = RunningResident::spawn_text(&lane);
+    resident.assert_ready(&lane);
+    let published = lane.discovery().endpoint;
+    let down = invoke(&lane, "down");
+    assert!(down.status.success(), "lane resident down failed");
     let output = resident.wait();
-    assert!(output.status.success(), "local resident failed");
-    let stage = fs::canonicalize(&stage).expect("local app stage canonicalizes");
+    assert!(output.status.success(), "lane resident failed");
+    let stage = fs::canonicalize(&stage).expect("lane app stage canonicalizes");
+    let announcement = String::from_utf8(output.stderr).expect("lane announcement is UTF-8");
+    // A text start announces what it serves, then where it is served. The
+    // endpoint line is the one an operator acts on now that no separate command
+    // prints it, so it is held to two separate claims.
+    let (announced_source, announced_endpoint) =
+        announcement.split_once('\n').unwrap_or_else(|| {
+            panic!("startup announces a source line then an endpoint: {announcement:?}")
+        });
     assert_eq!(
-        String::from_utf8(output.stderr).expect("local announcement is UTF-8"),
-        format!("canvas app source: lane app at {}\n", stage.display())
+        announced_source,
+        format!("canvas app source: lane app at {}", stage.display())
+    );
+    // It is the endpoint that was published, not one formatted alongside it, so
+    // an operator dialling the announcement reaches the surface a client would.
+    assert_eq!(
+        announced_endpoint,
+        format!("canvas endpoint: {published}\n")
+    );
+    // And that published endpoint names the port the kernel handed out. Both
+    // sides of the equality above are the resident's own, so on its own it
+    // would still hold if the resident published the address it asked for:
+    // this fixture starts with `--port 0`, which is unreachable.
+    let port = published
+        .strip_prefix("http://127.0.0.1:")
+        .unwrap_or_else(|| panic!("the resident publishes a loopback endpoint: {published:?}"));
+    assert!(
+        port.parse::<u16>().is_ok_and(|port| port != 0),
+        "the announced endpoint must name the bound port, not the requested one: {port:?}"
     );
 }

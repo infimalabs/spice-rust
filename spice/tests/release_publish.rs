@@ -25,6 +25,9 @@ use wire::{
     Actor, Digest, Domain, FactKind, Instant, Outcome, Producer, ReleasePlan, ReplyPosition,
 };
 
+#[path = "support/staged_app.rs"]
+mod staged_app;
+
 #[path = "support/readiness.rs"]
 mod readiness;
 
@@ -56,15 +59,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join(".git")).expect("fixture Git directory");
-        let app = root.join(canvas::APP_STAGE);
-        fs::create_dir_all(&app).expect("fixture app stage");
-        for asset in canvas::APP.assets() {
-            fs::write(
-                app.join(asset.file()),
-                format!("release fixture {}", asset.file()),
-            )
-            .expect("fixture app asset");
-        }
+        staged_app::seed(&root);
         let runtime = root.join(".git/.spice");
         let journal = runtime.join("data/spicejournal.sqlite3");
         let canvas = runtime.join("canvas");

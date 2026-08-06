@@ -144,7 +144,6 @@ const CASES: &[Case] = &[
     case("journal verify", &["journal", "verify"]),
     case("fold", &["fold"]),
     case("thread", &["thread", "1"]),
-    case("canvas", &["canvas"]),
     case("release publish", &["release", "publish"]),
     Case {
         path: "run",

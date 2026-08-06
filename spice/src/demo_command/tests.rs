@@ -19,14 +19,21 @@ fn app() -> canvas::AppSource {
     let root = ROOT.get_or_init(|| {
         let root = std::env::temp_dir().join(format!("spice-demo-unit-app-{}", std::process::id()));
         let stage = root.join(canvas::APP_STAGE);
-        fs::create_dir_all(&stage).expect("demo fixture app stage");
+        let identity = "5555555555555555555555555555555555555555555555555555555555555555";
+        let generation = stage.join(canvas::APP_STAGE_GENERATIONS).join(identity);
+        fs::create_dir_all(&generation).expect("demo fixture app generation");
         for asset in canvas::APP.assets() {
             fs::write(
-                stage.join(asset.file()),
+                generation.join(asset.file()),
                 format!("demo fixture app {}\n", asset.file()),
             )
             .expect("demo fixture app asset");
         }
+        fs::write(
+            stage.join(canvas::APP_STAGE_CURRENT),
+            format!("{identity}\n"),
+        )
+        .expect("demo fixture app pointer");
         root
     });
     canvas::AppSource::resolve(root).expect("demo fixture app resolves")

@@ -11,3 +11,4 @@
 # The one browser app stage. Every lane builds it natively with
 # `cargo xtask app`; the resident refuses to start without it.
 /dist/stage-app/
+/dist/.stage-app-build-*/
