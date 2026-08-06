@@ -531,44 +531,21 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
 }
 
 fn compose_markdown(draft: &ComposerDraft) -> String {
-    let mut parts = Vec::new();
-    let body = draft.body.trim();
-    if !body.is_empty() {
-        parts.push(body.to_owned());
-    }
-    parts.extend(
-        draft
-            .quotes
-            .iter()
-            .map(|quote| markdown_block_quote(quote))
-            .filter(|quote| !quote.is_empty()),
-    );
-    parts.join("\n\n")
+    crate::composer_markdown::compose(&draft.body, &draft.quotes)
 }
 
 fn markdown_block_quote(raw: &str) -> String {
-    raw.replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .lines()
-        .map(|line| format!("> {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_owned()
+    crate::composer_markdown::block_quote(raw)
 }
 
 fn render_markdown(markdown: &str) -> Html {
     html! {
-        {for markdown.split("\n\n").map(|block| {
-            if block.lines().all(|line| line.starts_with("> ")) {
-                let quote = block
-                    .lines()
-                    .map(|line| &line[2..])
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                html! {<blockquote>{quote}</blockquote>}
-            } else {
-                html! {<p>{block.to_owned()}</p>}
+        {for crate::composer_markdown::render(markdown).into_iter().map(|block| {
+            match block {
+                crate::composer_markdown::Block::Paragraph(body) => html! {<p>{body}</p>},
+                crate::composer_markdown::Block::Quote(quote) => {
+                    html! {<blockquote>{quote}</blockquote>}
+                }
             }
         })}
     }
