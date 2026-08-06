@@ -5,6 +5,7 @@
 //! and begins watching group absence only after the wrapper completes or dies.
 
 use crate::protected::{GROUP_SLOT_BLANK, GROUP_SLOT_BYTES, GROUP_SLOT_PREFIX, group_slot};
+use crate::surface::process_state::ProcessState;
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -199,11 +200,18 @@ pub(super) fn notify_group(notifier: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn group_absent(pid: u32) -> bool {
+/// What a signal-zero probe established about the protected group.
+///
+/// An identity that does not fit `pid_t` is reported as unreadable rather than
+/// as a group that is still there. Nothing was probed in that case: the number
+/// was never a group the kernel could name, so the probe observed neither its
+/// presence nor its absence, and saying "still present" would put a claim the
+/// caller can act on behind a conversion that simply refused.
+pub(super) fn group_state(pid: u32) -> ProcessState {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
+        return ProcessState::Indeterminate;
     };
-    raw_group_absent(pid)
+    raw_group_state(pid)
 }
 
 fn duplicate(descriptor: RawFd) -> io::Result<OwnedFd> {
@@ -254,7 +262,15 @@ fn guardian_main(lock: RawFd, notice: RawFd, descriptor_setup: bool) -> ! {
         publish_group(u32::from_ne_bytes(bytes));
         wait_for_wrapper_close();
         libc::close(GUARDIAN_NOTICE_FD);
-        while !raw_group_absent(pid) {
+        // Only an observed absence ends this wait. The guardian exists to hold
+        // the lock for as long as any member might still be running, so a probe
+        // that established nothing is not permission to release it -- exiting
+        // there would hand the lock to the next claimant on the strength of an
+        // answer nobody got. That is the same rule `crate::surface::owner`
+        // takes, and the opposite of the one the post-signal consumers in
+        // `crate::spawn` chose, where forgiving an unreadable answer ends a wait
+        // that has already delivered its kill rather than releasing a claim.
+        while raw_group_state(pid) != ProcessState::Terminal {
             let request = libc::timespec {
                 tv_sec: 0,
                 tv_nsec: POLL_NANOSECONDS,
@@ -437,9 +453,38 @@ unsafe fn close_unneeded_descriptors() -> bool {
     }
 }
 
-fn raw_group_absent(pid: libc::pid_t) -> bool {
+fn raw_group_state(pid: libc::pid_t) -> ProcessState {
     // SAFETY: signal zero probes process-group existence without delivering a signal.
-    unsafe { libc::kill(-pid, 0) == -1 && errno() == libc::ESRCH }
+    let result = unsafe { libc::kill(-pid, 0) };
+    // SAFETY: libc exposes the calling thread's errno slot, which the classifier
+    // reads only on the refusal that set it.
+    group_probe_state(result, unsafe { errno() })
+}
+
+/// Classify what one signal-zero call to a process group answered.
+///
+/// Three of the four answers are positive observations, and only one is not.
+/// A delivered probe found the group. `ESRCH` is the kernel saying it knows no
+/// such group, which is absence observed rather than assumed. `EPERM` is the
+/// answer this classification exists to name correctly: it is not the kernel
+/// declining to answer but the kernel resolving the group, finding at least one
+/// member, and refusing only the delivery -- so it establishes a live member
+/// just as firmly as success does, and it is the errno OOPS-1kKY9C8K recorded
+/// under fleet contention. That leaves every other errno, which established
+/// nothing at all; folding it into presence is what would let a probe that
+/// failed impersonate a member the kernel described as running.
+///
+/// The errno is a parameter so every arm can be driven, because the kernel
+/// cannot be asked to refuse this call on demand.
+pub(super) fn group_probe_state(result: libc::c_int, errno: libc::c_int) -> ProcessState {
+    if result == 0 {
+        return ProcessState::Live;
+    }
+    match errno {
+        libc::ESRCH => ProcessState::Terminal,
+        libc::EPERM => ProcessState::Live,
+        _ => ProcessState::Indeterminate,
+    }
 }
 
 unsafe fn errno() -> libc::c_int {
