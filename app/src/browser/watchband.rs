@@ -14,9 +14,9 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    agent_anchor, choose_images, drop_on_lane, keyboard_submit, paste_images, primary_textarea_id,
-    render_agent_message_card, render_attachments, render_directive_card, render_draft_shards,
-    render_markdown, render_shard_locus, update_body,
+    choose_images, drop_on_lane, focus_after_render, keyboard_submit, paste_images,
+    primary_textarea_id, render_agent_message_card, render_attachments, render_directive_card,
+    render_markdown, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -274,7 +274,6 @@ fn render_compose(
                             can_send,
                             sender,
                             drafts,
-                            latest_anchor(runtime, member.lane),
                         )
                     })}
                 </div>
@@ -292,20 +291,6 @@ fn render_compose(
             {render_activity(runtime, lineage, drafts, controls, control.speech, control.life)}
         </div>
     }
-}
-
-/// The message this agent's primary composer answers, as a link target.
-///
-/// Chosen by the largest tape offset rather than by position in the stream, so
-/// the answer does not depend on which end the runtime appends to. An agent that
-/// has not spoken yet has no point to link to and renders no link.
-fn latest_anchor(runtime: &CanvasRuntime, lane: CanonicalUuid) -> Option<String> {
-    runtime
-        .messages()
-        .iter()
-        .filter(|message| message.lane == lane)
-        .max_by_key(|message| (message.locus.offset, message.locus.event))
-        .map(agent_anchor)
 }
 
 fn render_activity(
@@ -355,6 +340,13 @@ fn render_activity(
             if empty {
                 <div class="mosaic-message-empty">{"No pending direction."}</div>
             }
+            {for lineage.members.iter().map(|member| html! {
+                <span
+                    id={format!("agent-stream-{}", member.lane)}
+                    class="agent-stream-anchor"
+                    aria-hidden="true"
+                ></span>
+            })}
             <MosaicPlane
                 key={lineage.lane.to_string()}
                 lane={lineage.lane}
@@ -496,7 +488,6 @@ fn render_agent_composer(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    anchor: Option<String>,
 ) -> Html {
     let lane_id = member.lane;
     let lane_key = lane_id.to_string();
@@ -552,12 +543,15 @@ fn render_agent_composer(
                 (!send_enabled).then_some("team-agent--vacant"),
             )}
             data-agent-lane={lane_id.to_string()}
-            data-shard-target-id={lane_id.to_string()}
             title={standing_title(standing)}
             {ondragover}
             {ondrop}
         >
-            <article class="composer-shard composer-shard--primary" data-shard-kind="primary">
+            <div
+                class="agent-composer-stack"
+                data-agent-composer-stack={lane_id.to_string()}
+                data-has-quote-shards={(!draft.quotes.is_empty()).to_string()}
+            >
                 {render_composer_body(
                     lane_id,
                     &lane_key,
@@ -565,13 +559,12 @@ fn render_agent_composer(
                     standing,
                     pending,
                     drafts,
-                    anchor.as_deref(),
                     onkeydown.clone(),
                     renew_enabled,
                     renew,
                 )}
-            </article>
-            {render_draft_shards(&lane_key, &draft, drafts, onkeydown)}
+                {render_quote_shards(&lane_key, &draft, drafts, onkeydown)}
+            </div>
         </section>
     }
 }
@@ -587,7 +580,6 @@ fn render_composer_body(
     standing: &Standing,
     pending: usize,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    anchor: Option<&str>,
     onkeydown: Callback<KeyboardEvent>,
     renew_enabled: bool,
     renew: Callback<MouseEvent>,
@@ -596,13 +588,32 @@ fn render_composer_body(
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
     let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
     html! {
-        <div class="mosaic-composer">
-            {render_composer_heading(standing, anchor)}
-            {render_agent_menu(standing, renew_enabled, renew)}
+        <div
+            class="mosaic-composer composer-shard composer-shard--primary"
+            data-shard-kind="primary"
+            data-shard-target-id={lane.to_string()}
+        >
+            {render_composer_heading(
+                lane,
+                lane_key,
+                standing,
+                renew_enabled,
+                renew.clone(),
+            )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
                 <span>{standing.liveness.as_str()}</span>
             </div>
+            <button
+                class="agent-renew-request"
+                type="button"
+                disabled={!renew_enabled}
+                title="Ask this agent to renew its current task lease"
+                onclick={renew}
+            >
+                <strong>{"Renew this agent"}</strong>
+                <span>{"request renewal"}</span>
+            </button>
             <textarea
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for {lane}")}
@@ -628,61 +639,49 @@ fn render_composer_body(
     }
 }
 
-fn render_composer_heading(standing: &Standing, anchor: Option<&str>) -> Html {
+fn render_composer_heading(
+    lane: CanonicalUuid,
+    lane_key: &str,
+    standing: &Standing,
+    renew_enabled: bool,
+    renew: Callback<MouseEvent>,
+) -> Html {
     let activity = standing
         .headline
         .as_deref()
         .or(standing.handle.as_deref())
         .unwrap_or(&standing.disposition);
-    let elapsed = standing
-        .held
-        .map(watchband::elapsed_label)
-        .unwrap_or_else(|| "now".to_owned());
+    let focus_lane = lane_key.to_owned();
+    let focus = Callback::from(move |_| {
+        focus_after_render(primary_textarea_id(&focus_lane));
+    });
+    let stream = format!("#agent-stream-{lane}");
     html! {
         <header class="composer-shard-heading">
-            if let Some(anchor) = anchor {
-                {render_shard_locus(anchor, &elapsed)}
-            } else {
-                <span class="composer-shard-age">{elapsed}</span>
-            }
+            <a
+                class="composer-shard-link composer-shard-age"
+                href={stream.clone()}
+                aria-label={format!("Jump to {} message stream", standing.label)}
+            >{
+                standing
+                    .held
+                    .map(watchband::elapsed_label)
+                    .unwrap_or_else(|| "now".to_owned())
+            }</a>
             <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
-        </header>
-    }
-}
-
-/// The drawer of actions that steer this one agent.
-///
-/// It is deliberately not the team Info panel. That panel describes the lane and
-/// is opened from the surface toolbar; this drawer holds the controls aimed at a
-/// single agent, so opening one must neither open nor restate the other. The
-/// open state is the element's own, so the drawer a reader sees is the drawer
-/// the DOM reports and there is no separate copy of that fact to fall out of
-/// step. Only the primary shard renders it: a draft shard is a reply to one
-/// message and owns none of these actions.
-fn render_agent_menu(
-    standing: &Standing,
-    renew_enabled: bool,
-    renew: Callback<MouseEvent>,
-) -> Html {
-    html! {
-        <details class="composer-shard-menu" data-agent-menu={standing.label.clone()}>
-            <summary
-                aria-label={format!("Agent actions for {}", standing.label)}
-                title={format!("Actions for {}", standing.label)}
-            >{"☰"}</summary>
-            <div class="composer-shard-drawer" role="group">
-                <button
-                    class="agent-renew-request"
-                    type="button"
-                    disabled={!renew_enabled}
-                    title="Ask this agent to renew its current task lease"
-                    onclick={renew}
+            <details class="agent-action-menu">
+                <summary aria-label={format!("Actions for {}", standing.label)}>{"☰"}</summary>
+                <div
+                    class="agent-action-drawer"
+                    data-agent-drawer-target-id={lane.to_string()}
                 >
-                    <strong>{"Renew this agent"}</strong>
-                    <span>{"request renewal"}</span>
-                </button>
-            </div>
-        </details>
+                    <button type="button" onclick={focus}>{"Focus message editor"}</button>
+                    <button type="button" disabled={!renew_enabled} onclick={renew}>
+                        {"Renew this agent"}
+                    </button>
+                </div>
+            </details>
+        </header>
     }
 }
 
@@ -729,13 +728,29 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
 }
 
 fn standing_title(standing: &Standing) -> String {
-    format!(
-        "{}\n{}\n{} pending\n{}",
-        standing.label,
-        standing.worktree,
-        standing.pending,
-        standing.liveness.as_str(),
-    )
+    let vendor = match standing.vendor.as_str() {
+        "claude" => "Claude driver",
+        "codex" => "Codex driver",
+        "openai" => "OpenAI driver",
+        _ => "Agent driver",
+    };
+    let mut parts = vec![vendor.to_owned()];
+    if let Some(model) = &standing.model {
+        parts.push(format!("model: {model}"));
+    }
+    if let Some(effort) = &standing.effort {
+        parts.push(format!("effort: {effort}"));
+    }
+    parts.push(format!(
+        "thread: {}",
+        standing
+            .thread
+            .map_or_else(|| "unbound".to_owned(), |thread| thread.to_string())
+    ));
+    if let Some(session) = &standing.session {
+        parts.push(format!("session: {session}"));
+    }
+    parts.join("; ")
 }
 
 fn submit_lineage_callback(

@@ -14,48 +14,9 @@
   line-height: 1.42;
 }
 
-.composer-quote-stack { display: grid; gap: 5px; }
+.composer-quote-stack { display: contents; }
 
-.composer-shard--draft {
-  display: grid;
-  flex: 0 0 92px;
-  grid-template-rows: 28px minmax(0, 1fr);
-  min-height: 92px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
-  border-radius: 6px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: .76rem;
-}
-
-.composer-shard--draft header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 22px;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 4px 2px 7px;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
-  color: inherit;
-}
-.composer-shard-locus {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.composer-shard--draft textarea {
-  width: 100%;
-  min-height: 0;
-  padding: 6px 7px;
-  border: 0;
-  border-radius: 0;
-  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
-  color: var(--ink);
-  font-size: .68rem;
-  resize: none;
-}
-
-.composer-shard--draft button,
+.composer-shard--quote .composer-shard-heading > button,
 .composer-attachment-chip button,
 .mosaic-message-card footer button {
   display: grid;
@@ -426,9 +387,12 @@
   overflow-y: auto;
 }
 
+/* The control column sizes itself from the pills rather than a pinned track, so
+   the reference widths and the narrow-viewport ones both land without a second
+   place to keep in step. */
 .team-composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(76px, 14%, 138px);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   min-height: 184px;
   padding: 8px 8px 0;
@@ -447,9 +411,7 @@
   max-height: 218px;
   flex-direction: column;
   align-self: stretch;
-  gap: 5px;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   border-color: var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -457,6 +419,30 @@
 }
 .team-surface .team-agent:focus-within { border-color: var(--accent); }
 .team-surface .team-agent--vacant { opacity: .72; }
+
+.agent-composer-stack {
+  display: grid;
+  gap: 5px;
+  max-height: 218px;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+}
+.composer-shard {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+}
+.composer-shard--primary { order: 0; }
+.composer-shard--quote {
+  order: 1;
+  min-height: 112px;
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+}
 
 .composer-shard-heading {
   display: grid;
@@ -477,11 +463,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.composer-shard-age {
+.composer-shard-link {
   color: var(--accent);
   text-decoration: underline;
+  text-underline-offset: 2px;
 }
-.composer-shard-heading button {
+.composer-shard-age {
+  color: var(--accent);
+}
+.composer-shard-heading > button,
+.agent-action-menu > summary {
+  display: grid;
+  place-items: center;
   width: 22px;
   min-width: 22px;
   height: 22px;
@@ -491,32 +484,40 @@
   color: var(--muted);
   font-size: .55rem;
 }
-/* The agent menu glyph sits in the column the heading grid reserves for it,
-   while its drawer opens in flow underneath so it pushes the shard rather than
-   floating over a stack that scrolls. */
-.composer-shard--primary { position: relative; }
-.composer-shard-menu > summary {
+.agent-action-menu { position: relative; }
+.agent-action-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.agent-action-menu > summary::-webkit-details-marker { display: none; }
+.agent-action-menu[open] > summary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.agent-action-drawer {
   position: absolute;
-  top: 0;
+  z-index: 4;
+  top: calc(100% + 4px);
   right: 0;
   display: grid;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: .55rem;
-  list-style: none;
-  place-items: center;
-}
-.composer-shard-menu > summary::-webkit-details-marker { display: none; }
-.composer-shard-menu[open] > summary { color: var(--accent); }
-.composer-shard-drawer {
-  display: grid;
+  width: max-content;
+  min-width: 132px;
   gap: 4px;
-  padding-top: 4px;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--identity, var(--accent)) 58%, var(--line));
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
 }
-
+.agent-action-drawer button {
+  width: 100%;
+  min-height: 25px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  color: var(--ink);
+  font: .58rem/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: left;
+}
 .composer-shard-standing {
   display: flex;
   justify-content: space-between;
@@ -551,9 +552,13 @@
 
 .team-surface .mosaic-composer {
   gap: 5px;
-  height: 100%;
+  height: auto;
   padding: 7px;
   background: color-mix(in srgb, var(--accent) 2%, var(--panel));
+}
+.team-surface .composer-shard--quote textarea {
+  min-height: 68px;
+  resize: none;
 }
 .team-surface .mosaic-composer textarea {
   min-height: 76px;
@@ -565,19 +570,27 @@
 .team-surface .image-picker { min-height: 25px; padding: 4px 6px; font-size: .62rem; }
 .team-surface .composer-markdown { padding: 6px 7px; font-size: .68rem; }
 
+/* The lineage control stack is sized against the Python Spice reference, which
+   fixes every item to one height and one width so the two sliders and the send
+   button read as a single column of equal pills. */
 .team-composer-controls {
+  --team-control-item-height: 36px;
+  --team-control-track-width: 96px;
+  align-items: stretch;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 .team-slider {
   --control-state-accent: var(--accent);
   display: grid;
-  align-content: center;
-  gap: 4px;
-  min-height: 54px;
-  padding: 7px 9px;
+  grid-template-rows: auto auto;
+  gap: 0;
+  flex: 0 0 var(--team-control-item-height);
+  height: var(--team-control-item-height);
+  min-height: var(--team-control-item-height);
+  padding: 4px 7px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -585,9 +598,9 @@
   cursor: ew-resize;
 }
 .team-slider input {
-  width: 100%;
+  width: var(--team-control-track-width);
   min-width: 0;
-  height: 20px;
+  height: 16px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -600,7 +613,7 @@
 .team-slider span {
   overflow: hidden;
   color: var(--muted);
-  font: 650 .76rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 11px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
   text-overflow: ellipsis;
   text-transform: lowercase;
@@ -611,34 +624,54 @@
 .team-send.maxed { --control-state-accent: var(--warning); }
 .team-slider.armed,
 .team-slider.maxed {
-  border-color: var(--control-state-accent);
-  background: color-mix(in srgb, var(--control-state-accent) 24%, var(--panel));
+  border-color: color-mix(in srgb, var(--control-state-accent) 70%, var(--line));
+  background: color-mix(in srgb, var(--control-state-accent) 18%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--control-state-accent) 22%, transparent);
 }
 .team-slider.armed span,
 .team-slider.maxed span { color: var(--control-state-accent); }
 .team-send {
-  min-width: 0;
-  min-height: 50px;
-  padding: 0 10px;
+  min-width: 6ch;
+  flex: 0 0 var(--team-control-item-height);
+  height: var(--team-control-item-height);
+  min-height: var(--team-control-item-height);
+  padding: 5px 16px;
   border-radius: 999px;
-  border-color: var(--control-state-accent, var(--accent));
+  border-color: color-mix(in srgb, var(--control-state-accent, var(--accent)) 72%, var(--line));
   background: var(--control-state-accent, var(--accent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 22%, transparent);
   color: var(--page);
-  font: 700 .82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 1rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.team-send.maxed { color: #15120a; }
 .team-control-issue {
-  width: 100%;
+  width: calc(var(--team-control-track-width) + 16px);
   margin: 0;
   color: var(--danger);
   font: .55rem/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
 }
+/* The reference narrows the same stack rather than letting it crowd the agent
+   cards once the viewport can no longer afford the full-width pills. */
+@media (max-width: 720px) {
+  .team-composer-controls {
+    --team-control-item-height: 34px;
+    --team-control-track-width: 68px;
+  }
+  .team-slider { padding: 3px 5px; }
+  .team-send { padding: 5px 8px; }
+}
 
 .team-activity-grid {
+  position: relative;
   display: block;
   padding: 7px;
   border-top: 1px solid var(--line);
+}
+.agent-stream-anchor {
+  position: absolute;
+  inset-block-start: 0;
+  width: 1px;
+  height: 1px;
 }
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
 .lane-mosaic-plane {
@@ -689,6 +722,11 @@
   border-radius: 7px;
   font-size: .7rem;
   box-shadow: none;
+}
+.team-surface .mosaic-message-card:target {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  scroll-margin-block: 8px;
 }
 .team-surface .mosaic-message-card p { line-height: 1.35; }
 .team-surface .mosaic-message-card .message-meta {

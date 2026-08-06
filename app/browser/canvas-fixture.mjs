@@ -672,17 +672,32 @@ export async function observedWait(page, label, run, context = {}) {
 /// instead of only ever seeing whichever the default happens to be.
 export async function assertWaitReporting(page, resident) {
   const label = "instrument self-check";
-  const failure = await observedWait(
+  const started = performance.now();
+  const failure = await waitForPageFunction(
     page,
     label,
-    () => page.waitForSelector(".spice-wait-instrument-absent", { timeout: 250 }),
+    WAIT_PROBE_MS,
+    () => false,
+    undefined,
     { resident },
   ).then(() => null, (error) => error);
+  const elapsed = performance.now() - started;
   assert.ok(failure, "a wait that cannot be satisfied must fail");
   assert.match(failure.message, /canvas wait failed: instrument self-check/);
   assert.match(failure.message, /site: .*canvas-fixture\.mjs/);
   assert.match(failure.message, /"endpointState":/, "the report probes the resident endpoint");
   assert.ok(failure.cause, "the original timeout survives as the cause");
+  assert.ok(elapsed >= WAIT_PROBE_MS, "the page-function probe reaches its named bound");
+  assert.ok(
+    elapsed < WAIT_PROBE_MS + TRANSITION_MS,
+    "the page-function probe never falls through to Playwright's default",
+  );
+
+  for (const invalid of [undefined, 0]) {
+    const refusal = await waitForPageFunction(page, "invalid-bound self-check", invalid, () => true)
+      .then(() => null, (error) => error);
+    assert.ok(refusal instanceof TypeError, `the ${String(invalid)} bound is refused`);
+  }
 
   // The connection state is asserted by shape rather than by one literal, because
   // both shapes are real and each is a different diagnosis. Reading it back out
@@ -794,6 +809,55 @@ function requireBound(bound, helper) {
   }
 }
 
+/// Bound used only by the executable never-satisfied instrumentation probe.
+const WAIT_PROBE_MS = 250;
+const reportBrowserWaits = process.env.SPICE_BROWSER_WAIT_REPORT === "1";
+
+/// Run one browser wait with a positive bound, actionable failure, and receipt.
+export async function observedBoundedWait(page, label, bound, run, context = {}) {
+  requireBound(bound, "observedBoundedWait");
+  const started = performance.now();
+  try {
+    return await observedWait(page, label, run, context);
+  } finally {
+    if (reportBrowserWaits) {
+      process.stdout.write(`${JSON.stringify({
+        browserWait: label,
+        elapsedMs: Math.round(performance.now() - started),
+        boundMs: bound,
+      })}\n`);
+    }
+  }
+}
+
+/// Wait for a page predicate without permitting Playwright to choose the bound.
+export async function waitForPageFunction(
+  page,
+  label,
+  bound,
+  predicate,
+  argument,
+  context = {},
+) {
+  return observedBoundedWait(
+    page,
+    label,
+    bound,
+    () => page.waitForFunction(predicate, argument, { timeout: bound }),
+    context,
+  );
+}
+
+/// Wait for a locator with the same bound enforcement and elapsed receipt.
+export async function waitForLocator(page, label, bound, locator, options = {}) {
+  return observedBoundedWait(
+    page,
+    label,
+    bound,
+    () => locator.waitFor({ ...options, timeout: bound }),
+  );
+}
+
 /// Wait for the canvas to report online, on the bound its class was measured at.
 ///
 /// The bound is an argument rather than a default because the two classes are
@@ -829,15 +893,12 @@ export async function assertOnlineObserved(page, cause, bound, context = {}) {
 export async function assertGenerationOnline(page, epoch, cause, bound, context = {}) {
   requireBound(bound, "assertGenerationOnline");
   await assertOnlineObserved(page, cause, bound, context);
-  await observedWait(
+  await waitForPageFunction(
     page,
     `canvas adopts the generation published when ${cause}`,
-    () =>
-      page.waitForFunction(
-        (expected) => document.querySelector(".status-copy")?.textContent?.includes(expected),
-        epoch,
-        { timeout: bound },
-      ),
+    bound,
+    (expected) => document.querySelector(".status-copy")?.textContent?.includes(expected),
+    epoch,
     context,
   );
 }

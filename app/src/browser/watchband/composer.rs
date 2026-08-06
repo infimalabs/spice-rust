@@ -44,7 +44,7 @@ fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
     format!("composer-quote-{lane_key}-{identity}")
 }
 
-fn focus_after_render(id: String) {
+pub(super) fn focus_after_render(id: String) {
     spawn_local(async move {
         TimeoutFuture::new(0).await;
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {
@@ -58,22 +58,6 @@ fn focus_after_render(id: String) {
         };
         let _ = textarea.focus();
     });
-}
-
-/// The one identity an agent message card answers to.
-///
-/// Quoting keys a draft by this string and the card carries it as its DOM id, so
-/// a shard's deep link resolves to the exact card it came from. Both readings
-/// come from here so the link target and the element can never drift apart.
-pub(super) fn agent_anchor(message: &wire::AgentMessage) -> String {
-    format!(
-        "agent-{}-{}-{}-{}-{}",
-        message.lane,
-        message.locus.member,
-        message.locus.offset,
-        message.locus.length,
-        message.locus.event,
-    )
 }
 
 pub(super) fn render_agent_message_card(
@@ -96,9 +80,16 @@ pub(super) fn render_agent_message_card(
     let quote_key = lane_key.clone();
     let quote_drafts = drafts.clone();
     let quote_text = message.text.clone();
-    let quote_identity = agent_anchor(message);
+    let quote_identity = format!(
+        "agent-{}-{}-{}-{}-{}",
+        message.lane,
+        message.locus.member,
+        message.locus.offset,
+        message.locus.length,
+        message.locus.event,
+    );
+    let source_id = format!("message-{quote_identity}");
     let focus_identity = quote_identity.clone();
-    let anchor = quote_identity.clone();
     let focus_lane = lane_key.clone();
     let producer = format!(
         "{} · {}",
@@ -133,7 +124,7 @@ pub(super) fn render_agent_message_card(
                 message.locus.offset,
                 message.locus.event,
             )}
-            id={anchor}
+            id={source_id}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             draggable="true"
             aria-label={format!("Agent message from {producer}")}
@@ -201,8 +192,8 @@ pub(super) fn render_directive_card(
     let quote_preview = directive.preview.clone();
     let quote_text = directive.text.clone();
     let quote_identity = format!("directive-{}", directive.directive);
+    let source_id = format!("message-{quote_identity}");
     let focus_identity = quote_identity.clone();
-    let anchor = quote_identity.clone();
     let focus_lane = lane_key.to_owned();
     let correspondent = view::chrome::Correspondent {
         name: watchband::short(lane),
@@ -232,7 +223,7 @@ pub(super) fn render_directive_card(
     html! {
         <article
             key={directive.directive.to_string()}
-            id={anchor}
+            id={source_id}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             draggable="true"
             data-directive={directive.directive.to_string()}
@@ -276,30 +267,7 @@ pub(super) fn render_directive_card(
     }
 }
 
-/// The deep link every composer shard carries in its top left.
-///
-/// `anchor` is the DOM id of the card the shard came from, which is the same
-/// string quoting keys the draft by, so the link lands on that exact message
-/// rather than on the lane it belongs to.
-pub(super) fn render_shard_locus(anchor: &str, label: &str) -> Html {
-    html! {
-        <a
-            class="composer-shard-locus composer-shard-age"
-            href={format!("#{anchor}")}
-            data-shard-locus={anchor.to_owned()}
-            title="Jump to this point in the message stream"
-        >{label.to_owned()}</a>
-    }
-}
-
-/// Render one draft composer shard per quote, stacked under the primary shard.
-///
-/// A quote is a composer in its own right: it has its own body and its own
-/// submission, so it renders as a shard rather than as an ornament inside the
-/// primary one. Only the primary shard carries the agent menu; a draft carries
-/// the deep link back to the message it was quoted from and the control that
-/// discards it.
-pub(super) fn render_draft_shards(
+pub(super) fn render_quote_shards(
     lane_key: &str,
     draft: &ComposerDraft,
     drafts: &UseReducerHandle<ComposerDrafts>,
@@ -330,20 +298,28 @@ pub(super) fn render_draft_shards(
                 });
                 let shown = crate::composer_markdown::quote_label(quote.preview.as_deref());
                 let textarea_id = quote_textarea_id(lane_key, &quote.identity);
+                let source_id = format!("message-{}", quote.identity);
                 html! {
                     <article
                         key={quote.identity.clone()}
-                        class="composer-shard composer-shard--draft"
-                        data-shard-kind="draft"
+                        class="mosaic-composer composer-shard composer-shard--quote"
                         title={quote.quote.clone()}
+                        data-shard-kind="quote"
+                        data-shard-target-id={lane_key.to_owned()}
                         data-quote-identity={quote.identity.clone()}
                         data-quote-target-id={lane_key.to_owned()}
                     >
                         <header class="composer-shard-heading">
-                            {render_shard_locus(&quote.identity, shown)}
+                            <a
+                                class="composer-shard-link"
+                                href={format!("#{source_id}")}
+                                aria-label={format!("Return to quoted message: {shown}")}
+                                title="Return to this message in the stream"
+                            >{"↩"}</a>
+                            <strong>{shown}</strong>
                             <button
                                 type="button"
-                                aria-label="Remove quoted composer"
+                                aria-label="Remove quoted composer shard"
                                 onclick={remove}
                             >{"×"}</button>
                         </header>

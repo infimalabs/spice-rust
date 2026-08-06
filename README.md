@@ -15,7 +15,14 @@ cargo xtask activate-hooks
 The plan publishes the executable, operator skill, and the `pre-commit`,
 `commit-msg`, and `reference-transaction` hooks once under the Git common
 directory's `.spice-install`. Every linked worktree uses those same assets.
-Build this lane's Canvas app, then start Spice with:
+Activation publishes one file more, the `xtask` the `reference-transaction`
+hook execs, and records which guard that copy carries. Run it: a repository
+with the plan applied but activation never run has a `reference-transaction`
+hook whose entry point is absent, and Git aborts every ref update rather than
+degrading to no guard. Nothing republishes that copy afterwards, so a landed
+change to the guard leaves Git enforcing the older one until this command runs
+again; `cargo xtask verify` refuses while that is true and names the command
+above. Build this lane's Canvas app, then start Spice with:
 
 ```sh
 cargo xtask app

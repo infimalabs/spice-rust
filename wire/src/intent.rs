@@ -804,6 +804,20 @@ pub struct LaneAnswerRow {
     pub life: String,
     /// Vendor selected for occupants of this lane.
     pub vendor: Name,
+    /// Concrete model supplied to the declared session's vendor launch.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub model: Option<String>,
+    /// Reasoning effort supplied to the declared session's vendor launch.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub effort: Option<String>,
     /// Current occupant, absent between seats.
     #[serde(
         default,
@@ -813,7 +827,14 @@ pub struct LaneAnswerRow {
     pub occupant: Option<CanonicalUuid>,
     /// Occupant ancestry, oldest first.
     pub lineage: Vec<CanonicalUuid>,
-    /// Whether this seat has resumable session authority without exposing it.
+    /// Exact resumable vendor session identity, absent before declaration.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub session: Option<String>,
+    /// Whether this seat has resumable session authority.
     pub bound: bool,
     /// Durable occupancy disposition.
     pub disposition: String,

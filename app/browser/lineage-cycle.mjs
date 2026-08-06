@@ -42,6 +42,8 @@ import {
   reply,
   seedAuthority,
   startResident,
+  TRANSITION_MS,
+  waitForPageFunction,
 } from "./canvas-fixture.mjs";
 
 const cycles = Number.parseInt(process.argv[2] ?? "100", 10);
@@ -51,6 +53,8 @@ assert.ok(
   Number.isInteger(frameDelayMs) && frameDelayMs >= 0,
   "frame delay is a non-negative integer",
 );
+// A dangle at 13 needs at most two delayed continuation frames to reach root.
+const rootSettleMs = TRANSITION_MS + frameDelayMs * 2;
 
 await buildResident();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-lineage-cycle-")));
@@ -104,7 +108,7 @@ try {
     if (label.startsWith("dangling at ")) {
       const observedAt = performance.now();
       const authority = await reply(fixture, ["thread", String(extent.cursor)]);
-      await page.waitForFunction(() => {
+      await waitForPageFunction(page, "packed lineage reaches root", rootSettleMs, () => {
         return document.querySelector('[data-pane="lineage"] .section-count')?.textContent === "root";
       });
       dangling.push({

@@ -51,6 +51,14 @@ pub struct Standing {
     pub label: String,
     /// Vendor driving the lane.
     pub vendor: String,
+    /// Concrete model supplied to the occupant's vendor launch.
+    pub model: Option<String>,
+    /// Reasoning effort supplied to the occupant's vendor launch.
+    pub effort: Option<String>,
+    /// Current supervised occupant, which is the Canvas agent thread.
+    pub thread: Option<CanonicalUuid>,
+    /// Exact resumable vendor session identity.
+    pub session: Option<String>,
     /// Lifecycle the lane was seated under.
     pub life: String,
     /// Current lane disposition.
@@ -101,6 +109,10 @@ pub fn standings(
                     .clone()
                     .unwrap_or_else(|| leaf(&member.worktree).to_owned()),
                 vendor: member.vendor.to_string(),
+                model: member.model.clone(),
+                effort: member.effort.clone(),
+                thread: member.occupant,
+                session: member.session.clone(),
                 life: member.life.clone(),
                 disposition: member.disposition.clone(),
                 liveness: member.liveness,
