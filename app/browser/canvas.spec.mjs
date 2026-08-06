@@ -42,6 +42,12 @@ if (coverageArguments.length > 0) {
   coverageReceiptPath = coverageArguments[1];
 }
 const agentNames = ["Ava", "Bex", "Cy", "Dee"];
+const teamLaneIds = [
+  "00000000-0000-4000-8000-000000000000",
+  "00000000-0000-4000-8000-000000000001",
+  "00000000-0000-4000-8000-000000000002",
+  "00000000-0000-4000-8000-000000000003",
+];
 const staleEpoch = "018f9999-9999-7444-8888-999999999999";
 const nestedQuoteMessage = [
   "> > The final review found no alternate execution path.",
@@ -181,6 +187,35 @@ async function assertCanvas(page, scheme) {
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }
 
+async function assignTeamLaneIds(page) {
+  await page.evaluate((laneIds) => {
+    const socket = window.__canvasSockets.at(-1);
+    if (!socket) throw new Error("canvas WebSocket was not captured");
+    const send = socket.send.bind(socket);
+    let assignment = 0;
+    const rewrite = (bytes) => {
+      const command = JSON.parse(new TextDecoder().decode(bytes));
+      if (command.kind !== "lane::seat") return bytes;
+      const lane = laneIds[assignment];
+      if (!lane) throw new Error("fixture received an unexpected fifth lane::seat command");
+      assignment += 1;
+      command.body.lane = lane;
+      command.body.lineage_id = laneIds[0];
+      return new TextEncoder().encode(JSON.stringify(command));
+    };
+    socket.send = (data) => {
+      if (typeof data === "string") {
+        const rewritten = rewrite(new TextEncoder().encode(data));
+        send(new TextDecoder().decode(rewritten));
+      } else if (data instanceof Blob) {
+        void data.arrayBuffer().then((buffer) => send(rewrite(new Uint8Array(buffer))));
+      } else {
+        send(rewrite(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
+      }
+    };
+  }, teamLaneIds);
+}
+
 async function assertAgentConversation(page, fixture, worktrees) {
   const teamWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
@@ -203,6 +238,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await refusal.waitFor({ timeout: 10_000 });
   assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
 
+  await assignTeamLaneIds(page);
   await console.getByLabel("Vendor").fill("Claude");
   await console.getByRole("button", { name: "Seat agent" }).click();
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
@@ -212,14 +248,14 @@ async function assertAgentConversation(page, fixture, worktrees) {
   const firstSnapshot = await reply(fixture, ["lane"]);
   const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === teamWorktrees[0]);
   assert.ok(host, "the Canvas seat control creates the lineage host");
+  assert.equal(host.lane, teamLaneIds[0], "the fixture fixes the lineage host accent slot");
   for (const [index, worktree] of teamWorktrees.slice(1).entries()) {
-    await reply(fixture, [
-      "lane", "add", worktree,
-      "--lineage", host.lineage_id,
-      "--name", agentNames[index + 1],
-      "--life", "Steer",
-      "--vendor", "claude",
-    ]);
+    await console.getByLabel("Name").fill(agentNames[index + 1]);
+    await console.getByLabel("Worktree").fill(worktree);
+    await console.getByLabel("Life").fill("steer");
+    await console.getByLabel("Vendor").fill("Claude");
+    await console.getByRole("button", { name: "Seat agent" }).click();
+    await console.locator(".team-detail-card").nth(index + 1).waitFor({ timeout: 15_000 });
   }
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
@@ -231,6 +267,11 @@ async function assertAgentConversation(page, fixture, worktrees) {
     (worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree),
   );
   assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
+  assert.deepEqual(
+    seated.map((lane) => lane.lane),
+    teamLaneIds,
+    "the fixture owns four deterministic and non-colliding accent slots",
+  );
   assert.ok(
     seated.every((lane) => lane.lineage_id === host.lineage_id),
     "every independently steerable member retains the shared lineage identity",
