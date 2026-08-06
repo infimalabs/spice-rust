@@ -24,6 +24,10 @@ use crate::stage_sources::{
 };
 use crate::toolchain;
 
+mod local;
+
+pub use local::local_app;
+
 /// The target the browser app is compiled for.
 ///
 /// Every other step builds for the host and only for the host, so the far side
@@ -111,13 +115,16 @@ const GENERATED_MODULE_REFERENCES: usize = 2;
 
 /// Why one app compilation is running.
 ///
-/// Staging and checking deliberately never share a Cargo target directory. A
-/// verifier that reused the staging cache could reproduce the same substituted
-/// artifact and call it equal without compiling the sources independently.
+/// Staging, checking, and development deliberately never share a Cargo target
+/// directory. A verifier that reused the staging cache could reproduce the
+/// same substituted artifact and call it equal without compiling the sources
+/// independently, while a development build may compile uncommitted bytes that
+/// no committed stage may inherit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AppBuildRole {
     Stage,
     Check,
+    Local,
 }
 
 impl AppBuildRole {
@@ -125,6 +132,7 @@ impl AppBuildRole {
         match self {
             Self::Stage => "stage",
             Self::Check => "check",
+            Self::Local => "local",
         }
     }
 }
@@ -722,11 +730,11 @@ mod tests {
     ///
     /// Both workers write the same artifact name at the same time. If the
     /// source identity leaves the namespace, the paths collapse and at least
-    /// one lane reads its peer's bytes. The checker is held apart as well: it
-    /// must independently compile the sources or it can agree with the exact
-    /// substituted artifact staging consumed.
+    /// one lane reads its peer's bytes. The checker and development builder
+    /// are held apart as well: the checker must independently compile the
+    /// sources, and uncommitted development output must never enter staging.
     #[test]
-    fn concurrent_source_inventories_and_the_checker_use_disjoint_app_targets() {
+    fn concurrent_source_inventories_and_build_roles_use_disjoint_app_targets() {
         use std::sync::{Arc, Barrier};
 
         let root = std::env::temp_dir().join(format!(
@@ -778,6 +786,13 @@ mod tests {
         assert!(
             !check.exists(),
             "the independent checker inherited the staged artifact"
+        );
+        let local = app_target_directory(&root, AppBuildRole::Local, &lane_a);
+        assert_ne!(local, built[0].0, "local-app reused the staging target");
+        assert_ne!(local, check, "local-app reused the checking target");
+        assert!(
+            !local.exists(),
+            "the development builder inherited a committed artifact"
         );
         fs::remove_dir_all(root).expect("remove app-target fixture");
     }

@@ -9,7 +9,7 @@ use sill::Deadlines;
 
 const USAGE_EXIT: u8 = 2;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <verify|stage-app|check-app|stage-target TARGET|",
+    "usage: cargo xtask <verify|stage-app|local-app|check-app|stage-target TARGET|",
     "commit-msg MESSAGE_FILE|reference-transaction STATE>"
 );
 
@@ -24,6 +24,9 @@ fn main() -> ExitCode {
         }
         Some(value) if value == OsStr::new("stage-app") && arguments.len() == 0 => {
             xtask::stage_app(&release_environment(), &mut output).map_err(Into::into)
+        }
+        Some(value) if value == OsStr::new("local-app") && arguments.len() == 0 => {
+            xtask::local_app(&release_environment(), &mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("check-app") && arguments.len() == 0 => {
             xtask::check_app(&release_environment(), &mut output).map_err(Into::into)

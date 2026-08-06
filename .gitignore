@@ -7,3 +7,8 @@
 # `cargo xtask stage-target`; they are not task-source work.
 /dist/stage/objects/
 /dist/stage/targets/
+
+# Locally built browser app; `cargo xtask local-app` writes it and the resident
+# uses it in place of the compiled bytes. Never committed: only the sealed
+# image may write the reproducible stage beside it.
+/dist/stage-local/

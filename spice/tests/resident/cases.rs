@@ -1198,3 +1198,62 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
         "foreground resident failed"
     );
 }
+
+/// The resident reads its own worktree for a locally built app, and a stage
+/// that cannot supply the whole app stops it before the endpoint is published.
+///
+/// This is the half of the local app loop that lives outside `canvas`: that
+/// the source is resolved at all, and against this worktree rather than some
+/// other directory. A resident that skipped the resolve would reach readiness
+/// here, and one that looked elsewhere would never see this stage.
+#[test]
+fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app() {
+    let fixture = Fixture::new("app-source");
+    let stage = fixture.root.join(canvas::LOCAL_STAGE);
+    fs::create_dir_all(&stage).expect("fixture stage");
+    fs::write(
+        stage.join("canvas-app.html"),
+        b"locally built canvas-app.html",
+    )
+    .expect("fixture asset");
+
+    let mut resident = RunningResident::spawn(&fixture);
+    // Bounded rather than a bare wait: a resident that never resolved this
+    // stage stays up forever, and that has to read as a failure here rather
+    // than as a battery that hangs.
+    fs::create_dir_all(&fixture.runtime).expect("runtime directory");
+    let ending = readiness::wait_until_ready(
+        resident.child.as_mut().expect("resident child"),
+        &fixture.runtime,
+        readiness::ARRIVAL_HORIZON,
+        "resident refusal of a partial local app stage",
+        || false,
+    );
+    assert!(
+        matches!(ending, Readiness::Exited),
+        "the resident stayed up with a stage that cannot supply the whole app"
+    );
+    let up = resident.wait();
+
+    assert_eq!(up.status.code(), Some(FAULT_EXIT));
+    let refusal = outcome(&up);
+    let Outcome::Fault(fault) = &refusal else {
+        panic!("a partial local stage answered {refusal:?}");
+    };
+    let detail = &fault.detail;
+    assert_eq!(fault.reason, "canvas::app-source-invalid");
+    for missing in ["app.module", "style.css", "app_bg.wasm"] {
+        assert!(
+            detail.contains(missing),
+            "the refusal does not name {missing}: {detail}"
+        );
+    }
+    assert!(
+        detail.contains("cargo xtask local-app"),
+        "the refusal does not say how to build the stage: {detail}"
+    );
+    assert!(
+        !fixture.canvas().is_file(),
+        "the endpoint was published for an app the resident cannot supply"
+    );
+}
