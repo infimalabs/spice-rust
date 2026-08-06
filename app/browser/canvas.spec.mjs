@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { watch } from "node:fs";
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { unwatchFile, watchFile } from "node:fs";
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,9 +41,8 @@ function waitForDiscovery(child, canvas, timeout = 10_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
     let lastError;
-    const watcher = watch(dirname(canvas), (_event, name) => {
-      if (name?.endsWith("canvas")) readPublishedDiscovery();
-    });
+    const discoveryChanged = () => readPublishedDiscovery();
+    watchFile(canvas, { interval: 100 }, discoveryChanged);
     const deadline = setTimeout(() => {
       finish(new Error("timed out waiting for resident canvas discovery", { cause: lastError }));
     }, timeout);
@@ -55,7 +54,7 @@ function waitForDiscovery(child, canvas, timeout = 10_000) {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
-      watcher.close();
+      unwatchFile(canvas, discoveryChanged);
       child.off("exit", residentExit);
       if (error) rejectDiscovery(error);
       else resolveDiscovery(discovery);
@@ -77,7 +76,6 @@ function waitForDiscovery(child, canvas, timeout = 10_000) {
       );
     }
 
-    watcher.on("error", finish);
     child.once("exit", residentExit);
     readPublishedDiscovery();
   });
@@ -90,7 +88,9 @@ async function startResident(fixture) {
     cwd: fixture,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  let stdout = "";
   let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
   child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
   child.on("exit", (code) => {
     if (code && code !== 0) process.stderr.write(`resident exited ${code}: ${stderr}\n`);
@@ -104,7 +104,11 @@ async function startResident(fixture) {
       child.kill("SIGKILL");
       await exited;
     }
-    throw error;
+    const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+    throw new Error(
+      output ? `${error.message}\nresident output:\n${output}` : error.message,
+      { cause: error },
+    );
   }
 }
 
@@ -164,6 +168,9 @@ async function configureFixture(fixture) {
     "",
     "[canvas.pack]",
     "rows = 2",
+    "",
+    "[tasks]",
+    'stems = ["app", "canvas"]',
     "",
   ].join("\n"));
 }
@@ -344,9 +351,9 @@ async function assertMosaicComposer(page, fixture, seeded) {
   await lane.getByRole("button", { name: "Quote reply" }).click();
   const composer = lane.locator(".mosaic-composer");
   await composer.getByLabel("Markdown preview").waitFor();
-  assert.match(
-    await composer.getByLabel("Markdown preview").innerText(),
-    /> browser direction survives streaming/,
+  assert.equal(
+    await composer.locator("blockquote").innerText(),
+    "browser direction survives streaming",
   );
   await composer.getByRole("textbox").fill("canvas quote reply");
   const pixel = Buffer.from(
@@ -715,7 +722,7 @@ async function assertSpeechVariants(browser, endpoint) {
   await variants.close();
 }
 
-const fixture = await mkdtemp(join(tmpdir(), "spice-canvas-browser-"));
+const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
 await mkdir(join(fixture, ".git"));
 await mkdir(artifacts, { recursive: true });
 await configureFixture(fixture);
@@ -740,7 +747,7 @@ try {
   await assertCanvas(lightPage, "light");
   await assertAuthoritySurface(lightPage, seeded);
   await assertMosaicComposer(lightPage, fixture, seeded);
-  await assertPackedHistory(lightPage, seeded.extent, true);
+  await assertPackedHistory(lightPage, await journalExtent(fixture), true);
   await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
   await assertSystemSpeech(lightPage);
   await lightPage.getByRole("button", { name: "Flow" }).click();

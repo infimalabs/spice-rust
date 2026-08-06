@@ -816,7 +816,7 @@ fn install_browser_headers(response: &mut Response) {
     response.headers_mut().insert(
         "content-security-policy",
         HeaderValue::from_static(
-            "default-src 'self'; connect-src 'self' ws:; img-src 'self'; object-src 'none'; \
+            "default-src 'self'; connect-src 'self' ws:; img-src 'self' data:; object-src 'none'; \
              script-src 'self' 'wasm-unsafe-eval' \
              'sha256-B50SC8VLF+K2T0Re7VCfyZ3PqVhYIkg+OlhW+7PQyTU='; style-src 'self'; \
              media-src 'self' blob:; \
