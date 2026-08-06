@@ -62,18 +62,38 @@ const triggeredActivityRecord = JSON.stringify({
     },
   },
 });
+// The vendor correlation id joins the call to its result and is the exact
+// string an operator must never be shown, so the fixture spells a realistic
+// one rather than a friendly placeholder.
+const toolCallId = "toolu_01LaneStatusStripWitness";
 const toolActivityRecord = JSON.stringify({
   type: "assistant",
   message: {
     type: "message",
     role: "assistant",
-    content: [{ type: "tool_use", id: "lane-status-tool", name: "Bash", input: {} }],
+    content: [
+      {
+        type: "tool_use",
+        id: toolCallId,
+        name: "Bash",
+        input: { command: "git status --short", description: "read the tree" },
+      },
+    ],
     usage: {
       input_tokens: 1,
       cache_read_input_tokens: 0,
       cache_creation_input_tokens: 0,
       output_tokens: 1,
     },
+  },
+});
+const toolResultRecord = JSON.stringify({
+  type: "user",
+  message: {
+    role: "user",
+    content: [
+      { type: "tool_result", tool_use_id: toolCallId, is_error: false, content: "M app/src/lib.rs" },
+    ],
   },
 });
 
@@ -284,9 +304,27 @@ export async function assertHeldTaskCount(team, fixture, lane) {
   // by the production capture path, not prose styled to resemble a tool.
   const ticker = team.locator(".ticker");
   await writeFile(join(fixture, ".spice-tool-trigger"), "emit\n");
-  const toolLine = "tool: Bash";
+  const toolLine = "tool: Bash: git status --short";
   await ticker.filter({ hasText: toolLine }).waitFor({ timeout: 15_000 });
   assertNewestLaneActivity(await ticker.innerText(), toolLine);
+
+  // The result of that same call arrives on a separate transcript record that
+  // names only the vendor correlation id. The strip has to resolve it back to
+  // the call, because `toolu_01...` is not something an operator can act on.
+  await writeFile(join(fixture, ".spice-tool-result-trigger"), "emit\n");
+  const resultLine = `${toolLine} succeeded`;
+  await ticker.filter({ hasText: resultLine }).waitFor({ timeout: 15_000 });
+  assertNewestLaneActivity(await ticker.innerText(), resultLine);
+
+  // Falsification: the exact opaque line this task exists to remove must be
+  // rejected by the same assertion the resolved line just passed. It is checked
+  // without writing to the page, because overwriting a rendered node here
+  // desynchronizes the client's diff and suppresses the next activity update.
+  assert.throws(
+    () => assertNewestLaneActivity(`tool: ${toolCallId} succeeded`, resultLine),
+    /raw vendor tool identifier/,
+    "the production assertion rejects a raw vendor identifier on the strip",
+  );
 
   // The fake resident agent consumes this one-shot trigger in its real
   // transcript process. Capture then publishes a normal prose stream frame,
@@ -326,6 +364,11 @@ function assertNewestLaneActivity(actual, expected) {
     /(?:Board|Lane) snapshot|Steering inbox/,
     "newest lane activity excludes protocol snapshot receipts",
   );
+  assert.doesNotMatch(
+    actual,
+    /toolu_/,
+    "newest lane activity never shows a raw vendor tool identifier",
+  );
   assert.equal(actual, expected, "newest lane activity wins across tool and prose shapes");
 }
 
@@ -349,6 +392,10 @@ export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
     "  if [ -f .spice-tool-trigger ]; then",
     "    rm -f .spice-tool-trigger",
     `    printf '%s\\n' '${toolActivityRecord}'`,
+    "  fi",
+    "  if [ -f .spice-tool-result-trigger ]; then",
+    "    rm -f .spice-tool-result-trigger",
+    `    printf '%s\\n' '${toolResultRecord}'`,
     "  fi",
     "  if [ -f .spice-prose-trigger ]; then",
     "    rm -f .spice-prose-trigger",

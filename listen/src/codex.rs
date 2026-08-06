@@ -1,3 +1,4 @@
+use serde_json::{Map, Value};
 use tape::Locus;
 
 use crate::{
@@ -50,28 +51,34 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
             })])
         }
         "command_execution" => {
-            let _ = string(item, "command")?;
+            let command = string(item, "command")?.to_owned();
             tool(
                 item,
                 "command_execution".to_owned(),
+                argument("command", Value::String(command)),
                 moment,
                 StatusPolicy::Reported,
                 locus,
             )
         }
         "file_change" if matches!(moment, ItemMoment::Completed) => {
-            let _ = array(item, "changes")?;
+            let changes = array(item, "changes")?.to_vec();
             tool(
                 item,
                 "file_change".to_owned(),
+                argument("changes", Value::Array(changes)),
                 moment,
                 StatusPolicy::Reported,
                 locus,
             )
         }
+        // The two routed call shapes below carry their arguments in a field
+        // this decoder does not read yet, so they announce none rather than
+        // guessing a name for it; the tool name alone still reaches the strip.
         "mcp_tool_call" => tool(
             item,
             format!("{}::{}", string(item, "server")?, string(item, "tool")?),
+            NO_ARGUMENTS.to_owned(),
             moment,
             StatusPolicy::Reported,
             locus,
@@ -79,15 +86,17 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
         "collab_tool_call" => tool(
             item,
             string(item, "tool")?.to_owned(),
+            NO_ARGUMENTS.to_owned(),
             moment,
             StatusPolicy::Reported,
             locus,
         ),
         "web_search" => {
-            let _ = string(item, "query")?;
+            let query = string(item, "query")?.to_owned();
             tool(
                 item,
                 "web_search".to_owned(),
+                argument("query", Value::String(query)),
                 moment,
                 StatusPolicy::Unreported,
                 locus,
@@ -107,9 +116,18 @@ enum StatusPolicy {
     Unreported,
 }
 
+/// The payload a call announces when this dialect reads no argument field.
+const NO_ARGUMENTS: &str = "{}";
+
+/// One vendor argument field, rendered as the JSON object a call carries.
+fn argument(key: &str, value: Value) -> String {
+    Value::Object(Map::from_iter([(key.to_owned(), value)])).to_string()
+}
+
 fn tool(
     item: &Object,
     name: String,
+    arguments: String,
     moment: ItemMoment,
     status_policy: StatusPolicy,
     locus: Locus,
@@ -120,13 +138,13 @@ fn tool(
             if matches!(status_policy, StatusPolicy::Reported) {
                 require_in_progress(item)?;
             }
-            ToolMoment::Call { name }
+            ToolMoment::Call { name, arguments }
         }
         ItemMoment::Updated => {
             if matches!(status_policy, StatusPolicy::Reported) {
                 require_in_progress(item)?;
             }
-            ToolMoment::Update { name }
+            ToolMoment::Update { name, arguments }
         }
         ItemMoment::Completed => ToolMoment::Result(match status_policy {
             StatusPolicy::Reported => tool_result(item)?,
