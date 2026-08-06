@@ -433,7 +433,10 @@
 
 /* A third of the message-card thumbnail, keeping its border, radius, and crop
    so a draft image reads as the same object at heading scale. The strip is
-   bounded and scrolls, so attachments never push the prose out of the row. */
+   bounded and scrolls, so attachments never push the prose out of the row. An
+   empty strip stays laid out at zero width rather than `display: none`: it owns
+   the third column of the primary heading, and dropping out of the grid would
+   slide the hamburger a whole column left until the first image arrives. */
 .composer-shard-image-indicators {
   display: flex;
   gap: 3px;
@@ -442,7 +445,6 @@
   overflow-x: auto;
   overscroll-behavior: contain;
 }
-.composer-shard-image-indicators:empty { display: none; }
 .composer-shard-image-indicator {
   display: block;
   flex: none;

@@ -356,8 +356,9 @@ pub(super) fn render_quote_shards(
 /// Draft images ride in the shard heading as message-card thumbnails shrunk to
 /// heading scale. The thumbnail is itself the remove control: a separate × would
 /// be wider than the image it decorates and would crowd the prose, deep link,
-/// and hamburger sharing that row. The indicator strip is always rendered so the
-/// heading keeps its fixed child order; CSS hides it while it is empty.
+/// and hamburger sharing that row. The strip is rendered even with no images so
+/// the heading keeps its fixed child order and its grid columns, which is what
+/// holds the hamburger still as the first image arrives.
 pub(super) fn render_image_indicators(
     lane_key: &str,
     draft: &ComposerDraft,
