@@ -316,8 +316,10 @@ pub enum WorktreeDamage {
 ///
 /// Two facts together are decisive. The update moves the branch backwards onto an
 /// ancestor of its own tip, and the working tree already holds that ancestor's
-/// content even though HEAD has not moved yet. Only a command that wrote the
-/// working tree itself can leave that pair behind.
+/// content even though HEAD has not moved yet. A command that wrote the working
+/// tree itself leaves that pair behind. It is not the only way to arrive there:
+/// a rewind that wrote nothing leaves the same pair whenever the tree already
+/// held the target's content, which is the bound named below.
 ///
 /// Both halves are load-bearing, measured live against git 2.50.1 at the
 /// `prepared` state. Dropping the ancestor test would report a refused
@@ -326,7 +328,10 @@ pub enum WorktreeDamage {
 /// replacement tip is no ancestor of the tip it replaces. Dropping the content
 /// test would report `reset --soft` and `reset --mixed` as rewritten, because
 /// both move backwards; they are excluded instead because neither writes the
-/// files on disk, so the worktree still disagrees with the rewind target.
+/// files on disk, so the worktree ordinarily still disagrees with the rewind
+/// target. Ordinarily rather than always: a worktree that already agreed is not
+/// made to disagree by a rewind that wrote nothing, so the content test admits
+/// those two after all, which is the bound below.
 ///
 /// The bound worth naming: a `--soft` or `--mixed` rewind onto a commit whose
 /// content the index and worktree already happen to match is reported as
