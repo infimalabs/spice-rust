@@ -317,7 +317,7 @@ fn file_shape_rows(
             );
         }
     };
-    if baselines.merge_inherits(path, &String::from_utf8_lossy(&bytes)) {
+    if baselines.merge_inherits(path, &bytes) {
         return declared_rows(
             declaration,
             key,
@@ -802,7 +802,7 @@ fn not_applicable_magic() -> Result<Vec<MetricEvidence>, MetricAcquisitionError>
 /// mint skip provenance over it. Of the two, only the class refusal outranks a
 /// measurement.
 ///
-/// A path no parent of the pending commit carries is then reported inapplicable
+/// A path no parent or pending merge base carries is then reported inapplicable
 /// rather than scanned against nothing. A regression is a literal this file did
 /// not have before, so a file that did not exist before has no delta to take:
 /// scanning it against an empty baseline would count every literal it was born
@@ -826,11 +826,12 @@ fn magic_state(source: &MetricSource<'_>, path: &str, baselines: &CommittedTexts
             };
         }
     };
-    let Some(baseline) = baselines.baseline(path, &current) else {
+    let Some(baseline) = baselines.baseline(path, current.as_bytes()) else {
         let reason = match baselines.commit() {
-            Some(commit) => {
-                format!("{path:?} is absent from {commit}, so it has no baseline to regress from")
-            }
+            Some(commit) => format!(
+                "{path:?} is absent from every committed baseline rooted at {commit}, so it has \
+                 no baseline to regress from"
+            ),
             None => format!("{path:?} has no baseline: this repository has no commit yet"),
         };
         return EvidenceState::NotApplicable { reason };
