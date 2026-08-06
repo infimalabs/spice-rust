@@ -43,7 +43,7 @@ use wire::{Digest, Domain};
 use super::analyze::{self, Analysis};
 use super::{
     ArmObservation, ArmOutcome, ProbeFailure, TOOLCHAIN_ARMS, ToolEvidence, ToolRequirement,
-    ToolchainDeclaration, contracted_version,
+    ToolchainDeclaration, ToolchainError, contracted_version,
 };
 use crate::GateId;
 use crate::input::Contract;
@@ -256,6 +256,23 @@ pub fn acquire_toolchain(source: &ToolchainSource<'_>, contract: &Contract) -> V
             )
         })
         .collect()
+}
+
+pub(crate) fn acquire_toolchain_arm(
+    source: &ToolchainSource<'_>,
+    contract: &Contract,
+    gate_id: GateId,
+) -> Result<ArmObservation, ToolchainError> {
+    let declaration = TOOLCHAIN_ARMS
+        .into_iter()
+        .find(|declaration| declaration.id == gate_id)
+        .ok_or(ToolchainError::ForeignGate(gate_id))?;
+    Ok(observe(
+        declaration,
+        source,
+        contract.bounds(),
+        contract.environment_names(),
+    ))
 }
 
 fn observe(

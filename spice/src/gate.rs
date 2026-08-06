@@ -12,8 +12,8 @@ use std::path::Path;
 use std::process::Command;
 
 use ::gate::{
-    ActorCapture, BatteryCapture, BatteryReceipt, BatteryReport, ClaimCapture,
-    HygieneConfiguration, RepositoryExecutionEvent, RimCapture, Selector,
+    ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport, ClaimCapture,
+    GateId, HygieneConfiguration, RepositoryExecutionEvent, RimCapture, Selector,
 };
 
 use crate::repository::{Repository, StateError};
@@ -30,6 +30,19 @@ pub fn run(selector: Selector) -> Result<BatteryReport, RunError> {
     let mut capture = capture(selector, None)?;
     capture
         .execute()
+        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+}
+
+/// Execute one named canonical gate arm over one selected source.
+///
+/// # Errors
+///
+/// Returns the same acquisition and arm refusal as [`run`], without executing
+/// sibling battery arms.
+pub fn run_arm(selector: Selector, gate_id: GateId) -> Result<BatteryArmResult, RunError> {
+    let mut capture = capture(selector, None)?;
+    capture
+        .execute_arm(gate_id)
         .map_err(|error| RunError::refusal("gate::battery-refused", error))
 }
 
