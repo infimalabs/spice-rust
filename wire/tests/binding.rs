@@ -221,6 +221,12 @@ fn oops_route_body_cannot_name_or_cross_target_a_hidden_project() {
 }
 
 /// One successful reply body for every declared answer shape.
+///
+/// The board task row spells every optional the shape carries -- `assignment`,
+/// `deferral`, and `completion` together, alongside `claim` and `lease` -- so
+/// each `skip_serializing_if` field is decoded and re-encoded here rather than
+/// only in a downstream crate. That makes the row a shape witness, not a
+/// reachable board state: no phase both defers and completes.
 const ANSWERS: &[(AnswerShape, &str)] = &[
     (
         AnswerShape::Board,
@@ -238,7 +244,60 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "project": "agent.operator.task",
     "origin_thread": "operator"
   },
-  "tasks": [],
+  "tasks": [
+    {
+      "visibility": { "kind": "public" },
+      "origin_thread": "operator",
+      "presentation_title": "Bind a board task",
+      "statement": {
+        "position": 2,
+        "body": {
+          "handle": "SPICE-aBcD",
+          "uuid": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+          "description": "One task spelled through every field the shape carries.",
+          "acceptance": ["the row decodes", "the row re-encodes unchanged"],
+          "project": "wire.binding",
+          "tags": ["binding"],
+          "dependencies": ["SPICE-eFgH"],
+          "provenance": "task:SPICE-aBcD",
+          "revision": 2
+        }
+      },
+      "workflow": {
+        "position": 3,
+        "body": {
+          "flow": ["todo", "review"],
+          "phase": "todo",
+          "status": "pending",
+          "review": "unassigned",
+          "assignment": "operator",
+          "deferral": "2026-08-01T07:07:19.000Z",
+          "completion": "2026-08-01T08:07:19.000Z"
+        }
+      },
+      "claim": {
+        "position": 4,
+        "body": {
+          "actor": "operator",
+          "fact": 4,
+          "lane": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+          "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+          "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+          "disposition": "active"
+        }
+      },
+      "lease": {
+        "position": 5,
+        "body": {
+          "start": "2026-08-01T06:07:19.000Z",
+          "renewal": "2026-08-01T06:37:19.000Z",
+          "maximum": "2026-08-01T09:07:19.000Z",
+          "expiry": "2026-08-01T07:07:19.000Z",
+          "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3"
+        }
+      }
+    }
+  ],
   "residency": {
     "position": 1,
     "body": {
