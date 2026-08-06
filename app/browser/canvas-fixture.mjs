@@ -314,6 +314,36 @@ export function monitorPage(page) {
   };
 }
 
+// Switch the canvas to a named view, which several waits treat as a precondition.
+//
+// BROWSER-1kKZ9jJs traced why a `.status.offline` wait can spend its whole
+// bound. The connection flip itself is not the slow part and is not polled:
+// `app/src/browser.rs` `run_surface` sets `Connection::Offline` the instant
+// `run_connection` returns, and `run_connection` returns as soon as the socket
+// reader yields nothing, mapped to "resident closed the socket". No heartbeat
+// or interval sits anywhere on that path, and `stopResident` below awaits the
+// resident process exit, so the close has already happened before any such
+// wait is armed.
+//
+// What is not settled before the wait is armed is *this* function. The status
+// element is not part of a permanently rendered chrome: `app/src/browser.rs`
+// starts `mosaic` at `true` and `app/src/browser/view.rs` renders the topbar
+// holding `.status` only under `if !**render.mosaic`, so `.status` is absent
+// from the document in the default Agents view. Every `.status` wait in
+// `canvas.spec.mjs` is therefore preceded by a switch to a non-mosaic view,
+// and each one is really waiting on two things: the connection state, and this
+// click having been applied. This function returns once the click is
+// dispatched; nothing here confirms the view actually changed. A wait that
+// times out consequently cannot distinguish "`.status` never carried
+// `offline`" from "`.status` was never in the document at all", and only the
+// second is a view-switch failure. That is demonstrated, not supposed: pointing
+// one such wait at the mosaic "Agents" view instead reproduces the reported
+// flake's signature exactly, down to the same bare uncaught TimeoutError on
+// `waiting for locator('.status.offline') to be visible`, from a cause that
+// never involved the connection at all.
+//
+// Keying this on the transition it triggers, and reporting which of the two
+// cases a timeout hit, is BROWSER-1kKZDVGZ and BROWSER-1kKZDKpT respectively.
 export async function chooseCanvasView(page, name) {
   const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
   if (!(await button.isVisible())) {
