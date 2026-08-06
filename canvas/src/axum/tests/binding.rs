@@ -2,6 +2,8 @@
 
 use super::*;
 
+const REMOTE_TOKEN: &str = "correct-horse-battery-staple";
+
 #[tokio::test(flavor = "current_thread")]
 async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
     let capabilities = Capabilities::default();
@@ -36,7 +38,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-            Access::authenticated("correct-horse-battery-staple".to_owned()),
+            Access::authenticated(REMOTE_TOKEN.to_owned()),
         ),
         epoch(),
         capabilities,
