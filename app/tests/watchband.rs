@@ -1,4 +1,4 @@
-use app::runtime::LaneRow;
+use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, leaf, one_line, short,
     standings, ticker_line, truncate,
@@ -41,16 +41,18 @@ fn spell(delta: i64) -> String {
 fn lane(id: &str, worktree: &str) -> LaneRow {
     LaneRow {
         lane: uuid(id),
+        members: vec![member(id, worktree)],
+    }
+}
+
+fn member(id: &str, worktree: &str) -> LaneMember {
+    LaneMember {
+        lane: uuid(id),
         worktree: worktree.to_owned(),
         life: "docker".to_owned(),
         vendor: "codex".parse().expect("the fixture spells a vendor name"),
         occupant: Some(uuid(OCCUPANT)),
         disposition: "seated".to_owned(),
-        // A seat that has run: `bound` records that a resumable session was once
-        // declared for it, which is true of every lane this fixture builds
-        // because each one is occupied. No standing reads the field, so the
-        // value is the fixture's stance rather than anything asserted below --
-        // spelled out because a bare `true` reads as load-bearing when it is not.
         bound: true,
     }
 }
@@ -163,6 +165,23 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows[1].handle, None);
     assert_eq!(rows[1].phase, None);
     assert_eq!(rows[1].held, None);
+}
+
+#[test]
+fn one_lineage_emits_one_standing_per_member_without_losing_the_lineage_identity() {
+    let lineage = LaneRow {
+        lane: uuid(EPOCH),
+        members: vec![member(LANE_A, "main-a"), member(LANE_B, "main-b")],
+    };
+
+    let rows = standings(&[lineage], &[], &[], at(0));
+
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.lineage_id == uuid(EPOCH)));
+    assert_eq!(rows[0].lane, uuid(LANE_A));
+    assert_eq!(rows[1].lane, uuid(LANE_B));
+    assert_eq!(rows[0].label, "main-a");
+    assert_eq!(rows[1].label, "main-b");
 }
 
 #[test]

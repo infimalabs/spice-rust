@@ -64,6 +64,7 @@ fn seated_fact(position: u64, capability: Option<&str>) -> serde_json::Value {
         "fact": {
             "kind": "lane::seated",
             "lane": LANE,
+            "lineage_id": LANE,
             "worktree": "/tmp/lane",
             "life": "continuous",
             "vendor": "codex",
@@ -148,6 +149,11 @@ fn board_response(
         "schema": 1,
         "cursor": 4,
         "principal": "operator",
+        "project_policy": {
+            "public_stems": ["app", "board"],
+            "public_min_depth": 2,
+            "public_max_depth": 3,
+        },
         "tasks": [
             board_task(
                 "HIDDEN-oops1",
@@ -192,12 +198,13 @@ fn board_response(
 /// The session body is the resident's real one rather than a placeholder,
 /// because `bound` is derived from its presence and a shape the wire refuses
 /// would prove the mapping against a row that never crosses.
-fn lane_response(rows: &[(&str, Option<&str>, bool)]) -> String {
+fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> String {
     let lanes = rows
         .iter()
-        .map(|(lane, occupant, bound)| {
+        .map(|(lane, lineage_id, occupant, bound)| {
             let mut row = serde_json::json!({
                 "lane": lane,
+                "lineage_id": lineage_id,
                 "worktree": format!("/tmp/worktree-{}", &lane[..8]),
                 "life": "steer",
                 "vendor": "claude",
@@ -656,6 +663,7 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
             serde_json::json!({
                 "kind": "lane::seated",
                 "lane": LANE,
+                "lineage_id": LANE,
                 "worktree": "/tmp/lane",
                 "life": "continuous",
                 "vendor": "codex",
@@ -834,9 +842,9 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
     let bytes = lane_response(&[
-        (SECOND_LANE, None, false),
-        (LANE, Some(OPERATOR), false),
-        (THIRD_LANE, None, true),
+        (SECOND_LANE, SECOND_LANE, None, false),
+        (LANE, LANE, Some(OPERATOR), false),
+        (THIRD_LANE, THIRD_LANE, None, true),
     ]);
     let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
         .admit_frame(bytes.as_bytes())
@@ -850,6 +858,9 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         .clone();
     let [never_seated, occupied, seated_before] = <[_; 3]>::try_from(lanes)
         .unwrap_or_else(|rows| panic!("three rows survive admission, got {}", rows.len()));
+    let never_seated = never_seated.host().expect("lineage has one member");
+    let occupied = occupied.host().expect("lineage has one member");
+    let seated_before = seated_before.host().expect("lineage has one member");
     assert_eq!(never_seated.status(0), LaneStatus::Unbound);
     assert_eq!(
         seated_before.status(0),
@@ -868,6 +879,10 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
     assert_eq!(LaneStatus::Running.label(), "agent running");
     assert_eq!(LaneStatus::Bound.label(), "agent bound");
     assert_eq!(LaneStatus::Unbound.label(), "agent unbound");
+    assert_eq!(LaneStatus::Queued.key(), "queued");
+    assert_eq!(LaneStatus::Running.key(), "running");
+    assert_eq!(LaneStatus::Bound.key(), "bound");
+    assert_eq!(LaneStatus::Unbound.key(), "unbound");
 
     let mut strip = vec![
         LaneStatus::Unbound,
@@ -886,6 +901,31 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         ],
         "the strip reads left to right as the predecessor's targetChoiceStatusValues"
     );
+}
+
+#[test]
+fn one_lineage_groups_multiple_steerable_worktrees_without_losing_member_order() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = lane_response(&[
+        (LANE, EPOCH, Some(OPERATOR), false),
+        (SECOND_LANE, EPOCH, None, true),
+        (THIRD_LANE, THIRD_LANE, None, false),
+    ]);
+    let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(bytes.as_bytes())
+        .expect("plural lineage answer is admitted");
+
+    runtime.apply_lanes(&admitted);
+
+    let lanes = &runtime.lanes().expect("the roster is retained").lanes;
+    assert_eq!(lanes.len(), 2);
+    assert_eq!(lanes[0].lane, uuid(EPOCH));
+    assert_eq!(lanes[0].members.len(), 2);
+    assert_eq!(lanes[0].members[0].lane, uuid(LANE));
+    assert_eq!(lanes[0].members[1].lane, uuid(SECOND_LANE));
+    assert_eq!(lanes[1].members[0].lane, uuid(THIRD_LANE));
 }
 
 /// The one steering receipt shape quotes the key exactly as the resident set it.

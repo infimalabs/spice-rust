@@ -613,6 +613,13 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "task", "add", "title", "--project", "rim.cli"],
         &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
         &["spice", "lane", "add", "--life", "Drive"],
+        &[
+            "spice",
+            "lane",
+            "add",
+            "--lineage",
+            "018f82d4-6f59-7d06-92e3-bce913116302",
+        ],
         &["spice", "install", "--apply=digest"],
         &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],

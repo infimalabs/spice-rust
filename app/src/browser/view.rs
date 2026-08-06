@@ -409,18 +409,20 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
                             <th>{"Lane"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
                             <th>{"Worktree"}</th><th>{"Vendor"}</th>
                         </tr></thead>
-                        <tbody>{for lanes.lanes.iter().map(|lane| html! {
+                        <tbody>{for lanes.lanes.iter().flat_map(|lineage| {
+                            lineage.members.iter().map(move |member| (lineage, member))
+                        }).map(|(lineage, member)| html! {
                             <tr>
-                                <td class="mono">{short(&lane.lane.to_string())}</td>
-                                <td><span class="tag active">{lane.disposition.clone()}</span></td>
+                                <td class="mono">{short(&lineage.lane.to_string())}</td>
+                                <td><span class="tag active">{member.disposition.clone()}</span></td>
                                 <td class="mono">{
-                                    lane
+                                    member
                                         .occupant
                                         .map(|value| short(&value.to_string()))
                                         .unwrap_or_else(|| "vacant".to_owned())
                                 }</td>
-                                <td class="mono">{lane.worktree.clone()}</td>
-                                <td>{lane.vendor.to_string()}</td>
+                                <td class="mono">{member.worktree.clone()}</td>
+                                <td>{member.vendor.to_string()}</td>
                             </tr>
                         })}</tbody>
                     </table></div>

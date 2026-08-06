@@ -300,10 +300,20 @@
   padding: 4px 6px 6px;
 }
 
+.lineage-fleet {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: calc(100vh - 40px);
+}
+
 .team-surface {
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
-  /* Match the predecessor's weighted swimlanes: a four-agent lineage receives
-     four shares and the only visible lineage consumes the available row. */
+  /* Match the predecessor's weighted swimlanes: each lineage receives one
+     share per member, up to the six-member visual contract, while the fleet
+     can carry any number of sibling lineage surfaces. */
   flex: var(--lineage-weight, 4) 1 0;
   width: auto;
   min-width: min(20em, 100%);
@@ -319,6 +329,8 @@
 .team-surface[data-lineage-weight="2"] { --lineage-weight: 2; }
 .team-surface[data-lineage-weight="3"] { --lineage-weight: 3; }
 .team-surface[data-lineage-weight="4"] { --lineage-weight: 4; }
+.team-surface[data-lineage-weight="5"] { --lineage-weight: 5; }
+.team-surface[data-lineage-weight="6"] { --lineage-weight: 6; }
 
 .team-toolbar {
   display: grid;
@@ -345,7 +357,9 @@
   background: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
 }
-.team-light.vacant { background: var(--muted); opacity: .35; box-shadow: none; }
+.team-light.queued { background: var(--warn); }
+.team-light.bound,
+.team-light.unbound { background: var(--muted); opacity: .35; box-shadow: none; }
 
 .team-mode-rail {
   display: grid;
@@ -426,7 +440,7 @@
 
 .team-surface .team-agents {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--lineage-weight, 4), minmax(0, 1fr));
   gap: 5px;
   min-width: 0;
 }
@@ -556,9 +570,7 @@
 }
 
 .team-activity-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 7px;
+  display: block;
   padding: 7px;
   border-top: 1px solid var(--line);
 }
@@ -625,7 +637,6 @@
   white-space: nowrap;
 }
 .team-surface .mosaic-message-empty {
-  grid-column: 1 / -1;
   padding: 16px 6px;
   font-size: .68rem;
 }
@@ -639,7 +650,7 @@
 .team-detail-pane.with-seat { gap: 8px; }
 .team-detail-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--lineage-weight, 4), minmax(0, 1fr));
   align-content: start;
   gap: 8px;
 }

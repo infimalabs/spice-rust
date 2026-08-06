@@ -17,6 +17,7 @@ mod source;
 pub(crate) const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
+const APP_SOURCE_IDENTITY_ENV: &str = "SPICE_APP_SOURCE_IDENTITY"; // env-policy: allow
 const GENERATED_MODULE_REFERENCES: usize = 2;
 const GENERATED_REFERENCES: [(&str, usize); 5] = [
     ("/app.module", 2),
@@ -240,7 +241,7 @@ fn trunk_command(
         .env("NO_COLOR", "true")
         .env("RUSTC_WORKSPACE_WRAPPER", "")
         .env("RUSTC_WRAPPER", "")
-        .env("SPICE_APP_SOURCE_IDENTITY", source_identity.as_str())
+        .env(APP_SOURCE_IDENTITY_ENV, source_identity.as_str())
         .args([
             "build",
             "index.html",
@@ -597,7 +598,7 @@ mod tests {
             Some(&Some(format!("/cargo-target/xtask-app-{worktree}-build")))
         );
         assert_eq!(
-            environment.get("SPICE_APP_SOURCE_IDENTITY"),
+            environment.get(APP_SOURCE_IDENTITY_ENV),
             Some(&Some(sources.to_string()))
         );
         assert_eq!(command.get_current_dir(), Some(Path::new("/workspace/app")));
@@ -656,8 +657,8 @@ mod tests {
             assert_eq!(first.get(name), second.get(name), "{name} changed on edit");
         }
         assert_ne!(
-            first.get("SPICE_APP_SOURCE_IDENTITY"),
-            second.get("SPICE_APP_SOURCE_IDENTITY"),
+            first.get(APP_SOURCE_IDENTITY_ENV),
+            second.get(APP_SOURCE_IDENTITY_ENV),
             "source identity did not change on edit"
         );
 

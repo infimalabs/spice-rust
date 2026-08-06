@@ -324,8 +324,10 @@ pub struct LaneRead {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneSeat {
-    /// Lane being seated.
+    /// Independently steerable member seat being created.
     pub lane: CanonicalUuid,
+    /// Canvas lineage whose lane receives the member.
+    pub lineage_id: CanonicalUuid,
     /// Worktree path the operator created.
     pub worktree: String,
     /// Closed lane-life spelling selected for this seat.
