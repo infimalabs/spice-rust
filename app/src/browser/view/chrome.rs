@@ -162,6 +162,11 @@ fn render_standing(standing: &Standing, selected: bool, choose: UseStateHandle<S
         standing.vendor, standing.name, standing.worktree
     );
     let holding = standing.handle.as_ref().zip(standing.phase.as_ref());
+    // Bound here rather than called in the markup below: inlined, the call sits
+    // inside a span already indented four levels deep and the line runs past the
+    // hundred characters the gate measures. The binding is the shorter spelling,
+    // not a change of behaviour, so re-inlining it would refuse the commit.
+    let name = watchband::truncate(&standing.label, watchband::FIELD_BUDGET);
     html! {
         <button
             class={classes!("agent-tab", "watchband-card", selected.then_some("selected"))}
@@ -173,7 +178,7 @@ fn render_standing(standing: &Standing, selected: bool, choose: UseStateHandle<S
         >
             <span class="watchband-line">
                 <span class="agent-presence"></span>
-                <span class="watchband-name">{watchband::truncate(&standing.label, watchband::FIELD_BUDGET)}</span>
+                <span class="watchband-name">{name}</span>
                 <span class="tag vendor">{standing.vendor.clone()}</span>
             </span>
             <span class="watchband-line muted">

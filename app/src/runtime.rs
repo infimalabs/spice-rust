@@ -128,6 +128,67 @@ pub struct LaneRow {
     pub vendor: wire::Name,
     pub occupant: Option<CanonicalUuid>,
     pub disposition: String,
+    /// Whether a resumable session was ever declared for this seat.
+    ///
+    /// The session record itself is authority the canvas has no use for, so
+    /// only its presence crosses: it is the difference the predecessor draws
+    /// between a seat an agent has run in and one that has never been used.
+    pub bound: bool,
+}
+
+/// What a lane tile says about its agent, ranked the way the operator scans.
+///
+/// Ported from the predecessor 0.31.0 UI, `spice/serve/static/app.lanes.js`:
+/// `targetChoiceStatus` derives it, `targetChoiceStatusLabel` names it, and the
+/// `targetChoiceStatusValues` list is the rank. That list carries nine states
+/// where this wire can distinguish four — the six liveness gradations between
+/// `running` and `unstarted` are read there from an agent process this canvas
+/// never sees — so the ported ladder keeps the predecessor's order and its
+/// exact wording for the four it can answer, rather than inventing labels for
+/// states the resident does not report.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum LaneStatus {
+    /// Direction is queued for this lane; the operator is being waited on.
+    Queued,
+    /// An occupant is live in the seat.
+    Running,
+    /// The seat has a declared session but nobody in it.
+    Bound,
+    /// The seat has never been occupied.
+    Unbound,
+}
+
+impl LaneStatus {
+    /// The predecessor's exact wording for this state.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Queued => "steering queued",
+            Self::Running => "agent running",
+            Self::Bound => "agent bound",
+            Self::Unbound => "agent unbound",
+        }
+    }
+}
+
+impl LaneRow {
+    /// This lane's status, given how much direction is queued for it.
+    ///
+    /// Pending direction outranks liveness, exactly as the predecessor ranks
+    /// it: a lane holding unanswered steering is the one the operator has to
+    /// look at, whether or not anything is running in it.
+    #[must_use]
+    pub const fn status(&self, pending: usize) -> LaneStatus {
+        if pending > 0 {
+            LaneStatus::Queued
+        } else if self.occupant.is_some() {
+            LaneStatus::Running
+        } else if self.bound {
+            LaneStatus::Bound
+        } else {
+            LaneStatus::Unbound
+        }
+    }
 }
 
 impl From<&LaneAnswer> for LaneView {
@@ -145,6 +206,7 @@ impl From<&LaneAnswer> for LaneView {
                     vendor: lane.vendor.clone(),
                     occupant: lane.occupant,
                     disposition: lane.disposition.clone(),
+                    bound: lane.session.is_some(),
                 })
                 .collect(),
         }
@@ -584,20 +646,6 @@ impl CanvasRuntime {
         });
     }
 
-    /// Record the resident's authoritative result for one steering request.
-    pub fn apply_steer(&mut self, admitted: &Admitted<Response<DirectiveAnswer>>) {
-        self.apply_response(admitted, |_runtime, answer| {
-            // Only the disposition is lowercased into its wire word. The key is
-            // a case-sensitive stamp the operator quotes back at the CLI, so
-            // folding its case would print a key that names no directive.
-            let disposition = format!("{:?}", answer.disposition).to_lowercase();
-            (
-                "Direction sent".to_owned(),
-                format!("{} / {disposition}", answer.key),
-            )
-        });
-    }
-
     pub fn apply_note<T>(&mut self, admitted: &Admitted<Response<T>>, task: &str) {
         self.apply_response(admitted, |_runtime, _answer| {
             (
@@ -610,6 +658,27 @@ impl CanvasRuntime {
     pub fn apply_decision<T>(&mut self, admitted: &Admitted<Response<T>>) {
         self.apply_response(admitted, |_runtime, _answer| {
             ("Consent decision".to_owned(), "reply admitted".to_owned())
+        });
+    }
+
+    /// Record the receipt for direction the operator sent from a lane tile.
+    ///
+    /// The acknowledgment key is the operator's handle on the directive from
+    /// here on, so it is the detail rather than the opaque directive identity.
+    pub fn apply_steer(
+        &mut self,
+        admitted: &Admitted<Response<DirectiveAnswer>>,
+        lane: CanonicalUuid,
+    ) {
+        self.apply_response(admitted, |_runtime, answer| {
+            (
+                format!("Steered lane {lane}"),
+                format!(
+                    "key {} {}",
+                    answer.key,
+                    disposition_label(answer.disposition)
+                ),
+            )
         });
     }
 
@@ -685,6 +754,20 @@ impl CanvasRuntime {
     }
 }
 
+/// The operator-facing spelling of a directive disposition.
+///
+/// The match is exhaustive, so a new retirement state must state its spelling
+/// rather than reach the operator as a debug rendering.
+const fn disposition_label(disposition: wire::Disposition) -> &'static str {
+    match disposition {
+        wire::Disposition::Live => "live",
+        wire::Disposition::Acked => "acked",
+        wire::Disposition::Declined => "declined",
+        wire::Disposition::Lapsed => "lapsed",
+        wire::Disposition::Canceled => "canceled",
+    }
+}
+
 fn project_page(packed: &Packed<wire::StreamFact>) -> Packed<FactRow> {
     Packed {
         rows: packed.rows.iter().map(FactRow::from).collect(),
@@ -707,4 +790,121 @@ fn continuation<T>(
             },
         }]
     })
+}
+
+/// Which cached reads a batch of admitted facts has invalidated.
+///
+/// The stream carries facts, not snapshots: it advances the journal cursor and
+/// leaves every read the surface is drawn from exactly as stale as it was.
+/// That was survivable while the four axes were the whole surface and the
+/// operator was reading history, and it is not survivable for the watchband,
+/// which claims to show what a lane is doing right now. Uncorrected, the shell
+/// reports itself online with a current cursor while a tile shows a directive
+/// two events old — worse than showing nothing, because the staleness is
+/// invisible.
+///
+/// This lives beside [`CanvasRuntime::apply_board`], [`CanvasRuntime::apply_lanes`]
+/// and [`CanvasRuntime::apply_inbox`] — the three reads it names — rather than
+/// in the socket loop that acts on it, so it can be tested off `wasm32`.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stale {
+    board: bool,
+    lanes: bool,
+    inbox: bool,
+    consent: bool,
+}
+
+impl Stale {
+    /// Widen this set by whatever one admitted fact invalidated.
+    ///
+    /// The mapping is read off the kind's own wire spelling rather than
+    /// declared as a second table over [`FactKind`]. The vocabulary already
+    /// namespaces every kind — `steer::sent`, `lane::seated`, `task::added`,
+    /// `claim::won` — and that prefix is exactly the question "which read went
+    /// stale". Matching the variants one by one would be a second registry to
+    /// hold in step with the first, and the failure mode when it drifted would
+    /// be a new kind that silently refreshes nothing.
+    pub fn widen(&mut self, kind: FactKind) {
+        match kind.as_str().split_once("::") {
+            Some(("steer", _)) => self.inbox = true,
+            // The inbox is keyed on the lane roster, not only on the steer
+            // ledger: the resident builds one row per seated lane and carries
+            // that lane's occupant on it, so a lane that arrives, departs or
+            // changes occupant moves the inbox even though no directive was
+            // sent. Widening only `lanes` here left a newly seated lane with
+            // no inbox row in the browser, and the console reads its residency
+            // witness out of that row -- so the first direction sent to a lane
+            // seated from the canvas was dropped before it reached the wire.
+            Some(("lane", _)) => {
+                self.lanes = true;
+                self.inbox = true;
+            }
+            Some(("task", _)) => self.board = true,
+            // A claim binds a task to a lane, so both sides of that join move.
+            Some(("claim", _)) => {
+                self.board = true;
+                self.lanes = true;
+            }
+            Some(("consent", _)) => self.consent = true,
+            _ => {}
+        }
+    }
+
+    /// Whether the board read went stale.
+    #[must_use]
+    pub const fn board(self) -> bool {
+        self.board
+    }
+
+    /// Whether the lane read went stale.
+    #[must_use]
+    pub const fn lanes(self) -> bool {
+        self.lanes
+    }
+
+    /// Whether the steering inbox read went stale.
+    #[must_use]
+    pub const fn inbox(self) -> bool {
+        self.inbox
+    }
+
+    /// Whether the consent queue read went stale.
+    #[must_use]
+    pub const fn consent(self) -> bool {
+        self.consent
+    }
+
+    /// Whether anything needs re-reading at all.
+    #[must_use]
+    pub const fn any(self) -> bool {
+        self.board || self.lanes || self.inbox || self.consent
+    }
+}
+
+/// The reads one admitted stream frame invalidated.
+///
+/// Two frames carry facts and both count. [`StreamFrame::Fact`] is the live
+/// push an established subscription receives one event at a time, and it is the
+/// case the watchband exists for: it is always the tail, so it always widens.
+/// [`StreamFrame::Facts`] is the paged backlog, and only its last page counts —
+/// a subscription walks its history as a run of pages each carrying facts that
+/// would widen this set, so honouring every page would issue a round of reads
+/// per page of history to learn a state the final page already implies.
+///
+/// [`StreamFrame::Thread`] carries facts too and is deliberately absent: a
+/// thread page is a causal walk backwards through history, not an advance, so
+/// nothing it contains says a current read is out of date.
+#[must_use]
+pub fn stale_reads(admitted: &Admitted<StreamFrame>) -> Stale {
+    let mut stale = Stale::default();
+    match admitted.get() {
+        StreamFrame::Fact { fact, .. } => stale.widen(fact.kind()),
+        StreamFrame::Facts { packed, .. } if packed.overflow.is_none() => {
+            for row in &packed.rows {
+                stale.widen(row.kind());
+            }
+        }
+        _ => {}
+    }
+    stale
 }
