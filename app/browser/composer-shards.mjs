@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 
+import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+
 /** Exercise the quote-created shard, source-link, drawer, and scroll contract. */
 export async function assertComposerShards({
   page,
@@ -98,7 +100,13 @@ export async function assertComposerShards({
     "quoting the same message identity reveals its existing shard",
   );
   const repeatedQuoteId = await previewShard.getByRole("textbox").getAttribute("id");
-  await page.waitForFunction((id) => document.activeElement?.id === id, repeatedQuoteId);
+  await waitForPageFunction(
+    page,
+    "repeated quote focuses its existing reply",
+    TRANSITION_MS,
+    (id) => document.activeElement?.id === id,
+    repeatedQuoteId,
+  );
   assert.equal(
     await previewShard
       .getByRole("textbox")

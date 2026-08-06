@@ -40,6 +40,8 @@ pub(in crate::resident) fn occupant_launch(
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
     let plan = launch_plan(&repository, &resolved, name, lane, resume)?;
+    let model = plan.launch().model.clone();
+    let effort = plan.launch().effort.as_str().to_owned();
     let record = plan
         .record()
         .map_err(|error| store_fault("lane::launch-invalid", &error.to_string()))?;
@@ -56,6 +58,8 @@ pub(in crate::resident) fn occupant_launch(
         occupant,
         worktree: repository.worktree_root().display().to_string(),
         vendor: name.clone(),
+        model,
+        effort,
         epoch,
         stream,
         expected,
