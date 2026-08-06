@@ -14,13 +14,36 @@ cp "$root/dist/proof-image/Dockerfile" "$context/Dockerfile" # env-policy: allow
 cp "$root/dist/proof-image/cargo-config.toml" "$context/cargo-config.toml" # env-policy: allow
 cp "$root/dist/proof-image/cargo-wrapper.sh" "$context/cargo-wrapper.sh" # env-policy: allow
 
-docker buildx build \
+log="$state/build.log" # env-policy: allow
+status="$state/build.status" # env-policy: allow
+
+# The status travels through a file because this is POSIX sh, where a pipeline
+# reports only its last stage, and `|| code=$?` keeps `set -eu` from taking the
+# stage before the status is written. Progress stays on stderr, where buildx
+# puts it.
+{ code=0; docker buildx build \
     --load \
     --platform linux/amd64 \
     --provenance=false \
     --sbom=false \
     --tag "$tag" \
-    "$context" # env-policy: allow
+    "$context" 2>&1 || code=$?; echo "$code" > "$status"; } | tee "$log" >&2 # env-policy: allow
+
+code=$(cat "$status") # env-policy: allow
+if [ "$code" -ne 0 ]; then # env-policy: allow
+    # A build the runtime dropped and a build a compiler refused arrive with the
+    # same exit status, and the runtime says only "unexpected EOF". On a host
+    # where many lanes share one Docker daemon that phrase almost always means a
+    # concurrent global prune rather than anything in this source, so name it
+    # instead of leaving every lane to rediscover it.
+    if grep -q 'unexpected EOF' "$log"; then # env-policy: allow
+        printf 'the container runtime dropped this build; no compiler refused it\n' >&2
+        printf 'on a shared daemon that is a concurrent global prune, which takes the\n' >&2
+        printf 'build cache and the pinned proof image from every lane at once\n' >&2
+        printf 'clean up only what this lane owns, its own %s, and rerun\n' "$state" >&2 # env-policy: allow
+    fi
+    exit "$code" # env-policy: allow
+fi
 
 identity=$(docker image inspect --format '{{.Id}}' "$tag") # env-policy: allow
 expected=$(tr -d '\n' < "$root/dist/proof-image/identity.txt") # env-policy: allow
