@@ -137,7 +137,7 @@ fn render_movement(rendered: &mut String, movement: ReportMutationMovement) {
     }
 }
 
-/// Name every metric refusing this tree, and the files behind each one.
+/// Name every cause refusing this tree, and the evidence behind each one.
 ///
 /// Public because two callers need exactly these words, and only one of them
 /// can see this crate's insides. The report fixtures adjudicate the live
@@ -151,12 +151,12 @@ fn render_movement(rendered: &mut String, movement: ReportMutationMovement) {
 /// `cargo xtask verify` reaches this battery at contract landing after its
 /// Cargo commands; only the battery reads the ratchet against the working tree.
 ///
-/// Built only from the contract's own declarations: the per-file counts come
-/// from re-running each metric's declared parser, so this attribution cannot
-/// drift from what the gate measured. Every carrying file is listed and none
-/// is dropped, heaviest first only so the order is stable to read: the file
-/// that moved a baseline is often not the file that holds the most, so the
-/// top of this list is where to start looking rather than the answer.
+/// Long-line loci are retained report evidence. The per-file metric counts
+/// come from re-running each metric's declared parser, so this attribution
+/// cannot drift from what the gate measured. Every carrying file is listed and
+/// none is dropped, heaviest first only so the order is stable to read: the
+/// file that moved a baseline is often not the file that holds the most, so
+/// the top of this list is where to start looking rather than the answer.
 #[must_use]
 pub fn refusal_detail(root: &Path, contract: &Contract, report: &GateReport) -> String {
     let mut detail = String::from(
@@ -164,6 +164,23 @@ pub fn refusal_detail(root: &Path, contract: &Contract, report: &GateReport) -> 
          standing nor a tightening proposal. a passing compiler or test step \
          does not contradict this: this battery is what reads the ratchet.",
     );
+    if !report.long_lines().is_empty() {
+        let _ = write!(
+            detail,
+            "\n\nrust.long-lines exceeds the {}-byte limit:",
+            crate::LONG_LINE_LIMIT
+        );
+        for finding in report.long_lines() {
+            let _ = write!(
+                detail,
+                "\n  {}:{} is {} bytes (limit {})",
+                finding.path(),
+                finding.line(),
+                finding.bytes(),
+                crate::LONG_LINE_LIMIT
+            );
+        }
+    }
     for finding in report
         .findings()
         .iter()
