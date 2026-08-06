@@ -27,11 +27,11 @@ use crate::{
     Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective, stale_reads,
 };
 
-mod composer;
 mod view;
+mod watchband;
 
-use composer::{ComposerDrafts, LineageControlAction, LineageControls, LineageMode};
 use view::{CanvasRender, render_canvas};
+use watchband::{ComposerDrafts, LineageControlAction, LineageControls, LineageMode};
 
 /// Source identity injected by `cargo xtask app` and verified before publish.
 const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY") {
