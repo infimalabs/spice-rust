@@ -162,6 +162,10 @@ fn render_standing(standing: &Standing, selected: bool, choose: UseStateHandle<S
         standing.vendor, standing.name, standing.worktree
     );
     let holding = standing.handle.as_ref().zip(standing.phase.as_ref());
+    // Bound here rather than called in the markup below: inlined, the call sits
+    // inside a span already indented four levels deep and the line runs past the
+    // hundred characters the gate measures. The binding is the shorter spelling,
+    // not a change of behaviour, so re-inlining it would refuse the commit.
     let name = watchband::truncate(&standing.label, watchband::FIELD_BUDGET);
     html! {
         <button
