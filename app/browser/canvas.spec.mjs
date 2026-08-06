@@ -57,6 +57,30 @@ const entirelyQuotedMessage = [
   "> > Borrowed context has no authored preview.",
   "> > A second borrowed line stays reachable.",
 ].join("\n");
+const tallMosaicMessage = [
+  "## Measured lattice witness",
+  "",
+  "This directive is intentionally tall at the base span.",
+  "",
+  "- measurement comes from the rendered DOM",
+  "- placement comes from the Rust lattice",
+  "- the wide tier remains content-class agnostic",
+  "- track bounds stay inside twelve columns",
+  "- row spans cover the natural card height",
+  "- creation order stays deterministic",
+  "- independent lineage controls remain mounted",
+  "- attachment presence cannot choose a span",
+  "- agent identity cannot choose a span",
+  "- CSS class cannot choose a span",
+  "- one base-height read is mandatory",
+  "- only a tall base measurement admits one more read",
+  "- no third candidate is measured",
+  "- no card overlaps another card",
+  "- exact viewport geometry stays observable",
+  "- the browser test reads the instrumentation",
+  "- the short path remains one read",
+  "- the tall path remains two reads",
+].join("\n");
 
 const axisPanes = new Map([
   ["Magnitude", ["Effort", "Pressure", "Residue", "Consent Volume"]],
@@ -270,6 +294,21 @@ async function assertAgentConversation(page, fixture, worktrees) {
     .locator(`.mosaic-message-card[data-agent-lane="${seated[3].lane}"]`)
     .filter({ hasText: "Borrowed context has no authored preview." })
     .waitFor({ timeout: 10_000 });
+  const tallLane = console.locator(`.team-agent[data-agent-lane="${seated[1].lane}"]`);
+  await tallLane.getByRole("textbox").fill(tallMosaicMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[1].lane}"]`)
+    .filter({ hasText: "Measured lattice witness" })
+    .waitFor({ timeout: 10_000 });
+  const orderedInbox = await reply(fixture, ["inbox", seated[1].lane]);
+  assert.deepEqual(
+    await console
+      .locator(`[data-card-kind="directive"][data-agent-lane="${seated[1].lane}"]`)
+      .evaluateAll((cards) => cards.map((card) => card.dataset.directive)),
+    orderedInbox.body.lanes[0].pending.map((directive) => directive.directive),
+    "pending directives reach the lattice in durable journal order",
+  );
   assert.ok(await console.locator(".mosaic-message-card h2").count(), "cards render headings");
   assert.ok(await console.locator(".mosaic-message-card ul li").count(), "cards render lists");
   assert.ok(
@@ -282,22 +321,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   assert.ok(new Set(cardHeights).size >= 3, "Markdown produces nonuniform Mosaic card heights");
   const planes = console.locator(".lane-mosaic-plane");
   assert.equal(await planes.count(), 1, "one seated lineage owns one Mosaic plane");
-  const plane = console.locator(
-    `.lane-mosaic-plane[data-agent-plane="${host.lineage_id}"]`,
-  );
-  await plane.waitFor();
-  const placements = await plane.locator(".mosaic-message-card").evaluateAll((cards) =>
-    cards.map((card) => ({
-      lane: card.dataset.agentLane,
-      track: Number(card.dataset.track),
-      span: Number(card.dataset.span),
-      base: Number(card.dataset.base),
-      row: Number(card.dataset.row),
-      rows: Number(card.dataset.rows),
-      columnStart: Number(getComputedStyle(card).gridColumnStart),
-      rowStart: Number(getComputedStyle(card).gridRowStart),
-    })),
-  );
+  const placements = await assertMosaicLattice(page, true);
   assert.ok(placements.length > seated.length, "the lane packs agent and directive cards");
   assert.ok(placements.every((card) => card.span >= 1 && card.track + card.span <= 12));
   assert.ok(placements.every((card) => card.rows >= 2));
@@ -376,6 +400,111 @@ async function assertFourAgentDensity(console) {
   }
 }
 
+async function assertMosaicLattice(page, requireBothReadPaths) {
+  await waitForMosaicReady(page);
+  const snapshot = await page.locator('[data-pane="agent-console"]').evaluate((console) => ({
+    activities: [...console.querySelectorAll(".team-activity-grid")].map((activity) => ({
+      columnCount: getComputedStyle(activity).columnCount,
+      columnWidth: getComputedStyle(activity).columnWidth,
+    })),
+    planes: [...console.querySelectorAll(".lane-mosaic-plane")].map((plane) => ({
+      trackCount: Number(plane.dataset.trackCount),
+      baseSpan: Number(plane.dataset.baseSpan),
+      tallThreshold: Number(plane.dataset.tallThreshold),
+      cards: [...plane.querySelectorAll(".mosaic-message-card")].map((card) => {
+        const box = card.getBoundingClientRect();
+        const style = getComputedStyle(card);
+        return {
+          kind: card.dataset.cardKind,
+          lane: card.dataset.agentLane,
+          creationIndex: Number(card.dataset.creationIndex),
+          track: Number(card.dataset.track),
+          span: Number(card.dataset.span),
+          base: Number(card.dataset.base),
+          row: Number(card.dataset.row),
+          rows: Number(card.dataset.rows),
+          reads: Number(card.dataset.measurementReads),
+          heights: card.dataset.measuredHeights.split(",").filter(Boolean).map(Number),
+          candidateSpans: card.dataset.candidateSpans.split(",").filter(Boolean).map(Number),
+          columnStart: Number(style.gridColumnStart),
+          columnEnd: style.gridColumnEnd,
+          rowStart: Number(style.gridRowStart),
+          rowEnd: style.gridRowEnd,
+          box: {
+            left: box.left,
+            right: box.right,
+            top: box.top,
+            bottom: box.bottom,
+          },
+        };
+      }),
+    })),
+  }));
+
+  assert.ok(snapshot.activities.length > 0, "the live activity region is mounted");
+  assert.ok(
+    snapshot.activities.every(
+      (activity) => activity.columnCount === "auto" && activity.columnWidth === "auto",
+    ),
+    "the live activity region uses no CSS multi-column flow",
+  );
+  const readPaths = new Set();
+  const kinds = new Set();
+  const placements = [];
+  for (const plane of snapshot.planes) {
+    assert.equal(plane.trackCount, 12, "the browser renders the twelve-track lattice");
+    assert.deepEqual(
+      plane.cards.map((card) => card.creationIndex),
+      plane.cards.map((_, index) => index),
+      "DOM order is the stable creation order submitted to Rust",
+    );
+    for (const card of plane.cards) {
+      const wideSpan = Math.min(plane.trackCount, plane.baseSpan * 2);
+      const wideEligible = wideSpan > plane.baseSpan && card.heights[0] >= plane.tallThreshold;
+      const expectedSpans = wideEligible ? [plane.baseSpan, wideSpan] : [plane.baseSpan];
+      assert.equal(card.reads, wideEligible ? 2 : 1, "height reads follow the bounded policy");
+      assert.equal(card.heights.length, card.reads, "every instrumented read records one height");
+      assert.deepEqual(card.candidateSpans, expectedSpans, "height alone admits the wide tier");
+      assert.ok(card.track >= 0 && card.track + card.span <= plane.trackCount);
+      assert.ok(card.rows >= 2);
+      assert.equal(card.columnStart, card.track + 1);
+      assert.equal(card.columnEnd, `span ${card.span}`);
+      assert.equal(card.rowStart, card.row);
+      assert.equal(card.rowEnd, `span ${card.rows}`);
+      readPaths.add(card.reads);
+      kinds.add(card.kind);
+      placements.push(card);
+    }
+    for (let left = 0; left < plane.cards.length; left += 1) {
+      for (let right = left + 1; right < plane.cards.length; right += 1) {
+        const one = plane.cards[left].box;
+        const two = plane.cards[right].box;
+        const separated = one.right <= two.left + 0.5 || two.right <= one.left + 0.5
+          || one.bottom <= two.top + 0.5 || two.bottom <= one.top + 0.5;
+        assert.ok(separated, `Mosaic cards ${left} and ${right} do not overlap`);
+      }
+    }
+  }
+  assert.ok(kinds.has("agent-message"), "agent-authored cards use the measured policy");
+  assert.ok(readPaths.has(1), "a short card takes exactly one DOM height read");
+  if (requireBothReadPaths) {
+    assert.ok(kinds.has("directive"), "pending directives use the measured policy");
+    assert.ok(readPaths.has(2), "a tall card takes exactly two DOM height reads");
+  }
+  return placements;
+}
+
+async function waitForMosaicReady(page) {
+  await page.waitForFunction(() => {
+    const planes = [...document.querySelectorAll(
+      '[data-pane="agent-console"] .lane-mosaic-plane',
+    )];
+    return planes.length > 0 && planes.every(
+      (plane) => plane.dataset.measurementPhase === "ready",
+    );
+  });
+}
+
 async function assertRosterPips(page, console, seated) {
   const teamPips = console.locator(".team-light");
   await teamPips.nth(seated.length - 1).waitFor();
@@ -412,6 +541,7 @@ async function assertRosterPips(page, console, seated) {
   );
   await chooseCanvasView(page, "Agents");
   await console.waitFor();
+  await waitForMosaicReady(page);
 }
 
 async function assertQueuedRosterPip(page, console, member) {
@@ -456,6 +586,7 @@ async function assertQueuedRosterPip(page, console, member) {
   assert.notEqual(brandStyle.boxShadow, "none", "the queued agent remains visibly lit");
   await chooseCanvasView(page, "Agents");
   await console.waitFor();
+  await waitForMosaicReady(page);
 }
 
 async function assertPerTeamWatchbands(page, fixture, worktrees) {
@@ -485,6 +616,21 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   assert.equal(await console.locator(".team-surface").count(), 2);
   assert.equal(await console.locator(".team-speech").count(), 2);
   assert.equal(await console.locator(".team-lifetime").count(), 2);
+  const weightedWidths = await console.locator(".team-surface").evaluateAll((surfaces) =>
+    surfaces.map((surface) => ({
+      weight: Number(surface.dataset.lineageWeight),
+      width: surface.getBoundingClientRect().width,
+    })),
+  );
+  assert.deepEqual(
+    weightedWidths.map(({ weight }) => weight),
+    [4, 1],
+    "lineage weights remain the admitted member counts",
+  );
+  assert.ok(
+    weightedWidths[0].width > weightedWidths[1].width,
+    "the four-agent lineage remains wider than its one-agent sibling",
+  );
 
   const primaryLife = primarySurface.locator('.team-lifetime input[type="range"]');
   await primaryLife.fill("2");
@@ -580,6 +726,12 @@ async function captureReferenceViewport(page) {
     "the reference capture explicitly exercises dark mode",
   );
   await assertFourAgentDensity(team);
+  assert.equal(
+    await team.locator(".team-surface").getAttribute("data-lineage-weight"),
+    "4",
+    "the reference viewport retains the four-agent lineage weight",
+  );
+  await assertMosaicLattice(page, false);
   const pixels = await page.evaluate(() => ({
     width: innerWidth,
     height: innerHeight,

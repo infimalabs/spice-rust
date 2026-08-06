@@ -13,12 +13,13 @@ pub const TRACK_COUNT: usize = 12;
 pub const FREEZE_DEPTH: usize = 2;
 /// Scroll distance after which incremental pushes preserve the viewport.
 pub const NEAR_TOP_THRESHOLD_PX: f64 = 80.0;
+/// Base-width height that admits one distinct wider measurement.
+pub const TALL_THRESHOLD_PX: f64 = 230.0;
 
 const LEGAL_BASE_SPANS: [usize; 5] = [2, 3, 4, 6, 12];
 const GAP_REM: f64 = 0.75;
 const MIN_LANE_REM: f64 = 17.0;
 const MODULE_LINE_HEIGHT_REM: f64 = 1.25;
-const TALL_THRESHOLD_PX: f64 = 230.0;
 const WIDE_FACTOR: usize = 2;
 const QUOTE_FONT_SIZE_REM: f64 = 0.8125;
 const QUOTE_LINE_HEIGHT_RATIO: f64 = 1.34;
