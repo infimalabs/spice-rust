@@ -235,7 +235,29 @@ fn combined(output: &Output) -> String {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        // A fixture is not the writer that owns this shared lock. Refuse to
+        // recursively erase the repository until that writer releases it.
+        if self.shared_lock().exists() {
+            return;
+        }
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+struct ForeignLock(PathBuf);
+
+impl ForeignLock {
+    fn take(path: PathBuf, contents: &str) -> Self {
+        fs::write(&path, contents).expect("the other writer takes the shared lock");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn release(self) {
+        fs::remove_file(&self.0).expect("the other writer releases its shared lock");
     }
 }
 
@@ -706,11 +728,11 @@ fn a_commit_that_genuinely_fails_still_reports_its_failure() {
 #[test]
 fn a_lock_another_writer_holds_survives_a_commit_that_gave_up() {
     let fixture = Fixture::history("survives");
+    let fixture_root = fixture.path().to_owned();
     fixture.expect(&["config", "core.packedRefsTimeout", "100"]);
-    let lock = fixture.shared_lock();
     let held = "another writer holds this\n";
-    fs::write(&lock, held).expect("the other writer takes the shared lock");
-    let identity = LockIdentity::read(&lock);
+    let foreign_lock = ForeignLock::take(fixture.shared_lock(), held);
+    let identity = LockIdentity::read(foreign_lock.path());
     fixture.stage("five");
     let before = fixture.head();
 
@@ -741,8 +763,16 @@ fn a_lock_another_writer_holds_survives_a_commit_that_gave_up() {
         seen
     );
     assert_eq!(
-        LockIdentity::read(&lock),
+        LockIdentity::read(foreign_lock.path()),
         identity,
         "the lock another writer holds changed bytes or metadata"
     );
+    drop(fixture);
+    assert_eq!(
+        LockIdentity::read(foreign_lock.path()),
+        identity,
+        "fixture cleanup touched the lock that the other writer still holds"
+    );
+    foreign_lock.release();
+    fs::remove_dir_all(fixture_root).expect("the released fixture is removed");
 }
