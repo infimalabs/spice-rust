@@ -719,15 +719,16 @@ async fn run_surface(
         let _ = stopped.await;
     }));
     let _ = writeln!(progress, "canvas app source: {app_description}");
-    let _ = progress.flush();
     announce_canvas(
         &paths.canvas,
         open,
         || {},
         crate::command_client::system_browser,
         endpoint,
+        progress,
     );
     let _ = endpoint.flush();
+    let _ = progress.flush();
     let capture::Channels {
         reporter,
         records,
@@ -772,12 +773,21 @@ async fn run_surface(
 /// serving. The surface is up either way, and refusing to run because the
 /// operator cannot be handed a URL would trade a working appliance for a
 /// cosmetic one.
+/// Only an endpoint reaches the endpoint stream; a failure to produce one is a
+/// diagnostic and goes where the other diagnostics went.
+///
+/// The point of publishing on stdout is that `endpoint=$(spice up | head -1)`
+/// reads it without a second command, and a shell doing that cannot tell a URL
+/// from a sentence. Writing `canvas unavailable: ...` there hands it a refusal
+/// reason to dial. Kept separate, the same shell sees an empty capture, which
+/// is the one reading that cannot be mistaken for an address.
 fn announce_canvas(
     discovery_path: &Path,
     open: bool,
     before_current_check: impl FnOnce(),
     browser: impl FnOnce(&str) -> Result<(), String>,
     announcement: &mut dyn io::Write,
+    diagnostic: &mut dyn io::Write,
 ) {
     let outcome = crate::command_client::open_canvas_with(
         discovery_path,
@@ -789,9 +799,9 @@ fn announce_canvas(
             writeln!(announcement, "canvas endpoint: {}", reply.body.endpoint)
         }
         Outcome::Refusal(refusal) => {
-            writeln!(announcement, "canvas unavailable: {}", refusal.reason)
+            writeln!(diagnostic, "canvas unavailable: {}", refusal.reason)
         }
-        Outcome::Fault(fault) => writeln!(announcement, "canvas unavailable: {}", fault.reason),
+        Outcome::Fault(fault) => writeln!(diagnostic, "canvas unavailable: {}", fault.reason),
     };
 }
 
