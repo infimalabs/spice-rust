@@ -197,6 +197,18 @@ pub struct BoardProjectPolicy {
     pub public_max_depth: u64,
 }
 
+/// Server-resolved predecessor-compatible route for one board principal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardActorRoute {
+    /// Actor identity used by predecessor task routing.
+    pub actor: String,
+    /// Exact actor-private project selected by the route.
+    pub project: String,
+    /// Exact creation-origin thread selected by the route.
+    pub origin_thread: String,
+}
+
 impl BoardTask {
     /// Project authoritative heads into one actor-facing task row.
     #[must_use]
@@ -267,6 +279,8 @@ pub struct BoardAnswer {
     pub principal: Actor,
     /// Public project route captured by the authority that validated the tasks.
     pub project_policy: BoardProjectPolicy,
+    /// Complete actor-specific route captured by the snapshot authority.
+    pub actor_route: BoardActorRoute,
     /// Complete current task evidence bundles in ascending handle order.
     pub tasks: Vec<BoardTask>,
     /// Current resident and lane head used by possession witnesses.

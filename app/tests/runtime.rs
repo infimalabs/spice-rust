@@ -168,6 +168,11 @@ fn board_response(
             public_min_depth: 2,
             public_max_depth: 3,
         },
+        actor_route: wire::intent::BoardActorRoute {
+            actor: "operator".to_owned(),
+            project: "agent.operator.task".to_owned(),
+            origin_thread: "operator".to_owned(),
+        },
         tasks: vec![
             board_task("HIDDEN-oops1", REQUEST, hidden_title, ".oops.correctness"),
             board_task(

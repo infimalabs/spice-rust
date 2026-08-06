@@ -410,6 +410,12 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
         leaf.get_one::<String>("status").map(String::as_str),
         Some("waiting")
     );
+    assert!(
+        command()
+            .try_get_matches_from(["spice", "task", "list", "--status", "deleted"])
+            .is_err(),
+        "deleted must not parse until the native board carries deletion truth"
+    );
 
     let status = command()
         .try_get_matches_from(["spice", "task", "status"])

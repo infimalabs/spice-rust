@@ -64,6 +64,7 @@ fn validated_snapshot(
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
     }
+    let actor_route = actor_route(&principal, &residency.body)?;
     Ok(ValidatedSnapshot {
         cursor,
         answer: BoardAnswer {
@@ -75,11 +76,69 @@ fn validated_snapshot(
                 public_min_depth: projects.public_min_depth(),
                 public_max_depth: projects.public_max_depth(),
             },
+            actor_route,
             tasks,
             residency,
         },
         entries,
     })
+}
+
+fn actor_route(
+    principal: &wire::Actor,
+    residency: &wire::ResidencyHead,
+) -> Result<wire::intent::BoardActorRoute, Outcome<CommandAnswer>> {
+    let actor = match principal {
+        wire::Actor::Operator => "operator".to_owned(),
+        wire::Actor::Spice => "spice".to_owned(),
+        wire::Actor::Lane(lane) => {
+            let row = residency
+                .lanes
+                .iter()
+                .find(|row| row.lane == *lane)
+                .ok_or_else(|| {
+                    protocol_fault(
+                        "board::actor-route-lane-missing",
+                        "the board principal has no current residency row",
+                    )
+                })?;
+            match &row.session {
+                Some(session) => route_actor_identity(&session.identity).ok_or_else(|| {
+                    protocol_fault(
+                        "board::actor-route-session-invalid",
+                        "the current vendor session identity cannot name an actor task route",
+                    )
+                })?,
+                None => row
+                    .occupant
+                    .ok_or_else(|| {
+                        protocol_fault(
+                            "board::actor-route-occupant-missing",
+                            "a legacy lane without session authority has no current occupant",
+                        )
+                    })?
+                    .get()
+                    .simple()
+                    .to_string(),
+            }
+        }
+    };
+    Ok(wire::intent::BoardActorRoute {
+        project: format!("agent.{actor}.task"),
+        origin_thread: actor.clone(),
+        actor,
+    })
+}
+
+fn route_actor_identity(identity: &str) -> Option<String> {
+    if let Ok(identity) = identity.parse::<wire::CanonicalUuid>() {
+        return Some(identity.get().simple().to_string());
+    }
+    (!identity.is_empty()
+        && identity
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))
+    .then(|| identity.to_owned())
 }
 
 fn positioned<T: Clone>(head: &journal::JournalHead<T>) -> Positioned<T> {

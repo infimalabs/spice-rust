@@ -295,11 +295,10 @@ fn native_task_add_carries_authored_context_through_client_add() {
     );
 
     let status = text_reply::<TextAnswer>(&fixture.invoke(&["task", "status"]));
-    assert!(
-        status
-            .text
-            .contains("filter ( project:serve or project:task or project:taste )")
-    );
+    assert!(status.text.contains(concat!(
+        "filter ( project:agent.operator.task or origin_thread.is:operator or ",
+        "( project:serve or project:task or project:taste ) )"
+    )));
     assert!(
         status
             .text
