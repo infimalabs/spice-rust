@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { chromium } from "playwright";
 import { assertComposerShards, assertNoDraftPreview } from "./composer-shards.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
+import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs";
 import {
   assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
@@ -1221,6 +1221,7 @@ async function assertSameGenerationResume(
   assert.ok(after.length > before.length, "same-generation resume appends missed facts");
 }
 
+await assertHeadlessLaunchSites();
 await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
 await buildResident();
@@ -1234,7 +1235,7 @@ let browser;
 try {
   resident = await startResident(fixture);
   const seeded = await seedAuthority(fixture);
-  browser = await chromium.launch({ headless: true });
+  browser = await launchBrowser();
   await assertHandshakeTimeout(browser, resident.discovery.endpoint);
   await assertLineageLifeIsolation(browser);
 
