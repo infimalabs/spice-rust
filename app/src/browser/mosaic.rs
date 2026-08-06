@@ -62,10 +62,38 @@ fn held_by_lane(runtime: &CanvasRuntime) -> BTreeMap<CanonicalUuid, &BoardTask> 
         .collect()
 }
 
+/// The whole standing of one lane, on one hover, in the card's own order.
+///
+/// A column is narrow enough to elide, so the same facts are restated here
+/// unabbreviated: the seat, then its standing, then the work, then the title.
+/// Nothing is derived that the card does not already show, which is what keeps
+/// the tooltip from becoming a second reading that can disagree with the first.
+fn lane_tooltip(lane: &LaneRow, holding: Option<&&BoardTask>) -> String {
+    let mut lines = vec![
+        format!("{}, {}", lane.worktree, lane.vendor),
+        format!("{}, {}", lane.disposition, lane.life),
+    ];
+    match holding {
+        Some(task) => {
+            lines.push(format!(
+                "{}, {}",
+                task.statement.body.handle, task.workflow.body.phase
+            ));
+            lines.push(task.presentation_title.clone());
+        }
+        None => lines.push("holding nothing".to_owned()),
+    }
+    lines.join("\n")
+}
+
 fn render_lane_column(lane: &LaneRow, held: &BTreeMap<CanonicalUuid, &BoardTask>) -> Html {
     let holding = held.get(&lane.lane);
     html! {
-        <article class="mosaic-lane" data-disposition={lane.disposition.clone()}>
+        <article
+            class="mosaic-lane"
+            data-disposition={lane.disposition.clone()}
+            title={lane_tooltip(lane, holding)}
+        >
             <header class="mosaic-lane-head">
                 <span class="mosaic-lane-name">{lane.worktree.clone()}</span>
                 <span class="tag active">{lane.disposition.clone()}</span>
@@ -85,6 +113,7 @@ fn render_lane_column(lane: &LaneRow, held: &BTreeMap<CanonicalUuid, &BoardTask>
             </div>
             <footer class="mosaic-lane-foot">
                 <span class="mosaic-lane-vendor">{lane.vendor.to_string()}</span>
+                <span class="mosaic-lane-life">{lane.life.clone()}</span>
                 <span class="mono">{
                     lane.occupant
                         .map(|value| short(&value.to_string()))
