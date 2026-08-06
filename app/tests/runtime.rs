@@ -581,11 +581,11 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
                 "life": "continuous",
                 "vendor": "codex",
             }),
-            [false, true, false, false],
+            [false, true, true, false],
         ),
         (
             serde_json::json!({"kind": "lane::exited", "lane": LANE, "occupant": REQUEST, "code": 0}),
-            [false, true, false, false],
+            [false, true, true, false],
         ),
         (
             serde_json::json!({"kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify"}),

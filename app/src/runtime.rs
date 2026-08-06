@@ -827,7 +827,18 @@ impl Stale {
     pub fn widen(&mut self, kind: FactKind) {
         match kind.as_str().split_once("::") {
             Some(("steer", _)) => self.inbox = true,
-            Some(("lane", _)) => self.lanes = true,
+            // The inbox is keyed on the lane roster, not only on the steer
+            // ledger: the resident builds one row per seated lane and carries
+            // that lane's occupant on it, so a lane that arrives, departs or
+            // changes occupant moves the inbox even though no directive was
+            // sent. Widening only `lanes` here left a newly seated lane with
+            // no inbox row in the browser, and the console reads its residency
+            // witness out of that row -- so the first direction sent to a lane
+            // seated from the canvas was dropped before it reached the wire.
+            Some(("lane", _)) => {
+                self.lanes = true;
+                self.inbox = true;
+            }
             Some(("task", _)) => self.board = true,
             // A claim binds a task to a lane, so both sides of that join move.
             Some(("claim", _)) => {
