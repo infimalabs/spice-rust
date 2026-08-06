@@ -1,4 +1,4 @@
-//! Browser callbacks, activity cards, attachments, and safe Markdown for the lane composer.
+//! Browser callbacks, activity cards, attachments, and safe Markdown for lane messages.
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag};
 use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader};
@@ -99,6 +99,7 @@ pub(super) fn render_agent_message_card(
     let quote_key = lane_key.clone();
     let quote_drafts = drafts.clone();
     let quote_text = message.text.clone();
+    let quote_preview = watchband::first_nonquoted_prose(&message.text);
     let quote_identity = agent_message_quote_identity(message);
     let source_id = agent_message_source_id(message);
     let focus_identity = quote_identity.clone();
@@ -118,7 +119,7 @@ pub(super) fn render_agent_message_card(
                 identity: quote_identity.clone(),
                 order,
                 quote: quote_text.clone(),
-                preview: None,
+                preview: quote_preview.clone(),
             });
             focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
         }),
@@ -328,7 +329,7 @@ pub(super) fn render_quote_shards(
                                 aria-label={format!("Return to quoted message: {shown}")}
                                 title="Return to this message in the stream"
                             >{"↩"}</a>
-                            <strong>{shown}</strong>
+                            <strong title={shown.to_owned()}>{shown}</strong>
                             <button
                                 type="button"
                                 aria-label="Remove quoted composer shard"
@@ -354,18 +355,16 @@ pub(super) fn render_quote_shards(
 
 /// Draft images ride in the shard heading as message-card thumbnails shrunk to
 /// heading scale. The thumbnail is itself the remove control: a separate × would
-/// be wider than the image it decorates and would crowd the title, deep link,
-/// and hamburger sharing that row.
-pub(super) fn render_shard_thumbs(
+/// be wider than the image it decorates and would crowd the prose, deep link,
+/// and hamburger sharing that row. The indicator strip is always rendered so the
+/// heading keeps its fixed child order; CSS hides it while it is empty.
+pub(super) fn render_image_indicators(
     lane_key: &str,
     draft: &ComposerDraft,
     drafts: &UseReducerHandle<ComposerDrafts>,
 ) -> Html {
-    if draft.attachments.is_empty() {
-        return Html::default();
-    }
     html! {
-        <div class="composer-shard-thumbs">
+        <span class="composer-shard-image-indicators">
             {for draft.attachments.iter().enumerate().map(|(index, attachment)| {
                 let remove_key = lane_key.to_owned();
                 let remove_drafts = drafts.clone();
@@ -378,7 +377,7 @@ pub(super) fn render_shard_thumbs(
                 html! {
                     <button
                         type="button"
-                        class="composer-shard-thumb"
+                        class="composer-shard-image-indicator"
                         title={format!("Remove {}", attachment.name)}
                         aria-label={format!("Remove image {}", attachment.name)}
                         onclick={remove}
@@ -387,7 +386,7 @@ pub(super) fn render_shard_thumbs(
                     </button>
                 }
             })}
-        </div>
+        </span>
     }
 }
 
@@ -521,7 +520,9 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
     }
 }
 
-pub(super) fn render_markdown(markdown: &str) -> Html {
+/// Render received text. Drafts are never rendered: a composer shard shows the
+/// operator what they typed, so the built Markdown is only ever the message sent.
+fn render_markdown(markdown: &str) -> Html {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH

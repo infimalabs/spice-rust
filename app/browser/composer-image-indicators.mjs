@@ -45,25 +45,28 @@ async function messageCardTreatment(page) {
   });
 }
 
+/// `composer-shard-image-indicator` is the heading's reserved name for a draft
+/// image; thumbnail is what it looks like, so the readings below keep that word
+/// while every selector uses the reserved one.
 function measureHeading(heading) {
   return heading.evaluate((header) => {
     const box = (selector) => {
       const found = header.querySelector(selector);
       return found ? found.getBoundingClientRect().toJSON() : null;
     };
-    const strip = header.querySelector(".composer-shard-thumbs");
+    const strip = header.querySelector(".composer-shard-image-indicators");
     return {
       header: header.getBoundingClientRect().toJSON(),
       link: box(".composer-shard-link"),
       title: box("strong"),
-      thumbs: box(".composer-shard-thumbs"),
+      thumbs: box(".composer-shard-image-indicators"),
       menu: box(".agent-action-menu"),
       strip: strip && {
         clientWidth: strip.clientWidth,
         scrollWidth: strip.scrollWidth,
         overflowX: getComputedStyle(strip).overflowX,
         rows: new Set(
-          [...strip.querySelectorAll(".composer-shard-thumb")].map((thumb) =>
+          [...strip.querySelectorAll(".composer-shard-image-indicator")].map((thumb) =>
             Math.round(thumb.getBoundingClientRect().top),
           ),
         ).size,
@@ -75,7 +78,7 @@ function measureHeading(heading) {
 /// Exercise the picker-less composer: attachments are heading thumbnails wearing
 /// the message-card treatment, and filling the row to MAX_ATTACHMENTS displaces
 /// neither the title, the deep link, nor the primary-only hamburger.
-export async function assertComposerThumbs(page, composer, names) {
+export async function assertComposerImageIndicators(page, composer, names) {
   const heading = composer.locator(".composer-shard-heading");
   const bare = await measureHeading(heading);
   assert.equal(
@@ -95,7 +98,9 @@ export async function assertComposerThumbs(page, composer, names) {
   );
 
   await pasteImages(composer, [...names, ...FILLER]);
-  const thumbs = heading.locator(".composer-shard-thumbs .composer-shard-thumb");
+  const thumbs = heading.locator(
+    ".composer-shard-image-indicators .composer-shard-image-indicator",
+  );
   await thumbs.nth(names.length + FILLER.length - 1).waitFor();
   for (const name of [...names, ...FILLER]) {
     await heading.getByRole("img", { name }).waitFor();
@@ -151,12 +156,14 @@ export async function assertComposerThumbs(page, composer, names) {
   // Each file is read asynchronously, so the stack order is not the paste order;
   // remove by name to prove the click removes the thumbnail it decorates.
   for (const name of FILLER) {
-    await heading.locator(`.composer-shard-thumb[aria-label="Remove image ${name}"]`).click();
+    await heading
+      .locator(`.composer-shard-image-indicator[aria-label="Remove image ${name}"]`)
+      .click();
   }
   assert.equal(await thumbs.count(), names.length, "clicking a heading thumbnail removes it");
   assert.deepEqual(
     (await heading
-      .locator(".composer-shard-thumb img")
+      .locator(".composer-shard-image-indicator img")
       .evaluateAll((images) => images.map((image) => image.getAttribute("alt")))).sort(),
     [...names].sort(),
     "removal leaves exactly the attachments that were not clicked",
