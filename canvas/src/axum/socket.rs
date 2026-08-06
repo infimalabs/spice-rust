@@ -224,7 +224,7 @@ async fn route_message_broadcast(
                 Some(subscription.id()),
                 wire::FaultClass::Environment,
                 "stream::message-broadcast-closed",
-                "resident transcript-message broadcast closed",
+                "resident transcript-activity broadcast closed",
             );
             send_encoded(socket, &frame).await;
             SessionFlow::Close

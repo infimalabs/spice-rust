@@ -90,6 +90,7 @@ fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentMessage {
             length: 24,
             event: 0,
         },
+        activity: wire::AgentActivityKind::Prose,
         text: text.to_owned(),
     }
 }

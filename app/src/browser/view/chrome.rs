@@ -362,19 +362,28 @@ fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
     }
 }
 
-/// The newest command outcome, folded onto one line.
-pub(in crate::browser) fn render_ticker(surface: &SurfaceData) -> Html {
-    let Some(event) = surface.as_ref().and_then(|runtime| runtime.newest_event()) else {
-        return Html::default();
+/// Newest activity from any member of one lineage.
+///
+/// Team strips never consult command receipts. Those remain visible in the
+/// chronology pane, while this line follows captured transcript activity
+/// exclusively.
+pub(in crate::browser) fn render_lineage_ticker(
+    runtime: &CanvasRuntime,
+    lineage: &crate::runtime::LaneRow,
+) -> Html {
+    let Some(activity) = runtime.newest_lineage_activity(lineage) else {
+        return html! {
+            <div class="ticker" aria-live="polite" data-empty="true"></div>
+        };
     };
-    let detail = if event.detail().is_empty() {
-        event.title()
-    } else {
-        event.detail()
-    };
+    ticker(activity.class(), activity.title(), activity.detail())
+}
+
+fn ticker(class: &'static str, title: &str, detail: &str) -> Html {
+    let detail = if detail.is_empty() { title } else { detail };
     html! {
-        <div class={classes!("ticker", event.class())} aria-live="polite">
-            {watchband::ticker_line(event.title(), detail, TICKER_BUDGET)}
+        <div class={classes!("ticker", class)} aria-live="polite">
+            {watchband::ticker_line(title, detail, TICKER_BUDGET)}
         </div>
     }
 }

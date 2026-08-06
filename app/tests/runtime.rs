@@ -348,9 +348,9 @@ fn message_snapshot_and_live_push_retain_distinct_authors_by_tape_identity() {
         "text": "first author",
     });
     let second = serde_json::json!({
-        "lane": LANE,
+        "lane": SECOND_LANE,
         "author": SECRET_LANE_CAPABILITY,
-        "locus": {"member": 1, "offset": 30, "length": 20, "event": 0},
+        "locus": {"member": 1, "offset": 10, "length": 20, "event": 0},
         "text": "second author",
     });
     let snapshot = serde_json::to_vec(&serde_json::json!({
@@ -374,6 +374,22 @@ fn message_snapshot_and_live_push_retain_distinct_authors_by_tape_identity() {
             .map(|message| message.author)
             .collect::<Vec<_>>(),
         [uuid(LANE_CAPABILITY), uuid(SECRET_LANE_CAPABILITY)]
+    );
+    assert_eq!(
+        runtime.activities().len(),
+        2,
+        "the same tape coordinates in two lanes are two activities"
+    );
+    runtime.apply_stream(&admitted_stream(&session, &snapshot));
+    assert_eq!(
+        runtime.activities().len(),
+        2,
+        "snapshot replay is idempotent"
+    );
+    assert_eq!(
+        runtime.messages().len(),
+        2,
+        "snapshot replay restores prose cards"
     );
 
     let duplicate = serde_json::to_vec(&serde_json::json!({
@@ -408,6 +424,121 @@ fn message_snapshot_and_live_push_retain_distinct_authors_by_tape_identity() {
             .map(|message| message.author)
             .collect::<Vec<_>>(),
         [uuid(SECRET_LANE_CAPABILITY), uuid(THIRD_LANE)]
+    );
+}
+
+#[test]
+fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let lanes = lane_response(&[
+        (LANE, LANE, Some(LANE_CAPABILITY), true),
+        (SECOND_LANE, LANE, Some(SECRET_LANE_CAPABILITY), true),
+        (THIRD_LANE, THIRD_LANE, Some(THIRD_LANE), true),
+    ]);
+    let admitted_lanes: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(&lanes)
+        .expect("lane response is admitted");
+    runtime.apply_lanes(&admitted_lanes);
+
+    let tool = serde_json::to_vec(&serde_json::json!({
+        "stream": "message",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "message": {
+            "lane": LANE,
+            "author": LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 60, "length": 20, "event": 0},
+            "activity": "tool",
+            "text": "Bash",
+        },
+    }))
+    .expect("tool activity fixture serializes");
+    runtime.apply_stream(&admitted_stream(&session, &tool));
+    let lineage = &runtime.lanes().expect("lane snapshot").lanes[0];
+    let activity = runtime
+        .newest_lineage_activity(lineage)
+        .expect("transcript tool becomes activity");
+    assert_eq!(activity.lane(), uuid(LANE));
+    assert_eq!(activity.class(), "tool");
+    assert_eq!(activity.title(), "tool");
+    assert_eq!(activity.detail(), "Bash");
+    assert!(
+        runtime.messages().is_empty(),
+        "tool activity does not become a prose card"
+    );
+
+    let prose = serde_json::to_vec(&serde_json::json!({
+        "stream": "message",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "message": {
+            "lane": SECOND_LANE,
+            "author": SECRET_LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 70, "length": 20, "event": 0},
+            "text": "newer teammate prose",
+        },
+    }))
+    .expect("message fixture serializes");
+    runtime.apply_stream(&admitted_stream(&session, &prose));
+
+    let other_tool = serde_json::to_vec(&serde_json::json!({
+        "stream": "message",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "message": {
+            "lane": THIRD_LANE,
+            "author": THIRD_LANE,
+            "locus": {"member": 1, "offset": 80, "length": 20, "event": 0},
+            "activity": "tool",
+            "text": "Read",
+        },
+    }))
+    .expect("other lineage tool fixture serializes");
+    runtime.apply_stream(&admitted_stream(&session, &other_tool));
+
+    // Snapshot receipts still belong to the command-outcome chronology, but
+    // none can enter the lineage activity chronology or displace its prose.
+    runtime.apply_lanes(&admitted_lanes);
+    runtime.apply_board(&board_response(&session, "hidden receipt witness"));
+    let inbox = support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(43)),
+            body: wire::intent::InboxAnswer {
+                epoch: uuid(EPOCH),
+                lanes: Vec::new(),
+            },
+        }),
+    );
+    let admitted_inbox: app::Admitted<Response<wire::intent::InboxAnswer>> = session
+        .admit_frame(&inbox)
+        .expect("inbox response is admitted");
+    runtime.apply_inbox(&admitted_inbox);
+
+    let lanes = runtime.lanes().expect("refreshed lane snapshot");
+    let team = runtime
+        .newest_lineage_activity(&lanes.lanes[0])
+        .expect("team activity survives receipts");
+    assert_eq!(team.lane(), uuid(SECOND_LANE));
+    assert_eq!(team.class(), "prose");
+    assert_eq!(team.title(), "assistant");
+    assert_eq!(team.detail(), "newer teammate prose");
+    let other = runtime
+        .newest_lineage_activity(&lanes.lanes[1])
+        .expect("other lineage keeps its own activity");
+    assert_eq!(other.lane(), uuid(THIRD_LANE));
+    assert_eq!(other.class(), "tool");
+    assert_eq!(other.detail(), "Read");
+    assert_eq!(
+        runtime.newest_event().expect("receipt chronology").title(),
+        "Steering inbox"
     );
 }
 

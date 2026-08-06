@@ -120,7 +120,6 @@ pub(super) fn render_lineage(
                         <div class="team-pane" data-team-mode={(**mode).label()}>
                             {match **mode {
                                 LineageMode::Compose => render_compose(
-                                    surface,
                                     runtime,
                                     lineage,
                                     &lineage_standings,
@@ -134,7 +133,7 @@ pub(super) fn render_lineage(
                                 ),
                                 LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => html! {
                                     <>
-                                        {view::chrome::render_ticker(surface)}
+                                        {view::chrome::render_lineage_ticker(runtime, lineage)}
                                         {render_details(
                                             runtime,
                                             lineage,
@@ -235,7 +234,6 @@ fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
     reason = "one lineage renderer needs the admitted surface and its interactive control handles"
 )]
 fn render_compose(
-    surface: &SurfaceData,
     runtime: &CanvasRuntime,
     lineage: &crate::runtime::LaneRow,
     standings: &[Standing],
@@ -292,7 +290,7 @@ fn render_compose(
                     ready,
                 )}
             </form>
-            {view::chrome::render_ticker(surface)}
+            {view::chrome::render_lineage_ticker(runtime, lineage)}
             {render_activity(
                 lineage,
                 &cards,

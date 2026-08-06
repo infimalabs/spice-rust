@@ -56,8 +56,8 @@ mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
-    BoardView, CanvasRuntime, FactRow, LaneMember, LaneRow, LaneStatus, LaneView, RuntimeEvent,
-    Stale, StreamDirective, StreamTerminal, stale_reads,
+    BoardView, CanvasRuntime, FactRow, LaneActivity, LaneMember, LaneRow, LaneStatus, LaneView,
+    RuntimeEvent, Stale, StreamDirective, StreamTerminal, stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};
