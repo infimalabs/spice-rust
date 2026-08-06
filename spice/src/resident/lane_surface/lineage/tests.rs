@@ -98,3 +98,35 @@ fn removing_the_host_rekeys_every_remaining_member_and_preserves_both_policies()
     assert_eq!(state.subscriptions[0].auto_projects, ["team.1"]);
     assert_eq!(state.subscriptions[1].auto_projects, ["team.1"]);
 }
+
+#[test]
+fn removing_a_host_mints_an_identity_when_every_remaining_member_name_is_taken() {
+    let mut state = head(&[(1, 1), (2, 2), (3, 2)]);
+    move_member(&mut state, uuid(2), uuid(1)).expect("member joins the host team");
+
+    let split = move_member(&mut state, uuid(1), uuid(1)).expect("host leaves the team");
+    let rekeyed = split
+        .source_rekeyed_to
+        .expect("the remaining member receives a lineage identity");
+
+    assert_eq!(
+        rekeyed,
+        uuid(4),
+        "the first derived identity absent from every lane and lineage wins"
+    );
+    assert_eq!(
+        grouping(&state),
+        vec![(uuid(1), uuid(1)), (uuid(2), rekeyed), (uuid(3), uuid(2))]
+    );
+    assert_eq!(state.subscriptions.len(), 3);
+    assert!(subscription_ids(&state).contains(&rekeyed));
+    assert_eq!(
+        state
+            .subscriptions
+            .iter()
+            .find(|subscription| subscription.lineage_id == rekeyed)
+            .expect("the replacement lineage has a subscription")
+            .auto_projects,
+        ["team.1"]
+    );
+}
