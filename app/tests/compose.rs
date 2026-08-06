@@ -182,6 +182,8 @@ fn an_unparseable_task_handle_is_refused_with_a_visible_sentence() {
     // underscore-shaped case from ordinary fragments so the installed ledger
     // cannot mistake test data for a process input.
     let underscore_handle = ["SPICE", "_123"].concat();
+    assert!(underscore_handle.starts_with("SPICE_"));
+    assert!(underscore_handle.ends_with("123"));
     for written in [
         "not a handle",
         "spice-aBcD",
