@@ -606,6 +606,7 @@ fn generic_nonpass_fixture_states_cover_every_arm_and_only_two_skip() {
         ArmOutcome::NotApplicable,
         ArmOutcome::Excluded,
         ArmOutcome::Timeout,
+        ArmOutcome::Cancelled,
         ArmOutcome::ParseFailure,
         ArmOutcome::NonzeroAnalysis,
     ];
@@ -805,26 +806,37 @@ fn typed_state_invariants_refuse_ambiguous_or_incomplete_evidence() {
 
 #[test]
 fn rust_process_timing_is_required_bounded_and_owned_by_its_arm() {
-    let mut missing = fixture_observation(GateId::RustTypecheck, ArmOutcome::Passed);
-    missing.timing = None;
-    assert!(matches!(
-        fixture_report_result_with(missing),
-        Err(ToolchainError::InvalidTiming {
-            gate: GateId::RustTypecheck,
-            ..
-        })
-    ));
+    for outcome in [
+        ArmOutcome::Passed,
+        ArmOutcome::Timeout,
+        ArmOutcome::Cancelled,
+    ] {
+        let mut missing = fixture_observation(GateId::RustTypecheck, outcome);
+        missing.timing = None;
+        assert!(matches!(
+            fixture_report_result_with(missing),
+            Err(ToolchainError::InvalidTiming {
+                gate: GateId::RustTypecheck,
+                ..
+            })
+        ));
 
-    let mut forged = fixture_observation(GateId::RustTypecheck, ArmOutcome::Passed);
-    let timing = forged.timing.as_mut().expect("native fixture is timed");
-    timing.elapsed_ms = timing.observation_bound_ms + 1;
-    assert!(matches!(
-        fixture_report_result_with(forged),
-        Err(ToolchainError::InvalidTiming {
-            gate: GateId::RustTypecheck,
-            ..
-        })
-    ));
+        let mut forged = fixture_observation(GateId::RustTypecheck, outcome);
+        let timing = forged.timing.as_mut().expect("native fixture is timed");
+        timing.elapsed_ms = timing.observation_bound_ms + 1;
+        assert!(matches!(
+            fixture_report_result_with(forged),
+            Err(ToolchainError::InvalidTiming {
+                gate: GateId::RustTypecheck,
+                ..
+            })
+        ));
+    }
+
+    let mut pre_spawn = fixture_observation(GateId::RustTypecheck, ArmOutcome::ParseFailure);
+    pre_spawn.timing = None;
+    fixture_report_result_with(pre_spawn)
+        .expect("a pre-spawn parse failure invents no process timing");
 
     let mut foreign = fixture_observation(GateId::CanvasWebTypecheck, ArmOutcome::Passed);
     foreign.timing = Some(ArmTiming {
@@ -838,6 +850,26 @@ fn rust_process_timing_is_required_bounded_and_owned_by_its_arm() {
             ..
         })
     ));
+}
+
+#[test]
+fn report_v4_round_trips_typed_cancelled_timing() {
+    let report = fixture_report_with(fixture_observation(
+        GateId::RustTypecheck,
+        ArmOutcome::Cancelled,
+    ));
+
+    let encoded = serde_json::to_vec(&report).expect("report v4 encodes");
+    let decoded: ToolchainReport = serde_json::from_slice(&encoded).expect("report v4 decodes");
+
+    assert_eq!(decoded, report);
+    let cancelled = decoded
+        .arms
+        .iter()
+        .find(|arm| arm.gate_id == GateId::RustTypecheck)
+        .expect("report retains native arm");
+    assert_eq!(cancelled.outcome, ArmOutcome::Cancelled);
+    assert!(cancelled.timing.is_some());
 }
 
 /// A program that never answered refuses its arm, and can do nothing else.

@@ -12,11 +12,11 @@ use std::time::Duration;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CompileInvocation, HOME_DIRECTORY, run_compile_analysis, tool_search_path,
+    CompileInvocation, HOME_DIRECTORY, run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
 use crate::toolchain::{ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
-use sill::Environment;
+use sill::{Environment, WaitPolicy};
 
 /// The native analysis, kept in its declaration order.
 ///
@@ -40,6 +40,16 @@ pub(in crate::toolchain) fn rust_typecheck(
     root: &Path,
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
+) -> Analysis {
+    rust_typecheck_with_wait(declaration, root, bounds, programs, None)
+}
+
+fn rust_typecheck_with_wait(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    bounds: &Bounds,
+    programs: &BTreeMap<&str, &str>,
+    wait: Option<WaitPolicy>,
 ) -> Analysis {
     if !root.join("Cargo.toml").is_file() {
         return Analysis::not_applicable(declaration);
@@ -65,13 +75,14 @@ pub(in crate::toolchain) fn rust_typecheck(
         arguments: CARGO_CHECK_ARGUMENTS,
         cwd: root,
     };
-    let result = run_compile_analysis(
+    let result = run_compile_analysis_with_wait(
         declaration.id,
         root,
         invocation,
         bounds,
         &environment,
         |code, message| FindingDetail::RustTypeOutput { code, message },
+        wait,
     );
     match result {
         Err(failure) => {
@@ -187,10 +198,12 @@ fn rust_environment(cargo: &str, workspace: &RustWorkspace) -> Result<Environmen
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::thread;
 
     use crate::toolchain::{ArmFinding, GateId, declaration};
-    use sill::Deadlines;
+    use sill::{Cancellation, CancellationToken, Deadlines, RestartDisposition, WaitPolicy};
 
     static NEXT_RUST_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -304,13 +317,26 @@ mod tests {
         /// reference the vocabulary gate cannot see.
         fn analyze(&self) -> Analysis {
             let cargo = env!("CARGO");
+            self.analyze_with(cargo, &rust_bounds(), None)
+        }
+
+        fn analyze_with(&self, cargo: &str, bounds: &Bounds, wait: Option<WaitPolicy>) -> Analysis {
             let programs = BTreeMap::from([(CARGO, cargo)]);
-            rust_typecheck(
+            rust_typecheck_with_wait(
                 declaration(GateId::RustTypecheck).expect("native arm is declared"),
                 &self.root,
-                &rust_bounds(),
+                bounds,
                 &programs,
+                wait,
             )
+        }
+
+        fn sleeping_cargo(&self, label: &str) -> PathBuf {
+            let path = self.root.join(label);
+            fs::write(&path, "#!/bin/sh\n/bin/sleep 5\n").expect("write sleeping Cargo");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .expect("make sleeping Cargo executable");
+            path
         }
     }
 
@@ -327,14 +353,14 @@ mod tests {
     /// what the compiler said whenever the lane is loaded enough for a real
     /// build to outrun the number.
     fn rust_bounds() -> Bounds {
+        rust_bounds_with_runtime(Duration::MAX)
+    }
+
+    fn rust_bounds_with_runtime(runtime: Duration) -> Bounds {
         Bounds::new(
             "native analyzer test",
-            Deadlines::new(
-                Duration::MAX,
-                Duration::from_secs(1),
-                Duration::from_secs(1),
-            )
-            .expect("valid native deadlines"),
+            Deadlines::new(runtime, Duration::from_secs(1), Duration::from_secs(1))
+                .expect("valid native deadlines"),
             Duration::from_millis(25),
             64 * 1024,
         )
@@ -402,5 +428,57 @@ mod tests {
             .expect("the successful compiler run reports wall time");
         assert!(cleared_timing.elapsed_ms <= cleared_timing.observation_bound_ms);
         assert_eq!(cleared.findings, Vec::<ArmFinding>::new());
+    }
+
+    #[test]
+    fn native_check_timeout_retains_bounded_process_time() {
+        let fixture = RustFixture::new("timeout");
+        fixture.source(REMOVED_PLANT);
+        let cargo = fixture.sleeping_cargo("cargo-timeout");
+        let bounds = rust_bounds_with_runtime(Duration::from_millis(25));
+
+        let analysis = fixture.analyze_with(
+            cargo.to_str().expect("sleeping Cargo path is UTF-8"),
+            &bounds,
+            None,
+        );
+
+        assert_eq!(analysis.outcome, ArmOutcome::Timeout);
+        let timing = analysis.timing.expect("a timed-out compiler reports time");
+        assert!(timing.elapsed_ms > 0);
+        assert!(timing.elapsed_ms <= timing.observation_bound_ms);
+    }
+
+    #[test]
+    fn native_check_cancellation_is_distinct_and_retains_bounded_process_time() {
+        let fixture = RustFixture::new("cancelled");
+        fixture.source(REMOVED_PLANT);
+        let cargo = fixture.sleeping_cargo("cargo-cancelled");
+        let token = CancellationToken::new();
+        let cancel = token.clone();
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            cancel.cancel();
+        });
+        let wait = WaitPolicy::new(
+            "cancelled native analyzer test",
+            Cancellation::Token(token),
+            RestartDisposition::Never,
+        )
+        .expect("valid cancellation policy");
+
+        let analysis = fixture.analyze_with(
+            cargo.to_str().expect("sleeping Cargo path is UTF-8"),
+            &rust_bounds(),
+            Some(wait),
+        );
+        canceller
+            .join()
+            .expect("cancellation thread does not panic");
+
+        assert_eq!(analysis.outcome, ArmOutcome::Cancelled);
+        let timing = analysis.timing.expect("a cancelled compiler reports time");
+        assert!(timing.elapsed_ms > 0);
+        assert!(timing.elapsed_ms <= timing.observation_bound_ms);
     }
 }
