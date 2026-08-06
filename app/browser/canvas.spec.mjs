@@ -89,6 +89,16 @@ async function assertCanvas(page, scheme) {
     await page.locator('[data-pane="agent-console"]').count() <= 1,
     "the active view never mounts duplicate lineage consoles",
   );
+  assert.equal(
+    await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
+    0,
+    "the internal packing name is not a user-facing view",
+  );
+  assert.equal(
+    await page.locator("button.axis-button", { hasText: /^Agents/ }).count(),
+    1,
+    "one Agents entry reaches the one conversation surface",
+  );
   await page.waitForFunction(() => {
     const cursor = document.querySelector(".bar-meta")?.textContent ?? "";
     return /cursor \d+/.test(cursor);
@@ -142,7 +152,7 @@ async function assertCanvas(page, scheme) {
     assert.ok(await page.getByRole("button", { name: "Add note" }).isVisible());
     await page.locator(".workspace").evaluate((element) => element.scrollTo(0, 0));
   }
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   await page.locator('[data-pane="agent-console"]').waitFor();
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }
@@ -150,7 +160,7 @@ async function assertCanvas(page, scheme) {
 async function assertAgentConversation(page, fixture, worktrees) {
   const teamWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   await console.waitFor();
   await console.getByRole("tab", { name: /^Info/ }).click();
   await console.getByLabel("Name").fill(agentNames[0]);
@@ -188,7 +198,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
     ]);
   }
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   await console.getByRole("tab", { name: /^Info/ }).click();
   await console.locator(".team-detail-card").nth(3).waitFor({ timeout: 15_000 });
 
@@ -221,6 +231,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   const producerNames = new Set(await authored.locator(".message-author").allTextContents());
   assert.ok(producerIds.size > 1, "the packed plane contains more than one producing agent");
   assert.ok(producerNames.size > 1, "each authored card footer names its producing agent");
+  await assertRosterPips(page, console, seated);
   const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
   for (const name of producerNames) {
     assert.match(accessibility, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -364,6 +375,44 @@ async function assertFourAgentDensity(console) {
   }
 }
 
+async function assertRosterPips(page, console, seated) {
+  const teamPips = console.locator(".team-light");
+  await teamPips.nth(seated.length - 1).waitFor();
+  const teamRoster = await teamPips.evaluateAll((pips) => pips.map((pip) => ({
+    lane: pip.dataset.laneLightTargetId,
+    status: pip.dataset.laneStatus,
+  })).sort((left, right) => left.lane.localeCompare(right.lane)));
+  assert.deepEqual(
+    teamRoster.map((entry) => entry.lane),
+    seated.map((member) => member.lane).sort(),
+    "the team pips are keyed by every admitted member and no decorative slot",
+  );
+  assert.ok(
+    teamRoster.every((entry) => ["running", "running-stale"].includes(entry.status)),
+    "every supervised member has a lit liveness pip",
+  );
+
+  await chooseCanvasView(page, "Flow");
+  const brandPips = page.locator(".brand-dot");
+  await brandPips.nth(seated.length - 1).waitFor();
+  const chromeRoster = await brandPips.evaluateAll((pips) => pips.map((pip) => ({
+    lane: pip.dataset.agentLane,
+    status: pip.dataset.agentStatus,
+  })).sort((left, right) => left.lane.localeCompare(right.lane)));
+  assert.deepEqual(
+    chromeRoster,
+    teamRoster,
+    "the compact chrome roster preserves the live team identities and liveness states",
+  );
+  assert.equal(
+    await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
+    0,
+    "analytic chrome keeps the layout implementation name private",
+  );
+  await chooseCanvasView(page, "Agents");
+  await console.waitFor();
+}
+
 async function assertPerTeamWatchbands(page, fixture, worktrees) {
   const before = await reply(fixture, ["lane"]);
   const primary = before.body.lanes.find((lane) => lane.worktree === worktrees[0]);
@@ -374,7 +423,7 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
     "--vendor", "claude",
   ]);
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   const console = page.locator('[data-pane="agent-console"]');
   await console.getByRole("tab", { name: /^Compose/ }).first().click();
   await console.locator(".team-surface").nth(1).waitFor({ timeout: 15_000 });
@@ -465,7 +514,7 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
 }
 
 async function captureReferenceViewport(page) {
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   const team = page.locator('[data-pane="agent-console"]');
   await team.getByRole("tab", { name: /^Info/ }).click();
   for (const name of agentNames) {
@@ -534,7 +583,7 @@ async function assertAuthoritySurface(page, seeded) {
 }
 
 async function assertMosaicComposer(page, fixture, seeded) {
-  await chooseCanvasView(page, "Mosaic");
+  await chooseCanvasView(page, "Agents");
   const team = page.locator('[data-pane="agent-console"]');
   await team.getByRole("tab", { name: /^Compose/ }).click();
   const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);

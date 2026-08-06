@@ -1,4 +1,4 @@
-//! Predecessor-style lane composer rendered inside the additive Mosaic tab.
+//! Predecessor-style lane composer rendered inside the Agents surface.
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag};
 use wasm_bindgen::JsCast;
@@ -44,7 +44,7 @@ impl LineageMode {
 
 /// Render every live lineage as one packed surface.
 ///
-/// This is the sole Mosaic execution path: each lineage owns exactly one
+/// This is the sole Agents conversation path: each lineage owns exactly one
 /// composer and activity plane, however many independently steerable members
 /// the lineage contains.
 pub(super) fn render_lineage(
@@ -152,13 +152,18 @@ fn render_lineage_toolbar(
 ) -> Html {
     html! {
         <header class="team-toolbar">
-            <span class="team-lights" aria-label={format!("{} live agents", standings.len())}>
+            <span
+                class="team-lights"
+                role="group"
+                aria-label={format!("{} admitted agents", standings.len())}
+            >
                 {for standings.iter().filter_map(|standing| {
                     let member = lineage.member(standing.lane)?;
                     let status = member.status(standing.pending);
                     Some(html! {
                         <span
                             class={classes!("team-light", status.key())}
+                            role="img"
                             data-lane-light-target-id={member.lane.to_string()}
                             data-lane-status={status.key()}
                             aria-label={format!("{}: {}", standing.label, status.label())}
