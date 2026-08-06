@@ -149,6 +149,11 @@ fn board_response(
         "schema": 1,
         "cursor": 4,
         "principal": "operator",
+        "project_policy": {
+            "public_stems": ["app", "board"],
+            "public_min_depth": 2,
+            "public_max_depth": 3,
+        },
         "tasks": [
             board_task(
                 "HIDDEN-oops1",

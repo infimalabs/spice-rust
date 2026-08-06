@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 88);
+    assert_eq!(contracts().len(), 89);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 88);
+    assert_eq!(landed, 89);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
@@ -132,6 +132,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["lane", "import"]), Landing::Landed);
     assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
     assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
+    assert_eq!(landing(&["task", "list"]), Landing::Landed);
     assert_eq!(landing(&["task", "status"]), Landing::Landed);
     assert_eq!(landing(&["recall"]), Landing::Landed);
     assert_eq!(landing(&["steer"]), Landing::Landed);
@@ -336,6 +337,35 @@ fn review_finding_and_note_are_declared_on_the_only_review_leaf() {
 
 #[test]
 fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
+    let list = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "list",
+            "--project",
+            "project:task.cli",
+            "--limit",
+            "2",
+            "--status",
+            "waiting",
+        ])
+        .expect("task list filters parse");
+    let leaf = selected_matches(&list);
+    assert_eq!(
+        selected_contract(&list)
+            .expect("list selects a contract")
+            .path,
+        ["task", "list"]
+    );
+    assert_eq!(
+        leaf.get_one::<String>("project").map(String::as_str),
+        Some("project:task.cli")
+    );
+    assert_eq!(
+        leaf.get_one::<String>("status").map(String::as_str),
+        Some("waiting")
+    );
+
     let status = command()
         .try_get_matches_from(["spice", "task", "status"])
         .expect("task status parses");

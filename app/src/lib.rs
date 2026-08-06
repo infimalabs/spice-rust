@@ -36,7 +36,7 @@
 //! to keep them, and that difference survives every floor above.
 
 pub mod compose;
-#[cfg(test)]
+#[cfg(any(target_arch = "wasm32", test))]
 mod composer_markdown;
 pub mod mosaic;
 pub mod pane;

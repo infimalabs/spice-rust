@@ -25,8 +25,8 @@ use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
 mod board;
 pub use board::{
-    BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardStatement, BoardTask, DocLedger,
-    Positioned, ProjectVisibility, TextAnswer,
+    BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead, BoardStatement,
+    BoardTask, DocLedger, Positioned, ProjectVisibility, TextAnswer,
 };
 
 /// Add one task as direct intent.
@@ -469,6 +469,13 @@ pub struct PendingDirective {
     pub key: String,
     /// Direction text.
     pub text: String,
+    /// First line authored outside quoted context, when the producer found one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preview: Option<String>,
     /// Control channel attached to the direction, when present.
     #[serde(
         default,

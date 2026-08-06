@@ -64,6 +64,11 @@ fn validated_snapshot(
             schema: journal::SCHEMA_VERSION,
             cursor,
             principal,
+            project_policy: BoardProjectPolicy {
+                public_stems: projects.public_stems().iter().cloned().collect(),
+                public_min_depth: projects.public_min_depth(),
+                public_max_depth: projects.public_max_depth(),
+            },
             tasks,
             residency,
         },

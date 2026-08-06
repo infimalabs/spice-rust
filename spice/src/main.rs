@@ -283,6 +283,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
+        | ["task", "list"]
         | ["task", "status"]
         | ["task", "next"]
         | ["task", "reclaim"]

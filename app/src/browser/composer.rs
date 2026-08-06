@@ -88,6 +88,7 @@ pub(super) struct ComposerDraft {
 #[derive(Clone, PartialEq)]
 struct QuoteDraft {
     quote: String,
+    preview: Option<String>,
     body: String,
 }
 
@@ -102,6 +103,7 @@ pub(super) enum ComposerAction {
     AddQuote {
         lane: String,
         quote: String,
+        preview: Option<String>,
     },
     RemoveQuote {
         lane: String,
@@ -136,11 +138,16 @@ impl Reducible for ComposerDrafts {
         let mut next = (*self).clone();
         match action {
             ComposerAction::SetBody { lane, body } => next.draft_mut(lane).body = body,
-            ComposerAction::AddQuote { lane, quote } => {
+            ComposerAction::AddQuote {
+                lane,
+                quote,
+                preview,
+            } => {
                 let draft = next.draft_mut(lane);
                 if !draft.quotes.iter().any(|draft| draft.quote == quote) {
                     draft.quotes.push(QuoteDraft {
                         quote,
+                        preview,
                         body: String::new(),
                     });
                 }
@@ -821,6 +828,7 @@ fn render_agent_message_card(
             quote_drafts.dispatch(ComposerAction::AddQuote {
                 lane: quote_key.clone(),
                 quote: text,
+                preview: None,
             });
         }),
     };
@@ -867,6 +875,7 @@ fn render_directive_card(
     });
     let quote_key = lane_key.to_owned();
     let quote_drafts = drafts.clone();
+    let quote_preview = directive.preview.clone();
     let correspondent = view::chrome::Correspondent {
         name: watchband::short(lane),
         accent: watchband::accent(lane),
@@ -875,6 +884,7 @@ fn render_directive_card(
             quote_drafts.dispatch(ComposerAction::AddQuote {
                 lane: quote_key.clone(),
                 quote: text,
+                preview: quote_preview.clone(),
             });
         }),
     };
@@ -943,10 +953,11 @@ fn render_quote_bands(
                         body: input.value(),
                     });
                 });
+                let shown = crate::composer_markdown::quote_label(quote.preview.as_deref());
                 html! {
-                    <div class="composer-quote-band">
+                    <div class="composer-quote-band" title={quote.quote.clone()}>
                         <header>
-                            <span>{quote.quote.lines().next().unwrap_or("quoted message")}</span>
+                            <span>{shown}</span>
                             <button
                                 type="button"
                                 aria-label="Remove quoted composer"

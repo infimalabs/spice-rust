@@ -221,6 +221,11 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
   "schema": 1,
   "cursor": 1,
   "principal": "operator",
+  "project_policy": {
+    "public_stems": ["serve", "task"],
+    "public_min_depth": 2,
+    "public_max_depth": 3
+  },
   "tasks": [],
   "residency": {
     "position": 1,
@@ -267,6 +272,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
       "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
       "key": "1kJJP87B",
       "text": "drain the queue",
+      "preview": "drain the queue",
       "expires": "2026-08-01T07:07:19.000Z"
     }]
   }]

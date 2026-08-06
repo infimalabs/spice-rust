@@ -57,7 +57,7 @@ pub struct Standing {
     pub disposition: String,
     /// Directives waiting for the lane.
     pub pending: usize,
-    /// Newest waiting directive, flattened to one line.
+    /// Producer-supplied preview of the newest waiting directive.
     pub headline: Option<String>,
     /// Handle of the task the lane currently holds.
     pub handle: Option<String>,
@@ -101,7 +101,7 @@ pub fn standings(
                 pending: waiting.map_or(0, |row| row.pending.len()),
                 headline: waiting
                     .and_then(|row| row.pending.last())
-                    .map(|directive| one_line(&directive.text)),
+                    .and_then(|directive| directive.preview.clone()),
                 handle: held.map(|task| task.statement.body.handle.to_string()),
                 phase: held.map(|task| task.workflow.body.phase.to_string()),
                 held: held.and_then(|task| since(task, now, |lease| lease.start)),

@@ -15,6 +15,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use syn::punctuated::Punctuated;
 use syn::{Meta, Token};
+use wire::intent::PendingDirective;
 use wire::{CursorHead, LaneResidency, Packed, Refusal, WorkflowHead};
 
 const WORKFLOW: &str = r#"{
@@ -47,6 +48,13 @@ const REFUSAL: &str = r#"{
   "remedy": "reclaim the task"
 }"#;
 
+const DIRECTIVE: &str = r#"{
+  "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+  "key": "1kJJP87B",
+  "text": "> quoted only",
+  "expires": "2026-08-01T07:07:19.000Z"
+}"#;
+
 #[test]
 fn absent_head_fields_are_omitted_and_null_is_refused() {
     assert_canonical_absence::<WorkflowHead>(WORKFLOW, &["assignment", "deferral", "completion"]);
@@ -58,6 +66,7 @@ fn absent_head_fields_are_omitted_and_null_is_refused() {
 fn absent_non_head_fields_are_omitted_and_null_is_refused() {
     assert_canonical_absence::<Packed<serde_json::Value>>(PACKED, &["overflow"]);
     assert_canonical_absence::<Refusal>(REFUSAL, &["witness", "expected", "observed"]);
+    assert_canonical_absence::<PendingDirective>(DIRECTIVE, &["preview", "control"]);
 }
 
 /// Every crossing optional field carries the whole spelling, including the ones
