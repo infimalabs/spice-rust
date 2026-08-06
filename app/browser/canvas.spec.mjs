@@ -15,6 +15,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const binary = join(root, "target/debug/spice");
 const artifacts = join(root, "artifacts/canvas");
+const coverageReceiptFlag = "--spice-coverage-receipt";
+const coverageReceipt = "BROWSER-1kKSWhZk browser coverage complete\n";
+const coverageArguments = process.argv.slice(2);
+let coverageReceiptPath;
+if (coverageArguments.length > 0) {
+  if (
+    coverageArguments.length !== 2 ||
+    coverageArguments[0] !== coverageReceiptFlag ||
+    !coverageArguments[1] ||
+    coverageArguments[1].startsWith("--")
+  ) {
+    throw new Error(`expected ${coverageReceiptFlag} FILE or no arguments`);
+  }
+  coverageReceiptPath = coverageArguments[1];
+}
 const sessionRecord = JSON.stringify({
   type: "system",
   subtype: "init",
@@ -1414,3 +1429,4 @@ try {
   await rm(fixture, { recursive: true, force: true });
   await rm(linkedRoot, { recursive: true, force: true });
 }
+if (coverageReceiptPath) await writeFile(coverageReceiptPath, coverageReceipt);
