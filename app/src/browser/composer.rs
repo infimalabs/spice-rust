@@ -8,6 +8,7 @@ use wasm_bindgen::closure::Closure;
 use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader, HtmlInputElement};
 
 use super::*;
+use crate::composer_markdown::{Attachment, QuotedReply};
 use crate::watchband::{self, Standing};
 
 const MAX_ATTACHMENTS: usize = 8;
@@ -1224,7 +1225,7 @@ fn drop_on_lane(
         let Some(occupant) = occupant else {
             return;
         };
-        let message = markdown_block_quote(&text);
+        let message = crate::composer_markdown::block_quote(&text);
         if message.is_empty() {
             return;
         }
@@ -1309,41 +1310,28 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
     }
 }
 
+/// Restate the draft as the borrowed parts the target-neutral composer takes.
+///
+/// Composition itself lives in [`crate::composer_markdown`], which a native
+/// test can reach; this module cannot, so it holds only the projection.
 fn compose_markdown(draft: &ComposerDraft) -> String {
-    let mut parts = Vec::new();
-    let body = draft.body.trim();
-    if !body.is_empty() {
-        parts.push(body.to_owned());
-    }
-    parts.extend(draft.quotes.iter().filter_map(|draft| {
-        let quote = markdown_block_quote(&draft.quote);
-        let body = draft.body.trim();
-        let part = [quote.as_str(), body]
-            .into_iter()
-            .filter(|part| !part.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        (!part.is_empty()).then_some(part)
-    }));
-    parts.extend(draft.attachments.iter().map(|attachment| {
-        let name = attachment
-            .name
-            .replace(['\r', '\n'], " ")
-            .replace(']', "\\]");
-        format!("![{name}]({})", attachment.data_url)
-    }));
-    parts.join("\n\n")
-}
-
-fn markdown_block_quote(raw: &str) -> String {
-    raw.replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .lines()
-        .map(|line| format!("> {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_owned()
+    let quotes = draft
+        .quotes
+        .iter()
+        .map(|quote| QuotedReply {
+            quote: &quote.quote,
+            body: &quote.body,
+        })
+        .collect::<Vec<_>>();
+    let attachments = draft
+        .attachments
+        .iter()
+        .map(|attachment| Attachment {
+            name: &attachment.name,
+            data_url: &attachment.data_url,
+        })
+        .collect::<Vec<_>>();
+    crate::composer_markdown::compose(&draft.body, &quotes, &attachments)
 }
 
 fn render_markdown(markdown: &str) -> Html {
