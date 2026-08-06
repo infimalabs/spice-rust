@@ -399,7 +399,11 @@ fn render_quote_bands(
                 html! {
                     <div class="composer-quote-band">
                         <span>{quote.lines().next().unwrap_or("quoted message")}</span>
-                        <button type="button" aria-label="Remove quote" onclick={remove}>{"×"}</button>
+                        <button
+                            type="button"
+                            aria-label="Remove quote"
+                            onclick={remove}
+                        >{"×"}</button>
                     </div>
                 }
             })}
@@ -426,7 +430,11 @@ fn render_attachments(
                 html! {
                     <span class="composer-attachment-chip" title={attachment.name.clone()}>
                         <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
-                        <button type="button" aria-label="Remove image" onclick={remove}>{"×"}</button>
+                        <button
+                            type="button"
+                            aria-label="Remove image"
+                            onclick={remove}
+                        >{"×"}</button>
                     </span>
                 }
             })}
@@ -601,7 +609,12 @@ fn render_markdown(markdown: &str) -> Html {
     html! {
         {for markdown.split("\n\n").map(|block| {
             if block.lines().all(|line| line.starts_with("> ")) {
-                html! {<blockquote>{block.lines().map(|line| &line[2..]).collect::<Vec<_>>().join("\n")}</blockquote>}
+                let quote = block
+                    .lines()
+                    .map(|line| &line[2..])
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                html! {<blockquote>{quote}</blockquote>}
             } else {
                 html! {<p>{block.to_owned()}</p>}
             }
