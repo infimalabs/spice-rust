@@ -8,7 +8,7 @@ mod tests {
     use crate::toolchain::{
         PACKAGED_SCANNER_EXCLUDES, TOOLCHAIN_ARMS, declaration, fixture_external_finding,
     };
-    use sill::Deadlines;
+    use sill::{Acquisition, Deadlines};
 
     static NEXT_CANVAS_FIXTURE: AtomicU64 = AtomicU64::new(0);
     static NEXT_DECODING_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -266,20 +266,30 @@ mod tests {
         assert!(!CanvasFixture::workspace_root(&second_tree).exists());
     }
 
-    /// A workspace an earlier analysis left behind refuses by name, untouched.
+    /// Plant a canvas workspace holding one artefact, as a live analysis leaves it.
+    fn plant_canvas_workspace(tree: &Path) -> (PathBuf, PathBuf) {
+        let root = CanvasFixture::workspace_root(tree);
+        fs::create_dir_all(root.join("trunk-dist")).expect("plant a canvas workspace");
+        let artefact = root.join("trunk-dist/planted.wasm");
+        fs::write(&artefact, b"artefact").expect("plant a canvas artefact");
+        (root, artefact)
+    }
+
+    /// A workspace a live analysis is writing into is never removed under it.
     ///
-    /// Removing it instead would be the more convenient answer and is the wrong
-    /// one: an existing workspace is equally the mark of an analysis running
-    /// right now, and reclaiming it would delete the directory a live run is
-    /// writing into. The planted contents are asserted to survive so that a
-    /// later change to reclaim the root cannot pass this test quietly.
+    /// The holder is a second acquisition of the very lock the arm takes.
+    /// `flock` grants per open file description, so this contends exactly as a
+    /// separate process would, and holding it *before* the arm starts is what
+    /// makes the decision drivable: the refusal is the arm's answer to a live
+    /// holder rather than the outcome of a race this test happened to win.
     #[test]
-    fn a_canvas_workspace_left_behind_refuses_by_name_and_is_not_reclaimed() {
-        let fixture = CanvasFixture::new("stale-workspace", true);
-        let stale = CanvasFixture::workspace_root(&fixture.root);
-        fs::create_dir(&stale).expect("plant a workspace an earlier analysis left behind");
-        fs::write(stale.join("evidence"), "a live analysis owns this")
-            .expect("write planted workspace contents");
+    fn a_canvas_workspace_a_live_analysis_holds_is_refused_and_survives_intact() {
+        let fixture = CanvasFixture::new("held-workspace-lock", true);
+        let (root, artefact) = plant_canvas_workspace(&fixture.root);
+        let lock = build_root::canvas_workspace_lock(&root).expect("the workspace names a lock");
+        let Ok(Acquisition::Acquired(held)) = lock.try_acquire() else {
+            panic!("a freshly planted canvas workspace must be lockable");
+        };
         let cargo = fixture.script("cargo", "exit 0");
         let trunk = fixture.script("trunk", "exit 0");
 
@@ -287,10 +297,11 @@ mod tests {
 
         assert_eq!(analysis.outcome, ArmOutcome::ParseFailure);
         assert!(
-            analysis.reason.contains(&stale.display().to_string())
-                && analysis.reason.contains("is already held")
-                && analysis.reason.contains("remove that directory"),
-            "the refusal names the path and what to do about it: {}",
+            analysis.reason.contains(&root.display().to_string())
+                && analysis
+                    .reason
+                    .contains("is in use by another analysis of this tree"),
+            "the refusal names the workspace and why it refused: {}",
             analysis.reason,
         );
         assert!(
@@ -298,10 +309,41 @@ mod tests {
             "neither tool ran: {:?}",
             fixture.log_lines(),
         );
-        assert!(
-            stale.join("evidence").is_file(),
-            "a workspace this analysis did not create is left where it was",
+        assert_eq!(
+            fs::read(&artefact).expect("the held analysis's artefact survives"),
+            b"artefact",
+            "the held workspace was removed out from under its analysis",
         );
+        drop(held);
+    }
+
+    /// The guard cannot pass by refusing every workspace it did not create.
+    ///
+    /// A workspace no analysis holds is what a killed run leaves behind, and its
+    /// name comes from the selected tree rather than from anything this
+    /// invocation minted, so refusing it would poison every later canvas
+    /// analysis of that tree until an operator cleaned up by hand. Possession is
+    /// what separates the two cases, so this one is reclaimed, and the planted
+    /// artefact is asserted gone rather than merely unmentioned.
+    #[test]
+    fn a_canvas_workspace_no_live_analysis_holds_is_reclaimed_rather_than_refused() {
+        let fixture = CanvasFixture::new("stale-workspace", true);
+        let (root, artefact) = plant_canvas_workspace(&fixture.root);
+        let cargo = fixture.script("cargo", "exit 0");
+        let trunk = fixture.script("trunk", "exit 0");
+
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_exit_bounds());
+
+        assert_eq!(analysis.outcome, ArmOutcome::Passed, "{}", analysis.reason);
+        assert!(
+            !artefact.exists(),
+            "the stale artefact outlived the run that abandoned it",
+        );
+        assert!(
+            !fixture.log_lines().is_empty(),
+            "the analysis the stale workspace would have blocked really ran",
+        );
+        assert!(!root.exists(), "teardown removed the reclaimed workspace");
     }
 
     /// A workspace that cannot be removed is reported, not dropped on the floor.

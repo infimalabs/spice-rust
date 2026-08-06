@@ -42,9 +42,12 @@ use crate::jurisdiction::{Ignore, Jurisdiction};
 use crate::measure::Bounds;
 use crate::structural::{StructuralPattern, scan_javascript_symbols};
 
+mod build_root;
 mod compile;
 mod csharp;
 mod rust;
+
+use build_root::CanvasWorkspace;
 
 pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
 pub(super) use csharp::csharp_unused;
@@ -1046,69 +1049,6 @@ fn tool_search_path(label: &str, programs: &[&str]) -> Result<std::ffi::OsString
     }
     std::env::join_paths(directories)
         .map_err(|error| format!("{label} tool search path is invalid: {error}"))
-}
-
-/// A sibling directory one analysis holds for the length of its run.
-///
-/// The name is derived from the selected tree and carries no token this
-/// invocation minted, so `fs::create_dir` refusing with `AlreadyExists` is the
-/// whole of the exclusion: one analysis per selected tree, decided by the
-/// filesystem rather than by anything this process remembers. A root that
-/// outlives the analysis that made it therefore refuses every later analysis of
-/// that tree, which is exactly why [`Drop`] must not discard a failed removal.
-/// The refusal an operator eventually meets and the report they get when the
-/// removal first fails name the same path on purpose: one is the warning, the
-/// other is the consequence.
-///
-/// Removing a root this analysis did not create is never attempted. A root that
-/// exists may belong to an analysis running right now, and reclaiming it would
-/// delete the directory a live run is writing into; the refusal says what was
-/// found and leaves the decision to remove it with the operator.
-struct CanvasWorkspace<'a> {
-    root: PathBuf,
-    removal: &'a Cell<Option<String>>,
-}
-
-impl<'a> CanvasWorkspace<'a> {
-    fn create(selected: &Path, removal: &'a Cell<Option<String>>) -> Result<Self, String> {
-        let Some(name) = selected.file_name() else {
-            return Err(format!(
-                "canvas selected tree {selected:?} has no name for an analysis workspace"
-            ));
-        };
-        let mut workspace_name = name.to_os_string();
-        workspace_name.push(".spice-canvas-analysis");
-        let root = selected.with_file_name(workspace_name);
-        match fs::create_dir(&root) {
-            Ok(()) => Ok(Self { root, removal }),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(format!(
-                "canvas analysis workspace {} is already held, either by an analysis of this \
-                 tree running now or by one that ended before it could remove it; remove that \
-                 directory to let this analysis run",
-                root.display()
-            )),
-            Err(error) => Err(format!(
-                "canvas analysis workspace {} could not be created: {error}",
-                root.display()
-            )),
-        }
-    }
-
-    fn path(&self) -> &Path {
-        &self.root
-    }
-}
-
-impl Drop for CanvasWorkspace<'_> {
-    fn drop(&mut self) {
-        if let Err(error) = fs::remove_dir_all(&self.root) {
-            self.removal.set(Some(format!(
-                "canvas analysis workspace {} could not be removed: {error}; every later canvas \
-                 analysis of this tree refuses until it is gone",
-                self.root.display(),
-            )));
-        }
-    }
 }
 
 /// Writable output roots for tools examining one immutable selected tree.
