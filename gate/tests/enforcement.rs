@@ -19,7 +19,7 @@ use wire::{Digest, Domain};
 
 mod support;
 
-use support::{Tree, git_commit, git_repository};
+use support::{Tree, fixture_git_barrier, git_commit, git_repository};
 
 /// A line counter written entirely in shell builtins.
 ///
@@ -54,6 +54,32 @@ const MUTATING_LIVE_COUNTER: &str = "printf 'changed\\n' >> \"$1/src/lib.rs\"; \
      printf 'added\\n' > \"$1/added.rs\"; shift; count=0; for file in \"$@\"; do \
      while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
      done; printf '%s\\n' \"$count\"";
+
+/// Create and append the same untracked browser log while the parser process
+/// owns the measurement boundary, then count only captured source arguments.
+const MUTATING_UNTRACKED_COUNTER: &str = "root=$1; shift; \
+     printf 'opened\\n' > \"$root/.playwright-mcp/console-123.log\"; \
+     printf 'closed\\n' >> \"$root/.playwright-mcp/console-123.log\"; \
+     count=0; for file in \"$@\"; do \
+     while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
+     done; printf '%s\\n' \"$count\"";
+
+/// Add a new live path to the Git index after the captured source was counted.
+const ADD_TRACKED_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@\"; do \
+     while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
+     done; printf 'added\\n' > \"$root/added.rs\"; \
+     /usr/bin/git -C \"$root\" add added.rs; printf '%s\\n' \"$count\"";
+
+/// Delete one live tracked path after the captured source was counted.
+const DELETE_TRACKED_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@\"; do \
+     while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
+     done; /bin/rm \"$root/src/lib.rs\"; printf '%s\\n' \"$count\"";
+
+/// Replace one live tracked file with a directory after counting its snapshot.
+const RESHAPE_TRACKED_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@\"; do \
+     while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
+     done; /bin/rm \"$root/src/lib.rs\"; /bin/mkdir \"$root/src/lib.rs\"; \
+     printf '%s\\n' \"$count\"";
 
 const MUTATE_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@\"; do \
      while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
@@ -92,6 +118,27 @@ fn line_metric() -> Metric {
         "",
     )
     .expect("declare a metric")
+}
+
+fn live_root_metric(name: &str, target: &str, script: &str, root: &std::path::Path) -> Metric {
+    Metric::new(
+        name,
+        "rust",
+        target,
+        Parser::new(
+            "/bin/sh",
+            [
+                "-c".to_owned(),
+                script.to_owned(),
+                "sh".to_owned(),
+                root.to_string_lossy().into_owned(),
+            ],
+        )
+        .expect("declare a live-root parser"),
+        "*.rs\n",
+        "",
+    )
+    .expect("declare a live-root metric")
 }
 
 fn policy(ignore: &str) -> Policy {
@@ -756,14 +803,166 @@ fn persistent_live_tree_and_inventory_mutation_remains_named() {
         matches!(
             &refused,
             RunError::JurisdictionChanged {
+                paths,
                 inventory,
                 observed_inventory,
                 tree,
                 observed_tree,
-            } if inventory != observed_inventory && tree != observed_tree
+            } if paths == &["added.rs", "src/lib.rs"]
+                && inventory != observed_inventory
+                && tree != observed_tree
         ),
         "the live tree and inventory mutation lost its named refusal: {refused:?}",
     );
+    let rendered = refused.to_string();
+    assert!(rendered.contains("added.rs"), "{rendered}");
+    assert!(rendered.contains("src/lib.rs"), "{rendered}");
+}
+
+#[test]
+fn tracked_index_jurisdiction_excludes_scratch_created_during_measurement() {
+    let tree = git_repository("tracked-scratch-mutation");
+    tree.write("src/lib.rs", "one\n");
+    git_commit(&tree, "tracked source");
+    fs::create_dir(tree.path(".playwright-mcp")).expect("create browser scratch directory");
+    let metric = || {
+        live_root_metric(
+            "rust.lines",
+            "lines while an untracked browser log changes",
+            MUTATING_UNTRACKED_COUNTER,
+            &tree.root,
+        )
+    };
+    let ignore = Ignore::parse(".git/\n").expect("parse Git metadata exclusion");
+
+    let whole = Policy::new(ignore.clone(), [metric()]).expect("declare whole-walk policy");
+    let refused = Run::adjudicate(&whole, &tree.root, &ratchet("rust.lines 1\n"), &bounds())
+        .expect_err("a whole-tree walk observes the changing scratch file");
+    assert!(
+        matches!(
+            &refused,
+            RunError::JurisdictionChanged { paths, .. }
+                if paths == &[".playwright-mcp/console-123.log"]
+        ),
+        "the control walk did not name the mutable browser log: {refused:?}",
+    );
+    fs::remove_file(tree.path(".playwright-mcp/console-123.log"))
+        .expect("reset browser scratch file");
+
+    let tracked = Policy::tracked_index(ignore, [metric()]).expect("declare tracked-index policy");
+    let run = Run::adjudicate(&tracked, &tree.root, &ratchet("rust.lines 1\n"), &bounds())
+        .expect("untracked browser scratch cannot move tracked jurisdiction");
+    assert_eq!(run.standing(), Standing::Clean);
+    assert!(
+        run.jurisdiction()
+            .entries()
+            .iter()
+            .all(|entry| entry.path() != ".playwright-mcp/console-123.log")
+    );
+    assert_eq!(
+        fs::read_to_string(tree.path(".playwright-mcp/console-123.log"))
+            .expect("read browser scratch evidence"),
+        "opened\nclosed\n"
+    );
+}
+
+#[test]
+fn tracked_index_jurisdiction_names_current_content_drift() {
+    let tree = git_repository("tracked-content-mutation");
+    tree.write("src/lib.rs", "one\n");
+    git_commit(&tree, "tracked source");
+    let metric = live_root_metric(
+        "rust.lines",
+        "lines before tracked current contents change",
+        MUTATE_LIVE_AFTER_COUNT,
+        &tree.root,
+    );
+    let policy = Policy::tracked_index(Ignore::parse("").expect("parse ignore"), [metric])
+        .expect("declare tracked-index policy");
+
+    let refused = Run::adjudicate(&policy, &tree.root, &ratchet("rust.lines 1\n"), &bounds())
+        .expect_err("tracked current content drift refuses");
+    assert!(
+        matches!(
+            &refused,
+            RunError::JurisdictionChanged { paths, .. } if paths == &["src/lib.rs"]
+        ),
+        "tracked content drift lost its path: {refused:?}",
+    );
+    assert!(refused.to_string().contains("src/lib.rs"));
+}
+
+#[test]
+fn tracked_index_jurisdiction_names_index_path_creation() {
+    let tree = git_repository("tracked-path-creation");
+    tree.write("src/lib.rs", "one\n");
+    git_commit(&tree, "tracked source");
+    let metric = live_root_metric(
+        "rust.lines",
+        "lines before the tracked path set grows",
+        ADD_TRACKED_LIVE_AFTER_COUNT,
+        &tree.root,
+    );
+    let policy = Policy::tracked_index(Ignore::parse("").expect("parse ignore"), [metric])
+        .expect("declare tracked-index policy");
+
+    let _git_barrier = fixture_git_barrier();
+    let refused = Run::adjudicate(&policy, &tree.root, &ratchet("rust.lines 1\n"), &bounds())
+        .expect_err("tracked path creation refuses");
+    assert!(
+        matches!(
+            &refused,
+            RunError::JurisdictionChanged { paths, .. } if paths == &["added.rs"]
+        ),
+        "tracked path creation lost its path: {refused:?}",
+    );
+    assert!(refused.to_string().contains("added.rs"));
+}
+
+#[test]
+fn tracked_index_jurisdiction_names_shape_drift() {
+    let tree = git_repository("tracked-shape-mutation");
+    tree.write("src/lib.rs", "one\n");
+    git_commit(&tree, "tracked source");
+    let metric = live_root_metric(
+        "rust.lines",
+        "lines before a tracked file changes shape",
+        RESHAPE_TRACKED_LIVE_AFTER_COUNT,
+        &tree.root,
+    );
+    let policy = Policy::tracked_index(Ignore::parse("").expect("parse ignore"), [metric])
+        .expect("declare tracked-index policy");
+
+    let refused = Run::adjudicate(&policy, &tree.root, &ratchet("rust.lines 1\n"), &bounds())
+        .expect_err("tracked shape drift refuses");
+    assert!(
+        matches!(
+            &refused,
+            RunError::JurisdictionChanged { paths, .. } if paths == &["src/lib.rs"]
+        ),
+        "tracked shape drift lost its path: {refused:?}",
+    );
+    assert!(refused.to_string().contains("src/lib.rs"));
+}
+
+#[test]
+fn tracked_index_jurisdiction_refuses_a_deleted_path_by_name() {
+    let tree = git_repository("tracked-deletion");
+    tree.write("src/lib.rs", "one\n");
+    git_commit(&tree, "tracked source");
+    let metric = live_root_metric(
+        "rust.lines",
+        "lines before a tracked path disappears",
+        DELETE_TRACKED_LIVE_AFTER_COUNT,
+        &tree.root,
+    );
+    let policy = Policy::tracked_index(Ignore::parse("").expect("parse ignore"), [metric])
+        .expect("declare tracked-index policy");
+
+    let refused = Run::adjudicate(&policy, &tree.root, &ratchet("rust.lines 1\n"), &bounds())
+        .expect_err("tracked deletion refuses");
+    assert!(matches!(&refused, RunError::Walk(_)), "{refused:?}");
+    assert!(refused.to_string().contains("src/lib.rs"));
 }
 
 #[test]

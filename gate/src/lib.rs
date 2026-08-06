@@ -106,8 +106,8 @@ pub use manifest::{
     PredecessorInputs, Provenance, migrate_predecessor,
 };
 pub use measure::{
-    Bounds, MeasureError, Measurement, Metric, MetricError, Parser, Policy, measurement_digest,
-    render_measurements,
+    Bounds, JurisdictionMode, MeasureError, Measurement, Metric, MetricError, Parser, Policy,
+    measurement_digest, render_measurements,
 };
 pub use message::{
     CommitMessageError, CommitMessagePolicy, OriginTrailer, OriginTrailerError, TrailerRejection,

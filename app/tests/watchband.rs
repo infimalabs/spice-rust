@@ -46,6 +46,12 @@ fn lane(id: &str, worktree: &str) -> LaneRow {
         vendor: "codex".parse().expect("the fixture spells a vendor name"),
         occupant: Some(uuid(OCCUPANT)),
         disposition: "seated".to_owned(),
+        // A seat that has run: `bound` records that a resumable session was once
+        // declared for it, which is true of every lane this fixture builds
+        // because each one is occupied. No standing reads the field, so the
+        // value is the fixture's stance rather than anything asserted below --
+        // spelled out because a bare `true` reads as load-bearing when it is not.
+        bound: true,
     }
 }
 

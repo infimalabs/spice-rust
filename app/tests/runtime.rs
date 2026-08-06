@@ -1,6 +1,9 @@
 //! The real canvas runtime retains only admitted, capability-scoped state.
 
-use app::{CanvasRuntime, ChainEnd, Session, StreamDirective, StreamTerminal};
+use app::{
+    CanvasRuntime, ChainEnd, LaneStatus, Session, Stale, StreamDirective, StreamTerminal,
+    stale_reads,
+};
 use wire::{CanonicalUuid, CommandKind, Response, Seq, StreamFrame, ViewSubject};
 
 const OPERATOR: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -11,6 +14,8 @@ const NEXT_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163ca";
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c2";
 const REQUEST: &str = "018f82d4-6f59-7d06-92e3-bce9131163c4";
 const SECRET_LANE_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163cc";
+const SECOND_LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163cd";
+const THIRD_LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163ce";
 
 fn uuid(text: &str) -> CanonicalUuid {
     text.parse().expect("fixture uuid is canonical")
@@ -180,6 +185,50 @@ fn board_response(
     session
         .admit_frame(&bytes)
         .expect("board response is admitted")
+}
+
+/// One admitted lane roster, one row per `(lane, occupant, session)` triple.
+///
+/// The session body is the resident's real one rather than a placeholder,
+/// because `bound` is derived from its presence and a shape the wire refuses
+/// would prove the mapping against a row that never crosses.
+fn lane_response(rows: &[(&str, Option<&str>, bool)]) -> String {
+    let lanes = rows
+        .iter()
+        .map(|(lane, occupant, bound)| {
+            let mut row = serde_json::json!({
+                "lane": lane,
+                "worktree": format!("/tmp/worktree-{}", &lane[..8]),
+                "life": "steer",
+                "vendor": "claude",
+                "lineage": [],
+                "capabilities": [],
+                "disposition": if occupant.is_some() { "occupied" } else { "vacant" },
+            });
+            if let Some(occupant) = occupant {
+                row["occupant"] = serde_json::json!(occupant);
+            }
+            if *bound {
+                row["session"] = serde_json::json!({
+                    "lane": lane,
+                    "occupant": OPERATOR,
+                    "worktree": format!("/tmp/worktree-{}", &lane[..8]),
+                    "vendor": "claude",
+                    "epoch": EPOCH,
+                    "stream": "stdout",
+                    "identity": "018f7777-7777-7444-8888-999999999999",
+                    "locus": {"member": 0, "offset": 0, "length": 12},
+                });
+            }
+            row
+        })
+        .collect::<Vec<_>>();
+    let body = serde_json::json!({
+        "kind": "reply",
+        "cursor": 41,
+        "body": {"epoch": EPOCH, "state": "seated", "lanes": lanes},
+    });
+    serde_json::json!({"v": 1, "id": REQUEST, "epoch": EPOCH, "outcome": body}).to_string()
 }
 
 fn fact_frame(fact: serde_json::Value) -> Vec<u8> {
@@ -480,12 +529,295 @@ fn stream_overflow_is_terminal_and_remains_distinct_in_chronology() {
     assert_eq!(runtime.events()[0].class(), "overflow");
 }
 
+/// One durable envelope around a fact body, at a position nothing else uses.
+fn envelope(
+    position: u64,
+    actor: &str,
+    origin: &str,
+    fact: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "v": 1,
+        "seq": position,
+        "at": "2030-04-12T18:44:09.271Z",
+        "actor": actor,
+        "origin": origin,
+        "fact": fact,
+    })
+}
+
+/// Which cached read each fact invalidates, as `[board, lanes, inbox, consent]`.
+///
+/// This inventory is written out here rather than read back off the mapping it
+/// checks, so deleting an arm fails instead of agreeing with itself. Every
+/// namespace appears twice under different kinds and different producers: a
+/// mapping keyed on one exact kind rather than on the namespace fails on the
+/// sibling instead of passing on the twin. Four kinds from namespaces no read
+/// is drawn from close the other side — a rule that simply refreshed
+/// everything on every fact would pass all the rows above and fail these.
+fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
+    let expires = "2030-04-12T19:44:09.271Z";
+    vec![
+        (
+            serde_json::json!({
+                "kind": "steer::sent",
+                "directive": REQUEST,
+                "key": "QmTKOamJ",
+                "lane": LANE,
+                "text": "look at the tile",
+                "expires": expires,
+            }),
+            [false, false, true, false],
+        ),
+        (
+            serde_json::json!({"kind": "steer::canceled", "key": "QmTKOamJ", "lane": LANE}),
+            [false, false, true, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "lane::seated",
+                "lane": LANE,
+                "worktree": "/tmp/lane",
+                "life": "continuous",
+                "vendor": "codex",
+            }),
+            [false, true, true, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "lane::exited",
+                "lane": LANE,
+                "occupant": REQUEST,
+                "code": 0,
+            }),
+            [false, true, true, false],
+        ),
+        (
+            serde_json::json!({"kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify"}),
+            [true, false, false, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "task::done",
+                "task": "SPICE-aBcD",
+                "validation": "the suite is green",
+            }),
+            [true, false, false, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "claim::won",
+                "task": "SPICE-aBcD",
+                "actor": "operator",
+                "lane": LANE,
+                "occupant": REQUEST,
+                "epoch": EPOCH,
+                "until": expires,
+            }),
+            [true, true, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "claim::freed", "task": "SPICE-aBcD", "actor": "operator"}),
+            [true, true, false, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "consent::asked",
+                "request": REQUEST,
+                "lane": LANE,
+                "operation": "write /etc/hosts",
+            }),
+            [false, false, false, true],
+        ),
+        (
+            serde_json::json!({
+                "kind": "consent::granted",
+                "request": REQUEST,
+                "lane": LANE,
+                "rule": "operator",
+            }),
+            [false, false, false, true],
+        ),
+        (
+            serde_json::json!({"kind": "up::dark", "epoch": EPOCH}),
+            [false, false, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "vendor::armed", "vendor": "codex", "version": "0.1.0"}),
+            [false, false, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "taste::cleared", "taste": "loud", "locus": "app/src"}),
+            [false, false, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "journal::migrated", "from": 1, "to": 2, "epoch": EPOCH}),
+            [false, false, false, false],
+        ),
+    ]
+}
+
+#[test]
+fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
+    let session = session(OPERATOR, EPOCH);
+    for (fact, expected) in staleness_inventory() {
+        let kind = fact["kind"]
+            .as_str()
+            .expect("fixture names its kind")
+            .to_owned();
+        let pushed = fact_frame(envelope(41, "spice", &format!("lane:{LANE}"), &fact));
+        let stale = stale_reads(&admitted_stream(&session, &pushed));
+        assert_eq!(
+            [stale.board(), stale.lanes(), stale.inbox(), stale.consent()],
+            expected,
+            "{kind} invalidated the wrong reads"
+        );
+        assert_eq!(
+            stale.any(),
+            expected.contains(&true),
+            "{kind} disagrees with its own summary"
+        );
+    }
+}
+
+#[test]
+fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
+    let session = session(OPERATOR, EPOCH);
+    let sent = serde_json::json!({
+        "kind": "steer::sent",
+        "directive": REQUEST,
+        "key": "QmTKOamJ",
+        "lane": LANE,
+        "text": "look at the tile",
+        "expires": "2030-04-12T19:44:09.271Z",
+    });
+    let won = serde_json::json!({
+        "kind": "claim::won",
+        "task": "SPICE-aBcD",
+        "actor": "operator",
+        "lane": LANE,
+        "occupant": REQUEST,
+        "epoch": EPOCH,
+        "until": "2030-04-12T19:44:09.271Z",
+    });
+    let lane = format!("lane:{LANE}");
+    let ascending = [
+        envelope(41, "spice", &lane, &sent),
+        envelope(42, "operator", "task:SPICE-aBcD", &won),
+    ];
+
+    let tail = admitted_stream(&session, &packed_frame("facts", &ascending, None, 42));
+    let stale = stale_reads(&tail);
+    assert_eq!(
+        [stale.board(), stale.lanes(), stale.inbox(), stale.consent()],
+        [true, true, true, false],
+        "a page widens to the union of its rows and no further"
+    );
+
+    let continued = admitted_stream(
+        &session,
+        &packed_frame("facts", &ascending, Some((7, 43)), 99),
+    );
+    assert_eq!(
+        stale_reads(&continued),
+        Stale::default(),
+        "a page that continues defers to the page that ends the backlog"
+    );
+
+    let descending = [
+        envelope(42, "operator", "task:SPICE-aBcD", &won),
+        envelope(41, "spice", &lane, &sent),
+    ];
+    let thread = admitted_stream(&session, &packed_frame("thread", &descending, None, 42));
+    assert_eq!(
+        stale_reads(&thread),
+        Stale::default(),
+        "a causal walk is history rather than an advance"
+    );
+}
+
+/// The tile ladder is the predecessor's, and every rung has its own cause.
+///
+/// The four rungs are read from three independent inputs — queued direction,
+/// a live occupant, and a declared session — so the fixture varies one at a
+/// time rather than presenting four lanes that differ in every field. The
+/// labels are written out here rather than read back from [`LaneStatus`],
+/// because a test that asks the enum what its wording is passes after the
+/// wording changes.
+///
+/// The rank is asserted through a shuffled sort because the strip orders its
+/// tiles by `Ord` alone: a ladder that named the four states in the right
+/// order but derived the wrong comparison would still put the lane waiting on
+/// the operator at the far end of the strip.
+#[test]
+fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_seat() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = lane_response(&[
+        (SECOND_LANE, None, false),
+        (LANE, Some(OPERATOR), false),
+        (THIRD_LANE, None, true),
+    ]);
+    let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(bytes.as_bytes())
+        .expect("lane answer is admitted");
+    runtime.apply_lanes(&admitted);
+
+    let lanes = runtime
+        .lanes()
+        .expect("the roster is retained")
+        .lanes
+        .clone();
+    let [never_seated, occupied, seated_before] = <[_; 3]>::try_from(lanes)
+        .unwrap_or_else(|rows| panic!("three rows survive admission, got {}", rows.len()));
+    assert_eq!(never_seated.status(0), LaneStatus::Unbound);
+    assert_eq!(
+        seated_before.status(0),
+        LaneStatus::Bound,
+        "a seat with a declared session is bound rather than unbound once its occupant leaves"
+    );
+    assert_eq!(occupied.status(0), LaneStatus::Running);
+    assert_eq!(occupied.status(2), LaneStatus::Queued);
+    assert_eq!(
+        never_seated.status(1),
+        LaneStatus::Queued,
+        "queued direction outranks liveness even in a seat nobody has ever occupied"
+    );
+
+    assert_eq!(LaneStatus::Queued.label(), "steering queued");
+    assert_eq!(LaneStatus::Running.label(), "agent running");
+    assert_eq!(LaneStatus::Bound.label(), "agent bound");
+    assert_eq!(LaneStatus::Unbound.label(), "agent unbound");
+
+    let mut strip = vec![
+        LaneStatus::Unbound,
+        LaneStatus::Running,
+        LaneStatus::Bound,
+        LaneStatus::Queued,
+    ];
+    strip.sort_unstable();
+    assert_eq!(
+        strip,
+        vec![
+            LaneStatus::Queued,
+            LaneStatus::Running,
+            LaneStatus::Bound,
+            LaneStatus::Unbound,
+        ],
+        "the strip reads left to right as the predecessor's targetChoiceStatusValues"
+    );
+}
+
 /// The one steering receipt shape quotes the key exactly as the resident set it.
 ///
 /// The key is a case-sensitive stamp drawn from a vowel-free mixed-case
 /// alphabet, and it is the handle an operator types back at the CLI to cancel
-/// or recover the directive they just sent. Only the disposition is a word, and
-/// only the word may be folded to its wire spelling.
+/// or recover the directive they just sent. Folding its case would print a key
+/// that names no directive. Only the disposition is a word, and it is spelled
+/// by an exhaustive match rather than by rendering the variant, so a new
+/// retirement state must state its spelling instead of reaching the operator
+/// as a debug rendering.
 #[test]
 fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_disposition() {
     let session = session(OPERATOR, EPOCH);
@@ -502,14 +834,14 @@ fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_dispos
     let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
         .admit_frame(bytes.as_bytes())
         .expect("response is admitted");
-    runtime.apply_steer(&admitted);
+    runtime.apply_steer(&admitted, uuid(LANE));
 
     let event = runtime
         .events()
         .first()
         .expect("steering records one event");
-    assert_eq!(event.title(), "Direction sent");
-    assert_eq!(event.detail(), "1kKQtLsP / acked");
+    assert_eq!(event.title(), format!("Steered lane {LANE}"));
+    assert_eq!(event.detail(), "key 1kKQtLsP acked");
 }
 
 /// A seating receipt names the lane and both dispositions it moved between.
@@ -593,9 +925,9 @@ fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
         .admit_frame(&bytes)
         .expect("steer response is admitted");
 
-    runtime.apply_steer(&admitted);
+    runtime.apply_steer(&admitted, uuid(LANE));
 
     assert_eq!(runtime.events()[0].class(), "reply");
-    assert_eq!(runtime.events()[0].title(), "Direction sent");
-    assert_eq!(runtime.events()[0].detail(), "1kQTest / live");
+    assert_eq!(runtime.events()[0].title(), format!("Steered lane {LANE}"));
+    assert_eq!(runtime.events()[0].detail(), "key 1kQTest live");
 }

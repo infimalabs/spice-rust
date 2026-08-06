@@ -122,6 +122,12 @@ enum ClientAction {
         rule: wire::Name,
         answer: Answer,
     },
+    /// Direction the operator aimed at one seated lane from its tile.
+    ///
+    /// The occupant and epoch travel with the message because the residency
+    /// witness the resident re-proves is built from the same inbox snapshot the
+    /// tile was drawn from. Recomputing them at the socket would let the tile
+    /// name one lane while the command named another.
     Steer {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
@@ -139,7 +145,13 @@ enum PendingKind {
     Consent,
     Policy,
     LaneSeat,
-    SteerSend,
+    /// Direction in flight, carrying the lane it was aimed at.
+    ///
+    /// The receipt names that lane, and the only moment it is known for certain
+    /// is the send: by the time the answer lands the selection may have moved,
+    /// so reading it back off the surface would attribute the receipt to
+    /// whichever lane the operator is looking at now.
+    Steer(CanonicalUuid),
     Note(TaskHandle),
     ConsentDecision,
 }
@@ -339,6 +351,14 @@ fn steer_submit(
     })
 }
 
+/// The lane a directive is aimed at: the selected one, else the first seated.
+///
+/// An explicit selection is honoured as given -- if the operator picked a lane
+/// that has since gone vacant they get the refusal for that lane, not a quiet
+/// substitution. The fallback is what has to skip: a vacant lane sorting first
+/// would hand back `steer::lane-vacant` while seated lanes sat further down the
+/// same list, which reads as the console being broken rather than as the one
+/// lane it happened to land on being empty.
 fn selected_occupant(
     surface: &SurfaceData,
     selected: Option<CanonicalUuid>,
@@ -349,7 +369,7 @@ fn selected_occupant(
         .and_then(|lanes| {
             selected
                 .and_then(|selected| lanes.lanes.iter().find(|row| row.lane == selected))
-                .or_else(|| lanes.lanes.first())
+                .or_else(|| lanes.lanes.iter().find(|row| row.occupant.is_some()))
                 .and_then(|row| {
                     row.occupant
                         .map(|occupant| (row.lane, occupant, lanes.epoch))
@@ -729,7 +749,7 @@ async fn dispatch_action(
                 principal,
                 writer,
                 pending,
-                PendingKind::SteerSend,
+                PendingKind::Steer(lane),
                 CommandKind::SteerSend,
                 expected,
                 body,
@@ -1039,10 +1059,10 @@ fn handle_incoming(
             runtime.apply_lane_change(&admitted);
             true
         }
-        PendingKind::SteerSend => {
+        PendingKind::Steer(lane) => {
             let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
                 admit_response(session, bytes)?;
-            runtime.apply_steer(&admitted);
+            runtime.apply_steer(&admitted, lane);
             true
         }
         PendingKind::Note(task) => {

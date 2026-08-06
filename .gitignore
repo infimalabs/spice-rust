@@ -11,4 +11,11 @@
 # The sole browser app generation store. Each lane publishes it with
 # `cargo xtask app`; no resident falls back when its current generation is absent.
 /dist/stage-app/
+
+# Snapshots, console logs and screenshots the Playwright MCP browser writes
+# beside the worktree. Every lane is told to validate the canvas through that
+# browser, so without this each one leaves untracked evidence behind -- and a
+# gate that walks the filesystem rather than the tracked set counts it as an
+# input to the build.
+/.playwright-mcp/
 /dist/.stage-app-build-*/

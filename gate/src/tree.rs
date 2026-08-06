@@ -230,6 +230,22 @@ pub(crate) fn git_directories(repository: &Path) -> Result<(PathBuf, PathBuf), T
     Ok((repo.path().to_path_buf(), repo.common_dir().to_path_buf()))
 }
 
+/// Capture the one stable set of regular paths named by the current Git index.
+///
+/// The index sources are sealed before they are opened and rechecked after
+/// every entry is admitted, just as staged-tree materialization does. Object
+/// identities are deliberately discarded: a live contract measures current
+/// checkout bytes, while the index supplies only the closed set of path names.
+pub(crate) fn tracked_paths(repository: &Path) -> Result<Vec<String>, TreeError> {
+    let repo = open_repository(repository)?;
+    let seal = IndexSeal::capture(&repo)?;
+    let build = BuildRoot::create()?;
+    let index = seal.open(&repo, &build.workspace)?;
+    let items = index_items(&index)?;
+    seal.verify(&repo)?;
+    Ok(items.into_iter().map(|item| item.path).collect())
+}
+
 pub(crate) fn open_repository(path: &Path) -> Result<gix::Repository, TreeError> {
     let options = gix::open::Options::isolated()
         .strict_config(true)
