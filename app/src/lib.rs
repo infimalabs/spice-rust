@@ -18,6 +18,14 @@
 //! [`Axis`] through an exhaustive match, so a pane with no axis does not
 //! compile rather than rendering unclassified.
 //!
+//! Those four all face inward, holding or presenting what the resident said.
+//! [`compose`] is the one floor facing the other way, turning text an operator
+//! typed into the fields a request carries. It is therefore the only floor
+//! that refuses, and its refusals are sentences rather than log lines: the
+//! form they came from has a button, and a button that does nothing and says
+//! nothing reads as a dead control. It is also the only inbound decision a
+//! native test can reach, since the module owning the forms is wasm-only.
+//!
 //! No floor constructs authority. Read panes append nothing, and steer and
 //! grant panes build ordinary commands the resident authenticates for itself.
 //! No floor constructs provenance either: a fold-backed answer is held as
@@ -25,6 +33,7 @@
 //! with, a head-direct answer is held as [`Answer::HeadDirect`] with nowhere
 //! to keep them, and that difference survives every floor above.
 
+pub mod compose;
 pub mod pane;
 pub mod runtime;
 pub mod socket;

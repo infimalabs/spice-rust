@@ -20,6 +20,7 @@ use wire::{
 };
 use yew::prelude::*;
 
+use crate::compose::{self, Notice};
 use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
 
 mod view;
@@ -236,19 +237,30 @@ fn use_agent_controls(
     let seat_vendor = use_state(|| "codex".to_owned());
     let seat_life = use_state(|| "steer".to_owned());
     let steer_text = use_state(String::new);
+    let seat_notice = use_state(Notice::none);
+    let steer_notice = use_state(Notice::none);
     view::AgentControls {
         submit_seat: seat_submit(
             sender.clone(),
             seat_worktree.clone(),
             seat_vendor.clone(),
             seat_life.clone(),
+            seat_notice.clone(),
         ),
-        submit_steer: steer_submit(sender, surface, selected_lane.clone(), steer_text.clone()),
+        submit_steer: steer_submit(
+            sender,
+            surface,
+            selected_lane.clone(),
+            steer_text.clone(),
+            steer_notice.clone(),
+        ),
         selected_lane,
         seat_worktree,
         seat_vendor,
         seat_life,
         steer_text,
+        seat_notice,
+        steer_notice,
     }
 }
 
@@ -257,25 +269,24 @@ fn seat_submit(
     worktree: UseStateHandle<String>,
     vendor: UseStateHandle<String>,
     life: UseStateHandle<String>,
+    notice: UseStateHandle<Notice>,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        let worktree = worktree.trim().to_owned();
-        let life = life.trim().to_ascii_lowercase();
-        let Ok(vendor) = vendor.trim().parse::<wire::Name>() else {
-            return;
-        };
-        if worktree.is_empty() || life.is_empty() {
-            return;
+        match compose::seat(&worktree, &vendor, &life) {
+            Ok(seat) => {
+                notice.set(Notice::none());
+                send_action(
+                    &sender,
+                    ClientAction::Seat {
+                        worktree: seat.worktree,
+                        life: seat.life,
+                        vendor: seat.vendor,
+                    },
+                );
+            }
+            Err(refusal) => notice.set(refusal.into()),
         }
-        send_action(
-            &sender,
-            ClientAction::Seat {
-                worktree,
-                life,
-                vendor,
-            },
-        );
     })
 }
 
@@ -284,26 +295,27 @@ fn steer_submit(
     surface: UseStateHandle<SurfaceData>,
     selected_lane: UseStateHandle<String>,
     message: UseStateHandle<String>,
+    notice: UseStateHandle<Notice>,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        let text = message.trim().to_owned();
         let selected = selected_lane.parse::<CanonicalUuid>().ok();
-        let Some((lane, occupant)) = selected_occupant(&surface, selected) else {
-            return;
-        };
-        if text.is_empty() {
-            return;
+        let seated = selected_occupant(&surface, selected);
+        match compose::steer(&message, seated) {
+            Ok(((lane, occupant), text)) => {
+                notice.set(Notice::none());
+                send_action(
+                    &sender,
+                    ClientAction::Steer {
+                        lane,
+                        occupant,
+                        message: text,
+                    },
+                );
+                message.set(String::new());
+            }
+            Err(refusal) => notice.set(refusal.into()),
         }
-        send_action(
-            &sender,
-            ClientAction::Steer {
-                lane,
-                occupant,
-                message: text,
-            },
-        );
-        message.set(String::new());
     })
 }
 
