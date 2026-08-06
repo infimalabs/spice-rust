@@ -158,6 +158,43 @@ fn only_the_first_clause_on_a_line_speaks() {
     );
 }
 
+/// A key from the retired base-62 mint retires where acknowledgments are
+/// written, and goes unreported only where one was misplaced.
+///
+/// This is the entire cost of parsing being wider than recognition, stated as
+/// behaviour rather than as a comment. A placed clause judges its tokens by the
+/// grammar, which admits the old alphabet; a buried one is diagnosed only when a
+/// token looks like something the current mint would write. The same sentence is
+/// scanned twice with only the key changed, so what silences the first is the
+/// alphabet and nothing else about the line.
+#[test]
+fn a_retired_alphabet_key_retires_when_placed_and_is_unreported_when_buried() {
+    let retired = Board(
+        [("YTVtQvOX", Disposition::Live)]
+            .into_iter()
+            .map(|(key, disposition)| {
+                (
+                    key.parse::<Key>().expect("retired-alphabet key"),
+                    disposition,
+                )
+            })
+            .collect(),
+    );
+
+    assert_eq!(
+        report(&scan("ACK YTVtQvOX: heard.", &retired)),
+        vec!["1:5 YTVtQvOX acked".to_owned()]
+    );
+    assert!(
+        scan("I mentioned ACK YTVtQvOX: earlier.", &retired).is_empty(),
+        "a buried pre-cutover key was diagnosed"
+    );
+    assert_eq!(
+        report(&scan("I mentioned ACK 1kJK6N3R: earlier.", &board())),
+        vec!["1:17 1kJK6N3R buried".to_owned()]
+    );
+}
+
 /// Renders each recognition as `locus token outcome`, which is exactly the
 /// diagnostic an operator needs to see why a key did or did not land.
 fn report(recognitions: &[Recognition]) -> Vec<String> {
