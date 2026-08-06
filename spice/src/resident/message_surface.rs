@@ -32,11 +32,7 @@ pub(super) fn accept_capture_record(
     record: &lane::capture::CaptureRecord,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    let current = seats
-        .occupant(record.lane)
-        .is_some_and(|occupant| occupant.occupant() == record.occupant);
-    lane_surface::capture_record(bus, epoch, seats, record)?;
-    if !current {
+    if !lane_surface::capture_record(bus, epoch, seats, record)? {
         return Ok(());
     }
     match publish_agent_messages(publisher, record) {

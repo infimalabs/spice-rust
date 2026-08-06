@@ -1,9 +1,10 @@
 use std::cell::Cell;
 
 use app::mosaic::{
-    Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, Reservation, TRACK_COUNT, burial_depth,
-    content_box_width, css_row_start, extent, full_replay, pack, pane_is_scrolled, replay_liquid,
-    resolve_frozen_resize, ripple_rows, scroll_compensation, span_candidates,
+    Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, Reservation, TALL_THRESHOLD_PX,
+    TRACK_COUNT, burial_depth, content_box_width, css_row_start, extent, full_replay, pack,
+    pane_is_scrolled, replay_liquid, resolve_frozen_resize, ripple_rows, scroll_compensation,
+    span_candidates,
 };
 
 fn candidates(span: usize, rows: i32) -> Vec<Candidate> {
@@ -75,6 +76,21 @@ fn repeated_base_cards_fill_columns_before_advancing_the_skyline() {
 }
 
 #[test]
+fn equal_height_anchors_choose_the_least_waste_before_the_leftmost_track() {
+    let cards = pack(
+        &[candidates(2, 2), candidates(6, 3), candidates(6, 2)],
+        TRACK_COUNT,
+    );
+    assert_eq!(
+        cards
+            .iter()
+            .map(|card| (card.track, card.base))
+            .collect::<Vec<_>>(),
+        [(0, 0), (2, 0), (2, 3)]
+    );
+}
+
+#[test]
 fn reservations_follow_the_live_type_ramp_and_exact_letterboxes() {
     let quote = Reservation::Quote.pixels(16.0);
     assert!((quote - 54.84).abs() < 0.001);
@@ -112,6 +128,33 @@ fn wide_measurement_occurs_only_for_a_tall_card_and_at_most_once() {
     });
     assert_eq!(calls.get(), 1);
     assert_eq!(measured.len(), 1);
+}
+
+#[test]
+fn candidate_policy_depends_on_measured_height_not_card_class() {
+    let geometry = Geometry::new(16.0, 1440.0);
+    let candidates_for = |_: &str, base_height: f64| {
+        let calls = Cell::new(0);
+        let candidates = span_candidates(&geometry, |span| {
+            calls.set(calls.get() + 1);
+            if span == geometry.base_span {
+                base_height
+            } else {
+                180.0
+            }
+        });
+        (candidates, calls.get())
+    };
+
+    let agent = candidates_for("agent-message", TALL_THRESHOLD_PX);
+    let directive = candidates_for("directive-with-attachment", TALL_THRESHOLD_PX);
+    assert_eq!(agent, directive);
+    assert_eq!(agent.1, 2);
+
+    let subthreshold = candidates_for("directive", TALL_THRESHOLD_PX - 1.0);
+    assert_eq!(subthreshold.1, 1);
+    assert_eq!(subthreshold.0.len(), 1);
+    assert_eq!(subthreshold.0[0].span, geometry.base_span);
 }
 
 #[test]
@@ -155,7 +198,8 @@ fn liquid_replay_moves_only_the_vertical_base_and_ignores_input_order() {
 
 #[test]
 fn frozen_growth_ripples_transitively_over_the_original_layout() {
-    let growing = card(0, 0, 3, 4, 2);
+    let mut growing = card(0, 0, 3, 4, 2);
+    growing.lifecycle = Lifecycle::Frozen;
     let below = card(1, 1, 3, 2, 2);
     let further = card(2, 3, 3, 1, 2);
     let separate = card(3, 9, 3, 0, 2);
@@ -166,6 +210,24 @@ fn frozen_growth_ripples_transitively_over_the_original_layout() {
     assert_eq!(resized[2].base, -1);
     assert_eq!(resized[3], separate);
     assert_eq!(resolve_frozen_resize(&cards, 0, 1), cards);
+
+    let grown = resolve_frozen_resize(&cards, 0, 5);
+    assert_eq!((grown[0].base, grown[0].rows), (1, 5));
+    assert_eq!(grown[1].base, -1);
+    assert_eq!(grown[2].base, -2);
+    assert_eq!(grown[3], separate);
+}
+
+#[test]
+#[should_panic(expected = "Mosaic creation index 99 is absent from the card set")]
+fn a_ripple_for_an_unknown_creation_index_fails_loudly() {
+    let _ = ripple_rows(&[card(0, 0, 3, 0, 2)], 99, 1);
+}
+
+#[test]
+#[should_panic(expected = "Mosaic creation index 99 is absent from the card set")]
+fn a_frozen_resize_for_an_unknown_creation_index_fails_loudly() {
+    let _ = resolve_frozen_resize(&[card(0, 0, 3, 0, 2)], 99, 3);
 }
 
 #[test]
@@ -180,6 +242,12 @@ fn full_replay_depends_on_creation_order_and_current_candidates_only() {
     let replayed = full_replay(&cards, TRACK_COUNT, FREEZE_DEPTH);
     let replayed_again = full_replay(&replayed, TRACK_COUNT, FREEZE_DEPTH);
     assert_eq!(replayed, replayed_again);
+    assert!(
+        replayed
+            .iter()
+            .all(|card| card.lifecycle == Lifecycle::Liquid),
+        "full replay clears every stale freeze latch before recomputing burial"
+    );
     let positions: Vec<_> = replayed
         .iter()
         .map(|card| (card.creation_index, card.track, card.base))

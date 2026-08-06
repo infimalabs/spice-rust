@@ -322,7 +322,15 @@ mod tests {
             "_SPLIT_LANE",
         ); // env-policy: not-an-env SPICE_SPLIT_LANE
         let source = format!(
-            "let value = std::env::var(concat!(\n    \"{PREFIX}\",\n    \"{SUFFIX}\",\n));\n"
+            concat!(
+                "let value = std::env::var(concat!(\n",
+                "    \"{PREFIX}\", // keep the namespace visible\n",
+                "    /* join the literal tokens */\n",
+                "    \"{SUFFIX}\",\n",
+                "));\n"
+            ),
+            PREFIX = PREFIX,
+            SUFFIX = SUFFIX,
         );
         assert_eq!(
             references_in(Some("rs"), None, &source),
@@ -346,19 +354,44 @@ mod tests {
         );
         assert!(references_in(Some("rs"), None, &exempted).is_empty());
 
+        let unrelated_marker = format!(
+            concat!(
+                "let value = std::env::var(concat!(\n",
+                "    \"{prefix}\", /* an unmatched ( is comment prose */\n",
+                "    \"{suffix}\",\n",
+                "));\n",
+                "let fixture = \"{name}\"; // {marker} {name}\n",
+            ),
+            prefix = PREFIX,
+            suffix = SUFFIX,
+            marker = ENV_NAME_LITERAL_MARKER,
+            name = NAME,
+        );
+        assert_eq!(
+            references_in(Some("rs"), None, &unrelated_marker),
+            BTreeSet::from([(1, NAME.to_owned())]),
+            "a marker in a later statement cannot exempt a concat through comment punctuation",
+        );
+
         let examples = format!(
             concat!(
                 "let joined = concat!(\"A\", \"B\"); ",
                 "let example = r#\"concat!(\"{prefix}\", \"{suffix}\")\"#;\n",
                 "let joined = concat!(\"A\", \"B\"); ",
-                "// concat!(\"{prefix}\", \"{suffix}\")\n"
+                "// concat!(\"{prefix}\", \"{suffix}\")\n",
+                "let wrapped = r#\"\n",
+                "concat!(\"{prefix}\", \"{suffix}\")\n",
+                "\"#;\n",
+                "/*\n",
+                "concat!(\"{prefix}\", \"{suffix}\")\n",
+                "*/\n"
             ),
             prefix = PREFIX,
             suffix = SUFFIX,
         );
         assert!(
             references_in(Some("rs"), None, &examples).is_empty(),
-            "a macro spelling in a raw string or comment is not source code"
+            "a macro spelling in a single- or multi-line string or comment is not source code"
         );
     }
 }

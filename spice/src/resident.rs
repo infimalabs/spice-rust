@@ -35,9 +35,9 @@ mod shutdown;
 mod steering;
 mod timers;
 
-use message_surface::accept_capture_record;
 #[cfg(test)]
-use message_surface::{AgentMessagePublisher, publish_agent_messages};
+use message_surface::AgentMessagePublisher;
+use message_surface::accept_capture_record;
 use shutdown::{current_residency, drive_shutdown};
 
 include!("resident/runtime.rs");
