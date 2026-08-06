@@ -1063,6 +1063,15 @@ try {
   await chooseCanvasView(lightPage, "Chronology");
   await lightPage.getByText(/Note appended to/).waitFor({ timeout: 10_000 });
   await chooseCanvasView(lightPage, "Flow");
+  await lightPage.getByLabel("Task").fill("not a handle");
+  await lightPage.getByLabel("Observation").fill("the callback must explain this refusal");
+  const addNote = lightPage.getByRole("button", { name: "Add note" });
+  assert.equal(await addNote.isEnabled(), true, "nonempty malformed input reaches the callback");
+  await addNote.click();
+  const noteRefusal = lightPage.getByRole("alert");
+  await noteRefusal.waitFor();
+  assert.match(await noteRefusal.innerText(), /Task must be .*both parts alphanumeric/);
+  assert.match(await noteRefusal.innerText(), /"not a handle"/);
   const existingTasks = await lightPage.locator("#note-tasks option").evaluateAll(
     (options) => options.map((option) => option.value),
   );
@@ -1072,7 +1081,8 @@ try {
   assert.ok(absentTask, "an absent canonical task handle is available");
   await lightPage.getByLabel("Task").fill(absentTask);
   await lightPage.getByLabel("Observation").fill("this task does not exist");
-  await lightPage.getByRole("button", { name: "Add note" }).click();
+  await addNote.click();
+  await noteRefusal.waitFor({ state: "detached" });
   await chooseCanvasView(lightPage, "Chronology");
   await lightPage.locator(".event.refusal").waitFor({ timeout: 10_000 });
   const beforeReconnect = await journalExtent(fixture);

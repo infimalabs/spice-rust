@@ -178,6 +178,7 @@ fn canvas_app() -> Html {
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
+    let note_notice = use_state(Notice::none);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
@@ -226,17 +227,23 @@ fn canvas_app() -> Html {
         let sender = sender.clone();
         let note_task = note_task.clone();
         let note_text = note_text.clone();
+        let note_notice = note_notice.clone();
         Callback::from(move |event: SubmitEvent| {
             event.prevent_default();
-            let Ok(task) = (*note_task).parse::<TaskHandle>() else {
-                return;
-            };
-            let note = note_text.trim().to_owned();
-            if note.is_empty() {
-                return;
+            match compose::note(&note_task, &note_text) {
+                Ok(note) => {
+                    note_notice.set(Notice::none());
+                    send_action(
+                        &sender,
+                        ClientAction::Note {
+                            task: note.task,
+                            note: note.text,
+                        },
+                    );
+                    note_text.set(String::new());
+                }
+                Err(refusal) => note_notice.set(refusal.into()),
             }
-            send_action(&sender, ClientAction::Note { task, note });
-            note_text.set(String::new());
         })
     };
     let toggle_speech = speech_toggle(
@@ -257,6 +264,7 @@ fn canvas_app() -> Html {
         agents: &agents,
         note_task: &note_task,
         note_text: &note_text,
+        note_notice: &note_notice,
         submit_note,
         refresh,
         speech: &speech,

@@ -42,6 +42,7 @@ pub(super) struct CanvasRender<'a> {
     pub agents: &'a AgentControls,
     pub note_task: &'a UseStateHandle<String>,
     pub note_text: &'a UseStateHandle<String>,
+    pub note_notice: &'a UseStateHandle<Notice>,
     pub submit_note: Callback<SubmitEvent>,
     pub refresh: Callback<MouseEvent>,
     pub speech: &'a UseStateHandle<wire::SpeechPlayback>,
@@ -160,6 +161,7 @@ fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
                 render.sender,
                 render.note_task,
                 render.note_text,
+                render.note_notice,
                 render.submit_note.clone(),
             )}
         </>
@@ -251,11 +253,12 @@ pub(super) fn render_axis(
     sender: &SenderHandle,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
+    note_notice: &UseStateHandle<Notice>,
     submit_note: Callback<SubmitEvent>,
 ) -> Html {
     match axis {
         Axis::Magnitude => render_magnitude(surface),
-        Axis::Flow => render_flow(surface, note_task, note_text, submit_note),
+        Axis::Flow => render_flow(surface, note_task, note_text, note_notice, submit_note),
         Axis::Topology => render_topology(surface),
         Axis::Chronology => render_chronology(surface, sender, connection),
     }
@@ -295,6 +298,7 @@ pub(super) fn render_flow(
     surface: &SurfaceData,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
+    note_notice: &UseStateHandle<Notice>,
     submit_note: Callback<SubmitEvent>,
 ) -> Html {
     let Some(board) = surface.as_ref().and_then(CanvasRuntime::board) else {
@@ -375,6 +379,7 @@ pub(super) fn render_flow(
                         type="submit"
                         disabled={note_task.is_empty() || note_text.trim().is_empty()}
                     >{"Add note"}</button>
+                    {render_notice(note_notice)}
                     </form>
                 </section>
             }
