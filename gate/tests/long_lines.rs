@@ -60,6 +60,7 @@ fn a_new_file_has_zero_per_file_debt() {
     let repository = fixture("long-lines-new-file");
     git_commit(&repository, "empty Rust baseline");
     repository.write("src/new.rs", &format!("{}\n", long("new")));
+    git(&repository, &["add", "src/new.rs"]);
 
     let run = adjudicate(&repository);
     assert_eq!(run.receipt().standing(), Standing::Refused);

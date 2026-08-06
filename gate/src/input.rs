@@ -222,7 +222,8 @@ impl Contract {
             .iter()
             .map(|declaration| declaration.metric.clone())
             .collect();
-        let policy = Policy::new(ignore.clone(), metrics).map_err(ContractError::Metric)?;
+        let policy =
+            Policy::tracked_index(ignore.clone(), metrics).map_err(ContractError::Metric)?;
         let camp_policy =
             Policy::new(ignore, gate_set.camp_metrics()).map_err(ContractError::Metric)?;
         let baseline = Baseline::parse(baseline_path, baseline_text, &gate_set)

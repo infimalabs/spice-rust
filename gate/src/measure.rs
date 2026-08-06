@@ -471,9 +471,28 @@ pub fn measurement_digest(measurements: &[Measurement]) -> Digest {
     )
 }
 
+/// Which path set one policy admits before its ignore rules decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JurisdictionMode {
+    /// Walk every path reached below the named root.
+    WholeWalk,
+    /// Walk only paths captured from the repository's current Git index.
+    TrackedIndex,
+}
+
+impl JurisdictionMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::WholeWalk => "whole-walk",
+            Self::TrackedIndex => "tracked-index",
+        }
+    }
+}
+
 /// The full enforcement declaration one gate run reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Policy {
+    jurisdiction: JurisdictionMode,
     ignore: Ignore,
     metrics: Vec<Metric>,
 }
@@ -492,6 +511,26 @@ impl Policy {
         ignore: Ignore,
         metrics: impl IntoIterator<Item = Metric>,
     ) -> Result<Self, MetricError> {
+        Self::with_jurisdiction(JurisdictionMode::WholeWalk, ignore, metrics)
+    }
+
+    /// Declare a policy over the current Git index path set.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MetricError::DuplicateName`] when two metrics share a name.
+    pub fn tracked_index(
+        ignore: Ignore,
+        metrics: impl IntoIterator<Item = Metric>,
+    ) -> Result<Self, MetricError> {
+        Self::with_jurisdiction(JurisdictionMode::TrackedIndex, ignore, metrics)
+    }
+
+    fn with_jurisdiction(
+        jurisdiction: JurisdictionMode,
+        ignore: Ignore,
+        metrics: impl IntoIterator<Item = Metric>,
+    ) -> Result<Self, MetricError> {
         let mut metrics: Vec<Metric> = metrics.into_iter().collect();
         metrics.sort_by(|left, right| left.name.cmp(&right.name));
 
@@ -501,7 +540,17 @@ impl Policy {
             });
         }
 
-        Ok(Self { ignore, metrics })
+        Ok(Self {
+            jurisdiction,
+            ignore,
+            metrics,
+        })
+    }
+
+    /// The one source of paths this policy measures.
+    #[must_use]
+    pub const fn jurisdiction(&self) -> JurisdictionMode {
+        self.jurisdiction
     }
 
     /// The jurisdiction rules.
@@ -520,6 +569,9 @@ impl Policy {
     #[must_use]
     pub fn render(&self) -> String {
         let mut rendered = String::new();
+        if self.jurisdiction == JurisdictionMode::TrackedIndex {
+            let _ = writeln!(rendered, "jurisdiction {}", self.jurisdiction.as_str());
+        }
         for rule in self.ignore.rules() {
             let _ = writeln!(rendered, "ignore {rule}");
         }
