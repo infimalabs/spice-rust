@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
+  assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
   assertLineageLifeIsolation,
   assertResidentLossObserved,
@@ -1331,6 +1332,7 @@ async function assertSameGenerationResume(
 }
 
 
+await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
 await buildResident();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));

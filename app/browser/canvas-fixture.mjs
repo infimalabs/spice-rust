@@ -467,6 +467,7 @@ function probeEndpoint(endpoint, timeout = 2_000) {
       );
     });
     socket.on("data", () => settle("accepting"));
+    socket.on("end", () => settle("accepted and closed before a response"));
     socket.on("timeout", () => settle("accepted nothing before the probe timed out"));
     socket.on("error", (error) => settle(`refused: ${error.code ?? error.message}`));
   });
@@ -509,6 +510,38 @@ function residentAt(endpoint) {
     child: { exitCode: null, signalCode: null },
     discovery: { endpoint },
   };
+}
+
+/// A peer can accept the TCP connection and close cleanly without answering.
+///
+/// Once the peer sends FIN, the socket no longer generates an inactivity
+/// timeout. Keep this fixture under its own outer bound so removing the `end`
+/// settlement fails by name instead of hanging the rest of the Canvas suite.
+export async function assertEndpointProbeClosesWithoutResponse() {
+  const closingFixture = await endpointFixture((socket) => socket.end());
+  let deadline;
+  try {
+    const closed = await Promise.race([
+      describeResident(residentAt(closingFixture.endpoint), 100),
+      new Promise((_, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error("the accepted-and-closed endpoint probe did not settle")),
+          250,
+        );
+      }),
+    ]);
+    assert.equal(
+      closed.endpointState,
+      "accepted and closed before a response",
+      "an accepted socket that ends without bytes reports its own bounded state",
+    );
+    assert.notEqual(closed.endpointState, "accepting");
+    assert.notEqual(closed.endpointState, "accepted nothing before the probe timed out");
+    assert.doesNotMatch(closed.endpointState, /^refused:/);
+  } finally {
+    clearTimeout(deadline);
+    await closingFixture.close();
+  }
 }
 
 /// Drive every endpoint report answer against a real TCP endpoint.
