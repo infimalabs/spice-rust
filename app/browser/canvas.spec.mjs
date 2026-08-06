@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
+import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
   assertLineageLifeIsolation,
   assertResidentLossObserved,
@@ -1341,6 +1342,7 @@ try {
   resident = await startResident(fixture);
   const seeded = await seedAuthority(fixture);
   browser = await chromium.launch({ headless: true });
+  await assertHandshakeTimeout(browser, resident.discovery.endpoint);
   await assertLineageLifeIsolation(browser);
 
   const light = await browser.newContext({
