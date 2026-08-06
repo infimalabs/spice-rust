@@ -852,4 +852,6 @@ include!("task_git/admission.rs");
 include!("task_git/transaction.rs");
 include!("task_git/command.rs");
 #[cfg(test)]
+include!("task_git/command_tests.rs");
+#[cfg(test)]
 include!("task_git/tests.rs");
