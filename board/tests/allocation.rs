@@ -85,6 +85,7 @@ fn residency() -> ResidencyHead {
             session: None,
             disposition: "occupied".to_owned(),
         }],
+        subscriptions: Vec::new(),
     }
 }
 

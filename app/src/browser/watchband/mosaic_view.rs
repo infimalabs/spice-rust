@@ -362,11 +362,15 @@ fn use_element_width(host: NodeRef) -> UseStateHandle<f64> {
         let width = width.clone();
         use_effect_with(host, move |host| {
             let registration = host.cast::<web_sys::Element>().and_then(|element| {
-                width.set(f64::from(element.client_width()));
+                width.set(element_content_width(&element)?);
                 let observed = element.clone();
                 let width = width.clone();
                 let callback = Closure::<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>::new(
-                    move |_, _| width.set(f64::from(observed.client_width())),
+                    move |_, _| {
+                        if let Some(measured) = element_content_width(&observed) {
+                            width.set(measured);
+                        }
+                    },
                 );
                 let observer =
                     web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()).ok()?;
@@ -381,4 +385,22 @@ fn use_element_width(host: NodeRef) -> UseStateHandle<f64> {
         });
     }
     width
+}
+
+fn element_content_width(element: &web_sys::Element) -> Option<f64> {
+    let style = web_sys::window()?.get_computed_style(element).ok()??;
+    let padding = |property| {
+        style
+            .get_property_value(property)
+            .ok()?
+            .trim()
+            .strip_suffix("px")?
+            .parse::<f64>()
+            .ok()
+    };
+    Some(crate::mosaic::content_box_width(
+        f64::from(element.client_width()),
+        padding("padding-left")?,
+        padding("padding-right")?,
+    ))
 }

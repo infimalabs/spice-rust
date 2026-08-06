@@ -433,6 +433,19 @@ export async function assertLineageLifeIsolation(browser) {
 
     await drainSurface.locator('.team-lifetime input[type="range"]').fill("0");
     await drainSurface.getByRole("button", { name: "Steer", exact: true }).waitFor();
+    const changed = await reply(fixture, ["lane"]);
+    assert.equal(
+      changed.body.subscriptions.find(
+        (subscription) => subscription.lineage_id === host.lineage_id,
+      )?.policy,
+      "steer",
+    );
+    assert.ok(
+      changed.body.lanes
+        .filter((lane) => lane.lineage_id === host.lineage_id)
+        .every((lane) => lane.life === "drain"),
+      "changing task subscription preserves the lineage's terminal seat life",
+    );
     assert.equal(
       await driveSurface.getByRole("button", { name: "Drive", exact: true }).count(),
       1,

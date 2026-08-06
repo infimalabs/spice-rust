@@ -11,12 +11,6 @@ pub(crate) enum LineageLife {
 impl LineageLife {
     const ALL: [Self; 3] = [Self::Steer, Self::Drive, Self::Drain];
 
-    fn from_wire(value: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|candidate| candidate.label().eq_ignore_ascii_case(value))
-    }
-
     pub(super) const fn label(self) -> &'static str {
         match self {
             Self::Steer => "Steer",
@@ -26,10 +20,14 @@ impl LineageLife {
     }
 
     const fn help(self) -> &'static str {
-        match self {
-            Self::Steer => "Manual task filters",
-            Self::Drive => "Auto-subscribe to projects this team creates or claims",
-            Self::Drain => "Boundary dissolved: see all assignable work",
+        match self.wire().scope() {
+            wire::intent::TaskSubscriptionScope::Manual => "Manual task filters",
+            wire::intent::TaskSubscriptionScope::ManualAndAutoProject => {
+                "Auto-subscribe to projects this team creates or claims"
+            }
+            wire::intent::TaskSubscriptionScope::AllAssignable => {
+                "Boundary dissolved: see all assignable work"
+            }
         }
     }
 
@@ -46,6 +44,16 @@ impl LineageLife {
             Self::Steer => wire::intent::LineageLife::Steer,
             Self::Drive => wire::intent::LineageLife::Drive,
             Self::Drain => wire::intent::LineageLife::Drain,
+        }
+    }
+}
+
+impl From<wire::intent::LineageLife> for LineageLife {
+    fn from(value: wire::intent::LineageLife) -> Self {
+        match value {
+            wire::intent::LineageLife::Steer => Self::Steer,
+            wire::intent::LineageLife::Drive => Self::Drive,
+            wire::intent::LineageLife::Drain => Self::Drain,
         }
     }
 }
@@ -83,6 +91,7 @@ pub(super) struct LineageControl {
     pub(super) speech: LineageSpeech,
     pub(super) life: LineageLife,
     pub(super) pending_life: bool,
+    authoritative_life: LineageLife,
     issue: Option<String>,
 }
 
@@ -92,6 +101,7 @@ impl Default for LineageControl {
             speech: LineageSpeech::Speak,
             life: LineageLife::Steer,
             pending_life: false,
+            authoritative_life: LineageLife::Steer,
             issue: None,
         }
     }
@@ -104,12 +114,12 @@ pub(crate) struct LineageControls(BTreeMap<CanonicalUuid, LineageControl>);
 pub(crate) enum LineageControlAction {
     SetSpeech {
         lineage: CanonicalUuid,
-        server_life: String,
+        authoritative_life: wire::intent::LineageLife,
         speech: LineageSpeech,
     },
     RequestLife {
         lineage: CanonicalUuid,
-        server_life: String,
+        authoritative_life: wire::intent::LineageLife,
         life: LineageLife,
     },
     SyncLanes {
@@ -130,14 +140,14 @@ impl Reducible for LineageControls {
         match action {
             LineageControlAction::SetSpeech {
                 lineage,
-                server_life,
+                authoritative_life,
                 speech,
-            } => next.set_speech(lineage, &server_life, speech),
+            } => next.set_speech(lineage, authoritative_life, speech),
             LineageControlAction::RequestLife {
                 lineage,
-                server_life,
+                authoritative_life,
                 life,
-            } => next.request_life(lineage, &server_life, life),
+            } => next.request_life(lineage, authoritative_life, life),
             LineageControlAction::SyncLanes { answer, settle } => {
                 next.sync_lanes(&answer, settle);
             }
@@ -150,29 +160,46 @@ impl Reducible for LineageControls {
 }
 
 impl LineageControls {
-    pub(super) fn current(&self, lineage: CanonicalUuid, server_life: &str) -> LineageControl {
+    pub(super) fn current(
+        &self,
+        lineage: CanonicalUuid,
+        authoritative_life: wire::intent::LineageLife,
+    ) -> LineageControl {
         self.0
             .get(&lineage)
             .cloned()
             .unwrap_or_else(|| LineageControl {
-                life: LineageLife::from_wire(server_life).unwrap_or(LineageLife::Steer),
+                life: authoritative_life.into(),
+                authoritative_life: authoritative_life.into(),
                 ..LineageControl::default()
             })
     }
 
-    fn set_speech(&mut self, lineage: CanonicalUuid, server_life: &str, speech: LineageSpeech) {
+    fn set_speech(
+        &mut self,
+        lineage: CanonicalUuid,
+        authoritative_life: wire::intent::LineageLife,
+        speech: LineageSpeech,
+    ) {
         self.0
             .entry(lineage)
             .or_insert_with(|| LineageControl {
-                life: LineageLife::from_wire(server_life).unwrap_or(LineageLife::Steer),
+                life: authoritative_life.into(),
+                authoritative_life: authoritative_life.into(),
                 ..LineageControl::default()
             })
             .speech = speech;
     }
 
-    fn request_life(&mut self, lineage: CanonicalUuid, server_life: &str, life: LineageLife) {
+    fn request_life(
+        &mut self,
+        lineage: CanonicalUuid,
+        authoritative_life: wire::intent::LineageLife,
+        life: LineageLife,
+    ) {
         let state = self.0.entry(lineage).or_insert_with(|| LineageControl {
-            life: LineageLife::from_wire(server_life).unwrap_or(LineageLife::Steer),
+            life: authoritative_life.into(),
+            authoritative_life: authoritative_life.into(),
             ..LineageControl::default()
         });
         state.life = life;
@@ -183,17 +210,11 @@ impl LineageControls {
     /// Reconcile a lane table. Ordinary reads cannot overtake an in-flight
     /// selection; the command's own authoritative reply can.
     fn sync_lanes(&mut self, answer: &wire::intent::LaneAnswer, settle: bool) {
-        let mut lives = BTreeMap::<CanonicalUuid, LineageLife>::new();
-        for row in &answer.lanes {
-            if let Some(life) = LineageLife::from_wire(&row.life) {
-                lives.entry(row.lineage_id).or_insert(life);
-            }
-        }
-        for (lineage, life) in lives {
-            let state = self
-                .0
-                .entry(lineage)
-                .or_insert_with(LineageControl::default);
+        for subscription in &answer.subscriptions {
+            let lineage = subscription.lineage_id;
+            let life = subscription.policy.into();
+            let state = self.0.entry(lineage).or_default();
+            state.authoritative_life = life;
             if settle || !state.pending_life {
                 state.life = life;
                 state.pending_life = false;
@@ -205,10 +226,8 @@ impl LineageControls {
     }
 
     fn settle_issue(&mut self, lineage: CanonicalUuid, issue: String) {
-        let state = self
-            .0
-            .entry(lineage)
-            .or_insert_with(LineageControl::default);
+        let state = self.0.entry(lineage).or_default();
+        state.life = state.authoritative_life;
         state.pending_life = false;
         state.issue = Some(issue);
     }
@@ -220,7 +239,7 @@ impl LineageControls {
 )]
 pub(super) fn render_lineage_controls(
     lineage: CanonicalUuid,
-    server_life: &str,
+    authoritative_life: wire::intent::LineageLife,
     control: &LineageControl,
     lineage_controls: &UseReducerHandle<LineageControls>,
     sender: &SenderHandle,
@@ -229,10 +248,8 @@ pub(super) fn render_lineage_controls(
 ) -> Html {
     let speech = control.speech;
     let update_speech = lineage_controls.clone();
-    let speech_server_life = server_life.to_owned();
     let selected = control.life;
     let update_life = lineage_controls.clone();
-    let life_server_life = server_life.to_owned();
     let life_sender = sender.clone();
     html! {
         <aside
@@ -259,7 +276,7 @@ pub(super) fn render_lineage_controls(
                         let index = input.value().parse::<usize>().unwrap_or(1).min(2);
                         update_speech.dispatch(LineageControlAction::SetSpeech {
                             lineage,
-                            server_life: speech_server_life.clone(),
+                            authoritative_life,
                             speech: LineageSpeech::ALL[index],
                         });
                     })}
@@ -287,7 +304,7 @@ pub(super) fn render_lineage_controls(
                         let life = LineageLife::ALL[index];
                         update_life.dispatch(LineageControlAction::RequestLife {
                             lineage,
-                            server_life: life_server_life.clone(),
+                            authoritative_life,
                             life,
                         });
                         send_action(

@@ -622,17 +622,67 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
       width: surface.getBoundingClientRect().width,
     })),
   );
+  const widthsByWeight = weightedWidths.toSorted((left, right) => left.weight - right.weight);
   assert.deepEqual(
-    weightedWidths.map(({ weight }) => weight),
-    [4, 1],
+    widthsByWeight.map(({ weight }) => weight),
+    [1, 4],
     "lineage weights remain the admitted member counts",
   );
   assert.ok(
-    weightedWidths[0].width > weightedWidths[1].width,
+    widthsByWeight[1].width > widthsByWeight[0].width,
     "the four-agent lineage remains wider than its one-agent sibling",
   );
 
   const primaryLife = primarySurface.locator('.team-lifetime input[type="range"]');
+  const primarySeatLives = new Map(
+    lanes.body.lanes
+      .filter((lane) => lane.lineage_id === primary.lineage_id)
+      .map((lane) => [lane.lane, lane.life]),
+  );
+  const initialPrimaryPolicy = lanes.body.subscriptions.find(
+    (subscription) => subscription.lineage_id === primary.lineage_id,
+  )?.policy;
+  assert.ok(initialPrimaryPolicy, "the primary team has one authoritative task policy");
+  const initialPrimaryLabel = `${initialPrimaryPolicy[0].toUpperCase()}${initialPrimaryPolicy.slice(1)}`;
+  const initialPrimaryIndex = { steer: "0", drive: "1", drain: "2" }[initialPrimaryPolicy];
+  await page.evaluate((missingLineage) => {
+    const socket = window.__canvasSockets.at(-1);
+    if (!socket) throw new Error("canvas WebSocket was not captured");
+    const send = socket.send.bind(socket);
+    let intercepted = false;
+    const rewrite = (bytes) => {
+      const command = JSON.parse(new TextDecoder().decode(bytes));
+      if (!intercepted && command.kind === "lineage::configure") {
+        intercepted = true;
+        command.body.lineage_id = missingLineage;
+        return new TextEncoder().encode(JSON.stringify(command));
+      }
+      return bytes;
+    };
+    socket.send = (data) => {
+      if (typeof data === "string") {
+        const rewritten = rewrite(new TextEncoder().encode(data));
+        send(new TextDecoder().decode(rewritten));
+      } else if (data instanceof Blob) {
+        void data.arrayBuffer().then((buffer) => send(rewrite(new Uint8Array(buffer))));
+      } else {
+        send(rewrite(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
+      }
+    };
+  }, staleEpoch);
+  await primaryLife.fill("2");
+  await page.waitForFunction(
+    (lineage) => document
+      .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
+      ?.dataset.lifetimePending === "false",
+    primary.lineage_id,
+  );
+  await primarySurface
+    .getByRole("button", { name: initialPrimaryLabel, exact: true })
+    .waitFor();
+  assert.equal(await primaryLife.inputValue(), initialPrimaryIndex);
+  assert.match(await primarySurface.locator(".team-control-issue").innerText(), /lineage::missing/);
+
   await primaryLife.fill("2");
   await page.waitForFunction(
     (lineage) => document
@@ -645,8 +695,15 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   const primaryRows = configured.body.lanes.filter(
     (lane) => lane.lineage_id === primary.lineage_id,
   );
+  const primarySubscription = configured.body.subscriptions.find(
+    (subscription) => subscription.lineage_id === primary.lineage_id,
+  );
   assert.equal(primaryRows.length, 4, "the first team retains all four worktrees");
-  assert.ok(primaryRows.every((lane) => lane.life === "drain"));
+  assert.equal(primarySubscription?.policy, "drain");
+  assert.ok(
+    primaryRows.every((lane) => lane.life === primarySeatLives.get(lane.lane)),
+    "watchband Drain never changes terminal lane life",
+  );
   assert.ok(
     primaryRows.every((lane) => lane.occupant && lane.disposition === "occupied"),
     "watchband Drain changes task policy and never tears down occupants",
@@ -698,10 +755,32 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a streamed refresh");
   assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
   assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
+
+  const lifecycleLane = primaryRows[0];
+  await reply(fixture, ["lane", "drain", lifecycleLane.lane]);
+  const vacantSnapshot = await reply(fixture, ["lane"]);
+  const vacant = vacantSnapshot.body.lanes.find((lane) => lane.lane === lifecycleLane.lane);
+  assert.ok(vacant, "the configured member remains durable after leaving");
+  assert.equal(vacant.disposition, "vacant");
+  assert.equal(vacant.occupant, undefined);
+  assert.equal(vacant.life, primarySeatLives.get(vacant.lane));
+  assert.equal(
+    vacantSnapshot.body.subscriptions.find(
+      (subscription) => subscription.lineage_id === primary.lineage_id,
+    )?.policy,
+    "drain",
+  );
+  await reply(fixture, ["lane", "wake", lifecycleLane.lane]);
+  const wokenSnapshot = await reply(fixture, ["lane"]);
+  const woken = wokenSnapshot.body.lanes.find((lane) => lane.lane === lifecycleLane.lane);
+  assert.ok(woken?.occupant, "watchband Drain leaves the member eligible for a normal wake");
+  assert.equal(woken.disposition, "occupied");
+  assert.equal(woken.life, primarySeatLives.get(woken.lane));
   await page.screenshot({
     path: join(artifacts, "canvas-light-watchband-teams.png"),
     fullPage: true,
   });
+  return { lineage: primary.lineage_id, policy: "drain" };
 }
 
 async function captureReferenceViewport(page) {
@@ -1158,7 +1237,7 @@ try {
     resident.discovery.epoch,
     beforeReconnect,
   );
-  await assertPerTeamWatchbands(lightPage, fixture, worktrees);
+  const configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
   lightMonitor.assertClean();
   await dark.close();
 
@@ -1179,6 +1258,14 @@ try {
     resident.discovery.capability,
     firstCapability,
     "restart publishes a new operator capability",
+  );
+  const restartedLanes = await reply(fixture, ["lane"]);
+  assert.equal(
+    restartedLanes.body.subscriptions.find(
+      (subscription) => subscription.lineage_id === configuredPolicy.lineage,
+    )?.policy,
+    configuredPolicy.policy,
+    "restart preserves the configured task policy instead of deriving it from lane life",
   );
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(lightPage, "Chronology");

@@ -404,6 +404,7 @@ impl Table {
             epoch: self.epoch,
             state,
             lanes: self.seats.values().map(Seat::residency).collect(),
+            subscriptions: Vec::new(),
         }
     }
 

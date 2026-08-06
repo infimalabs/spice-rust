@@ -12,7 +12,7 @@ use sill::WaitOutcome;
 use spice::repository::Repository;
 use wire::intent::{
     CommandAnswer, LaneAction, LaneAnswer, LaneChangeAnswer, LaneRecall, LaneSeat, LaneState,
-    LineageConfigure, RecallAnswer, RecallEntry, RecallProvenance,
+    LineageConfigure, LineageLife, RecallAnswer, RecallEntry, RecallProvenance,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
@@ -52,6 +52,26 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(1);
 const RECORD_QUEUE: usize = 64;
 const SESSION_PROOF: Duration = Duration::from_secs(10);
 const SESSION_SETTLE: Duration = Duration::from_millis(25);
+
+/// Resolve the one durable subscription policy for a lineage.
+fn subscription_policy(
+    head: &wire::ResidencyHead,
+    lineage_id: CanonicalUuid,
+) -> CommandResult<Option<LineageLife>> {
+    let mut durable = head
+        .subscriptions
+        .iter()
+        .filter(|subscription| subscription.lineage_id == lineage_id)
+        .map(|subscription| subscription.policy);
+    let policy = durable.next();
+    if durable.next().is_some() {
+        return Err(store_fault(
+            "lineage::subscription-ambiguous",
+            "one lineage has more than one durable task-subscription policy",
+        ));
+    }
+    Ok(policy)
+}
 
 pub(super) struct Runtime<'a> {
     capabilities: &'a canvas::axum::Capabilities,
@@ -197,7 +217,7 @@ pub(super) fn seat(
     }
 }
 
-/// Commit one task-subscription life across every member of a Canvas lineage.
+/// Commit one task-subscription policy for a Canvas lineage.
 ///
 /// `drain` here is a policy spelling. Occupant teardown remains exclusively
 /// owned by `lane::state { action: drain }`, so this transaction changes no
@@ -227,19 +247,30 @@ pub(super) fn configure(
             "read lane state and retry with a current lineage identity",
         );
     }
-    let from = members
-        .first()
-        .map(|row| row.life.clone())
-        .filter(|life| members.iter().all(|row| row.life == *life))
-        .unwrap_or_else(|| "mixed".to_owned());
-    let life = request.life.as_str().to_owned();
+    let from = match subscription_policy(observed.body(), request.lineage_id) {
+        Ok(Some(policy)) => policy,
+        Ok(None) => {
+            return typed_store_fault(
+                "lineage::subscription-missing",
+                "a current lineage has no task-subscription policy",
+            );
+        }
+        Err(outcome) => return typed_outcome(outcome),
+    };
     let mut next = observed.body().clone();
-    for row in next
-        .lanes
+    if let Some(subscription) = next
+        .subscriptions
         .iter_mut()
-        .filter(|row| row.lineage_id == request.lineage_id)
+        .find(|subscription| subscription.lineage_id == request.lineage_id)
     {
-        row.life.clone_from(&life);
+        subscription.policy = request.life;
+    } else {
+        next.subscriptions.push(wire::LineageSubscription {
+            lineage_id: request.lineage_id,
+            policy: request.life,
+        });
+        next.subscriptions
+            .sort_by_key(|subscription| subscription.lineage_id);
     }
     let lane_answer = match answer(&next, None, seats) {
         Ok(answer) => answer,
@@ -258,7 +289,7 @@ pub(super) fn configure(
         wire::body::LineageConfigured {
             lineage_id: request.lineage_id,
             from,
-            life,
+            life: request.life,
         },
         FactCause::Existing(observed.position()),
     ) {

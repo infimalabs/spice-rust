@@ -71,6 +71,7 @@ mod tests {
             epoch,
             state: ResidentState::Seated,
             lanes,
+            subscriptions: Vec::new(),
         });
         match bus.commit(write).expect("fixture seating reaches writer") {
             CommitOutcome::Committed(_) => {}

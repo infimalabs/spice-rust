@@ -77,6 +77,7 @@ pub(super) fn render_lineage(
     if lanes.lanes.is_empty() {
         let empty_lineage = crate::runtime::LaneRow {
             lane: lanes.epoch,
+            subscription: wire::intent::LineageLife::Steer,
             members: Vec::new(),
         };
         return html! {
@@ -245,10 +246,8 @@ fn render_compose(
     if lineage.members.is_empty() {
         return empty("No agents are assigned. Open Info to add one.");
     }
-    let server_life = lineage
-        .host()
-        .map_or("steer", |member| member.life.as_str());
-    let control = lineage_controls.current(lineage.lane, server_life);
+    let authoritative_life = lineage.subscription;
+    let control = lineage_controls.current(lineage.lane, authoritative_life);
     let submit = submit_lineage_callback(&lineage.members, epoch, sender.clone(), drafts.clone());
     let ready = can_send
         && !control.pending_life
@@ -277,7 +276,7 @@ fn render_compose(
                 </div>
                 {render_lineage_controls(
                     lineage.lane,
-                    server_life,
+                    authoritative_life,
                     &control,
                     lineage_controls,
                     sender,

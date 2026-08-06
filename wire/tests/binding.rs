@@ -309,6 +309,13 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "state": "seated",
+  "subscriptions": [{
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "policy": "drive"
+  }, {
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+    "policy": "steer"
+  }],
   "lanes": [{
     "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
     "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -354,7 +361,8 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
   "residency": {
     "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
     "state": "seated",
-    "lanes": []
+    "lanes": [],
+    "subscriptions": []
   },
   "recent": []
 }"#,
@@ -603,4 +611,22 @@ fn the_union_reports_the_shape_it_carries() {
         task: "SPICE-aBcD".parse().expect("a handle"),
     });
     assert_eq!(intent.shape(), BodyShape::TaskRef);
+}
+
+#[test]
+fn lineage_subscription_policies_close_over_the_predecessor_scopes() {
+    use wire::intent::{LineageLife, TaskSubscriptionScope};
+
+    let policies = [
+        (LineageLife::Steer, TaskSubscriptionScope::Manual),
+        (
+            LineageLife::Drive,
+            TaskSubscriptionScope::ManualAndAutoProject,
+        ),
+        (LineageLife::Drain, TaskSubscriptionScope::AllAssignable),
+    ];
+    for (policy, scope) in policies {
+        assert_eq!(policy.scope(), scope);
+        assert_eq!(LineageLife::from_wire(policy.as_str()), Some(policy));
+    }
 }

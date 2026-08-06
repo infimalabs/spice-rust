@@ -643,6 +643,7 @@ mod tests {
                 session: None,
                 disposition: "occupied".to_owned(),
             }],
+            subscriptions: Vec::new(),
         });
         journal.apply(write).expect("seed authority");
         journal

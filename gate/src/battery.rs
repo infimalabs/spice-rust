@@ -27,6 +27,7 @@ pub use context::{
 };
 pub use execution::{
     ArmExecution, BatteryArmResult, BatteryExecutor, BatteryReport, CompiledArm, run_battery,
+    run_battery_arm,
 };
 pub use family_evidence::{ArmEvidence, BatteryState, ResultProvenance};
 #[cfg(test)]

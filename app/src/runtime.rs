@@ -4,6 +4,8 @@
 //! frame. Stream facts are already credential-free; the canvas projects only
 //! the envelope metadata its panes render and retains no kind-specific body.
 
+use std::collections::BTreeMap;
+
 use wire::intent::{
     BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, InboxAnswer,
     LaneAnswer, LaneChangeAnswer, LaneLiveness,
@@ -124,6 +126,8 @@ pub struct LaneView {
 pub struct LaneRow {
     /// Stable lineage identity.
     pub lane: CanonicalUuid,
+    /// Authoritative task-subscription policy for this lineage.
+    pub subscription: wire::intent::LineageLife,
     /// Members in canonical resident seat order.
     pub members: Vec<LaneMember>,
 }
@@ -234,6 +238,15 @@ impl LaneRow {
 
 impl From<&LaneAnswer> for LaneView {
     fn from(answer: &LaneAnswer) -> Self {
+        let mut subscriptions = BTreeMap::new();
+        for subscription in &answer.subscriptions {
+            assert!(
+                subscriptions
+                    .insert(subscription.lineage_id, subscription.policy)
+                    .is_none(),
+                "an admitted lane answer names one policy per lineage"
+            );
+        }
         let mut lineages = Vec::<LaneRow>::new();
         for lane in &answer.lanes {
             let member = LaneMember {
@@ -255,10 +268,18 @@ impl From<&LaneAnswer> for LaneView {
             } else {
                 lineages.push(LaneRow {
                     lane: lane.lineage_id,
+                    subscription: *subscriptions
+                        .get(&lane.lineage_id)
+                        .expect("an admitted lane answer names every lineage policy"),
                     members: vec![member],
                 });
             }
         }
+        assert_eq!(
+            subscriptions.len(),
+            lineages.len(),
+            "an admitted lane answer names no orphan lineage policy"
+        );
         Self {
             epoch: answer.epoch,
             state: answer.state,

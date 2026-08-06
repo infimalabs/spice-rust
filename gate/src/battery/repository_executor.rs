@@ -15,8 +15,8 @@ use crate::input::Contract;
 use crate::metrics::{BaselineCapture, MetricSource, acquire_metrics_with_bounds};
 use crate::state::{BoundDecision, LatchEntry};
 use crate::toolchain::{
-    RimCapture, TASTE_EXTENSIONS, ToolchainSource, acquire_toolchain,
-    environment_baseline_suffixes, measure_toolchain,
+    RimCapture, TASTE_EXTENSIONS, ToolchainSource, acquire_toolchain, acquire_toolchain_arm,
+    environment_baseline_suffixes, measure_toolchain, measure_toolchain_arm,
 };
 use crate::tree::{SelectedTree, Selector};
 
@@ -80,6 +80,7 @@ pub struct RepositoryExecutor<'trace> {
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
     families: [Option<FamilyExecution>; FAMILY_COUNT],
+    selected: Option<GateId>,
     trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
 }
 
@@ -178,6 +179,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             hygiene,
             context: None,
             families: std::array::from_fn(|_| None),
+            selected: None,
             trace,
         })
     }
@@ -206,6 +208,11 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// decide a bound reports none for that position.
     pub(super) fn bounds(&self) -> &[BoundDecision] {
         &self.bounds
+    }
+
+    pub(super) fn select(&mut self, selected: Option<GateId>) {
+        self.selected = selected;
+        self.families = std::array::from_fn(|_| None);
     }
 
     fn bind_inputs(&mut self, inputs: &BatteryInputs<'_>) -> Result<(), BatteryError> {
@@ -265,6 +272,12 @@ impl<'trace> RepositoryExecutor<'trace> {
     fn acquire_toolchain_family(&self) -> Result<Vec<ArmEvidence>, String> {
         let source =
             ToolchainSource::capture_with_baselines(&self.tree, self.rim.clone(), &self.baselines);
+        if let Some(gate_id) = self.selected {
+            let observation = acquire_toolchain_arm(&source, &self.contract, gate_id)
+                .map_err(|error| error.to_string())?;
+            let report = measure_toolchain_arm(observation).map_err(|error| error.to_string())?;
+            return Ok(vec![ArmEvidence::Toolchain { report }]);
+        }
         let report = measure_toolchain(acquire_toolchain(&source, &self.contract))
             .map_err(|error| error.to_string())?;
         Ok(report

@@ -2,8 +2,9 @@ use std::cell::Cell;
 
 use app::mosaic::{
     Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, Reservation, TALL_THRESHOLD_PX,
-    TRACK_COUNT, burial_depth, css_row_start, extent, full_replay, pack, pane_is_scrolled,
-    replay_liquid, resolve_frozen_resize, ripple_rows, scroll_compensation, span_candidates,
+    TRACK_COUNT, burial_depth, content_box_width, css_row_start, extent, full_replay, pack,
+    pane_is_scrolled, replay_liquid, resolve_frozen_resize, ripple_rows, scroll_compensation,
+    span_candidates,
 };
 
 fn candidates(span: usize, rows: i32) -> Vec<Candidate> {
@@ -37,6 +38,17 @@ fn geometry_uses_the_minimum_lane_inequality_and_shared_edges() {
     assert_eq!(Geometry::new(16.0, 1000.0).base_span, 4);
     assert_eq!(Geometry::new(16.0, 700.0).base_span, 6);
     assert_eq!(Geometry::new(16.0, 300.0).base_span, 12);
+}
+
+#[test]
+fn geometry_uses_content_width_instead_of_the_padded_client_box() {
+    let unpadded = Geometry::new(16.0, content_box_width(810.0, 0.0, 0.0));
+    let padded = Geometry::new(16.0, content_box_width(840.0, 15.0, 15.0));
+    let geometry_key =
+        |geometry: &Geometry| (geometry.base_span, geometry.lane_count, geometry.module);
+
+    assert_eq!(geometry_key(&unpadded), (6, 2, 40));
+    assert_eq!(geometry_key(&padded), geometry_key(&unpadded));
 }
 
 #[test]

@@ -502,6 +502,10 @@ mod tests {
                 session: None,
                 disposition: "occupied".to_owned(),
             }],
+            subscriptions: vec![wire::LineageSubscription {
+                lineage_id: lane,
+                policy: wire::intent::LineageLife::Drive,
+            }],
         });
     }
 

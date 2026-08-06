@@ -159,8 +159,11 @@ fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
 fn the_ledger_refusal_names_the_literal_escape_without_hiding_an_access() {
     // These become exact literals only inside the isolated repository written
     // below; the integration test itself must not declare environment names.
-    const FIXTURE_NAME: &str = concat!("SPICE", "_123");
-    const ACCESS_NAME: &str = concat!("SPICE", "_UNDECLARED");
+    const FIXTURE_NAME: &str = concat!("SPICE", "_123"); // env-policy: not-an-env SPICE_123
+    const ACCESS_NAME: &str = {
+        // env-policy: not-an-env SPICE_UNDECLARED
+        concat!("SPICE", "_UNDECLARED")
+    };
     let repository = environment_repository("toolchain-env-literal-marker");
     repository.write(
         "tests/task_handle.rs",
@@ -214,4 +217,61 @@ fn the_ledger_refusal_names_the_literal_escape_without_hiding_an_access() {
     );
 
     measure_toolchain(observations).expect("the marked fixture and real refusal are admitted");
+}
+
+/// A literal-only Rust concat is one ledger reference even when it wraps.
+#[test]
+fn the_environment_ledger_reassembles_a_wrapped_rust_concat() {
+    const NAME: &str = concat!("SPICE", "_SPLIT_LANE",); // env-policy: not-an-env SPICE_SPLIT_LANE
+    const SOURCE: &str = "app/split.rs";
+    let repository = environment_repository("toolchain-env-wrapped-concat");
+    repository.write(
+        SOURCE,
+        concat!(
+            "pub fn lane() {\n",
+            "    let _ = std::env::var(concat!(\n",
+            "        \"SPICE\", // the comment is legal macro whitespace\n",
+            "        /* and block comments are legal here too */\n",
+            "        \"_SPLIT_LANE\",\n",
+            "    ));\n",
+            "}\n"
+        ),
+    );
+    git_commit(&repository, "wrapped environment-name concat");
+
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+    let observation = arm(&observations, GateId::EnvNameLedger);
+    assert_eq!(observation.outcome, ArmOutcome::Findings);
+    let finding = observation
+        .findings
+        .iter()
+        .find(|finding| {
+            matches!(
+                &finding.detail,
+                FindingDetail::EnvironmentLedger { name, .. } if name == NAME
+            )
+        })
+        .unwrap_or_else(|| panic!("the wrapped environment name {NAME} passed unseen"));
+    let FindingDetail::EnvironmentLedger {
+        mismatch,
+        references,
+        ..
+    } = &finding.detail
+    else {
+        panic!("the wrapped name stopped being a ledger finding");
+    };
+    assert_eq!(*mismatch, EnvironmentLedgerKind::Unaccounted);
+    assert_eq!(
+        references,
+        &[SourceLocus {
+            path: SOURCE.to_owned(),
+            line: 2,
+        }]
+    );
+
+    measure_toolchain(observations).expect("the wrapped-name refusal is admitted");
 }

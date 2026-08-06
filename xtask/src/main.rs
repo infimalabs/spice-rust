@@ -9,7 +9,7 @@ use sill::Deadlines;
 
 const USAGE_EXIT: u8 = 2;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <verify|app|activate-hooks|",
+    "usage: cargo xtask <verify|gate ARM|app|activate-hooks|",
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "stage-target TARGET|",
     "commit-msg MESSAGE_FILE|reference-transaction STATE>"
@@ -24,6 +24,21 @@ fn main() -> ExitCode {
     let result: Result<(), Box<dyn std::error::Error>> = match command.as_deref() {
         Some(value) if value == OsStr::new("verify") && arguments.len() == 0 => {
             xtask::verify(&mut output).map_err(Into::into)
+        }
+        Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
+            let arm = arguments.next().expect("one gate arm was admitted");
+            let Some(arm) = arm.to_str() else {
+                eprintln!("{USAGE}");
+                return ExitCode::from(USAGE_EXIT);
+            };
+            let Some(gate_id) = gate::GateId::ALL
+                .into_iter()
+                .find(|gate_id| gate_id.as_str() == arm)
+            else {
+                eprintln!("unknown gate arm {arm:?}\n{USAGE}");
+                return ExitCode::from(USAGE_EXIT);
+            };
+            xtask::gate_arm(gate_id, &mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("app") && arguments.len() == 0 => {
             xtask::app(&release_environment(), &mut output).map_err(Into::into)
