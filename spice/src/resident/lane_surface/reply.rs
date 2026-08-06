@@ -85,6 +85,21 @@ fn liveness(
         }
         return Ok(wire::intent::LaneLiveness::Vacant);
     };
+    if crate::resident::is_simulated_lane(row) {
+        if activity.is_some() {
+            return Err(store_fault(
+                "lane::simulated-supervised",
+                "a simulated lane has real supervised activity",
+            ));
+        }
+        if row.session.is_some() {
+            return Err(store_fault(
+                "lane::simulated-session-present",
+                "a simulated lane carries real vendor session authority",
+            ));
+        }
+        return Ok(wire::intent::LaneLiveness::Running);
+    }
     let observed = activity.ok_or_else(|| {
         store_fault(
             "lane::liveness-unobserved",
@@ -347,6 +362,16 @@ mod tests {
         }
     }
 
+    fn simulated() -> wire::LaneResidency {
+        let mut row = occupied();
+        row.vendor = crate::resident::SIMULATED_VENDOR
+            .parse()
+            .expect("simulated fixture vendor");
+        row.session = None;
+        row.disposition = crate::resident::SIMULATED_DISPOSITION.to_owned();
+        row
+    }
+
     #[test]
     fn the_same_occupied_lane_turns_quiet_at_the_exact_sixty_second_boundary() {
         let row = occupied();
@@ -425,5 +450,50 @@ mod tests {
             panic!("unobserved occupancy must be a fault")
         };
         assert_eq!(fault.reason, "lane::liveness-unobserved");
+    }
+
+    #[test]
+    fn a_simulated_occupant_is_running_without_a_supervised_process() {
+        let head = wire::ResidencyHead {
+            epoch: uuid(4),
+            state: ResidentState::Seated,
+            lanes: vec![simulated()],
+        };
+
+        let answer = answer_at(&head, None, Monotonic::now(), |_| None)
+            .expect("simulated occupancy projects without a process");
+
+        assert_eq!(
+            answer.lanes[0].liveness,
+            wire::intent::LaneLiveness::Running
+        );
+        assert!(!answer.lanes[0].bound);
+        assert_eq!(
+            answer.lanes[0].vendor.as_str(),
+            crate::resident::SIMULATED_VENDOR
+        );
+        assert_eq!(
+            answer.lanes[0].disposition,
+            crate::resident::SIMULATED_DISPOSITION
+        );
+    }
+
+    #[test]
+    fn a_simulated_occupant_with_real_supervision_faults() {
+        let row = simulated();
+        let occupant = row.occupant.expect("simulated fixture occupant");
+        let head = wire::ResidencyHead {
+            epoch: uuid(4),
+            state: ResidentState::Seated,
+            lanes: vec![row],
+        };
+        let error = answer_at(&head, None, Monotonic::now(), |_| {
+            Some(lane::occupant::Activity::new(occupant, Monotonic::now()))
+        })
+        .expect_err("simulated occupancy must never acquire real supervision");
+        let Outcome::Fault(fault) = error else {
+            panic!("simulated supervision must be a fault")
+        };
+        assert_eq!(fault.reason, "lane::simulated-supervised");
     }
 }

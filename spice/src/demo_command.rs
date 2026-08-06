@@ -31,6 +31,10 @@ const DEMO_UUID: &str = "018f82d4-6f59-7d06-92e3-bce913116410";
 const DEMO_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116411";
 const DEMO_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce913116412";
 const DEMO_EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116413";
+const DEMO_OCCUPANT: &str = "018f82d4-6f59-7d06-92e3-bce913116414";
+const DEMO_SECOND_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116415";
+const DEMO_SECOND_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce913116416";
+const DEMO_SECOND_OCCUPANT: &str = "018f82d4-6f59-7d06-92e3-bce913116417";
 const SEED_BRANCH: &str = "refs/heads/main";
 const SEED_NAME: &str = "spice demo";
 const SEED_EMAIL: &str = "demo@spice.invalid";
@@ -41,6 +45,29 @@ const READY_DEADLINE: Duration = Duration::from_secs(10);
 const STOP_DEADLINE: Duration = Duration::from_secs(10);
 
 type DemoResult<T> = Result<T, Box<Outcome<DemoAnswer>>>;
+
+#[derive(Clone, Copy)]
+struct DemoLane {
+    lane: &'static str,
+    capability: &'static str,
+    occupant: &'static str,
+    name: &'static str,
+}
+
+const DEMO_LANES: [DemoLane; 2] = [
+    DemoLane {
+        lane: DEMO_LANE,
+        capability: DEMO_CAPABILITY,
+        occupant: DEMO_OCCUPANT,
+        name: "Ava",
+    },
+    DemoLane {
+        lane: DEMO_SECOND_LANE,
+        capability: DEMO_SECOND_CAPABILITY,
+        occupant: DEMO_SECOND_OCCUPANT,
+        name: "Milo",
+    },
+];
 
 const CANNED_TRANSCRIPT: [(&str, &str); 4] = [
     (
@@ -566,7 +593,7 @@ fn seed_journal(state: &spice::repository::StatePaths, root: &Path) -> DemoResul
     let task: wire::TaskHandle = DEMO_TASK.parse().expect("demo task handle is valid");
     let previous = seed_task(&mut journal, &task)?;
     seed_turns(&mut journal, &task, previous)?;
-    seed_lane(&mut journal, root)?;
+    seed_lanes(&mut journal, root)?;
     journal
         .verify()
         .map_err(|error| environment_fault("demo::journal-invalid", error.to_string()))?;
@@ -659,10 +686,9 @@ fn seed_turns(
     Ok(())
 }
 
-fn seed_lane(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
+fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
     let epoch = uuid(DEMO_EPOCH);
-    let lane = uuid(DEMO_LANE);
-    let capability = uuid(DEMO_CAPABILITY);
+    let lineage_id = uuid(DEMO_LANE);
     let mut write = JournalWrite::new(
         Actor::Spice,
         format!("resident:{epoch}")
@@ -671,37 +697,52 @@ fn seed_lane(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
         instant(CANNED_TRANSCRIPT[3].0),
         Producer::ResidentRecognition,
     );
-    let seated = write
-        .fact(
-            body::LaneSeated {
-                lane,
-                lineage_id: lane,
-                capability,
-                name: Some("Ava".to_owned()),
-                worktree: root.display().to_string(),
-                life: "drive".to_owned(),
-                vendor: "codex".parse().expect("demo vendor is valid"),
-            },
-            FactCause::Root,
-        )
-        .map_err(build_failure)?;
+    let mut cause = FactCause::Root;
+    let mut seated = None;
+    for seed in DEMO_LANES {
+        let fact = write
+            .fact(
+                body::LaneSeated {
+                    lane: uuid(seed.lane),
+                    lineage_id,
+                    capability: uuid(seed.capability),
+                    name: Some(seed.name.to_owned()),
+                    worktree: root.display().to_string(),
+                    life: "drive".to_owned(),
+                    vendor: crate::resident::SIMULATED_VENDOR
+                        .parse()
+                        .expect("simulated demo vendor is valid"),
+                },
+                cause,
+            )
+            .map_err(build_failure)?;
+        cause = FactCause::Pending(fact);
+        seated = Some(fact);
+    }
     let worktree = root.display().to_string();
-    write.residency_head(seated, move |_| ResidencyHead {
-        epoch,
-        state: ResidentState::Dark,
-        lanes: vec![wire::LaneResidency {
-            lane,
-            lineage_id: lane,
-            name: Some("Ava".to_owned()),
-            worktree,
-            life: "drive".to_owned(),
-            vendor: "codex".parse().expect("demo vendor is valid"),
-            occupant: None,
-            lineage: Vec::new(),
-            capabilities: vec![capability],
-            session: None,
-            disposition: "vacant".to_owned(),
-        }],
+    write.residency_head(seated.expect("the demo always seeds lanes"), move |_| {
+        ResidencyHead {
+            epoch,
+            state: ResidentState::Dark,
+            lanes: DEMO_LANES
+                .into_iter()
+                .map(|seed| wire::LaneResidency {
+                    lane: uuid(seed.lane),
+                    lineage_id,
+                    name: Some(seed.name.to_owned()),
+                    worktree: worktree.clone(),
+                    life: "drive".to_owned(),
+                    vendor: crate::resident::SIMULATED_VENDOR
+                        .parse()
+                        .expect("simulated demo vendor is valid"),
+                    occupant: Some(uuid(seed.occupant)),
+                    lineage: vec![uuid(seed.occupant)],
+                    capabilities: vec![uuid(seed.capability)],
+                    session: None,
+                    disposition: crate::resident::SIMULATED_DISPOSITION.to_owned(),
+                })
+                .collect(),
+        }
     });
     journal.apply(write).map_err(commit_failure)?;
     Ok(())
@@ -725,25 +766,47 @@ fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<
                 .and_then(serde_json::Value::as_str)
                 == Some(DEMO_TASK)
     });
-    let lane = snapshot.facts().iter().any(|envelope| {
-        envelope.fact.kind() == wire::FactKind::LaneSeated
-            && envelope
-                .fact
-                .body()
-                .get("lane")
-                .and_then(serde_json::Value::as_str)
-                == Some(DEMO_LANE)
+    let lanes = DEMO_LANES.iter().all(|seed| {
+        snapshot.facts().iter().any(|envelope| {
+            envelope.fact.kind() == wire::FactKind::LaneSeated
+                && envelope
+                    .fact
+                    .body()
+                    .get("lane")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(seed.lane)
+        })
+    });
+    let residency = reader
+        .read(|read| read.residency_head())
+        .map_err(|error| environment_fault("demo::journal-invalid", error.to_string()))?;
+    let simulated = residency.is_some_and(|head| {
+        head.body().lanes.len() == DEMO_LANES.len()
+            && DEMO_LANES.iter().all(|seed| {
+                head.body().lanes.iter().any(|lane| {
+                    lane.lane == uuid(seed.lane)
+                        && lane.lineage_id == uuid(DEMO_LANE)
+                        && lane.capabilities == [uuid(seed.capability)]
+                        && lane.occupant == Some(uuid(seed.occupant))
+                        && lane.lineage == [uuid(seed.occupant)]
+                        && lane.vendor.as_str() == crate::resident::SIMULATED_VENDOR
+                        && lane.disposition == crate::resident::SIMULATED_DISPOSITION
+                        && lane.session.is_none()
+                })
+            })
     });
     let notes = snapshot
         .facts()
         .iter()
         .filter(|envelope| envelope.fact.kind() == wire::FactKind::TaskNoted)
         .count();
-    if !task || !lane || notes < CANNED_TRANSCRIPT.len() {
+    if !task || !lanes || !simulated || notes < CANNED_TRANSCRIPT.len() {
         return Err(refusal(
             "demo::seed-moved",
-            Some("the seeded task, lane, and four canned turns"),
-            Some(&format!("task={task}, lane={lane}, turns={notes}")),
+            Some("the seeded task, two simulated lanes, and four canned turns"),
+            Some(&format!(
+                "task={task}, lanes={lanes}, simulated={simulated}, turns={notes}"
+            )),
             "restore the seeded journal or remove this disposable root",
         )
         .into());

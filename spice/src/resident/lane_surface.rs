@@ -87,6 +87,15 @@ pub(super) fn restore_seats(
             continue;
         }
         super::steering::lane_capability(&row)?;
+        if super::is_simulated_lane(&row) {
+            if row.session.is_some() {
+                return Err(store_fault(
+                    "lane::simulated-session-present",
+                    "a simulated lane carries real vendor session authority",
+                ));
+            }
+            continue;
+        }
         let resume = resume_session(paths, &row)?;
         let occupant = new_uuid();
         let launch = occupant_launch(
