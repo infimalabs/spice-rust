@@ -466,6 +466,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   color: #fff;
 }
 
+/* Why a submission was refused. Rendered only while one is outstanding, so
+   the form never reserves space for a sentence it is not showing. */
+.form-refusal {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: .77rem;
+  line-height: 1.35;
+}
+
 .page-heading {
   display: flex;
   align-items: end;
