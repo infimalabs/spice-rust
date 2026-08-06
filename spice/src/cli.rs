@@ -646,7 +646,7 @@ const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "list"],
         "task list [--all] [--project PROJECT] [--limit N] \
-         [--status pending|waiting|completed|deleted]",
+         [--status pending|waiting|completed]",
         OperatorOrLane,
         Read,
         [],

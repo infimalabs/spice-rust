@@ -233,6 +233,11 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "public_min_depth": 2,
     "public_max_depth": 3
   },
+  "actor_route": {
+    "actor": "operator",
+    "project": "agent.operator.task",
+    "origin_thread": "operator"
+  },
   "tasks": [],
   "residency": {
     "position": 1,

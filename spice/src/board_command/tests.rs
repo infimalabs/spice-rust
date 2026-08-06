@@ -307,7 +307,10 @@ mod tests {
         for expected in [
             "claim -",
             "actor operator",
-            "filter ( project:board or project:rim or project:serve or project:task )",
+            concat!(
+                "filter ( project:agent.operator.task or origin_thread.is:operator or ",
+                "( project:board or project:rim or project:serve or project:task ) )"
+            ),
             "public task project depth 2..3 dotted segments",
             "active 0",
             "ready 1",
@@ -327,6 +330,136 @@ mod tests {
         let (root, bus, epoch, _) = fixture("task-list", 0);
         let (answer, first, descendant, waiting) = task_list_fixture(&bus, epoch);
         assert_task_list_queries(&answer, &first, &descendant, &waiting);
+        clean(&root, bus);
+    }
+
+    #[test]
+    fn default_task_list_selects_each_complete_actor_route_branch_only() {
+        let (root, bus, epoch, _) = fixture("task-list-actor-route", 0);
+        let public = add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CLI-route0001",
+            "Public route row",
+            "task.cli",
+            Some("todo"),
+        );
+        let mut answer = board(&bus, epoch, Actor::Operator);
+        let template = at(&answer, &public).clone();
+
+        let mut actor_private = template.clone();
+        actor_private.statement.body.handle = "CLI-route0002"
+            .parse()
+            .expect("actor-private fixture handle");
+        actor_private.statement.body.uuid = uuid(8_002);
+        actor_private.statement.body.project = answer.actor_route.project.clone();
+        actor_private.statement.body.provenance = "task:CLI-route0002"
+            .parse()
+            .expect("actor-private fixture origin");
+        actor_private.presentation_title = "Actor-private route row".to_owned();
+
+        let mut origin_thread = template.clone();
+        origin_thread.statement.body.handle = "CLI-route0003"
+            .parse()
+            .expect("origin-thread fixture handle");
+        origin_thread.statement.body.uuid = uuid(8_003);
+        origin_thread.statement.body.project = "external.route".to_owned();
+        origin_thread.statement.body.provenance = format!(
+            "origin_thread:{}",
+            answer.actor_route.origin_thread
+        )
+        .parse()
+        .expect("origin-thread fixture origin");
+        origin_thread.presentation_title = "Origin-thread route row".to_owned();
+
+        let mut outside = template;
+        outside.statement.body.handle = "CLI-route0004"
+            .parse()
+            .expect("outside fixture handle");
+        outside.statement.body.uuid = uuid(8_004);
+        outside.statement.body.project = "agent.someone_else.task".to_owned();
+        outside.statement.body.provenance = "origin_thread:someone_else"
+            .parse()
+            .expect("outside fixture origin");
+        outside.presentation_title = "Outside route row".to_owned();
+
+        answer
+            .tasks
+            .extend([actor_private, origin_thread, outside]);
+        let listed = task_list(
+            &answer,
+            &TaskListOptions {
+                all: false,
+                project: None,
+                limit: None,
+                status: None,
+            },
+        );
+        for included in ["CLI-route0001", "CLI-route0002", "CLI-route0003"] {
+            assert!(listed.contains(included), "missing {included}: {listed}");
+        }
+        assert!(!listed.contains("CLI-route0004"), "{listed}");
+        assert!(listed.starts_with(concat!(
+            "scope actor-route filter ",
+            "( project:agent.operator.task or origin_thread.is:operator or ",
+            "( project:board or project:rim or project:serve or project:task ) )\n"
+        )));
+        let status = task_status(&answer).expect("planted actor-route rows validate");
+        assert!(status.lines().any(|line| line == "ready 3"), "{status}");
+        assert!(status.lines().any(|line| {
+            line == concat!(
+                "filter ( project:agent.operator.task or origin_thread.is:operator or ",
+                "( project:board or project:rim or project:serve or project:task ) )"
+            )
+        }), "{status}");
+        clean(&root, bus);
+    }
+
+    #[test]
+    fn actor_route_projects_the_current_lane_session_identity() {
+        let (root, bus, epoch, seats) = fixture("actor-route-session", 1);
+        let answer = board(&bus, epoch, Actor::Operator);
+        let mut residency = answer.residency.body;
+        let identity = uuid(9_001);
+        let row = residency.lanes.first_mut().expect("fixture lane");
+        let occupant = row.occupant.expect("fixture occupant");
+        let legacy = actor_route(&Actor::Lane(seats[0].lane), &residency)
+            .expect("a legacy occupied seat names its occupant route");
+        assert_eq!(legacy.actor, occupant.get().simple().to_string());
+
+        let row = residency.lanes.first_mut().expect("fixture lane");
+        row.session = Some(wire::LaneSession {
+            lane: row.lane,
+            occupant,
+            worktree: row.worktree.clone(),
+            vendor: row.vendor.clone(),
+            epoch,
+            stream: "stdout".to_owned(),
+            identity: identity.to_string(),
+            locus: wire::TapeLocus {
+                member: 0,
+                offset: 0,
+                length: 1,
+            },
+        });
+
+        let route = actor_route(&Actor::Lane(seats[0].lane), &residency)
+            .expect("current session identity names a route");
+        let actor = identity.get().simple().to_string();
+        assert_eq!(route.actor, actor);
+        assert_eq!(route.project, format!("agent.{actor}.task"));
+        assert_eq!(route.origin_thread, actor);
+
+        residency.lanes[0]
+            .session
+            .as_mut()
+            .expect("fixture session")
+            .identity = "session-id-with-hyphens".to_owned();
+        assert!(
+            actor_route(&Actor::Lane(seats[0].lane), &residency).is_err(),
+            "a current malformed session route must fail instead of falling back"
+        );
         clean(&root, bus);
     }
 
@@ -415,7 +548,8 @@ mod tests {
         );
         assert!(default.starts_with(concat!(
             "scope actor-route filter ",
-            "( project:board or project:rim or project:serve or project:task )\n"
+            "( project:agent.operator.task or origin_thread.is:operator or ",
+            "( project:board or project:rim or project:serve or project:task ) )\n"
         )));
         assert!(default.contains("CLI-list0001 [todo] P:M task.cli First task route"));
         assert!(default.contains("CLI-list0002 [todo] task.cli.deep Descendant task route"));
@@ -448,6 +582,18 @@ mod tests {
         assert!(waiting_only.contains(waiting.as_str()));
         assert!(!waiting_only.contains(first.as_str()));
 
+        let completed_only = task_list(
+            answer,
+            &TaskListOptions {
+                all: false,
+                project: None,
+                limit: None,
+                status: Some(TaskListStatus::Completed),
+            },
+        );
+        assert!(completed_only.contains("CLI-list0004"));
+        assert!(!completed_only.contains(first.as_str()));
+
         let newest_global = task_list(
             answer,
             &TaskListOptions {
@@ -461,16 +607,6 @@ mod tests {
             newest_global,
             "scope global --all\nCLI-list0004 [done] board.test Completed board route"
         );
-        let deleted = task_list(
-            answer,
-            &TaskListOptions {
-                all: true,
-                project: None,
-                limit: None,
-                status: Some(TaskListStatus::Deleted),
-            },
-        );
-        assert_eq!(deleted, "scope global --all\nno tasks in global scope");
     }
 
     fn fixture_instant(context: &str) -> Instant {

@@ -128,7 +128,6 @@ enum TaskListStatus {
     Pending,
     Waiting,
     Completed,
-    Deleted,
 }
 
 struct TaskListOptions {
@@ -187,7 +186,6 @@ impl TaskListOptions {
                 "pending" => TaskListStatus::Pending,
                 "waiting" => TaskListStatus::Waiting,
                 "completed" => TaskListStatus::Completed,
-                "deleted" => TaskListStatus::Deleted,
                 _ => unreachable!("contract parser owns task list status values"),
             });
         Ok(Self {
@@ -203,7 +201,7 @@ fn task_list(board: &BoardAnswer, options: &TaskListOptions) -> String {
     let mut rows = board
         .tasks
         .iter()
-        .filter(|task| list_scope_matches(task, options))
+        .filter(|task| list_scope_matches(board, task, options))
         .filter(|task| list_status_matches(task, options))
         .collect::<Vec<_>>();
     if let Some(limit) = options.limit {
@@ -250,7 +248,7 @@ fn task_list(board: &BoardAnswer, options: &TaskListOptions) -> String {
     output
 }
 
-fn list_scope_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
+fn list_scope_matches(board: &BoardAnswer, task: &BoardTask, options: &TaskListOptions) -> bool {
     if let Some(project) = &options.project {
         let candidate = task.statement.body.project.as_str();
         return candidate == project
@@ -258,7 +256,25 @@ fn list_scope_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
                 .strip_prefix(project)
                 .is_some_and(|suffix| suffix.starts_with('.'));
     }
-    options.all || !task.visibility.is_hidden()
+    options.all || actor_route_matches(board, task)
+}
+
+fn actor_route_matches(board: &BoardAnswer, task: &BoardTask) -> bool {
+    let statement = &task.statement.body;
+    statement.project == board.actor_route.project
+        || statement
+            .provenance
+            .as_str()
+            .strip_prefix("origin_thread:")
+            == Some(board.actor_route.origin_thread.as_str())
+        || (!task.visibility.is_hidden()
+            && board.project_policy.public_stems.iter().any(|stem| {
+                statement.project == *stem
+                    || statement
+                        .project
+                        .strip_prefix(stem)
+                        .is_some_and(|suffix| suffix.starts_with('.'))
+            }))
 }
 
 fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
@@ -272,7 +288,6 @@ fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
         Some(TaskListStatus::Pending) => pending,
         Some(TaskListStatus::Waiting) => waiting,
         Some(TaskListStatus::Completed) => task.workflow.body.status == "completed",
-        Some(TaskListStatus::Deleted) => false,
         None if options.all => true,
         None => {
             pending
@@ -332,18 +347,27 @@ fn actor_route_filter(board: &BoardAnswer) -> String {
         .map(|stem| format!("project:{stem}"))
         .collect::<Vec<_>>()
         .join(" or ");
-    format!("( {projects} )")
+    format!(
+        "( project:{} or origin_thread.is:{} or ( {projects} ) )",
+        board.actor_route.project, board.actor_route.origin_thread
+    )
 }
 
 fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
     let entries = actor_entries(board)?;
+    let routed = board
+        .tasks
+        .iter()
+        .filter(|task| actor_route_matches(board, task))
+        .map(|task| task.statement.body.handle.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     let completed = entries
         .iter()
         .filter(|entry| entry.workflow().status == "completed")
         .map(|entry| entry.statement().handle.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let pending_public = |entry: &&Entry| {
-        !entry.project().visibility().is_hidden()
+    let pending_actor = |entry: &&Entry| {
+        routed.contains(&entry.statement().handle)
             && entry.workflow().status == "pending"
             && entry.workflow().completion.is_none()
     };
@@ -352,7 +376,7 @@ fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
             .claim()
             .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
     };
-    let rows = entries.iter().filter(pending_public).collect::<Vec<_>>();
+    let rows = entries.iter().filter(pending_actor).collect::<Vec<_>>();
     let claim = rows
         .iter()
         .copied()
@@ -412,7 +436,7 @@ fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
          active {active_count}\nready {ready}\n\
          review {review}\nblocked {blocked}\nwaiting {waiting}\n\
          stale {stale}\noops {oops}",
-        board.principal,
+        board.actor_route.actor,
         actor_route_filter(board),
         board.project_policy.public_min_depth,
         board.project_policy.public_max_depth,
