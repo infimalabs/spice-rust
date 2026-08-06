@@ -159,10 +159,18 @@ fn canvas_app() -> Html {
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
-    let agents = use_agent_controls(sender.clone(), surface.clone());
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
+    let agents = use_agent_controls(
+        sender.clone(),
+        surface.clone(),
+        speech_speak(
+            speech.clone(),
+            speech_status.clone(),
+            speech_controller.clone(),
+        ),
+    );
 
     {
         let connection = connection.clone();
@@ -212,9 +220,9 @@ fn canvas_app() -> Html {
         })
     };
     let toggle_speech = speech_toggle(
-        speech.clone(),
         speech_status.clone(),
         speech_controller.clone(),
+        agents.speak.clone(),
     );
 
     render_canvas(CanvasRender {
@@ -239,6 +247,7 @@ fn canvas_app() -> Html {
 fn use_agent_controls(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
+    speak: Callback<String>,
 ) -> view::AgentControls {
     let selected_lane = use_state(String::new);
     let seat_worktree = use_state(String::new);
@@ -269,6 +278,7 @@ fn use_agent_controls(
         steer_text,
         seat_notice,
         steer_notice,
+        speak,
     }
 }
 
@@ -347,10 +357,15 @@ fn selected_occupant(
         })
 }
 
+/// Stop what is playing, or read the whole rendered surface aloud.
+///
+/// The topbar control is a toggle because it speaks one thing; a card speaks
+/// its own text and shares only the second half of that, so the two enter
+/// through [`speech_speak`] rather than each driving the controller.
 fn speech_toggle(
-    speech: UseStateHandle<wire::SpeechPlayback>,
     speech_status: UseStateHandle<SpeechStatus>,
     speech_controller: Rc<RefCell<crate::speech::Controller>>,
+    speak: Callback<String>,
 ) -> Callback<MouseEvent> {
     Callback::from(move |_| {
         if speech_status.active() {
@@ -358,13 +373,19 @@ fn speech_toggle(
             speech_status.set(SpeechStatus::Idle);
             return;
         }
-        let text = match crate::speech::rendered_text() {
-            Ok(text) => text,
-            Err(error) => {
-                speech_status.set(SpeechStatus::Failed(error));
-                return;
-            }
-        };
+        match crate::speech::rendered_text() {
+            Ok(text) => speak.emit(text),
+            Err(error) => speech_status.set(SpeechStatus::Failed(error)),
+        }
+    })
+}
+
+fn speech_speak(
+    speech: UseStateHandle<wire::SpeechPlayback>,
+    speech_status: UseStateHandle<SpeechStatus>,
+    speech_controller: Rc<RefCell<crate::speech::Controller>>,
+) -> Callback<String> {
+    Callback::from(move |text: String| {
         let generation = speech_controller.borrow_mut().begin();
         speech_status.set(SpeechStatus::Loading);
         match &*speech {
