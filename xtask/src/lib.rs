@@ -226,6 +226,30 @@ fn remove_receipt(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Run one canonical gate arm against the staged worktree and emit its JSON row.
+///
+/// # Errors
+///
+/// Returns acquisition, encoding, output, or non-admitting arm failures.
+pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), GateArmError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let result =
+            spice::gate::run_arm(gate::Selector::staged(), gate_id).map_err(GateArmError::Run)?;
+        serde_json::to_writer(&mut *output, &result).map_err(GateArmError::Encode)?;
+        writeln!(output).map_err(GateArmError::Output)?;
+        if !result.state().admits() {
+            return Err(GateArmError::Refused(gate_id));
+        }
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (gate_id, output);
+        Err(GateArmError::Unavailable)
+    }
+}
+
 /// Run the complete repository verification battery in its canonical order.
 ///
 /// # Errors
@@ -234,6 +258,44 @@ fn remove_receipt(path: &Path) -> io::Result<()> {
 /// subsequent command.
 pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
     verify_with(&mut SystemRunner, output)
+}
+
+/// One selected gate-arm command failure.
+#[derive(Debug)]
+pub enum GateArmError {
+    #[cfg(not(target_arch = "wasm32"))]
+    Run(spice::gate::RunError),
+    Encode(serde_json::Error),
+    Output(io::Error),
+    Refused(gate::GateId),
+    Unavailable,
+}
+
+impl fmt::Display for GateArmError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Run(source) => write!(formatter, "[gate] acquisition failed: {source}"),
+            Self::Encode(source) => write!(formatter, "[gate] result encoding failed: {source}"),
+            Self::Output(source) => write!(formatter, "[gate] output failed: {source}"),
+            Self::Refused(gate_id) => {
+                write!(formatter, "[gate] {gate_id} refused publication")
+            }
+            Self::Unavailable => formatter.write_str("[gate] unavailable on wasm32"),
+        }
+    }
+}
+
+impl std::error::Error for GateArmError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Run(source) => Some(source),
+            Self::Encode(source) => Some(source),
+            Self::Output(source) => Some(source),
+            Self::Refused(_) | Self::Unavailable => None,
+        }
+    }
 }
 
 fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(), VerifyError> {

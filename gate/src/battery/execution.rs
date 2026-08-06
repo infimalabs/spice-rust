@@ -334,6 +334,33 @@ pub fn run_battery(
     Ok(report)
 }
 
+/// Execute exactly one named canonical arm against the same validated inputs.
+///
+/// The result retains its canonical position and declaration identity, so it
+/// can be compared directly with the matching row of [`run_battery`]. No
+/// partial [`BatteryReport`] is constructed: reports remain complete by law.
+pub fn run_battery_arm(
+    inputs: &BatteryInputs<'_>,
+    executor: &mut impl BatteryExecutor,
+    gate_id: GateId,
+) -> Result<BatteryArmResult, BatteryError> {
+    let manifest = BatteryManifest::canonical()?;
+    inputs.snapshot()?;
+    let Some((position, arm)) = manifest.arms.iter().enumerate().find(|(_, arm)| {
+        matches!(
+            arm.disposition,
+            ArmDisposition::Compiled { gate_id: candidate, .. } if candidate == gate_id
+        )
+    }) else {
+        return Err(BatteryError::new(format!(
+            "canonical battery omits selected gate {gate_id}"
+        )));
+    };
+    let result = execute_arm(position, arm, inputs, executor);
+    validate_result(position, &result, arm, inputs.source())?;
+    Ok(result)
+}
+
 fn execute_arm(
     position: usize,
     arm: &BatteryManifestArm,

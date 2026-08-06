@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gate::{BatteryReport, GateId};
+use gate::{BatteryArmResult, BatteryReport, GateId};
 
 const PROCESS_PATH: &str = concat!("PA", "TH");
 
@@ -61,6 +61,8 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         ),
     );
 
+    let selected_result = run_selected_gate(&fixture, &programs, &cargo_log, &browser_log);
+
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("verify")
         .current_dir(&fixture.repository)
@@ -99,15 +101,52 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         "unexpected browser action: {browser:?}"
     );
 
+    assert_full_battery(&output, &selected_result);
+}
+
+fn run_selected_gate(
+    fixture: &Fixture,
+    programs: &Path,
+    cargo_log: &Path,
+    browser_log: &Path,
+) -> BatteryArmResult {
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "env-name-ledger"])
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, programs)
+        .output()
+        .expect("launch one real gate arm");
+    assert!(output.status.success(), "{}", streams(&output));
+    let result: BatteryArmResult =
+        serde_json::from_slice(&output.stdout).expect("selected arm emits one JSON result");
+    assert_eq!(result.gate_id(), GateId::EnvNameLedger);
+    assert!(!cargo_log.exists(), "selected arm launched a Cargo stage");
+    assert!(
+        !browser_log.exists(),
+        "selected arm launched the browser stage"
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("[verify]"));
+    result
+}
+
+fn assert_full_battery(output: &std::process::Output, selected: &BatteryArmResult) {
     let reports = output
         .stdout
         .split(|byte| *byte == b'\n')
         .filter_map(|line| BatteryReport::decode(line).ok())
         .collect::<Vec<_>>();
-    assert_eq!(reports.len(), 1, "{}", streams(&output));
+    assert_eq!(reports.len(), 1, "{}", streams(output));
     let report = &reports[0];
     assert_eq!(GateId::ALL.len(), 27);
     assert_eq!(report.results().len(), 27);
+    assert_eq!(
+        selected,
+        report
+            .results()
+            .iter()
+            .find(|result| result.gate_id() == GateId::EnvNameLedger)
+            .expect("full battery contains env-name-ledger")
+    );
     assert_eq!(
         report
             .results()
@@ -127,6 +166,20 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
             .matches("[verify] npm run test:canvas (BROWSER-1kKSWhZk guard)")
             .count(),
         1
+    );
+}
+
+#[test]
+fn command_usage_names_the_single_gate_arm_surface() {
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .output()
+        .expect("launch xtask usage");
+
+    assert_eq!(output.status.code(), Some(2), "{}", streams(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cargo xtask <verify|gate ARM|"),
+        "{}",
+        streams(&output)
     );
 }
 

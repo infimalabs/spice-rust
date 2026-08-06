@@ -12,8 +12,9 @@ use wire::{Digest, Domain};
 
 use super::repository_executor::RepositoryExecutor;
 use super::{
-    BatteryError, BatteryInputs, BatteryReceipt, BatteryReport, BatteryScope, BatteryToolEvidence,
-    ConfigurationEvidence, RepositoryExecutionEvent, run_battery,
+    BatteryArmResult, BatteryError, BatteryInputs, BatteryReceipt, BatteryReport, BatteryScope,
+    BatteryToolEvidence, ConfigurationEvidence, RepositoryExecutionEvent, run_battery,
+    run_battery_arm,
 };
 use crate::core::{ActorCapture, ClaimCapture};
 use crate::hygiene::HygieneConfiguration;
@@ -189,7 +190,23 @@ impl<'trace> BatteryCapture<'trace> {
     /// one total result vector. An arm that fails is a result, not an error.
     pub fn execute(&mut self) -> Result<BatteryReport, BatteryError> {
         let inputs = self.authorities.inputs()?;
+        self.executor.select(None);
         run_battery(&inputs, &mut self.executor)
+    }
+
+    /// Run exactly one canonical arm against this capture.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same manifest, input, and executor refusals as a complete
+    /// run, scoped to the selected arm.
+    pub fn execute_arm(
+        &mut self,
+        gate_id: crate::GateId,
+    ) -> Result<BatteryArmResult, BatteryError> {
+        let inputs = self.authorities.inputs()?;
+        self.executor.select(Some(gate_id));
+        run_battery_arm(&inputs, &mut self.executor, gate_id)
     }
 
     /// Run once and bind the complete vector to the captured baseline.

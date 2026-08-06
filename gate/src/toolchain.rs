@@ -201,6 +201,8 @@ mod declarations;
 #[cfg(not(target_arch = "wasm32"))]
 mod environment;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use acquire::acquire_toolchain_arm;
+#[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
 pub use declarations::*;
 
@@ -722,6 +724,15 @@ pub fn measure_toolchain(
         version: TOOLCHAIN_REPORT_VERSION,
         arms,
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn measure_toolchain_arm(
+    observation: ArmObservation,
+) -> Result<ArmMeasurement, ToolchainError> {
+    let declaration =
+        declaration(observation.gate_id).ok_or(ToolchainError::ForeignGate(observation.gate_id))?;
+    measure_arm(declaration, observation)
 }
 
 fn declaration(gate: GateId) -> Option<ToolchainDeclaration> {
