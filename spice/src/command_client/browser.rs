@@ -21,30 +21,35 @@ pub(crate) fn open_canvas_with(
     before_current_check: impl FnOnce(),
     launch: impl FnOnce(&str) -> Result<(), String>,
 ) -> Outcome<wire::CanvasOpen> {
-    let discovery = match DiscoveryRead::open(discovery_path) {
-        Ok(discovery) => discovery,
-        Err(outcome) => return rebody(outcome),
-    };
-    if let Err(outcome) = dialable_endpoint(&discovery.value.endpoint) {
-        return rebody(outcome);
+    match open_canvas_result_with(discovery_path, before_current_check, launch) {
+        Ok(body) => Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body,
+        }),
+        Err(fault) => Outcome::Fault(fault),
     }
+}
+
+/// Admit and launch Canvas through the fault-only discovery boundary.
+pub(crate) fn open_canvas_result_with(
+    discovery_path: &Path,
+    before_current_check: impl FnOnce(),
+    launch: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<wire::CanvasOpen, Fault> {
+    let discovery = DiscoveryRead::open_fault(discovery_path)?;
+    dialable_endpoint(&discovery.value.endpoint)?;
     before_current_check();
-    if let Err(outcome) = discovery.verify_current() {
-        return rebody(outcome);
-    }
+    discovery.verify_current_fault()?;
     if let Err(detail) = launch(&discovery.value.endpoint) {
-        return Outcome::Fault(Fault {
+        return Err(Fault {
             class: FaultClass::Environment,
             reason: "canvas::launch-failed".to_owned(),
             detail,
         });
     }
-    Outcome::Reply(Reply {
-        position: ReplyPosition::Direct {},
-        body: wire::CanvasOpen {
-            endpoint: discovery.value.endpoint,
-            epoch: discovery.value.epoch,
-        },
+    Ok(wire::CanvasOpen {
+        endpoint: discovery.value.endpoint,
+        epoch: discovery.value.epoch,
     })
 }
 
@@ -81,16 +86,4 @@ pub(super) fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub(super) fn browser_command(_endpoint: &str) -> Result<ProcessCommand, String> {
     Err("canvas browser launch is unsupported on this build target".to_owned())
-}
-
-fn rebody<B>(outcome: Outcome<CommandAnswer>) -> Outcome<B> {
-    match outcome {
-        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
-        Outcome::Fault(fault) => Outcome::Fault(fault),
-        Outcome::Reply(_) => Outcome::Fault(Fault {
-            class: FaultClass::Protocol,
-            reason: "canvas::admission-replied".to_owned(),
-            detail: "canvas discovery admission returned a reply instead of a failure".to_owned(),
-        }),
-    }
 }
