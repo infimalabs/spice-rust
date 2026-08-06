@@ -558,6 +558,21 @@ fn lineage_configuration_changes_shared_life_without_touching_occupants() {
     let first_occupant = test_uuid(4);
     let second_lane = test_uuid(5);
     let second_occupant = test_uuid(6);
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            first_lane,
+            first_occupant,
+            process_spec("sleep 0.05", Duration::from_secs(5)),
+        )
+        .expect("first supervised occupant starts");
+    seats
+        .seat(
+            second_lane,
+            second_occupant,
+            process_spec("sleep 0.05", Duration::from_secs(5)),
+        )
+        .expect("second supervised occupant starts");
     seed_lane_in_lineage(&bus, epoch, first_lane, lineage, first_occupant);
     seed_lane_in_lineage(&bus, epoch, second_lane, lineage, second_occupant);
 
@@ -580,7 +595,8 @@ fn lineage_configuration_changes_shared_life_without_touching_occupants() {
     })
     .expect("operator lineage configuration admits");
 
-    let Outcome::Reply(reply) = super::lane_surface::configure(&bus, epoch, &command, &request)
+    let Outcome::Reply(reply) =
+        super::lane_surface::configure(&bus, epoch, &seats, &command, &request)
     else {
         panic!("lineage configuration replies");
     };
@@ -597,6 +613,8 @@ fn lineage_configuration_changes_shared_life_without_touching_occupants() {
         answer.lanes.iter().all(|row| row.disposition == "occupied"),
         "task-subscription drain never performs LaneAction::Drain",
     );
+    assert!(seats.occupied(first_lane));
+    assert!(seats.occupied(second_lane));
     let snapshot = bus.canvas_snapshot().expect("configured journal reads");
     let configured = snapshot
         .facts()
@@ -608,6 +626,13 @@ fn lineage_configuration_changes_shared_life_without_touching_occupants() {
         configured.fact.body().get("lineage_id"),
         Some(&serde_json::Value::String(lineage.to_string())),
     );
+    for lane in [first_lane, second_lane] {
+        seats
+            .vacate(lane)
+            .expect("configured occupant remains supervised")
+            .wait()
+            .expect("fixture occupant exits");
+    }
     bus.verify().expect("configured authority verifies");
     bus.shutdown().expect("fixture bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
@@ -657,6 +682,7 @@ fn seed_lane_in_lineage(
     head.lanes.push(wire::LaneResidency {
         lane,
         lineage_id,
+        name: None,
         worktree: "/fixture".to_owned(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -675,6 +701,7 @@ fn seed_lane_in_lineage(
                 lane,
                 lineage_id,
                 capability: test_uuid(9),
+                name: None,
                 worktree: "/fixture".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),

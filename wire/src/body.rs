@@ -541,6 +541,13 @@ pub struct LaneSeated {
     pub lineage_id: CanonicalUuid,
     /// Capability minted with the lane.
     pub capability: CanonicalUuid,
+    /// Operator-configured agent display name, absent on pre-field facts.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub name: Option<String>,
     /// Worktree the lane is bound to.
     pub worktree: String,
     /// Closed lane-life spelling selected for the seat.

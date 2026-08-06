@@ -677,6 +677,7 @@ fn seed_lane(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                 lane,
                 lineage_id: lane,
                 capability,
+                name: Some("Ava".to_owned()),
                 worktree: root.display().to_string(),
                 life: "drive".to_owned(),
                 vendor: "codex".parse().expect("demo vendor is valid"),
@@ -691,6 +692,7 @@ fn seed_lane(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
         lanes: vec![wire::LaneResidency {
             lane,
             lineage_id: lane,
+            name: Some("Ava".to_owned()),
             worktree,
             life: "drive".to_owned(),
             vendor: "codex".parse().expect("demo vendor is valid"),

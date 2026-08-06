@@ -38,6 +38,7 @@ pub struct Seat {
     lane: CanonicalUuid,
     lineage_id: CanonicalUuid,
     capability: CanonicalUuid,
+    name: Option<String>,
     worktree: String,
     life: String,
     vendor: Name,
@@ -63,6 +64,12 @@ impl Seat {
     #[must_use]
     pub const fn capability(&self) -> CanonicalUuid {
         self.capability
+    }
+
+    /// Operator-configured agent display name, absent on pre-field seats.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     /// The worktree the lane is bound to.
@@ -113,6 +120,7 @@ impl Seat {
         LaneResidency {
             lane: self.lane,
             lineage_id: self.lineage_id,
+            name: self.name.clone(),
             worktree: self.worktree.clone(),
             life: self.life.clone(),
             vendor: self.vendor.clone(),
@@ -410,6 +418,7 @@ impl Table {
                 lane: fact.lane,
                 lineage_id: fact.lineage_id,
                 capability: fact.capability,
+                name: fact.name.clone(),
                 worktree: fact.worktree.clone(),
                 life: fact.life.clone(),
                 vendor: fact.vendor.clone(),
@@ -660,6 +669,7 @@ mod tests {
             lane: uuid(1),
             lineage_id: uuid(1),
             capability: uuid(2),
+            name: Some("Ava".to_owned()),
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
@@ -721,6 +731,7 @@ mod tests {
             .expect("the sitting occupant ends");
 
         let seat = table.seat(uuid(1)).expect("the lane was seated");
+        assert_eq!(seat.name(), Some("Ava"));
         assert_eq!(seat.worktree(), "/worktrees/lane-a");
         assert_eq!(seat.capability(), uuid(2));
         assert_eq!(seat.occupant(), None);
@@ -761,6 +772,7 @@ mod tests {
             .expect("successor occupies the imported seat");
 
         let seat = table.seat(uuid(1)).expect("imported seat remains seated");
+        assert_eq!(seat.name(), Some("Ava"));
         assert_eq!(seat.worktree(), "/worktrees/lane-b");
         assert_eq!(seat.occupant(), Some(uuid(4)));
         assert_eq!(seat.lineage(), [uuid(3), uuid(4)]);
@@ -1048,6 +1060,7 @@ mod tests {
         let row = &head.lanes[0];
         assert_eq!(row.lane, uuid(1));
         assert_eq!(row.lineage_id, uuid(1));
+        assert_eq!(row.name.as_deref(), Some("Ava"));
         assert_eq!(row.occupant, Some(uuid(3)));
         assert_eq!(row.lineage, vec![uuid(3)]);
         assert_eq!(row.capabilities, vec![uuid(2)]);

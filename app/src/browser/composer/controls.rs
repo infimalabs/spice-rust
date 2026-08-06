@@ -17,7 +17,7 @@ impl LineageLife {
             .find(|candidate| candidate.label().eq_ignore_ascii_case(value))
     }
 
-    const fn label(self) -> &'static str {
+    pub(super) const fn label(self) -> &'static str {
         match self {
             Self::Steer => "Steer",
             Self::Drive => "Drive",

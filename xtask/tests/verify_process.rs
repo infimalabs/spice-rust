@@ -27,16 +27,37 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         );
     }
 
-    // The process under test is the real verifier binary. Its six Cargo build
-    // and test actions are satisfied by this logged fixture so this integration
-    // test does not recursively launch Cargo from inside Cargo. The following
-    // battery action is not replaceable and executes through SystemRunner.
+    // The process under test is the real verifier binary. Its five Cargo build
+    // and test actions and browser receipt are satisfied by logged fixtures so
+    // this integration test does not recursively launch either toolchain from
+    // inside Cargo. The following battery action is not replaceable and
+    // executes through SystemRunner.
     let cargo_log = fixture.root.join("cargo-actions");
     executable(
         &programs.join("cargo"),
         &format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
             cargo_log.display()
+        ),
+    );
+    let browser_log = fixture.root.join("browser-action");
+    executable(
+        &programs.join("npm"),
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$*\" > '{}'\n",
+                "while [ \"$#\" -gt 0 ]; do\n",
+                "  if [ \"$1\" = \"--spice-coverage-receipt\" ]; then\n",
+                "    shift\n",
+                "    printf 'BROWSER-1kKSWhZk browser coverage complete\\n' > \"$1\"\n",
+                "    exit 0\n",
+                "  fi\n",
+                "  shift\n",
+                "done\n",
+                "exit 96\n",
+            ),
+            browser_log.display(),
         ),
     );
 
@@ -72,6 +93,11 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
             "test --locked --workspace --doc",
         ]
     );
+    let browser = fs::read_to_string(&browser_log).expect("read verifier browser action");
+    assert!(
+        browser.starts_with("run test:canvas -- --spice-coverage-receipt "),
+        "unexpected browser action: {browser:?}"
+    );
 
     let reports = output
         .stdout
@@ -95,6 +121,58 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
             .matches("[verify] canonical Rust gate battery")
             .count(),
         1
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout)
+            .matches("[verify] npm run test:canvas (BROWSER-1kKSWhZk guard)")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() {
+    let fixture = Fixture::new();
+    let programs = fixture.root.join("programs");
+    fs::create_dir(&programs).expect("create process fixture directory");
+    let cargo_log = fixture.root.join("cargo-actions");
+    executable(
+        &programs.join("cargo"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            cargo_log.display()
+        ),
+    );
+    executable(&programs.join("npm"), "#!/bin/sh\nexit 0\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("verify")
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, &programs)
+        .output()
+        .expect("launch the real verifier process");
+
+    assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("browser coverage did not complete"),
+        "{}",
+        streams(&output)
+    );
+    assert_eq!(
+        fs::read_to_string(cargo_log)
+            .expect("read verifier Cargo actions")
+            .lines()
+            .collect::<Vec<_>>(),
+        [
+            "fmt --all -- --check",
+            "clippy --locked --workspace --all-targets -- -D warnings",
+            "check --locked --workspace --target wasm32-unknown-unknown",
+        ]
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("canonical Rust gate battery"),
+        "{}",
+        streams(&output)
     );
 }
 
