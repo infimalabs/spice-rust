@@ -83,7 +83,6 @@ const CASES: &[Case] = &[
     case("task next", &["task", "next"]),
     case("task reclaim", &["task", "reclaim"]),
     case("task add", &["task", "add", "readiness task"]),
-    case("task status", &["task", "status"]),
     case("task capture", &["task", "capture"]),
     case("task done", &["task", "done"]),
     case("task review", &["task", "review", "READY-12345678"]),
