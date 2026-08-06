@@ -133,9 +133,17 @@ export async function assertComposerShards({
   const stackOverflow = await quoteStack.evaluate((stack) => ({
     clientHeight: stack.clientHeight,
     scrollHeight: stack.scrollHeight,
+    overflowY: getComputedStyle(stack).overflowY,
     shardCount: stack.querySelectorAll(".composer-shard").length,
   }));
   assert.equal(stackOverflow.shardCount, 3);
+  // The excess height must also be reachable. Clipping the stack instead of
+  // scrolling it leaves the height reading below completely unchanged, so that
+  // reading alone cannot tell a scrollable stack from a truncated one.
+  assert.ok(
+    ["auto", "scroll"].includes(stackOverflow.overflowY),
+    `the agent stack scrolls its own overflow rather than clipping it: ${JSON.stringify(stackOverflow)}`,
+  );
   assert.ok(
     stackOverflow.scrollHeight > stackOverflow.clientHeight,
     `multiple draft shards make the agent stack scroll: ${JSON.stringify(stackOverflow)}`,
