@@ -7,17 +7,17 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CompileInvocation, HOME_DIRECTORY, run_compile_analysis_with_wait, tool_search_path,
+    CompileInvocation, HOME_DIRECTORY, build_root, run_compile_analysis_with_wait,
+    tool_search_path,
 };
 use crate::measure::Bounds;
 use crate::toolchain::{ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
-use sill::{Acquisition, Environment, LockFile, LockName, Possession, WaitPolicy};
+use sill::{Environment, Possession, WaitPolicy};
 
 /// The native analysis, kept in its declaration order.
 ///
@@ -149,20 +149,12 @@ fn milliseconds(duration: Duration) -> u64 {
 /// is also the shape that survives a killed run: whatever the previous arm left
 /// behind is indistinguishable from a root in active use by looking at it.
 ///
-/// The mechanism is therefore an advisory lock at `<root>.lock`, held for the
-/// life of the workspace, and the invariant is that **this arm removes a build
-/// root only while it possesses that lock**. Contention is not a removal that
-/// gets refused; it is a removal that never becomes reachable, because a
-/// contended arm returns before it owns anything to tear down. Possession also
-/// makes reclaiming a stale root safe: a root whose lock is free is one no live
-/// build holds, which is exactly the run that was killed before its teardown.
-///
-/// [`remove_build_root`] takes a [`Possession`] rather than a path, so the
-/// invariant is carried by the signature and a removal cannot be spelled
-/// without the lock in hand. `flock` grants per-open-file-description, so a
-/// second acquisition contends even from inside this process; that is what lets
-/// a fixture hold a build root and drive the decision directly rather than
-/// having to lose a race to observe it.
+/// The mechanism is therefore the possession lock in [`super::build_root`],
+/// which both compiling arms share: this arm removes a build root only while it
+/// holds that root's lock, so a contended root is one it never owns anything to
+/// tear down for, and a root whose lock is free is the wreckage of a killed run
+/// and is reclaimed. That module carries the invariant and why it is spelled in
+/// the signature of [`build_root::remove_build_root`].
 struct RustWorkspace {
     root: PathBuf,
     cargo_target: PathBuf,
@@ -170,57 +162,9 @@ struct RustWorkspace {
     possession: Option<Possession>,
 }
 
-/// What one attempt to remove a build root did, so no attempt is discarded.
-#[derive(Debug, Eq, PartialEq)]
-enum BuildRootRemoval {
-    /// The root is gone, whether this attempt unlinked it or found it absent.
-    Removed,
-    /// The root still exists and the reason is carried rather than dropped.
-    Failed(String),
-}
-
-impl BuildRootRemoval {
-    fn reason(&self, root: &Path) -> Option<String> {
-        match self {
-            Self::Removed => None,
-            Self::Failed(error) => Some(format!(
-                "rust analysis build root {} could not be removed: {error}",
-                root.display()
-            )),
-        }
-    }
-}
-
-/// Remove a build root whose lock this caller already possesses.
-///
-/// Taking [`Possession`] rather than a path alone is the guard: there is no way
-/// to spell a removal without first holding the lock, so a root a live build
-/// holds is unreachable here rather than merely unlucky. Absence counts as
-/// removed; every other refusal is carried back out.
-fn remove_build_root(root: &Path, _possession: &Possession) -> BuildRootRemoval {
-    match fs::remove_dir_all(root) {
-        Ok(()) => BuildRootRemoval::Removed,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => BuildRootRemoval::Removed,
-        Err(error) => BuildRootRemoval::Failed(error.to_string()),
-    }
-}
-
-/// The lock guarding one build root, kept beside the root rather than inside
-/// it so removing the root cannot remove the evidence that it was held.
-fn build_root_lock(root: &Path) -> Result<LockFile, String> {
-    let Some(name) = root.file_name() else {
-        return Err(format!(
-            "rust analysis workspace {} has no name to lock",
-            root.display()
-        ));
-    };
-    let mut lock_name = name.to_os_string();
-    lock_name.push(".lock");
-    let path = root.with_file_name(lock_name);
-    let name = LockName::new("rust-analysis-build-root")
-        .map_err(|error| format!("rust analysis build-root lock name was refused: {error}"))?;
-    Ok(LockFile::new(name, path))
-}
+/// How this arm names itself in a refusal, and how it names its lock.
+const RUST_LABEL: &str = "rust analysis build root";
+const RUST_LOCK: &str = "rust-analysis-build-root";
 
 /// Where one selected tree's build root lives.
 ///
@@ -240,27 +184,7 @@ fn build_root_path(selected: &Path) -> Result<PathBuf, String> {
 impl RustWorkspace {
     fn create(selected: &Path) -> Result<Self, String> {
         let root = build_root_path(selected)?;
-        let lock = build_root_lock(&root)?;
-        let possession = match lock.try_acquire() {
-            Ok(Acquisition::Acquired(possession)) => possession,
-            Ok(Acquisition::Contended) => {
-                return Err(format!(
-                    "rust analysis build root {} is in use by another analysis of this tree",
-                    root.display()
-                ));
-            }
-            Err(error) => {
-                return Err(format!(
-                    "rust analysis build root {} could not be locked: {error}",
-                    root.display()
-                ));
-            }
-        };
-        // Possession proves no live build holds this root, so anything already
-        // here was left by a run that died before its own teardown.
-        if let Some(reason) = remove_build_root(&root, &possession).reason(&root) {
-            return Err(reason);
-        }
+        let possession = build_root::hold(&root, RUST_LOCK, RUST_LABEL)?;
         fs::create_dir(&root).map_err(|error| {
             format!(
                 "rust analysis workspace {} could not be created: {error}",
@@ -276,8 +200,8 @@ impl RustWorkspace {
                 "rust analysis output directories for {} could not be created: {error}",
                 selected.display()
             );
-            let removal = remove_build_root(&root, &possession);
-            return Err(match removal.reason(&root) {
+            let removal = build_root::remove_build_root(&root, &possession);
+            return Err(match removal.reason(RUST_LABEL, &root) {
                 Some(reason) => format!("{created}; {reason}"),
                 None => created,
             });
@@ -296,9 +220,9 @@ impl RustWorkspace {
     /// removal failure is the half of this arm's history that made a vanished
     /// build root undiagnosable from the remover's side.
     fn release(mut self) -> Option<String> {
-        self.possession
-            .take()
-            .and_then(|possession| remove_build_root(&self.root, &possession).reason(&self.root))
+        self.possession.take().and_then(|possession| {
+            build_root::remove_build_root(&self.root, &possession).reason(RUST_LABEL, &self.root)
+        })
     }
 }
 
@@ -309,7 +233,7 @@ impl Drop for RustWorkspace {
     /// arrives here already emptied and this does nothing.
     fn drop(&mut self) {
         if let Some(possession) = self.possession.take() {
-            let _ = remove_build_root(&self.root, &possession);
+            let _ = build_root::remove_build_root(&self.root, &possession);
         }
     }
 }
@@ -339,7 +263,15 @@ mod tests {
     use std::thread;
 
     use crate::toolchain::{ArmFinding, GateId, declaration};
-    use sill::{Cancellation, CancellationToken, Deadlines, RestartDisposition, WaitPolicy};
+    use sill::{
+        Acquisition, Cancellation, CancellationToken, Deadlines, LockFile, RestartDisposition,
+        WaitPolicy,
+    };
+
+    /// The lock guarding one of this arm's build roots, as `hold` resolves it.
+    fn build_root_lock(root: &Path) -> Result<LockFile, String> {
+        build_root::build_root_lock(root, RUST_LOCK, RUST_LABEL)
+    }
 
     static NEXT_RUST_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
