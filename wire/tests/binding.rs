@@ -11,8 +11,14 @@
 
 use std::collections::BTreeSet;
 
-use wire::CommandKind;
-use wire::intent::{AnswerShape, BodyShape, CommandAnswer, Intent};
+use wire::intent::{
+    AnswerShape, BoardStatement, BoardTask, BodyShape, CommandAnswer, Intent, Positioned,
+    ProjectVisibility,
+};
+use wire::{
+    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LeaseHead, Phase, Seq,
+    TaskHandle, WorkflowHead,
+};
 
 /// Every command body, spelled as WIRE spells it, paired with the kind whose
 /// binding must decode it.
@@ -227,6 +233,15 @@ fn oops_route_body_cannot_name_or_cross_target_a_hidden_project() {
 /// each `skip_serializing_if` field is decoded and re-encoded here rather than
 /// only in a downstream crate. That makes the row a shape witness, not a
 /// reachable board state: no phase both defers and completes.
+///
+/// Round-tripping alone cannot hold that claim. An absent optional decodes to
+/// `None` and re-encodes skipped, so deleting one of those keys leaves the
+/// encoded value and the spelling equal and `every_answer_re_encodes_unchanged`
+/// stays green. What holds it is
+/// [`the_board_task_row_is_the_struct_this_crate_declares`], which builds the
+/// row as a struct literal naming every field and asserts it encodes to exactly
+/// the JSON below: a deleted optional makes the two spellings disagree, and a
+/// field added to the DTO fails this crate's build.
 const ANSWERS: &[(AnswerShape, &str)] = &[
     (
         AnswerShape::Board,
@@ -569,6 +584,169 @@ fn every_answer_re_encodes_unchanged() {
             "{shape:?} did not re-encode to the spelling it was decoded from",
         );
     }
+}
+
+/// The single board task row spelled in [`ANSWERS`], as parsed JSON.
+fn spelled_board_task() -> serde_json::Value {
+    let (_, body) = ANSWERS
+        .iter()
+        .find(|(shape, _)| *shape == AnswerShape::Board)
+        .expect("the answer table spells a board body");
+    let spelled: serde_json::Value =
+        serde_json::from_str(body).expect("the board fixture is well-formed JSON");
+    let mut tasks = spelled["tasks"]
+        .as_array()
+        .expect("the board body carries a task array")
+        .clone();
+    assert_eq!(tasks.len(), 1, "the board fixture spells exactly one task");
+    tasks.remove(0)
+}
+
+/// Every path at which two encoded rows disagree, named so a failure is legible.
+///
+/// `assert_eq!` on two `serde_json::Value`s prints both rows whole and leaves
+/// the reader to find the one key among dozens that moved. Naming the paths is
+/// what makes this single guard a separate witness for each field it covers
+/// rather than one undifferentiated failure standing in for all of them.
+fn disagreeing_paths(left: &serde_json::Value, right: &serde_json::Value) -> Vec<String> {
+    let mut found = Vec::new();
+    collect_disagreements(left, right, String::new(), &mut found);
+    found
+}
+
+fn collect_disagreements(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+    path: String,
+    into: &mut Vec<String>,
+) {
+    match (left, right) {
+        (serde_json::Value::Object(left), serde_json::Value::Object(right)) => {
+            let keys: BTreeSet<&String> = left.keys().chain(right.keys()).collect();
+            for key in keys {
+                let nested = format!("{path}/{key}");
+                match (left.get(key), right.get(key)) {
+                    (Some(left), Some(right)) => collect_disagreements(left, right, nested, into),
+                    _ => into.push(nested),
+                }
+            }
+        }
+        (serde_json::Value::Array(left), serde_json::Value::Array(right))
+            if left.len() == right.len() =>
+        {
+            for (index, (left, right)) in left.iter().zip(right).enumerate() {
+                collect_disagreements(left, right, format!("{path}/{index}"), into);
+            }
+        }
+        _ if left != right => into.push(path),
+        _ => {}
+    }
+}
+
+fn seq(position: u64) -> Seq {
+    Seq::new(position).expect("a fact position")
+}
+
+fn handle(spelled: &str) -> TaskHandle {
+    spelled.parse().expect("a task handle")
+}
+
+fn uuid(spelled: &str) -> CanonicalUuid {
+    spelled.parse().expect("a canonical uuid")
+}
+
+fn actor(spelled: &str) -> Actor {
+    spelled.parse().expect("an actor")
+}
+
+fn phase(spelled: &str) -> Phase {
+    spelled.parse().expect("a phase")
+}
+
+fn instant(spelled: &str) -> Instant {
+    spelled.parse().expect("an instant")
+}
+
+/// The board task row, built field by field, must encode to the spelled row.
+///
+/// This is the guard the JSON table cannot be: a struct literal naming every
+/// field is exhaustive at compile time, so a field added to [`BoardTask`] or to
+/// anything it reaches fails this crate's build whether it is optional or
+/// required. Asserting the literal encodes to the spelling in [`ANSWERS`] then
+/// pins the two together in the other direction, which is what a round trip
+/// cannot do: an optional deleted from the JSON decodes to `None` and
+/// re-encodes skipped, so the round trip compares two equally diminished
+/// values and passes, while this comparison sees the key the literal supplies
+/// and the JSON no longer does.
+#[test]
+fn the_board_task_row_is_the_struct_this_crate_declares() {
+    let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
+    let task = BoardTask {
+        visibility: ProjectVisibility::Public,
+        origin_thread: "operator".to_owned(),
+        presentation_title: "Bind a board task".to_owned(),
+        statement: Positioned {
+            position: seq(2),
+            body: BoardStatement {
+                handle: handle("SPICE-aBcD"),
+                uuid: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+                description: Some(
+                    "One task spelled through every field the shape carries.".to_owned(),
+                ),
+                acceptance: vec![
+                    "the row decodes".to_owned(),
+                    "the row re-encodes unchanged".to_owned(),
+                ],
+                project: "wire.binding".to_owned(),
+                tags: vec!["binding".to_owned()],
+                dependencies: vec![handle("SPICE-eFgH")],
+                provenance: "task:SPICE-aBcD".parse().expect("an origin"),
+                revision: seq(2),
+            },
+        },
+        workflow: Positioned {
+            position: seq(3),
+            body: WorkflowHead {
+                flow: vec![phase("todo"), phase("review")],
+                phase: phase("todo"),
+                status: "pending".to_owned(),
+                review: "unassigned".to_owned(),
+                assignment: Some(actor("operator")),
+                deferral: Some(instant("2026-08-01T07:07:19.000Z")),
+                completion: Some(instant("2026-08-01T08:07:19.000Z")),
+            },
+        },
+        claim: Some(Positioned {
+            position: seq(4),
+            body: ClaimHead {
+                actor: actor("operator"),
+                fact: seq(4),
+                lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+                occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c6"),
+                epoch,
+                disposition: ClaimDisposition::Active,
+            },
+        }),
+        lease: Some(Positioned {
+            position: seq(5),
+            body: LeaseHead {
+                start: instant("2026-08-01T06:07:19.000Z"),
+                renewal: instant("2026-08-01T06:37:19.000Z"),
+                maximum: instant("2026-08-01T09:07:19.000Z"),
+                expiry: instant("2026-08-01T07:07:19.000Z"),
+                epoch,
+            },
+        }),
+    };
+
+    let encoded = serde_json::to_value(&task).expect("the constructed board task encodes");
+    let spelled = spelled_board_task();
+    assert_eq!(
+        encoded,
+        spelled,
+        "the constructed board task and the row spelled in ANSWERS disagree at {}",
+        disagreeing_paths(&encoded, &spelled).join(", "),
+    );
 }
 
 #[test]

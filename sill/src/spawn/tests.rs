@@ -16,10 +16,14 @@ use crate::spec::{
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 use crate::surface::process_state;
+use crate::{HeldShard, LockAttempt, LockConfig, LockTopology};
+use std::ffi::{CString, OsString};
 use std::fs;
 use std::io::{self, Read};
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 struct ForwardObserver {
@@ -877,6 +881,213 @@ fn descriptor_setup_failure_refuses_protected_child_admission() {
     fs::remove_file(lock_path).expect("guardian lock fixture removes");
 }
 
+struct ProtectedFixture {
+    root: PathBuf,
+    topology: LockTopology,
+}
+
+impl ProtectedFixture {
+    fn new(label: &str) -> Self {
+        let root = unique_lock_path(label);
+        fs::create_dir(&root).expect("protected fixture root creates");
+        let root = fs::canonicalize(root).expect("protected fixture root canonicalizes");
+        let config: LockConfig = toml::from_str(concat!(
+            "busy = 71\n",
+            "taken = 72\n",
+            "full = 73\n",
+            "[protected]\n",
+            "path = \"protected.lock\"\n",
+        ))
+        .expect("protected fixture configuration is admitted");
+        let topology = LockTopology::new(&root, &config);
+        Self { root, topology }
+    }
+
+    fn acquire(&self) -> HeldShard {
+        match self
+            .topology
+            .try_acquire("protected", None)
+            .expect("protected fixture lock is observable")
+        {
+            LockAttempt::Acquired(held) => held,
+            LockAttempt::Contended { .. } => panic!("fresh protected fixture lock contended"),
+        }
+    }
+
+    fn held_member(&self) -> (PathBuf, fs::File) {
+        let path = self.root.join("member.fifo");
+        let encoded = CString::new(path.as_os_str().as_bytes()).expect("fixture path has no nul");
+        // SAFETY: the path names a new entry inside this fixture's private root.
+        assert_eq!(unsafe { libc::mkfifo(encoded.as_ptr(), 0o600) }, 0);
+        let hold = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("fixture holds both ends of the member fifo");
+        (path, hold)
+    }
+
+    fn acquire_before(&self, duration: Duration) -> HeldShard {
+        let started = Instant::now();
+        loop {
+            match self
+                .topology
+                .try_acquire("protected", None)
+                .expect("protected fixture lock remains observable")
+            {
+                LockAttempt::Acquired(held) => return held,
+                LockAttempt::Contended { .. } => {}
+            }
+            assert!(
+                started.elapsed() < duration,
+                "lock guardian did not release after its protected group ended"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for ProtectedFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn blocked_group_spec(fifo: &Path) -> Spec {
+    test_spec(
+        "/bin/sh",
+        [
+            OsString::from("-c"),
+            OsString::from("/bin/cat < \"$1\" >/dev/null 2>&1 & child=$!; kill -0 \"$child\""),
+            OsString::from("sill-guardian-member"),
+            fifo.as_os_str().to_owned(),
+        ],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(5),
+        StreamPolicy::Null,
+    )
+}
+
+fn reap_protected_leader(running: &mut super::Running) -> std::process::ExitStatus {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = running
+            .take_child_exit()
+            .expect("protected fixture leader remains reapable")
+        {
+            return status;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "protected fixture leader did not exit"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// The guardian, rather than this wrapper, holds the lock while a protected
+/// group member is still running.
+#[test]
+fn a_real_guardian_outlives_the_wrapper_while_a_group_member_is_live() {
+    let fixture = ProtectedFixture::new("guardian-group-lifetime");
+    let mut held = fixture.acquire();
+    let (fifo, member_lifetime) = fixture.held_member();
+    let running = held
+        .spawn_protected(blocked_group_spec(&fifo))
+        .expect("protected fixture launches");
+    let group = running.id();
+    let guardian = running
+        .guardian_id()
+        .expect("protected fixture retains its guardian");
+
+    let outcome = running.wait().expect("protected fixture leader reaps");
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+    assert_eq!(
+        group_state(group),
+        process_state::ProcessState::Live,
+        "the protected member did not outlive its group leader"
+    );
+
+    drop(held);
+    let observed = Instant::now();
+    while observed.elapsed() < Duration::from_millis(500) {
+        assert!(
+            !process_state::process_terminal(guardian),
+            "the lock guardian exited while a protected group member was live"
+        );
+        assert_eq!(group_state(group), process_state::ProcessState::Live);
+        match fixture
+            .topology
+            .try_acquire("protected", None)
+            .expect("guardian-held fixture lock is observable")
+        {
+            LockAttempt::Contended { .. } => {}
+            LockAttempt::Acquired(replacement) => {
+                drop(replacement);
+                panic!("the guardian released possession while a group member was live");
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    drop(member_lifetime);
+    drop(fixture.acquire_before(Duration::from_secs(2)));
+}
+
+/// `Running::wait` must not join a guardian on an unreadable group answer.
+///
+/// The real guardian still watches the live group under its original identity;
+/// only `Running` is given an identity too wide for the join probe after its
+/// leader has been reaped. That stages `Indeterminate` at the otherwise
+/// unreachable join gate without replacing the guardian or the group it holds.
+#[test]
+fn running_wait_does_not_join_a_guardian_for_an_unreadable_live_group() {
+    let fixture = ProtectedFixture::new("guardian-join-gate");
+    let mut held = fixture.acquire();
+    let (fifo, member_lifetime) = fixture.held_member();
+    let mut running = held
+        .spawn_protected(blocked_group_spec(&fifo))
+        .expect("protected fixture launches");
+    let group = running.id();
+    assert!(reap_protected_leader(&mut running).success());
+    assert_eq!(
+        group_state(group),
+        process_state::ProcessState::Live,
+        "the protected member did not outlive its group leader"
+    );
+    running.pid = u32::try_from(libc::pid_t::MAX).expect("pid_t fits u32") + 1;
+
+    let (finished, returned) = mpsc::channel();
+    let waiter = std::thread::spawn(move || {
+        let _sent = finished.send(running.wait());
+    });
+    let prompt = returned.recv_timeout(Duration::from_millis(500));
+    drop(member_lifetime);
+    let (waited, joined_live_guardian) = match prompt {
+        Ok(waited) => (waited, false),
+        Err(mpsc::RecvTimeoutError::Timeout) => (
+            returned
+                .recv_timeout(Duration::from_secs(2))
+                .expect("guardian join returns after the protected member exits"),
+            true,
+        ),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("protected wait thread disconnected without an answer")
+        }
+    };
+    waiter.join().expect("protected wait thread does not panic");
+    let outcome = waited.expect("protected fixture wait succeeds");
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+
+    drop(held);
+    drop(fixture.acquire_before(Duration::from_secs(2)));
+    assert!(
+        !joined_live_guardian,
+        "Running::wait joined a guardian on an unreadable pre-absence answer"
+    );
+}
+
 fn test_spec<I, S>(
     program: &str,
     arguments: I,
@@ -1058,6 +1269,28 @@ fn an_unreadable_pre_kill_probe_never_settles_a_group_not_observed_terminal() {
             "the pre-kill decision exceeded its one-re-probe bound"
         );
     }
+}
+
+/// A child that never led a group of its own settles without asking the kernel.
+///
+/// `requires_group_terminal` is false for an inherited group and for a new group
+/// whose guardian still holds it, and the decision must answer true there
+/// without observing anything. The observer panics rather than returning an
+/// answer because both halves of that sentence need pinning at once: a decision
+/// that returned the wrong value fails on the assertion, and one that reached
+/// the probe at all fails on the panic, which no returned answer could
+/// distinguish. The kernel is worth not asking here because there is no group of
+/// the child's own to name -- probing an inherited child's negated identity asks
+/// about a group it never led, and the answer settles nothing the caller did not
+/// already know.
+#[test]
+fn a_child_that_never_led_a_group_settles_without_probing() {
+    assert!(
+        execution_group_terminal_against(false, || panic!(
+            "the pre-kill decision probed a group the child never led"
+        )),
+        "a child that never led a group of its own was not settled before any probe"
+    );
 }
 
 /// A number that was never a process identity did not observe a live group.

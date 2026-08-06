@@ -36,6 +36,29 @@
 //! question and is deliberately outside this module. It is recorded here so
 //! the next reader of this guard can tell why the refusal arrives when it does
 //! without re-deriving Git's hook ordering to reach the same answer.
+//!
+//! # This guard runs inside a lock every worktree shares
+//!
+//! `prepared` means the references "were locked on disk", so whatever this hook
+//! does, it does while Git holds those locks. One of them is not per-worktree:
+//! deleting a reference takes `packed-refs.lock` in the *common* directory, which
+//! every linked worktree shares, and an ordinary commit ends with a deletion
+//! transaction that clears `AUTO_MERGE`, `CHERRY_PICK_HEAD` and `REVERT_HEAD`.
+//! Those pseudo-references are normally absent, and deleting an absent reference
+//! takes the shared lock anyway.
+//!
+//! Recorded from a real commit rather than reasoned about, by a hook that logged
+//! its state alongside whether the common lock existed: the queue naming
+//! `refs/heads/main` was handed over with the lock **free**, and the only queue
+//! ever handed over with the lock **held** named `AUTO_MERGE` alone. So the
+//! transaction this guard exists to inspect never holds the shared lock, and the
+//! transaction that holds it can never contain anything this guard may refuse.
+//!
+//! That is why [`apply`] reads its own input before it reads Git. Resolving
+//! `HEAD` and the publication baseline costs up to five subprocesses, and for a
+//! queue naming no branch every one of them was spent inside the shared lock to
+//! reach a conclusion the queue already determined. A queue that names no
+//! `refs/heads/` reference is answered from the queue alone, launching nothing.
 
 use std::error::Error;
 use std::ffi::OsStr;
@@ -58,12 +81,30 @@ const OPERATIONAL_RECOVERY: &str = concat!(
     "commit with `git reset --hard HEAD`."
 );
 
+/// Refuse a queued update that would abandon published history on this branch.
+///
+/// The order of the checks is a contract, not a detail. Cheapest first, and no
+/// subprocess until the queue proves one is needed, because Git calls this while
+/// holding locks that reach outside this worktree. See the module header.
+///
+/// # Errors
+///
+/// Returns [`ReferenceTransactionError::ProtectedHistory`] for a refused update,
+/// a malformed queue, or a failure to read Git.
 pub fn apply(
     repository: &Path,
     state: &OsStr,
     input: &str,
 ) -> Result<(), ReferenceTransactionError> {
     if state != OsStr::new(PREPARED) {
+        return Ok(());
+    }
+
+    let updates = parse_updates(input)?;
+    if !updates
+        .iter()
+        .any(|update| update.reference.starts_with(LOCAL_PREFIX))
+    {
         return Ok(());
     }
 
@@ -74,7 +115,7 @@ pub fn apply(
         return Ok(());
     };
 
-    for update in parse_updates(input)? {
+    for update in updates {
         if update.reference != current_ref {
             continue;
         }
@@ -451,308 +492,4 @@ impl Error for ReferenceTransactionError {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use super::*;
-
-    /// A scratch repository whose reference updates can be made to fail the way
-    /// this guard fails them.
-    struct Fixture(PathBuf);
-
-    impl Fixture {
-        /// Three commits on `main`, with no hook installed yet so the history
-        /// itself is allowed to be built.
-        fn history(label: &str) -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "spice-xtask-refguard-{label}-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir(&root).expect("exclusive scratch root is created");
-            let fixture = Self(fs::canonicalize(&root).expect("scratch root canonicalizes"));
-
-            fixture.expect(&["init", "--quiet", "--initial-branch=main", "."]);
-            fixture.expect(&["config", "user.email", "lane@example.invalid"]);
-            fixture.expect(&["config", "user.name", "lane"]);
-            for subject in ["one", "two", "three"] {
-                fs::write(fixture.0.join("file.txt"), format!("{subject}\n"))
-                    .expect("tracked file is written");
-                fixture.expect(&["add", "file.txt"]);
-                fixture.expect(&["commit", "--quiet", "-m", subject]);
-            }
-            fixture
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-
-        fn expect(&self, arguments: &[&str]) -> String {
-            let output = git(&self.0, arguments).expect("git launches");
-            assert!(
-                output.status.success(),
-                "git {} failed: {}",
-                arguments.join(" "),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            String::from_utf8(output.stdout)
-                .expect("git output is UTF-8")
-                .trim()
-                .to_owned()
-        }
-
-        fn head(&self) -> String {
-            self.expect(&["rev-parse", "HEAD"])
-        }
-
-        /// Refuse the branch update the way the real guard refuses it, recording
-        /// what git handed the hook so the fixture reads the real transaction
-        /// rather than one it composed for itself.
-        ///
-        /// Only the queue naming the branch is refused. `git reset` queues
-        /// `ORIG_HEAD` first, and a hook that refuses that one too aborts the
-        /// reset before it ever writes the worktree, which is the state this
-        /// fixture exists to observe.
-        fn refuse_reference_updates(&self) {
-            let hooks = self.0.join("refusing-hooks");
-            fs::create_dir_all(&hooks).expect("hook directory is created");
-            let hook = hooks.join("reference-transaction");
-            fs::write(
-                &hook,
-                format!(
-                    concat!(
-                        "#!/usr/bin/env sh\n",
-                        "if [ \"$1\" = prepared ]; then\n",
-                        "\tqueue=$(cat)\n",
-                        "\tprintf '%s\\n' \"$queue\" >>{}\n",
-                        "\tcase \"$queue\" in *refs/heads/main*) exit 1 ;; esac\n",
-                        "fi\n",
-                        "exit 0\n"
-                    ),
-                    self.0.join("transaction").display()
-                ),
-            )
-            .expect("hook is written");
-            let mut permissions = fs::metadata(&hook).expect("hook metadata").permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(&hook, permissions).expect("hook is executable");
-            self.expect(&[
-                "config",
-                "core.hooksPath",
-                hooks.to_str().expect("hook path is UTF-8"),
-            ]);
-        }
-
-        /// Run a command the hook above will refuse, and read the damage from
-        /// the transaction git actually queued for the branch.
-        fn refused(&self, arguments: &[&str]) -> WorktreeDamage {
-            let before = self.head();
-            let output = git(&self.0, arguments).expect("git launches");
-            assert!(
-                !output.status.success(),
-                "git {} was not refused, so this fixture proves nothing",
-                arguments.join(" ")
-            );
-            assert_eq!(
-                self.head(),
-                before,
-                "a refused update must leave HEAD where it was"
-            );
-
-            let recorded =
-                fs::read_to_string(self.0.join("transaction")).expect("the hook recorded a queue");
-            let updates = parse_updates(&recorded).expect("the recorded queue parses");
-            let update = updates
-                .iter()
-                .rfind(|update| update.reference == "refs/heads/main")
-                .expect("the refused queue named the branch");
-            worktree_damage(self.path(), update).expect("damage is read")
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[test]
-    fn parser_ignores_blank_lines_and_preserves_each_update() {
-        let updates = parse_updates("old new refs/heads/main\n\nzero tip refs/tags/v1\n").unwrap();
-        assert_eq!(
-            updates,
-            [
-                RefUpdate {
-                    old: "old",
-                    new: "new",
-                    reference: "refs/heads/main",
-                },
-                RefUpdate {
-                    old: "zero",
-                    new: "tip",
-                    reference: "refs/tags/v1",
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn parser_names_the_first_malformed_line() {
-        let error = parse_updates("old new refs/heads/main\nmissing field\n").unwrap_err();
-        assert!(matches!(
-            error,
-            ReferenceTransactionError::MalformedInput { line: 2 }
-        ));
-    }
-
-    fn assert_operational_error_names_tree_and_recovery(error: ReferenceTransactionError) {
-        let message = error.to_string();
-        assert!(
-            message.contains("HEAD is not moved"),
-            "operational refusal must say the reference stays put: {message}"
-        );
-        assert!(
-            message.contains("index and worktree may already have changed"),
-            "operational refusal must name the uncertain tree state: {message}"
-        );
-        assert!(
-            message.contains("git reset --hard HEAD"),
-            "operational refusal must name the admitted rewind recovery: {message}"
-        );
-    }
-
-    #[test]
-    fn malformed_input_names_the_tree_risk_and_recovery() {
-        assert_operational_error_names_tree_and_recovery(
-            ReferenceTransactionError::MalformedInput { line: 2 },
-        );
-    }
-
-    #[test]
-    fn git_launch_failure_names_the_tree_risk_and_recovery() {
-        assert_operational_error_names_tree_and_recovery(ReferenceTransactionError::GitLaunch {
-            repository: PathBuf::from("/fixture/repository"),
-            arguments: vec!["status".to_owned()],
-            source: io::Error::new(io::ErrorKind::NotFound, "fixture git is absent"),
-        });
-    }
-
-    #[test]
-    fn non_utf8_output_names_the_tree_risk_and_recovery() {
-        assert_operational_error_names_tree_and_recovery(
-            ReferenceTransactionError::NonUtf8Output {
-                arguments: vec!["symbolic-ref".to_owned(), "HEAD".to_owned()],
-            },
-        );
-    }
-
-    fn refusal(damage: WorktreeDamage) -> String {
-        ReferenceTransactionError::ProtectedHistory {
-            reference: "refs/heads/main".to_owned(),
-            commits: "deadbee".to_owned(),
-            damage,
-        }
-        .to_string()
-    }
-
-    /// The guard cannot protect the tree, so a refusal that arrived after the
-    /// tree was written owes the reader the state it was left in and the way
-    /// out. All three halves are load-bearing text.
-    #[test]
-    fn a_rewritten_worktree_is_named_along_with_the_recovery() {
-        let message = refusal(WorktreeDamage::Rewritten);
-        assert!(
-            message.contains("HEAD was not moved"),
-            "refusal must say the reference stayed put: {message}"
-        );
-        assert!(
-            message.contains("index and worktree"),
-            "refusal must report that the rewind already wrote the tree: {message}"
-        );
-        assert!(
-            message.contains("git reset --hard HEAD"),
-            "refusal must name the recovery this guard admits: {message}"
-        );
-    }
-
-    /// The opposite refusal must not borrow the rewind's account. Telling an
-    /// operator whose files were never written that they were overwritten sends
-    /// them to a recovery that destroys the work this refusal left intact.
-    #[test]
-    fn an_untouched_worktree_is_never_reported_as_rewritten() {
-        let message = refusal(WorktreeDamage::Untouched);
-        assert!(
-            !message.contains("index and worktree"),
-            "refusal claimed a rewrite that did not happen: {message}"
-        );
-        assert!(
-            !message.contains("git reset --hard HEAD"),
-            "refusal offered a destructive recovery for undamaged files: {message}"
-        );
-        assert!(
-            message.contains("did not write the working tree"),
-            "refusal must say the files on disk were left alone: {message}"
-        );
-    }
-
-    #[test]
-    fn non_prepared_states_are_inert_before_input_or_repository_access() {
-        apply(
-            Path::new("repository-does-not-exist"),
-            OsStr::new("committed"),
-            "malformed",
-        )
-        .unwrap();
-    }
-
-    /// Read from a real refused rewind rather than from documentation: git
-    /// writes the worktree before it opens the transaction this hook can veto.
-    #[test]
-    fn a_refused_hard_rewind_reports_a_rewritten_worktree() {
-        let fixture = Fixture::history("hard");
-        fixture.refuse_reference_updates();
-
-        assert_eq!(
-            fixture.refused(&["reset", "--hard", "HEAD~2"]),
-            WorktreeDamage::Rewritten,
-            "a refused reset --hard had already written the worktree"
-        );
-    }
-
-    /// The amend is why the account has to be read rather than assumed. It
-    /// leaves index and worktree holding its own tree exactly as a hard rewind
-    /// does, so only the ancestor half of the discriminator separates them.
-    #[test]
-    fn a_refused_amend_reports_an_untouched_worktree() {
-        let fixture = Fixture::history("amend");
-        fs::write(fixture.path().join("file.txt"), "staged\n").expect("staged content is written");
-        fixture.expect(&["add", "file.txt"]);
-        fixture.refuse_reference_updates();
-
-        assert_eq!(
-            fixture.refused(&["commit", "--amend", "-m", "amended"]),
-            WorktreeDamage::Untouched,
-            "a refused amend never wrote the worktree"
-        );
-    }
-
-    /// Both of these move the branch backwards exactly as `--hard` does, so
-    /// they are what keeps the content half of the discriminator load-bearing.
-    #[test]
-    fn a_refused_soft_or_mixed_rewind_reports_an_untouched_worktree() {
-        for mode in ["--soft", "--mixed"] {
-            let fixture = Fixture::history("rewind");
-            fixture.refuse_reference_updates();
-
-            assert_eq!(
-                fixture.refused(&["reset", mode, "HEAD~2"]),
-                WorktreeDamage::Untouched,
-                "a refused reset {mode} left the files on disk alone"
-            );
-        }
-    }
-}
+mod tests;

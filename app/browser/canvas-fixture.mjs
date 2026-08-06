@@ -345,6 +345,20 @@ export function monitorPage(page) {
 //
 // Keying this on the transition it triggers, and reporting which of the two
 // cases a timeout hit, is BROWSER-1kKZDVGZ and BROWSER-1kKZDKpT respectively.
+/// Bound for a DOM transition the page has already been handed the input for.
+///
+/// Justified against a measured distribution rather than chosen to outlast an
+/// observed failure. `app/browser/offline-cycle.mjs` drives the smallest cycle
+/// that reproduces the reported flake -- start the resident, open the page,
+/// choose the view, stop the resident, wait for offline -- and 120 runs on a
+/// 12-core host at load average 13 to 16 put the offline flip at 2ms minimum,
+/// 4ms median, 19ms maximum and the companion fault event at 7ms minimum, 11ms
+/// median, 32ms maximum. Seventy of those runs were held to a 300ms bound and
+/// none failed. Two seconds is roughly a hundred times the slowest observation,
+/// so a timeout at this bound is a defect rather than a busy machine, and the
+/// earlier ten seconds bounded nothing that was ever slow.
+const TRANSITION_MS = 2_000;
+
 export async function chooseCanvasView(page, name) {
   const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
   if (!(await button.isVisible())) {
@@ -355,6 +369,17 @@ export async function chooseCanvasView(page, name) {
   if (await openMenu.count()) {
     await openMenu.locator("summary").click();
   }
+  // Returning here would return on dispatch, which is what made every later
+  // wait ambiguous: a selector wait that follows an unapplied switch is deaf
+  // rather than slow, and both spell the same bare TimeoutError. The two modes
+  // confirm differently because the mosaic replaces the whole command bar --
+  // `chrome.rs` returns `render_mosaic_command_bar` when `mosaic` is set, so
+  // the Agents pill it was chosen from no longer exists to carry the marker.
+  const applied =
+    name === "Agents"
+      ? page.locator(".mosaic-workspace")
+      : button.and(page.locator('[aria-current="page"]'));
+  await applied.waitFor({ timeout: TRANSITION_MS });
 }
 
 export async function stopResident(fixture, resident) {
@@ -586,16 +611,28 @@ export async function assertResidentRestart(fixture, page, previous) {
 /// and what the client and the resident looked like when it did, rather than
 /// killing the node process with a bare TimeoutError.
 export async function assertResidentLossObserved(page, resident) {
+  // Both waits below are gated on the same layout: `view.rs` renders the topbar
+  // carrying `.status` only outside the mosaic, and the analytics pane carrying
+  // `.event.fault` is the else branch of that same test. Waiting for the gate
+  // first means a wrong view fails saying the status never rendered, instead of
+  // spending the whole bound waiting for a class on an element that is not in
+  // the document and then blaming the connection for it.
+  await observedWait(
+    page,
+    "the status element is rendered to be waited on",
+    () => page.waitForSelector(".status", { timeout: TRANSITION_MS }),
+    { resident },
+  );
   await observedWait(
     page,
     "canvas reports offline after the resident stops",
-    () => page.waitForSelector(".status.offline", { timeout: 10_000 }),
+    () => page.waitForSelector(".status.offline", { timeout: TRANSITION_MS }),
     { resident },
   );
   await observedWait(
     page,
     "a fault event is recorded after the resident stops",
-    () => page.locator(".event.fault").waitFor({ timeout: 10_000 }),
+    () => page.locator(".event.fault").waitFor({ timeout: TRANSITION_MS }),
     { resident },
   );
 }
