@@ -8,6 +8,9 @@ use wire::{Digest, Domain};
 
 use super::AppBuildError;
 
+#[cfg(test)]
+mod modules;
+
 const SOURCE_FILES: [&str; 7] = [
     "Cargo.lock",
     "Cargo.toml",

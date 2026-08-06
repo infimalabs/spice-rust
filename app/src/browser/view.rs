@@ -98,7 +98,7 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
             }
             <main class="content">
                 if **render.mosaic {
-                    {composer::render_lineage(
+                    {watchband::render_lineage(
                         render.surface,
                         render.sender,
                         render.composer_drafts,
