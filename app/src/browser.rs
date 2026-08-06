@@ -31,6 +31,12 @@ mod view;
 use composer::{ComposerDrafts, LineageLife, LineageMode};
 use view::{CanvasRender, render_canvas};
 
+/// Source identity injected by `cargo xtask app` and verified before publish.
+const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY") {
+    Some(identity) => identity,
+    None => "unbound-development-build",
+};
+
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
 type SocketReader = futures_util::stream::SplitStream<WebSocket>;
@@ -1147,13 +1153,13 @@ fn state_from_textarea(state: UseStateHandle<String>) -> Callback<InputEvent> {
 
 #[wasm_bindgen(start)]
 pub fn start() {
-    yew::Renderer::<CanvasApp>::with_root(
-        web_sys::window()
-            .expect("browser window")
-            .document()
-            .expect("browser document")
-            .get_element_by_id("app")
-            .expect("canvas app root"),
-    )
-    .render();
+    let root = web_sys::window()
+        .expect("browser window")
+        .document()
+        .expect("browser document")
+        .get_element_by_id("app")
+        .expect("canvas app root");
+    root.set_attribute("data-app-source", APP_SOURCE_IDENTITY)
+        .expect("stamp canvas app source identity");
+    yew::Renderer::<CanvasApp>::with_root(root).render();
 }
