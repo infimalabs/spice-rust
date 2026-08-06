@@ -311,9 +311,8 @@ fn system_executor_overrides_machine_local_cargo_build_state() {
         entries.iter().all(|(key, _)| key != "CARGO_BUILD_RUSTC"),
         "the resolved RUSTC already outranks CARGO_BUILD_RUSTC"
     );
-    // Pinned to the resolved answer rather than left absent: absence would
-    // let the one child that reads this variable — `xtask app` — pick
-    // a build root of its own.
+    // Pinned to the resolved answer rather than left absent: absence would let
+    // the sole app-build child, `xtask app`, pick a build root of its own.
     assert_eq!(
         value("CARGO_TARGET_DIR"),
         fixture.root.join("target").as_os_str()

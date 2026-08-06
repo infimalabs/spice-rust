@@ -146,7 +146,8 @@ async function reply(fixture, args) {
 }
 
 async function configureFixture(fixture) {
-  await cp(join(root, "dist/stage-app"), join(fixture, "dist/stage-app"), { recursive: true });
+  const appStage = "dist/stage-app";
+  await cp(join(root, appStage), join(fixture, appStage), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
     "#!/bin/sh",

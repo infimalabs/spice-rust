@@ -827,7 +827,7 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
 ///
 /// The bytes name their own file so a route served from the wrong one is
 /// visible in the assertion.
-fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
+fn app_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
     let root = std::env::temp_dir().join(format!(
@@ -841,7 +841,7 @@ fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
 
 #[tokio::test(flavor = "current_thread")]
 async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
-    let (root, stage) = local_worktree();
+    let (root, stage) = app_worktree();
     let app = crate::AppSource::resolve(&root).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),

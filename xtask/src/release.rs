@@ -883,8 +883,8 @@ impl SystemExecutor {
         entries.extend([
             (OsString::from("RUSTC"), rustc.as_os_str().to_owned()),
             // Named rather than dropped, because one of the commands below is
-            // this same binary: `app-build` re-invokes `xtask app`, which
-            // resolves its own build root from this variable at its own rim. An
+            // this same binary: `app-build` re-invokes the sole `xtask app`
+            // path, which resolves its build root from this variable at its rim. An
             // absent value there is not a neutral default but a second answer —
             // the app rebuild would write under the workspace while everything
             // else wrote here, which is exactly the split a read-only workspace

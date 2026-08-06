@@ -17,7 +17,7 @@ static APP_ASSETS: [AppAsset; 4] = [
     AppAsset::new("/app_bg.wasm", "app_bg.wasm", "application/wasm"),
 ];
 
-/// The one browser app stage, built at [`APP_STAGE`] and served per worktree.
+/// The sole browser app generation store, built and served per worktree.
 pub const APP_STAGE: &str = "dist/stage-app";
 /// Atomic pointer to the active immutable lane-app generation.
 pub const APP_STAGE_CURRENT: &str = "current";

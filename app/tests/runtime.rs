@@ -480,7 +480,7 @@ fn stream_overflow_is_terminal_and_remains_distinct_in_chronology() {
     assert_eq!(runtime.events()[0].class(), "overflow");
 }
 
-/// The steering receipt quotes the directive key exactly as the resident set it.
+/// The one steering receipt shape quotes the key exactly as the resident set it.
 ///
 /// The key is a case-sensitive stamp drawn from a vowel-free mixed-case
 /// alphabet, and it is the handle an operator types back at the CLI to cancel

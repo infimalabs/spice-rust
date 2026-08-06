@@ -9,7 +9,7 @@
 use super::*;
 use crate::watchband::{self, Standing};
 
-/// Characters the ticker line is allowed.
+/// Characters the ticker's one current line is allowed.
 ///
 /// The ticker is one line of monospace across the full width, and a command
 /// echo runs far past that; the budget cuts it here rather than letting the

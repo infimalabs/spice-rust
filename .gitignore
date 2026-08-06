@@ -8,7 +8,7 @@
 /dist/stage/objects/
 /dist/stage/targets/
 
-# The one browser app stage. Every lane builds it natively with
-# `cargo xtask app`; the resident refuses to start without it.
+# The sole browser app generation store. Each lane publishes it with
+# `cargo xtask app`; no resident falls back when its current generation is absent.
 /dist/stage-app/
 /dist/.stage-app-build-*/

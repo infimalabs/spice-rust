@@ -113,7 +113,7 @@ impl Drop for Fixture {
     }
 }
 
-/// The ignore rule every fixture repository owes the stage [`Fixture`] installs.
+/// The ignore rule every fixture repository owes its generated app store.
 ///
 /// A resident refuses to start without that stage, so every fixture root holds
 /// one whether or not the case under test is about the app. It is built output

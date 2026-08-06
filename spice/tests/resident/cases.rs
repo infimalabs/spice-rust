@@ -1199,8 +1199,8 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
     );
 }
 
-/// The resident reads its own worktree for a lane-built app, and a stage
-/// that cannot serve the whole app stops it before the endpoint is published.
+/// The resident resolves exactly one lane-built generation from its worktree;
+/// an incomplete generation stops it before the endpoint is published.
 ///
 /// This is the half of the lane app loop that lives outside `canvas`: that
 /// the source is resolved at all, and against this worktree rather than some

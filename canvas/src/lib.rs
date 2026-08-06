@@ -1,4 +1,4 @@
-//! Loopback operator surface, derived reads, and causal thread walks.
+//! Loopback operator surface, atomic app generations, derived reads, and causal thread walks.
 
 #![forbid(unsafe_code)]
 

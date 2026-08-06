@@ -17,6 +17,7 @@ const SEED_COMMIT: &str = "a53ad58b1356a5f7abea7437975321850e04b217";
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 static BUILD_LANE_APP: Mutex<()> = Mutex::new(());
 
+/// A serialized, temporary source generation for real-binary demo invocations.
 struct SeededBuildLaneApp(Option<PathBuf>);
 
 impl SeededBuildLaneApp {

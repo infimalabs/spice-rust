@@ -18,6 +18,7 @@ fn main() -> ExitCode {
     let command = arguments.next();
 
     let mut output = io::stdout().lock();
+    // Dispatch only current spellings; removed command names have no alias arm.
     let result: Result<(), Box<dyn std::error::Error>> = match command.as_deref() {
         Some(value) if value == OsStr::new("verify") && arguments.len() == 0 => {
             xtask::verify(&mut output).map_err(Into::into)

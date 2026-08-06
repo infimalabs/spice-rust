@@ -679,9 +679,9 @@ async fn app(
     let asset = match state.app.served(uri.path()) {
         Ok(Some(asset)) => asset,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        // The source was whole when this generation started, so a read that
-        // fails now is the app stage being rebuilt or removed underneath the
-        // resident, which is a served answer nobody should cache.
+        // The generation was complete when admitted, so a read failure means
+        // immutable staged bytes moved underneath the resident. That is a
+        // served answer nobody should cache.
         Err(error) => {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,

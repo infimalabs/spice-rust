@@ -1,4 +1,4 @@
-//! Closed lane app fixture for process tests that start a resident.
+//! Closed atomic app-generation fixture for process tests that start a resident.
 
 use std::fs;
 use std::path::Path;

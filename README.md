@@ -23,10 +23,10 @@ cargo xtask app
 ```
 
 That resident serves the HTML, JavaScript, stylesheet, and WASM built in this
-worktree's ignored `dist/stage-app` generation store. `app` finalizes all
-four files away from the served path and atomically publishes one immutable
-generation, so rebuilding cannot mix a page's assets. The resident refuses to
-start when no complete generation is active. There is no separate command to
+worktree's ignored `dist/stage-app` generation store. `cargo xtask app`
+finalizes all four files away from the served path and atomically publishes one
+immutable generation, so rebuilding cannot mix a page's assets. The resident
+refuses to start when no complete generation is active. There is no separate command to
 open the app: the start above announces the exact URL on its standard error,
 and adding `--open` has the resident open the default browser too.
 

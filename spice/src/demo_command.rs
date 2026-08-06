@@ -268,7 +268,7 @@ fn finish_seed_prepared_root(
     environment(root.to_path_buf(), transcript, state, executable, automatic)
 }
 
-/// Copy the binary's build lane app into the disposable demo lane.
+/// Copy the binary's current immutable app generation into the demo lane.
 fn seed_lane_app(root: &Path, source: &canvas::AppSource) -> DemoResult<()> {
     let generation = source
         .current_generation()

@@ -14,7 +14,7 @@ use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
-fn app() -> canvas::AppSource {
+fn fixture_app() -> canvas::AppSource {
     static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     let root = ROOT.get_or_init(|| {
         let root = std::env::temp_dir().join(format!("spice-demo-unit-app-{}", std::process::id()));
@@ -43,7 +43,7 @@ fn seed_test_environment(root: Option<&Path>, executable: &Path) -> DemoResult<E
     require_utf8(executable, "current spice executable")?;
     let (root, automatic) = prepare_root(root)?;
     let result = born_repository(&root)
-        .and_then(|()| finish_seed_prepared_root(&root, executable, automatic, &app()));
+        .and_then(|()| finish_seed_prepared_root(&root, executable, automatic, &fixture_app()));
     result.map_err(|failure| preserve_failure(&root, executable, *failure).into())
 }
 
@@ -53,7 +53,7 @@ fn seed_test_prepared_root(
     automatic: bool,
 ) -> DemoResult<Environment> {
     born_repository(root)?;
-    finish_seed_prepared_root(root, executable, automatic, &app())
+    finish_seed_prepared_root(root, executable, automatic, &fixture_app())
 }
 
 struct Scratch(PathBuf);

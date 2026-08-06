@@ -178,9 +178,9 @@ cd "$CUTOVER_REPO"
 "$CUTOVER_BIN" --json board
 ```
 
-The Canvas web app is built natively into ignored `dist/stage-app`; one atomic
-pointer selects a complete immutable generation, and `up` serves only those
-lane-local assets. There is no separate opener command: the start already
+The Canvas web app is built natively into ignored `dist/stage-app`; its atomic
+`current` pointer selects a complete immutable generation, and `up` serves only
+those lane-local assets. There is no separate opener command: the start already
 running in terminal A announces the exact URL on its standard error:
 
 ```

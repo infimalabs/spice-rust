@@ -1,4 +1,4 @@
-//! Repository-local development commands.
+//! Repository-local build, verification, and release commands.
 
 use std::ffi::OsStr;
 use std::fmt;
