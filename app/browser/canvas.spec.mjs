@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { assertComposerShards, assertNoDraftPreview } from "./composer-shards.mjs";
@@ -470,8 +470,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   return {
     lane: seated[0].lane,
     quoteLane: seated[3].lane,
-    agentName: agentNames[0],
-    activityHeadline: messages[0],
+    primaryProse: `Canvas message reports CONTROL-1kKbC3j4 from ${basename(teamWorktrees[0])}`,
   };
 }
 
