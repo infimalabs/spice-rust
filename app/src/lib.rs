@@ -38,8 +38,8 @@ mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
-    BoardView, CanvasRuntime, FactRow, LaneView, RuntimeEvent, Stale, StreamDirective,
-    StreamTerminal, stale_reads,
+    BoardView, CanvasRuntime, FactRow, LaneRow, LaneStatus, LaneView, RuntimeEvent, Stale,
+    StreamDirective, StreamTerminal, stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

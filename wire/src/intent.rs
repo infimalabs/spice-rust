@@ -52,6 +52,13 @@ pub struct TaskAdd {
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
+    /// Caller-authored creation provenance, or the new task itself when absent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub origin: Option<Origin>,
     /// Non-default phase route, when the caller means one.
     #[serde(
         default,

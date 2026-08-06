@@ -5,7 +5,8 @@
 //! the envelope metadata its panes render and retains no kind-specific body.
 
 use wire::intent::{
-    BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, InboxAnswer, LaneAnswer,
+    BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, InboxAnswer,
+    LaneAnswer, LaneChangeAnswer,
 };
 use wire::{
     Accepted, Actor, CanonicalUuid, CommandKind, FactKind, Origin, Outcome, Packed, Response, Seq,
@@ -127,6 +128,67 @@ pub struct LaneRow {
     pub vendor: wire::Name,
     pub occupant: Option<CanonicalUuid>,
     pub disposition: String,
+    /// Whether a resumable session was ever declared for this seat.
+    ///
+    /// The session record itself is authority the canvas has no use for, so
+    /// only its presence crosses: it is the difference the predecessor draws
+    /// between a seat an agent has run in and one that has never been used.
+    pub bound: bool,
+}
+
+/// What a lane tile says about its agent, ranked the way the operator scans.
+///
+/// Ported from the predecessor 0.31.0 UI, `spice/serve/static/app.lanes.js`:
+/// `targetChoiceStatus` derives it, `targetChoiceStatusLabel` names it, and the
+/// `targetChoiceStatusValues` list is the rank. That list carries nine states
+/// where this wire can distinguish four — the six liveness gradations between
+/// `running` and `unstarted` are read there from an agent process this canvas
+/// never sees — so the ported ladder keeps the predecessor's order and its
+/// exact wording for the four it can answer, rather than inventing labels for
+/// states the resident does not report.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum LaneStatus {
+    /// Direction is queued for this lane; the operator is being waited on.
+    Queued,
+    /// An occupant is live in the seat.
+    Running,
+    /// The seat has a declared session but nobody in it.
+    Bound,
+    /// The seat has never been occupied.
+    Unbound,
+}
+
+impl LaneStatus {
+    /// The predecessor's exact wording for this state.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Queued => "steering queued",
+            Self::Running => "agent running",
+            Self::Bound => "agent bound",
+            Self::Unbound => "agent unbound",
+        }
+    }
+}
+
+impl LaneRow {
+    /// This lane's status, given how much direction is queued for it.
+    ///
+    /// Pending direction outranks liveness, exactly as the predecessor ranks
+    /// it: a lane holding unanswered steering is the one the operator has to
+    /// look at, whether or not anything is running in it.
+    #[must_use]
+    pub const fn status(&self, pending: usize) -> LaneStatus {
+        if pending > 0 {
+            LaneStatus::Queued
+        } else if self.occupant.is_some() {
+            LaneStatus::Running
+        } else if self.bound {
+            LaneStatus::Bound
+        } else {
+            LaneStatus::Unbound
+        }
+    }
 }
 
 impl From<&LaneAnswer> for LaneView {
@@ -144,6 +206,7 @@ impl From<&LaneAnswer> for LaneView {
                     vendor: lane.vendor.clone(),
                     occupant: lane.occupant,
                     disposition: lane.disposition.clone(),
+                    bound: lane.session.is_some(),
                 })
                 .collect(),
         }
@@ -570,6 +633,19 @@ impl CanvasRuntime {
         });
     }
 
+    /// Record the resident's authoritative result for one lane seating request.
+    pub fn apply_lane_change(&mut self, admitted: &Admitted<Response<LaneChangeAnswer>>) {
+        self.apply_response(admitted, |_runtime, answer| {
+            (
+                "Agent seated".to_owned(),
+                format!(
+                    "{} moved from {} to {}",
+                    answer.lane, answer.from, answer.to
+                ),
+            )
+        });
+    }
+
     pub fn apply_note<T>(&mut self, admitted: &Admitted<Response<T>>, task: &str) {
         self.apply_response(admitted, |_runtime, _answer| {
             (
@@ -591,7 +667,7 @@ impl CanvasRuntime {
     /// here on, so it is the detail rather than the opaque directive identity.
     pub fn apply_steer(
         &mut self,
-        admitted: &Admitted<Response<wire::intent::DirectiveAnswer>>,
+        admitted: &Admitted<Response<DirectiveAnswer>>,
         lane: CanonicalUuid,
     ) {
         self.apply_response(admitted, |_runtime, answer| {

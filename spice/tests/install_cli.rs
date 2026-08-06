@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -170,7 +170,7 @@ impl Fixture {
     }
 
     fn installed_binary(&self) -> PathBuf {
-        self.root.join(".spice/bin/spice")
+        self.root.join(".git/.spice-install/bin/spice")
     }
 
     fn record(&self) -> PathBuf {
@@ -373,6 +373,34 @@ fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
 }
 
 #[test]
+fn same_image_atomic_rewrite_still_plans_and_unapplies() {
+    let fixture = Fixture::new("same-image-rewrite");
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let digest = preview.digest().clone();
+    assert_eq!(
+        fixture
+            .invoke(&["install", &format!("--apply={digest}")])
+            .code,
+        Some(0)
+    );
+    let entry = fixture.root.join(".spice/hooks/entry.sh");
+    let replacement = fixture.root.join("replacement-entry");
+    fs::write(&replacement, fs::read(&entry).unwrap()).expect("write replacement entry hook");
+    fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755))
+        .expect("set replacement entry hook mode");
+    fs::rename(replacement, &entry).expect("atomically rewrite installed entry hook");
+
+    let replanned: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    assert_eq!(replanned.digest(), &digest);
+    let unapply = fixture.invoke(&["--json", "install", "--unapply"]);
+    let unapplied: InstallReceipt = reply_body(unapply);
+
+    assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
+    assert!(!entry.exists());
+    fixture.assert_state_unchanged();
+}
+
+#[test]
 fn drift_refuses_reversal_without_overwriting_the_changed_target() {
     let fixture = Fixture::new("drift");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
@@ -383,7 +411,7 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
             .code,
         Some(0)
     );
-    let entry = fixture.root.join(".spice/hooks/entry.sh");
+    let entry = fixture.root.join(".git/.spice-install/hooks/entry.sh");
     fs::write(&entry, b"operator drift\n").expect("drift installed entry hook");
 
     let refused = fixture.invoke(&["--json", "install", "--unapply"]);
@@ -626,8 +654,8 @@ fn unapply_directory_replacement_at_cleanup_preserves_both_trees() {
             .code,
         Some(0)
     );
-    let destination = fixture.root.join(".spice/bin");
-    let parked = fixture.root.join(".spice/bin.parked");
+    let destination = fixture.root.join(".git/.spice-install/bin");
+    let parked = fixture.root.join(".git/.spice-install/bin.parked");
     let paused = fixture.spawn_paused(
         &["--json", "install", "--unapply"],
         "cleanup",

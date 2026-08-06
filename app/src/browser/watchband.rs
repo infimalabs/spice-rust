@@ -40,7 +40,7 @@ struct Tile {
     life: String,
     vendor: String,
     occupant: Option<CanonicalUuid>,
-    disposition: String,
+    status: LaneStatus,
     pending: usize,
     headline: Option<String>,
     body: Option<String>,
@@ -60,7 +60,7 @@ impl Tile {
     fn hover(&self) -> String {
         let mut lines = vec![
             format!("{}, {}", self.worktree, self.life),
-            format!("{} pending, {}", self.pending, self.disposition),
+            format!("{} pending, {}", self.pending, self.status.label()),
         ];
         match &self.claim {
             Some((handle, title)) => {
@@ -161,7 +161,9 @@ fn render_tile(
             <span class="lane-tile-top">
                 <span class="lane-tile-name">{tile.worktree.clone()}</span>
                 <span class="lane-tile-head">{
-                    tile.headline.clone().unwrap_or_else(|| tile.disposition.clone())
+                    tile.headline
+                        .clone()
+                        .unwrap_or_else(|| tile.status.label().to_owned())
                 }</span>
             </span>
             <span class="lane-tile-body">{
@@ -189,8 +191,11 @@ fn render_tile(
 
 /// Join the lane roster, the steering inbox and the board into tiles.
 ///
-/// Lane order is the roster's, which is canonical, so a tile does not move
-/// under the operator's cursor when its pending count changes.
+/// Order is the predecessor's `compareTargetChoices`: status first, so the
+/// lanes waiting on the operator sit at the head of the strip, then the name,
+/// then the lane id so the order is total. The predecessor breaks its status
+/// tie on recency before the name; this wire carries no per-lane activity
+/// instant to break it with, which is a contract gap rather than a decision.
 fn tiles(surface: &UseStateHandle<SurfaceData>) -> Vec<Tile> {
     let Some(runtime) = (**surface).as_ref() else {
         return Vec::new();
@@ -200,7 +205,7 @@ fn tiles(surface: &UseStateHandle<SurfaceData>) -> Vec<Tile> {
     };
     let inbox = runtime.inbox();
     let board = runtime.board();
-    lanes
+    let mut tiles = lanes
         .lanes
         .iter()
         .map(|lane| {
@@ -228,14 +233,21 @@ fn tiles(surface: &UseStateHandle<SurfaceData>) -> Vec<Tile> {
                 life: lane.life.clone(),
                 vendor: lane.vendor.to_string(),
                 occupant: lane.occupant,
-                disposition: lane.disposition.clone(),
+                status: lane.status(pending.len()),
                 pending: pending.len(),
                 headline: latest.map(|directive| directive.key.clone()),
                 body: latest.map(|directive| directive.text.clone()),
                 claim,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    tiles.sort_by(|left, right| {
+        left.status
+            .cmp(&right.status)
+            .then_with(|| left.worktree.cmp(&right.worktree))
+            .then_with(|| left.lane.to_string().cmp(&right.lane.to_string()))
+    });
+    tiles
 }
 
 /// The residency the focused lane's directive must witness.

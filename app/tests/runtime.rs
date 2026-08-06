@@ -682,6 +682,37 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
     );
 }
 
+/// The steering receipt quotes the directive key exactly as the resident set it.
+///
+/// The key is a case-sensitive stamp drawn from a vowel-free mixed-case
+/// alphabet, and it is the handle an operator types back at the CLI to cancel
+/// or recover the directive they just sent. Folding its case would print a key
+/// that names no directive. Only the disposition is a word, and it is spelled
+/// by an exhaustive match rather than by rendering the variant, so a new
+/// retirement state must state its spelling instead of reaching the operator
+/// as a debug rendering.
+#[test]
+fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_disposition() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let reply = format!(
+        r#"{{"kind":"reply","cursor":41,"body":{{"directive":"{LANE}","key":"1kKQtLsP","disposition":"acked"}}}}"#
+    );
+    let bytes = format!(r#"{{"v":1,"id":"{REQUEST}","epoch":"{EPOCH}","outcome":{reply}}}"#);
+    let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
+        .admit_frame(bytes.as_bytes())
+        .expect("response is admitted");
+    runtime.apply_steer(&admitted, uuid(LANE));
+
+    let event = runtime
+        .events()
+        .first()
+        .expect("steering records one event");
+    assert_eq!(event.title(), format!("Steered lane {LANE}"));
+    assert_eq!(event.detail(), "key 1kKQtLsP acked");
+}
+
 #[test]
 fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
     let session = session(OPERATOR, EPOCH);

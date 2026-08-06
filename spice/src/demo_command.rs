@@ -534,6 +534,8 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
                 task: task.clone(),
                 uuid: task_uuid,
                 title: DEMO_TITLE.to_owned(),
+                description: None,
+                acceptance: Vec::new(),
                 project: DEMO_PROJECT.to_owned(),
                 tags: vec!["demo".to_owned()],
                 depends: Vec::new(),
@@ -552,6 +554,8 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
         handle: statement_task,
         uuid: task_uuid,
         title: DEMO_TITLE.to_owned(),
+        description: None,
+        acceptance: Vec::new(),
         project: DEMO_PROJECT.to_owned(),
         tags: vec!["demo".to_owned()],
         dependencies: Vec::new(),
@@ -854,7 +858,7 @@ fn start_resident(environment: &Environment, events: Sender<Event>) -> DemoResul
     std::thread::Builder::new()
         .name("spice-demo-resident".to_owned())
         .spawn(move || {
-            let outcome = crate::resident::up_from(&root);
+            let outcome = crate::resident::up_from(&root, crate::resident::EPHEMERAL_LOOPBACK);
             let _ = events.send(Event::Resident(outcome));
         })
         .map_err(|error| {
