@@ -11,6 +11,7 @@ import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
   assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
+  assertGenerationOnline,
   assertOfflineObserved,
   assertLineageLifeIsolation,
   assertResidentLossObserved,
@@ -30,6 +31,7 @@ import {
   seedAuthority,
   startResident,
   stopResident,
+  RECONNECT_MS,
 } from "./canvas-fixture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1326,8 +1328,7 @@ async function assertSameGenerationResume(
   const advanced = await journalExtent(fixture);
   assert.ok(advanced.facts > beforeExtent.facts, "offline command advances resident authority");
 
-  await page.waitForSelector(".status.online", { timeout: 15_000 });
-  await page.waitForFunction((expected) => document.querySelector(".status-copy")?.textContent?.includes(expected), epoch);
+  await assertGenerationOnline(page, epoch, "the socket is reopened", RECONNECT_MS);
   monitor.expectNetworkInterruption(false);
   await assertPackedHistory(page, advanced);
   const after = await page.locator('[data-pane="commands"] .event strong').allTextContents();

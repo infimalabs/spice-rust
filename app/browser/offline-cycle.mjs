@@ -1,4 +1,5 @@
-/// Repeat the smallest cycle that reproduces the unobserved offline flip.
+/// Repeat the smallest cycle that reproduces the unobserved offline flip, and
+/// time every status transition that cycle passes through on the way.
 ///
 /// The canvas suite is one script whose full run is multi-minute work, so
 /// repeating it cannot produce a distribution inside the time budget and a
@@ -7,6 +8,16 @@
 /// the resident, wait for offline -- so that cycle is what this harness drives,
 /// from the same fixture module the suite uses, so a pass rate here describes
 /// the suite's wait rather than a re-implementation of it.
+///
+/// The suite waits on three distinct transitions and they are not one thing
+/// measured three times. A cold connect follows a navigation that has already
+/// reached `networkidle`, so the page only has to finish its handshake. A live
+/// reconnect follows the page closing its own socket while the resident keeps
+/// serving, so the client's retry schedule governs it and nothing the page did
+/// can shorten it. The offline flip follows a close the page already holds. One
+/// bound quoted across all three would be justified by whichever happened to be
+/// measured, so each is timed separately here and reported as its own
+/// distribution.
 ///
 /// Two things are recorded per iteration and both are load-bearing. A failure
 /// carries the instrument's own report, whose shape names the cause: `rendered`
@@ -89,7 +100,30 @@ const iterations = numericOption("--iterations", 20);
 const bound = numericOption("--bound", 10_000);
 const view = viewOption("--view", "Chronology");
 
-/// Run the cycle once and report what the wait saw.
+/// Time one transition, carrying the instrument's view out when it never lands.
+///
+/// Every measured wait goes through here, so a timeout names the transition that
+/// went unobserved rather than the selector that expired, and so no number in
+/// the report can be quoted against a transition it was not taken from.
+async function timed(page, resident, transition, run) {
+  const started = Date.now();
+  try {
+    await run();
+    return Date.now() - started;
+  } catch (error) {
+    throw Object.assign(new Error(`${transition} was never observed`), {
+      report: {
+        transition,
+        elapsed: Date.now() - started,
+        connection: await describeConnection(page),
+        resident: await describeResident(resident),
+        error: String(error).split("\n")[0],
+      },
+    });
+  }
+}
+
+/// Run the cycle once and report what each wait saw.
 ///
 /// The resident is stopped inside the measured region because that is the event
 /// the page must observe; the elapsed time is taken from the stop returning, so
@@ -112,24 +146,38 @@ async function cycle(fixture, browser, seed) {
   try {
     await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, view);
-    await stopResident(fixture, resident);
-    const started = Date.now();
     try {
-      await page.waitForSelector(".status.offline", { timeout: bound });
-      const elapsed = Date.now() - started;
+      const connect = await timed(page, resident, "cold connect reports online", () =>
+        page.waitForSelector(".status.online", { timeout: bound }),
+      );
+      await page.evaluate(() => {
+        const socket = window.__canvasSockets.at(-1);
+        if (!socket) throw new Error("canvas WebSocket was not captured");
+        socket.close(4000, "cycle reconnect");
+      });
+      // The reconnect is timed from offline being on screen rather than from the
+      // close, because that is where the suite's wait arms: it asserts the
+      // offline copy first and only then waits to come back. Timing from the
+      // close would charge this number for a flip the suite waits out under its
+      // own bound, and would quote a reconnect bound nobody's wait experiences.
+      await timed(page, resident, "the socket closing reports offline", () =>
+        page.waitForSelector(".status.offline", { timeout: bound }),
+      );
+      const reconnect = await timed(page, resident, "live reconnect reports online", () =>
+        page.waitForSelector(".status.online", { timeout: bound }),
+      );
+      await stopResident(fixture, resident);
+      const started = Date.now();
+      const elapsed = await timed(page, resident, "the resident stopping reports offline", () =>
+        page.waitForSelector(".status.offline", { timeout: bound }),
+      );
       // The companion wait shares the view gate and the close that drives it,
       // so it is measured here too rather than inheriting a bound justified
       // only against the status flip.
       await page.locator(".event.fault").waitFor({ timeout: bound });
-      return { passed: true, elapsed, fault: Date.now() - started };
+      return { passed: true, connect, reconnect, elapsed, fault: Date.now() - started };
     } catch (error) {
-      return {
-        passed: false,
-        elapsed: Date.now() - started,
-        connection: await describeConnection(page),
-        resident: await describeResident(resident),
-        error: String(error).split("\n")[0],
-      };
+      return { passed: false, ...(error.report ?? { error: String(error).split("\n")[0] }) };
     }
   } finally {
     await context.close();
@@ -154,8 +202,8 @@ try {
     const result = await cycle(fixture, browser, index === 0);
     results.push(result);
     const detail = result.passed
-      ? `passed in ${result.elapsed}ms`
-      : `FAILED after ${result.elapsed}ms connection=${JSON.stringify(result.connection)} resident=${JSON.stringify(result.resident)}`;
+      ? `connect ${result.connect}ms reconnect ${result.reconnect}ms offline ${result.elapsed}ms`
+      : `FAILED on ${result.transition ?? "an unnamed step"} after ${result.elapsed}ms connection=${JSON.stringify(result.connection)} resident=${JSON.stringify(result.resident)}`;
     process.stdout.write(`cycle ${index + 1}/${iterations}: ${detail}\n`);
   }
 } finally {
@@ -173,6 +221,8 @@ process.stdout.write(
   [
     "",
     `pass rate: ${passed.length}/${results.length} at bound ${bound}ms in the ${view} view`,
+    distribution("observed cold connect", "connect"),
+    distribution("observed live reconnect", "reconnect"),
     distribution("observed offline flip", "elapsed"),
     distribution("observed fault event", "fault"),
     "",
