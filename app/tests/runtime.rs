@@ -920,6 +920,40 @@ fn one_lineage_groups_multiple_steerable_worktrees_without_losing_member_order()
     assert_eq!(lanes[1].members[0].lane, uuid(THIRD_LANE));
 }
 
+#[test]
+fn every_distinct_lineage_forms_one_console_even_when_members_have_no_name() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let bytes = lane_response(&[
+        (LANE, LANE, None, false),
+        (SECOND_LANE, SECOND_LANE, None, false),
+        (THIRD_LANE, THIRD_LANE, None, false),
+    ]);
+    let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(bytes.as_bytes())
+        .expect("distinct lineage answer is admitted");
+
+    runtime.apply_lanes(&admitted);
+
+    let lineages = &runtime.lanes().expect("the roster is retained").lanes;
+    assert_eq!(
+        lineages.len(),
+        3,
+        "distinct lineage keys never share a console"
+    );
+    assert_eq!(
+        lineages
+            .iter()
+            .map(|lineage| lineage.lane)
+            .collect::<Vec<_>>(),
+        vec![uuid(LANE), uuid(SECOND_LANE), uuid(THIRD_LANE)]
+    );
+    assert!(lineages.iter().all(|lineage| {
+        lineage.members.len() == 1 && lineage.host().is_some_and(|member| member.name.is_none())
+    }));
+}
+
 /// The one steering receipt shape quotes the key exactly as the resident set it.
 ///
 /// The key is a case-sensitive stamp drawn from a vowel-free mixed-case
