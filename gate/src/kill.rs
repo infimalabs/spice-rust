@@ -816,7 +816,12 @@ fn make_mutation_targets_writable(root: &Path, targets: &[String]) -> io::Result
 
             permissions.set_mode(permissions.mode() | 0o200);
         }
+        // The lint's hazard is a unix one: clearing the readonly flag there
+        // opens the write bit to the world, which is why the unix arm above
+        // sets an explicit mode instead. This arm is the one unix never
+        // compiles, and off unix the flag is all there is to clear.
         #[cfg(not(target_family = "unix"))]
+        #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
         fs::set_permissions(&path, permissions)?;
     }

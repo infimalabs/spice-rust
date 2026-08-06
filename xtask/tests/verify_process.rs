@@ -67,7 +67,7 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         [
             "fmt --all -- --check",
             "clippy --locked --workspace --all-targets -- -D warnings",
-            "check --locked --workspace --target wasm32-unknown-unknown",
+            "clippy --locked --workspace --target wasm32-unknown-unknown -- -D warnings",
             "test --locked --workspace --all-targets",
             "test --locked --workspace --doc",
         ]

@@ -188,23 +188,38 @@ impl CancellationToken {
             return;
         }
 
-        #[cfg(unix)]
-        {
-            let wakers = self
-                .0
-                .wakers
-                .lock()
-                .map(|mut wakers| {
-                    std::mem::take(&mut *wakers)
-                        .into_values()
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            for waker in wakers {
-                waker();
-            }
+        self.wake_registered();
+    }
+
+    /// Takes the wake list and calls every waker in it exactly once.
+    ///
+    /// Only the first caller of [`Self::cancel`] gets here, and it takes the
+    /// map, so a waker registered before cancellation is called once and a
+    /// waker registered after it never lands in the map at all.
+    #[cfg(unix)]
+    fn wake_registered(&self) {
+        let wakers = self
+            .0
+            .wakers
+            .lock()
+            .map(|mut wakers| {
+                std::mem::take(&mut *wakers)
+                    .into_values()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for waker in wakers {
+            waker();
         }
     }
+
+    /// Off unix nothing registers a waker, so cancellation is the flag alone.
+    ///
+    /// This exists so `cancel` keeps a statement after its early return on
+    /// every target. Inlining the wake under `#[cfg(unix)]` left the return as
+    /// the whole body elsewhere, which is a lint the browser build now runs.
+    #[cfg(not(unix))]
+    fn wake_registered(&self) {}
 
     pub fn is_cancelled(&self) -> bool {
         self.0.cancelled.load(Ordering::Acquire)

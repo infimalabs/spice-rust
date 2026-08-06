@@ -52,6 +52,13 @@ pub fn reference_transaction(
 
 /// Every verification action, in the one order a run performs them.
 ///
+/// Two arms lint, because one cannot see the other's code. The native arm
+/// compiles `cfg(not(target_arch = "wasm32"))` and leaves the browser UI out;
+/// the cross-target arm is the only thing in the run that compiles the browser
+/// UI at all, so it lints rather than merely checks. Neither is `--all-targets`
+/// on the cross-target side: a wasm test binary needs a runner this repository
+/// does not have, and the native arm already lints every test.
+///
 /// `gate/src/battery/manifest.toml` names all 25 retired standard policy checks
 /// and binds each to one compiled Rust arm; its one additional C# arm is marked
 /// native by carrying no retired-step name. The workspace tests exercise that
@@ -77,8 +84,17 @@ const VERIFY_ACTIONS: [Action; 7] = [
         ],
     )),
     Action::Command(Step::cargo(
-        "cargo check --locked --workspace --target wasm32-unknown-unknown",
-        &["check", "--locked", "--workspace", "--target", WASM_TARGET],
+        "cargo clippy --locked --workspace --target wasm32-unknown-unknown -- -D warnings",
+        &[
+            "clippy",
+            "--locked",
+            "--workspace",
+            "--target",
+            WASM_TARGET,
+            "--",
+            "-D",
+            "warnings",
+        ],
     )),
     Action::Command(Step::cargo(
         "cargo test --locked --workspace --all-targets",
@@ -372,13 +388,16 @@ mod tests {
                 ],
             )),
             Action::Command(Step::cargo(
-                "cargo check --locked --workspace --target wasm32-unknown-unknown",
+                "cargo clippy --locked --workspace --target wasm32-unknown-unknown -- -D warnings",
                 &[
-                    "check",
+                    "clippy",
                     "--locked",
                     "--workspace",
                     "--target",
                     "wasm32-unknown-unknown",
+                    "--",
+                    "-D",
+                    "warnings",
                 ],
             )),
             Action::Command(Step::cargo(
@@ -444,7 +463,16 @@ mod tests {
 
         assert_eq!(
             step.arguments,
-            ["check", "--locked", "--workspace", "--target", WASM_TARGET],
+            [
+                "clippy",
+                "--locked",
+                "--workspace",
+                "--target",
+                WASM_TARGET,
+                "--",
+                "-D",
+                "warnings",
+            ],
         );
         assert!(
             step.label.contains(WASM_TARGET),

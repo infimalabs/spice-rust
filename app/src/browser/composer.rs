@@ -238,13 +238,15 @@ pub(super) fn render_lineage(
                         runtime,
                         &lanes.lanes,
                         &standings,
-                        lanes.epoch,
-                        can_send,
-                        sender,
-                        drafts,
-                        mode,
-                        life,
                         controls,
+                        &ComposeContext {
+                            epoch: lanes.epoch,
+                            can_send,
+                            sender,
+                            drafts,
+                            mode,
+                            life,
+                        },
                     ),
                     LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => html! {
                         <>
@@ -320,23 +322,35 @@ fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
     watchband::badge(count)
 }
 
+/// What the compose pane knows that is the same for every lane inside it.
+///
+/// These six are the team's identity and the handles a card writes through.
+/// They travelled as six separate parameters down two levels, which is why
+/// both levels were over the argument limit; per-lane facts stay parameters,
+/// because those are the ones that differ card to card.
+struct ComposeContext<'a> {
+    epoch: CanonicalUuid,
+    can_send: bool,
+    sender: &'a SenderHandle,
+    drafts: &'a UseReducerHandle<ComposerDrafts>,
+    mode: &'a UseStateHandle<LineageMode>,
+    life: &'a UseStateHandle<LineageLife>,
+}
+
 fn render_compose(
     surface: &SurfaceData,
     runtime: &CanvasRuntime,
     lanes: &[crate::runtime::LaneRow],
     standings: &[Standing],
-    epoch: CanonicalUuid,
-    can_send: bool,
-    sender: &SenderHandle,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
-    life: &UseStateHandle<LineageLife>,
     controls: &view::AgentControls,
+    context: &ComposeContext<'_>,
 ) -> Html {
     if lanes.is_empty() {
         return empty("No agents are assigned. Open Info to add one.");
     }
-    let submit = submit_lineage_callback(lanes, epoch, sender.clone(), drafts.clone());
+    let drafts = context.drafts;
+    let submit =
+        submit_lineage_callback(lanes, context.epoch, context.sender.clone(), drafts.clone());
     let ready = lanes.iter().any(|lane| {
         lane.occupant.is_some()
             && drafts
@@ -352,20 +366,10 @@ fn render_compose(
                             .inbox()
                             .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == lane.lane))
                             .map_or(0, |row| row.pending.len());
-                        render_agent_composer(
-                            lane,
-                            standing,
-                            epoch,
-                            pending,
-                            can_send,
-                            sender,
-                            drafts,
-                            submit.clone(),
-                            mode,
-                        )
+                        render_agent_composer(lane, standing, pending, submit.clone(), context)
                     })}
                 </div>
-                {render_lineage_controls(life, ready)}
+                {render_lineage_controls(context.life, ready)}
             </form>
             {view::chrome::render_ticker(surface)}
             {render_activity(runtime, lanes, drafts, controls)}
@@ -505,19 +509,16 @@ fn render_agent_details(
 fn render_agent_composer(
     lane: &crate::runtime::LaneRow,
     standing: &Standing,
-    epoch: CanonicalUuid,
     pending: usize,
-    can_send: bool,
-    sender: &SenderHandle,
-    drafts: &UseReducerHandle<ComposerDrafts>,
     team_submit: Callback<SubmitEvent>,
-    mode: &UseStateHandle<LineageMode>,
+    context: &ComposeContext<'_>,
 ) -> Html {
+    let drafts = context.drafts;
     let lane_id = lane.lane;
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let occupant = lane.occupant;
-    let send_enabled = can_send && occupant.is_some();
+    let send_enabled = context.can_send && occupant.is_some();
     let markdown = compose_markdown(&draft);
     let oninput = update_body(lane_key.clone(), drafts.clone());
     let onkeydown = keyboard_submit(team_submit.clone());
@@ -531,9 +532,9 @@ fn render_agent_composer(
     let ondrop = drop_on_lane(
         lane_id,
         occupant,
-        epoch,
+        context.epoch,
         lane_key.clone(),
-        sender.clone(),
+        context.sender.clone(),
         drafts.clone(),
     );
     let input_id = format!("mosaic-images-{lane_id}");
@@ -543,7 +544,7 @@ fn render_agent_composer(
         .as_deref()
         .or(standing.handle.as_deref())
         .unwrap_or(&standing.disposition);
-    let open = mode.clone();
+    let open = context.mode.clone();
     html! {
         <section
             class={classes!("team-agent", (!send_enabled).then_some("team-agent--vacant"))}
@@ -823,10 +824,21 @@ fn render_quote_bands(
                         body: input.value(),
                     });
                 });
+                // The band names the quoted author's own words. Their message
+                // often opens on material they were themselves quoting, and the
+                // first line of that is a run of angle brackets belonging to
+                // someone else, which tells the reader nothing about what this
+                // card said. The whole quote stays reachable on the title.
+                let shown = crate::composer_markdown::preview(&quote.quote);
+                let shown = if shown.is_empty() {
+                    "quoted message".to_owned()
+                } else {
+                    shown
+                };
                 html! {
-                    <div class="composer-quote-band">
+                    <div class="composer-quote-band" title={quote.quote.clone()}>
                         <header>
-                            <span>{quote.quote.lines().next().unwrap_or("quoted message")}</span>
+                            <span>{shown}</span>
                             <button
                                 type="button"
                                 aria-label="Remove quoted composer"
@@ -930,7 +942,7 @@ fn drop_on_lane(
         let Some(occupant) = occupant else {
             return;
         };
-        let message = markdown_block_quote(&text);
+        let message = crate::composer_markdown::block_quote(&text);
         if message.is_empty() {
             return;
         }
@@ -1022,7 +1034,7 @@ fn compose_markdown(draft: &ComposerDraft) -> String {
         parts.push(body.to_owned());
     }
     parts.extend(draft.quotes.iter().filter_map(|draft| {
-        let quote = markdown_block_quote(&draft.quote);
+        let quote = crate::composer_markdown::block_quote(&draft.quote);
         let body = draft.body.trim();
         let part = [quote.as_str(), body]
             .into_iter()
@@ -1039,17 +1051,6 @@ fn compose_markdown(draft: &ComposerDraft) -> String {
         format!("![{name}]({})", attachment.data_url)
     }));
     parts.join("\n\n")
-}
-
-fn markdown_block_quote(raw: &str) -> String {
-    raw.replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .lines()
-        .map(|line| format!("> {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_owned()
 }
 
 fn render_markdown(markdown: &str) -> Html {

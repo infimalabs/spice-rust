@@ -135,13 +135,18 @@ impl Destination {
             return Err(Error::Refused(Refusal::SourceIsNotRegularFile { source }));
         }
 
-        let file = OpenOptions::new()
-            .write(true)
-            .open(&source)
-            .map_err(|error| Error::io(Operation::OpenSource, &source, error))?;
-        file.sync_all()
-            .map_err(|error| Error::io(Operation::SyncFile, &source, error))?;
-        drop(file);
+        // The handle closes where this block ends, which is before the rename
+        // on every path out. A scope says that once; a `drop` call has to be
+        // repeated on each exit, and reads as a no-op on targets whose `File`
+        // carries no `Drop` at all.
+        {
+            let file = OpenOptions::new()
+                .write(true)
+                .open(&source)
+                .map_err(|error| Error::io(Operation::OpenSource, &source, error))?;
+            file.sync_all()
+                .map_err(|error| Error::io(Operation::SyncFile, &source, error))?;
+        }
 
         fs::rename(&source, &self.path)
             .map_err(|error| Error::io(Operation::Replace, &source, error))?;
@@ -177,16 +182,20 @@ impl StagedWrite {
             .as_ref()
             .expect("a staged write always has a temporary path")
             .clone();
-        let file = self
-            .file
-            .take()
-            .expect("a staged write always has an open file");
-
-        if let Err(source) = file.sync_all() {
-            drop(file);
+        // The handle closes where this block ends, which is ahead of both exits
+        // below: the failure path hands `self` to `fail`, and the success path
+        // renames over the destination. Neither may run while the process still
+        // holds the staged bytes open.
+        let synced = {
+            let file = self
+                .file
+                .take()
+                .expect("a staged write always has an open file");
+            file.sync_all()
+        };
+        if let Err(source) = synced {
             return Err(self.fail(Operation::SyncFile, source));
         }
-        drop(file);
 
         if let Err(source) = fs::rename(&temporary, &self.destination.path) {
             return Err(self.fail(Operation::Replace, source));

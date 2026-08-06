@@ -187,15 +187,18 @@ impl Tape {
     /// visible under the final name.
     fn publish(&self, destination: &Path, bytes: &[u8]) -> Result<(), Error> {
         let staged = self.root.join(temporary_name());
-        let mut file = create_private(&staged)
-            .map_err(|error| Error::io(Operation::StagePublication, &staged, error))?;
-
-        if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-            drop(file);
+        // The handle closes where this block ends, which is ahead of both the
+        // unlink below and the rename [`atomic`] performs: neither may run
+        // while this process still holds the staged bytes open.
+        let written = {
+            let mut file = create_private(&staged)
+                .map_err(|error| Error::io(Operation::StagePublication, &staged, error))?;
+            file.write_all(bytes).and_then(|()| file.sync_all())
+        };
+        if let Err(error) = written {
             let _ = fs::remove_file(&staged);
             return Err(Error::io(Operation::StagePublication, staged, error));
         }
-        drop(file);
 
         let target = atomic::Destination::new(destination)
             .map_err(|error| Error::Publish(Box::new(error)))?;
