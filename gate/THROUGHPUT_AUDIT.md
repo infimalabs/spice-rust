@@ -1,0 +1,165 @@
+# Gate throughput audit
+
+Task: `THROUGH-1kKR1m2q`
+
+This is an evidence report and a removal/deferral proposal. It changes no gate.
+The governing operator direction is steering `1kKR1gmK`: focus on speed and
+throughput now, identify overzealous checks, and harden and polish after cutover.
+The later load warning `1kKRGGHk` specifically called out repetitive work in
+high-volume hooks.
+
+## Measurement method
+
+Measurements were taken on 2026-08-06 at repository commit `44f505a`, on an
+Apple M4 Pro running arm64 macOS 26.5.2. `/usr/bin/time -p` measured the seven
+canonical `cargo xtask verify` actions. Temporary `Instant` probes measured the
+27 compiled battery arms and their fused acquisition seams; the probes were
+then removed and the clean battery was repeated. The measured staged index was
+identical to `HEAD`, so changed-path scanners show their clean no-op floor.
+Cargo caches were warm except where the named command required a different
+target or test artifact.
+
+The battery eagerly acquires evidence by family. A row timer therefore cannot
+honestly own all of its setup. The tables report direct arm time, while these
+shared observations remain separate:
+
+| Shared battery work | Wall time |
+| --- | ---: |
+| Materialize staged index | 694.743 ms |
+| Load tracked contract | 9.366 ms |
+| Core capture total | 884.724 ms |
+| Core direct rows within that total | 52.986 ms |
+| Core shared walk, digest, and baselines | 831.738 ms |
+| Metrics capture total | 8.252 s |
+| Toolchain family total | 61.861 s |
+| Hygiene family total | 1.938 s |
+| End-to-end battery, instrumented | 77.79 s |
+| End-to-end battery, probes removed | **78.77 s** |
+
+The direct family totals account for about 73.65 seconds. Roughly 4.14 seconds
+remain in orchestration, validation, and serialization. The emitted report was
+approximately 23 MB in this run, so success-path report construction and output
+are themselves material hook work.
+
+## Verify battery
+
+“No catch found” means SPICE transcript forensics found no instance in this
+port where the check stopped a defect. It does not claim the check could never
+find one.
+
+| Verify action | Measured wall | Defect actually caught in this port | Proposal for the speed-first cutover |
+| --- | ---: | --- | --- |
+| `cargo fmt --all -- --check` | 1.18 s | No catch found; formatting drift only | Remove from blocking verify and leave to editor/after-cutover polish. |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 12.43 s | A shared readiness fixture became dead code in suites that did not import it; strict lint stopped it | Keep in verify, not pre-commit. This is a demonstrated compile/lint catch. |
+| `cargo check --locked --workspace --target wasm32-unknown-unknown` | 10.29 s | No distinct catch found. The observed WASM refusal came from the selected-tree canvas arm while this standalone check passed | Defer this duplicate class until after cutover unless it becomes the sole WASM check. |
+| `cargo test --locked --workspace --all-targets` | **232.13 s to first failure** | On this exact audit run, `wire/tests/environment_vocabulary.rs` caught `SPICE_APP_SOURCE_IDENTITY` being removed as foreign even though Doctor owns it | Keep as the high-value integration battery, but run outside commit hooks. Shard or target by affected closure for feedback speed. |
+| `cargo test --locked --workspace --doc` | 3.42 s | No catch found | Defer to post-cutover or scheduled CI. |
+| Canonical Rust gate battery | **78.77 s** | See all 27 rows below | Replace in pre-commit with a deliberately small selected battery. Run retained expensive arms in verify/CI. |
+| Contract landing inspection | 5.839 ms | No catch found; measured current report admitted all registered dispatch | Defer under the no-catch rule, although its savings are negligible and it is the cheapest check here. |
+
+The workspace test command stopped at its first failure, so 232.13 seconds is a
+lower bound rather than a complete-suite time. Measuring the later actions
+independently gives a lower-bound full verify cost of about **338.22 seconds**.
+A real `cargo xtask verify` on this snapshot stops after about 256.03 seconds at
+the integration failure and never reaches doc tests, the battery, or landing.
+
+## Pre-commit battery: all 27 arms
+
+Core rows share 831.738 ms of eager family setup. Metrics rows share 31.374 ms.
+Toolchain rows share 0.181 ms. Hygiene rows share 579.068 ms. Those values are
+not repeated in each row and must be added once per retained family, not once
+per arm.
+
+| Arm | Direct wall | Defect actually caught in this port | Proposal |
+| --- | ---: | --- | --- |
+| `merge-integrity` | 8.567 ms | No catch found | Defer to post-cutover/landing validation. |
+| `plan-phase` | 0.001 ms | No catch found | Remove from blocking hook. |
+| `repo-shape` | 0.232 ms | No catch found | Defer to post-cutover. |
+| `staging` | 20.780 ms | No catch found for partial staging | Defer to post-cutover. |
+| `repo-docs` | 8.898 ms | No defect catch found; only bound-policy work was observed | Defer bound enforcement to post-cutover. |
+| `config-key-validity` | 0.114 ms | No catch found | Defer; typed configuration tests already exercise this class. |
+| `config-false-disable` | 12.643 ms | No catch found | Defer to post-cutover. |
+| `config-tracked-trust` | 1.751 ms | No catch found | Defer to post-cutover. |
+| `formatters` | 1.980 s | No catch found; duplicates top-level formatting | Remove from pre-commit. |
+| `local-paths` | 0.009 ms | No catch found; clean changed-path floor | Defer to post-cutover. |
+| `taste` | 0.002 ms | No catch found; clean changed-path floor | Defer to post-cutover. |
+| `rust-typecheck` | 22.662 s | No distinct catch found; overlaps workspace Clippy/check | Remove from pre-commit. |
+| `canvas-web-typecheck` | **35.773 s** | Caught a selected-tree native WASM check exiting 101 while standalone checks passed | Retain the class in verify/CI, but remove it from every commit. |
+| `javascript-unused` | 65.377 ms | No catch found | Defer to post-cutover. |
+| `csharp-unused-candidates` | 4.868 ms | No C# input; no catch found | Remove until C# exists in the port. |
+| `python-typecheck` | 0.004 ms | No Python input; no catch found | Remove until Python exists in the port. |
+| `env-policy` | 0.006 ms | Caught a regression where three `env-policy: allow` markers stopped suppressing their intended accesses | Keep as the one demonstrated cheap changed-path scanner. Re-measure with an applicable staged path. |
+| `env-name-ledger` | 1.375 s | Caught unaccounted/stale vocabulary, but also blocked every lane on `SPICE_123`, a task-handle negative fixture mistaken for an env read | Move out of pre-commit until its jurisdiction and false-positive policy are repaired. Run in verify/CI meanwhile. |
+| `file-shape` | 196.425 ms | Caught a new bound breach and caused work to split files; no functional defect was demonstrated | Defer to post-cutover. It is a structure preference with cross-lane coupling. |
+| `complexity` | **3.544 s** | Caught an 80-line test routine, but also mis-measured a bodyless `extern "C"` declaration through EOF | Defer to post-cutover. The observed catches were shape debt, not behavior defects. |
+| `magic-numbers` | 1.137 s | No catch found | Defer to post-cutover. |
+| `markdown-links` | 3.342 s | No catch found | Defer to post-cutover or scheduled docs CI. |
+| `reachability` | 1.359 s | Not applicable: selected Python files = 0 | Remove until Python returns. |
+| `symbol-reachability` | 0.001 ms | Not applicable: selected Python files = 0 | Remove until Python returns. |
+| `python-unused` | 0.001 ms | Not applicable: selected Python files = 0 | Remove until Python returns. |
+| `assertion-free-tests` | <0.001 ms | Not applicable: selected Python files = 0 | Remove until Python returns. |
+| `private-internals` | <0.001 ms | Not applicable: selected Python files = 0 | Remove until Python returns. |
+
+## Complexity, file shape, and the flex slice
+
+These arms have caught policy breaches, but no observed breach was a functional
+defect. Their mechanics also turn local shape preferences into fleet-wide
+coordination:
+
+1. File shape measures every selected source as both lines and bytes.
+   Complexity parses every selected routine for cyclomatic complexity and
+   length. The current run paid 3.741 seconds for these two arms before shared
+   metrics setup.
+2. A fresh path receives actor-varied elastic headroom. The predecessor limits
+   are a base routine length of 80 and a 1.5 elastic ratio, with five-percent
+   actor variation; a prior breach latches the path/routine and collapses its
+   active limit back to the base.
+3. A breach is also represented by a Git-common, path-owned peer claim: earliest
+   claim wins, same actor refreshes it, and another actor receives `PeerHeld`
+   until expiry. The state fixture fixes the TTL at 21,600 seconds (six hours).
+4. That is the “flex slice”: one lane spends elastic headroom and holds the path
+   while other linked worktrees inherit the restriction. The resulting advice
+   is to remain append-only or move seams, even when the blocked lane did not
+   author the debt it is being asked to reorganize.
+
+Two field events demonstrate the throughput cost. A test rename crossed the
+80-line complexity bound and had to be split before an unrelated task could
+commit. Later, a merge was byte-identical to its peer parent in three flagged
+files but was charged against first parent; the peer flex claims did not expire
+for hours, so the merge required a hook bypass and a separate defect task. The
+current code now exempts a file inherited byte-for-byte from either merge
+parent, which repairs that exact attribution case, but it does not remove the
+shared latch/claim coupling for ordinary concurrent edits. The complexity
+parser's bodyless-`extern` EOF behavior is a second example where unrelated
+tail append work changes a routine measurement.
+
+The audit's own final battery validation reproduced that coupling: the only
+failure was `spice/src/board_command/client.rs` at 1,504 lines against a 1,485
+line active flex limit. This audit neither edits nor stages that file; a peer's
+shared-tree growth therefore blocked this documentation-only lane.
+
+For the speed-first cutover, defer both arms and freeze their ledgers. After
+cutover, restore them only with changed-path jurisdiction, no cross-actor
+publication block, and parser tests proving that append-only tail work cannot
+inflate an unrelated routine.
+
+## Recommended cutover battery
+
+The immediate pre-commit contract should be intentionally small:
+
+- Keep only `env-policy`, the demonstrated cheap changed-path catch, after an
+  applicable-path benchmark.
+- Do not acquire core, metrics, or hygiene families for a hook profile that has
+  no retained arm in those families. The current eager capture would otherwise
+  pay most of their cost even after rows were hidden.
+- Do not emit the complete success report. Print a compact success receipt and
+  retain detailed evidence only for failures or an explicit audit command.
+- Run Clippy, the selected-tree canvas check, the environment ledger, and the
+  workspace integration suite in verify/CI, never once per commit.
+- Park all never-caught and non-applicable checks until post-cutover, exactly as
+  the operator's speed-first direction requests.
+
+Removing only the two nested typechecks from pre-commit recovers about 58.44
+seconds. Removing structural/docs scanners recovers another 8.22 seconds.
+Avoiding unused family capture and full success serialization is required to
+turn those row-level savings into a genuinely fast hook.
