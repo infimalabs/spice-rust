@@ -174,6 +174,21 @@ cd "$CUTOVER_REPO"
 .spice/bin/spice --json board
 ```
 
+The Canvas web app is part of this appliance: its HTML, JavaScript, stylesheet,
+and WASM are embedded in the native binary, and `up` serves those assets from
+the resident. From terminal B, open the app and capture the discovery receipt:
+
+```sh
+.spice/bin/spice --json canvas | tee "$CUTOVER_EVIDENCE/canvas.json"
+```
+
+`canvas` launches the default browser and prints a reply whose `body.endpoint`
+is the exact URL, shaped `http://127.0.0.1:<port>`. The port is selected
+ephemerally on every resident start and the listener is IPv4 loopback-only, so
+the endpoint is reachable only on the resident host. Explicit host and port
+selection, including remote access, is tracked by `BIND-1kKQTXP1` and is not a
+capability of this release.
+
 The board must contain no task rows. Create only wanted work with `task add` or
 preview and apply a native task document; every resulting handle is new. Seat
 fresh lanes and verify steering by their returned lane identities:
