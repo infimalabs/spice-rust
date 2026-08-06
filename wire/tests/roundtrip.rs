@@ -833,3 +833,36 @@ fn a_reversed_committed_range_does_not_decode() {
         "the same check is available before a range is sent"
     );
 }
+
+#[test]
+fn a_declared_session_requires_one_complete_launch_identity() {
+    let complete = serde_json::json!({
+        "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+        "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+        "worktree": "/worktrees/lane-a",
+        "vendor": "claude",
+        "model": "sonnet",
+        "effort": "high",
+        "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+        "stream": "stdout",
+        "identity": "session-a",
+        "member": 1,
+        "offset": 2,
+        "length": 3
+    });
+    let bytes = serde_json::to_vec(&complete).expect("fixture encodes");
+    wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
+        .expect("the one current declaration shape decodes");
+
+    for field in ["model", "effort"] {
+        let mut incomplete = complete.clone();
+        incomplete
+            .as_object_mut()
+            .expect("fixture is an object")
+            .remove(field);
+        let bytes = serde_json::to_vec(&incomplete).expect("fixture encodes");
+        let error = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
+            .expect_err("missing launch identity must fail loudly");
+        assert!(error.to_string().contains(field), "{field}: {error}");
+    }
+}

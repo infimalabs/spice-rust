@@ -459,6 +459,8 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
             occupant: second_uuid,
             worktree: "/worktrees/lane-a".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
+            model: "sonnet".to_owned(),
+            effort: "high".to_owned(),
             epoch: first_uuid,
             stream: "stdout".to_owned(),
             identity: "018f7777-7777-7444-8888-999999999999".to_owned(),

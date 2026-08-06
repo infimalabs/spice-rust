@@ -10,15 +10,37 @@ use std::process::{Command, Output};
 
 const HOOKS: [&str; 3] = ["pre-commit", "commit-msg", "reference-transaction"];
 
+/// The one name a hook can spell for an executable Cargo keeps somewhere else.
+///
+/// This sits beside the installed hooks under the Git common directory, so all
+/// eleven linked worktrees resolve it to the same file. That is correct rather
+/// than merely convenient: `reference_transaction::apply` reads only the
+/// repository at the current directory, through Git, and carries no lane
+/// identity and no per-worktree configuration, so one executable serves every
+/// worktree and no per-lane dispatch is owed.
+const ENTRY_POINT_PATH: &str = ".spice-install/bin/xtask";
+
 /// Point the repository and every linked worktree at the installed hook set.
 ///
 /// This is deliberately separate from digest-bound installation: the install
-/// plan publishes bytes, while this explicit cutover changes Git configuration.
+/// plan publishes bytes, while this explicit cutover changes Git configuration
+/// and publishes the executable those bytes name.
+///
+/// `entry_point` is the executable to publish. It is a parameter rather than
+/// `current_exe` read in here so that the provenance of the published file is
+/// decided by the caller: the command passes the running `xtask`, and a test
+/// can drive activation with the binary Cargo built for it rather than
+/// publishing the test harness itself.
 ///
 /// # Errors
 ///
-/// Returns repository discovery, installed-hook, Git, or output failures.
-pub fn activate_hooks(root: &Path, output: &mut impl Write) -> Result<(), HookActivationError> {
+/// Returns repository discovery, installed-hook, publication, Git, or output
+/// failures.
+pub fn activate_hooks(
+    root: &Path,
+    entry_point: &Path,
+    output: &mut impl Write,
+) -> Result<(), HookActivationError> {
     let repository = spice::repository::Repository::discover(root)
         .map_err(|error| HookActivationError::Repository(error.to_string()))?;
     let hooks = repository.common_dir().join(".spice-install/git-hooks");
@@ -28,6 +50,9 @@ pub fn activate_hooks(root: &Path, output: &mut impl Write) -> Result<(), HookAc
             return Err(HookActivationError::HookNotExecutable(path));
         }
     }
+    // Published before the configuration flips, so the hooks Git is about to
+    // start running never observe a moment where the file they exec is absent.
+    publish_entry_point(&repository, entry_point, output)?;
 
     let listed = git(
         repository.worktree_root(),
@@ -108,6 +133,82 @@ pub fn activate_hooks(root: &Path, output: &mut impl Write) -> Result<(), HookAc
     writeln!(output, "activated Spice hooks from {hooks_text}").map_err(HookActivationError::Output)
 }
 
+/// Copy the executable the hooks exec to a name a hook can spell.
+///
+/// Cargo writes its output under a content-keyed directory, so the executable
+/// just built sits at a path that moves whenever the sources do and that no
+/// hook can name in advance. Activation copies it once to [`ENTRY_POINT_PATH`],
+/// which is the only path in this arrangement that survives an edit.
+///
+/// A stale copy is detected here and nowhere else, by comparing the published
+/// bytes against the ones being published. Nothing rebuilds at hook time, which
+/// is the whole point of publishing, so the copy is exactly as current as the
+/// last activation left it and re-running activation is what reports the
+/// difference: an unchanged copy says so, a replaced one names its source.
+///
+/// The bytes land on a sibling and are renamed into place. A hook in another
+/// worktree may be executing the current file, and writing over it would either
+/// be refused outright while those bytes run or hand a half-written executable
+/// to whoever started next; a rename leaves the running process holding its own
+/// inode and swaps the name in one step.
+fn publish_entry_point(
+    repository: &spice::repository::Repository,
+    entry_point: &Path,
+    output: &mut impl Write,
+) -> Result<(), HookActivationError> {
+    let bytes = fs::read(entry_point).map_err(|source| HookActivationError::Publish {
+        path: entry_point.to_path_buf(),
+        source,
+    })?;
+    let destination = repository.common_dir().join(ENTRY_POINT_PATH);
+    let parent = destination
+        .parent()
+        .ok_or_else(|| HookActivationError::UnnameablePath(destination.clone()))?;
+    fs::create_dir_all(parent).map_err(|source| HookActivationError::Publish {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    if fs::read(&destination).is_ok_and(|published| published == bytes) {
+        return writeln!(
+            output,
+            "hook entry point already current at {}",
+            destination.display()
+        )
+        .map_err(HookActivationError::Output);
+    }
+    // Named for this process because the worktrees that share the destination
+    // share this directory with it, so two activations at once must not stage
+    // over one another on the way in.
+    let staged = parent.join(format!("xtask.{}.staged", std::process::id()));
+    write_executable(&staged, &bytes)?;
+    fs::rename(&staged, &destination).map_err(|source| HookActivationError::Publish {
+        path: destination.clone(),
+        source,
+    })?;
+    writeln!(
+        output,
+        "published hook entry point {} from {}",
+        destination.display(),
+        entry_point.display()
+    )
+    .map_err(HookActivationError::Output)
+}
+
+fn write_executable(path: &Path, bytes: &[u8]) -> Result<(), HookActivationError> {
+    fs::write(path, bytes).map_err(|source| HookActivationError::Publish {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).map_err(|source| {
+        HookActivationError::Publish {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    Ok(())
+}
+
 fn git(
     root: &Path,
     arguments: &[&str],
@@ -162,6 +263,10 @@ pub enum HookActivationError {
         path: PathBuf,
         source: io::Error,
     },
+    Publish {
+        path: PathBuf,
+        source: io::Error,
+    },
     UnnameablePath(PathBuf),
     Launch {
         operation: &'static str,
@@ -195,6 +300,13 @@ impl fmt::Display for HookActivationError {
                 write!(
                     formatter,
                     "inspect installed hook {}: {source}",
+                    path.display()
+                )
+            }
+            Self::Publish { path, source } => {
+                write!(
+                    formatter,
+                    "publish hook entry point {}: {source}",
                     path.display()
                 )
             }
@@ -240,9 +352,10 @@ impl fmt::Display for HookActivationError {
 impl std::error::Error for HookActivationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Inspect { source, .. } | Self::Launch { source, .. } | Self::Output(source) => {
-                Some(source)
-            }
+            Self::Inspect { source, .. }
+            | Self::Publish { source, .. }
+            | Self::Launch { source, .. }
+            | Self::Output(source) => Some(source),
             Self::Repository(_)
             | Self::HookNotExecutable(_)
             | Self::UnnameablePath(_)

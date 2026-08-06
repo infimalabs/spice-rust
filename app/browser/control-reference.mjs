@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { reply } from "./canvas-fixture.mjs";
+import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 
 const darkPalette = {
   quiet: "rgb(138, 169, 232)",
@@ -14,13 +14,19 @@ const darkPalette = {
 
 async function selectLifetime(page, lineage, input, value, label) {
   await input.fill(value);
-  await page.waitForFunction(({ lineageId, expected }) => {
-    const current = document.querySelector(
-      `.team-surface[data-lineage-id="${lineageId}"] .team-composer-controls`,
-    );
-    return current?.dataset.lifetimePending === "false"
-      && current.dataset.lifetime === expected;
-  }, { lineageId: lineage, expected: label });
+  await waitForPageFunction(
+    page,
+    `reference lifetime reaches ${label}`,
+    TRANSITION_MS,
+    ({ lineageId, expected }) => {
+      const current = document.querySelector(
+        `.team-surface[data-lineage-id="${lineageId}"] .team-composer-controls`,
+      );
+      return current?.dataset.lifetimePending === "false"
+        && current.dataset.lifetime === expected;
+    },
+    { lineageId: lineage, expected: label },
+  );
 }
 
 function measureReference(surface) {

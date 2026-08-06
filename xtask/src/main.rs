@@ -54,7 +54,15 @@ fn main() -> ExitCode {
             xtask::app(&release_environment(), &mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("activate-hooks") && arguments.len() == 0 => {
-            xtask::activate_hooks(Path::new("."), &mut output).map_err(Into::into)
+            // The executable published for the hooks to exec is this one. Cargo
+            // keeps it under a content-keyed directory, so this is the only
+            // moment its path is known to anything that could copy it.
+            env::current_exe()
+                .map_err(Into::into)
+                .and_then(|entry_point| {
+                    xtask::activate_hooks(Path::new("."), &entry_point, &mut output)
+                        .map_err(Into::into)
+                })
         }
         Some(value) if value == OsStr::new("proof-image") => {
             drop(output);
