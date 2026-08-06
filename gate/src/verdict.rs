@@ -9,12 +9,12 @@
 use std::fmt;
 use std::fmt::Write as _;
 use std::io::Write as _;
+use std::marker::PhantomData;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::input::{Contract, ToolIdentity};
 use crate::jurisdiction::{Jurisdiction, WalkError};
 #[cfg(not(target_arch = "wasm32"))]
@@ -28,11 +28,6 @@ use crate::metrics::CommittedTexts;
 use crate::ratchet::{Finding, Ratchet};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::tree::TreeError;
-
-#[cfg(not(target_arch = "wasm32"))]
-type LongLineBaselines<'a> = Option<&'a CommittedTexts>;
-#[cfg(target_arch = "wasm32")]
-type LongLineBaselines<'a> = Option<&'a ()>;
 
 /// The one receipt schema this build emits and admits.
 pub const GATE_RECEIPT_VERSION: u64 = 2;
@@ -66,7 +61,6 @@ pub struct ReceiptTool {
 }
 
 impl ReceiptTool {
-    #[cfg(not(target_arch = "wasm32"))]
     fn current(tool: &ToolIdentity) -> Self {
         Self {
             name: tool.name().to_owned(),
@@ -118,7 +112,6 @@ pub struct Verdict {
 }
 
 impl Verdict {
-    #[cfg(not(target_arch = "wasm32"))]
     fn current(contract: &Contract, run: &Run) -> Self {
         Self {
             version: GATE_RECEIPT_VERSION,
@@ -455,6 +448,27 @@ impl SnapshotIntegrity {
     }
 }
 
+#[derive(Clone, Copy)]
+enum LongLineBaselines<'a> {
+    None(PhantomData<&'a ()>),
+    #[cfg(not(target_arch = "wasm32"))]
+    Captured(&'a CommittedTexts),
+}
+
+impl LongLineBaselines<'_> {
+    const fn none() -> Self {
+        Self::None(PhantomData)
+    }
+
+    const fn captured(self) -> bool {
+        match self {
+            Self::None(_) => false,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Captured(_) => true,
+        }
+    }
+}
+
 impl Run {
     /// Walk a foreign repository, measure it, and judge it against a ratchet.
     ///
@@ -479,7 +493,14 @@ impl Run {
         bounds: &Bounds,
         snapshot_integrity: SnapshotIntegrity,
     ) -> Result<Self, RunError> {
-        Self::adjudicate_with_inputs(policy, root, ratchet, bounds, snapshot_integrity, None)
+        Self::adjudicate_with_inputs(
+            policy,
+            root,
+            ratchet,
+            bounds,
+            snapshot_integrity,
+            LongLineBaselines::none(),
+        )
     }
 
     fn adjudicate_with_inputs(
@@ -513,32 +534,28 @@ impl Run {
             measurements.push(measurement.map_err(RunError::Measure)?);
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let (head, long_lines) = if let Some(baselines) = long_line_baselines {
-            let findings =
-                scan_jurisdiction(snapshot.jurisdiction(), baselines).map_err(|error| {
-                    RunError::LongLineRead {
-                        path: error.path,
-                        source: error.source,
-                    }
-                })?;
-            if let Some(changed) = snapshot.verify().map_err(RunError::Walk)? {
-                return Err(RunError::SnapshotChanged {
-                    metric: "rust.long-lines".to_owned(),
-                    measured: None,
-                    path: changed.path,
-                    tree: changed.tree,
-                    observed_tree: changed.observed_tree,
-                });
+        let (head, long_lines) = match long_line_baselines {
+            #[cfg(not(target_arch = "wasm32"))]
+            LongLineBaselines::Captured(baselines) => {
+                let findings =
+                    scan_jurisdiction(snapshot.jurisdiction(), baselines).map_err(|error| {
+                        RunError::LongLineRead {
+                            path: error.path,
+                            source: error.source,
+                        }
+                    })?;
+                if let Some(changed) = snapshot.verify().map_err(RunError::Walk)? {
+                    return Err(RunError::SnapshotChanged {
+                        metric: "rust.long-lines".to_owned(),
+                        measured: None,
+                        path: changed.path,
+                        tree: changed.tree,
+                        observed_tree: changed.observed_tree,
+                    });
+                }
+                (baselines.commit().unwrap_or("unborn").to_owned(), findings)
             }
-            (baselines.commit().unwrap_or("unborn").to_owned(), findings)
-        } else {
-            ("not-captured".to_owned(), Vec::new())
-        };
-        #[cfg(target_arch = "wasm32")]
-        let (head, long_lines) = {
-            let _ = long_line_baselines;
-            ("not-captured".to_owned(), Vec::new())
+            LongLineBaselines::None(_) => ("not-captured".to_owned(), Vec::new()),
         };
 
         let observed = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
@@ -560,7 +577,7 @@ impl Run {
             } else {
                 Standing::Refused
             };
-        let measurement = if long_line_baselines.is_some() {
+        let measurement = if long_line_baselines.captured() {
             run_evidence_digest(&measurements, &head, &long_lines)
         } else {
             measurement_digest(&measurements)
@@ -616,12 +633,6 @@ impl Run {
         &self.measurement
     }
 
-    /// Captured committed `HEAD`, or `not-captured` for a low-level run.
-    #[must_use]
-    pub fn head(&self) -> &str {
-        &self.head
-    }
-
     /// Whether the completed low-level run passed its ratchet.
     #[must_use]
     pub const fn standing(&self) -> Standing {
@@ -655,7 +666,6 @@ impl Run {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Contract {
     /// Execute this current contract and bind its complete identity to the
     /// completed run in one receipt.
@@ -665,16 +675,21 @@ impl Contract {
     /// Returns the run failure. A partial run never reaches receipt
     /// construction.
     pub fn adjudicate(&self, root: &Path) -> Result<CurrentRun, RunError> {
-        let baselines =
-            CommittedTexts::read(root, &[".rs".to_owned()]).map_err(RunError::CommittedBaseline)?;
-        let run = Run::adjudicate_with_inputs(
-            self.policy(),
-            root,
-            self.ratchet(),
-            self.bounds(),
-            SnapshotIntegrity::native(),
-            Some(&baselines),
-        )?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let run = {
+            let baselines = CommittedTexts::read(root, &[".rs".to_owned()])
+                .map_err(RunError::CommittedBaseline)?;
+            Run::adjudicate_with_inputs(
+                self.policy(),
+                root,
+                self.ratchet(),
+                self.bounds(),
+                SnapshotIntegrity::native(),
+                LongLineBaselines::Captured(&baselines),
+            )?
+        };
+        #[cfg(target_arch = "wasm32")]
+        let run = Run::adjudicate(self.policy(), root, self.ratchet(), self.bounds())?;
         let receipt = Verdict::current(self, &run);
         Ok(CurrentRun { run, receipt })
     }
@@ -725,6 +740,7 @@ pub enum RunError {
     #[cfg(not(target_arch = "wasm32"))]
     CommittedBaseline(TreeError),
     /// One current Rust source selected for attribution could not be read.
+    #[cfg(not(target_arch = "wasm32"))]
     LongLineRead {
         /// Repository-relative selected source path.
         path: String,
@@ -773,6 +789,7 @@ impl fmt::Display for RunError {
                     "capture committed HEAD for rust.long-lines: {source}"
                 )
             }
+            #[cfg(not(target_arch = "wasm32"))]
             Self::LongLineRead { path, source } => {
                 write!(formatter, "read rust.long-lines source {path}: {source}")
             }
@@ -808,6 +825,7 @@ impl std::error::Error for RunError {
             Self::Measure(source) => Some(source),
             #[cfg(not(target_arch = "wasm32"))]
             Self::CommittedBaseline(source) => Some(source),
+            #[cfg(not(target_arch = "wasm32"))]
             Self::LongLineRead { source, .. } => Some(source),
             Self::SnapshotIntegrityUnsupported
             | Self::JurisdictionChanged { .. }
