@@ -103,6 +103,7 @@ mod runtime {
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct TaskSnapshot {
         cursor: Option<journal::crossing::Seq>,
+        facts: FactSnapshot,
         tasks: Vec<TaskHeads>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
@@ -150,6 +151,12 @@ mod runtime {
         #[must_use]
         pub const fn cursor(&self) -> Option<journal::crossing::Seq> {
             self.cursor
+        }
+
+        /// Complete fact stream captured at the same board barrier.
+        #[must_use]
+        pub const fn facts(&self) -> &FactSnapshot {
+            &self.facts
         }
 
         #[must_use]
@@ -332,7 +339,7 @@ mod runtime {
                 .map_err(BusReadError::Snapshot)
         }
 
-        /// Read board and residency heads together through the writer queue.
+        /// Read board facts, task heads, and residency together at one barrier.
         pub fn task_snapshot(&self) -> Result<TaskSnapshot, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
@@ -341,7 +348,6 @@ mod runtime {
             receiver
                 .recv()
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?
-                .map_err(BusReadError::Head)
         }
 
         /// Capture the canvas fact and trust planes at one authority barrier.
@@ -437,7 +443,7 @@ mod runtime {
             answer: SyncSender<Result<FactSnapshot, SnapshotError>>,
         },
         Tasks {
-            answer: SyncSender<Result<TaskSnapshot, GuardError>>,
+            answer: SyncSender<Result<TaskSnapshot, BusReadError>>,
         },
         Canvas {
             answer: SyncSender<Result<CanvasSnapshot, BusReadError>>,
@@ -499,13 +505,19 @@ mod runtime {
                     let _ = answer.send(journal.fact_snapshot());
                 }
                 Request::Tasks { answer } => {
-                    let snapshot = journal.read(|read| {
-                        Ok(TaskSnapshot {
-                            cursor: read.cursor()?,
-                            tasks: read.task_heads()?,
-                            residency: read.residency_head()?,
+                    let snapshot = journal
+                        .read_with(|read| {
+                            Ok(TaskSnapshot {
+                                cursor: read.cursor().map_err(BusReadError::Head)?,
+                                facts: read.fact_snapshot().map_err(BusReadError::Snapshot)?,
+                                tasks: read.task_heads().map_err(BusReadError::Head)?,
+                                residency: read.residency_head().map_err(BusReadError::Head)?,
+                            })
                         })
-                    });
+                        .map_err(|error| match error {
+                            journal::ReadError::Journal(error) => BusReadError::Head(error),
+                            journal::ReadError::Answer(error) => error,
+                        });
                     let _ = answer.send(snapshot);
                 }
                 Request::Canvas { answer } => {

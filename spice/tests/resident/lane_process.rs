@@ -890,7 +890,7 @@ fn typed_task_commands_retain_the_ambient_lane_principal() {
             "spice.client",
         ],
         true,
-        None,
+        Some(added_lane.lane),
     ));
 
     let implementation = reply_body::<wire::intent::ClaimAnswer>(&invoke_args(

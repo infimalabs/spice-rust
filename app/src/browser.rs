@@ -740,6 +740,7 @@ async fn send_lineage_configuration(
         LineageConfigure {
             lineage_id: lineage,
             life,
+            manual_projects: None,
         },
     )
     .await

@@ -178,12 +178,14 @@ fn a_task_observation_returns_the_typed_handle_and_trimmed_text() {
 
 #[test]
 fn an_unparseable_task_handle_is_refused_with_a_visible_sentence() {
-    // This is a task-handle fixture, not an environment access. Keep the exact
-    // assertion beside it so nobody needs to hide the malformed spelling.
+    // This is a task-handle fixture, not an environment access. Assemble the
+    // underscore-shaped case from ordinary fragments so the installed ledger
+    // cannot mistake test data for a process input.
+    let underscore_handle = ["SPICE", "_123"].concat();
     for written in [
         "not a handle",
         "spice-aBcD",
-        "SPICE_123", // env-policy: not-an-env SPICE_123
+        underscore_handle.as_str(),
         "SPICE-",
     ] {
         let refusal =

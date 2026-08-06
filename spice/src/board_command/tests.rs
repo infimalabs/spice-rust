@@ -10,6 +10,8 @@ mod tests {
 
     use super::*;
 
+    mod subscription;
+
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
     static NEXT_COMMAND: AtomicU64 = AtomicU64::new(100);
 
@@ -59,6 +61,15 @@ mod tests {
                 disposition: "occupied".to_owned(),
             })
             .collect::<Vec<_>>();
+        let subscriptions = lanes
+            .iter()
+            .map(|lane| wire::LineageSubscription {
+                lineage_id: lane.lineage_id,
+                policy: wire::intent::LineageLife::Drain,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
+            })
+            .collect::<Vec<_>>();
         let origin = format!("resident:{epoch}")
             .parse()
             .expect("resident fixture origin");
@@ -71,7 +82,7 @@ mod tests {
             epoch,
             state: ResidentState::Seated,
             lanes,
-            subscriptions: Vec::new(),
+            subscriptions,
         });
         match bus.commit(write).expect("fixture seating reaches writer") {
             CommitOutcome::Committed(_) => {}
@@ -561,7 +572,12 @@ mod tests {
         let entries = actor_entries(&available)
             .expect("capture board entries are valid");
         assert_eq!(
-            board::select(&entries, &lane)
+            board::select(
+                &entries,
+                &lane,
+                allocation_subscription(&available.residency.body, &lane)
+                    .expect("fixture lane subscription"),
+            )
                 .expect("allocator winner")
                 .entry()
                 .statement()
@@ -873,7 +889,12 @@ mod tests {
         assert_eq!(at(&after_restart, &held_task), after);
         let entries = actor_entries(&after_restart).expect("restarted board validates");
         assert_eq!(
-            board::select(&entries, &lane)
+            board::select(
+                &entries,
+                &lane,
+                allocation_subscription(&after_restart.residency.body, &lane)
+                    .expect("restarted lane subscription"),
+            )
                 .expect("allocator still has unclaimed work")
                 .entry()
                 .statement()

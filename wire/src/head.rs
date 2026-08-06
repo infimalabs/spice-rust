@@ -314,13 +314,50 @@ pub struct LaneResidency {
 /// This policy controls which tasks a team may draw. It is deliberately
 /// separate from [`LaneResidency::life`], which controls whether an individual
 /// seat may be occupied again after its current process exits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineageSubscription {
     /// Stable Canvas lineage identifying the subscribed team.
     pub lineage_id: CanonicalUuid,
     /// Authoritative task-selection policy for the entire lineage.
     pub policy: crate::intent::LineageLife,
+    /// Operator-pinned public projects retained across policy changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub manual_projects: Vec<String>,
+    /// Server-projected public projects replayed from durable create/claim facts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto_projects: Vec<String>,
+}
+
+impl LineageSubscription {
+    /// Whether this effective policy admits one public project to `task next`.
+    #[must_use]
+    pub fn admits_project(&self, project: &str) -> bool {
+        match self.policy.scope() {
+            crate::intent::TaskSubscriptionScope::Manual => self
+                .manual_projects
+                .iter()
+                .any(|candidate| candidate == project),
+            crate::intent::TaskSubscriptionScope::ManualAndAutoProject => self
+                .manual_projects
+                .iter()
+                .chain(&self.auto_projects)
+                .any(|candidate| candidate == project),
+            crate::intent::TaskSubscriptionScope::AllAssignable => true,
+        }
+    }
+
+    /// Project one server-learned public project in deterministic lexical order.
+    pub fn learn_project(&mut self, project: &str) {
+        if !self
+            .auto_projects
+            .iter()
+            .any(|candidate| candidate == project)
+        {
+            self.auto_projects.push(project.to_owned());
+            self.auto_projects.sort();
+        }
+    }
 }
 
 /// Current resident and lane state.

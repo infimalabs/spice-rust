@@ -85,7 +85,14 @@ impl<'a> Surface<'a> {
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
             ),
             (CommandKind::LineageConfigure, Intent::LineageConfigure(configure)) => {
-                lane_surface::configure(self.bus, self.epoch, seats, command, configure)
+                lane_surface::configure(
+                    self.bus,
+                    self.epoch,
+                    seats,
+                    &self.config.projects,
+                    command,
+                    configure,
+                )
             }
             (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => {
                 lane_surface::recall(self.bus, self.paths, self.epoch, seats, command, recall)

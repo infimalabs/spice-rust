@@ -37,6 +37,15 @@ fn seq(value: u64) -> Seq {
     Seq::new(value).expect("non-zero sequence")
 }
 
+fn all_projects() -> wire::LineageSubscription {
+    wire::LineageSubscription {
+        lineage_id: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
+        policy: wire::intent::LineageLife::Drain,
+        manual_projects: Vec::new(),
+        auto_projects: Vec::new(),
+    }
+}
+
 fn projects() -> board::ProjectPolicy {
     board::ProjectPolicy::new(
         ["board".to_owned(), "agent".to_owned()],
@@ -363,7 +372,7 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
     let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
     for actor in [Actor::Spice, Actor::Operator, Actor::Lane(lane)] {
         assert_eq!(
-            select(&entries, &actor)
+            select(&entries, &actor, &all_projects())
                 .expect("public task remains eligible")
                 .entry()
                 .statement()
@@ -678,14 +687,96 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
         completed, deferred, active, first, assigned, second, blocked,
     ];
 
-    let selected = select(&ordered, &Actor::Spice).expect("eligible task");
-    let selected_again = select(&reversed, &Actor::Spice).expect("eligible task");
+    let selected = select(&ordered, &Actor::Spice, &all_projects()).expect("eligible task");
+    let selected_again = select(&reversed, &Actor::Spice, &all_projects()).expect("eligible task");
     assert_eq!(selected.entry().statement().handle, handle("BOARD-a1"));
     assert_eq!(
         selected_again.entry().statement().handle,
         selected.entry().statement().handle
     );
     assert_eq!(selected_again.urgency(), selected.urgency());
+}
+
+#[test]
+fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
+    let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
+    let other = uuid("019fbbde-5105-75a3-a76a-722afde1e409");
+    let actor = Actor::Lane(lane);
+    let entry = |handle: &str, project: &str, assignment: Option<Actor>| {
+        let mut statement = statement(handle);
+        statement.project = project.to_owned();
+        if project == "task.unrelated" {
+            statement.tags.push("priority:critical".to_owned());
+        }
+        let mut workflow = workflow("todo");
+        workflow.assignment = assignment;
+        admitted(statement, workflow, None, None).expect("scoped fixture entry")
+    };
+    let entries = vec![
+        entry("SCOPE-manual1", "task.manual", None),
+        entry("SCOPE-auto001", "task.learned", None),
+        entry("SCOPE-open001", "task.unrelated", None),
+        entry(
+            "SCOPE-closed1",
+            "task.unassignable",
+            Some(Actor::Lane(other)),
+        ),
+    ];
+    let handles = |subscription: &wire::LineageSubscription| {
+        entries
+            .iter()
+            .filter(|entry| board::selectable_entry(&entries, entry, &actor, subscription))
+            .map(|entry| entry.statement().handle.to_string())
+            .collect::<BTreeSet<_>>()
+    };
+    let subscription = |policy| wire::LineageSubscription {
+        lineage_id: lane,
+        policy,
+        manual_projects: vec!["task.manual".to_owned()],
+        auto_projects: vec!["task.learned".to_owned(), "task.unassignable".to_owned()],
+    };
+
+    assert_eq!(
+        handles(&subscription(wire::intent::LineageLife::Steer)),
+        BTreeSet::from(["SCOPE-manual1".to_owned()]),
+    );
+    assert_eq!(
+        handles(&subscription(wire::intent::LineageLife::Drive)),
+        BTreeSet::from(["SCOPE-auto001".to_owned(), "SCOPE-manual1".to_owned(),]),
+    );
+    assert_eq!(
+        handles(&subscription(wire::intent::LineageLife::Drain)),
+        BTreeSet::from([
+            "SCOPE-auto001".to_owned(),
+            "SCOPE-manual1".to_owned(),
+            "SCOPE-open001".to_owned(),
+        ]),
+    );
+    assert_eq!(
+        select(
+            &entries,
+            &actor,
+            &subscription(wire::intent::LineageLife::Steer),
+        )
+        .expect("steer has manual work")
+        .entry()
+        .statement()
+        .handle,
+        handle("SCOPE-manual1"),
+        "a higher-urgency unrelated task must not cross the Steer boundary",
+    );
+    assert_eq!(
+        select(
+            &entries,
+            &actor,
+            &subscription(wire::intent::LineageLife::Drain),
+        )
+        .expect("drain has all assignable work")
+        .entry()
+        .statement()
+        .handle,
+        handle("SCOPE-open001"),
+    );
 }
 
 #[derive(Debug)]
