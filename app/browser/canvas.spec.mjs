@@ -323,6 +323,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
     await outgoing.locator(".message-key").innerText(),
     inbox.body.lanes[0].pending[0].key,
   );
+  await assertQueuedRosterPip(page, console, seated[0]);
   assert.match(await outgoing.locator(".message-age").innerText(), / left$/);
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
@@ -409,6 +410,50 @@ async function assertRosterPips(page, console, seated) {
     0,
     "analytic chrome keeps the layout implementation name private",
   );
+  await chooseCanvasView(page, "Agents");
+  await console.waitFor();
+}
+
+async function assertQueuedRosterPip(page, console, member) {
+  const teamPip = console.locator(
+    `.team-light[data-lane-light-target-id="${member.lane}"]`,
+  );
+  await page.waitForFunction((lane) => (
+    document.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`)
+      ?.getAttribute("data-lane-status") === "queued"
+  ), member.lane);
+  const teamStyle = await teamPip.evaluate((pip) => {
+    const style = getComputedStyle(pip);
+    return {
+      backgroundColor: style.backgroundColor,
+      boxShadow: style.boxShadow,
+      opacity: style.opacity,
+    };
+  });
+
+  await chooseCanvasView(page, "Flow");
+  const brandPip = page.locator(`.brand-dot[data-agent-lane="${member.lane}"]`);
+  assert.equal(await brandPip.count(), 1, "the queued member retains exactly one brand pip");
+  await page.waitForFunction((lane) => (
+    document.querySelector(`.brand-dot[data-agent-lane="${lane}"]`)
+      ?.getAttribute("data-agent-status") === "queued"
+  ), member.lane);
+  assert.equal(await brandPip.getAttribute("data-agent-status"), "queued");
+  const brandStyle = await brandPip.evaluate((pip) => {
+    const style = getComputedStyle(pip);
+    return {
+      backgroundColor: style.backgroundColor,
+      boxShadow: style.boxShadow,
+      opacity: style.opacity,
+    };
+  });
+  assert.deepEqual(
+    brandStyle,
+    teamStyle,
+    "a queued live member keeps the team roster's visible warning state in the brand roster",
+  );
+  assert.equal(brandStyle.opacity, "1", "queued direction never mutes an occupied agent");
+  assert.notEqual(brandStyle.boxShadow, "none", "the queued agent remains visibly lit");
   await chooseCanvasView(page, "Agents");
   await console.waitFor();
 }

@@ -357,7 +357,7 @@
   background: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
 }
-.team-light.queued { background: var(--warn); }
+.team-light.queued { background: var(--warning); }
 .team-light.bound,
 .team-light.unbound { background: var(--muted); opacity: .35; box-shadow: none; }
 
