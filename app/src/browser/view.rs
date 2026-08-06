@@ -2,6 +2,10 @@
 
 use super::*;
 
+mod chrome;
+
+use chrome::Correspondent;
+
 #[derive(Clone)]
 pub(super) struct AgentControls {
     pub(super) selected_lane: UseStateHandle<String>,
@@ -13,6 +17,8 @@ pub(super) struct AgentControls {
     pub(super) steer_notice: UseStateHandle<Notice>,
     pub(super) submit_seat: Callback<SubmitEvent>,
     pub(super) submit_steer: Callback<SubmitEvent>,
+    /// Read one message aloud, using the resident's current speech settings.
+    pub(super) speak: Callback<String>,
 }
 
 /// Render the reason the last submission was refused, or nothing.
@@ -60,7 +66,7 @@ pub(super) fn render_canvas(
         .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="shell">
-            {render_rail(axis, mosaic, active_axis, &cursor)}
+            {chrome::render_command_bar(axis, mosaic, active_axis, surface, &cursor)}
             {render_workspace(
                 connection,
                 surface,
@@ -77,56 +83,6 @@ pub(super) fn render_canvas(
                 toggle_speech,
             )}
         </div>
-    }
-}
-
-pub(super) fn render_rail(
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
-    active_axis: Axis,
-    cursor: &str,
-) -> Html {
-    html! {
-        <aside class="rail">
-            <div class="brand">
-                <span class="brand-mark">{"SP"}</span>
-                <span class="brand-name">{"Spice Canvas"}</span>
-            </div>
-            <nav class="axis-nav" aria-label="Canvas views">
-                <button
-                    class="axis-button"
-                    aria-current={(**mosaic).then_some("page")}
-                    title="Converse with seated agents"
-                    onclick={{
-                        let mosaic = mosaic.clone();
-                        Callback::from(move |_| mosaic.set(true))
-                    }}
-                >
-                    <span class="axis-glyph mosaic-glyph"></span>
-                    <span class="axis-label">{"Mosaic"}</span>
-                </button>
-                {for Axis::ALL.iter().copied().map(|candidate| {
-                    let axis = axis.clone();
-                    let mosaic = mosaic.clone();
-                    let selected = !*mosaic && candidate == active_axis;
-                    html! {
-                        <button
-                            class="axis-button"
-                            aria-current={selected.then_some("page")}
-                            title={candidate.question()}
-                            onclick={Callback::from(move |_| {
-                                axis.set(candidate);
-                                mosaic.set(false);
-                            })}
-                        >
-                            <span class="axis-glyph"></span>
-                            <span class="axis-label">{title(candidate.as_str())}</span>
-                        </button>
-                    }
-                })}
-            </nav>
-            <div class="rail-meta">{format!("cursor {cursor}")}</div>
-        </aside>
     }
 }
 
@@ -261,7 +217,8 @@ pub(super) fn render_agent_console(surface: &SurfaceData, controls: &AgentContro
                 </div>
                 <span class="agent-count">{format!("{} active", lanes.len())}</span>
             </div>
-            {render_agent_tabs(lanes, selected, controls)}
+            {chrome::render_watchband(surface, controls)}
+            {chrome::render_ticker(surface)}
             <div class="agent-stage">
                 {render_conversation(runtime, selected, pending, controls)}
                 {render_seat_panel(runtime, controls)}
@@ -295,40 +252,6 @@ fn selected_inbox<'a>(
         .unwrap_or(&[])
 }
 
-fn render_agent_tabs(
-    lanes: &[crate::runtime::LaneRow],
-    selected: Option<&crate::runtime::LaneRow>,
-    controls: &AgentControls,
-) -> Html {
-    html! {
-        <div class="agent-tabs" role="tablist" aria-label="Seated agents">
-            if lanes.is_empty() {
-                <span class="agent-tab-empty">{"No agents seated"}</span>
-            } else {
-                {for lanes.iter().map(|lane| {
-                    let lane_id = lane.lane.to_string();
-                    let selected_now = selected.is_some_and(|selected| selected.lane == lane.lane);
-                    let choose = controls.selected_lane.clone();
-                    let label = format!("Open {} lane {}", lane.vendor, short(&lane_id));
-                    html! {
-                        <button
-                            class={classes!("agent-tab", selected_now.then_some("selected"))}
-                            type="button" role="tab"
-                            aria-selected={selected_now.to_string()} aria-label={label}
-                            data-lane={lane_id.clone()}
-                            onclick={Callback::from(move |_| choose.set(lane_id.clone()))}
-                        >
-                            <span class="agent-presence"></span>
-                            <span>{lane.vendor.to_string()}</span>
-                            <span class="mono">{short(&lane.lane.to_string())}</span>
-                        </button>
-                    }
-                })}
-            }
-        </div>
-    }
-}
-
 fn render_conversation(
     runtime: Option<&CanvasRuntime>,
     selected: Option<&crate::runtime::LaneRow>,
@@ -340,7 +263,7 @@ fn render_conversation(
     html! {
         <section class="conversation" aria-label="Selected agent conversation">
             {render_conversation_heading(selected)}
-            {render_inbox(pending)}
+            {render_inbox(pending, correspondent(selected, controls))}
             <form class="agent-compose" onsubmit={controls.submit_steer.clone()}>
                 <label for="agent-message">{"Message"}</label>
                 <textarea
@@ -378,13 +301,47 @@ fn render_conversation_heading(selected: Option<&crate::runtime::LaneRow>) -> Ht
     }
 }
 
-fn render_inbox(pending: &[wire::intent::PendingDirective]) -> Html {
-    html! { <MosaicInbox pending={pending.to_vec()} /> }
+/// Who the open conversation is with, and what its cards can do.
+///
+/// The lane is the correspondent because the operator authored every pending
+/// directive; keying the accent to it means the whole feed changes colour when
+/// the selection moves, which is the signal the reference band carries.
+fn correspondent(
+    selected: Option<&crate::runtime::LaneRow>,
+    controls: &AgentControls,
+) -> Correspondent {
+    let steer = controls.steer_text.clone();
+    Correspondent {
+        name: selected.map_or_else(
+            || "no lane".to_owned(),
+            |lane| crate::watchband::leaf(&lane.worktree).to_owned(),
+        ),
+        accent: selected.map_or(0, |lane| crate::watchband::accent(lane.lane)),
+        speak: controls.speak.clone(),
+        quote: Callback::from(move |text: String| {
+            let quoted = text
+                .lines()
+                .map(|line| format!("> {line}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let standing = (*steer).clone();
+            steer.set(if standing.is_empty() {
+                format!("{quoted}\n\n")
+            } else {
+                format!("{standing}\n{quoted}\n\n")
+            });
+        }),
+    }
+}
+
+fn render_inbox(pending: &[wire::intent::PendingDirective], correspondent: Correspondent) -> Html {
+    html! { <MosaicInbox pending={pending.to_vec()} correspondent={correspondent} /> }
 }
 
 #[derive(Properties, PartialEq)]
 struct MosaicInboxProps {
     pending: Vec<wire::intent::PendingDirective>,
+    correspondent: Correspondent,
 }
 
 #[function_component(MosaicInbox)]
@@ -419,7 +376,7 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
                 </div>
             } else {
                 {for properties.pending.iter().zip(cards.iter()).map(|pair| {
-                    render_mosaic_card(pair, max_row)
+                    chrome::render_mosaic_card(pair, max_row, &properties.correspondent)
                 })}
             }
         </div>
@@ -452,53 +409,6 @@ fn message_candidates(
             .sum::<f64>();
         54.0 + text_lines as f64 * 19.0 + attachment_height
     })
-}
-
-fn render_mosaic_card(
-    (directive, card): (&wire::intent::PendingDirective, &crate::mosaic::Card),
-    max_row: i32,
-) -> Html {
-    let state = card.lifecycle.as_str();
-    html! {
-        <article
-            class={classes!("message", "outgoing", "mosaic-card", state)}
-            data-state={state}
-            data-track={card.track.to_string()}
-            data-span={card.span.to_string()}
-            data-base={card.base.to_string()}
-            data-row={crate::mosaic::css_row_start(card, max_row).to_string()}
-            data-rows={card.rows.to_string()}
-        >
-            <div class="message-meta">
-                <strong>{"You"}</strong>
-                <span>{format!("{} / pending", directive.key)}</span>
-            </div>
-            <p>{directive.text.clone()}</p>
-            {render_attachments(&directive.attachments)}
-        </article>
-    }
-}
-
-fn render_attachments(attachments: &[wire::body::DirectiveAttachment]) -> Html {
-    if attachments.is_empty() {
-        return Html::default();
-    }
-    html! {
-        <div class="message-attachments">
-            {for attachments.iter().map(|attachment| {
-                if attachment.content_type.starts_with("image/") {
-                    html! {
-                        <figure>
-                            <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
-                            <figcaption>{attachment.name.clone()}</figcaption>
-                        </figure>
-                    }
-                } else {
-                    html! { <span class="message-attachment">{attachment.name.clone()}</span> }
-                }
-            })}
-        </div>
-    }
 }
 
 #[hook]

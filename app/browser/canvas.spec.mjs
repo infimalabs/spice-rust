@@ -262,7 +262,7 @@ async function assertCanvas(page, scheme) {
   await assert.doesNotReject(() => page.locator(".brand-name:visible, .mobile-brand:visible").waitFor());
   await assert.doesNotReject(() => page.getByRole("heading", { name: "Agents", exact: true }).waitFor());
   await page.waitForFunction(() => {
-    const cursor = document.querySelector(".rail-meta")?.textContent ?? "";
+    const cursor = document.querySelector(".bar-meta")?.textContent ?? "";
     return /cursor \d+/.test(cursor);
   });
 
@@ -272,7 +272,7 @@ async function assertCanvas(page, scheme) {
     const rootStyle = root ? getComputedStyle(root) : null;
     const canvasBox = canvas?.getBoundingClientRect();
     const workspaceBox = document.querySelector(".workspace")?.getBoundingClientRect();
-    const railBox = document.querySelector(".rail")?.getBoundingClientRect();
+    const barBox = document.querySelector(".commandbar")?.getBoundingClientRect();
     return {
       appChildren: root?.childElementCount ?? 0,
       bodyWidth: document.body.scrollWidth,
@@ -280,8 +280,7 @@ async function assertCanvas(page, scheme) {
       canvasHeight: Math.round(canvasBox?.height ?? 0),
       ink: rootStyle?.color ?? "",
       background: getComputedStyle(document.body).backgroundColor,
-      mobileNavOverlap: window.innerWidth <= 560
-        && (workspaceBox?.bottom ?? 0) > (railBox?.top ?? window.innerHeight),
+      barOverlap: (barBox?.bottom ?? 0) > (workspaceBox?.top ?? 0) + 1,
       overflowingControls: [...document.querySelectorAll("button, .pane-chip")]
         .filter((element) => {
           const style = getComputedStyle(element);
@@ -295,7 +294,7 @@ async function assertCanvas(page, scheme) {
   assert.ok(pixels.canvasHeight > 300, "primary canvas has visible content");
   assert.ok(pixels.bodyWidth <= pixels.viewportWidth, "page has no viewport overflow");
   assert.notEqual(pixels.ink, pixels.background, "foreground and background pixels differ");
-  assert.equal(pixels.mobileNavOverlap, false, "mobile workspace stops above bottom navigation");
+  assert.equal(pixels.barOverlap, false, "the workspace starts below the command bar");
   assert.deepEqual(pixels.overflowingControls, [], "controls and pane labels fit their bounds");
 
   for (const [axis, panes] of axisPanes) {
