@@ -164,7 +164,7 @@ In terminal A, keep the foreground resident attached:
 
 ```sh
 cd "$CUTOVER_REPO"
-cargo xtask dev-app
+cargo xtask local-app
 "$CUTOVER_BIN" up
 ```
 
@@ -178,7 +178,7 @@ cd "$CUTOVER_REPO"
 "$CUTOVER_BIN" --json board
 ```
 
-The Canvas web app is built natively into ignored `dist/stage-dev`; one atomic
+The Canvas web app is built natively into ignored `dist/stage-local`; one atomic
 pointer selects a complete immutable generation, and `up` serves only those
 lane-local assets. There is no separate opener command: the start already
 running in terminal A announces the exact URL on its standard error:

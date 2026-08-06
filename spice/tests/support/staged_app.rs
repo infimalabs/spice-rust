@@ -6,9 +6,9 @@ use std::path::Path;
 const FIXTURE_GENERATION: &str = "4444444444444444444444444444444444444444444444444444444444444444";
 
 pub(super) fn seed(root: &Path) {
-    let stage = root.join(canvas::DEV_STAGE);
+    let stage = root.join(canvas::LOCAL_STAGE);
     let generation = stage
-        .join(canvas::DEV_STAGE_GENERATIONS)
+        .join(canvas::LOCAL_STAGE_GENERATIONS)
         .join(FIXTURE_GENERATION);
     fs::create_dir_all(&generation).expect("fixture app generation directory");
     for asset in canvas::APP.assets() {
@@ -19,7 +19,7 @@ pub(super) fn seed(root: &Path) {
         .expect("fixture app asset");
     }
     fs::write(
-        stage.join(canvas::DEV_STAGE_CURRENT),
+        stage.join(canvas::LOCAL_STAGE_CURRENT),
         format!("{FIXTURE_GENERATION}\n"),
     )
     .expect("fixture app pointer");

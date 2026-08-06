@@ -126,9 +126,9 @@ fn speech() -> crate::SpeechConfig {
 const FIXTURE_GENERATION: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 
 fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBuf {
-    let stage = root.join(crate::DEV_STAGE);
+    let stage = root.join(crate::LOCAL_STAGE);
     let generation = stage
-        .join(crate::DEV_STAGE_GENERATIONS)
+        .join(crate::LOCAL_STAGE_GENERATIONS)
         .join(FIXTURE_GENERATION);
     std::fs::create_dir_all(&generation).expect("fixture app generation");
     for asset in APP.assets() {
@@ -143,7 +143,7 @@ fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBu
         std::fs::write(generation.join(asset.file()), bytes).expect("fixture app asset");
     }
     std::fs::write(
-        stage.join(crate::DEV_STAGE_CURRENT),
+        stage.join(crate::LOCAL_STAGE_CURRENT),
         format!("{FIXTURE_GENERATION}\n"),
     )
     .expect("fixture app pointer");
@@ -823,7 +823,7 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
     assert!(task.await.expect_err("aborted server task").is_cancelled());
 }
 
-/// A worktree holding a complete development stage, and that stage's path.
+/// A worktree holding a complete local stage, and that stage's path.
 ///
 /// The bytes name their own file so a route served from the wrong one is
 /// visible in the assertion.
