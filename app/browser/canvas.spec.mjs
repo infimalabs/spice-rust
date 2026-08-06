@@ -1177,7 +1177,30 @@ async function assertPackedHistory(page, extent, linked = false) {
     await threadRowsLocator.count() >= minimumRows,
     linked ? "multi-link causal thread renders" : "terminal causal thread renders",
   );
-  assert.match(await thread.locator(".section-count").innerText(), /root/);
+  // The terminal label is the tail of a walk built one admitted frame at a time,
+  // not a value the row count settles. `observe_stream` inserts one CausalLink
+  // per admitted frame and the walk stops at `ChainEnd::Dangling(position)` the
+  // moment a position is missing (app/src/state.rs:351), which renders as
+  // `dangling at N` (app/src/browser/view.rs:588). Two rows can be on screen
+  // while headers below them are still in flight, so the row wait above leaves
+  // this field mid-flight: it was observed once reading `dangling at 14` on a
+  // tree that re-ran green, and CAUSAL_HEADERS is 1024, so position 14 was never
+  // eviction.
+  //
+  // The rejection is dropped on purpose. This wait exists to let the walk root;
+  // the assertion below is what must fail, because it names the label actually
+  // on screen -- `dangling at 14`, or `cycle at N` -- where a thrown timeout
+  // would report only that something took too long.
+  const terminal = thread.locator(".section-count");
+  await waitForPage(page, "the causal walk reaches its rooted terminal", TRANSITION_MS, () => (
+    document.querySelector('[data-pane="lineage"] .section-count')?.textContent?.includes("root")
+      ?? false
+  )).catch(() => {});
+  assert.match(
+    await terminal.innerText(),
+    /root/,
+    "the causal walk reaches root before its terminal label is read",
+  );
   const threadRows = await thread.locator("tbody tr").allTextContents();
   if (linked) {
     assert.ok(threadRows.some((row) => !row.endsWith("root")), "causal walk includes a linked cause");
