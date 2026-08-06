@@ -587,9 +587,13 @@ impl CanvasRuntime {
     /// Record the resident's authoritative result for one steering request.
     pub fn apply_steer(&mut self, admitted: &Admitted<Response<DirectiveAnswer>>) {
         self.apply_response(admitted, |_runtime, answer| {
+            // Only the disposition is lowercased into its wire word. The key is
+            // a case-sensitive stamp the operator quotes back at the CLI, so
+            // folding its case would print a key that names no directive.
+            let disposition = format!("{:?}", answer.disposition).to_lowercase();
             (
                 "Direction sent".to_owned(),
-                format!("{} / {:?}", answer.key, answer.disposition).to_lowercase(),
+                format!("{} / {disposition}", answer.key),
             )
         });
     }
