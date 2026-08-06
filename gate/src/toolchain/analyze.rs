@@ -33,8 +33,8 @@ use sill::{Argv, Completion, Environment, spawn};
 use super::{
     ArmFinding, ArmOutcome, ArmTiming, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind,
     FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
-    PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, SourceLocus, ToolchainDeclaration, column_of,
-    environment,
+    PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, SourceLocus, TASTE_EXTENSIONS, ToolchainDeclaration,
+    column_of, environment,
 };
 use crate::GateId;
 use crate::jurisdiction::{Ignore, Jurisdiction};
@@ -211,9 +211,6 @@ const SCANNER_EXCLUSIONS: &[Exclusion] = &[
 /// directories written as `name/**`, not components matched at any depth.
 const BUILD_EXCLUSIONS: &[&str] = &[".git", "target", "dist", "node_modules", ".venv", "vendor"];
 
-/// The compiled form of the Taste include globs, in declaration order.
-const PROSE_EXTENSIONS: &[&str] = &["md", "txt", "rst"];
-
 /// The compiled form of the JavaScript-unused include globs.
 const JAVASCRIPT_EXTENSIONS: &[&str] = &["js", "mjs", "cjs"];
 
@@ -380,7 +377,7 @@ fn taste_with(
     read_source: SourceReader,
 ) -> Analysis {
     let selected = selected_changes(root, changes, |path| {
-        extension(path).is_some_and(|found| PROSE_EXTENSIONS.contains(&found.as_str()))
+        extension(path).is_some_and(|found| TASTE_EXTENSIONS.contains(&found.as_str()))
     });
     if selected.is_empty() {
         return Analysis::not_applicable(declaration);

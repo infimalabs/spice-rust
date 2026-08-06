@@ -30,6 +30,12 @@ const INHERITED: &str = "src/inherited.rs";
 /// A second-parent source carrying complexity and environment debt.
 const INHERITED_POLICY: &str = "src/inherited_policy.rs";
 
+/// An extensionless second-parent file carrying one workstation-local path.
+const INHERITED_LOCAL_PATH: &str = "notes/inherited-local-path";
+
+/// A second-parent prose file carrying one discouraged word.
+const INHERITED_TASTE: &str = "notes/inherited.md";
+
 /// The short source the merge itself writes, standing for its resolutions.
 const RESOLVED: &str = "src/resolved.rs";
 
@@ -81,6 +87,16 @@ fn inherited_policy_source() -> String {
     }
     source.push_str("}\n");
     source
+}
+
+/// One workstation-local path authored wholly by the second parent.
+fn inherited_local_path_source() -> String {
+    format!("source = {}/peer/spice\n", crate::LOCAL_PATH_MARKER)
+}
+
+/// One discouraged prose token authored wholly by the second parent.
+fn inherited_taste_source() -> &'static str {
+    "the orphan fixture belongs to the side parent\n"
 }
 
 /// One short source whose final byte is deliberately not UTF-8.
@@ -200,6 +216,7 @@ fn merged_repository(root: &Path) -> PathBuf {
     );
 
     fixture_git(&repository, &["checkout", "-q", "-b", "side"]);
+    fs::create_dir(repository.join("notes")).expect("fixture prose directory");
     fs::write(
         repository.join(INHERITED),
         compared_source(INHERITED_LITERAL, INHERITED_LINES),
@@ -207,8 +224,24 @@ fn merged_repository(root: &Path) -> PathBuf {
     .expect("fixture inherited source");
     fs::write(repository.join(INHERITED_POLICY), inherited_policy_source())
         .expect("fixture inherited policy source");
+    fs::write(
+        repository.join(INHERITED_LOCAL_PATH),
+        inherited_local_path_source(),
+    )
+    .expect("fixture inherited local path");
+    fs::write(repository.join(INHERITED_TASTE), inherited_taste_source())
+        .expect("fixture inherited taste");
     fixture_git(&repository, &["rm", "-q", REINTRODUCED]);
-    fixture_git(&repository, &["add", INHERITED, INHERITED_POLICY]);
+    fixture_git(
+        &repository,
+        &[
+            "add",
+            INHERITED,
+            INHERITED_POLICY,
+            INHERITED_LOCAL_PATH,
+            INHERITED_TASTE,
+        ],
+    );
     fixture_git(
         &repository,
         &["commit", "-q", "-m", "side authors the file"],
@@ -286,7 +319,10 @@ fn a_merge_is_not_charged_for_a_file_its_second_parent_already_committed() {
     let fixture = Fixture::new();
     let repository = merged_repository(&fixture.root);
 
-    let report = battery_report_with_changes(&repository, &[INHERITED_POLICY]);
+    let report = battery_report_with_changes(
+        &repository,
+        &[INHERITED_POLICY, INHERITED_LOCAL_PATH, INHERITED_TASTE],
+    );
 
     let shape = row(&report, GateId::FileShape, INHERITED, MetricId::FileLines);
     assert!(
@@ -367,6 +403,20 @@ fn a_merge_is_not_charged_for_a_file_its_second_parent_already_committed() {
         findings(&report, GateId::EnvNameLedger).is_empty(),
         "the inherited environment name produces no ledger finding"
     );
+    for id in [GateId::LocalPaths, GateId::Taste] {
+        assert_eq!(
+            arm(&report, id).state(),
+            BatteryState::NotApplicable,
+            "{} scans no path inherited byte-identically from a merge parent: {}",
+            id.as_str(),
+            arm(&report, id).reason(),
+        );
+        assert!(
+            findings(&report, id).is_empty(),
+            "{} produces no finding for a path the merge did not author",
+            id.as_str(),
+        );
+    }
 }
 
 /// The same merge is charged in full once it writes to that same file.
@@ -395,9 +445,28 @@ fn a_merge_is_charged_for_the_line_it_adds_to_an_inherited_file() {
     let mut policy = inherited_policy_source();
     policy.push_str("// resolved by the merge\n");
     fs::write(repository.join(INHERITED_POLICY), policy).expect("the merge's policy edit");
-    fixture_git(&repository, &["add", INHERITED, INHERITED_POLICY]);
+    let mut local_path = inherited_local_path_source();
+    local_path.push_str("merge touched this file\n");
+    fs::write(repository.join(INHERITED_LOCAL_PATH), local_path)
+        .expect("the merge's local-path edit");
+    let mut taste = inherited_taste_source().to_owned();
+    taste.push_str("merge touched this prose\n");
+    fs::write(repository.join(INHERITED_TASTE), taste).expect("the merge's taste edit");
+    fixture_git(
+        &repository,
+        &[
+            "add",
+            INHERITED,
+            INHERITED_POLICY,
+            INHERITED_LOCAL_PATH,
+            INHERITED_TASTE,
+        ],
+    );
 
-    let report = battery_report_with_changes(&repository, &[INHERITED_POLICY]);
+    let report = battery_report_with_changes(
+        &repository,
+        &[INHERITED_POLICY, INHERITED_LOCAL_PATH, INHERITED_TASTE],
+    );
 
     let lines = measured(
         row(&report, GateId::FileShape, INHERITED, MetricId::FileLines),
@@ -432,7 +501,13 @@ fn a_merge_is_charged_for_the_line_it_adds_to_an_inherited_file() {
         BatteryState::Failed,
         "the magic-number arm still refuses the literal this merge introduced"
     );
-    for id in [GateId::Complexity, GateId::EnvPolicy, GateId::EnvNameLedger] {
+    for id in [
+        GateId::Complexity,
+        GateId::LocalPaths,
+        GateId::Taste,
+        GateId::EnvPolicy,
+        GateId::EnvNameLedger,
+    ] {
         assert_eq!(
             arm(&report, id).state(),
             BatteryState::Failed,
@@ -448,6 +523,18 @@ fn a_merge_is_charged_for_the_line_it_adds_to_an_inherited_file() {
     assert!(
         !findings(&report, GateId::EnvNameLedger).is_empty(),
         "the edited file's unaccounted environment name is charged"
+    );
+    assert!(
+        findings(&report, GateId::LocalPaths)
+            .iter()
+            .any(|finding| finding.path.as_deref() == Some(INHERITED_LOCAL_PATH)),
+        "the edited extensionless file's inherited local path is charged"
+    );
+    assert!(
+        findings(&report, GateId::Taste)
+            .iter()
+            .any(|finding| finding.path.as_deref() == Some(INHERITED_TASTE)),
+        "the edited prose file's inherited discouraged word is charged"
     );
 }
 

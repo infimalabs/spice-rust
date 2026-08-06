@@ -204,6 +204,15 @@ mod environment;
 pub use acquire::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
 pub use declarations::*;
 
+/// Extensions selected by the compiled prose scanner, without their leading dot.
+///
+/// Kept beside the toolchain surface because both the scanner and the atomic
+/// repository capture need the same class: the first decides which staged
+/// changes Taste reads, and the second retains the parent bytes that can prove
+/// a merge merely inherited one of those files.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const TASTE_EXTENSIONS: &[&str] = &["md", "txt", "rst"];
+
 /// File suffixes whose committed blobs can prove environment-arm authorship.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn environment_baseline_suffixes() -> Vec<String> {

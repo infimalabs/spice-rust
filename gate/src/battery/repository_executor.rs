@@ -15,8 +15,8 @@ use crate::input::Contract;
 use crate::metrics::{BaselineCapture, MetricSource, acquire_metrics_with_bounds};
 use crate::state::{BoundDecision, LatchEntry};
 use crate::toolchain::{
-    RimCapture, ToolchainSource, acquire_toolchain, environment_baseline_suffixes,
-    measure_toolchain,
+    RimCapture, TASTE_EXTENSIONS, ToolchainSource, acquire_toolchain,
+    environment_baseline_suffixes, measure_toolchain,
 };
 use crate::tree::{SelectedTree, Selector};
 
@@ -137,9 +137,10 @@ impl<'trace> RepositoryExecutor<'trace> {
         // whole core family and the bounds it decided, and the committed
         // baselines every delta or merge-authorship decision reads are all read
         // here, and nothing below this block can reach the live repository
-        // again. Every class is captured together because one capture cannot
-        // answer for a suffix it never walked, and a second capture could name
-        // a different commit than the one this report is labelled with.
+        // again. Suffix classes cover arms with class-bound jurisdictions;
+        // exact rim changes cover every-change arms such as local-paths, whose
+        // inputs may be extensionless. Both are retained together because a
+        // second capture could name a different commit than this report does.
         let (source, core, mut bounds, baselines) = {
             let captured = CoreSource::capture(&tree, &contract, claim, actor.clone(), latches)
                 .map_err(|error| {
@@ -151,9 +152,15 @@ impl<'trace> RepositoryExecutor<'trace> {
             selected.extend(classes.file_shape().iter().cloned());
             selected.extend(classes.complexity().iter().cloned());
             selected.extend(environment_baseline_suffixes());
+            selected.extend(
+                TASTE_EXTENSIONS
+                    .iter()
+                    .map(|extension| format!(".{extension}")),
+            );
             selected.sort();
             selected.dedup();
-            let baselines = BaselineCapture::capture(&repository, &selected);
+            let baselines =
+                BaselineCapture::capture_with_paths(&repository, &selected, rim.changes());
             (captured.digest().clone(), core, bounds, baselines)
         };
         let (metrics, metric_bounds) =
