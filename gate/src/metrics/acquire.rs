@@ -240,8 +240,8 @@ fn file_shape_metrics(
     declaration: ArmDeclaration,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
-    let baselines = match source.baselines {
-        BaselineCapture::Reached(baselines) => baselines,
+    match source.baselines {
+        BaselineCapture::Reached(_) => {}
         BaselineCapture::Unreachable(reason) => {
             return unavailable(
                 declaration,
@@ -265,14 +265,7 @@ fn file_shape_metrics(
             continue;
         }
         let key = MetricKey::path(path).map_err(MetricAcquisitionError::Evidence)?;
-        metrics.extend(file_shape_rows(
-            source,
-            declaration,
-            path,
-            &key,
-            baselines,
-            bounds,
-        )?);
+        metrics.extend(file_shape_rows(source, declaration, path, &key, bounds)?);
     }
     if metrics.is_empty() {
         return declared_rows(
@@ -302,7 +295,6 @@ fn file_shape_rows(
     declaration: ArmDeclaration,
     path: &str,
     key: &MetricKey,
-    baselines: &CommittedTexts,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let bytes = match std::fs::read(source.root().join(path)) {
@@ -317,7 +309,7 @@ fn file_shape_rows(
             );
         }
     };
-    if baselines.merge_inherits(path, &bytes) {
+    if source.baselines.merge_inherits(path, &bytes) {
         return declared_rows(
             declaration,
             key,
@@ -621,12 +613,19 @@ fn complexity_metrics(
 /// A refused routine contributes its paired unavailable rows and no decision;
 /// a measured routine contributes both. Appending here keeps evidence and
 /// decisions in the same parse traversal and the same canonical metric order.
+/// A merge-inherited file contributes neither because this commit authored no
+/// routine in it and therefore owns no complexity or bound decision for it.
 fn complexity_rows(
     source: &MetricSource<'_>,
     path: &str,
     metrics: &mut Vec<MetricEvidence>,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<(), MetricAcquisitionError> {
+    if std::fs::read(source.root().join(path))
+        .is_ok_and(|bytes| source.baselines.merge_inherits(path, &bytes))
+    {
+        return Ok(());
+    }
     let routines = match read_complexity(source, path) {
         Ok(routines) => routines,
         Err(state) => return whole_file_complexity(path, &state, metrics),

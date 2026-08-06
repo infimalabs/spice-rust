@@ -48,6 +48,7 @@ use super::{
 use crate::GateId;
 use crate::input::Contract;
 use crate::measure::Bounds;
+use crate::metrics::BaselineCapture;
 use crate::tree::SelectedTree;
 
 type ProgramReader = fn(&Path) -> std::io::Result<Vec<u8>>;
@@ -161,16 +162,37 @@ pub struct ToolchainSource<'a> {
     root: &'a Path,
     repository: &'a Path,
     rim: RimCapture,
+    baselines: Option<&'a BaselineCapture>,
 }
 
 impl<'a> ToolchainSource<'a> {
     /// Capture one selected tree beside the rim that will supply its programs.
+    ///
+    /// Standalone toolchain acquisition does not infer ancestry from the live
+    /// repository after the tree was selected. The production battery supplies
+    /// ancestry from its atomic repository capture instead.
     #[must_use]
     pub fn capture(tree: &'a SelectedTree, rim: RimCapture) -> Self {
         Self {
             root: tree.root(),
             repository: tree.repository(),
             rim,
+            baselines: None,
+        }
+    }
+
+    /// Capture one selected tree with the parents that can prove merge authorship.
+    #[must_use]
+    pub(crate) fn capture_with_baselines(
+        tree: &'a SelectedTree,
+        rim: RimCapture,
+        baselines: &'a BaselineCapture,
+    ) -> Self {
+        Self {
+            root: tree.root(),
+            repository: tree.repository(),
+            rim,
+            baselines: Some(baselines),
         }
     }
 
@@ -196,6 +218,23 @@ impl<'a> ToolchainSource<'a> {
     #[must_use]
     pub fn changes(&self) -> &[String] {
         self.rim.changes()
+    }
+
+    /// Whether this pending merge inherited one selected path verbatim.
+    fn merge_inherits(&self, path: &str) -> bool {
+        let Some(baselines) = self.baselines else {
+            return false;
+        };
+        fs::read(self.root.join(path)).is_ok_and(|bytes| baselines.merge_inherits(path, &bytes))
+    }
+
+    /// Changed paths authored by this pending commit rather than a merge parent.
+    fn chargeable_changes(&self) -> Vec<String> {
+        self.changes()
+            .iter()
+            .filter(|path| !self.merge_inherits(path))
+            .cloned()
+            .collect()
     }
 }
 
@@ -316,9 +355,14 @@ fn examine(
             GateId::Taste => analyze::taste(declaration, source.root, source.changes()),
             GateId::JavascriptUnused => analyze::javascript_unused(declaration, source.root),
             GateId::CsharpUnusedCandidates => analyze::csharp_unused(declaration, source.root),
-            GateId::EnvPolicy => analyze::env_policy(declaration, source.root, source.changes()),
+            GateId::EnvPolicy => {
+                let changes = source.chargeable_changes();
+                analyze::env_policy(declaration, source.root, &changes)
+            }
             GateId::EnvNameLedger => {
-                analyze::env_name_ledger(declaration, source.root, environment_names)
+                analyze::env_name_ledger(declaration, source.root, environment_names, |path| {
+                    !source.merge_inherits(path)
+                })
             }
             id => Analysis::terminal(
                 ArmOutcome::ParseFailure,

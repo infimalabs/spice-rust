@@ -14,7 +14,10 @@ use crate::hygiene::{HygieneConfiguration, HygieneSource, acquire_hygiene};
 use crate::input::Contract;
 use crate::metrics::{BaselineCapture, MetricSource, acquire_metrics_with_bounds};
 use crate::state::{BoundDecision, LatchEntry};
-use crate::toolchain::{RimCapture, ToolchainSource, acquire_toolchain, measure_toolchain};
+use crate::toolchain::{
+    RimCapture, ToolchainSource, acquire_toolchain, environment_baseline_suffixes,
+    measure_toolchain,
+};
 use crate::tree::{SelectedTree, Selector};
 
 const FAMILY_COUNT: usize = 4;
@@ -55,11 +58,12 @@ enum FamilyExecution {
 /// result or refusal is retained and handed over unchanged when its first arm
 /// is requested.
 ///
-/// The committed magic-number baselines are read in that same moment and for
-/// the same reason, even though the arm that reads them is not a core arm. They
-/// are the live repository's `HEAD`, and `HEAD` moves: a read deferred to first
-/// request would compare part of the selection against one commit and the rest
-/// against another, and the report would name neither.
+/// The committed comparison and merge-authorship baselines are read in that
+/// same moment and for the same reason, even though some arms that read them
+/// are not core arms. They are the live repository's `HEAD` and pending merge
+/// parents, and those move: a read deferred to first request would compare part
+/// of the selection against one ancestry and the rest against another, and the
+/// report would name neither.
 ///
 /// The acting actor and the latch inventory are handed directly from the core
 /// capture to the structural acquisition. That keeps both families deciding
@@ -70,6 +74,7 @@ pub struct RepositoryExecutor<'trace> {
     source: Digest,
     core: Result<Vec<ArmEvidence>, String>,
     metrics: Result<Vec<ArmEvidence>, String>,
+    baselines: BaselineCapture,
     bounds: Vec<BoundDecision>,
     rim: RimCapture,
     hygiene: HygieneConfiguration,
@@ -130,12 +135,11 @@ impl<'trace> RepositoryExecutor<'trace> {
         })?;
         // One capture, taken once: the digest every arm is labelled with, the
         // whole core family and the bounds it decided, and the committed
-        // baselines the magic-number delta is measured against and the
-        // file-shape arm reads a merge's authorship from are all read here, and
-        // nothing below this block can reach the live repository again. Both
-        // classes are captured together because one capture cannot answer for a
-        // suffix it never walked, and a second capture could name a different
-        // commit than the one this report is labelled with.
+        // baselines every delta or merge-authorship decision reads are all read
+        // here, and nothing below this block can reach the live repository
+        // again. Every class is captured together because one capture cannot
+        // answer for a suffix it never walked, and a second capture could name
+        // a different commit than the one this report is labelled with.
         let (source, core, mut bounds, baselines) = {
             let captured = CoreSource::capture(&tree, &contract, claim, actor.clone(), latches)
                 .map_err(|error| {
@@ -145,6 +149,8 @@ impl<'trace> RepositoryExecutor<'trace> {
             let classes = contract.rule_policy().document().file_classes();
             let mut selected = classes.magic().to_vec();
             selected.extend(classes.file_shape().iter().cloned());
+            selected.extend(classes.complexity().iter().cloned());
+            selected.extend(environment_baseline_suffixes());
             selected.sort();
             selected.dedup();
             let baselines = BaselineCapture::capture(&repository, &selected);
@@ -159,6 +165,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             source,
             core,
             metrics,
+            baselines,
             bounds,
             rim,
             hygiene,
@@ -249,7 +256,8 @@ impl<'trace> RepositoryExecutor<'trace> {
     }
 
     fn acquire_toolchain_family(&self) -> Result<Vec<ArmEvidence>, String> {
-        let source = ToolchainSource::capture(&self.tree, self.rim.clone());
+        let source =
+            ToolchainSource::capture_with_baselines(&self.tree, self.rim.clone(), &self.baselines);
         let report = measure_toolchain(acquire_toolchain(&source, &self.contract))
             .map_err(|error| error.to_string())?;
         Ok(report
