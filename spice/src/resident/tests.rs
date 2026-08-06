@@ -1018,7 +1018,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 }
 
 #[test]
-fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
+fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
     let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
         .expect("message bus starts");
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
@@ -1044,8 +1044,28 @@ fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
             }),
         ]),
     };
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            record.lane,
+            record.occupant,
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("capture fixture occupant starts");
+    let mut diagnostics = Vec::new();
 
-    publish_agent_messages(&publisher, &record).expect("capture projects");
+    accept_capture_record(
+        &bus,
+        test_uuid(4),
+        &mut seats,
+        &publisher,
+        &record,
+        &mut diagnostics,
+    )
+    .expect("current capture projects");
 
     let message = updates.try_recv().expect("prose publishes once");
     assert_eq!(message.lane, record.lane);
@@ -1064,6 +1084,55 @@ fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
+
+    seats
+        .vacate(record.lane)
+        .expect("original occupant remains supervised")
+        .wait()
+        .expect("original occupant stops");
+    seats
+        .seat(
+            record.lane,
+            test_uuid(7),
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("replacement occupant starts");
+    let stale_locus = listen::Locus::new(4, 180, 48);
+    let stale_record = lane::capture::CaptureRecord {
+        lane: record.lane,
+        occupant: record.occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus: stale_locus,
+        declaration: None,
+        decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
+            text: "stale prior-occupant answer".to_owned(),
+            phase: None,
+            locus: stale_locus,
+        })]),
+    };
+    accept_capture_record(
+        &bus,
+        test_uuid(4),
+        &mut seats,
+        &publisher,
+        &stale_record,
+        &mut diagnostics,
+    )
+    .expect("stale capture is ignored");
+    assert!(matches!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    assert!(diagnostics.is_empty());
+    seats
+        .vacate(record.lane)
+        .expect("replacement occupant remains supervised")
+        .wait()
+        .expect("replacement occupant stops");
     drop(source);
     bus.shutdown().expect("message bus stops");
 }
