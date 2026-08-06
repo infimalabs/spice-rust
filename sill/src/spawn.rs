@@ -460,7 +460,11 @@ impl Running {
             .map(CaptureHandle::finish)
             .transpose()
             .map_err(|source| self.io_error("finishing stderr capture", source))?;
-        if self.requires_group_terminal() && !self.execution_group_terminal() {
+        // No condition guards this beyond the decision's own first question.
+        // [`Self::execution_group_terminal`] already answers true for a child
+        // that never led a group of its own, so re-asking that here would only
+        // hide which of the two spellings the behaviour actually depends on.
+        if !self.execution_group_terminal() {
             self.terminate_and_reap()?;
         }
         let outcome = WaitOutcome {

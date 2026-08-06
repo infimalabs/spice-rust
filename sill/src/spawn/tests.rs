@@ -1060,6 +1060,28 @@ fn an_unreadable_pre_kill_probe_never_settles_a_group_not_observed_terminal() {
     }
 }
 
+/// A child that never led a group of its own settles without asking the kernel.
+///
+/// `requires_group_terminal` is false for an inherited group and for a new group
+/// whose guardian still holds it, and the decision must answer true there
+/// without observing anything. The observer panics rather than returning an
+/// answer because both halves of that sentence need pinning at once: a decision
+/// that returned the wrong value fails on the assertion, and one that reached
+/// the probe at all fails on the panic, which no returned answer could
+/// distinguish. The kernel is worth not asking here because there is no group of
+/// the child's own to name -- probing an inherited child's negated identity asks
+/// about a group it never led, and the answer settles nothing the caller did not
+/// already know.
+#[test]
+fn a_child_that_never_led_a_group_settles_without_probing() {
+    assert!(
+        execution_group_terminal_against(false, || panic!(
+            "the pre-kill decision probed a group the child never led"
+        )),
+        "a child that never led a group of its own was not settled before any probe"
+    );
+}
+
 /// A number that was never a process identity did not observe a live group.
 ///
 /// The conversion is the whole subject: `group_state` takes a `u32` because
