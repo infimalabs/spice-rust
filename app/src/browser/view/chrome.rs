@@ -229,6 +229,7 @@ pub(super) fn render_mosaic_card(
         <article
             class={classes!("message", "outgoing", "mosaic-card", state)}
             data-state={state}
+            data-key={directive.key.clone()}
             data-accent={correspondent.accent.to_string()}
             data-track={card.track.to_string()}
             data-span={card.span.to_string()}
@@ -239,6 +240,7 @@ pub(super) fn render_mosaic_card(
             <p>{text.clone()}</p>
             {render_attachments(&directive.attachments)}
             <footer class="message-meta">
+                <span class="message-key">{directive.key.clone()}</span>
                 <span class="message-age" title={directive.expires.to_string()}>
                     {format!(
                         "{} left",
