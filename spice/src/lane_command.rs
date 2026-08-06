@@ -94,8 +94,17 @@ fn add(
         },
         None => resolved.root().lane().vendor().clone(),
     };
+    let lane = new_uuid();
+    let lineage_id = match matches.get_one::<String>("lineage") {
+        Some(lineage) => match lineage.parse::<wire::CanonicalUuid>() {
+            Ok(lineage_id) => lineage_id,
+            Err(error) => return protocol_fault("lane::lineage-invalid", &error.to_string()),
+        },
+        None => lane,
+    };
     let body = LaneSeat {
-        lane: new_uuid(),
+        lane,
+        lineage_id,
         name: matches
             .get_one::<String>("name")
             .map(|name| name.trim().to_owned())

@@ -1,6 +1,7 @@
 //! Target-neutral Markdown composition for the browser lane composer.
 
 /// One block the browser renders from the composer preview.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Block {
     /// Ordinary authored prose.
@@ -10,6 +11,7 @@ pub(crate) enum Block {
 }
 
 /// Join one body and its nonblank quotes in the order the composer displays.
+#[cfg(test)]
 pub(crate) fn compose(body: &str, quotes: &[String]) -> String {
     let mut parts = Vec::new();
     let body = body.trim();
@@ -31,6 +33,7 @@ pub(crate) fn compose(body: &str, quotes: &[String]) -> String {
 /// result takes the space off the marker on a final blank line, leaving `>`
 /// alone, and [`render`] reads a line that is not `> ` as prose: the whole
 /// quote reaches the reader as literal markers instead of a blockquote.
+#[cfg(test)]
 pub(crate) fn block_quote(raw: &str) -> String {
     let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
     let trimmed = normalized.trim();
@@ -45,11 +48,15 @@ pub(crate) fn block_quote(raw: &str) -> String {
 }
 
 /// Display the producer's preview or the explicit absent-preview label.
+///
+/// This is the module's runtime boundary: agent transcript cards deliberately
+/// pass absence instead of reparsing authored prose in the browser.
 pub(crate) fn quote_label(preview: Option<&str>) -> &str {
     preview.unwrap_or("quoted message")
 }
 
 /// Parse the exact blank-line boundary [`compose`] emits into render blocks.
+#[cfg(test)]
 pub(crate) fn render(markdown: &str) -> Vec<Block> {
     markdown
         .split("\n\n")

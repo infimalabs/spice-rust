@@ -116,7 +116,7 @@ fn admit_import(
             "lane::import-worktree-missing",
             Some("one canonical linked worktree root".into()),
             None,
-            "name the worktree receiving this vacant team seat",
+            "name the worktree receiving this vacant lineage seat",
         )
     })?;
     let observed = current_residency(bus, epoch)?;

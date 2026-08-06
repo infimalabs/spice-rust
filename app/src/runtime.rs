@@ -119,9 +119,18 @@ pub struct LaneView {
     pub lanes: Vec<LaneRow>,
 }
 
-/// One safe current lane row.
+/// One Canvas lane: a lineage and every independently steerable member in it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LaneRow {
+    /// Stable lineage identity.
+    pub lane: CanonicalUuid,
+    /// Members in canonical resident seat order.
+    pub members: Vec<LaneMember>,
+}
+
+/// One independently steerable worktree and occupant inside a Canvas lane.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LaneMember {
     pub lane: CanonicalUuid,
     pub name: Option<String>,
     pub worktree: String,
@@ -163,6 +172,18 @@ pub enum LaneStatus {
 }
 
 impl LaneStatus {
+    /// Stable machine spelling used by browser hooks and status styling.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::RunningStale => "running-stale",
+            Self::Bound => "bound",
+            Self::Unbound => "unbound",
+        }
+    }
+
     /// The predecessor's exact wording for this state.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -176,8 +197,8 @@ impl LaneStatus {
     }
 }
 
-impl LaneRow {
-    /// This lane's status, given how much direction is queued for it.
+impl LaneMember {
+    /// This member's status, given how much direction is queued for it.
     ///
     /// Pending direction outranks liveness, exactly as the predecessor ranks
     /// it: a lane holding unanswered steering is the one the operator has to
@@ -197,26 +218,51 @@ impl LaneRow {
     }
 }
 
+impl LaneRow {
+    /// The lineage host, which is the first member in canonical seat order.
+    #[must_use]
+    pub fn host(&self) -> Option<&LaneMember> {
+        self.members.first()
+    }
+
+    /// Resolve one independently steerable member of this lineage.
+    #[must_use]
+    pub fn member(&self, lane: CanonicalUuid) -> Option<&LaneMember> {
+        self.members.iter().find(|member| member.lane == lane)
+    }
+}
+
 impl From<&LaneAnswer> for LaneView {
     fn from(answer: &LaneAnswer) -> Self {
+        let mut lineages = Vec::<LaneRow>::new();
+        for lane in &answer.lanes {
+            let member = LaneMember {
+                lane: lane.lane,
+                name: lane.name.clone(),
+                worktree: lane.worktree.clone(),
+                life: lane.life.clone(),
+                vendor: lane.vendor.clone(),
+                occupant: lane.occupant,
+                disposition: lane.disposition.clone(),
+                liveness: lane.liveness,
+                bound: lane.bound,
+            };
+            if let Some(lineage) = lineages
+                .iter_mut()
+                .find(|lineage| lineage.lane == lane.lineage_id)
+            {
+                lineage.members.push(member);
+            } else {
+                lineages.push(LaneRow {
+                    lane: lane.lineage_id,
+                    members: vec![member],
+                });
+            }
+        }
         Self {
             epoch: answer.epoch,
             state: answer.state,
-            lanes: answer
-                .lanes
-                .iter()
-                .map(|lane| LaneRow {
-                    lane: lane.lane,
-                    name: lane.name.clone(),
-                    worktree: lane.worktree.clone(),
-                    life: lane.life.clone(),
-                    vendor: lane.vendor.clone(),
-                    occupant: lane.occupant,
-                    disposition: lane.disposition.clone(),
-                    liveness: lane.liveness,
-                    bound: lane.bound,
-                })
-                .collect(),
+            lanes: lineages,
         }
     }
 }

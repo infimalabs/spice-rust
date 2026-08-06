@@ -860,7 +860,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["lane", "add"],
-        "lane add [WORKTREE] [--name DISPLAY] [--life Steer|Drive|Drain] [--vendor NAME]",
+        "lane add [WORKTREE] [--lineage ID] [--name DISPLAY] [--life Steer|Drive|Drain] [--vendor NAME]",
         Operator,
         Command,
         [LaneSeated, LaneSessionDeclared, LaneStarted],

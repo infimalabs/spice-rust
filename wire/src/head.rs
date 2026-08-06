@@ -270,8 +270,10 @@ pub struct LaneSession {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneResidency {
-    /// Lane identity.
+    /// Address of this independently steerable lineage member.
     pub lane: CanonicalUuid,
+    /// Canvas lineage whose lane contains this member.
+    pub lineage_id: CanonicalUuid,
     /// Operator-configured agent display name, absent on pre-field seats.
     #[serde(
         default,

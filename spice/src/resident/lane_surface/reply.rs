@@ -51,6 +51,7 @@ fn answer_at(
             let liveness = liveness(row, activity(row.lane), now)?;
             Ok(wire::intent::LaneAnswerRow {
                 lane: row.lane,
+                lineage_id: row.lineage_id,
                 name: row.name.clone(),
                 worktree: row.worktree.clone(),
                 life: row.life.clone(),
@@ -320,6 +321,7 @@ mod tests {
     fn occupied() -> wire::LaneResidency {
         wire::LaneResidency {
             lane: uuid(1),
+            lineage_id: uuid(1),
             name: Some("Ava".to_owned()),
             worktree: "/worktrees/main-a".to_owned(),
             life: "drive".to_owned(),

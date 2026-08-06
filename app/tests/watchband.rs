@@ -1,4 +1,4 @@
-use app::runtime::LaneRow;
+use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, leaf, one_line, short,
     standings, ticker_line, truncate,
@@ -40,6 +40,13 @@ fn spell(delta: i64) -> String {
 
 fn lane(id: &str, worktree: &str) -> LaneRow {
     LaneRow {
+        lane: uuid(id),
+        members: vec![member(id, worktree)],
+    }
+}
+
+fn member(id: &str, worktree: &str) -> LaneMember {
+    LaneMember {
         lane: uuid(id),
         name: None,
         worktree: worktree.to_owned(),
@@ -169,6 +176,23 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
 }
 
 #[test]
+fn one_lineage_emits_one_standing_per_member_without_losing_the_lineage_identity() {
+    let lineage = LaneRow {
+        lane: uuid(EPOCH),
+        members: vec![member(LANE_A, "main-a"), member(LANE_B, "main-b")],
+    };
+
+    let rows = standings(&[lineage], &[], &[], at(0));
+
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.lineage_id == uuid(EPOCH)));
+    assert_eq!(rows[0].lane, uuid(LANE_A));
+    assert_eq!(rows[1].lane, uuid(LANE_B));
+    assert_eq!(rows[0].label, "main-a");
+    assert_eq!(rows[1].label, "main-b");
+}
+
+#[test]
 fn the_headline_is_the_newest_producer_preview() {
     let lanes = [lane(LANE_A, "main-c")];
     let waiting = [inbox(
@@ -286,7 +310,7 @@ fn a_lane_is_labelled_by_what_separates_it_from_its_fleet() {
 #[test]
 fn a_configured_agent_name_wins_while_an_unconfigured_lane_uses_the_worktree_leaf() {
     let mut configured = lane(LANE_A, "/fleet/one/spice-rust-a");
-    configured.name = Some("Ava".to_owned());
+    configured.members[0].name = Some("Ava".to_owned());
     let unconfigured = lane(LANE_B, "/fleet/one/spice-rust-g");
 
     let rows = standings(&[configured, unconfigured], &[], &[], at(0));

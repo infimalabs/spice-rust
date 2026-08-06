@@ -19,6 +19,9 @@ pub enum SpiceVariable {
     /// Preferred agent vendor selected for transcript forensics.
     #[serde(rename = "SPICE_AGENT_VENDOR")] // env-policy: allow
     AgentVendor,
+    /// Source identity of the canvas app generation the build stamped.
+    #[serde(rename = "SPICE_APP_SOURCE_IDENTITY")] // env-policy: allow
+    AppSourceIdentity,
     /// Installed shell-hook directory.
     #[serde(rename = "SPICE_HOOKS")] // env-policy: allow
     Hooks,
@@ -63,6 +66,7 @@ impl SpiceVariable {
         Self::ClaudeSession,
         Self::CodexThread,
         Self::AgentVendor,
+        Self::AppSourceIdentity,
         Self::Hooks,
         Self::HygieneAcquireRepository,
         Self::HygieneInterpreterMarker,
@@ -84,6 +88,7 @@ impl SpiceVariable {
             Self::ClaudeSession => "CLAUDE_CODE_SESSION_ID", // env-policy: allow
             Self::CodexThread => "CODEX_THREAD_ID",          // env-policy: allow
             Self::AgentVendor => "SPICE_AGENT_VENDOR",       // env-policy: allow
+            Self::AppSourceIdentity => "SPICE_APP_SOURCE_IDENTITY", // env-policy: allow
             Self::Hooks => "SPICE_HOOKS",                    // env-policy: allow
             Self::HygieneAcquireRepository => {
                 "SPICE_HYGIENE_ACQUIRE_REPOSITORY" // env-policy: allow

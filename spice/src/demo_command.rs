@@ -675,6 +675,7 @@ fn seed_lane(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
         .fact(
             body::LaneSeated {
                 lane,
+                lineage_id: lane,
                 capability,
                 name: Some("Ava".to_owned()),
                 worktree: root.display().to_string(),
@@ -690,6 +691,7 @@ fn seed_lane(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
         state: ResidentState::Dark,
         lanes: vec![wire::LaneResidency {
             lane,
+            lineage_id: lane,
             name: Some("Ava".to_owned()),
             worktree,
             life: "drive".to_owned(),

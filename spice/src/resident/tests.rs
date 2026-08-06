@@ -576,6 +576,7 @@ fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: Can
     let mut head = current.body().clone();
     head.lanes.push(wire::LaneResidency {
         lane,
+        lineage_id: lane,
         name: None,
         worktree: "/fixture".to_owned(),
         life: "drive".to_owned(),
@@ -593,6 +594,7 @@ fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: Can
         .fact(
             wire::body::LaneSeated {
                 lane,
+                lineage_id: lane,
                 capability: test_uuid(9),
                 name: None,
                 worktree: "/fixture".to_owned(),

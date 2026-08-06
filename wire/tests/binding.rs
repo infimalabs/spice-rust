@@ -141,6 +141,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::LaneSeat,
         r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "worktree": "worktrees/h",
   "life": "drive",
   "vendor": "claude"
@@ -303,6 +304,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
   "state": "seated",
   "lanes": [{
     "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
     "name": "Ava",
     "worktree": "/worktrees/lane-a",
     "life": "drive",
@@ -314,6 +316,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "liveness": "running"
   }, {
     "lane": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c6",
     "worktree": "/worktrees/lane-b",
     "life": "steer",
     "vendor": "codex",

@@ -28,7 +28,6 @@
   .team-mode-badge { display: none; }
   .team-surface .team-agents,
   .team-detail-grid { grid-template-columns: 1fr; }
-  .team-activity-grid { columns: 1; }
   .seat-panel { padding: 16px; }
   .page-heading { align-items: start; }
   .page-heading h1 { font-size: 1.35rem; }

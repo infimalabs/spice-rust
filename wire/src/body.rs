@@ -535,8 +535,10 @@ pub struct ConsentFloored {
 /// A lane and its capability were created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneSeated {
-    /// Created lane.
+    /// Created independently steerable member seat.
     pub lane: CanonicalUuid,
+    /// Canvas lineage whose lane contains the member.
+    pub lineage_id: CanonicalUuid,
     /// Capability minted with the lane.
     pub capability: CanonicalUuid,
     /// Operator-configured agent display name, absent on pre-field facts.
@@ -595,7 +597,7 @@ pub struct LaneStarted {
 /// A vacant lane seat moved to a fresh linked worktree before exact-session seating.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneImported {
-    /// Lane whose team seat is retained.
+    /// Lane whose lineage seat is retained.
     pub lane: CanonicalUuid,
     /// Latest occupant in the retained lineage.
     pub ancestor: CanonicalUuid,

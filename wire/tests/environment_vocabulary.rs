@@ -40,6 +40,11 @@ struct EnvironmentPolicy {
 /// account all seven names. They are named here rather than added to
 /// [`SpiceVariable`], because Doctor reports the variables Spice owns and a row
 /// for one of these would claim ownership Spice does not have.
+///
+/// Membership turns on ownership alone, never on when a name is read. A build
+/// stamp Spice owns still gets a row: `SPICE_NATIVE_PINS` is sealed into the
+/// proof runner by `option_env!` and has always been reported, and
+/// `SPICE_APP_SOURCE_IDENTITY` is the same construction one target over.
 const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "GIT_CONFIG_COUNT",  // env-policy: allow
     "GIT_CONFIG_SYSTEM", // env-policy: allow
