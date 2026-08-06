@@ -59,6 +59,13 @@ fn tracked_inputs_load_one_operational_current_contract() {
 
 /// Native long-line admission, durable mutation state, and the Camp profile.
 fn the_measured_policy_is_current(contract: &Contract) {
+    assert!(
+        contract
+            .policy()
+            .render()
+            .starts_with("jurisdiction tracked-index\n"),
+        "the live Contract must render its sole tracked-index path source"
+    );
     assert_eq!(contract.policy().ignore().render(), ".git/\ntarget/\n");
     assert!(contract.policy().metrics().is_empty());
     assert_eq!(

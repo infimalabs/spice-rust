@@ -18,11 +18,12 @@ use crate::input::{Contract, ToolIdentity};
 use crate::jurisdiction::{Jurisdiction, WalkError};
 use crate::long_lines::{LongLineFinding, scan_jurisdiction, validate as validate_long_lines};
 use crate::measure::{
-    Bounds, MeasureError, Measurement, Policy, measurement_digest, render_measurements,
+    Bounds, JurisdictionMode, MeasureError, Measurement, Policy, measurement_digest,
+    render_measurements,
 };
 use crate::metrics::CommittedTexts;
 use crate::ratchet::{Finding, Ratchet};
-use crate::tree::TreeError;
+use crate::tree::{TreeError, tracked_paths};
 
 /// The one receipt schema this build emits and admits.
 pub const GATE_RECEIPT_VERSION: u64 = 2;
@@ -482,7 +483,8 @@ impl Run {
             return Err(RunError::SnapshotIntegrityUnsupported);
         }
 
-        let jurisdiction = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
+        let selection = CapturedJurisdiction::capture(policy.jurisdiction(), root)?;
+        let jurisdiction = selection.walk(root, policy)?;
         let inventory = jurisdiction.inventory_digest();
         let snapshot = jurisdiction.snapshot().map_err(RunError::Walk)?;
         let tree = snapshot.tree();
@@ -523,11 +525,20 @@ impl Run {
             ("not-captured".to_owned(), Vec::new())
         };
 
-        let observed = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
+        let observed = selection.walk(root, policy)?;
         let observed_inventory = observed.inventory_digest();
-        let observed_tree = observed.tree_digest().map_err(RunError::Walk)?;
-        if inventory != observed_inventory || tree != observed_tree {
+        let observed_snapshot = observed.snapshot().map_err(RunError::Walk)?;
+        let observed_tree = observed_snapshot.tree();
+        let mut paths = snapshot
+            .jurisdiction()
+            .changed_paths(observed_snapshot.jurisdiction())
+            .map_err(RunError::Walk)?;
+        paths.extend(selection.changed_paths(root)?);
+        paths.sort();
+        paths.dedup();
+        if inventory != observed_inventory || tree != observed_tree || !paths.is_empty() {
             return Err(RunError::JurisdictionChanged {
+                paths,
                 inventory,
                 observed_inventory,
                 tree,
@@ -631,6 +642,53 @@ impl Run {
     }
 }
 
+enum CapturedJurisdiction {
+    WholeWalk,
+    TrackedIndex(Vec<String>),
+}
+
+impl CapturedJurisdiction {
+    fn capture(mode: JurisdictionMode, root: &Path) -> Result<Self, RunError> {
+        match mode {
+            JurisdictionMode::WholeWalk => Ok(Self::WholeWalk),
+            JurisdictionMode::TrackedIndex => tracked_paths(root)
+                .map(Self::TrackedIndex)
+                .map_err(RunError::TrackedIndex),
+        }
+    }
+
+    fn walk(&self, root: &Path, policy: &Policy) -> Result<Jurisdiction, RunError> {
+        match self {
+            Self::WholeWalk => Jurisdiction::walk(root, policy.ignore()),
+            Self::TrackedIndex(paths) => Jurisdiction::walk_tracked(root, policy.ignore(), paths),
+        }
+        .map_err(RunError::Walk)
+    }
+
+    fn changed_paths(&self, root: &Path) -> Result<Vec<String>, RunError> {
+        match self {
+            Self::WholeWalk => Ok(Vec::new()),
+            Self::TrackedIndex(captured) => {
+                let observed = tracked_paths(root).map_err(RunError::TrackedIndex)?;
+                Ok(changed_tracked_paths(captured, &observed))
+            }
+        }
+    }
+}
+
+fn changed_tracked_paths(captured: &[String], observed: &[String]) -> Vec<String> {
+    captured
+        .iter()
+        .filter(|path| observed.binary_search(path).is_err())
+        .chain(
+            observed
+                .iter()
+                .filter(|path| captured.binary_search(path).is_err()),
+        )
+        .cloned()
+        .collect()
+}
+
 impl Contract {
     /// Execute this current contract and bind its complete identity to the
     /// completed run in one receipt.
@@ -698,6 +756,8 @@ pub enum RunError {
     Measure(MeasureError),
     /// The committed `HEAD` source baseline could not be captured.
     CommittedBaseline(TreeError),
+    /// The current Git index path set could not be captured.
+    TrackedIndex(TreeError),
     /// One current Rust source selected for attribution could not be read.
     LongLineRead {
         /// Repository-relative selected source path.
@@ -707,6 +767,8 @@ pub enum RunError {
     },
     /// The inventory or admitted contents moved during measurement.
     JurisdictionChanged {
+        /// Sorted repository-relative paths whose inventory or bytes moved.
+        paths: Vec<String>,
         /// Inventory established before measurement.
         inventory: Digest,
         /// Inventory observed after measurement.
@@ -746,18 +808,23 @@ impl fmt::Display for RunError {
                     "capture committed HEAD for rust.long-lines: {source}"
                 )
             }
+            Self::TrackedIndex(source) => {
+                write!(formatter, "capture tracked-index jurisdiction: {source}")
+            }
             Self::LongLineRead { path, source } => {
                 write!(formatter, "read rust.long-lines source {path}: {source}")
             }
             Self::JurisdictionChanged {
+                paths,
                 inventory,
                 observed_inventory,
                 tree,
                 observed_tree,
             } => write!(
                 formatter,
-                "jurisdiction changed during measurement: inventory {inventory} became \
-                 {observed_inventory}; tree {tree} became {observed_tree}"
+                "jurisdiction changed during measurement at {}: inventory {inventory} became \
+                 {observed_inventory}; tree {tree} became {observed_tree}",
+                paths.join(", ")
             ),
             Self::SnapshotChanged {
                 metric,
@@ -780,6 +847,7 @@ impl std::error::Error for RunError {
             Self::Walk(source) => Some(source),
             Self::Measure(source) => Some(source),
             Self::CommittedBaseline(source) => Some(source),
+            Self::TrackedIndex(source) => Some(source),
             Self::LongLineRead { source, .. } => Some(source),
             Self::SnapshotIntegrityUnsupported
             | Self::JurisdictionChanged { .. }

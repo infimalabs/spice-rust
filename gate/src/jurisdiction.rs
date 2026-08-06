@@ -8,6 +8,7 @@
 //! as admitted ones, because a measurement's silence is only trustworthy when
 //! the record can say what filled it.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fmt::Write as _;
 use std::fs;
@@ -365,6 +366,81 @@ impl Jurisdiction {
         })
     }
 
+    /// Walk only the regular paths captured from one Git index.
+    ///
+    /// Parent directories are derived from the captured paths and inspected
+    /// directly. Directory listings are never consulted, so an untracked name
+    /// cannot enter the inventory or perturb a tracked read while it changes.
+    /// Ignore rules still decide whether a tracked path is measurable.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tracked path or derived parent that cannot be named or
+    /// inspected.
+    pub(crate) fn walk_tracked(
+        root: &Path,
+        ignore: &Ignore,
+        tracked: &[String],
+    ) -> Result<Self, WalkError> {
+        let mut candidates = BTreeMap::<String, bool>::new();
+        for file in tracked {
+            candidates.insert(file.clone(), true);
+            let mut parent = Path::new(file).parent();
+            while let Some(path) = parent {
+                if path.as_os_str().is_empty() {
+                    break;
+                }
+                let path = path.to_str().ok_or_else(|| WalkError::Unnameable {
+                    path: root.join(path),
+                })?;
+                candidates.entry(path.to_owned()).or_insert(false);
+                parent = Path::new(path).parent();
+            }
+        }
+        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+        candidates.sort_by(|(left, _), (right, _)| {
+            left.matches('/')
+                .count()
+                .cmp(&right.matches('/').count())
+                .then_with(|| left.cmp(right))
+        });
+
+        let mut entries = Vec::with_capacity(candidates.len());
+        let mut pruned = Vec::<String>::new();
+        for (path, expected_file) in candidates {
+            if pruned.iter().any(|parent| {
+                path.strip_prefix(parent)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+            }) {
+                continue;
+            }
+            let absolute = root.join(&path);
+            let metadata = fs::symlink_metadata(&absolute)
+                .map_err(|source| WalkError::io("inspecting a tracked path", &absolute, source))?;
+            let shape = if metadata.is_dir() {
+                Shape::Directory
+            } else if metadata.is_file() {
+                Shape::File
+            } else {
+                Shape::Other
+            };
+            let admission = ignore.decide(&path, shape);
+            if !matches!(shape, Shape::Directory) || !admission.admits() || expected_file {
+                pruned.push(path.clone());
+            }
+            entries.push(Entry {
+                path,
+                shape,
+                admission,
+            });
+        }
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
+        Ok(Self {
+            root: root.to_path_buf(),
+            entries,
+        })
+    }
+
     /// The root every entry path is relative to.
     #[must_use]
     pub fn root(&self) -> &Path {
@@ -428,6 +504,54 @@ impl Jurisdiction {
             );
         }
         Ok(Digest::compute(Domain::GateTree, listing.as_bytes()))
+    }
+
+    /// Every inventory or measurable-content path that differs in another walk.
+    pub(crate) fn changed_paths(&self, observed: &Self) -> Result<Vec<String>, WalkError> {
+        let before = self
+            .entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry))
+            .collect::<BTreeMap<_, _>>();
+        let after = observed
+            .entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry))
+            .collect::<BTreeMap<_, _>>();
+        let names = before
+            .keys()
+            .chain(after.keys())
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let mut changed = Vec::new();
+        for name in names {
+            let (Some(left), Some(right)) = (before.get(name), after.get(name)) else {
+                changed.push(name.to_owned());
+                continue;
+            };
+            if *left != *right {
+                changed.push(name.to_owned());
+                continue;
+            }
+            if left.measurable() {
+                let left_path = self.root.join(name);
+                let right_path = observed.root.join(name);
+                let left_bytes = fs::read(&left_path).map_err(|source| {
+                    WalkError::io("reading captured jurisdiction contents", &left_path, source)
+                })?;
+                let right_bytes = fs::read(&right_path).map_err(|source| {
+                    WalkError::io(
+                        "reading observed jurisdiction contents",
+                        &right_path,
+                        source,
+                    )
+                })?;
+                if left_bytes != right_bytes {
+                    changed.push(name.to_owned());
+                }
+            }
+        }
+        Ok(changed)
     }
 
     pub(crate) fn snapshot(&self) -> Result<Snapshot, WalkError> {
