@@ -17,7 +17,6 @@
 .composer-quote-stack { display: contents; }
 
 .composer-shard--quote .composer-shard-heading > button,
-.composer-attachment-chip button,
 .mosaic-message-card footer button {
   display: grid;
   place-items: center;
@@ -28,26 +27,6 @@
   padding: 0;
   border-radius: 50%;
 }
-
-.composer-attachment-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.composer-attachment-chip {
-  position: relative;
-  display: inline-flex;
-  width: 46px;
-  height: 46px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-muted);
-}
-
-.composer-attachment-chip img { width: 100%; height: 100%; object-fit: cover; }
-.composer-attachment-chip button { position: absolute; top: 2px; right: 2px; background: var(--panel); }
 
 .composer-issue { margin: 0; color: var(--danger); font-size: .76rem; }
 
@@ -89,23 +68,6 @@
 .markdown-body img {
   display: block; max-width: 100%; max-height: 20rem; margin: .5em 0;
   border: 1px solid var(--line); border-radius: 5px; object-fit: contain;
-}
-.mosaic-composer-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: .74rem;
-}
-.image-picker {
-  min-height: 32px;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--panel);
-  color: var(--ink);
-  cursor: pointer;
-  font-weight: 650;
 }
 .composer-send {
   margin-left: auto;
@@ -596,7 +558,38 @@
 .composer-shard-age {
   color: var(--identity, var(--accent));
 }
-.composer-shard-image-indicators:empty { display: none; }
+
+/* A third of the message-card thumbnail, keeping its border, radius, and crop
+   so a draft image reads as the same object at heading scale. The strip is
+   bounded and scrolls, so attachments never push the prose out of the row. An
+   empty strip stays laid out at zero width rather than `display: none`: it owns
+   the third column of the primary heading, and dropping out of the grid would
+   slide the hamburger a whole column left until the first image arrives. */
+.composer-shard-image-indicators {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+  max-width: 42%;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+}
+.composer-shard-image-indicator {
+  display: block;
+  flex: none;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.composer-shard-image-indicator img {
+  display: block;
+  width: 24px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  object-fit: cover;
+}
+.composer-shard-image-indicator:hover img { border-color: var(--accent); }
 .composer-shard-heading > button,
 .agent-action-menu > summary {
   display: grid;
@@ -692,8 +685,6 @@
   font-size: .72rem;
   line-height: 1.35;
 }
-.team-surface .mosaic-composer-actions { gap: 5px; font-size: .62rem; }
-.team-surface .image-picker { min-height: 25px; padding: 4px 6px; font-size: .62rem; }
 
 /* The lineage control stack is sized against the Python Spice reference, which
    fixes every item to one height and one width so the two sliders and the send
