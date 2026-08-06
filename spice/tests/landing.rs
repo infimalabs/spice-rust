@@ -162,21 +162,23 @@ const CASES: &[Case] = &[
     },
 ];
 
-/// Every path a case list registers more than once, in the order the repeats fall.
+/// Every rendered path a list registers more than once, in the order the repeats fall.
 ///
-/// A merge that folds two edits of the case array can keep both copies of an
-/// entry, and the panic is the only thing the next lane reads. How far the
-/// distinct set fell short of the list is a subtraction they then have to solve;
-/// the paths themselves are the answer, so those are what this hands back. Every
-/// repeat is collected rather than the first, because one fold can duplicate
-/// more than one entry and a lane that fixes only the named one comes straight
-/// back.
-fn repeated_paths(cases: &[Case]) -> Vec<&'static str> {
+/// A merge that folds two edits of either the case array or the contract registry
+/// can keep both copies of an entry, and the panic is the only thing the next lane
+/// reads. How far the distinct set fell short of the list is a subtraction they
+/// then have to solve; the paths themselves are the answer, so those are what this
+/// hands back. Every repeat is collected rather than the first, because one fold
+/// can duplicate more than one entry and a lane that fixes only the named one
+/// comes straight back.
+fn repeated_paths<T>(items: &[T], render: impl Fn(&T) -> String) -> Vec<String> {
     let mut seen = BTreeSet::new();
-    cases
+    items
         .iter()
-        .filter(|case| !seen.insert(case.path))
-        .map(|case| case.path)
+        .filter_map(|item| {
+            let path = render(item);
+            (!seen.insert(path.clone())).then_some(path)
+        })
         .collect()
 }
 
@@ -215,8 +217,15 @@ impl Drop for Scratch {
 
 #[test]
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
+    let repeated_contracts =
+        repeated_paths(spice::cli::contracts(), |contract| contract.path.join(" "));
+    assert!(
+        repeated_contracts.is_empty(),
+        "contract path repeated: {}",
+        repeated_contracts.join(", ")
+    );
     let registered = landed_contract_paths();
-    let repeated = repeated_paths(CASES);
+    let repeated = repeated_paths(CASES, |case| case.path.to_owned());
     assert!(
         repeated.is_empty(),
         "process case repeated: {}",
@@ -273,11 +282,14 @@ fn a_repeated_case_is_named_rather_than_counted() {
         case("task add", &["task", "add", "readiness task"]),
         case("task next", &["task", "next"]),
     ];
-    assert_eq!(repeated_paths(&folded), ["task status", "task next"]);
+    assert_eq!(
+        repeated_paths(&folded, |case| case.path.to_owned()),
+        ["task status", "task next"]
+    );
 
     // The shipped array reaches the same refusal here in milliseconds, where the
     // dispatch test only reaches it after standing up a scratch root.
-    let shipped = repeated_paths(CASES);
+    let shipped = repeated_paths(CASES, |case| case.path.to_owned());
     assert!(
         shipped.is_empty(),
         "process case repeated: {}",
