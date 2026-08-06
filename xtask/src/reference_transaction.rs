@@ -15,10 +15,12 @@
 //! Verified against git 2.50.1 rather than recalled: with this guard installed,
 //! a `reset --hard` onto an upstream-merged parent is refused, and leaves HEAD
 //! unmoved while the index and worktree hold the abandoned rewind's target
-//! content. The branch survives; the tree does not. That asymmetry is why the
-//! `ProtectedHistory` refusal carries a recovery rather than merely reporting
-//! that it refused. The recovery is `git reset --hard HEAD`, which this guard
-//! admits because such an update leaves the reference where it already is, so
+//! content. The branch survives; the tree does not. That asymmetry is why
+//! every error this hook can return from the `prepared` state accounts for the
+//! tree rather than merely reporting that it refused. Whenever a destructive
+//! rewind may have written it, the named recovery is `git reset --hard HEAD`,
+//! which this guard admits because such an update leaves the reference where
+//! it already is, so
 //! `abandoned_upstream_commits` finds nothing to protect.
 //!
 //! That damage is not what every refused command leaves behind, so the refusal
@@ -48,6 +50,13 @@ const ASCII_ZERO: u8 = 0x30;
 const REMOTE_PREFIX: &str = "refs/remotes/";
 const LOCAL_PREFIX: &str = "refs/heads/";
 const ORIGIN_HEAD: &str = "refs/remotes/origin/HEAD";
+const OPERATIONAL_RECOVERY: &str = concat!(
+    ". This error aborts the reference transaction, so HEAD is not moved, but ",
+    "this hook runs after the command's tree operations: the index and worktree ",
+    "may already have changed. After correcting this operational failure, ",
+    "inspect them and, if this was a destructive rewind, restore the kept ",
+    "commit with `git reset --hard HEAD`."
+);
 
 pub fn apply(
     repository: &Path,
@@ -370,23 +379,30 @@ impl fmt::Display for ReferenceTransactionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MalformedInput { line } => {
-                write!(formatter, "malformed reference-transaction line {line}")
+                write!(formatter, "malformed reference-transaction line {line}")?;
+                formatter.write_str(OPERATIONAL_RECOVERY)
             }
             Self::GitLaunch {
                 repository,
                 arguments,
                 source,
-            } => write!(
-                formatter,
-                "reference-transaction could not run git -C {} {}: {source}",
-                repository.display(),
-                arguments.join(" ")
-            ),
-            Self::NonUtf8Output { arguments } => write!(
-                formatter,
-                "reference-transaction git output was not UTF-8: git {}",
-                arguments.join(" ")
-            ),
+            } => {
+                write!(
+                    formatter,
+                    "reference-transaction could not run git -C {} {}: {source}",
+                    repository.display(),
+                    arguments.join(" ")
+                )?;
+                formatter.write_str(OPERATIONAL_RECOVERY)
+            }
+            Self::NonUtf8Output { arguments } => {
+                write!(
+                    formatter,
+                    "reference-transaction git output was not UTF-8: git {}",
+                    arguments.join(" ")
+                )?;
+                formatter.write_str(OPERATIONAL_RECOVERY)
+            }
             Self::ProtectedHistory {
                 reference,
                 commits,
@@ -591,6 +607,47 @@ mod tests {
             error,
             ReferenceTransactionError::MalformedInput { line: 2 }
         ));
+    }
+
+    fn assert_operational_error_names_tree_and_recovery(error: ReferenceTransactionError) {
+        let message = error.to_string();
+        assert!(
+            message.contains("HEAD is not moved"),
+            "operational refusal must say the reference stays put: {message}"
+        );
+        assert!(
+            message.contains("index and worktree may already have changed"),
+            "operational refusal must name the uncertain tree state: {message}"
+        );
+        assert!(
+            message.contains("git reset --hard HEAD"),
+            "operational refusal must name the admitted rewind recovery: {message}"
+        );
+    }
+
+    #[test]
+    fn malformed_input_names_the_tree_risk_and_recovery() {
+        assert_operational_error_names_tree_and_recovery(
+            ReferenceTransactionError::MalformedInput { line: 2 },
+        );
+    }
+
+    #[test]
+    fn git_launch_failure_names_the_tree_risk_and_recovery() {
+        assert_operational_error_names_tree_and_recovery(ReferenceTransactionError::GitLaunch {
+            repository: PathBuf::from("/fixture/repository"),
+            arguments: vec!["status".to_owned()],
+            source: io::Error::new(io::ErrorKind::NotFound, "fixture git is absent"),
+        });
+    }
+
+    #[test]
+    fn non_utf8_output_names_the_tree_risk_and_recovery() {
+        assert_operational_error_names_tree_and_recovery(
+            ReferenceTransactionError::NonUtf8Output {
+                arguments: vec!["symbolic-ref".to_owned(), "HEAD".to_owned()],
+            },
+        );
     }
 
     fn refusal(damage: WorktreeDamage) -> String {
