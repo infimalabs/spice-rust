@@ -254,6 +254,8 @@ mod tests {
     /// The explicit assertion removes only the broad watchlist inference.
     #[test]
     fn a_named_non_environment_literal_is_not_a_ledger_reference() {
+        // The generated source below contains the exact names; this test source
+        // constructs them so the repository ledger does not consume its fixture.
         const FIXTURE: &str = concat!("SPICE", "_123");
         const ACCESS: &str = concat!("SPICE", "_REAL");
         let fixture = format!(
@@ -286,6 +288,8 @@ mod tests {
     /// A marker must name one exact ledger-shaped token to have any effect.
     #[test]
     fn a_non_environment_marker_never_waives_the_whole_line() {
+        // Build both fixture names before formatting the synthetic source, which
+        // keeps this scanner test outside the repository's own name inventory.
         const FIXTURE: &str = concat!("SPICE", "_123");
         const OTHER: &str = concat!("SPICE", "_OTHER");
         for line in [

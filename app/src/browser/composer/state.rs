@@ -1,4 +1,7 @@
 //! Browser reducer adapting the target-neutral composer store to Yew.
+//!
+//! Lifetime and speech policy belong to `controls`; this module owns only draft
+//! state so a second local lifetime reducer cannot bypass resident authority.
 
 use std::rc::Rc;
 
