@@ -29,6 +29,39 @@ export async function assertComposerShards({
     "the primary shard owns the agent hamburger",
   );
 
+  const primarySources = [];
+  for (const lane of [seeded.lane, seeded.quoteLane]) {
+    const primaryLink = team.locator(
+      `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-link`,
+    );
+    const primaryHref = await primaryLink.getAttribute("href");
+    assert.match(
+      primaryHref,
+      /^#message-(?:agent|directive)-/,
+      "a primary shard with activity links to a real source card",
+    );
+    const primarySource = page.locator(primaryHref);
+    await primarySource.waitFor({ timeout: TRANSITION_MS });
+    assert.equal(
+      await primarySource.getAttribute("data-agent-lane"),
+      lane,
+      "the primary shard target belongs to that exact agent",
+    );
+    await primaryLink.click();
+    assert.equal(await page.evaluate(() => window.location.hash), primaryHref);
+    assert.equal(
+      await primarySource.evaluate((card) => card.matches(":target")),
+      true,
+      "clicking the primary deep link targets its resident stream card",
+    );
+    primarySources.push(primaryHref);
+  }
+  assert.notEqual(
+    primarySources[0],
+    primarySources[1],
+    "two agents in one lineage have distinct primary stream destinations",
+  );
+
   await nestedCard.click();
   let previewShard = quoteLane
     .locator(".composer-shard--quote")

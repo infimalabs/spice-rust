@@ -14,9 +14,9 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    choose_images, drop_on_lane, focus_after_render, keyboard_submit, paste_images,
-    primary_textarea_id, render_agent_message_card, render_attachments, render_directive_card,
-    render_markdown, render_quote_shards, update_body,
+    agent_message_source_id, choose_images, directive_source_id, drop_on_lane, focus_after_render,
+    keyboard_submit, paste_images, primary_textarea_id, render_agent_message_card,
+    render_attachments, render_directive_card, render_markdown, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -261,11 +261,13 @@ fn render_compose(
                     .get(&member.lane.to_string())
                     .is_some_and(|draft| !compose(draft).trim().is_empty())
         });
+    let cards = activity_cards(runtime, lineage);
     html! {
         <div class="team-compose">
             <form class="team-composer" onsubmit={submit.clone()}>
                 <div class="team-agents">
                     {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
+                        let stream = primary_stream_link(&cards, lineage, member.lane, standing);
                         render_agent_composer(
                             member,
                             standing,
@@ -274,6 +276,7 @@ fn render_compose(
                             can_send,
                             sender,
                             drafts,
+                            stream,
                         )
                     })}
                 </div>
@@ -288,20 +291,20 @@ fn render_compose(
                 )}
             </form>
             {view::chrome::render_ticker(surface)}
-            {render_activity(runtime, lineage, drafts, controls, control.speech, control.life)}
+            {render_activity(
+                lineage,
+                &cards,
+                drafts,
+                controls,
+                control.speech,
+                control.life,
+            )}
         </div>
     }
 }
 
-fn render_activity(
-    runtime: &CanvasRuntime,
-    lineage: &crate::runtime::LaneRow,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-    controls: &view::AgentControls,
-    speech: LineageSpeech,
-    life: LineageLife,
-) -> Html {
-    let cards = runtime
+fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
+    runtime
         .messages()
         .iter()
         .filter_map(|message| {
@@ -323,7 +326,17 @@ fn render_activity(
                 .cloned()
                 .map(move |directive| ActivityCard::Directive { lane, directive })
         }))
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+fn render_activity(
+    lineage: &crate::runtime::LaneRow,
+    cards: &[ActivityCard],
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    controls: &view::AgentControls,
+    speech: LineageSpeech,
+    life: LineageLife,
+) -> Html {
     let empty = cards.is_empty();
     let speak = if speech == LineageSpeech::Quiet {
         Callback::from(|_: String| {})
@@ -332,6 +345,7 @@ fn render_activity(
     };
     html! {
         <div
+            id={format!("lineage-stream-{}", lineage.lane)}
             class="team-activity-grid"
             aria-live="polite"
             aria-label="Live agent activity"
@@ -340,19 +354,12 @@ fn render_activity(
             if empty {
                 <div class="mosaic-message-empty">{"No pending direction."}</div>
             }
-            {for lineage.members.iter().map(|member| html! {
-                <span
-                    id={format!("agent-stream-{}", member.lane)}
-                    class="agent-stream-anchor"
-                    aria-hidden="true"
-                ></span>
-            })}
             <MosaicPlane
                 key={lineage.lane.to_string()}
                 lane={lineage.lane}
                 {life}
                 members={lineage.members.len()}
-                {cards}
+                cards={cards.to_vec()}
                 drafts={drafts.clone()}
                 {speak}
                 {speech}
@@ -476,6 +483,39 @@ fn render_agent_details(
     }
 }
 
+struct ComposerStreamLink {
+    target: String,
+    label: String,
+}
+
+fn primary_stream_link(
+    cards: &[ActivityCard],
+    lineage: &crate::runtime::LaneRow,
+    lane: CanonicalUuid,
+    standing: &Standing,
+) -> ComposerStreamLink {
+    let source = cards.iter().rev().find_map(|card| match card {
+        ActivityCard::Agent {
+            member, message, ..
+        } if member.lane == lane => Some(agent_message_source_id(message)),
+        ActivityCard::Directive {
+            lane: card_lane,
+            directive,
+        } if *card_lane == lane => Some(directive_source_id(directive)),
+        ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
+    });
+    source.map_or_else(
+        || ComposerStreamLink {
+            target: format!("lineage-stream-{}", lineage.lane),
+            label: "Jump to lineage activity".to_owned(),
+        },
+        |target| ComposerStreamLink {
+            target,
+            label: format!("Jump to latest {} activity", standing.label),
+        },
+    )
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one member composer needs its standing and shared lineage interaction handles"
@@ -488,6 +528,7 @@ fn render_agent_composer(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
+    stream: ComposerStreamLink,
 ) -> Html {
     let lane_id = member.lane;
     let lane_key = lane_id.to_string();
@@ -562,6 +603,7 @@ fn render_agent_composer(
                     onkeydown.clone(),
                     renew_enabled,
                     renew,
+                    stream,
                 )}
                 {render_quote_shards(&lane_key, &draft, drafts, onkeydown)}
             </div>
@@ -583,6 +625,7 @@ fn render_composer_body(
     onkeydown: Callback<KeyboardEvent>,
     renew_enabled: bool,
     renew: Callback<MouseEvent>,
+    stream: ComposerStreamLink,
 ) -> Html {
     let markdown = compose(draft);
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
@@ -599,6 +642,7 @@ fn render_composer_body(
                 standing,
                 renew_enabled,
                 renew.clone(),
+                stream,
             )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
@@ -645,6 +689,7 @@ fn render_composer_heading(
     standing: &Standing,
     renew_enabled: bool,
     renew: Callback<MouseEvent>,
+    stream: ComposerStreamLink,
 ) -> Html {
     let activity = standing
         .headline
@@ -655,13 +700,12 @@ fn render_composer_heading(
     let focus = Callback::from(move |_| {
         focus_after_render(primary_textarea_id(&focus_lane));
     });
-    let stream = format!("#agent-stream-{lane}");
     html! {
         <header class="composer-shard-heading">
             <a
                 class="composer-shard-link composer-shard-age"
-                href={stream.clone()}
-                aria-label={format!("Jump to {} message stream", standing.label)}
+                href={format!("#{}", stream.target)}
+                aria-label={stream.label}
             >{
                 standing
                     .held
