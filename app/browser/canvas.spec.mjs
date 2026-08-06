@@ -342,6 +342,13 @@ async function assertCanvas(page, scheme) {
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }
 
+/// The console's one compose box, addressed so a feed full of cards cannot
+/// shadow it. Every card action is labelled "... this message", so the box has
+/// to be picked by role and by an exact name rather than by a label substring.
+function composeField(console) {
+  return console.getByRole("textbox", { name: "Message", exact: true });
+}
+
 async function assertAgentConversation(page, fixture) {
   const console = page.locator('[data-pane="agent-console"]');
   await page.getByRole("button", { name: "Mosaic" }).click();
@@ -384,11 +391,25 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(await tab.getAttribute("data-lane"), seated.lane);
 
   const message = "browser direction survives streaming";
-  await console.getByLabel("Message").fill(message);
+  // Addressed by role and exact name, not by label substring: once a card is on
+  // the feed its actions are labelled "Speak/Quote/Copy this message", so a
+  // substring match resolves to four elements and the fill fails on ambiguity
+  // rather than on anything the test is about.
+  await composeField(console).fill(message);
   await console.getByRole("button", { name: "Send direction" }).click();
   const outgoing = console.locator(".message.outgoing").filter({ hasText: message });
   await outgoing.waitFor({ timeout: 10_000 });
-  assert.match(await outgoing.innerText(), /pending/);
+  // A card is only drawn for a direction still in the pending region, and it
+  // marks that with the time left before the direction lapses; once a lane takes
+  // the direction the card is gone rather than relabelled. So a countdown here is
+  // the browser-side proof it is still waiting. This replaces a literal "pending"
+  // label the mosaic card no longer prints -- matching that word again would pass
+  // on any card that merely mentioned it. The server-side pending state is
+  // asserted directly below, so the two together pin both ends.
+  assert.match(
+    await outgoing.locator(".message-age").innerText(),
+    /^(\d+[smhd]|now) left$/,
+  );
 
   const inbox = await reply(fixture, ["inbox", seated.lane]);
   assert.equal(inbox.body.lanes.length, 1);
@@ -403,34 +424,62 @@ async function assertAgentConversation(page, fixture) {
   return seated.lane;
 }
 
-/// The strip above the console: one tile per seated lane, carrying its state.
+/// The strip above the console: one card per seated lane, carrying its state.
 ///
-/// The tile is what the operator reads before opening a conversation, so it is
+/// The card is what the operator reads before opening a conversation, so it is
 /// checked for what it joins rather than for its existence: the lane's name,
 /// the direction that is actually queued, the count of it, and the vendor. The
 /// name is the worktree's last segment because the full path is the same for
-/// every tile up to it; the whole path is on the hover card instead, which is
-/// also what a screen reader reads for the tile.
+/// every card up to it; the whole path is on the label a screen reader reads,
+/// and on the conversation heading the card selects.
 async function assertLaneStrip(page, fixture, seated, message) {
-  const tile = page.locator(".watchband .lane-tile");
+  const tile = page.locator(".agent-tabs.watchband .watchband-card");
   await tile.waitFor({ timeout: 10_000 });
-  assert.equal(await tile.count(), 1, "the strip carries one tile per seated lane");
-  const leaf = fixture.split("/").filter(Boolean).pop();
-  assert.equal(await tile.locator(".lane-tile-name").innerText(), leaf);
-  assert.equal(await tile.locator(".lane-tile-body").innerText(), message);
-  assert.equal(await tile.locator(".lane-tile-pending").innerText(), "1");
-  // innerText reports the rendered text, and the chip is uppercased by the
-  // stylesheet, so this is the vendor as the operator reads it off the tile.
-  assert.equal(await tile.locator(".lane-tile-vendor").innerText(), "CLAUDE");
-  const hover = await tile.getAttribute("title");
-  assert.ok(hover.startsWith(`${fixture}, steer\n`), `hover card names the worktree: ${hover}`);
-  assert.match(hover, /^.*\n1 pending, steering queued\n/m);
+  assert.equal(await tile.count(), 1, "the strip carries one card per seated lane");
 
-  // Focusing the tile aims the one compose bar at it, which is the whole point
-  // of a strip that shares a single input.
+  // The card has room for one field of the path, so it carries the segment that
+  // tells this lane from its neighbours, cut to that field. The cut is asserted
+  // in both directions: a card that stopped truncating would still start with
+  // the leaf, and one that truncated a name that already fit would still fit.
+  const leaf = fixture.split("/").filter(Boolean).pop();
+  const name = await tile.locator(".watchband-name").innerText();
+  assert.ok(name.length <= 22, `the name fits the card's field: ${name}`);
+  assert.ok(leaf.startsWith(name.replace(/…$/, "")), `the name is the worktree leaf: ${name}`);
+  assert.equal(name.endsWith("…"), leaf.length > 22, "the ellipsis marks a cut and only a cut");
+
+  // The queued direction itself is the hover card, flattened to one line; the
+  // count and the disposition are the line under the name. Between them the
+  // card answers "how many, and what is newest" without being opened. The claim
+  // line is checked too because it is the join against a third source -- the
+  // board -- and an empty board has to read as "no claim" rather than as blank.
+  // `occupied` is the resident's own word for the seat -- the vocabulary is
+  // vacant/occupied/degraded -- so the card is showing the lane table rather
+  // than a label the view made up, and a lane that lost its occupant would read
+  // differently here without the count changing at all.
+  assert.equal(await tile.getAttribute("title"), message);
+  assert.match(
+    await tile.locator(".watchband-line.muted").first().innerText(),
+    /^1 pending, occupied/,
+  );
+  assert.equal(await tile.locator(".watchband-line.mono").innerText(), "no claim");
+  assert.equal(await tile.locator(".tag.vendor").innerText(), "claude");
+  assert.equal(
+    await tile.getAttribute("aria-label"),
+    `Open claude lane ${seated.lane.slice(0, 8)} in ${fixture}`,
+    "the label a screen reader reads carries the whole path the card cut",
+  );
+
+  // Selecting the card aims the one compose form at that lane, which is the
+  // whole point of a strip that shares a single input. The heading is what says
+  // which lane the form now writes to, and the form is live because that lane
+  // is occupied -- a vacant one disables it.
   await tile.click();
-  const compose = page.locator(".watchband .compose-input");
-  assert.equal(await compose.getAttribute("placeholder"), `Steer ${fixture}`);
+  assert.equal(await tile.getAttribute("aria-selected"), "true");
+  assert.equal(
+    await page.locator(".conversation-heading p").innerText(),
+    `occupied / steer / ${fixture}`,
+  );
+  const compose = page.locator("#agent-message");
   assert.equal(await compose.isDisabled(), false, "an occupied lane accepts direction");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-strip.png"), fullPage: true });
 }
@@ -441,7 +490,7 @@ async function assertMosaicPacking(page, console) {
   assert.ok(laneCount >= 1 && laneCount <= 6, "geometry exposes a legal base-lane count");
   const targetCards = laneCount * 2 + 1;
   for (let index = 1; index < targetCards; index += 1) {
-    await console.getByLabel("Message").fill(`mosaic placement ${index}`);
+    await composeField(console).fill(`mosaic placement ${index}`);
     await console.getByRole("button", { name: "Send direction" }).click();
   }
   const cards = console.locator(".mosaic-card");
@@ -481,7 +530,7 @@ async function assertMosaicPacking(page, console) {
 
   await feed.evaluate((element) => element.scrollTo(0, element.scrollHeight));
   const before = await feed.evaluate((element) => element.scrollTop);
-  await console.getByLabel("Message").fill("mosaic scroll compensation");
+  await composeField(console).fill("mosaic scroll compensation");
   await console.getByRole("button", { name: "Send direction" }).click();
   await cards.nth(targetCards).waitFor({ timeout: 10_000 });
   const after = await feed.evaluate((element) => element.scrollTop);
@@ -519,7 +568,11 @@ async function assertAuthoritySurface(page, seeded) {
 }
 
 async function assertMosaicComposer(page, fixture, seeded) {
-  await page.getByRole("button", { name: "Mosaic", exact: true }).click();
+  // Not an exact name: the pill carries a badge with the count of directions
+  // waiting across every lane, so its accessible name is "Mosaic 5" by the time
+  // anything has been sent. The heading below is the exact one -- it is the pane
+  // itself rather than the control, so it is what proves the click landed.
+  await page.getByRole("button", { name: "Mosaic" }).click();
   await page.getByRole("heading", { name: "Mosaic", exact: true }).waitFor();
   const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
   await lane.getByText("browser direction survives streaming", { exact: true }).waitFor();
