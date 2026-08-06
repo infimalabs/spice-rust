@@ -145,7 +145,8 @@ async function reply(fixture, args) {
   return outcome;
 }
 
-async function configureFixture(fixture) {
+async function configureFixture(fixture, linkedRoot) {
+  await execute("git", ["init", "--quiet"], { cwd: fixture });
   await cp(join(root, "dist/stage-local"), join(fixture, "dist/stage-local"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
@@ -171,7 +172,7 @@ async function configureFixture(fixture) {
     'vendor = "claude"',
     "",
     "[tasks]",
-    'stems = ["app", "canvas"]',
+    'stems = ["app", "canvas", "dist", "gate", "spice", "steer"]',
     "",
     "[vendor.claude]",
     `binary = ${JSON.stringify(vendor)}`,
@@ -180,6 +181,20 @@ async function configureFixture(fixture) {
     "rows = 2",
     "",
   ].join("\n"));
+  await writeFile(join(fixture, ".gitignore"), ["dist/stage-local", "",].join("\n"));
+  await execute("git", ["add", ".gitignore", "fake-claude", "spice.toml"], { cwd: fixture });
+  await execute("git", [
+    "-c", "user.name=Canvas Fixture",
+    "-c", "user.email=canvas@example.invalid",
+    "commit", "--quiet", "-m", "canvas fixture",
+  ], { cwd: fixture });
+  const worktrees = [fixture];
+  for (let index = 2; index <= 4; index += 1) {
+    const worktree = join(linkedRoot, `lane-${index}`);
+    await execute("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: fixture });
+    worktrees.push(await realpath(worktree));
+  }
+  return worktrees;
 }
 
 async function journalExtent(fixture) {
@@ -211,6 +226,14 @@ async function seedAuthority(fixture) {
     "--project",
     "canvas.browser",
   ]);
+  for (const [title, project] of [
+    ["Distribution witness", "dist.browser"],
+    ["Gate witness", "gate.browser"],
+    ["Spice witness", "spice.browser"],
+    ["Steering witness", "steer.browser"],
+  ]) {
+    await reply(fixture, ["task", "add", title, "--project", project]);
+  }
   await reply(fixture, ["task", "note", first.body.task, "first causal observation"]);
   await reply(fixture, ["task", "note", first.body.task, "second causal observation"]);
 
@@ -244,6 +267,18 @@ function monitorPage(page) {
   };
 }
 
+async function chooseCanvasView(page, name) {
+  const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
+  if (!(await button.isVisible())) {
+    await page.getByLabel("Open Spice Canvas menu").click();
+  }
+  await button.click();
+  const openMenu = page.locator(".canvas-menu[open]");
+  if (await openMenu.count()) {
+    await openMenu.locator("summary").click();
+  }
+}
+
 async function stopResident(fixture, resident) {
   const exited = resident.child.exitCode === null
     ? once(resident.child, "exit")
@@ -254,14 +289,19 @@ async function stopResident(fixture, resident) {
 
 async function assertCanvas(page, scheme) {
   try {
-    await page.waitForSelector(".status.online", { timeout: 10_000 });
+    await page.waitForFunction(() => /cursor \d+/.test(
+      document.querySelector(".bar-meta")?.textContent ?? "",
+    ), null, { timeout: 10_000 });
   } catch (error) {
     const body = await page.locator("body").innerText().catch(() => "<body unavailable>");
     throw new Error(`canvas did not come online; body=${JSON.stringify(body)}`, { cause: error });
   }
   await page.waitForFunction(() => document.querySelector("#app")?.childElementCount > 0);
-  await assert.doesNotReject(() => page.locator(".brand-name:visible, .mobile-brand:visible").waitFor());
-  await assert.doesNotReject(() => page.getByRole("heading", { name: "Agents", exact: true }).waitFor());
+  await assert.doesNotReject(() => page.locator(".canvas-menu > summary:visible, .brand-name:visible").waitFor());
+  assert.ok(
+    await page.locator('[data-pane="agent-console"]').count() <= 1,
+    "the active view never mounts duplicate lineage consoles",
+  );
   await page.waitForFunction(() => {
     const cursor = document.querySelector(".bar-meta")?.textContent ?? "";
     return /cursor \d+/.test(cursor);
@@ -299,7 +339,7 @@ async function assertCanvas(page, scheme) {
   assert.deepEqual(pixels.overflowingControls, [], "controls and pane labels fit their bounds");
 
   for (const [axis, panes] of axisPanes) {
-    await page.getByRole("button", { name: axis }).click();
+    await chooseCanvasView(page, axis);
     await page.getByRole("heading", { name: axis, exact: true }).waitFor();
     assert.deepEqual(
       await page.locator(".pane-chip").allTextContents(),
@@ -310,21 +350,22 @@ async function assertCanvas(page, scheme) {
   await page.keyboard.press("Tab");
   assert.ok(await page.locator(":focus-visible").count(), "keyboard focus remains visible");
   if ((page.viewportSize()?.width ?? 1000) <= 560) {
-    await page.getByRole("button", { name: "Flow" }).click();
+    await chooseCanvasView(page, "Flow");
     await page.locator(".workspace").evaluate((element) => element.scrollTo(0, element.scrollHeight));
     assert.ok(await page.getByRole("button", { name: "Add note" }).isVisible());
     await page.locator(".workspace").evaluate((element) => element.scrollTo(0, 0));
   }
-  await page.getByRole("button", { name: "Mosaic" }).click();
-  await page.getByRole("heading", { name: "Agents", exact: true }).waitFor();
+  await chooseCanvasView(page, "Mosaic");
+  await page.locator('[data-pane="agent-console"]').waitFor();
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }
 
-async function assertAgentConversation(page, fixture) {
+async function assertAgentConversation(page, fixture, worktrees) {
   const console = page.locator('[data-pane="agent-console"]');
-  await page.getByRole("button", { name: "Mosaic" }).click();
-  await console.getByRole("heading", { name: "Agents", exact: true }).waitFor();
-  await console.getByLabel("Worktree").fill(fixture);
+  await chooseCanvasView(page, "Mosaic");
+  await console.waitFor();
+  await console.getByRole("tab", { name: /^Info/ }).click();
+  await console.getByLabel("Worktree").fill(worktrees[0]);
   await console.getByLabel("Life").fill("steer");
 
   // A refused submission has to say why. The vendor field is free text with no
@@ -342,136 +383,170 @@ async function assertAgentConversation(page, fixture) {
   await console.getByLabel("Vendor").fill("Claude");
   await console.getByRole("button", { name: "Seat agent" }).click();
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
+  await console.locator(".team-detail-card").nth(0).waitFor({ timeout: 15_000 });
 
-  const tab = console.locator(".agent-tab");
-  try {
-    await tab.waitFor({ timeout: 15_000 });
-  } catch (error) {
-    await page.getByRole("button", { name: "Chronology" }).click();
-    const rendered = await page.locator("body").innerText();
-    const lanes = await invoke(fixture, ["lane"]);
-    throw new Error(`Canvas seat did not create a lane: lanes=${JSON.stringify(lanes)} body=${JSON.stringify(rendered)}`, {
-      cause: error,
-    });
+  for (const [index, worktree] of worktrees.slice(1).entries()) {
+    await console.getByLabel("Worktree").fill(worktree);
+    await console.getByLabel("Vendor").fill("claude");
+    await console.getByLabel("Life").fill("steer");
+    await console.getByRole("button", { name: "Seat agent" }).click();
+    await console.locator(".team-detail-card").nth(index + 1).waitFor({ timeout: 15_000 });
   }
+
   const lanes = await reply(fixture, ["lane"]);
-  const seated = lanes.body.lanes.find((lane) => lane.worktree === fixture);
-  assert.ok(seated, "the Canvas seat control creates a lane in the requested worktree");
-  assert.equal(seated.vendor, "claude");
-  assert.equal(seated.life, "steer");
-  assert.equal(await tab.getAttribute("data-lane"), seated.lane);
+  const seated = worktrees.map((worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree));
+  assert.ok(seated.every(Boolean), "the Canvas seat control creates all four linked-worktree lanes");
+  assert.ok(seated.every((lane) => lane.vendor === "claude"));
+  assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
 
-  const message = "browser direction survives streaming";
-  await console.getByRole("textbox", { name: "Message", exact: true }).fill(message);
-  await console.getByRole("button", { name: "Send direction" }).click();
-  const outgoing = console.locator(".message.outgoing").filter({ hasText: message });
-  await outgoing.waitFor({ timeout: 10_000 });
+  await console.getByRole("tab", { name: /^Compose/ }).click();
+  await console.locator(".team-agent").nth(3).waitFor();
+  assert.equal(await console.getByRole("button", { name: "Steer", exact: true }).count(), 1);
+  const lifetime = console.locator('.team-lifetime input[type="range"]');
+  await lifetime.fill("2");
+  await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
+  await lifetime.fill("0");
+  await console.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  const messages = [
+    "browser direction survives streaming",
+    "## Gate contract\n\n- green on the integrated tip\n- exact checks retained",
+    "> The reference viewport keeps **all agent status** visible.\n>\n> Density remains readable.\n\n`1000×568` stays bounded.",
+    "> > The final review found no alternate execution path.\n> >\n> > `cargo xtask verify` is green.\n>\n> Why it matters: nested context remains visible.\n\n### Result\n\nThe Mosaic card grows with its Markdown.",
+  ];
+  const messageLabels = [
+    messages[0],
+    "Gate contract",
+    "reference viewport keeps",
+    "final review found",
+  ];
+  for (const [index, lane] of seated.entries()) {
+    const column = console.locator(`.team-agent[data-agent-lane="${lane.lane}"]`);
+    await column.getByRole("textbox").fill(messages[index]);
+    await console.getByRole("button", { name: "Steer", exact: true }).click();
+    await console
+      .locator(`.mosaic-message-card[data-agent-lane="${lane.lane}"]`)
+      .filter({ hasText: messageLabels[index] })
+      .waitFor({ timeout: 10_000 });
+  }
+  assert.ok(await console.locator(".mosaic-message-card h2").count(), "cards render headings");
+  assert.ok(await console.locator(".mosaic-message-card ul li").count(), "cards render lists");
+  assert.ok(
+    await console.locator(".mosaic-message-card blockquote blockquote").count(),
+    "cards preserve nested quote depth",
+  );
+  const cardHeights = await console.locator(".mosaic-message-card").evaluateAll((cards) =>
+    cards.map((card) => Math.round(card.getBoundingClientRect().height)),
+  );
+  assert.ok(new Set(cardHeights).size >= 3, "Markdown produces nonuniform Mosaic card heights");
+  await page.locator('.task-pill[data-task-stem="app"]').waitFor();
+  await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
+  assert.match(await page.locator('.task-pill[data-task-stem="app"]').innerText(), /\d+·\d+·\d+/);
 
-  const inbox = await reply(fixture, ["inbox", seated.lane]);
+  const outgoing = console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
+    .filter({ hasText: messages[0] });
+  const inbox = await reply(fixture, ["inbox", seated[0].lane]);
   assert.equal(inbox.body.lanes.length, 1);
   assert.equal(inbox.body.lanes[0].pending.length, 1);
-  assert.equal(inbox.body.lanes[0].pending[0].text, message);
+  assert.equal(inbox.body.lanes[0].pending[0].text, messages[0]);
   assert.equal(
     await outgoing.locator(".message-key").innerText(),
     inbox.body.lanes[0].pending[0].key,
   );
   assert.match(await outgoing.locator(".message-age").innerText(), / left$/);
-  await assertMosaicPacking(page, console);
+  assert.equal(await outgoing.locator(".message-actions button").count(), 3);
+
+  for (const mode of ["Filters", "Metrics", "Info"]) {
+    await console.getByRole("tab", { name: new RegExp(`^${mode}`) }).click();
+    await console.locator(".team-detail-card").nth(3).waitFor();
+    assert.equal(await console.locator(".team-detail-card").count(), 4, `${mode} reaches all agents`);
+  }
+  await console.getByText(worktrees[0], { exact: true }).waitFor();
+  await console.getByRole("tab", { name: /^Compose/ }).click();
+  await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
-  return seated.lane;
+  return seated[0].lane;
 }
 
-async function assertMosaicPacking(page, console) {
-  const feed = console.locator(".mosaic-feed");
-  const laneCount = Number(await feed.getAttribute("data-lanes"));
-  assert.ok(laneCount >= 1 && laneCount <= 6, "geometry exposes a legal base-lane count");
-  const targetCards = laneCount * 2 + 1;
-  for (let index = 1; index < targetCards; index += 1) {
-    await console
-      .getByRole("textbox", { name: "Message", exact: true })
-      .fill(`mosaic placement ${index}`);
-    await console.getByRole("button", { name: "Send direction" }).click();
-  }
-  const cards = console.locator(".mosaic-card");
-  await cards.nth(targetCards - 1).waitFor({ timeout: 15_000 });
-  assert.equal(await cards.count(), targetCards);
-  assert.equal(await cards.first().getAttribute("data-state"), "frozen");
-  const keys = await cards.locator(".message-key").allTextContents();
-  assert.deepEqual(keys, [...keys].sort(), "Canvas journal order agrees with steering key order");
-  assert.deepEqual(
-    await cards.evaluateAll((elements) => elements.map((element) => element.dataset.key)),
-    keys,
-    "each packed card binds its visible key to its machine-readable identity",
-  );
-  const ages = cards.locator(".message-age");
-  assert.ok(
-    (await ages.allTextContents()).every((age) => age.endsWith(" left")),
-    "spatially packed keys carry the age that orders them",
-  );
-  assert.equal(await ages.count(), targetCards);
-
-  const placements = await cards.evaluateAll((elements) => elements.map((element) => {
-    const box = element.getBoundingClientRect();
-    return {
-      track: Number(element.dataset.track),
-      span: Number(element.dataset.span),
-      base: Number(element.dataset.base),
-      row: Number(element.dataset.row),
-      rows: Number(element.dataset.rows),
-      gridColumnStart: Number(getComputedStyle(element).gridColumnStart),
-      gridRowStart: Number(getComputedStyle(element).gridRowStart),
-      left: box.left,
-      right: box.right,
-      top: box.top,
-      bottom: box.bottom,
-    };
+async function assertFourAgentDensity(console) {
+  const geometry = await console.evaluate((surface) => ({
+    surfaceWidth: surface.getBoundingClientRect().width,
+    contentWidth: surface.parentElement?.getBoundingClientRect().width ?? 0,
+    surfaceOverflow: surface.scrollWidth - surface.clientWidth,
+    headers: [...surface.querySelectorAll(".composer-shard-heading")].map((node) => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    }),
+    columns: [...surface.querySelectorAll(".team-agent")].map((node) => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    }),
   }));
-  assert.ok(placements.every((card) => card.span >= 2 && card.track + card.span <= 12));
-  assert.ok(placements.every((card) => card.rows >= 2));
-  assert.ok(placements.every((card) => card.gridColumnStart === card.track + 1));
-  assert.ok(placements.every((card) => card.gridRowStart === card.row));
-  for (let left = 0; left < placements.length; left += 1) {
-    for (let right = left + 1; right < placements.length; right += 1) {
-      const a = placements[left];
-      const b = placements[right];
-      const separated = a.right <= b.left + 1 || b.right <= a.left + 1
-        || a.bottom <= b.top + 1 || b.bottom <= a.top + 1;
-      assert.ok(separated, `mosaic cards ${left} and ${right} do not overlap`);
+  assert.equal(geometry.headers.length, 4, "four intelligent draft headers are simultaneous");
+  assert.equal(geometry.columns.length, 4, "four live composer columns are simultaneous");
+  assert.ok(
+    geometry.surfaceWidth >= geometry.contentWidth - 16 &&
+      geometry.surfaceWidth <= geometry.contentWidth + 1,
+    "one live lineage consumes the available reference viewport",
+  );
+  assert.ok(geometry.surfaceOverflow <= 1, "the team surface does not hide horizontal content");
+  for (const row of [geometry.headers, geometry.columns]) {
+    for (let index = 1; index < row.length; index += 1) {
+      assert.ok(row[index - 1].right <= row[index].left + 1, "agent columns never overlap");
+      assert.ok(Math.abs(row[index - 1].top - row[index].top) <= 1, "agent columns share one row");
     }
   }
+}
 
-  await feed.evaluate((element) => element.scrollTo(0, element.scrollHeight));
-  const before = await feed.evaluate((element) => element.scrollTop);
-  await console
-    .getByRole("textbox", { name: "Message", exact: true })
-    .fill("mosaic scroll compensation");
-  await console.getByRole("button", { name: "Send direction" }).click();
-  await cards.nth(targetCards).waitFor({ timeout: 10_000 });
-  const after = await feed.evaluate((element) => element.scrollTop);
-  assert.ok(after >= before, "incremental placement preserves a scrolled viewport");
-  await page.setViewportSize({ width: 1200, height: 900 });
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await cards.nth(targetCards).waitFor();
+async function captureReferenceViewport(page) {
+  await chooseCanvasView(page, "Mosaic");
+  const team = page.locator('[data-pane="agent-console"]');
+  await team.getByRole("tab", { name: /^Compose/ }).click();
+  await team.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
+  assert.equal(
+    await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches),
+    true,
+    "the reference capture explicitly exercises dark mode",
+  );
+  await assertFourAgentDensity(team);
+  const pixels = await page.evaluate(() => ({
+    width: innerWidth,
+    height: innerHeight,
+    background: getComputedStyle(document.body).backgroundColor,
+    bodyWidth: document.body.scrollWidth,
+  }));
+  assert.deepEqual([pixels.width, pixels.height], [1000, 568]);
+  assert.equal(
+    await page.locator(".mosaic-workspace > .topbar").count(),
+    0,
+    "the live lineage has no redundant operator control bar",
+  );
+  assert.equal(pixels.bodyWidth, 1000, "the reference viewport has no horizontal overflow");
+  assert.equal(pixels.background, "rgb(11, 15, 12)", "the captured surface uses the dark palette");
+  await page.screenshot({
+    path: join(artifacts, "canvas-reference-four-agent-dark.png"),
+    fullPage: false,
+  });
 }
 
 async function assertAuthoritySurface(page, seeded) {
-  await page.getByRole("button", { name: "Flow" }).click();
+  await chooseCanvasView(page, "Flow");
   const currentWork = page.locator(".section").filter({ hasText: "Current work" });
   await currentWork.getByText("Browser fixture task", { exact: true }).waitFor();
   await currentWork.getByText("Continuation witness", { exact: true }).waitFor();
 
-  await page.getByRole("button", { name: "Magnitude" }).click();
+  await chooseCanvasView(page, "Magnitude");
   await page.getByRole("heading", { name: "Consent budgets", exact: true }).waitFor();
   await page.getByText("browser", { exact: true }).waitFor();
   assert.match(await page.locator(".section").filter({ hasText: "Consent budgets" }).innerText(), /2\s+2/);
 
-  await page.getByRole("button", { name: "Topology" }).click();
+  await chooseCanvasView(page, "Topology");
   const topology = page.locator("main.content");
   await topology.getByText("Resident topology", { exact: true }).waitFor();
-  await topology.getByText("claude", { exact: true }).waitFor();
+  await topology.getByText("claude", { exact: true }).first().waitFor();
   assert.match(await topology.innerText(), new RegExp(seeded.lane.slice(0, 8)));
 
-  await page.getByRole("button", { name: "Chronology" }).click();
+  await chooseCanvasView(page, "Chronology");
   await page.getByText("browser direction survives streaming", { exact: true }).waitFor();
   const trust = page.locator('[data-pane="trust"]');
   await trust.waitFor();
@@ -482,22 +557,27 @@ async function assertAuthoritySurface(page, seeded) {
 }
 
 async function assertMosaicComposer(page, fixture, seeded) {
-  await page.getByRole("button", { name: /^Mosaic/ }).click();
-  await page.getByRole("heading", { name: "Mosaic", exact: true }).waitFor();
-  const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
-  await lane.getByText("browser direction survives streaming", { exact: true }).waitFor();
+  await chooseCanvasView(page, "Mosaic");
+  const team = page.locator('[data-pane="agent-console"]');
+  await team.getByRole("tab", { name: /^Compose/ }).click();
+  const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);
+  const activity = team.locator(`.mosaic-message-card[data-agent-lane="${seeded.lane}"]`);
+  await activity.filter({ hasText: "browser direction survives streaming" }).waitFor();
 
-  await lane.locator(".mosaic-message-card")
+  await activity
     .filter({ hasText: "browser direction survives streaming" })
-    .getByRole("button", { name: "Quote reply" })
+    .getByRole("button", { name: "Quote this message" })
     .click();
   const composer = lane.locator(".mosaic-composer");
+  const quotedComposer = lane.locator(".composer-quote-band");
+  await quotedComposer.waitFor();
   await composer.getByLabel("Markdown preview").waitFor();
   assert.equal(
     await composer.locator("blockquote").innerText(),
     "browser direction survives streaming",
   );
-  await composer.getByRole("textbox").fill("canvas quote reply");
+  await quotedComposer.getByRole("textbox").fill("canvas quote reply");
+  assert.equal(await composer.getByRole("textbox").inputValue(), "");
   const pixel = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     "base64",
@@ -506,22 +586,34 @@ async function assertMosaicComposer(page, fixture, seeded) {
     { name: "pixel.png", mimeType: "image/png", buffer: pixel },
     { name: "pixel-copy.png", mimeType: "image/png", buffer: pixel },
   ]);
-  await composer.getByRole("img", { name: "pixel.png" }).waitFor();
-  await composer.getByRole("img", { name: "pixel-copy.png" }).waitFor();
+  const attachmentControls = composer.locator(".composer-attachment-list");
+  await attachmentControls.getByRole("img", { name: "pixel.png" }).waitFor();
+  await attachmentControls.getByRole("img", { name: "pixel-copy.png" }).waitFor();
+  assert.equal(
+    await composer.getByLabel("Markdown preview").locator("img").count(),
+    2,
+    "draft images are appended to the generated Markdown preview",
+  );
   await page.screenshot({
     path: join(artifacts, "canvas-light-mosaic-composer.png"),
     fullPage: true,
   });
-  await composer.getByRole("button", { name: "Send" }).click();
-  await lane.locator(".mosaic-message-card").filter({ hasText: "canvas quote reply" }).waitFor({
+  await team.getByRole("button", { name: "Steer", exact: true }).click();
+  await activity.filter({ hasText: "canvas quote reply" }).waitFor({
     timeout: 10_000,
   });
+  assert.equal(
+    await activity.filter({ hasText: "canvas quote reply" }).locator(".message-body img").count(),
+    2,
+    "durable image links render through the card Markdown body",
+  );
   const quoted = await reply(fixture, ["inbox", seeded.lane]);
   const quotedDirective = quoted.body.lanes[0].pending.find(
     (directive) => directive.text.includes("canvas quote reply"),
   );
   assert.ok(quotedDirective, "quote reply reaches the lane inbox");
   assert.match(quotedDirective.text, /> browser direction survives streaming/);
+  assert.match(quotedDirective.text, /!\[pixel\.png\]\(data:image\/png;base64,/);
   assert.equal(quotedDirective.attachments.length, 2);
   assert.deepEqual(
     quotedDirective.attachments.map((attachment) => attachment.name).sort(),
@@ -541,7 +633,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
       dataTransfer: transfer,
     }));
   });
-  await lane.locator(".mosaic-message-card").filter({ hasText: "dragged card direction" }).waitFor({
+  await activity.filter({ hasText: "dragged card direction" }).waitFor({
     timeout: 10_000,
   });
   const dropped = await reply(fixture, ["inbox", seeded.lane]);
@@ -554,7 +646,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
 }
 
 async function assertPackedHistory(page, extent, linked = false) {
-  await page.getByRole("button", { name: "Chronology" }).click();
+  await chooseCanvasView(page, "Chronology");
   const journal = page.locator('[data-pane="commands"]');
   const facts = journal.locator(".event strong");
   await facts.nth(extent.facts - 1).waitFor();
@@ -586,7 +678,7 @@ async function assertPackedHistory(page, extent, linked = false) {
     "continuation loses no fact before the packed horizon",
   );
 
-  await page.getByRole("button", { name: "Topology" }).click();
+  await chooseCanvasView(page, "Topology");
   const thread = page.locator('[data-pane="lineage"]');
   const minimumRows = linked ? 2 : 1;
   const threadRowsLocator = thread.locator("tbody tr");
@@ -601,7 +693,7 @@ async function assertPackedHistory(page, extent, linked = false) {
     assert.ok(threadRows.some((row) => !row.endsWith("root")), "causal walk includes a linked cause");
   }
 
-  await page.getByRole("button", { name: "Chronology" }).click();
+  await chooseCanvasView(page, "Chronology");
   await page.screenshot({ path: join(artifacts, "canvas-chronology.png"), fullPage: true });
 }
 
@@ -633,8 +725,8 @@ async function assertStaleGeneration(browser, endpoint, currentEpoch) {
     });
   });
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
+  await chooseCanvasView(page, "Chronology");
   await page.waitForSelector(".status.offline", { timeout: 10_000 });
-  await page.getByRole("button", { name: "Chronology" }).click();
   const fault = page.locator(".event.fault");
   await fault.waitFor();
   assert.match(await fault.innerText(), /Canvas connection reset/);
@@ -651,7 +743,7 @@ async function assertSameGenerationResume(
   epoch,
   beforeExtent,
 ) {
-  await page.getByRole("button", { name: "Chronology" }).click();
+  await chooseCanvasView(page, "Chronology");
   const before = await page.locator('[data-pane="commands"] .event strong').allTextContents();
   monitor.expectNetworkInterruption(true);
   await page.evaluate(() => {
@@ -661,7 +753,7 @@ async function assertSameGenerationResume(
   });
   await page.waitForSelector(".status.offline", { timeout: 10_000 });
   assert.match(await page.locator(".status-copy").innerText(), /Reconnecting/);
-  await page.getByRole("button", { name: "Chronology" }).click();
+  await chooseCanvasView(page, "Chronology");
   await page.locator(".event.fault").waitFor();
 
   await reply(fixture, ["task", "note", seeded.task, "written during browser disconnect"]);
@@ -753,7 +845,7 @@ async function installSocketControl(context) {
 }
 
 async function assertSystemSpeech(page) {
-  await page.getByRole("button", { name: "Flow" }).click();
+  await chooseCanvasView(page, "Flow");
   const button = page.locator(".speech-button");
   await button.waitFor();
   assert.equal(await button.getAttribute("aria-label"), "Read current canvas");
@@ -781,6 +873,7 @@ async function assertSpeechVariants(browser, endpoint) {
   const unavailablePage = await unavailableContext.newPage();
   const unavailableMonitor = monitorPage(unavailablePage);
   await unavailablePage.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(unavailablePage, "Flow");
   await unavailablePage.waitForSelector(".status.online");
   await unavailablePage.locator(".speech-button").click();
   await unavailablePage.locator('.speech-button[data-state="error"]').waitFor();
@@ -795,6 +888,7 @@ async function assertSpeechVariants(browser, endpoint) {
   const disabledMonitor = monitorPage(disabled);
   await routeSpeechBootstrap(disabled, { backend: "disabled" });
   await disabled.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(disabled, "Flow");
   await disabled.waitForSelector(".status.online");
   assert.equal(await disabled.locator(".speech-button").count(), 0, "disabled hides playback");
   disabledMonitor.assertClean();
@@ -809,6 +903,7 @@ async function assertSpeechVariants(browser, endpoint) {
     available: false,
   });
   await externalUnavailable.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(externalUnavailable, "Flow");
   await externalUnavailable.waitForSelector(".status.online");
   const unavailableButton = externalUnavailable.locator(".speech-button");
   assert.equal(await unavailableButton.getAttribute("aria-label"), "Speech unavailable");
@@ -834,8 +929,8 @@ async function assertSpeechVariants(browser, endpoint) {
     });
   });
   await external.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(external, "Flow");
   await external.waitForSelector(".status.online");
-  await external.getByRole("button", { name: "Flow" }).click();
   const externalButton = external.locator(".speech-button");
   await externalButton.click();
   await external.locator('.speech-button[data-state="playing"]').waitFor();
@@ -853,10 +948,10 @@ async function assertSpeechVariants(browser, endpoint) {
   const malformedMonitor = monitorPage(malformed);
   await routeSpeechBootstrap(malformed, { backend: "system", voice: "Zoe (Premium)" });
   await malformed.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(malformed, "Chronology");
   await malformed.waitForSelector(".status.offline");
   assert.match(await malformed.locator(".status-copy").innerText(), /bootstrap response was invalid/);
   assert.equal(await malformed.locator(".speech-button").count(), 0);
-  await malformed.getByRole("button", { name: "Chronology" }).click();
   assert.match(await malformed.locator(".event.fault").innerText(), /bootstrap response was invalid/);
   malformedMonitor.assertClean();
   await malformed.close();
@@ -865,9 +960,9 @@ async function assertSpeechVariants(browser, endpoint) {
 }
 
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
-await mkdir(join(fixture, ".git"));
+const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
 await mkdir(artifacts, { recursive: true });
-await configureFixture(fixture);
+const worktrees = await configureFixture(fixture, linkedRoot);
 
 let resident;
 let browser;
@@ -887,20 +982,31 @@ try {
   lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(lightPage, "light");
-  seeded.lane = await assertAgentConversation(lightPage, fixture);
+  seeded.lane = await assertAgentConversation(lightPage, fixture, worktrees);
+  const reference = await browser.newContext({
+    colorScheme: "dark",
+    viewport: { width: 1000, height: 568 },
+  });
+  await installBrowserSpeech(reference);
+  const referencePage = await reference.newPage();
+  const referenceMonitor = monitorPage(referencePage);
+  await referencePage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+  await captureReferenceViewport(referencePage);
+  referenceMonitor.assertClean();
+  await reference.close();
   seeded.extent = await journalExtent(fixture);
   await assertAuthoritySurface(lightPage, seeded);
   await assertMosaicComposer(lightPage, fixture, seeded);
   await assertPackedHistory(lightPage, await journalExtent(fixture), true);
   await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
   await assertSystemSpeech(lightPage);
-  await lightPage.getByRole("button", { name: "Flow" }).click();
+  await chooseCanvasView(lightPage, "Flow");
   await lightPage.getByLabel("Task").fill(seeded.task);
   await lightPage.getByLabel("Observation").fill("browser mutation reached the resident");
   await lightPage.getByRole("button", { name: "Add note" }).click();
-  await lightPage.getByRole("button", { name: "Chronology" }).click();
+  await chooseCanvasView(lightPage, "Chronology");
   await lightPage.getByText(/Note appended to/).waitFor({ timeout: 10_000 });
-  await lightPage.getByRole("button", { name: "Flow" }).click();
+  await chooseCanvasView(lightPage, "Flow");
   const existingTasks = await lightPage.locator("#note-tasks option").evaluateAll(
     (options) => options.map((option) => option.value),
   );
@@ -911,7 +1017,7 @@ try {
   await lightPage.getByLabel("Task").fill(absentTask);
   await lightPage.getByLabel("Observation").fill("this task does not exist");
   await lightPage.getByRole("button", { name: "Add note" }).click();
-  await lightPage.getByRole("button", { name: "Chronology" }).click();
+  await chooseCanvasView(lightPage, "Chronology");
   await lightPage.locator(".event.refusal").waitFor({ timeout: 10_000 });
   const beforeReconnect = await journalExtent(fixture);
   await assertPackedHistory(lightPage, beforeReconnect);
@@ -942,13 +1048,16 @@ try {
   lightMonitor.assertClean();
   await dark.close();
 
-  await reply(fixture, ["lane", "drain", seeded.lane]);
+  const liveTeam = await reply(fixture, ["lane"]);
+  for (const agent of liveTeam.body.lanes) {
+    await reply(fixture, ["lane", "drain", agent.lane]);
+  }
   const firstEpoch = resident.discovery.epoch;
   const firstCapability = resident.discovery.capability;
   lightMonitor.expectNetworkInterruption(true);
+  await chooseCanvasView(lightPage, "Chronology");
   await stopResident(fixture, resident);
   await lightPage.waitForSelector(".status.offline", { timeout: 10_000 });
-  await lightPage.getByRole("button", { name: "Chronology" }).click();
   await lightPage.locator(".event.fault").waitFor({ timeout: 10_000 });
   resident = await startResident(fixture);
   assert.notEqual(resident.discovery.epoch, firstEpoch, "restart publishes a new generation");
@@ -958,6 +1067,7 @@ try {
     "restart publishes a new operator capability",
   );
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(lightPage, "Chronology");
   await lightPage.waitForSelector(".status.online", { timeout: 10_000 });
   await lightPage.waitForFunction(
     (epoch) => document.querySelector(".status-copy")?.textContent?.includes(epoch),
@@ -965,7 +1075,7 @@ try {
   );
   lightMonitor.expectNetworkInterruption(false);
   await assertCanvas(lightPage, "light-restarted");
-  await lightPage.getByRole("button", { name: "Chronology" }).click();
+  await chooseCanvasView(lightPage, "Chronology");
   assert.equal(
     await lightPage.getByText(/Note appended to/).count(),
     0,
@@ -986,4 +1096,5 @@ try {
     await exited;
   }
   await rm(fixture, { recursive: true, force: true });
+  await rm(linkedRoot, { recursive: true, force: true });
 }

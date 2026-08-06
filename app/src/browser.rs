@@ -28,7 +28,7 @@ use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, Stream
 mod composer;
 mod view;
 
-use composer::ComposerDrafts;
+use composer::{ComposerDrafts, LineageLife, LineageMode};
 use view::{CanvasRender, render_canvas};
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
@@ -155,6 +155,8 @@ fn canvas_app() -> Html {
     let surface = use_state(SurfaceData::default);
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
+    let lineage_mode = use_state(|| LineageMode::Compose);
+    let lineage_life = use_state(|| LineageLife::Steer);
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
@@ -164,7 +166,7 @@ fn canvas_app() -> Html {
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
     let agents = use_agent_controls(
         sender.clone(),
-        surface.clone(),
+        lineage_life.clone(),
         speech_speak(
             speech.clone(),
             speech_status.clone(),
@@ -230,6 +232,8 @@ fn canvas_app() -> Html {
         surface: &surface,
         axis: &axis,
         mosaic: &mosaic,
+        lineage_mode: &lineage_mode,
+        lineage_life: &lineage_life,
         composer_drafts: &composer_drafts,
         sender: &sender,
         agents: &agents,
@@ -246,16 +250,13 @@ fn canvas_app() -> Html {
 #[hook]
 fn use_agent_controls(
     sender: SenderHandle,
-    surface: UseStateHandle<SurfaceData>,
+    lineage_life: UseStateHandle<LineageLife>,
     speak: Callback<String>,
 ) -> view::AgentControls {
-    let selected_lane = use_state(String::new);
     let seat_worktree = use_state(String::new);
     let seat_vendor = use_state(|| "codex".to_owned());
     let seat_life = use_state(|| "steer".to_owned());
-    let steer_text = use_state(String::new);
     let seat_notice = use_state(Notice::none);
-    let steer_notice = use_state(Notice::none);
     view::AgentControls {
         submit_seat: seat_submit(
             sender.clone(),
@@ -263,21 +264,12 @@ fn use_agent_controls(
             seat_vendor.clone(),
             seat_life.clone(),
             seat_notice.clone(),
+            lineage_life,
         ),
-        submit_steer: steer_submit(
-            sender,
-            surface,
-            selected_lane.clone(),
-            steer_text.clone(),
-            steer_notice.clone(),
-        ),
-        selected_lane,
         seat_worktree,
         seat_vendor,
         seat_life,
-        steer_text,
         seat_notice,
-        steer_notice,
         speak,
     }
 }
@@ -288,12 +280,16 @@ fn seat_submit(
     vendor: UseStateHandle<String>,
     life: UseStateHandle<String>,
     notice: UseStateHandle<Notice>,
+    lineage_life: UseStateHandle<LineageLife>,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
         match compose::seat(&worktree, &vendor, &life) {
             Ok(seat) => {
                 notice.set(Notice::none());
+                if let Some(selected_life) = LineageLife::from_wire(&seat.life) {
+                    lineage_life.set(selected_life);
+                }
                 send_action(
                     &sender,
                     ClientAction::Seat {
@@ -306,55 +302,6 @@ fn seat_submit(
             Err(refusal) => notice.set(refusal.into()),
         }
     })
-}
-
-fn steer_submit(
-    sender: SenderHandle,
-    surface: UseStateHandle<SurfaceData>,
-    selected_lane: UseStateHandle<String>,
-    message: UseStateHandle<String>,
-    notice: UseStateHandle<Notice>,
-) -> Callback<SubmitEvent> {
-    Callback::from(move |event: SubmitEvent| {
-        event.prevent_default();
-        let selected = selected_lane.parse::<CanonicalUuid>().ok();
-        let seated = selected_occupant(&surface, selected);
-        match compose::steer(&message, seated) {
-            Ok(((lane, occupant, epoch), text)) => {
-                notice.set(Notice::none());
-                send_action(
-                    &sender,
-                    ClientAction::Steer {
-                        lane,
-                        occupant,
-                        epoch,
-                        message: text,
-                        attachments: Vec::new(),
-                    },
-                );
-                message.set(String::new());
-            }
-            Err(refusal) => notice.set(refusal.into()),
-        }
-    })
-}
-
-fn selected_occupant(
-    surface: &SurfaceData,
-    selected: Option<CanonicalUuid>,
-) -> Option<(CanonicalUuid, CanonicalUuid, CanonicalUuid)> {
-    surface
-        .as_ref()
-        .and_then(CanvasRuntime::lanes)
-        .and_then(|lanes| {
-            selected
-                .and_then(|selected| lanes.lanes.iter().find(|row| row.lane == selected))
-                .or_else(|| lanes.lanes.first())
-                .and_then(|row| {
-                    row.occupant
-                        .map(|occupant| (row.lane, occupant, lanes.epoch))
-                })
-        })
 }
 
 /// Stop what is playing, or read the whole rendered surface aloud.

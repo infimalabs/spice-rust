@@ -1250,7 +1250,13 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
     };
     let detail = &fault.detail;
     assert_eq!(fault.reason, "canvas::app-source-invalid");
-    for missing in ["app.module", "style.css", "app_bg.wasm"] {
+    for missing in [
+        "app.module",
+        "style.css",
+        "mosaic.css",
+        "responsive.css",
+        "app_bg.wasm",
+    ] {
         assert!(
             detail.contains(missing),
             "the refusal does not name {missing}: {detail}"
