@@ -1270,8 +1270,29 @@ fn resident_text_startup_names_the_exact_lane_app_source() {
     let output = resident.wait();
     assert!(output.status.success(), "local resident failed");
     let stage = fs::canonicalize(&stage).expect("local app stage canonicalizes");
+    let announcement = String::from_utf8(output.stderr).expect("local announcement is UTF-8");
+    // A text start announces what it serves, then where it is served. The
+    // endpoint line is the one an operator acts on now that no separate command
+    // prints it, so it is checked against the port the kernel actually handed
+    // out: this fixture asks for port 0, so an endpoint formatted from the
+    // requested address rather than read back out of published discovery would
+    // announce `:0` and be unreachable.
+    let (announced_source, announced_endpoint) =
+        announcement.split_once('\n').unwrap_or_else(|| {
+            panic!("startup announces a source line then an endpoint: {announcement:?}")
+        });
     assert_eq!(
-        String::from_utf8(output.stderr).expect("local announcement is UTF-8"),
-        format!("canvas app source: lane app at {}\n", stage.display())
+        announced_source,
+        format!("canvas app source: lane app at {}", stage.display())
+    );
+    let port = announced_endpoint
+        .strip_prefix("canvas endpoint: http://127.0.0.1:")
+        .and_then(|rest| rest.strip_suffix('\n'))
+        .unwrap_or_else(|| {
+            panic!("startup announces its loopback endpoint: {announced_endpoint:?}")
+        });
+    assert!(
+        port.parse::<u16>().is_ok_and(|port| port != 0),
+        "the announced endpoint must name the bound port, not the requested one: {port:?}"
     );
 }

@@ -95,7 +95,7 @@ fn initialize_task_git_fixture(fixture: &Fixture) {
     fixture_git(fixture, &["config", "user.email", "resident@example.test"]);
     fs::write(
         fixture.root.join(".gitignore"),
-        "vendor-launches\norigin.git\n",
+        format!("vendor-launches\norigin.git\n{}", app_stage_ignore()),
     )
     .expect("task fixture ignore writes");
     fixture_git(fixture, &["add", ".gitignore", "fake-claude", "spice.toml"]);

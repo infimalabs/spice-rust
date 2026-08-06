@@ -94,7 +94,6 @@ impl Fixture {
             .expect("fixture app asset");
         }
     }
-
     fn journal(&self) -> PathBuf {
         self.runtime.join("data/spicejournal.sqlite3")
     }
@@ -117,6 +116,18 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.cleanup).expect("fixture cleanup");
     }
+}
+
+/// The ignore rule every fixture repository owes the stage [`Fixture`] installs.
+///
+/// A resident refuses to start without that stage, so every fixture root holds
+/// one whether or not the case under test is about the app. It is built output
+/// rather than repository content, exactly as in a real worktree, and a fixture
+/// that does not ignore it reports itself dirty and fails cases that assert a
+/// clean tree for unrelated reasons. Derived from the constant the stage is
+/// written from so the two cannot come to name different directories.
+fn app_stage_ignore() -> String {
+    format!("/{}/\n", canvas::DEV_STAGE)
 }
 
 struct RunningResident {

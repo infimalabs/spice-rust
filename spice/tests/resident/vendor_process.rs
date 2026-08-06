@@ -110,7 +110,10 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
     fs::write(fixture.root.join("spice.toml"), document).expect("vendor configuration");
     fs::write(
         fixture.root.join(".gitignore"),
-        "fixture-claude\nlaunch-captures\nlaunch-index\n",
+        format!(
+            "fixture-claude\nlaunch-captures\nlaunch-index\n{}",
+            app_stage_ignore()
+        ),
     )
     .expect("fixture ignore policy");
     fixture_git(&fixture.root, &["init", "-b", "main-d"]);
@@ -307,15 +310,19 @@ fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
     fs::write(fixture.root.join("spice.toml"), &document).expect("Claude config extends");
     fs::write(
         fixture.root.join(".gitignore"),
-        concat!(
-            ".agents/\n",
-            ".spice/\n",
-            "codex-worktree/\n",
-            "fixture-claude\n",
-            "fixture-codex\n",
-            "launch-captures/\n",
-            "launch-index\n",
-            "native-path/\n",
+        format!(
+            concat!(
+                ".agents/\n",
+                ".spice/\n",
+                "codex-worktree/\n",
+                "fixture-claude\n",
+                "fixture-codex\n",
+                "launch-captures/\n",
+                "launch-index\n",
+                "native-path/\n",
+                "{}",
+            ),
+            app_stage_ignore()
         ),
     )
     .expect("cutover fixture ignore policy writes");
