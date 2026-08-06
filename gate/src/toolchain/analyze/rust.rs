@@ -8,13 +8,14 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
     CompileInvocation, HOME_DIRECTORY, run_compile_analysis, tool_search_path,
 };
 use crate::measure::Bounds;
-use crate::toolchain::{ArmOutcome, FindingDetail, ToolchainDeclaration};
+use crate::toolchain::{ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
 use sill::Environment;
 
 /// The native analysis, kept in its declaration order.
@@ -37,7 +38,6 @@ pub(super) const CARGO_CHECK_ARGUMENTS: &[&str] =
 pub(in crate::toolchain) fn rust_typecheck(
     declaration: ToolchainDeclaration,
     root: &Path,
-    repository: &Path,
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
 ) -> Analysis {
@@ -50,7 +50,7 @@ pub(in crate::toolchain) fn rust_typecheck(
             format!("{} declares no {CARGO} program", declaration.id.as_str()),
         );
     };
-    let workspace = match RustWorkspace::create(repository) {
+    let workspace = match RustWorkspace::create(root) {
         Ok(workspace) => workspace,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -65,23 +65,53 @@ pub(in crate::toolchain) fn rust_typecheck(
         arguments: CARGO_CHECK_ARGUMENTS,
         cwd: root,
     };
-    if let Err(analysis) = run_compile_analysis(
+    let result = run_compile_analysis(
         declaration.id,
         root,
         invocation,
         bounds,
         &environment,
         |code, message| FindingDetail::RustTypeOutput { code, message },
-    ) {
-        return analysis;
+    );
+    match result {
+        Err(failure) => {
+            let (analysis, elapsed) = failure.into_parts();
+            match elapsed {
+                Some(elapsed) => analysis.timed(timing(elapsed, bounds)),
+                None => analysis,
+            }
+        }
+        Ok(elapsed) => Analysis::terminal(
+            ArmOutcome::Passed,
+            format!(
+                "{} completed its declared native analysis",
+                declaration.id.as_str()
+            ),
+        )
+        .timed(timing(elapsed, bounds)),
     }
-    Analysis::terminal(
-        ArmOutcome::Passed,
-        format!(
-            "{} completed its declared native analysis",
-            declaration.id.as_str()
-        ),
+}
+
+fn timing(elapsed: Duration, bounds: &Bounds) -> ArmTiming {
+    ArmTiming {
+        elapsed_ms: milliseconds(elapsed),
+        observation_bound_ms: observation_bound_ms(bounds),
+    }
+}
+
+fn observation_bound_ms(bounds: &Bounds) -> u64 {
+    let deadlines = bounds.deadlines();
+    milliseconds(
+        deadlines
+            .runtime()
+            .saturating_add(deadlines.output_drain())
+            .saturating_add(deadlines.reap())
+            .saturating_add(bounds.grace()),
     )
+}
+
+fn milliseconds(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Build directories the native check owns, kept off the lane's own `target`.
@@ -91,26 +121,49 @@ pub(in crate::toolchain) fn rust_typecheck(
 /// occupant is already running, so the arm gets its own pair exactly as the
 /// canvas arm does.
 struct RustWorkspace {
+    root: PathBuf,
     cargo_target: PathBuf,
     cargo_build: PathBuf,
 }
 
 impl RustWorkspace {
-    fn create(repository: &Path) -> Result<Self, String> {
-        let cargo_target = repository.join("target/gate-rust-typecheck");
-        let cargo_build = repository.join("target/gate-rust-typecheck-build");
-        fs::create_dir_all(&cargo_target)
-            .and_then(|()| fs::create_dir_all(&cargo_build))
-            .map_err(|error| {
-                format!(
-                    "native typecheck output directories under {} could not be created: {error}",
-                    repository.display()
-                )
-            })?;
+    fn create(selected: &Path) -> Result<Self, String> {
+        let Some(name) = selected.file_name() else {
+            return Err(format!(
+                "rust selected tree {selected:?} has no name for an analysis workspace"
+            ));
+        };
+        let mut workspace_name = name.to_os_string();
+        workspace_name.push(".spice-rust-analysis");
+        let root = selected.with_file_name(workspace_name);
+        fs::create_dir(&root).map_err(|error| {
+            format!(
+                "rust analysis workspace {} could not be created: {error}",
+                root.display()
+            )
+        })?;
+        let cargo_target = root.join("cargo-target");
+        let cargo_build = root.join("cargo-build");
+        if let Err(error) =
+            fs::create_dir(&cargo_target).and_then(|()| fs::create_dir(&cargo_build))
+        {
+            let _ = fs::remove_dir_all(&root);
+            return Err(format!(
+                "rust analysis output directories for {} could not be created: {error}",
+                selected.display()
+            ));
+        }
         Ok(Self {
+            root,
             cargo_target,
             cargo_build,
         })
+    }
+}
+
+impl Drop for RustWorkspace {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
@@ -135,7 +188,6 @@ fn rust_environment(cargo: &str, workspace: &RustWorkspace) -> Result<Environmen
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Duration;
 
     use crate::toolchain::{ArmFinding, GateId, declaration};
     use sill::Deadlines;
@@ -218,10 +270,9 @@ mod tests {
     /// The one-based column the planted call's first character occupies.
     const PLANTED_COLUMN: u32 = 17;
 
-    /// A workspace the real compiler is run over, and the output it writes to.
+    /// A workspace the real compiler is run over.
     struct RustFixture {
         root: PathBuf,
-        output: PathBuf,
     }
 
     impl RustFixture {
@@ -234,15 +285,10 @@ mod tests {
             if root.exists() {
                 fs::remove_dir_all(&root).expect("remove stale native fixture");
             }
-            let output = root.with_extension("output");
-            if output.exists() {
-                fs::remove_dir_all(&output).expect("remove stale native output fixture");
-            }
-            fs::create_dir(&output).expect("create native output fixture");
             fs::create_dir_all(root.join("src")).expect("create native fixture tree");
             fs::write(root.join("Cargo.toml"), FIXTURE_MANIFEST).expect("write fixture manifest");
             fs::write(root.join("Cargo.lock"), FIXTURE_LOCK).expect("write fixture lock");
-            Self { root, output }
+            Self { root }
         }
 
         fn source(&self, contents: &str) {
@@ -262,7 +308,6 @@ mod tests {
             rust_typecheck(
                 declaration(GateId::RustTypecheck).expect("native arm is declared"),
                 &self.root,
-                &self.output,
                 &rust_bounds(),
                 &programs,
             )
@@ -272,7 +317,6 @@ mod tests {
     impl Drop for RustFixture {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.root).expect("remove native fixture");
-            fs::remove_dir_all(&self.output).expect("remove native output fixture");
         }
     }
 
@@ -327,6 +371,10 @@ mod tests {
         let refusal = fixture.analyze();
 
         assert_eq!(refusal.outcome, ArmOutcome::Findings);
+        let refusal_timing = refusal
+            .timing
+            .expect("the compiler refusal reports wall time");
+        assert!(refusal_timing.elapsed_ms <= refusal_timing.observation_bound_ms);
         let [finding] = refusal.findings.as_slice() else {
             panic!(
                 "the planted reference is one located diagnostic, not {}",
@@ -349,6 +397,10 @@ mod tests {
         let cleared = fixture.analyze();
 
         assert_eq!(cleared.outcome, ArmOutcome::Passed);
+        let cleared_timing = cleared
+            .timing
+            .expect("the successful compiler run reports wall time");
+        assert!(cleared_timing.elapsed_ms <= cleared_timing.observation_bound_ms);
         assert_eq!(cleared.findings, Vec::<ArmFinding>::new());
     }
 }

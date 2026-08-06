@@ -185,6 +185,22 @@ fn decoded_family_evidence_cannot_be_forged() {
             }),
         ),
         (
+            "invalid toolchain evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][11]["evidence"]["report"]
+                    .as_object_mut()
+                    .expect("rust report is an object")
+                    .remove("timing");
+            }),
+        ),
+        (
+            "invalid toolchain evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][11]["evidence"]["report"]["timing"]["elapsed_ms"] =
+                    serde_json::json!(30_001)
+            }),
+        ),
+        (
             "invalid metric evidence",
             mutate(&value, |candidate| {
                 candidate["results"][18]["evidence"]["report"]["metrics"] = serde_json::json!([])

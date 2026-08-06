@@ -238,6 +238,7 @@ fn observe(
         reason,
         findings,
         exit_code,
+        timing,
     } = examine(declaration, source, bounds, environment_names, &tools);
     let tools = if matches!(outcome, ArmOutcome::NotApplicable | ArmOutcome::Excluded) {
         Vec::new()
@@ -251,6 +252,7 @@ fn observe(
             reason,
             findings,
             exit_code,
+            timing,
         },
         tools,
     )
@@ -268,6 +270,7 @@ fn observation(
         tools,
         findings: analysis.findings,
         exit_code: analysis.exit_code,
+        timing: analysis.timing,
     }
 }
 
@@ -299,7 +302,6 @@ fn examine(
             GateId::RustTypecheck => analyze::rust_typecheck(
                 declaration,
                 source.root,
-                source.repository,
                 bounds,
                 &resolved_programs(declaration, tools),
             ),

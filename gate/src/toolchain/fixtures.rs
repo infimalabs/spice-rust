@@ -289,6 +289,18 @@ fn fixture_observation(gate: GateId, outcome: ArmOutcome) -> ArmObservation {
         _ => exact_tools(gate),
     };
     let exit_code = (outcome == ArmOutcome::NonzeroAnalysis).then_some(17);
+    let timing = (gate == GateId::RustTypecheck
+        && !matches!(
+            outcome,
+            ArmOutcome::ToolUnavailable
+                | ArmOutcome::UnsupportedVersion
+                | ArmOutcome::NotApplicable
+                | ArmOutcome::Excluded
+        ))
+    .then_some(ArmTiming {
+        elapsed_ms: 17,
+        observation_bound_ms: 30_000,
+    });
     ArmObservation {
         gate_id: gate,
         outcome,
@@ -296,6 +308,7 @@ fn fixture_observation(gate: GateId, outcome: ArmOutcome) -> ArmObservation {
         tools,
         findings,
         exit_code,
+        timing,
     }
 }
 
@@ -578,6 +591,10 @@ fn pass_and_finding_fixtures_cover_every_arm_and_are_deterministic() {
                 measurement.findings.is_empty(),
                 outcome == ArmOutcome::Passed
             );
+            assert_eq!(
+                measurement.timing.is_some(),
+                measurement.gate_id == GateId::RustTypecheck
+            );
             assert!(measurement.findings.windows(2).all(|pair| pair[0] < pair[1]));
         }
     }
@@ -616,6 +633,11 @@ fn generic_nonpass_fixture_states_cover_every_arm_and_only_two_skip() {
                 measurement.exit_code,
                 (outcome == ArmOutcome::NonzeroAnalysis).then_some(17)
             );
+            assert_eq!(
+                measurement.timing.is_some(),
+                arm.id == GateId::RustTypecheck
+                    && !matches!(outcome, ArmOutcome::NotApplicable | ArmOutcome::Excluded)
+            );
         }
     }
 }
@@ -624,6 +646,7 @@ fn generic_nonpass_fixture_states_cover_every_arm_and_only_two_skip() {
 fn external_tool_nonpass_fixtures_cover_discovery_and_version_independently() {
     let external = [
         GateId::Formatters,
+        GateId::RustTypecheck,
         GateId::CanvasWebTypecheck,
         GateId::PythonTypecheck,
     ];
@@ -775,6 +798,43 @@ fn typed_state_invariants_refuse_ambiguous_or_incomplete_evidence() {
         measure_toolchain(impossible_tool_free_state),
         Err(ToolchainError::InvalidToolEvidence {
             gate: GateId::LocalPaths,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn rust_process_timing_is_required_bounded_and_owned_by_its_arm() {
+    let mut missing = fixture_observation(GateId::RustTypecheck, ArmOutcome::Passed);
+    missing.timing = None;
+    assert!(matches!(
+        fixture_report_result_with(missing),
+        Err(ToolchainError::InvalidTiming {
+            gate: GateId::RustTypecheck,
+            ..
+        })
+    ));
+
+    let mut forged = fixture_observation(GateId::RustTypecheck, ArmOutcome::Passed);
+    let timing = forged.timing.as_mut().expect("native fixture is timed");
+    timing.elapsed_ms = timing.observation_bound_ms + 1;
+    assert!(matches!(
+        fixture_report_result_with(forged),
+        Err(ToolchainError::InvalidTiming {
+            gate: GateId::RustTypecheck,
+            ..
+        })
+    ));
+
+    let mut foreign = fixture_observation(GateId::CanvasWebTypecheck, ArmOutcome::Passed);
+    foreign.timing = Some(ArmTiming {
+        elapsed_ms: 17,
+        observation_bound_ms: 30_000,
+    });
+    assert!(matches!(
+        fixture_report_result_with(foreign),
+        Err(ToolchainError::InvalidTiming {
+            gate: GateId::CanvasWebTypecheck,
             ..
         })
     ));

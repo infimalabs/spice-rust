@@ -179,6 +179,18 @@ fn tool_observation(
         };
         version.push_str("-unsupported");
     }
+    let timing = (declaration.id() == GateId::RustTypecheck
+        && !matches!(
+            outcome,
+            ArmOutcome::ToolUnavailable
+                | ArmOutcome::UnsupportedVersion
+                | ArmOutcome::NotApplicable
+                | ArmOutcome::Excluded
+        ))
+    .then_some(crate::toolchain::ArmTiming {
+        elapsed_ms: 17,
+        observation_bound_ms: 30_000,
+    });
     ArmObservation {
         gate_id: declaration.id(),
         outcome,
@@ -186,6 +198,7 @@ fn tool_observation(
         tools,
         findings: Vec::new(),
         exit_code: None,
+        timing,
     }
 }
 

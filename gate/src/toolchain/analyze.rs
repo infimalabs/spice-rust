@@ -31,18 +31,21 @@ use std::path::{Path, PathBuf};
 use sill::{Argv, Completion, Environment, spawn};
 
 use super::{
-    ArmFinding, ArmOutcome, EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus,
-    LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS,
-    SourceLocus, ToolchainDeclaration, column_of, environment,
+    ArmFinding, ArmOutcome, ArmTiming, EnvironmentLedgerKind, FindingDetail,
+    JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
+    PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, SourceLocus, ToolchainDeclaration, column_of,
+    environment,
 };
 use crate::GateId;
 use crate::jurisdiction::{Ignore, Jurisdiction};
 use crate::measure::Bounds;
 use crate::structural::{StructuralPattern, scan_javascript_symbols};
 
+mod compile;
 mod csharp;
 mod rust;
 
+pub(super) use compile::{CompileInvocation, run_compile_analysis};
 pub(super) use csharp::csharp_unused;
 pub(super) use rust::rust_typecheck;
 
@@ -56,6 +59,7 @@ pub(super) struct Analysis {
     pub(super) reason: String,
     pub(super) findings: Vec<ArmFinding>,
     pub(super) exit_code: Option<i32>,
+    pub(super) timing: Option<ArmTiming>,
 }
 
 impl Analysis {
@@ -66,6 +70,7 @@ impl Analysis {
             reason,
             findings: Vec::new(),
             exit_code: None,
+            timing: None,
         }
     }
 
@@ -76,6 +81,7 @@ impl Analysis {
             reason,
             findings: Vec::new(),
             exit_code: Some(code),
+            timing: None,
         }
     }
 
@@ -99,7 +105,14 @@ impl Analysis {
             ),
             findings,
             exit_code: None,
+            timing: None,
         }
+    }
+
+    /// Attach the bounded process duration observed by a compiled runner.
+    fn timed(mut self, timing: ArmTiming) -> Self {
+        self.timing = Some(timing);
+        self
     }
 
     /// The declaration's own applicability predicate came out false.
@@ -260,14 +273,6 @@ const TRUNK_BUILD_ARGUMENTS: &[&str] = &[
     "--locked",
     "--filehash=false",
 ];
-
-#[derive(Clone, Copy)]
-struct CompileInvocation<'a> {
-    name: &'static str,
-    program: &'a str,
-    arguments: &'static [&'static str],
-    cwd: &'a Path,
-}
 
 /// The line prefix `cargo fmt --check` writes before each differing region.
 const DIFF_PREFIX: &str = "Diff in ";
@@ -918,7 +923,7 @@ pub(super) fn canvas_web_typecheck(
         },
     ];
     for invocation in invocations {
-        if let Err(analysis) = run_compile_analysis(
+        if let Err(failure) = run_compile_analysis(
             declaration.id,
             root,
             invocation,
@@ -926,7 +931,7 @@ pub(super) fn canvas_web_typecheck(
             &environment,
             |code, message| FindingDetail::CanvasWebOutput { code, message },
         ) {
-            return analysis;
+            return failure.analysis;
         }
     }
     Analysis::terminal(
@@ -936,85 +941,6 @@ pub(super) fn canvas_web_typecheck(
             declaration.id.as_str()
         ),
     )
-}
-
-fn run_compile_analysis(
-    id: GateId,
-    root: &Path,
-    invocation: CompileInvocation<'_>,
-    bounds: &Bounds,
-    environment: &Environment,
-    detail: fn(String, String) -> FindingDetail,
-) -> Result<(), Analysis> {
-    let CompileInvocation {
-        name,
-        program,
-        arguments,
-        cwd,
-    } = invocation;
-    let argv = Argv::new(program, arguments.iter().map(OsStr::new)).map_err(|error| {
-        Analysis::terminal(
-            ArmOutcome::ParseFailure,
-            format!("{name} argument vector was refused: {error}"),
-        )
-    })?;
-    let mut spec = bounds.spec(argv, cwd);
-    spec.environment = environment.clone();
-    let running = spawn(spec).map_err(|error| {
-        Analysis::terminal(
-            ArmOutcome::ParseFailure,
-            format!("{name} did not start: {error}"),
-        )
-    })?;
-    let outcome = running.wait().map_err(|error| {
-        Analysis::terminal(
-            ArmOutcome::ParseFailure,
-            format!("{name} could not be waited on: {error}"),
-        )
-    })?;
-    let status = match outcome.completion() {
-        Completion::Exited(status) => status,
-        Completion::TimedOut(_) => {
-            return Err(Analysis::terminal(
-                ArmOutcome::Timeout,
-                format!("{name} outlived the bounds it was given"),
-            ));
-        }
-        Completion::Cancelled(_) => {
-            return Err(Analysis::terminal(
-                ArmOutcome::ParseFailure,
-                format!("{name} was cancelled before it reported"),
-            ));
-        }
-    };
-    let printed = complete_output(name, &outcome)
-        .map_err(|reason| Analysis::terminal(ArmOutcome::ParseFailure, reason))?;
-    let findings = compile_findings(root, cwd, &printed, detail);
-    if !findings.is_empty() {
-        return Err(Analysis {
-            outcome: ArmOutcome::Findings,
-            reason: format!(
-                "{} parsed {} from {name}",
-                id.as_str(),
-                plural(findings.len(), "diagnostic")
-            ),
-            findings,
-            exit_code: None,
-        });
-    }
-    if status.success() {
-        return Ok(());
-    }
-    let Some(code) = status.code() else {
-        return Err(Analysis::terminal(
-            ArmOutcome::ParseFailure,
-            format!("{name} was signalled without a typed diagnostic"),
-        ));
-    };
-    Err(Analysis::refused(
-        format!("{name} refused with {code} and emitted no typed diagnostic"),
-        code,
-    ))
 }
 
 fn canvas_environment(
