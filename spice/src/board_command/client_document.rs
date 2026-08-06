@@ -4,6 +4,7 @@ fn run_doc(
     repository: &Repository,
     contract: &Contract,
     matches: &ArgMatches,
+    emit: fn(&dialect::Document) -> String,
 ) -> Outcome<CommandAnswer> {
     let input = match read_doc_input(matches) {
         Ok(input) => input,
@@ -19,7 +20,7 @@ fn run_doc(
             );
         }
     };
-    let normalized = dialect::emit(preview.document());
+    let normalized = emit(preview.document());
     let normalized = match board::Preview::classify(&normalized) {
         Ok(preview) => preview,
         Err(error) => {

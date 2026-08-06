@@ -22,7 +22,7 @@ fn dispatch_client(
         ["board"] => client_board(repository, contract, matches),
         ["board", "graph"] => client_graph(repository, contract, matches),
         ["board", "handout"] => client_handout(repository, contract, matches),
-        ["doc"] => run_doc(repository, contract, matches),
+        ["doc"] => run_doc(repository, contract, matches, dialect::emit),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),

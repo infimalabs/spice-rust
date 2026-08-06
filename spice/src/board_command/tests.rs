@@ -1304,6 +1304,55 @@ mod tests {
     }
 
     #[test]
+    fn doc_leaf_owns_classification_and_normal_form_reasons() {
+        let number = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "spice-board-command-doc-client-{}-{number}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join(".git")).expect("doc client fixture exists");
+        let path = root.join("tasks.md");
+        let repository = Repository::discover(&root).expect("doc client repository resolves");
+
+        fs::write(&path, " \n\t\n").expect("refused document is written");
+        let matches = crate::cli::command()
+            .try_get_matches_from(["spice", "doc", &path.display().to_string()])
+            .expect("doc leaf parses");
+        let contract = crate::cli::selected_contract(&matches).expect("doc contract is selected");
+        let leaf = crate::cli::selected_matches(&matches);
+        let classification = run_doc(&repository, contract, leaf, dialect::emit);
+        assert!(
+            matches!(
+                classification,
+                Outcome::Refusal(Refusal { ref reason, .. })
+                    if reason == "doc::classification-refused"
+            ),
+            "doc leaf lost its classification reason: {classification:?}",
+        );
+
+        fs::write(&path, "# Goal\n\n- First task\n").expect("valid document is written");
+        let matches = crate::cli::command()
+            .try_get_matches_from(["spice", "doc", &path.display().to_string()])
+            .expect("doc leaf parses");
+        let contract = crate::cli::selected_contract(&matches).expect("doc contract is selected");
+        let leaf = crate::cli::selected_matches(&matches);
+        let normal_form = run_doc(&repository, contract, leaf, |_| " \n\t\n".to_owned());
+        assert!(
+            matches!(
+                normal_form,
+                Outcome::Fault(Fault {
+                    class: FaultClass::Protocol,
+                    ref reason,
+                    ..
+                }) if reason == "doc::normal-form-invalid"
+            ),
+            "doc leaf lost its normal-form reason: {normal_form:?}",
+        );
+
+        fs::remove_dir_all(&root).expect("doc client fixture is removed");
+    }
+
+    #[test]
     fn authored_document_apply_is_atomic_idempotent_and_barrier_bound() {
         let (root, bus, epoch, _) = fixture("document", 0);
         let initial_board = board(&bus, epoch, Actor::Operator);
