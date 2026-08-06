@@ -243,6 +243,21 @@ pub fn elapsed_label(millis: i64) -> String {
     }
 }
 
+/// First authored line in a message after borrowed Markdown quotes are skipped.
+///
+/// Composer headers are intentionally prose-led rather than identity-led. A
+/// reply can begin with several levels of quoted context, so the first raw
+/// line is not necessarily something the resident wrote. Trimming before the
+/// marker check handles indented quote markers, and returning `None` for an
+/// entirely quoted message lets the caller continue into older messages.
+#[must_use]
+pub fn first_nonquoted_prose(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('>'))
+        .map(ToOwned::to_owned)
+}
+
 /// The count a navigation pill wears, or nothing.
 ///
 /// Zero is absence rather than a badge reading `0`: the badge exists to draw
