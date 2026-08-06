@@ -83,6 +83,35 @@ fn replacing_one_over_limit_line_fails_even_when_file_debt_holds() {
     assert_eq!((finding.baseline_debt(), finding.current_debt()), (1, 1));
 }
 
+#[test]
+fn a_long_line_only_refusal_names_its_actionable_locus_first() {
+    let repository = fixture("long-line-refusal-detail");
+    git_commit(&repository, "empty Rust baseline");
+    repository.write(
+        "src/detail.rs",
+        &format!("short\n{}\n", "x".repeat(LONG_LINE_LIMIT + 1)),
+    );
+    git(&repository, &["add", "src/detail.rs"]);
+    let contract = Contract::load(&repository.root).expect("load current contract");
+
+    let run = contract
+        .adjudicate(&repository.root)
+        .expect("adjudicate long-line-only tree");
+    assert_eq!(run.receipt().standing(), Standing::Refused);
+    assert!(run.receipt().findings().is_empty());
+
+    let detail = gate::report::refusal_detail(&repository.root, &contract, &run.report());
+    assert!(detail.contains("src/detail.rs:2"), "{detail}");
+    assert!(
+        detail.contains(&format!("is {} bytes", LONG_LINE_LIMIT + 1)),
+        "{detail}"
+    );
+    assert!(
+        detail.contains(&format!("limit {LONG_LINE_LIMIT}")),
+        "{detail}"
+    );
+}
+
 fn fixture(label: &str) -> Tree {
     let repository = git_repository(label);
     repository.write("spice.toml", gate::NARROWEST_FILE_CLASSES);
