@@ -300,6 +300,7 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
             .expect("validated lane::seated decodes through its registered DTO");
     let crate::body::LaneSeated {
         lane,
+        lineage_id,
         capability: _,
         worktree,
         life,
@@ -307,6 +308,7 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
     } = durable;
     let visible = StreamLaneSeated {
         lane,
+        lineage_id,
         worktree,
         life,
         vendor,
@@ -357,6 +359,7 @@ impl<'de> Deserialize<'de> for StreamFactBody {
 #[serde(deny_unknown_fields)]
 struct StreamLaneSeated {
     lane: CanonicalUuid,
+    lineage_id: CanonicalUuid,
     worktree: String,
     life: String,
     vendor: Name,

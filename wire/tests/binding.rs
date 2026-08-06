@@ -141,6 +141,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::LaneSeat,
         r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "worktree": "worktrees/h",
   "life": "drive",
   "vendor": "claude"

@@ -513,7 +513,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-bottom-right-radius: 2px;
   background: var(--accent-soft);
 }
-.message.outgoing.mosaic-card {
+.message.mosaic-card {
   grid-column-start: calc(attr(data-track type(<integer>)) + 1);
   grid-column-end: span attr(data-span type(<integer>));
   grid-row-start: attr(data-row type(<integer>));
@@ -523,6 +523,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   min-width: 0;
   border-radius: 8px;
   overflow: hidden;
+}
+.message.agent-authored { background: var(--panel); }
+.message.operator-direction {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .mosaic-card.liquid { transition: opacity 180ms ease-out; }
 .mosaic-card.frozen { transition: none; }

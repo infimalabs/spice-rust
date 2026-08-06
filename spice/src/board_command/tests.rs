@@ -47,6 +47,7 @@ mod tests {
             .enumerate()
             .map(|(index, seat)| wire::LaneResidency {
                 lane: seat.lane,
+                lineage_id: seat.lane,
                 worktree: "/fixture".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
@@ -294,8 +295,17 @@ mod tests {
     #[test]
     fn task_list_preserves_scope_status_project_and_newest_limit_semantics() {
         let (root, bus, epoch, _) = fixture("task-list", 0);
+        let (answer, first, descendant, waiting) = task_list_fixture(&bus, epoch);
+        assert_task_list_queries(&answer, &first, &descendant, &waiting);
+        clean(&root, bus);
+    }
+
+    fn task_list_fixture(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+    ) -> (BoardAnswer, TaskHandle, TaskHandle, TaskHandle) {
         let first = add_project(
-            &bus,
+            bus,
             epoch,
             Actor::Operator,
             "CLI-list0001",
@@ -304,7 +314,7 @@ mod tests {
             Some("todo"),
         );
         let descendant = add_project(
-            &bus,
+            bus,
             epoch,
             Actor::Operator,
             "CLI-list0002",
@@ -313,7 +323,7 @@ mod tests {
             Some("todo"),
         );
         let waiting = add_project(
-            &bus,
+            bus,
             epoch,
             Actor::Operator,
             "CLI-list0003",
@@ -322,7 +332,7 @@ mod tests {
             Some("todo"),
         );
         let completed = add_project(
-            &bus,
+            bus,
             epoch,
             Actor::Operator,
             "CLI-list0004",
@@ -330,7 +340,7 @@ mod tests {
             "board.test",
             Some("todo"),
         );
-        let mut answer = board(&bus, epoch, Actor::Operator);
+        let mut answer = board(bus, epoch, Actor::Operator);
         answer
             .tasks
             .iter_mut()
@@ -355,9 +365,17 @@ mod tests {
             .expect("completed row");
         completed_row.workflow.body.status = "completed".to_owned();
         completed_row.workflow.body.completion = Some(fixture_instant("fixture completion"));
+        (answer, first, descendant, waiting)
+    }
 
+    fn assert_task_list_queries(
+        answer: &BoardAnswer,
+        first: &TaskHandle,
+        descendant: &TaskHandle,
+        waiting: &TaskHandle,
+    ) {
         let default = task_list(
-            &answer,
+            answer,
             &TaskListOptions {
                 all: false,
                 project: None,
@@ -375,7 +393,7 @@ mod tests {
         assert!(!default.contains("CLI-list0004"), "{default}");
 
         let project = task_list(
-            &answer,
+            answer,
             &TaskListOptions {
                 all: false,
                 project: Some("task.cli".to_owned()),
@@ -389,7 +407,7 @@ mod tests {
         assert!(!project.contains(waiting.as_str()));
 
         let waiting_only = task_list(
-            &answer,
+            answer,
             &TaskListOptions {
                 all: false,
                 project: None,
@@ -401,7 +419,7 @@ mod tests {
         assert!(!waiting_only.contains(first.as_str()));
 
         let newest_global = task_list(
-            &answer,
+            answer,
             &TaskListOptions {
                 all: true,
                 project: None,
@@ -414,7 +432,7 @@ mod tests {
             "scope global --all\nCLI-list0004 [done] board.test Completed board route"
         );
         let deleted = task_list(
-            &answer,
+            answer,
             &TaskListOptions {
                 all: true,
                 project: None,
@@ -423,7 +441,6 @@ mod tests {
             },
         );
         assert_eq!(deleted, "scope global --all\nno tasks in global scope");
-        clean(&root, bus);
     }
 
     fn fixture_instant(context: &str) -> Instant {
