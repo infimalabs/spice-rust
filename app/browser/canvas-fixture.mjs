@@ -393,7 +393,7 @@ export async function assertLineageLifeIsolation(browser) {
     const page = await context.newPage();
     const monitor = monitorPage(page);
     await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Mosaic");
+    await chooseCanvasView(page, "Agents");
     const console = page.locator('[data-pane="agent-console"]');
     await console.waitFor();
     const drainSurface = console.locator(
