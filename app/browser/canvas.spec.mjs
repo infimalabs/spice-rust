@@ -224,6 +224,9 @@ function monitorPage(page) {
   const requestFailures = [];
   let expectedNetworkInterruption = false;
   page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.toString()));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(`console: ${message.text()}`);
+  });
   page.on("requestfailed", (request) => {
     if (!expectedNetworkInterruption) {
       requestFailures.push(`${request.url()} ${request.failure()?.errorText ?? "unknown failure"}`);
@@ -322,9 +325,23 @@ async function assertAgentConversation(page, fixture) {
   await page.getByRole("button", { name: "Mosaic" }).click();
   await console.getByRole("heading", { name: "Agents", exact: true }).waitFor();
   await console.getByLabel("Worktree").fill(fixture);
-  await console.getByLabel("Vendor").fill("claude");
   await console.getByLabel("Life").fill("steer");
+
+  // A refused submission has to say why. The vendor field is free text with no
+  // datalist, so a proper name typed the way it is written everywhere else is
+  // the trip an operator actually takes, and it used to send no request and
+  // print nothing: the button read as dead. This is the only refusal reachable
+  // by clicking, because the compose button disables itself while the message
+  // is empty or no agent is seated.
+  const refusal = console.locator(".form-refusal");
+  await console.getByLabel("Vendor").fill("My Agent");
   await console.getByRole("button", { name: "Seat agent" }).click();
+  await refusal.waitFor({ timeout: 10_000 });
+  assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
+
+  await console.getByLabel("Vendor").fill("Claude");
+  await console.getByRole("button", { name: "Seat agent" }).click();
+  await refusal.waitFor({ state: "detached", timeout: 10_000 });
 
   const tab = console.locator(".agent-tab");
   try {
@@ -355,8 +372,65 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(inbox.body.lanes.length, 1);
   assert.equal(inbox.body.lanes[0].pending.length, 1);
   assert.equal(inbox.body.lanes[0].pending[0].text, message);
+  await assertMosaicPacking(page, console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   return seated.lane;
+}
+
+async function assertMosaicPacking(page, console) {
+  const feed = console.locator(".mosaic-feed");
+  const laneCount = Number(await feed.getAttribute("data-lanes"));
+  assert.ok(laneCount >= 1 && laneCount <= 6, "geometry exposes a legal base-lane count");
+  const targetCards = laneCount * 2 + 1;
+  for (let index = 1; index < targetCards; index += 1) {
+    await console.getByLabel("Message").fill(`mosaic placement ${index}`);
+    await console.getByRole("button", { name: "Send direction" }).click();
+  }
+  const cards = console.locator(".mosaic-card");
+  await cards.nth(targetCards - 1).waitFor({ timeout: 15_000 });
+  assert.equal(await cards.count(), targetCards);
+  assert.equal(await cards.first().getAttribute("data-state"), "frozen");
+
+  const placements = await cards.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return {
+      track: Number(element.dataset.track),
+      span: Number(element.dataset.span),
+      base: Number(element.dataset.base),
+      row: Number(element.dataset.row),
+      rows: Number(element.dataset.rows),
+      gridColumnStart: Number(getComputedStyle(element).gridColumnStart),
+      gridRowStart: Number(getComputedStyle(element).gridRowStart),
+      left: box.left,
+      right: box.right,
+      top: box.top,
+      bottom: box.bottom,
+    };
+  }));
+  assert.ok(placements.every((card) => card.span >= 2 && card.track + card.span <= 12));
+  assert.ok(placements.every((card) => card.rows >= 2));
+  assert.ok(placements.every((card) => card.gridColumnStart === card.track + 1));
+  assert.ok(placements.every((card) => card.gridRowStart === card.row));
+  for (let left = 0; left < placements.length; left += 1) {
+    for (let right = left + 1; right < placements.length; right += 1) {
+      const a = placements[left];
+      const b = placements[right];
+      const separated = a.right <= b.left + 1 || b.right <= a.left + 1
+        || a.bottom <= b.top + 1 || b.bottom <= a.top + 1;
+      assert.ok(separated, `mosaic cards ${left} and ${right} do not overlap`);
+    }
+  }
+
+  await feed.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  const before = await feed.evaluate((element) => element.scrollTop);
+  await console.getByLabel("Message").fill("mosaic scroll compensation");
+  await console.getByRole("button", { name: "Send direction" }).click();
+  await cards.nth(targetCards).waitFor({ timeout: 10_000 });
+  const after = await feed.evaluate((element) => element.scrollTop);
+  assert.ok(after >= before, "incremental placement preserves a scrolled viewport");
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await cards.nth(targetCards).waitFor();
 }
 
 async function assertAuthoritySurface(page, seeded) {
@@ -392,7 +466,10 @@ async function assertMosaicComposer(page, fixture, seeded) {
   const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
   await lane.getByText("browser direction survives streaming", { exact: true }).waitFor();
 
-  await lane.getByRole("button", { name: "Quote reply" }).click();
+  await lane.locator(".mosaic-message-card")
+    .filter({ hasText: "browser direction survives streaming" })
+    .getByRole("button", { name: "Quote reply" })
+    .click();
   const composer = lane.locator(".mosaic-composer");
   await composer.getByLabel("Markdown preview").waitFor();
   assert.equal(

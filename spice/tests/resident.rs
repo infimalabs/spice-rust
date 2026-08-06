@@ -121,13 +121,29 @@ impl RunningResident {
     }
 
     fn spawn_with_environment(fixture: &Fixture, executable: &Path, path: Option<&Path>) -> Self {
+        Self::spawn_with_form(fixture, executable, path, true)
+    }
+
+    fn spawn_text(fixture: &Fixture) -> Self {
+        Self::spawn_with_form(fixture, Path::new(env!("CARGO_BIN_EXE_spice")), None, false)
+    }
+
+    fn spawn_with_form(
+        fixture: &Fixture,
+        executable: &Path,
+        path: Option<&Path>,
+        json: bool,
+    ) -> Self {
         let mut command = Command::new(executable);
         // The default port belongs to the operator's one resident, and these
         // fixtures are neither one of those nor alone on the machine: every
         // battery here spawns its own, alongside whatever the lanes sharing
         // this host are running. Each asks the kernel for a free port instead,
         // and reads the one it got back out of the published discovery.
-        command.args(["--json", "up", "--port", "0"]);
+        if json {
+            command.arg("--json");
+        }
+        command.args(["up", "--port", "0"]);
         if let Some(path) = path {
             command.env("PATH", path);
         }
