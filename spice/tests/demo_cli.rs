@@ -27,12 +27,19 @@ impl SeededBuildLaneApp {
         let worktree = manifest
             .parent()
             .expect("spice crate has a workspace parent");
+        Self::for_worktree(worktree).unwrap_or_else(|message| panic!("{message}"))
+    }
+
+    fn for_worktree(worktree: &Path) -> Result<Self, String> {
         let stage = worktree.join(canvas::APP_STAGE);
         if stage.exists() {
-            return Self(None);
+            canvas::AppSource::resolve(worktree).map_err(|error| {
+                format!("demo_cli precondition found a stale lane app generation: {error}")
+            })?;
+            return Ok(Self(None));
         }
         staged_app::seed(worktree);
-        Self(Some(stage))
+        Ok(Self(Some(stage)))
     }
 }
 
@@ -143,6 +150,124 @@ impl Drop for Fixture {
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[test]
+fn stale_real_stage_precondition_names_the_missing_asset_without_mutating_it() {
+    let fixture = Fixture::new();
+    let root = fixture.root("stale-app-stage");
+    staged_app::seed(&root);
+    let stage = root.join(canvas::APP_STAGE);
+    let identity = fs::read_to_string(stage.join(canvas::APP_STAGE_CURRENT))
+        .expect("read fixture app generation pointer");
+    let missing = stage
+        .join(canvas::APP_STAGE_GENERATIONS)
+        .join(identity.trim_ascii_end())
+        .join("mosaic.css");
+    fs::remove_file(&missing).expect("remove one current-generation asset");
+    let before = stage_snapshot(&stage);
+
+    let error = match SeededBuildLaneApp::for_worktree(&root) {
+        Ok(_) => panic!("a stale real stage must fail its precondition"),
+        Err(error) => error,
+    };
+
+    for required in [
+        "demo_cli precondition",
+        "stale lane app generation",
+        "mosaic.css",
+        "cargo xtask app",
+    ] {
+        assert!(error.contains(required), "missing {required:?}: {error}");
+    }
+    assert_eq!(
+        stage_snapshot(&stage),
+        before,
+        "refusing a stale existing stage must not seed over or remove any bytes"
+    );
+}
+
+#[test]
+fn build_lane_stage_is_byte_identical_or_still_absent_after_the_precondition_guard() {
+    let _app_lock = BUILD_LANE_APP.lock().expect("build lane app fixture lock");
+    let worktree = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("spice crate has a workspace parent");
+    let stage = worktree.join(canvas::APP_STAGE);
+    let before = stage_snapshot(&stage);
+
+    drop(SeededBuildLaneApp::new());
+
+    assert_eq!(
+        stage_snapshot(&stage),
+        before,
+        "the suite must preserve an existing real stage and restore an absent one to absence"
+    );
+}
+
+#[test]
+fn staged_app_seed_callers_are_fully_inventoried() {
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let marker = ["staged_app", "::seed("].concat();
+    let mut callers = fs::read_dir(&tests)
+        .expect("read Spice integration tests")
+        .filter_map(|entry| {
+            let path = entry.expect("read Spice integration test entry").path();
+            (path.extension().is_some_and(|extension| extension == "rs")
+                && fs::read_to_string(&path)
+                    .expect("read Spice integration test source")
+                    .contains(&marker))
+            .then(|| path.file_name().expect("test file name").to_owned())
+        })
+        .collect::<Vec<_>>();
+    callers.sort();
+
+    // `demo_cli.rs` is the sole real-worktree consumer. Every other caller
+    // seeds an owned temporary scratch root unconditionally and removes it.
+    assert_eq!(
+        callers,
+        [
+            "cli.rs",
+            "consent_cli.rs",
+            "demo_cli.rs",
+            "journal_cli.rs",
+            "release_publish.rs",
+            "resident.rs",
+            "steering.rs",
+            "task_artifact_cli.rs",
+            "taste_cli.rs",
+        ]
+        .map(std::ffi::OsString::from)
+    );
+}
+
+fn stage_snapshot(stage: &Path) -> Option<Vec<(PathBuf, Vec<u8>)>> {
+    if !stage.exists() {
+        return None;
+    }
+    let mut snapshot = Vec::new();
+    snapshot_directory(stage, stage, &mut snapshot);
+    Some(snapshot)
+}
+
+fn snapshot_directory(root: &Path, directory: &Path, snapshot: &mut Vec<(PathBuf, Vec<u8>)>) {
+    let mut entries = fs::read_dir(directory)
+        .expect("read staged app directory")
+        .map(|entry| entry.expect("read staged app entry").path())
+        .collect::<Vec<_>>();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            snapshot_directory(root, &path, snapshot);
+        } else {
+            snapshot.push((
+                path.strip_prefix(root)
+                    .expect("stage entry is beneath root")
+                    .to_path_buf(),
+                fs::read(&path).expect("read staged app bytes"),
+            ));
+        }
+    }
 }
 
 fn wait_for_demo_discovery(launched: &mut Child, discovery: &Path) {
