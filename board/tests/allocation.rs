@@ -85,7 +85,12 @@ fn residency() -> ResidencyHead {
             session: None,
             disposition: "occupied".to_owned(),
         }],
-        subscriptions: Vec::new(),
+        subscriptions: vec![wire::LineageSubscription {
+            lineage_id: uuid(20),
+            policy: wire::intent::LineageLife::Drain,
+            manual_projects: Vec::new(),
+            auto_projects: Vec::new(),
+        }],
     }
 }
 

@@ -565,6 +565,12 @@ pub struct LineageConfigured {
     pub from: crate::intent::LineageLife,
     /// Authoritative task-subscription policy after this transaction.
     pub life: crate::intent::LineageLife,
+    /// Prior operator-pinned project set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub from_manual_projects: Vec<String>,
+    /// Authoritative operator-pinned project set after this transaction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub manual_projects: Vec<String>,
 }
 
 /// A selected vendor record declared the exact resumable lane session.

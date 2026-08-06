@@ -505,6 +505,8 @@ mod tests {
             subscriptions: vec![wire::LineageSubscription {
                 lineage_id: lane,
                 policy: wire::intent::LineageLife::Drive,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
             }],
         });
     }

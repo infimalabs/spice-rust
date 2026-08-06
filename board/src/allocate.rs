@@ -99,6 +99,8 @@ pub enum Refusal {
         seated: Option<CanonicalUuid>,
         named: CanonicalUuid,
     },
+    MissingSubscription(CanonicalUuid),
+    AmbiguousSubscription(CanonicalUuid),
     Empty,
     Changed(String),
 }
@@ -151,6 +153,14 @@ impl fmt::Display for Refusal {
             } => write!(
                 formatter,
                 "lane {lane} holds occupant {seated:?}, not named occupant {named}"
+            ),
+            Self::MissingSubscription(lineage) => write!(
+                formatter,
+                "lane lineage {lineage} has no durable task-subscription policy"
+            ),
+            Self::AmbiguousSubscription(lineage) => write!(
+                formatter,
+                "lane lineage {lineage} has more than one task-subscription policy"
             ),
             Self::Empty => formatter.write_str("allocator found no eligible task"),
             Self::Changed(detail) => write!(formatter, "{CHANGED}: {detail}"),
@@ -415,10 +425,20 @@ fn observe(
     request: &Request,
 ) -> Result<Observation, ObservationError> {
     let residency = read.residency_head()?.ok_or(Refusal::MissingResidency)?;
-    admit_residency(residency.body(), request)?;
     let heads = read.task_heads()?;
     let entries = entries(&heads, &request.projects)?;
-    let winner = select(&entries, &request.actor)
+    let facts = read
+        .fact_snapshot()
+        .map_err(|error| GuardError::Invalid(format!("allocator facts are invalid: {error}")))?;
+    let mut effective_residency = residency.body().clone();
+    crate::project_subscription_history(&mut effective_residency, &entries, facts.facts())
+        .map_err(|error| {
+            GuardError::Invalid(format!(
+                "allocator subscription history is invalid: {error}"
+            ))
+        })?;
+    let subscription = admit_residency(&effective_residency, request)?;
+    let winner = select(&entries, &request.actor, subscription)
         .ok_or(Refusal::Empty)?
         .entry()
         .statement()
@@ -431,7 +451,10 @@ fn observe(
     })
 }
 
-fn admit_residency(residency: &wire::ResidencyHead, request: &Request) -> Result<(), Refusal> {
+fn admit_residency<'a>(
+    residency: &'a wire::ResidencyHead,
+    request: &Request,
+) -> Result<&'a wire::LineageSubscription, Refusal> {
     if residency.state != wire::ResidentState::Seated {
         return Err(Refusal::ResidentState(residency.state));
     }
@@ -459,7 +482,17 @@ fn admit_residency(residency: &wire::ResidencyHead, request: &Request) -> Result
             named: request.occupant,
         });
     }
-    Ok(())
+    let mut subscriptions = residency
+        .subscriptions
+        .iter()
+        .filter(|subscription| subscription.lineage_id == seat.lineage_id);
+    let subscription = subscriptions
+        .next()
+        .ok_or(Refusal::MissingSubscription(seat.lineage_id))?;
+    if subscriptions.next().is_some() {
+        return Err(Refusal::AmbiguousSubscription(seat.lineage_id));
+    }
+    Ok(subscription)
 }
 
 fn entries(heads: &[TaskHeads], projects: &ProjectPolicy) -> Result<Vec<Entry>, ObservationError> {
@@ -643,7 +676,12 @@ mod tests {
                 session: None,
                 disposition: "occupied".to_owned(),
             }],
-            subscriptions: Vec::new(),
+            subscriptions: vec![wire::LineageSubscription {
+                lineage_id: uuid(20),
+                policy: wire::intent::LineageLife::Drain,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
+            }],
         });
         journal.apply(write).expect("seed authority");
         journal
