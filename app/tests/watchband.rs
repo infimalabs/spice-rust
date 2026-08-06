@@ -95,6 +95,7 @@ fn inbox(id: &str, directives: &[(&str, Option<&str>)]) -> LaneInbox {
 fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> BoardTask {
     serde_json::from_value(serde_json::json!({
         "visibility": {"kind": "public"},
+        "origin_thread": "operator",
         "presentation_title": "Rebuild the watchband",
         "statement": {
             "position": 1,
