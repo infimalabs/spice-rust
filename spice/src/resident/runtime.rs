@@ -30,7 +30,8 @@ struct SurfaceLaunch<'a> {
     /// it decides who dials the published address, not which address gets
     /// published or what admits a caller to it.
     open: bool,
-    announcement: &'a mut dyn io::Write,
+    progress: &'a mut dyn io::Write,
+    endpoint: &'a mut dyn io::Write,
 }
 
 // Runtime policy and trust identity are projections of this one captured generation.
@@ -220,7 +221,11 @@ impl CanvasBinding {
     }
 }
 
-pub(crate) fn up(leaf: &clap::ArgMatches, announcement: &mut dyn io::Write) -> Outcome<()> {
+pub(crate) fn up(
+    leaf: &clap::ArgMatches,
+    progress: &mut dyn io::Write,
+    endpoint: &mut dyn io::Write,
+) -> Outcome<()> {
     let listen = match requested_listen(leaf) {
         Ok(listen) => listen,
         Err(outcome) => return outcome,
@@ -237,7 +242,8 @@ pub(crate) fn up(leaf: &clap::ArgMatches, announcement: &mut dyn io::Write) -> O
         &current,
         CanvasBinding { listen, access },
         leaf.get_flag("open"),
-        announcement,
+        progress,
+        endpoint,
     )
 }
 
@@ -328,14 +334,21 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
 }
 
 pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
-    up_from_with(current, binding, false, &mut io::sink())
+    up_from_with(
+        current,
+        binding,
+        false,
+        &mut io::sink(),
+        &mut io::sink(),
+    )
 }
 
 fn up_from_with(
     current: &Path,
     binding: CanvasBinding,
     open: bool,
-    announcement: &mut dyn io::Write,
+    progress: &mut dyn io::Write,
+    endpoint: &mut dyn io::Write,
 ) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
@@ -402,7 +415,8 @@ fn up_from_with(
             SurfaceLaunch {
                 binding,
                 open,
-                announcement,
+                progress,
+                endpoint,
             },
         )),
         Err(error) => Err(environment_fault(
@@ -665,7 +679,8 @@ async fn run_surface(
     let SurfaceLaunch {
         binding,
         open,
-        announcement,
+        progress,
+        endpoint,
     } = launch;
     let listen = binding.listen;
     let (server, control) = canvas::axum::Server::bind_streaming(
@@ -703,15 +718,16 @@ async fn run_surface(
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    let _ = writeln!(announcement, "canvas app source: {app_description}");
+    let _ = writeln!(progress, "canvas app source: {app_description}");
+    let _ = progress.flush();
     announce_canvas(
         &paths.canvas,
         open,
         || {},
         crate::command_client::system_browser,
-        announcement,
+        endpoint,
     );
-    let _ = announcement.flush();
+    let _ = endpoint.flush();
     let capture::Channels {
         reporter,
         records,
