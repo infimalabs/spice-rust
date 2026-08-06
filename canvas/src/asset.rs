@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-static APP_ASSETS: [AppAsset; 4] = [
+static APP_ASSETS: [AppAsset; 6] = [
     AppAsset::new("/", "canvas-app.html", "text/html; charset=utf-8"),
     AppAsset::new(
         "/app.module",
@@ -14,6 +14,12 @@ static APP_ASSETS: [AppAsset; 4] = [
         "text/javascript; charset=utf-8",
     ),
     AppAsset::new("/style.css", "style.css", "text/css; charset=utf-8"),
+    AppAsset::new("/mosaic.css", "mosaic.css", "text/css; charset=utf-8"),
+    AppAsset::new(
+        "/responsive.css",
+        "responsive.css",
+        "text/css; charset=utf-8",
+    ),
     AppAsset::new("/app_bg.wasm", "app_bg.wasm", "application/wasm"),
 ];
 
@@ -573,6 +579,8 @@ mod tests {
                 ("/", "text/html; charset=utf-8"),
                 ("/app.module", "text/javascript; charset=utf-8"),
                 ("/style.css", "text/css; charset=utf-8"),
+                ("/mosaic.css", "text/css; charset=utf-8"),
+                ("/responsive.css", "text/css; charset=utf-8"),
                 ("/app_bg.wasm", "application/wasm"),
             ]
         );
@@ -713,10 +721,16 @@ mod tests {
             panic!("a partial stage refused as {error:?}");
         };
         assert_eq!(directory, &stage);
-        assert_eq!(missing, &["app_bg.wasm", "style.css"]);
+        assert_eq!(
+            missing,
+            &["app_bg.wasm", "mosaic.css", "responsive.css", "style.css"]
+        );
         let message = error.to_string();
         assert!(
-            message.contains("style.css") && message.contains("app_bg.wasm"),
+            message.contains("style.css")
+                && message.contains("mosaic.css")
+                && message.contains("responsive.css")
+                && message.contains("app_bg.wasm"),
             "the refusal does not name what is missing: {message}"
         );
         assert!(

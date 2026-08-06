@@ -16,8 +16,13 @@ pub(crate) const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 const GENERATED_MODULE_REFERENCES: usize = 2;
-const GENERATED_REFERENCES: [(&str, usize); 3] =
-    [("/app.module", 2), ("/app_bg.wasm", 2), ("/style.css", 1)];
+const GENERATED_REFERENCES: [(&str, usize); 5] = [
+    ("/app.module", 2),
+    ("/app_bg.wasm", 2),
+    ("/style.css", 1),
+    ("/mosaic.css", 1),
+    ("/responsive.css", 1),
+];
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 
 /// Run `cargo xtask app` to compile the browser app into the one stage
@@ -447,6 +452,10 @@ mod tests {
         fs::write(stage.join("app.js"), format!("module {label}")).expect("write generated module");
         fs::write(stage.join("app_bg.wasm"), format!("wasm {label}")).expect("write wasm");
         fs::write(stage.join("style.css"), format!("style {label}")).expect("write stylesheet");
+        fs::write(stage.join("mosaic.css"), format!("mosaic {label}"))
+            .expect("write Mosaic stylesheet");
+        fs::write(stage.join("responsive.css"), format!("responsive {label}"))
+            .expect("write responsive stylesheet");
         let second_wasm = if valid {
             "<link href=\"/app_bg.wasm\">"
         } else {
@@ -455,7 +464,8 @@ mod tests {
         fs::write(
             stage.join("canvas-app.html"),
             format!(
-                "<link href=\"/style.css\"><script src=\"/app.js\"></script>\
+                "<link href=\"/style.css\"><link href=\"/mosaic.css\">\
+                 <link href=\"/responsive.css\"><script src=\"/app.js\"></script>\
                  <link href=\"/app.js\"><link href=\"/app_bg.wasm\">{second_wasm}\
                  <main>{label}</main>"
             ),
@@ -531,8 +541,15 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"]
-                .map(std::ffi::OsString::from)
+            [
+                "app.module",
+                "app_bg.wasm",
+                "canvas-app.html",
+                "mosaic.css",
+                "responsive.css",
+                "style.css"
+            ]
+            .map(std::ffi::OsString::from)
         );
         let shell = fs::read_to_string(root.join("canvas-app.html")).expect("read shell");
         for asset in spice::canvas::APP

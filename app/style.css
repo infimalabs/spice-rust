@@ -28,12 +28,12 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --page: #171916;
-    --panel: #20231f;
-    --panel-muted: #292d28;
-    --ink: #f0f2ed;
-    --muted: #a7aea3;
-    --line: #3a4038;
+    --page: #0b0f0c;
+    --panel: #111712;
+    --panel-muted: #182019;
+    --ink: #edf4ed;
+    --muted: #99a499;
+    --line: #29342a;
     --accent: #73c79f;
     --accent-soft: #203e31;
     --focus: #67b7e8;
@@ -317,11 +317,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 .agent-console-heading h1,
-.seat-panel-heading h2 { margin: 0; }
+.seat-panel-heading h2,
+.conversation-heading h2 { margin: 0; }
 
 .agent-console-heading h1 { margin-top: 3px; font-size: 1.65rem; }
 .agent-console-heading p,
-.seat-panel-heading p {
+.seat-panel-heading p,
+.conversation-heading p {
   margin: 5px 0 0;
   color: var(--muted);
   font-size: .8rem;
@@ -450,6 +452,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .ticker.refusal { color: var(--danger); }
 
+.agent-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(280px, .65fr);
+  min-height: 380px;
+}
+
+.conversation { display: flex; min-width: 0; flex-direction: column; padding: 20px 22px; }
+.conversation-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+}
+.conversation-heading h2 { font-size: 1rem; }
+
 .conversation-feed {
   display: flex;
   flex: 1 1 auto;
@@ -495,7 +513,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-bottom-right-radius: 2px;
   background: var(--accent-soft);
 }
-.message.mosaic-card {
+.message.outgoing.mosaic-card {
   grid-column-start: calc(attr(data-track type(<integer>)) + 1);
   grid-column-end: span attr(data-span type(<integer>));
   grid-row-start: attr(data-row type(<integer>));
@@ -514,10 +532,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   display: flex;
   flex-direction: column;
   padding-right: 16px;
-  cursor: grab;
 }
-
-.mosaic-card:active { cursor: grabbing; }
 
 .accent-rail {
   position: absolute;
@@ -574,18 +589,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .message-attachments figcaption,
 .message-attachment { color: var(--muted); font-size: .7rem; }
 
+.agent-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 12px;
+}
+.agent-compose label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 650;
+}
+.agent-compose textarea {
+  width: 100%;
+  min-height: 74px;
+  padding: 10px 11px;
+  resize: vertical;
+}
+.agent-compose button {
+  align-self: stretch;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .seat-panel {
   padding: 20px;
-  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
   background: var(--panel-muted);
 }
 .seat-panel-heading h2 { margin-top: 3px; font-size: 1rem; }
-
-/* The form used to be a narrow right-hand column beside the conversation. It
-   now runs under the watchband across the console's full width, where three
-   short fields stretched edge to edge read as a much bigger ask than they
-   are; the cap keeps them the size of what they actually collect. */
-.seat-form { display: grid; gap: 8px; margin-top: 18px; max-width: 34rem; }
+.seat-form { display: grid; gap: 8px; margin-top: 18px; }
 .seat-form label { margin-top: 3px; color: var(--muted); font-size: .72rem; font-weight: 650; }
 .seat-form input { width: 100%; min-width: 0; padding: 9px 10px; background: var(--panel); }
 .seat-form button {
@@ -643,102 +678,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .metric-label { color: var(--muted); font-size: .76rem; font-weight: 650; text-transform: uppercase; }
 .metric-value { margin-top: 8px; font-size: 1.55rem; font-weight: 750; }
 .metric-detail { margin-top: 4px; color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
-
-.watchband { margin-bottom: 20px; }
-
-.compose {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.compose-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel);
-  color: var(--ink);
-  font: inherit;
-}
-
-.compose-input:disabled { background: var(--panel-muted); color: var(--muted); }
-
-.compose-send {
-  flex: 0 0 auto;
-  padding: 0 18px;
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font: inherit;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.compose-send:disabled { border-color: var(--line); background: var(--panel-muted); color: var(--muted); cursor: default; }
-
-.watchband-strip {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.watchband-empty { margin: 0; color: var(--muted); font-size: .84rem; }
-
-/* On its own destination the band owns the page rather than sitting above one,
-   so tiles wrap into rows instead of scrolling out of sight sideways. The tile
-   width is already fixed, so wrapping lands them on a grid without one. */
-.content--mosaic .watchband-strip { overflow-x: visible; flex-wrap: wrap; }
-
-/* A tile is fixed-width so the strip reads as one band rather than as columns
-   that resize when a lane's direction text changes length. */
-.lane-tile {
-  display: flex;
-  flex: 0 0 218px;
-  flex-direction: column;
-  gap: 6px;
-  height: 116px;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  border-radius: 6px;
-  background: var(--panel);
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.lane-tile--focused { border-color: var(--focus); border-top-color: var(--focus); box-shadow: 0 0 0 2px var(--accent-soft); }
-.lane-tile-top { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
-/* The name shrinks and the key beside it does not: the key is eight characters
-   that identify a directive, so an ellipsis makes it useless, while the name
-   stays readable truncated. Both must be able to shrink to nothing rather than
-   widen the tile, because the tile is a fixed-width card and a lane names its
-   own worktree. */
-.lane-tile-name { overflow: hidden; flex: 0 1 auto; min-width: 0; font-weight: 700; font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
-.lane-tile-head { overflow: hidden; flex: 0 0 auto; min-width: 0; color: var(--muted); font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
-
-/* Direction is operator prose and can carry an unbroken path or handle longer
-   than the tile, which would widen the card rather than wrap inside it. */
-.lane-tile-body {
-  display: -webkit-box;
-  flex: 1 1 auto;
-  overflow: hidden;
-  font-size: .78rem;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.lane-tile-foot { display: flex; gap: 6px; align-items: center; min-width: 0; }
-.lane-tile-claim { overflow: hidden; flex: 1 1 auto; color: var(--muted); font-family: ui-monospace, monospace; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
-.lane-tile-pending { flex: 0 0 auto; padding: 0 6px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); font-size: .68rem; font-weight: 700; }
-.lane-tile-vendor { flex: 0 0 auto; color: var(--muted); font-size: .68rem; text-transform: uppercase; }
 
 .pane-strip {
   display: flex;
@@ -860,222 +799,3 @@ tbody tr:last-child td { border-bottom: 0; }
 .form input, .form textarea { width: 100%; padding: 9px 10px; }
 .form textarea { min-height: 92px; resize: vertical; }
 .form button { justify-self: start; background: var(--accent); border-color: var(--accent); color: #fff; }
-
-.mosaic {
-  min-height: calc(100vh - 116px);
-  padding: 2px 0 28px;
-}
-
-.mosaic-heading {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 18px;
-}
-
-.mosaic-heading h1 { margin: 0; font-size: 1.65rem; }
-.mosaic-heading p { margin: 6px 0 0; color: var(--muted); font-size: .9rem; }
-
-.mosaic-lanes {
-  display: grid;
-  gap: 18px;
-}
-
-.mosaic-lane {
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 97%, var(--accent));
-  box-shadow: 0 12px 30px rgb(14 24 17 / 8%);
-}
-
-.mosaic-lane:has(.mosaic-card:hover),
-.mosaic-lane:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
-}
-
-.mosaic-lane--vacant { opacity: .72; }
-
-.mosaic-lane-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--accent-soft) 42%, var(--panel));
-}
-
-.mosaic-lane-header div { display: grid; min-width: 0; gap: 3px; }
-.mosaic-lane-header strong { font-size: .82rem; }
-.mosaic-lane-header div span {
-  overflow: hidden;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .7rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mosaic-composer {
-  display: grid;
-  gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--accent) 3%, var(--panel));
-}
-
-.mosaic-composer textarea {
-  width: 100%;
-  min-height: 92px;
-  padding: 10px 11px;
-  resize: vertical;
-  line-height: 1.42;
-}
-
-.composer-quote-stack { display: grid; gap: 5px; }
-
-.composer-quote-band {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 4px 5px 4px 9px;
-  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
-  border-radius: 6px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: .76rem;
-}
-
-.composer-quote-band span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-quote-band button,
-.composer-attachment-chip button {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  min-width: 26px;
-  height: 26px;
-  min-height: 26px;
-  padding: 0;
-  border-radius: 50%;
-}
-
-.composer-attachment-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.composer-attachment-chip {
-  position: relative;
-  display: inline-flex;
-  width: 46px;
-  height: 46px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-muted);
-}
-
-.composer-attachment-chip img { width: 100%; height: 100%; object-fit: cover; }
-.composer-attachment-chip button { position: absolute; top: 2px; right: 2px; background: var(--panel); }
-
-.composer-issue { margin: 0; color: var(--danger); font-size: .76rem; }
-
-.composer-markdown {
-  display: grid;
-  gap: 8px;
-  padding: 9px 11px;
-  border-left: 3px solid var(--accent);
-  border-radius: 0 5px 5px 0;
-  background: var(--panel-muted);
-  font-size: .8rem;
-  white-space: pre-wrap;
-}
-
-.composer-markdown p,
-.composer-markdown blockquote { margin: 0; }
-.composer-markdown blockquote { color: var(--muted); }
-
-.mosaic-composer-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: .74rem;
-}
-
-.image-picker {
-  min-height: 32px;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--panel);
-  color: var(--ink);
-  cursor: pointer;
-  font-weight: 650;
-}
-
-.composer-send {
-  margin-left: auto;
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-
-.message-attachments { display: flex; flex-wrap: wrap; gap: 7px; }
-.message-attachments img {
-  width: 72px;
-  height: 54px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  object-fit: cover;
-}
-
-.decision-row { display: flex; gap: 6px; margin-top: 8px; }
-.decision-row button { min-height: 31px; padding: 0 9px; font-size: .76rem; }
-.decision-row .deny { color: var(--danger); }
-
-@media (max-width: 900px) {
-  .commandbar { gap: 10px; padding: 8px 12px; }
-  .bar-meta { display: none; }
-  .axis-button { padding: 0 11px; }
-  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
-  .metric:nth-child(4) { border-top: 1px solid var(--line); }
-  .split { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 560px) {
-  .shell { min-height: 100vh; }
-  .brand-name { display: none; }
-  .axis-button { min-height: 40px; padding: 0 9px; font-size: .74rem; }
-  .watchband-card { min-width: 148px; }
-  .topbar { min-height: 58px; padding: 0 14px; }
-  .mobile-brand { display: block; }
-  .workspace-tabs { margin-left: auto; }
-  .workspace-tabs button { min-width: 34px; padding: 0 7px; font-size: 0; }
-  .workspace-tabs button::first-letter { font-size: .72rem; }
-  .status-copy { display: none; }
-  .refresh { min-width: 36px; padding: 0 8px; }
-  .content { padding: 18px 14px 28px; }
-  .agent-console-heading { align-items: flex-start; padding: 17px; }
-  .agent-console-heading h1 { font-size: 1.35rem; }
-  .conversation-feed { min-height: 150px; padding: 11px; }
-  .message { width: 94%; }
-  .seat-panel { padding: 16px; }
-  .page-heading { align-items: start; }
-  .page-heading h1 { font-size: 1.35rem; }
-  .metrics { grid-template-columns: 1fr 1fr; }
-  .metric { padding: 13px; }
-  .metric-value { font-size: 1.25rem; }
-  th, td { padding: 10px; }
-}

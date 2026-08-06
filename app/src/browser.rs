@@ -28,7 +28,7 @@ use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, Stream
 mod composer;
 mod view;
 
-use composer::ComposerDrafts;
+use composer::{ComposerDrafts, LineageLife, LineageMode};
 use view::{CanvasRender, render_canvas};
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
@@ -167,6 +167,8 @@ fn canvas_app() -> Html {
     let surface = use_state(SurfaceData::default);
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
+    let lineage_mode = use_state(|| LineageMode::Compose);
+    let lineage_life = use_state(|| LineageLife::Steer);
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
@@ -176,6 +178,7 @@ fn canvas_app() -> Html {
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
     let agents = use_agent_controls(
         sender.clone(),
+        lineage_life.clone(),
         speech_speak(
             speech.clone(),
             speech_status.clone(),
@@ -241,6 +244,8 @@ fn canvas_app() -> Html {
         surface: &surface,
         axis: &axis,
         mosaic: &mosaic,
+        lineage_mode: &lineage_mode,
+        lineage_life: &lineage_life,
         composer_drafts: &composer_drafts,
         sender: &sender,
         agents: &agents,
@@ -255,8 +260,11 @@ fn canvas_app() -> Html {
 }
 
 #[hook]
-fn use_agent_controls(sender: SenderHandle, speak: Callback<String>) -> view::AgentControls {
-    let selected_lane = use_state(String::new);
+fn use_agent_controls(
+    sender: SenderHandle,
+    lineage_life: UseStateHandle<LineageLife>,
+    speak: Callback<String>,
+) -> view::AgentControls {
     let seat_worktree = use_state(String::new);
     let seat_vendor = use_state(|| "codex".to_owned());
     let seat_life = use_state(|| "steer".to_owned());
@@ -268,8 +276,8 @@ fn use_agent_controls(sender: SenderHandle, speak: Callback<String>) -> view::Ag
             seat_vendor.clone(),
             seat_life.clone(),
             seat_notice.clone(),
+            lineage_life,
         ),
-        selected_lane,
         seat_worktree,
         seat_vendor,
         seat_life,
@@ -284,12 +292,16 @@ fn seat_submit(
     vendor: UseStateHandle<String>,
     life: UseStateHandle<String>,
     notice: UseStateHandle<Notice>,
+    lineage_life: UseStateHandle<LineageLife>,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
         match compose::seat(&worktree, &vendor, &life) {
             Ok(seat) => {
                 notice.set(Notice::none());
+                if let Some(selected_life) = LineageLife::from_wire(&seat.life) {
+                    lineage_life.set(selected_life);
+                }
                 send_action(
                     &sender,
                     ClientAction::Seat {

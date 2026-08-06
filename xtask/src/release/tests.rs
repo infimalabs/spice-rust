@@ -31,6 +31,10 @@ impl Fixture {
         fs::write(app.join("canvas-app.html"), TEST_HTML).expect("write lane-built shell");
         fs::write(app.join("app.module"), b"lane-built module").expect("write lane module");
         fs::write(app.join("style.css"), b"lane-built style").expect("write lane style");
+        fs::write(app.join("mosaic.css"), b"lane-built Mosaic style")
+            .expect("write lane Mosaic style");
+        fs::write(app.join("responsive.css"), b"lane-built responsive style")
+            .expect("write lane responsive style");
         fs::write(
             root.join(spice::canvas::APP_STAGE)
                 .join(spice::canvas::APP_STAGE_CURRENT),

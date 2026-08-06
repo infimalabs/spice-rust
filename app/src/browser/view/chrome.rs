@@ -7,19 +7,14 @@
 //! is the part that genuinely needs a browser.
 
 use super::*;
-use crate::watchband::{self, Standing};
+use crate::watchband;
 
-/// Characters the ticker's one current line is allowed.
+/// Characters the ticker line is allowed.
 ///
 /// The ticker is one line of monospace across the full width, and a command
 /// echo runs far past that; the budget cuts it here rather than letting the
 /// row grow and push the feed down.
 const TICKER_BUDGET: usize = 160;
-
-/// Milliseconds since the epoch, as the browser reads them.
-fn now_millis() -> i64 {
-    js_sys::Date::now() as i64
-}
 
 /// The bar of view pills, each wearing what its axis currently counts.
 pub(super) fn render_command_bar(
@@ -30,6 +25,9 @@ pub(super) fn render_command_bar(
     cursor: &str,
 ) -> Html {
     let runtime = surface.as_ref();
+    if **mosaic {
+        return render_mosaic_command_bar(axis, mosaic, active_axis, runtime, cursor);
+    }
     html! {
         <header class="commandbar">
             <div class="brand">
@@ -67,6 +65,178 @@ pub(super) fn render_command_bar(
             <span class="bar-meta">{format!("cursor {cursor}")}</span>
         </header>
     }
+}
+
+#[derive(Default)]
+struct TaskPill {
+    stem: String,
+    hidden: bool,
+    ready: usize,
+    active: usize,
+    unavailable: usize,
+}
+
+impl TaskPill {
+    fn count(&self) -> String {
+        if self.hidden {
+            (self.ready + self.active + self.unavailable).to_string()
+        } else {
+            format!("{}·{}·{}", self.ready, self.active, self.unavailable)
+        }
+    }
+
+    fn title(&self) -> String {
+        if self.hidden {
+            return format!("{} deferred or system tasks", self.count());
+        }
+        format!(
+            "{} ready, {} active or in flight, {} blocked or deferred across {}.*",
+            self.ready, self.active, self.unavailable, self.stem
+        )
+    }
+}
+
+fn render_mosaic_command_bar(
+    axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
+    active_axis: Axis,
+    runtime: Option<&CanvasRuntime>,
+    cursor: &str,
+) -> Html {
+    let task_pills = task_pills(runtime);
+    html! {
+        <header class="commandbar commandbar--mosaic">
+            <nav class="task-pill-strip" aria-label="Open task projects">
+                if task_pills.is_empty() {
+                    <span class="task-pill-empty">{"No open tasks"}</span>
+                } else {
+                    {for task_pills.into_iter().map(|pill| {
+                        let axis = axis.clone();
+                        let mosaic = mosaic.clone();
+                        html! {
+                            <button
+                                class={classes!(
+                                    "task-pill",
+                                    pill.hidden.then_some("system"),
+                                    (pill.active > 0).then_some("active"),
+                                    (pill.ready == 0 && pill.active == 0).then_some("dormant"),
+                                )}
+                                type="button"
+                                title={pill.title()}
+                                data-task-stem={pill.stem.clone()}
+                                data-ready={pill.ready.to_string()}
+                                data-active={pill.active.to_string()}
+                                data-unavailable={pill.unavailable.to_string()}
+                                onclick={Callback::from(move |_| {
+                                    axis.set(Axis::Flow);
+                                    mosaic.set(false);
+                                })}
+                            >
+                                <span>{pill.stem.clone()}</span>
+                                <span class="task-pill-count">{pill.count()}</span>
+                            </button>
+                        }
+                    })}
+                }
+            </nav>
+            <span class="bar-meta">{format!("cursor {cursor}")}</span>
+            {render_canvas_menu(axis, mosaic, active_axis, runtime)}
+        </header>
+    }
+}
+
+fn render_canvas_menu(
+    axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
+    active_axis: Axis,
+    runtime: Option<&CanvasRuntime>,
+) -> Html {
+    html! {
+        <details class="canvas-menu">
+            <summary aria-label="Open Spice Canvas menu">
+                <span aria-hidden="true">{"🌶️"}</span>
+                <span>{"Spice"}</span>
+            </summary>
+            <nav aria-label="Canvas views">
+                {render_pill(
+                    "Mosaic",
+                    "Converse with seated agents",
+                    **mosaic,
+                    watchband::badge(waiting_directives(runtime)),
+                    {
+                        let mosaic = mosaic.clone();
+                        Callback::from(move |_| mosaic.set(true))
+                    },
+                )}
+                {for Axis::ALL.iter().copied().map(|candidate| {
+                    let axis = axis.clone();
+                    let mosaic = mosaic.clone();
+                    render_pill(
+                        &title(candidate.as_str()),
+                        candidate.question(),
+                        !*mosaic && candidate == active_axis,
+                        watchband::badge(axis_count(candidate, runtime)),
+                        Callback::from(move |_| {
+                            axis.set(candidate);
+                            mosaic.set(false);
+                        }),
+                    )
+                })}
+            </nav>
+        </details>
+    }
+}
+
+fn task_pills(runtime: Option<&CanvasRuntime>) -> Vec<TaskPill> {
+    let Some(board) = runtime.and_then(CanvasRuntime::board) else {
+        return Vec::new();
+    };
+    let mut pills = BTreeMap::<String, TaskPill>::new();
+    for task in &board.tasks {
+        let workflow = &task.workflow.body;
+        if workflow.status != "pending" || workflow.completion.is_some() {
+            continue;
+        }
+        let hidden = task.visibility.is_hidden();
+        let stem = task
+            .visibility
+            .hidden_stem()
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                task.statement
+                    .body
+                    .project
+                    .trim_start_matches('.')
+                    .split('.')
+                    .next()
+                    .unwrap_or("task")
+                    .to_owned()
+            });
+        let pill = pills.entry(stem.clone()).or_insert_with(|| TaskPill {
+            stem,
+            hidden,
+            ..TaskPill::default()
+        });
+        if task
+            .claim
+            .as_ref()
+            .is_some_and(|claim| claim.body.disposition == wire::head::ClaimDisposition::Active)
+        {
+            pill.active += 1;
+        } else if workflow.deferral.is_some()
+            || task.statement.body.dependencies.iter().any(|dependency| {
+                board.tasks.iter().any(|candidate| {
+                    candidate.statement.body.handle == *dependency
+                        && candidate.workflow.body.completion.is_none()
+                })
+            })
+        {
+            pill.unavailable += 1;
+        } else {
+            pill.ready += 1;
+        }
+    }
+    pills.into_values().collect()
 }
 
 fn render_pill(
@@ -118,95 +288,8 @@ fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
     }
 }
 
-/// The band of lane standings, one card per seated lane.
-///
-/// The cards remain the tablist that selects a conversation; what changed is
-/// how much each one says while doing it.
-pub(super) fn render_watchband(surface: &SurfaceData, controls: &AgentControls) -> Html {
-    let runtime = surface.as_ref();
-    let lanes = runtime
-        .and_then(CanvasRuntime::lanes)
-        .map(|lanes| lanes.lanes.as_slice())
-        .unwrap_or(&[]);
-    let waiting = runtime
-        .and_then(CanvasRuntime::inbox)
-        .map(|inbox| inbox.lanes.as_slice())
-        .unwrap_or(&[]);
-    let tasks = runtime
-        .and_then(CanvasRuntime::board)
-        .map(|board| board.tasks.as_slice())
-        .unwrap_or(&[]);
-    let standings = watchband::standings(lanes, waiting, tasks, now_millis());
-    let selected = selected_agent(lanes, &controls.selected_lane).map(|lane| lane.lane);
-    html! {
-        <div class="agent-tabs watchband" role="tablist" aria-label="Seated agents">
-            if standings.is_empty() {
-                <span class="agent-tab-empty">{"No agents seated"}</span>
-            } else {
-                {for standings.iter().map(|standing| {
-                    render_standing(
-                        standing,
-                        selected == Some(standing.lane),
-                        controls.selected_lane.clone(),
-                    )
-                })}
-            }
-        </div>
-    }
-}
-
-fn render_standing(standing: &Standing, selected: bool, choose: UseStateHandle<String>) -> Html {
-    let lane = standing.lane.to_string();
-    let label = format!(
-        "Open {} lane {} in {}",
-        standing.vendor, standing.name, standing.worktree
-    );
-    let holding = standing.handle.as_ref().zip(standing.phase.as_ref());
-    // Bound here rather than called in the markup below: inlined, the call sits
-    // inside a span already indented four levels deep and the line runs past the
-    // hundred characters the gate measures. The binding is the shorter spelling,
-    // not a change of behaviour, so re-inlining it would refuse the commit.
-    let name = watchband::truncate(&standing.label, watchband::FIELD_BUDGET);
-    html! {
-        <button
-            class={classes!("agent-tab", "watchband-card", selected.then_some("selected"))}
-            type="button" role="tab"
-            aria-selected={selected.to_string()} aria-label={label}
-            data-lane={lane.clone()} data-accent={standing.accent.to_string()}
-            title={standing.headline.clone().unwrap_or_else(|| standing.disposition.clone())}
-            onclick={Callback::from(move |_| choose.set(lane.clone()))}
-        >
-            <span class="watchband-line">
-                <span class="agent-presence"></span>
-                <span class="watchband-name">{name}</span>
-                <span class="tag vendor">{standing.vendor.clone()}</span>
-            </span>
-            <span class="watchband-line muted">
-                {format!("{} pending", standing.pending)}
-                {", "}
-                {standing.disposition.clone()}
-                if let Some(held) = standing.held {
-                    {format!(" {}", watchband::elapsed_label(held))}
-                }
-            </span>
-            <span class="watchband-line mono">
-                if let Some((handle, phase)) = holding {
-                    {format!("{handle}, {phase}")}
-                } else {
-                    {"no claim"}
-                }
-            </span>
-            if let Some(renewed) = standing.renewed {
-                <span class="watchband-line muted">
-                    {format!("renewed {}", watchband::elapsed_label(renewed))}
-                </span>
-            }
-        </button>
-    }
-}
-
 /// The newest command outcome, folded onto one line.
-pub(super) fn render_ticker(surface: &SurfaceData) -> Html {
+pub(in crate::browser) fn render_ticker(surface: &SurfaceData) -> Html {
     let Some(event) = surface.as_ref().and_then(|runtime| runtime.events().last()) else {
         return Html::default();
     };
@@ -222,76 +305,22 @@ pub(super) fn render_ticker(surface: &SurfaceData) -> Html {
     }
 }
 
-/// One packed card: the lattice decides where, this says what.
-pub(super) fn render_mosaic_card(
-    (message, card): (&wire::AgentMessage, &crate::mosaic::Card),
-    max_row: i32,
-    actions: &CardActions,
-) -> Html {
-    let state = card.lifecycle.as_str();
-    let text = message.text.clone();
-    let key = format!(
-        "{}:{}:{}:{}:{}",
-        message.lane,
-        message.locus.member,
-        message.locus.offset,
-        message.locus.length,
-        message.locus.event,
-    );
-    let author = crate::watchband::short(message.author);
-    let accent = crate::watchband::accent(message.author);
-    // A card is a quotable source as well as a rendered message: the operator
-    // drags one onto a lane to carry its text into that lane's composer. The
-    // payload is the card's own text, so this needs nothing the card does not
-    // already hold, and the drop side is the lane section that receives it.
-    let dragged = text.clone();
-    let ondragstart = Callback::from(move |event: DragEvent| {
-        if let Some(transfer) = event.data_transfer() {
-            let _ = transfer.set_data("text/plain", &dragged);
-            transfer.set_effect_allowed("copy");
-        }
-    });
-    html! {
-        <article
-            class={classes!("message", "incoming", "mosaic-card", state)}
-            draggable="true"
-            {ondragstart}
-            data-state={state}
-            data-key={key.clone()}
-            data-author={message.author.to_string()}
-            data-accent={accent.to_string()}
-            data-track={card.track.to_string()}
-            data-span={card.span.to_string()}
-            data-base={card.base.to_string()}
-            data-row={crate::mosaic::css_row_start(card, max_row).to_string()}
-            data-rows={card.rows.to_string()}
-        >
-            <p>{text.clone()}</p>
-            <footer class="message-meta">
-                <span class="message-key">{format!(
-                    "m{}:{}#{}",
-                    message.locus.member,
-                    message.locus.offset,
-                    message.locus.event,
-                )}</span>
-                <span class="message-author">{author}</span>
-                {render_card_actions(&text, actions)}
-            </footer>
-            <span class="accent-rail" aria-hidden="true"></span>
-        </article>
-    }
-}
-
-/// Lane-bound actions available on every agent-authored message card.
+/// Who the card is addressed to, and the colour that says so.
+///
+/// A pending directive carries no author of its own: the operator wrote every
+/// one of them. What distinguishes cards is the lane they are waiting on, so
+/// that is what the accent and the footer name.
 #[derive(Clone, PartialEq)]
-pub(super) struct CardActions {
-    pub(super) speak: Callback<String>,
-    pub(super) quote: Callback<String>,
+pub(in crate::browser) struct Correspondent {
+    pub(in crate::browser) name: String,
+    pub(in crate::browser) accent: usize,
+    pub(in crate::browser) speak: Callback<String>,
+    pub(in crate::browser) quote: Callback<String>,
 }
 
-fn render_card_actions(text: &str, actions: &CardActions) -> Html {
-    let speak = actions.speak.clone();
-    let quote = actions.quote.clone();
+pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Correspondent) -> Html {
+    let speak = correspondent.speak.clone();
+    let quote = correspondent.quote.clone();
     let spoken = text.to_owned();
     let quoted = text.to_owned();
     let copied = text.to_owned();
