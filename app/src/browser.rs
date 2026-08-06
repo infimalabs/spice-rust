@@ -21,6 +21,7 @@ use wire::{
 };
 use yew::prelude::*;
 
+use crate::compose::{self, Notice};
 use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
 
 mod view;
@@ -237,19 +238,30 @@ fn use_agent_controls(
     let seat_vendor = use_state(|| "codex".to_owned());
     let seat_life = use_state(|| "steer".to_owned());
     let steer_text = use_state(String::new);
+    let seat_notice = use_state(Notice::none);
+    let steer_notice = use_state(Notice::none);
     view::AgentControls {
         submit_seat: seat_submit(
             sender.clone(),
             seat_worktree.clone(),
             seat_vendor.clone(),
             seat_life.clone(),
+            seat_notice.clone(),
         ),
-        submit_steer: steer_submit(sender, surface, selected_lane.clone(), steer_text.clone()),
+        submit_steer: steer_submit(
+            sender,
+            surface,
+            selected_lane.clone(),
+            steer_text.clone(),
+            steer_notice.clone(),
+        ),
         selected_lane,
         seat_worktree,
         seat_vendor,
         seat_life,
         steer_text,
+        seat_notice,
+        steer_notice,
     }
 }
 
@@ -258,25 +270,24 @@ fn seat_submit(
     worktree: UseStateHandle<String>,
     vendor: UseStateHandle<String>,
     life: UseStateHandle<String>,
+    notice: UseStateHandle<Notice>,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        let worktree = worktree.trim().to_owned();
-        let life = life.trim().to_ascii_lowercase();
-        let Ok(vendor) = vendor.trim().parse::<wire::Name>() else {
-            return;
-        };
-        if worktree.is_empty() || life.is_empty() {
-            return;
+        match compose::seat(&worktree, &vendor, &life) {
+            Ok(seat) => {
+                notice.set(Notice::none());
+                send_action(
+                    &sender,
+                    ClientAction::Seat {
+                        worktree: seat.worktree,
+                        life: seat.life,
+                        vendor: seat.vendor,
+                    },
+                );
+            }
+            Err(refusal) => notice.set(refusal.into()),
         }
-        send_action(
-            &sender,
-            ClientAction::Seat {
-                worktree,
-                life,
-                vendor,
-            },
-        );
     })
 }
 
@@ -285,26 +296,27 @@ fn steer_submit(
     surface: UseStateHandle<SurfaceData>,
     selected_lane: UseStateHandle<String>,
     message: UseStateHandle<String>,
+    notice: UseStateHandle<Notice>,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        let text = message.trim().to_owned();
         let selected = selected_lane.parse::<CanonicalUuid>().ok();
-        let Some((lane, occupant)) = selected_occupant(&surface, selected) else {
-            return;
-        };
-        if text.is_empty() {
-            return;
+        let seated = selected_occupant(&surface, selected);
+        match compose::steer(&message, seated) {
+            Ok(((lane, occupant), text)) => {
+                notice.set(Notice::none());
+                send_action(
+                    &sender,
+                    ClientAction::Steer {
+                        lane,
+                        occupant,
+                        message: text,
+                    },
+                );
+                message.set(String::new());
+            }
+            Err(refusal) => notice.set(refusal.into()),
         }
-        send_action(
-            &sender,
-            ClientAction::Steer {
-                lane,
-                occupant,
-                message: text,
-            },
-        );
-        message.set(String::new());
     })
 }
 
@@ -507,21 +519,27 @@ async fn run_connection(
 async fn open_socket(
     speech: &UseStateHandle<wire::SpeechPlayback>,
 ) -> Result<(Session, SocketWriter, SocketReader), String> {
-    let discovery: wire::CanvasBootstrap = Request::get("/bootstrap")
-        .send()
-        .await
-        .map_err(|error| format!("bootstrap request failed: {error}"))?
-        .json()
-        .await
-        .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
+    let discovery: wire::CanvasBootstrap = Request::get(&authenticated_path(
+        "/bootstrap",
+        browser_auth_token()?.as_deref(),
+    ))
+    .send()
+    .await
+    .map_err(|error| format!("bootstrap request failed: {error}"))?
+    .json()
+    .await
+    .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
     speech.set(discovery.speech.clone());
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery
         .endpoint
         .strip_prefix("http://")
-        .ok_or_else(|| "bootstrap endpoint was not loopback HTTP".to_owned())?;
-    let socket = WebSocket::open(&format!("ws://{endpoint}/socket"))
-        .map_err(|error| format!("socket did not open: {error}"))?;
+        .ok_or_else(|| "bootstrap endpoint was not the current HTTP origin".to_owned())?;
+    let socket = WebSocket::open(&format!(
+        "ws://{endpoint}/socket?auth={}",
+        discovery.capability
+    ))
+    .map_err(|error| format!("socket did not open: {error}"))?;
     let (mut writer, reader) = socket.split();
     writer
         .send(Message::Bytes(
@@ -687,11 +705,14 @@ async fn dispatch_action(
 }
 
 async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u8>, String> {
-    let request = Request::post("/speech")
-        .json(&wire::SpeechRequest {
-            text: text.to_owned(),
-        })
-        .map_err(|error| format!("speech request could not be encoded: {error}"))?;
+    let request = Request::post(&authenticated_path(
+        "/speech",
+        browser_auth_token()?.as_deref(),
+    ))
+    .json(&wire::SpeechRequest {
+        text: text.to_owned(),
+    })
+    .map_err(|error| format!("speech request could not be encoded: {error}"))?;
     let response = request
         .send()
         .await
@@ -720,6 +741,22 @@ async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u
         return Err("speech renderer returned empty audio".to_owned());
     }
     Ok(bytes)
+}
+
+fn browser_auth_token() -> Result<Option<String>, String> {
+    let hash = web_sys::window()
+        .ok_or_else(|| "browser window is unavailable".to_owned())?
+        .location()
+        .hash()
+        .map_err(|_| "browser URL fragment is unavailable".to_owned())?;
+    Ok(hash
+        .strip_prefix('#')
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned))
+}
+
+fn authenticated_path(path: &str, token: Option<&str>) -> String {
+    token.map_or_else(|| path.to_owned(), |token| format!("{path}?auth={token}"))
 }
 
 fn bounded_speech_error(error: &str) -> String {

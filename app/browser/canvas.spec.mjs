@@ -326,9 +326,23 @@ async function assertAgentConversation(page, fixture) {
   await page.getByRole("button", { name: "Mosaic" }).click();
   await console.getByRole("heading", { name: "Agents", exact: true }).waitFor();
   await console.getByLabel("Worktree").fill(fixture);
-  await console.getByLabel("Vendor").fill("claude");
   await console.getByLabel("Life").fill("steer");
+
+  // A refused submission has to say why. The vendor field is free text with no
+  // datalist, so a proper name typed the way it is written everywhere else is
+  // the trip an operator actually takes, and it used to send no request and
+  // print nothing: the button read as dead. This is the only refusal reachable
+  // by clicking, because the compose button disables itself while the message
+  // is empty or no agent is seated.
+  const refusal = console.locator(".form-refusal");
+  await console.getByLabel("Vendor").fill("My Agent");
   await console.getByRole("button", { name: "Seat agent" }).click();
+  await refusal.waitFor({ timeout: 10_000 });
+  assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
+
+  await console.getByLabel("Vendor").fill("Claude");
+  await console.getByRole("button", { name: "Seat agent" }).click();
+  await refusal.waitFor({ state: "detached", timeout: 10_000 });
 
   const tab = console.locator(".agent-tab");
   try {

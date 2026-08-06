@@ -899,7 +899,10 @@ fn start_resident(environment: &Environment, events: Sender<Event>) -> DemoResul
     std::thread::Builder::new()
         .name("spice-demo-resident".to_owned())
         .spawn(move || {
-            let outcome = crate::resident::up_from(&root, crate::resident::EPHEMERAL_LOOPBACK);
+            let outcome = crate::resident::up_from(
+                &root,
+                crate::resident::CanvasBinding::local(crate::resident::EPHEMERAL_LOOPBACK),
+            );
             let _ = events.send(Event::Resident(outcome));
         })
         .map_err(|error| {

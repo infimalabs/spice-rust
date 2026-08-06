@@ -1207,7 +1207,7 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
 /// other directory. A resident that skipped the resolve would reach readiness
 /// here, and one that looked elsewhere would never see this stage.
 #[test]
-fn resident_process_refuses_a_local_app_stage_that_cannot_serve_the_whole_app() {
+fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app() {
     let fixture = Fixture::new("app-source");
     let stage = fixture.root.join(canvas::DEV_STAGE);
     fs::remove_dir_all(&stage).expect("remove complete fixture app");
