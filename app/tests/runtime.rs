@@ -209,8 +209,7 @@ fn board_response(
 
 /// One admitted safe lane roster, one row per `(lane, lineage, occupant, bound)` tuple.
 ///
-/// Session authority and capabilities are intentionally not part of this DTO;
-/// only the explicit `bound` projection crosses into the Canvas.
+/// The display session identity crosses; capabilities remain outside this DTO.
 fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
     let subscriptions = rows
         .iter()
@@ -239,8 +238,11 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
                 worktree: format!("/tmp/worktree-{}", &lane[..8]),
                 life: "steer".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
+                model: bound.then(|| "sonnet".to_owned()),
+                effort: bound.then(|| "high".to_owned()),
                 occupant: occupant.map(uuid),
                 lineage: Vec::new(),
+                session: bound.then(|| "session-fixture".to_owned()),
                 bound: *bound,
                 disposition: if occupant.is_some() {
                     "occupied".to_owned()

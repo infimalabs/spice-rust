@@ -109,8 +109,7 @@ impl BoardView {
     }
 }
 
-/// Lane snapshot fields used by the canvas, excluding capabilities and session
-/// authority.
+/// Capability-free lane snapshot fields used by the canvas.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LaneView {
     /// Resident generation that owns these rows.
@@ -140,15 +139,14 @@ pub struct LaneMember {
     pub worktree: String,
     pub life: String,
     pub vendor: wire::Name,
+    pub model: Option<String>,
+    pub effort: Option<String>,
     pub occupant: Option<CanonicalUuid>,
+    pub session: Option<String>,
     pub disposition: String,
     /// Dynamic supervised live/quiet projection supplied by the resident.
     pub liveness: LaneLiveness,
     /// Whether a resumable session was ever declared for this seat.
-    ///
-    /// The session record itself is authority the canvas has no use for, so
-    /// only its presence crosses: it is the difference the predecessor draws
-    /// between a seat an agent has run in and one that has never been used.
     pub bound: bool,
 }
 
@@ -255,7 +253,10 @@ impl From<&LaneAnswer> for LaneView {
                 worktree: lane.worktree.clone(),
                 life: lane.life.clone(),
                 vendor: lane.vendor.clone(),
+                model: lane.model.clone(),
+                effort: lane.effort.clone(),
                 occupant: lane.occupant,
+                session: lane.session.clone(),
                 disposition: lane.disposition.clone(),
                 liveness: lane.liveness,
                 bound: lane.bound,

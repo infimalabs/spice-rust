@@ -165,7 +165,12 @@ fn an_uninstalled_prior_build_receipt_is_superseded_by_a_current_digest_bound_in
     apply(&repository, Some(&binary), &prior.digest().unwrap()).expect("prior build applies");
     unapply(&repository).expect("prior build restores every target");
 
-    rewrite_recorded_skill(&repository, b"prior build embedded skill\n");
+    rewrite_recorded_asset(
+        &repository,
+        Asset::Skill,
+        DATA_MODE,
+        b"prior build embedded skill\n",
+    );
     fs::write(&binary, b"current build binary\n").expect("current binary replaces prior input");
 
     let historical = read_record(&repository)
@@ -267,7 +272,12 @@ fn every_nonterminal_receipt_remains_bound_to_current_build_assets() {
         );
         let before = images(&repository, &planned);
 
-        rewrite_recorded_skill(&repository, b"foreign build embedded skill\n");
+        rewrite_recorded_asset(
+            &repository,
+            Asset::Skill,
+            DATA_MODE,
+            b"foreign build embedded skill\n",
+        );
 
         let error = plan(&repository, None).expect_err("foreign live receipt must refuse");
         assert!(
@@ -277,6 +287,43 @@ fn every_nonterminal_receipt_remains_bound_to_current_build_assets() {
         );
         assert_eq!(images(&repository, &planned), before);
     }
+}
+
+/// The build digest still refuses a foreign reference-transaction hook now that
+/// the hook reaches a published executable rather than a build system.
+///
+/// Keeping the hook as text is what keeps this arm reachable. Only the
+/// executable it execs is compiled, and that artifact is published by explicit
+/// activation instead of being embedded here, so `include_str!` still has bytes
+/// to compare against and a receipt carrying anything else is still refused. An
+/// arm that had quietly become unreachable would look exactly like this one
+/// without a test to tell them apart.
+///
+/// The bytes written in are the wrapper this hook replaced, which is the
+/// tampering with a motive: a receipt claiming the build still shells out to a
+/// build system under the ref lock is precisely what must not be honoured.
+#[test]
+fn a_foreign_reference_transaction_hook_is_refused() {
+    let scratch = Scratch::new("reference-transaction-build");
+    let repository = scratch.repository();
+    let planned = plan(&repository, None).expect("current build plans");
+    apply(&repository, None, &planned.digest().unwrap()).expect("current build applies");
+    let before = images(&repository, &planned);
+
+    rewrite_recorded_asset(
+        &repository,
+        Asset::GitReferenceTransaction,
+        EXECUTABLE_MODE,
+        b"#!/usr/bin/env sh\nexec cargo xtask reference-transaction \"$1\"\n",
+    );
+
+    let error = plan(&repository, None).expect_err("a foreign hook receipt must refuse");
+    assert!(
+        matches!(error, InstallError::InvalidRecord(ref reason)
+            if reason == "Git reference-transaction hook differs from this build"),
+        "refused for the wrong reason: {error}"
+    );
+    assert_eq!(images(&repository, &planned), before);
 }
 
 #[test]
@@ -625,7 +672,7 @@ fn images(repository: &Repository, plan: &InstallPlan) -> Vec<Option<ObservedFil
 /// The record remains canonical and digest-consistent, exactly as another build
 /// would encode it; no malformed-record refusal can satisfy the tests that call
 /// this helper.
-fn rewrite_recorded_skill(repository: &Repository, bytes: &[u8]) {
+fn rewrite_recorded_asset(repository: &Repository, asset: Asset, mode: u32, bytes: &[u8]) {
     let mut record = read_record(repository)
         .expect("current record reads before the simulated build boundary")
         .expect("an install record exists")
@@ -634,9 +681,9 @@ fn rewrite_recorded_skill(repository: &Repository, bytes: &[u8]) {
         .plan
         .operations
         .iter_mut()
-        .find(|operation| operation.asset == Asset::Skill)
-        .expect("the canonical plan carries its skill");
-    let historical = GeneratedImage::new(DATA_MODE, bytes);
+        .find(|operation| operation.asset == asset)
+        .expect("the canonical plan carries the rewritten asset");
+    let historical = GeneratedImage::new(mode, bytes);
     assert_ne!(operation.generated, historical);
     operation.generated = historical;
     record.plan_digest = record.plan.digest().expect("changed plan has a digest");

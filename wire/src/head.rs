@@ -256,6 +256,10 @@ pub struct LaneSession {
     pub worktree: String,
     /// Vendor dialect that admitted the declaration.
     pub vendor: crate::Name,
+    /// Concrete model supplied to this occupant's vendor launch.
+    pub model: String,
+    /// Reasoning effort supplied to this occupant's vendor launch.
+    pub effort: String,
     /// Resident generation that observed the declaration.
     pub epoch: CanonicalUuid,
     /// Selected child stream carrying the declaration.

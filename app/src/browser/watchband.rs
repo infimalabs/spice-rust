@@ -731,13 +731,29 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
 }
 
 fn standing_title(standing: &Standing) -> String {
-    format!(
-        "{}\n{}\n{} pending\n{}",
-        standing.label,
-        standing.worktree,
-        standing.pending,
-        standing.liveness.as_str(),
-    )
+    let vendor = match standing.vendor.as_str() {
+        "claude" => "Claude driver",
+        "codex" => "Codex driver",
+        "openai" => "OpenAI driver",
+        _ => "Agent driver",
+    };
+    let mut parts = vec![vendor.to_owned()];
+    if let Some(model) = &standing.model {
+        parts.push(format!("model: {model}"));
+    }
+    if let Some(effort) = &standing.effort {
+        parts.push(format!("effort: {effort}"));
+    }
+    parts.push(format!(
+        "thread: {}",
+        standing
+            .thread
+            .map_or_else(|| "unbound".to_owned(), |thread| thread.to_string())
+    ));
+    if let Some(session) = &standing.session {
+        parts.push(format!("session: {session}"));
+    }
+    parts.join("; ")
 }
 
 fn submit_lineage_callback(

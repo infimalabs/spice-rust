@@ -72,6 +72,8 @@ fn row(fixture: &Fixture) -> wire::LaneResidency {
             occupant: fixture.occupant,
             worktree: WORKTREE.into(),
             vendor: "claude".parse().expect("fixture vendor"),
+            model: "sonnet".into(),
+            effort: "high".into(),
             epoch: uuid(3),
             stream: "stdout".into(),
             identity: IDENTITY.into(),

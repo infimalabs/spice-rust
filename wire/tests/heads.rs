@@ -108,6 +108,8 @@ const RESIDENCY: &str = r#"{
       "occupant": "018f82d4-6f59-7d06-92e3-bce913116303",
       "worktree": "/worktrees/lane-a",
       "vendor": "claude",
+      "model": "sonnet",
+      "effort": "high",
       "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
       "stream": "stdout",
       "identity": "018f7777-7777-7444-8888-999999999999",

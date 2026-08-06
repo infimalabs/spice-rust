@@ -335,6 +335,8 @@ fn seed_occupied_lane(
         occupant,
         worktree: worktree.clone(),
         vendor: "claude".parse().expect("fixture vendor"),
+        model: "sonnet".to_owned(),
+        effort: "high".to_owned(),
         epoch,
         stream: "stdout".to_owned(),
         identity: SESSION_ID.to_owned(),
@@ -389,6 +391,8 @@ fn seed_occupied_lane(
                 occupant,
                 worktree: worktree.clone(),
                 vendor: "claude".parse().expect("fixture vendor"),
+                model: "sonnet".to_owned(),
+                effort: "high".to_owned(),
                 epoch,
                 stream: "stdout".to_owned(),
                 identity: SESSION_ID.to_owned(),
@@ -505,10 +509,13 @@ fn seat_and_recall(fixture: &Fixture) -> (wire::intent::LaneChangeAnswer, wire::
         (recalled.lane, recalled.residency.lanes.len()),
         (Some(added.lane), 1)
     );
-    assert!(recalled.residency.lanes[0].bound);
+    let row = &recalled.residency.lanes[0];
+    assert!(row.bound);
+    assert_eq!(row.model.as_deref(), Some("sonnet"));
+    assert_eq!(row.effort.as_deref(), Some("high"));
+    assert_eq!(row.session.as_deref(), Some(SESSION_ID));
     let safe = wire::encode(&recalled.residency).expect("safe recall residency encodes");
     assert!(!String::from_utf8_lossy(&safe).contains(&capability.to_string()));
-    assert!(!String::from_utf8_lossy(&safe).contains(SESSION_ID));
     assert!(recalled.recent.len() <= RECALL_LIMIT);
     assert!(
         recalled
@@ -722,8 +729,11 @@ fn predecessor_import_launches_the_successor_through_the_shared_occupant_path() 
     assert_eq!(row.lineage.len(), 2);
     assert_eq!(row.occupant, row.lineage.last().copied());
     assert!(row.bound, "import preserves resumable session presence");
+    assert_eq!(row.model.as_deref(), Some("sonnet"));
+    assert_eq!(row.effort.as_deref(), Some("high"));
+    assert_eq!(row.session.as_deref(), Some(SESSION_ID));
     let safe = wire::encode(&lanes).expect("imported safe lanes encode");
-    assert!(!String::from_utf8_lossy(&safe).contains(SESSION_ID));
+    assert!(!String::from_utf8_lossy(&safe).contains("capabilities"));
     assert_latest_launch_resumed(&fixture);
     let journal = journal::Journal::open(fixture.journal()).expect("import journal opens");
     let kinds = journal
