@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -16,7 +17,7 @@ use super::{
 };
 use crate::measure::Bounds;
 use crate::toolchain::{ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
-use sill::{Environment, WaitPolicy};
+use sill::{Acquisition, Environment, LockFile, LockName, Possession, WaitPolicy};
 
 /// The native analysis, kept in its declaration order.
 ///
@@ -64,42 +65,48 @@ fn rust_typecheck_with_wait(
         Ok(workspace) => workspace,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    let environment = match rust_environment(cargo, &workspace) {
-        Ok(environment) => environment,
-        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
-    };
-
-    let invocation = CompileInvocation {
-        name: "cargo native check",
-        program: cargo,
-        arguments: CARGO_CHECK_ARGUMENTS,
-        cwd: root,
-    };
-    let result = run_compile_analysis_with_wait(
-        declaration.id,
-        root,
-        invocation,
-        bounds,
-        &environment,
-        |code, message| FindingDetail::RustTypeOutput { code, message },
-        wait,
-    );
-    match result {
-        Err(failure) => {
-            let (analysis, elapsed) = failure.into_parts();
-            match elapsed {
-                Some(elapsed) => analysis.timed(timing(elapsed, bounds)),
-                None => analysis,
+    let analysis = match rust_environment(cargo, &workspace) {
+        Err(reason) => Analysis::terminal(ArmOutcome::ParseFailure, reason),
+        Ok(environment) => {
+            let invocation = CompileInvocation {
+                name: "cargo native check",
+                program: cargo,
+                arguments: CARGO_CHECK_ARGUMENTS,
+                cwd: root,
+            };
+            let result = run_compile_analysis_with_wait(
+                declaration.id,
+                root,
+                invocation,
+                bounds,
+                &environment,
+                |code, message| FindingDetail::RustTypeOutput { code, message },
+                wait,
+            );
+            match result {
+                Err(failure) => {
+                    let (analysis, elapsed) = failure.into_parts();
+                    match elapsed {
+                        Some(elapsed) => analysis.timed(timing(elapsed, bounds)),
+                        None => analysis,
+                    }
+                }
+                Ok(elapsed) => Analysis::terminal(
+                    ArmOutcome::Passed,
+                    format!(
+                        "{} completed its declared native analysis",
+                        declaration.id.as_str()
+                    ),
+                )
+                .timed(timing(elapsed, bounds)),
             }
         }
-        Ok(elapsed) => Analysis::terminal(
-            ArmOutcome::Passed,
-            format!(
-                "{} completed its declared native analysis",
-                declaration.id.as_str()
-            ),
-        )
-        .timed(timing(elapsed, bounds)),
+    };
+    // A build root that could not be torn down is reported rather than
+    // discarded, so a later vanished or poisoned root is attributable here.
+    match workspace.release() {
+        None => analysis,
+        Some(reason) => Analysis::terminal(ArmOutcome::ParseFailure, reason),
     }
 }
 
@@ -131,22 +138,129 @@ fn milliseconds(duration: Duration) -> u64 {
 /// `target` would make this arm block on, and be blocked by, any `cargo` the
 /// occupant is already running, so the arm gets its own pair exactly as the
 /// canvas arm does.
+///
+/// # Removal is possible only under the root's lock
+///
+/// Both build directories live *inside* `root`, and `root` is a fixed sibling
+/// of the selected tree carrying no per-invocation token, so two arms analysing
+/// one tree resolve the same path. Tearing that root down unconditionally would
+/// delete a directory another arm is still compiling into, and the victim would
+/// report a rustc error naming a missing artefact rather than the removal. It
+/// is also the shape that survives a killed run: whatever the previous arm left
+/// behind is indistinguishable from a root in active use by looking at it.
+///
+/// The mechanism is therefore an advisory lock at `<root>.lock`, held for the
+/// life of the workspace, and the invariant is that **this arm removes a build
+/// root only while it possesses that lock**. Contention is not a removal that
+/// gets refused; it is a removal that never becomes reachable, because a
+/// contended arm returns before it owns anything to tear down. Possession also
+/// makes reclaiming a stale root safe: a root whose lock is free is one no live
+/// build holds, which is exactly the run that was killed before its teardown.
+///
+/// [`remove_build_root`] takes a [`Possession`] rather than a path, so the
+/// invariant is carried by the signature and a removal cannot be spelled
+/// without the lock in hand. `flock` grants per-open-file-description, so a
+/// second acquisition contends even from inside this process; that is what lets
+/// a fixture hold a build root and drive the decision directly rather than
+/// having to lose a race to observe it.
 struct RustWorkspace {
     root: PathBuf,
     cargo_target: PathBuf,
     cargo_build: PathBuf,
+    possession: Option<Possession>,
+}
+
+/// What one attempt to remove a build root did, so no attempt is discarded.
+#[derive(Debug, Eq, PartialEq)]
+enum BuildRootRemoval {
+    /// The root is gone, whether this attempt unlinked it or found it absent.
+    Removed,
+    /// The root still exists and the reason is carried rather than dropped.
+    Failed(String),
+}
+
+impl BuildRootRemoval {
+    fn reason(&self, root: &Path) -> Option<String> {
+        match self {
+            Self::Removed => None,
+            Self::Failed(error) => Some(format!(
+                "rust analysis build root {} could not be removed: {error}",
+                root.display()
+            )),
+        }
+    }
+}
+
+/// Remove a build root whose lock this caller already possesses.
+///
+/// Taking [`Possession`] rather than a path alone is the guard: there is no way
+/// to spell a removal without first holding the lock, so a root a live build
+/// holds is unreachable here rather than merely unlucky. Absence counts as
+/// removed; every other refusal is carried back out.
+fn remove_build_root(root: &Path, _possession: &Possession) -> BuildRootRemoval {
+    match fs::remove_dir_all(root) {
+        Ok(()) => BuildRootRemoval::Removed,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => BuildRootRemoval::Removed,
+        Err(error) => BuildRootRemoval::Failed(error.to_string()),
+    }
+}
+
+/// The lock guarding one build root, kept beside the root rather than inside
+/// it so removing the root cannot remove the evidence that it was held.
+fn build_root_lock(root: &Path) -> Result<LockFile, String> {
+    let Some(name) = root.file_name() else {
+        return Err(format!(
+            "rust analysis workspace {} has no name to lock",
+            root.display()
+        ));
+    };
+    let mut lock_name = name.to_os_string();
+    lock_name.push(".lock");
+    let path = root.with_file_name(lock_name);
+    let name = LockName::new("rust-analysis-build-root")
+        .map_err(|error| format!("rust analysis build-root lock name was refused: {error}"))?;
+    Ok(LockFile::new(name, path))
+}
+
+/// Where one selected tree's build root lives.
+///
+/// A sibling of the tree rather than a child, so the analysis never writes
+/// inside the tree it is measuring.
+fn build_root_path(selected: &Path) -> Result<PathBuf, String> {
+    let Some(name) = selected.file_name() else {
+        return Err(format!(
+            "rust selected tree {selected:?} has no name for an analysis workspace"
+        ));
+    };
+    let mut workspace_name = name.to_os_string();
+    workspace_name.push(".spice-rust-analysis");
+    Ok(selected.with_file_name(workspace_name))
 }
 
 impl RustWorkspace {
     fn create(selected: &Path) -> Result<Self, String> {
-        let Some(name) = selected.file_name() else {
-            return Err(format!(
-                "rust selected tree {selected:?} has no name for an analysis workspace"
-            ));
+        let root = build_root_path(selected)?;
+        let lock = build_root_lock(&root)?;
+        let possession = match lock.try_acquire() {
+            Ok(Acquisition::Acquired(possession)) => possession,
+            Ok(Acquisition::Contended) => {
+                return Err(format!(
+                    "rust analysis build root {} is in use by another analysis of this tree",
+                    root.display()
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "rust analysis build root {} could not be locked: {error}",
+                    root.display()
+                ));
+            }
         };
-        let mut workspace_name = name.to_os_string();
-        workspace_name.push(".spice-rust-analysis");
-        let root = selected.with_file_name(workspace_name);
+        // Possession proves no live build holds this root, so anything already
+        // here was left by a run that died before its own teardown.
+        if let Some(reason) = remove_build_root(&root, &possession).reason(&root) {
+            return Err(reason);
+        }
         fs::create_dir(&root).map_err(|error| {
             format!(
                 "rust analysis workspace {} could not be created: {error}",
@@ -158,23 +272,45 @@ impl RustWorkspace {
         if let Err(error) =
             fs::create_dir(&cargo_target).and_then(|()| fs::create_dir(&cargo_build))
         {
-            let _ = fs::remove_dir_all(&root);
-            return Err(format!(
+            let created = format!(
                 "rust analysis output directories for {} could not be created: {error}",
                 selected.display()
-            ));
+            );
+            let removal = remove_build_root(&root, &possession);
+            return Err(match removal.reason(&root) {
+                Some(reason) => format!("{created}; {reason}"),
+                None => created,
+            });
         }
         Ok(Self {
             root,
             cargo_target,
             cargo_build,
+            possession: Some(possession),
         })
+    }
+
+    /// Tear the build root down and hand back anything that went wrong.
+    ///
+    /// Teardown is explicit because `Drop` cannot report, and an unreported
+    /// removal failure is the half of this arm's history that made a vanished
+    /// build root undiagnosable from the remover's side.
+    fn release(mut self) -> Option<String> {
+        self.possession
+            .take()
+            .and_then(|possession| remove_build_root(&self.root, &possession).reason(&self.root))
     }
 }
 
 impl Drop for RustWorkspace {
+    /// Last resort for an unwind, where no caller remains to receive a reason.
+    ///
+    /// `release` takes the possession, so a workspace torn down through it
+    /// arrives here already emptied and this does nothing.
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
+        if let Some(possession) = self.possession.take() {
+            let _ = remove_build_root(&self.root, &possession);
+        }
     }
 }
 
@@ -282,6 +418,81 @@ mod tests {
 
     /// The one-based column the planted call's first character occupies.
     const PLANTED_COLUMN: u32 = 17;
+
+    /// Plant a build root holding one artefact, as a live build would leave it.
+    fn plant_build_root(selected: &Path) -> (PathBuf, PathBuf) {
+        let root = build_root_path(selected).expect("the fixture tree names a build root");
+        fs::create_dir_all(root.join("cargo-target")).expect("plant a build root");
+        let artefact = root.join("cargo-target/planted.rmeta");
+        fs::write(&artefact, b"artefact").expect("plant a build artefact");
+        (root, artefact)
+    }
+
+    /// A build root another build is compiling into is never removed.
+    ///
+    /// The holder is a second acquisition of the same lock. `flock` grants per
+    /// open file description, so this contends exactly as a separate process
+    /// would, which is what makes the decision drivable instead of raced.
+    #[test]
+    fn a_build_root_a_live_build_holds_is_refused_and_survives_intact() {
+        let fixture = RustFixture::new("held-build-root");
+        let (root, artefact) = plant_build_root(&fixture.root);
+        let lock = build_root_lock(&root).expect("the build root names a lock");
+        let Ok(Acquisition::Acquired(held)) = lock.try_acquire() else {
+            panic!("a freshly planted build root must be lockable");
+        };
+
+        let refused = match RustWorkspace::create(&fixture.root) {
+            Err(reason) => reason,
+            Ok(_) => panic!("a build root a live build holds must be refused"),
+        };
+
+        assert!(
+            refused.contains("is in use by another analysis of this tree"),
+            "the refusal names why it refused: {refused}"
+        );
+        assert!(
+            refused.contains(&root.display().to_string()),
+            "the refusal names the build root: {refused}"
+        );
+        assert_eq!(
+            fs::read(&artefact).expect("the held build's artefact survives"),
+            b"artefact",
+            "the held build root was removed out from under its build"
+        );
+        drop(held);
+        fs::remove_dir_all(&root).expect("remove the held fixture root");
+        fs::remove_file(lock.path()).expect("remove the held fixture lock");
+    }
+
+    /// The guard cannot pass by refusing every removal.
+    ///
+    /// A root no build holds is what a killed run leaves behind. Refusing it
+    /// too would poison every later analysis of the tree, so it is reclaimed.
+    #[test]
+    fn a_build_root_no_live_build_holds_is_reclaimed_rather_than_refused() {
+        let fixture = RustFixture::new("stale-build-root");
+        let (root, artefact) = plant_build_root(&fixture.root);
+
+        let workspace =
+            RustWorkspace::create(&fixture.root).expect("a build root no build holds is reclaimed");
+
+        assert!(
+            !artefact.exists(),
+            "the stale artefact outlived the run that abandoned it"
+        );
+        assert!(
+            workspace.cargo_target.is_dir(),
+            "the reclaimed root was rebuilt for this analysis"
+        );
+        let lock_path = build_root_lock(&root)
+            .expect("the build root names a lock")
+            .path()
+            .to_path_buf();
+        assert_eq!(workspace.release(), None, "teardown reports no reason");
+        assert!(!root.exists(), "teardown removed the build root");
+        fs::remove_file(&lock_path).expect("remove the reclaimed fixture lock");
+    }
 
     /// A workspace the real compiler is run over.
     struct RustFixture {
