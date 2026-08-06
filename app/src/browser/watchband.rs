@@ -14,9 +14,9 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    choose_images, drop_on_lane, keyboard_submit, paste_images, primary_textarea_id,
-    render_agent_message_card, render_attachments, render_directive_card, render_markdown,
-    render_quote_bands, update_body,
+    choose_images, drop_on_lane, focus_after_render, keyboard_submit, lane_stream_id, paste_images,
+    primary_textarea_id, render_agent_message_card, render_attachments, render_directive_card,
+    render_markdown, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -128,7 +128,6 @@ pub(super) fn render_lineage(
                                     can_send,
                                     sender,
                                     drafts,
-                                    mode,
                                     lineage_controls,
                                     can_configure,
                                     controls,
@@ -244,7 +243,6 @@ fn render_compose(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
     lineage_controls: &UseReducerHandle<LineageControls>,
     can_configure: bool,
     controls: &view::AgentControls,
@@ -276,7 +274,6 @@ fn render_compose(
                             can_send,
                             sender,
                             drafts,
-                            mode,
                         )
                     })}
                 </div>
@@ -340,6 +337,14 @@ fn render_activity(
             aria-label="Live agent activity"
             data-empty={empty.to_string()}
         >
+            <div class="agent-stream-anchors" aria-hidden="true">
+                {for lineage.members.iter().map(|member| html! {
+                    <span
+                        id={lane_stream_id(&member.lane.to_string())}
+                        class="agent-stream-anchor"
+                    ></span>
+                })}
+            </div>
             if empty {
                 <div class="mosaic-message-empty">{"No pending direction."}</div>
             }
@@ -484,7 +489,6 @@ fn render_agent_composer(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
 ) -> Html {
     let lane_id = member.lane;
     let lane_key = lane_id.to_string();
@@ -537,16 +541,15 @@ fn render_agent_composer(
             key={lane_key.clone()}
             class={classes!(
                 "team-agent",
-                "composer-shard",
                 (!send_enabled).then_some("team-agent--vacant"),
             )}
             data-agent-lane={lane_id.to_string()}
-            data-shard-target-id={lane_id.to_string()}
+            data-agent-stack-target-id={lane_id.to_string()}
             title={standing_title(standing)}
             {ondragover}
             {ondrop}
         >
-            {render_quote_bands(&lane_key, &draft, drafts, onkeydown.clone())}
+            {render_quote_shards(&lane_key, &draft, drafts, onkeydown.clone())}
             {render_composer_body(
                 lane_id,
                 &lane_key,
@@ -554,7 +557,6 @@ fn render_agent_composer(
                 standing,
                 pending,
                 drafts,
-                mode,
                 onkeydown,
                 renew_enabled,
                 renew,
@@ -574,7 +576,6 @@ fn render_composer_body(
     standing: &Standing,
     pending: usize,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
     onkeydown: Callback<KeyboardEvent>,
     renew_enabled: bool,
     renew: Callback<MouseEvent>,
@@ -583,22 +584,20 @@ fn render_composer_body(
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
     let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
     html! {
-        <div class="mosaic-composer">
-            {render_composer_heading(standing, mode)}
+        <div
+            class={classes!("mosaic-composer", "composer-shard", "composer-shard--primary")}
+            data-stream-target-id={lane_stream_id(lane_key)}
+        >
+            {render_composer_heading(
+                lane_key,
+                standing,
+                renew_enabled,
+                renew,
+            )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
                 <span>{standing.liveness.as_str()}</span>
             </div>
-            <button
-                class="agent-renew-request"
-                type="button"
-                disabled={!renew_enabled}
-                title="Ask this agent to renew its current task lease"
-                onclick={renew}
-            >
-                <strong>{"Renew this agent"}</strong>
-                <span>{"request renewal"}</span>
-            </button>
             <textarea
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for {lane}")}
@@ -624,27 +623,67 @@ fn render_composer_body(
     }
 }
 
-fn render_composer_heading(standing: &Standing, mode: &UseStateHandle<LineageMode>) -> Html {
+fn render_composer_heading(
+    lane_key: &str,
+    standing: &Standing,
+    renew_enabled: bool,
+    renew: Callback<MouseEvent>,
+) -> Html {
     let activity = standing
         .headline
         .as_deref()
         .or(standing.handle.as_deref())
         .unwrap_or(&standing.disposition);
-    let open = mode.clone();
+    let focus_id = primary_textarea_id(lane_key);
+    let focus = Callback::from(move |_| focus_after_render(focus_id.clone()));
+    let stream_id = lane_stream_id(lane_key);
     html! {
         <header class="composer-shard-heading">
-            <span class="composer-shard-age">{
+            <a
+                class="composer-shard-age"
+                href={format!("#{stream_id}")}
+                aria-label={format!("Open message stream for {}", standing.label)}
+            >{
                 standing
                     .held
                     .map(watchband::elapsed_label)
                     .unwrap_or_else(|| "now".to_owned())
-            }</span>
+            }</a>
             <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
-            <button
-                type="button"
-                aria-label={format!("Details for {}", standing.label)}
-                onclick={Callback::from(move |_| open.set(LineageMode::Info))}
-            >{"☰"}</button>
+            <details
+                class="agent-composer-drawer"
+                data-agent-target-id={lane_key.to_owned()}
+            >
+                <summary
+                    aria-label={format!("Open controls for {}", standing.label)}
+                >{"☰"}</summary>
+                <div
+                    class="agent-composer-drawer-panel"
+                    role="group"
+                    aria-label={format!("Controls for {}", standing.label)}
+                >
+                    <button
+                        class="agent-focus-composer"
+                        type="button"
+                        data-agent-target-id={lane_key.to_owned()}
+                        onclick={focus}
+                    >
+                        <strong>{"Message this agent"}</strong>
+                        <span>{"focus composer"}</span>
+                    </button>
+                    <button
+                        class="agent-renew-request"
+                        type="button"
+                        data-agent-target-id={lane_key.to_owned()}
+                        disabled={!renew_enabled}
+                        title="Ask this agent to renew its current task lease"
+                        onclick={renew}
+                    >
+                        <strong>{"Renew this agent"}</strong>
+                        <span>{"request renewal"}</span>
+                    </button>
+                </div>
+            </details>
         </header>
     }
 }

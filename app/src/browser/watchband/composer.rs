@@ -44,7 +44,7 @@ fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
     format!("composer-quote-{lane_key}-{identity}")
 }
 
-fn focus_after_render(id: String) {
+pub(super) fn focus_after_render(id: String) {
     spawn_local(async move {
         TimeoutFuture::new(0).await;
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {
@@ -58,6 +58,14 @@ fn focus_after_render(id: String) {
         };
         let _ = textarea.focus();
     });
+}
+
+pub(super) fn lane_stream_id(lane_key: &str) -> String {
+    format!("agent-stream-{lane_key}")
+}
+
+fn message_stream_id(identity: &str) -> String {
+    format!("message-stream-{identity}")
 }
 
 pub(super) fn render_agent_message_card(
@@ -90,6 +98,7 @@ pub(super) fn render_agent_message_card(
     );
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.clone();
+    let stream_id = message_stream_id(&quote_identity);
     let producer = format!(
         "{} · {}",
         watchband::leaf(&member.worktree),
@@ -124,6 +133,7 @@ pub(super) fn render_agent_message_card(
                 message.locus.event,
             )}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
+            id={stream_id}
             draggable="true"
             aria-label={format!("Agent message from {producer}")}
             data-card-kind="agent-message"
@@ -192,6 +202,7 @@ pub(super) fn render_directive_card(
     let quote_identity = format!("directive-{}", directive.directive);
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.to_owned();
+    let stream_id = message_stream_id(&quote_identity);
     let correspondent = view::chrome::Correspondent {
         name: watchband::short(lane),
         accent: watchband::accent(lane),
@@ -221,6 +232,7 @@ pub(super) fn render_directive_card(
         <article
             key={directive.directive.to_string()}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
+            id={stream_id}
             draggable="true"
             data-directive={directive.directive.to_string()}
             data-card-kind="directive"
@@ -263,14 +275,14 @@ pub(super) fn render_directive_card(
     }
 }
 
-pub(super) fn render_quote_bands(
+pub(super) fn render_quote_shards(
     lane_key: &str,
     draft: &ComposerDraft,
     drafts: &UseReducerHandle<ComposerDrafts>,
     target_submit: Callback<KeyboardEvent>,
 ) -> Html {
     html! {
-        <div class="composer-quote-stack" data-composer-quote-stack-target-id={lane_key.to_owned()}>
+        <>
             {for draft.quotes.iter().map(|quote| {
                 let remove_key = lane_key.to_owned();
                 let remove_drafts = drafts.clone();
@@ -294,19 +306,30 @@ pub(super) fn render_quote_bands(
                 });
                 let shown = crate::composer_markdown::quote_label(quote.preview.as_deref());
                 let textarea_id = quote_textarea_id(lane_key, &quote.identity);
+                let stream_id = message_stream_id(&quote.identity);
                 html! {
-                    <div
+                    <article
                         key={quote.identity.clone()}
-                        class="composer-quote-band"
+                        class={classes!(
+                            "mosaic-composer",
+                            "composer-shard",
+                            "composer-shard--draft",
+                        )}
                         title={quote.quote.clone()}
                         data-quote-identity={quote.identity.clone()}
                         data-quote-target-id={lane_key.to_owned()}
+                        data-stream-target-id={stream_id.clone()}
                     >
-                        <header>
-                            <span>{shown}</span>
+                        <header class="composer-shard-heading">
+                            <a
+                                class="composer-shard-age"
+                                href={format!("#{stream_id}")}
+                                aria-label="Open quoted message in stream"
+                            >{"quote"}</a>
+                            <strong title={quote.quote.clone()}>{shown}</strong>
                             <button
                                 type="button"
-                                aria-label="Remove quoted composer"
+                                aria-label="Remove quoted composer shard"
                                 onclick={remove}
                             >{"×"}</button>
                         </header>
@@ -320,10 +343,10 @@ pub(super) fn render_quote_bands(
                             oninput={update}
                             onkeydown={target_submit.clone()}
                         ></textarea>
-                    </div>
+                    </article>
                 }
             })}
-        </div>
+        </>
     }
 }
 
