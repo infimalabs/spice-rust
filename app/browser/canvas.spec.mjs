@@ -474,9 +474,11 @@ async function assertAgentConversation(page, fixture, worktrees) {
     quoteLane: seated[3].lane,
     primaryHeadings: seated.map((lane, index) => ({
       lane: lane.lane,
-      prose: index === 1
-        ? "periodic live witness"
-        : `Canvas message reports CONTROL-1kKbC3j4 from ${basename(teamWorktrees[index])}`,
+      prose: index === 0
+        ? "newest lane prose witness"
+        : index === 1
+          ? "periodic live witness"
+          : `Canvas message reports CONTROL-1kKbC3j4 from ${basename(teamWorktrees[index])}`,
     })),
   };
 }
