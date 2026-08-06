@@ -1,2 +1,13 @@
+# A machine-level Cargo configuration may move `build.build-dir` into a
+# shared cache hierarchy. Cargo 1.97.1 identifies a build that is using one of
+# those roots by holding `<build-dir>/<profile>/.cargo-build-lock`; an external
+# cleaner must enumerate those files and skip the whole root when any lock is
+# held. An operator can observe the holder with `lsof <lock>`, and a collector
+# can attempt a nonblocking exclusive file lock. `CACHEDIR.TAG` is permanent
+# and means "cache", not "idle". Cargo's own stable automatic collection was
+# forced and observed by
+# `xtask/tests/build_cache.rs`: it manages caches under `CARGO_HOME` and visits
+# neither a held nor an idle build-dir, so it does not supply that
+# external-cleaner check. (`cargo clean gc` is still nightly-only.)
 [alias]
 xtask = "run --package xtask --"
