@@ -170,6 +170,11 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
 }
 
 #[hook]
+/// Preserve the viewport only after live measurement produces a ready plane.
+///
+/// A temporary `None` during incremental measurement deliberately retains the
+/// prior ready-plane state, so the eventual row delta has one authoritative
+/// baseline and one scroll owner.
 fn use_plane_scroll(host: NodeRef, max_row: Option<i32>, module: i32, card_count: usize) {
     let scroll_state = use_mut_ref(|| None::<(i32, i32, usize)>);
     use_effect_with(
