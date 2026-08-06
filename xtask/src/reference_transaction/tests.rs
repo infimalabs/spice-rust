@@ -257,6 +257,45 @@ fn parser_names_the_first_malformed_line() {
     ));
 }
 
+fn assert_operational_error_names_tree_and_recovery(error: ReferenceTransactionError) {
+    let message = error.to_string();
+    assert!(
+        message.contains("HEAD is not moved"),
+        "operational refusal must say the reference stays put: {message}"
+    );
+    assert!(
+        message.contains("index and worktree may already have changed"),
+        "operational refusal must name the uncertain tree state: {message}"
+    );
+    assert!(
+        message.contains("git reset --hard HEAD"),
+        "operational refusal must name the admitted rewind recovery: {message}"
+    );
+}
+
+#[test]
+fn malformed_input_names_the_tree_risk_and_recovery() {
+    assert_operational_error_names_tree_and_recovery(ReferenceTransactionError::MalformedInput {
+        line: 2,
+    });
+}
+
+#[test]
+fn git_launch_failure_names_the_tree_risk_and_recovery() {
+    assert_operational_error_names_tree_and_recovery(ReferenceTransactionError::GitLaunch {
+        repository: PathBuf::from("/fixture/repository"),
+        arguments: vec!["status".to_owned()],
+        source: io::Error::new(io::ErrorKind::NotFound, "fixture git is absent"),
+    });
+}
+
+#[test]
+fn non_utf8_output_names_the_tree_risk_and_recovery() {
+    assert_operational_error_names_tree_and_recovery(ReferenceTransactionError::NonUtf8Output {
+        arguments: vec!["symbolic-ref".to_owned(), "HEAD".to_owned()],
+    });
+}
+
 fn refusal(damage: WorktreeDamage) -> String {
     ReferenceTransactionError::ProtectedHistory {
         reference: "refs/heads/main".to_owned(),
