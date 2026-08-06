@@ -258,6 +258,12 @@
   font-size: .76rem;
 }
 .canvas-menu-setting span { color: var(--muted); font-family: ui-monospace, monospace; }
+.canvas-menu-context-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: .72rem;
+  line-height: 1.45;
+}
 .canvas-open-teams { gap: 9px; }
 .canvas-team {
   display: grid;
