@@ -17,6 +17,10 @@
 /// justified against the distribution of the thing it bounds.
 ///
 /// Usage: node app/browser/offline-cycle.mjs [--iterations N] [--bound MS]
+///                                           [--view Agents|Chronology|Flow|Magnitude|Topology]
+///
+/// Pointing `--view` at Agents reproduces the reported incident, because the
+/// mosaic has no status element for the wait to ever see.
 
 import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,13 +41,53 @@ import {
   stopResident,
 } from "./canvas-fixture.mjs";
 
-function option(name, fallback) {
+/// The views the cycle can be pointed at, which is the whole set the canvas has.
+///
+/// `Agents` is the mosaic and is the reason this is an option at all: `view.rs`
+/// renders the topbar carrying `.status` only outside the mosaic, so a cycle
+/// pointed there waits for an element that is not in the document. That is the
+/// configuration that proved the reported failure was a deaf wait rather than a
+/// slow transition, and a harness that cannot be pointed back at it cannot
+/// demonstrate the failure it was built to diagnose.
+const VIEWS = ["Agents", "Chronology", "Flow", "Magnitude", "Topology"];
+
+function argument(name) {
   const index = process.argv.indexOf(name);
-  return index === -1 ? fallback : Number(process.argv[index + 1]);
+  return index === -1 ? null : { given: true, raw: process.argv[index + 1] };
 }
 
-const iterations = option("--iterations", 20);
-const bound = option("--bound", 10_000);
+function refuse(name, raw, expected) {
+  const seen = raw === undefined ? "no value" : JSON.stringify(raw);
+  throw new Error(`${name} needs ${expected}, got ${seen}`);
+}
+
+/// Read a numeric option, refusing anything that would silently measure nothing.
+///
+/// `Number(undefined)` and `Number("Agents")` are both NaN, and a NaN iteration
+/// count makes the loop body unreachable while the closing comparison of zero
+/// passes against zero results still exits 0. A harness whose entire product is
+/// a pass rate must not be able to report success having run no cycles, so an
+/// unusable value is refused here instead of being absorbed into a green.
+function numericOption(name, fallback) {
+  const given = argument(name);
+  if (!given) return fallback;
+  const value = Number(given.raw);
+  if (!Number.isInteger(value) || value < 1) {
+    refuse(name, given.raw, "a positive whole number");
+  }
+  return value;
+}
+
+function viewOption(name, fallback) {
+  const given = argument(name);
+  if (!given) return fallback;
+  if (!VIEWS.includes(given.raw)) refuse(name, given.raw, `one of ${VIEWS.join(", ")}`);
+  return given.raw;
+}
+
+const iterations = numericOption("--iterations", 20);
+const bound = numericOption("--bound", 10_000);
+const view = viewOption("--view", "Chronology");
 
 /// Run the cycle once and report what the wait saw.
 ///
@@ -67,7 +111,7 @@ async function cycle(fixture, browser, seed) {
   const page = await context.newPage();
   try {
     await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Chronology");
+    await chooseCanvasView(page, view);
     await stopResident(fixture, resident);
     const started = Date.now();
     try {
@@ -128,7 +172,7 @@ function distribution(label, field) {
 process.stdout.write(
   [
     "",
-    `pass rate: ${passed.length}/${results.length} at bound ${bound}ms`,
+    `pass rate: ${passed.length}/${results.length} at bound ${bound}ms in the ${view} view`,
     distribution("observed offline flip", "elapsed"),
     distribution("observed fault event", "fault"),
     "",
