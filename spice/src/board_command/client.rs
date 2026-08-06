@@ -24,6 +24,7 @@ fn dispatch_client(
         ["board", "handout"] => client_handout(repository, contract, matches),
         ["doc"] => run_doc(repository, contract, matches),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
+        ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
         ["task", "next"] => client_next(repository, contract),
         ["task", "reclaim"] => client_reclaim(repository, contract, matches),
@@ -86,6 +87,252 @@ fn client_status(repository: &Repository, contract: &Contract) -> Outcome<Comman
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),
     }
+}
+
+fn client_list(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let options = match TaskListOptions::from_matches(matches) {
+        Ok(options) => options,
+        Err(outcome) => return outcome,
+    };
+    match crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead { family: None },
+    ) {
+        Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Board(board),
+        }) => Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Text(TextAnswer {
+                text: task_list(&board, &options),
+            }),
+        }),
+        Outcome::Reply(_) => protocol_fault(
+            "task::list-answer",
+            "task list board read returned another answer shape",
+        ),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TaskListStatus {
+    Pending,
+    Waiting,
+    Completed,
+    Deleted,
+}
+
+struct TaskListOptions {
+    all: bool,
+    project: Option<String>,
+    limit: Option<usize>,
+    status: Option<TaskListStatus>,
+}
+
+impl TaskListOptions {
+    fn from_matches(matches: &ArgMatches) -> Result<Self, Outcome<CommandAnswer>> {
+        let all = matches.get_flag("all");
+        let project = matches.get_one::<String>("project").map(|written| {
+            written
+                .trim()
+                .strip_prefix("project:")
+                .unwrap_or(written.trim())
+                .to_owned()
+        });
+        if all && project.is_some() {
+            return Err(refusal(
+                "task::list-scope",
+                None,
+                "choose either --all or --project PROJECT",
+            ));
+        }
+        if project.as_ref().is_some_and(String::is_empty) {
+            return Err(refusal(
+                "task::list-project",
+                matches.get_one::<String>("project").cloned(),
+                "name a non-empty project after --project",
+            ));
+        }
+        let limit = matches
+            .get_one::<String>("limit")
+            .map(|written| {
+                written.parse::<usize>().map_err(|_| {
+                    refusal(
+                        "task::list-limit",
+                        Some(written.clone()),
+                        "name a positive integer after --limit",
+                    )
+                })
+            })
+            .transpose()?;
+        if limit == Some(0) {
+            return Err(refusal(
+                "task::list-limit",
+                Some("0".to_owned()),
+                "name a positive integer after --limit",
+            ));
+        }
+        let status = matches
+            .get_one::<String>("status")
+            .map(|status| match status.as_str() {
+                "pending" => TaskListStatus::Pending,
+                "waiting" => TaskListStatus::Waiting,
+                "completed" => TaskListStatus::Completed,
+                "deleted" => TaskListStatus::Deleted,
+                _ => unreachable!("contract parser owns task list status values"),
+            });
+        Ok(Self {
+            all,
+            project,
+            limit,
+            status,
+        })
+    }
+}
+
+fn task_list(board: &BoardAnswer, options: &TaskListOptions) -> String {
+    let mut rows = board
+        .tasks
+        .iter()
+        .filter(|task| list_scope_matches(task, options))
+        .filter(|task| list_status_matches(task, options))
+        .collect::<Vec<_>>();
+    if let Some(limit) = options.limit {
+        rows.sort_by(|left, right| {
+            task_newest_position(right)
+                .cmp(&task_newest_position(left))
+                .then_with(|| {
+                    right
+                        .statement
+                        .body
+                        .handle
+                        .cmp(&left.statement.body.handle)
+                })
+        });
+        rows.truncate(limit);
+    }
+
+    let (scope, empty) = if options.all {
+        (
+            "scope global --all".to_owned(),
+            "no tasks in global scope".to_owned(),
+        )
+    } else if let Some(project) = &options.project {
+        (
+            format!("scope explicit-project project:{project}"),
+            "no tasks in scope; use --all for global rows or --project PROJECT for one project"
+                .to_owned(),
+        )
+    } else {
+        (
+            format!("scope actor-route filter {}", actor_route_filter(board)),
+            "no tasks in scope; use --all for global rows or --project PROJECT for one project"
+                .to_owned(),
+        )
+    };
+    if rows.is_empty() {
+        return format!("{scope}\n{empty}");
+    }
+    let mut output = scope;
+    for task in rows {
+        output.push('\n');
+        output.push_str(&render_task_list_row(task));
+    }
+    output
+}
+
+fn list_scope_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
+    if let Some(project) = &options.project {
+        let candidate = task.statement.body.project.as_str();
+        return candidate == project
+            || candidate
+                .strip_prefix(project)
+                .is_some_and(|suffix| suffix.starts_with('.'));
+    }
+    options.all || !task.visibility.is_hidden()
+}
+
+fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
+    let pending = task.workflow.body.status == "pending"
+        && task.workflow.body.completion.is_none()
+        && task.workflow.body.deferral.is_none();
+    let waiting = task.workflow.body.status == "pending"
+        && task.workflow.body.completion.is_none()
+        && task.workflow.body.deferral.is_some();
+    match options.status {
+        Some(TaskListStatus::Pending) => pending,
+        Some(TaskListStatus::Waiting) => waiting,
+        Some(TaskListStatus::Completed) => task.workflow.body.status == "completed",
+        Some(TaskListStatus::Deleted) => false,
+        None if options.all => true,
+        None => {
+            pending
+                || waiting
+                    && task.claim.as_ref().is_some_and(|claim| {
+                        claim.body.disposition == ClaimDisposition::Active
+                    })
+        }
+    }
+}
+
+fn task_newest_position(task: &BoardTask) -> Seq {
+    let mut newest = task.statement.position.max(task.workflow.position);
+    if let Some(claim) = &task.claim {
+        newest = newest.max(claim.position);
+    }
+    if let Some(lease) = &task.lease {
+        newest = newest.max(lease.position);
+    }
+    newest
+}
+
+fn render_task_list_row(task: &BoardTask) -> String {
+    let state = if task.workflow.body.status == "completed" {
+        "done"
+    } else {
+        task.workflow.body.phase.as_str()
+    };
+    let priority = task
+        .statement
+        .body
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix("priority:"))
+        .map(|priority| match priority {
+            "critical" => "C".to_owned(),
+            "high" => "H".to_owned(),
+            "medium" => "M".to_owned(),
+            "low" => "L".to_owned(),
+            "none" => "N".to_owned(),
+            other => other.to_owned(),
+        });
+    let priority = priority.map_or_else(String::new, |value| format!(" P:{value}"));
+    format!(
+        "{} [{state}]{priority} {} {}",
+        task.statement.body.handle,
+        task.statement.body.project,
+        task.presentation_title()
+    )
+}
+
+fn actor_route_filter(board: &BoardAnswer) -> String {
+    let projects = board
+        .project_policy
+        .public_stems
+        .iter()
+        .map(|stem| format!("project:{stem}"))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    format!("( {projects} )")
 }
 
 fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
@@ -161,10 +408,14 @@ fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
         })
         .count();
     Ok(format!(
-        "claim {claim}\nactor {}\nactive {active_count}\nready {ready}\n\
+        "claim {claim}\nactor {}\nfilter {}\npublic task project depth {}..{} dotted segments\n\
+         active {active_count}\nready {ready}\n\
          review {review}\nblocked {blocked}\nwaiting {waiting}\n\
          stale {stale}\noops {oops}",
-        board.principal
+        board.principal,
+        actor_route_filter(board),
+        board.project_policy.public_min_depth,
+        board.project_policy.public_max_depth,
     ))
 }
 

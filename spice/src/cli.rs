@@ -643,6 +643,17 @@ const CONTRACTS: &[Contract] = &[
         "board::handout"
     ),
     row!(
+        ["task", "list"],
+        "task list [--all] [--project PROJECT] [--limit N] \
+         [--status pending|waiting|completed|deleted]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Resident],
+        Reply,
+        "board::list"
+    ),
+    row!(
         ["task", "status"],
         "task status",
         OperatorOrLane,
@@ -1252,6 +1263,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
+        | ["task", "list"]
         | ["task", "status"]
         | ["task", "next"]
         | ["task", "reclaim"]

@@ -25,8 +25,8 @@ use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
 mod board;
 pub use board::{
-    BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardStatement, BoardTask, DocLedger,
-    Positioned, ProjectVisibility, TextAnswer,
+    BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead, BoardStatement,
+    BoardTask, DocLedger, Positioned, ProjectVisibility, TextAnswer,
 };
 
 /// Add one task as direct intent.
