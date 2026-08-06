@@ -8,6 +8,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 use super::*;
+use crate::EMBEDDED_APP;
 
 type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -119,6 +120,12 @@ async fn stream_frame_bytes(socket: &mut ClientSocket) -> (wire::StreamFrame, Ve
 
 fn speech() -> crate::SpeechConfig {
     crate::SpeechConfig::default()
+}
+
+/// The app source every test but the app-serving ones binds with: the bytes
+/// compiled into this binary, which is what a release resident serves.
+fn embedded() -> crate::AppSource {
+    crate::AppSource::Embedded
 }
 
 async fn websocket(address: SocketAddr) -> ClientSocket {
@@ -321,6 +328,7 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
         Access::local(),
         epoch(),
         capabilities,
+        embedded(),
         speech(),
         bus.reader(),
         8,
@@ -387,6 +395,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
         Access::local(),
         epoch(),
         capabilities.clone(),
+        embedded(),
         speech(),
         bus.reader(),
         8,
@@ -441,6 +450,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         Access::local(),
         epoch(),
         capabilities,
+        embedded(),
         speech(),
         bus.reader(),
         8,
@@ -549,6 +559,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
         Access::authenticated("correct-horse-battery-staple".to_owned()),
         epoch(),
         capabilities,
+        embedded(),
         speech(),
         None,
         1,
@@ -650,6 +661,7 @@ async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
         Access::local(),
         epoch(),
         Capabilities::default(),
+        embedded(),
         speech(),
         None,
         1,
@@ -895,6 +907,75 @@ async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
 
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());
+}
+
+/// A worktree holding a complete development stage, and that stage's path.
+///
+/// The bytes name their own file so a route served from the wrong one is
+/// visible in the assertion rather than merely non-embedded.
+fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    let root = std::env::temp_dir().join(format!(
+        "spice-canvas-local-app-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let stage = root.join(crate::DEV_STAGE);
+    std::fs::create_dir_all(&stage).expect("fixture stage");
+    for asset in EMBEDDED_APP.assets() {
+        std::fs::write(
+            stage.join(asset.file()),
+            format!("locally built {}", asset.file()),
+        )
+        .expect("fixture asset");
+    }
+    (root, stage)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn live_server_serves_a_local_stage_and_refuses_when_it_goes_away() {
+    let (root, stage) = local_worktree();
+    let app = crate::AppSource::resolve(&root).expect("a complete stage resolves");
+    let (server, _control) = Server::bind_with_capacity(
+        LOOPBACK_EPHEMERAL,
+        Access::local(),
+        epoch(),
+        Capabilities::default(),
+        app,
+        speech(),
+        None,
+        1,
+    )
+    .await
+    .expect("binds");
+    let address = server.local_addr().expect("local address");
+    let task = tokio::spawn(server.up());
+
+    let served = request(address, &address.to_string(), "/").await;
+    let split = served
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("response carries headers")
+        + 4;
+    assert!(served.starts_with(b"HTTP/1.1 200 OK\r\n"));
+    assert_eq!(&served[split..], b"locally built canvas-app.html");
+    assert_ne!(&served[split..], EMBEDDED_APP.bytes());
+
+    // A stage that stops answering mid-flight is reported as this endpoint's
+    // own failure, not as the app the operator asked to stop serving.
+    std::fs::remove_file(stage.join("canvas-app.html")).expect("fixture removes one staged file");
+
+    let refused = request(address, &address.to_string(), "/").await;
+    assert!(refused.starts_with(b"HTTP/1.1 503 Service Unavailable\r\n"));
+    assert!(
+        String::from_utf8_lossy(&refused).contains("canvas-app.html"),
+        "the refusal does not name the file it could not read"
+    );
+
+    task.abort();
+    assert!(task.await.expect_err("aborted server task").is_cancelled());
+    std::fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1160,6 +1241,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         Access::local(),
         epoch(),
         capabilities,
+        embedded(),
         speech(),
         None,
         1,
@@ -1248,6 +1330,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
         Access::local(),
         epoch(),
         capabilities,
+        embedded(),
         speech(),
         None,
         1,
@@ -1454,6 +1537,7 @@ fn host_and_origin_must_name_the_published_endpoint() {
         origin: "http://127.0.0.1:48123".to_owned(),
         epoch: epoch(),
         capabilities: Capabilities::default(),
+        app: embedded(),
         speech: speech(),
         speech_slot: Semaphore::new(1),
         admission: Mutex::new(Admission::Open),

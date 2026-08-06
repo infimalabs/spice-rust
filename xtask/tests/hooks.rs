@@ -7,12 +7,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use spice::install::{InstallStatus, apply, plan};
+use spice::install::{InstallStatus, apply, installed_git_hooks, plan};
 use spice::repository::Repository;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const ACTIVE_HOOKS: [&str; 3] = ["pre-commit", "commit-msg", "reference-transaction"];
-const INSTALLED_HOOKS: &str = ".spice/git-hooks";
 const GIT_DIRECTORY: &str = concat!("GIT_", "DIR");
 const GIT_WORKING_TREE: &str = concat!("GIT_", "WORK_TREE");
 const GIT_INDEX: &str = concat!("GIT_", "INDEX_FILE");
@@ -137,9 +136,10 @@ fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
         .expect("install Spice hooks");
     assert_eq!(receipt.status(), InstallStatus::Complete);
 
-    let pre_commit = scratch.join(format!("{INSTALLED_HOOKS}/pre-commit"));
-    let commit_message = scratch.join(format!("{INSTALLED_HOOKS}/commit-msg"));
-    let reference_transaction = scratch.join(format!("{INSTALLED_HOOKS}/reference-transaction"));
+    let installed_hooks = installed_git_hooks(&repository);
+    let pre_commit = installed_hooks.join("pre-commit");
+    let commit_message = installed_hooks.join("commit-msg");
+    let reference_transaction = installed_hooks.join("reference-transaction");
     assert_eq!(mode(&pre_commit), 0o755);
     assert_eq!(mode(&commit_message), 0o755);
     assert_eq!(mode(&reference_transaction), 0o755);
@@ -181,7 +181,7 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
 }
 
 fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
-    let pre_commit = scratch.join(format!("{INSTALLED_HOOKS}/pre-commit"));
+    let pre_commit = common_hooks(scratch).join("pre-commit");
     let pre_commit_output = Command::new(&pre_commit)
         .current_dir(scratch.path())
         .env(GIT_DIRECTORY, scratch.join(".git"))
@@ -194,7 +194,7 @@ fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
 }
 
 fn exercise_commit_message(scratch: &Scratch) {
-    let commit_message = scratch.join(format!("{INSTALLED_HOOKS}/commit-msg"));
+    let commit_message = common_hooks(scratch).join("commit-msg");
     let message = scratch.join("COMMIT_EDITMSG");
     fs::write(
         &message,
@@ -274,6 +274,11 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
             .contains("refused to abandon upstream-merged commits")
     );
 
+    let linked = scratch.join("linked");
+    git(
+        scratch,
+        &["worktree", "add", "--quiet", "--detach", "linked", "HEAD"],
+    );
     let cutover = scratch.executable(
         "scripts/install-hooks.sh",
         include_bytes!("../../scripts/install-hooks.sh"),
@@ -283,7 +288,20 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
         .output()
         .expect("run explicit hook cutover");
     assert_success(&activated, "hook cutover");
-    assert_eq!(configured_hooks(scratch), INSTALLED_HOOKS);
+    let shared_hooks = common_hooks(scratch);
+    assert_eq!(
+        configured_hooks(scratch),
+        shared_hooks.display().to_string()
+    );
+    assert_eq!(
+        configured_hooks_at(&linked),
+        shared_hooks.display().to_string()
+    );
+    assert_eq!(
+        git_at(&linked, &["rev-parse", "--git-path", "hooks"]),
+        shared_hooks.display().to_string()
+    );
+    assert!(!linked.join(".spice-install").exists());
     assert!(
         String::from_utf8(activated.stdout)
             .unwrap()
@@ -457,16 +475,26 @@ fn rev_parse(scratch: &Scratch, revision: &str) -> String {
 }
 
 fn configured_hooks(scratch: &Scratch) -> String {
-    String::from_utf8(
-        git(
-            scratch,
-            &["config", "--worktree", "--get", "core.hooksPath"],
-        )
-        .stdout,
-    )
-    .unwrap()
-    .trim()
-    .to_owned()
+    configured_hooks_at(scratch.path())
+}
+
+fn configured_hooks_at(root: &Path) -> String {
+    git_at(root, &["config", "--get", "core.hooksPath"])
+}
+
+fn common_hooks(scratch: &Scratch) -> PathBuf {
+    let repository = Repository::discover(scratch.path()).expect("discover hook repository");
+    installed_git_hooks(&repository)
+}
+
+fn git_at(root: &Path, arguments: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .expect("run Git fixture query");
+    assert_success(&output, "Git fixture query");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
 fn git(scratch: &Scratch, arguments: &[&str]) -> Output {

@@ -7,7 +7,8 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::install::{
-    InstallError, InstallPreview, InstallReceipt, InstallStatus, apply, plan, unapply,
+    InstallError, InstallPreview, InstallReceipt, InstallStatus, apply, installed_binary,
+    installed_git_hooks, installed_skill, plan, unapply,
 };
 use spice::repository::Repository;
 use wire::{Outcome, ReplyPosition};
@@ -23,7 +24,7 @@ fn installed_spice_is_the_one_repository_local_executable() {
 
     let planned = plan(&repository, Some(source)).unwrap();
     let receipt = apply(&repository, Some(source), &planned.digest().unwrap()).unwrap();
-    let installed = scratch.join(".spice/bin/spice");
+    let installed = installed_binary(&repository);
 
     assert_eq!(receipt.status(), InstallStatus::Complete);
     let help = run(&installed, &["--help"]);
@@ -36,8 +37,13 @@ fn installed_spice_is_the_one_repository_local_executable() {
         fs::metadata(&installed).unwrap().len(),
         fs::metadata(source).unwrap().len()
     );
-    let skill = fs::read_to_string(scratch.join(".agents/skills/spice/SKILL.md")).unwrap();
-    assert_eq!(skill.matches(".spice/bin/spice up").count(), 1);
+    let skill = fs::read_to_string(installed_skill(&repository)).unwrap();
+    assert_eq!(
+        skill
+            .matches("--git-common-dir)/.spice-install/bin/spice up")
+            .count(),
+        1
+    );
     let receipt = fs::metadata(scratch.join(".git/.spice/install.json")).unwrap();
     assert!(receipt.len() < MAX_COMPACT_RECORD_BYTES);
     assert_eq!(receipt.permissions().mode() & 0o777, 0o600);
@@ -63,7 +69,7 @@ fn installed_spice_is_the_one_repository_local_executable() {
 }
 
 #[test]
-fn linked_worktree_keeps_assets_local_and_the_receipt_common() {
+fn linked_worktrees_share_one_common_install_and_receipt() {
     let scratch = Scratch::new("linked");
     let common = scratch.join(".git");
     let git_dir = common.join("worktrees/linked");
@@ -76,23 +82,47 @@ fn linked_worktree_keeps_assets_local_and_the_receipt_common() {
     )
     .unwrap();
     fs::write(git_dir.join("commondir"), "../..\n").unwrap();
-    let repository = Repository::discover(&linked).unwrap();
+    let first_repository = Repository::discover(scratch.path()).unwrap();
+    let linked_repository = Repository::discover(&linked).unwrap();
     let source = Path::new(env!("CARGO_BIN_EXE_spice"));
 
-    let planned = plan(&repository, Some(source)).unwrap();
-    let installed = apply(&repository, Some(source), &planned.digest().unwrap()).unwrap();
+    let planned = plan(&first_repository, Some(source)).unwrap();
+    let installed = apply(&first_repository, Some(source), &planned.digest().unwrap()).unwrap();
+    let linked_plan = plan(&linked_repository, Some(source)).unwrap();
+    let linked_install = apply(
+        &linked_repository,
+        Some(source),
+        &linked_plan.digest().unwrap(),
+    )
+    .unwrap();
 
     assert_eq!(installed.status(), InstallStatus::Complete);
-    assert!(linked.join(".spice/bin/spice").is_file());
-    assert!(linked.join(".agents/skills/spice/SKILL.md").is_file());
+    assert_eq!(linked_install, installed);
+    assert_eq!(linked_plan, planned);
+    assert_eq!(
+        installed_binary(&first_repository),
+        installed_binary(&linked_repository)
+    );
+    assert_eq!(
+        installed_git_hooks(&first_repository),
+        installed_git_hooks(&linked_repository)
+    );
+    assert!(installed_binary(&linked_repository).is_file());
+    assert!(installed_skill(&linked_repository).is_file());
+    assert!(installed_git_hooks(&linked_repository).is_dir());
     assert!(common.join(".spice/install.json").is_file());
-    assert!(!scratch.join(".spice/bin/spice").exists());
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(common.join(".spice/install.json")).unwrap()).unwrap();
+    assert!(record["repository"].get("worktree").is_none());
+    assert!(record["plan"]["repository"].get("worktree").is_none());
+    assert!(!scratch.join(".spice-install").exists());
+    assert!(!linked.join(".spice-install").exists());
 
     assert_eq!(
-        unapply(&repository).unwrap().status(),
+        unapply(&linked_repository).unwrap().status(),
         InstallStatus::Uninstalled
     );
-    assert!(!linked.join(".spice/bin/spice").exists());
+    assert!(!installed_binary(&first_repository).exists());
     assert!(common.join(".spice/install.json").is_file());
 }
 
@@ -100,25 +130,25 @@ fn linked_worktree_keeps_assets_local_and_the_receipt_common() {
 fn stable_and_swapped_parent_symlinks_bind_one_physical_destination() {
     let stable = Scratch::new("stable-symlink");
     let repository = stable.repository();
-    let target = stable.join("agent-assets");
+    let target = repository.common_dir().join("appliance-assets");
     fs::create_dir(&target).unwrap();
-    symlink(&target, stable.join(".agents")).unwrap();
+    symlink(&target, repository.common_dir().join(".spice-install")).unwrap();
     let planned = plan(&repository, None).unwrap();
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    assert!(target.join("skills/spice/SKILL.md").is_file());
+    assert!(target.join("agents/skills/spice/SKILL.md").is_file());
     unapply(&repository).unwrap();
-    assert!(!target.join("skills/spice/SKILL.md").exists());
+    assert!(!target.join("agents/skills/spice/SKILL.md").exists());
 
     let swapped = Scratch::new("swapped-symlink");
     let repository = swapped.repository();
-    let first = swapped.join("agent-assets-a");
-    let second = swapped.join("agent-assets-b");
+    let first = repository.common_dir().join("appliance-assets-a");
+    let second = repository.common_dir().join("appliance-assets-b");
     fs::create_dir(&first).unwrap();
     fs::create_dir(&second).unwrap();
-    symlink(&first, swapped.join(".agents")).unwrap();
+    symlink(&first, repository.common_dir().join(".spice-install")).unwrap();
     let stale = plan(&repository, None).unwrap().digest().unwrap();
-    fs::remove_file(swapped.join(".agents")).unwrap();
-    symlink(&second, swapped.join(".agents")).unwrap();
+    fs::remove_file(repository.common_dir().join(".spice-install")).unwrap();
+    symlink(&second, repository.common_dir().join(".spice-install")).unwrap();
     let before = swapped.snapshot();
     let error = apply(&repository, None, &stale).unwrap_err();
     assert!(matches!(error, InstallError::DigestMismatch { .. }));
@@ -131,21 +161,31 @@ fn parent_creation_replacement_and_same_byte_destination_drift_are_inert() {
     let created = Scratch::new("created-parent");
     let repository = created.repository();
     let stale = plan(&repository, None).unwrap().digest().unwrap();
-    fs::create_dir(created.join(".agents")).unwrap();
+    fs::create_dir(repository.common_dir().join(".spice-install")).unwrap();
     assert_stale_apply_is_inert(&created, &repository, &stale);
 
     let replaced_parent = Scratch::new("replaced-parent");
     let repository = replaced_parent.repository();
-    let parent = replaced_parent.join(".agents/skills/spice");
+    let parent = repository
+        .common_dir()
+        .join(".spice-install/agents/skills/spice");
     fs::create_dir_all(&parent).unwrap();
     let stale = plan(&repository, None).unwrap().digest().unwrap();
-    fs::rename(&parent, replaced_parent.join(".agents/skills/prior-parent")).unwrap();
+    fs::rename(
+        &parent,
+        repository
+            .common_dir()
+            .join(".spice-install/agents/skills/prior-parent"),
+    )
+    .unwrap();
     fs::create_dir(&parent).unwrap();
     assert_stale_apply_is_inert(&replaced_parent, &repository, &stale);
 
     let replaced_file = Scratch::new("replaced-file");
     let repository = replaced_file.repository();
-    let skill = replaced_file.join(".agents/skills/spice/SKILL.md");
+    let skill = repository
+        .common_dir()
+        .join(".spice-install/agents/skills/spice/SKILL.md");
     fs::create_dir_all(skill.parent().unwrap()).unwrap();
     fs::write(&skill, b"operator skill\n").unwrap();
     let stale = plan(&repository, None).unwrap().digest().unwrap();
@@ -203,7 +243,9 @@ fn arbitrary_duplicate_reordered_and_mismatched_records_are_inert() {
 fn same_byte_installed_file_replacement_unapplies_while_parent_replacement_refuses_inertly() {
     let replaced_file = applied("installed-file-generation");
     let repository = replaced_file.repository();
-    let entry = replaced_file.join(".spice/hooks/entry.sh");
+    let entry = repository
+        .common_dir()
+        .join(".spice-install/hooks/entry.sh");
     let replacement = replaced_file.join("replacement-entry");
     fs::write(&replacement, fs::read(&entry).unwrap()).unwrap();
     fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755)).unwrap();
@@ -216,8 +258,8 @@ fn same_byte_installed_file_replacement_unapplies_while_parent_replacement_refus
 
     let replaced_parent = applied("installed-parent-generation");
     let repository = replaced_parent.repository();
-    let hooks = replaced_parent.join(".spice/hooks");
-    let prior = replaced_parent.join(".spice/prior-hooks");
+    let hooks = repository.common_dir().join(".spice-install/hooks");
+    let prior = repository.common_dir().join(".spice-install/prior-hooks");
     fs::rename(&hooks, &prior).unwrap();
     fs::create_dir(&hooks).unwrap();
     fs::hard_link(prior.join("entry.sh"), hooks.join("entry.sh")).unwrap();
@@ -285,7 +327,7 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_exact() {
         panic!("invalid install digest must refuse");
     };
     assert_eq!(refusal.reason, "install::digest-refused");
-    assert!(!scratch.join(".spice/bin/spice").exists());
+    assert!(!installed_binary(&scratch.repository()).exists());
 
     let text_plan = invoke(scratch.path(), &["install"]);
     let json_plan = invoke(scratch.path(), &["--json", "install"]);
@@ -299,7 +341,7 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_exact() {
     assert_eq!(json_plan.position, ReplyPosition::Direct {});
     assert_eq!(json_plan.body, text_plan);
     assert_eq!(text_plan.digest(), &text_plan.plan().digest().unwrap());
-    assert!(!scratch.join(".spice/bin/spice").exists());
+    assert!(!installed_binary(&scratch.repository()).exists());
 
     let apply_argument = format!("--apply={}", text_plan.digest());
     let text_apply = invoke(scratch.path(), &["install", &apply_argument]);
@@ -308,7 +350,7 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_exact() {
     let json_apply: InstallReceipt = successful_reply(json_apply);
     assert_eq!(text_apply, json_apply);
     assert_eq!(text_apply.status(), InstallStatus::Complete);
-    assert!(scratch.join(".spice/bin/spice").is_file());
+    assert!(installed_binary(&scratch.repository()).is_file());
 
     let text_unapply: InstallReceipt =
         successful_body(invoke(scratch.path(), &["install", "--unapply"]));

@@ -5,7 +5,8 @@
 //! the envelope metadata its panes render and retains no kind-specific body.
 
 use wire::intent::{
-    BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, InboxAnswer, LaneAnswer,
+    BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, InboxAnswer,
+    LaneAnswer, LaneChangeAnswer,
 };
 use wire::{
     Accepted, Actor, CanonicalUuid, CommandKind, FactKind, Origin, Outcome, Packed, Response, Seq,
@@ -566,6 +567,33 @@ impl CanvasRuntime {
             (
                 "Consent policy".to_owned(),
                 format!("{} rules", answer.rules.len()),
+            )
+        });
+    }
+
+    /// Record the resident's authoritative result for one lane seating request.
+    pub fn apply_lane_change(&mut self, admitted: &Admitted<Response<LaneChangeAnswer>>) {
+        self.apply_response(admitted, |_runtime, answer| {
+            (
+                "Agent seated".to_owned(),
+                format!(
+                    "{} moved from {} to {}",
+                    answer.lane, answer.from, answer.to
+                ),
+            )
+        });
+    }
+
+    /// Record the resident's authoritative result for one steering request.
+    pub fn apply_steer(&mut self, admitted: &Admitted<Response<DirectiveAnswer>>) {
+        self.apply_response(admitted, |_runtime, answer| {
+            // Only the disposition is lowercased into its wire word. The key is
+            // a case-sensitive stamp the operator quotes back at the CLI, so
+            // folding its case would print a key that names no directive.
+            let disposition = format!("{:?}", answer.disposition).to_lowercase();
+            (
+                "Direction sent".to_owned(),
+                format!("{} / {disposition}", answer.key),
             )
         });
     }

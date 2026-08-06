@@ -619,11 +619,17 @@ async fn run_surface(
     let capabilities = surface_capabilities(operator, residency.body())?;
     let timer_commits = bus.reader().subscribe();
     let timers = timers::Runtime::start(config.projects.clone())?;
+    // Settled before the listener exists, so a local stage that cannot serve
+    // the whole app stops the resident with its own name rather than turning
+    // into a page the operator has to diagnose from the browser.
+    let app = canvas::AppSource::resolve(&paths.worktree)
+        .map_err(|error| environment_fault("canvas::app-source-invalid", &error.to_string()))?;
     let (server, control) = canvas::axum::Server::bind_streaming(
         binding.listen,
         binding.access,
         epoch,
         capabilities.clone(),
+        app,
         config.speech.clone(),
         bus.reader(),
         config.canvas.rows(),

@@ -170,7 +170,7 @@ impl Fixture {
     }
 
     fn installed_binary(&self) -> PathBuf {
-        self.root.join(".spice/bin/spice")
+        self.root.join(".git/.spice-install/bin/spice")
     }
 
     fn record(&self) -> PathBuf {
@@ -411,7 +411,7 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
             .code,
         Some(0)
     );
-    let entry = fixture.root.join(".spice/hooks/entry.sh");
+    let entry = fixture.root.join(".git/.spice-install/hooks/entry.sh");
     fs::write(&entry, b"operator drift\n").expect("drift installed entry hook");
 
     let refused = fixture.invoke(&["--json", "install", "--unapply"]);
@@ -654,8 +654,8 @@ fn unapply_directory_replacement_at_cleanup_preserves_both_trees() {
             .code,
         Some(0)
     );
-    let destination = fixture.root.join(".spice/bin");
-    let parked = fixture.root.join(".spice/bin.parked");
+    let destination = fixture.root.join(".git/.spice-install/bin");
+    let parked = fixture.root.join(".git/.spice-install/bin.parked");
     let paused = fixture.spawn_paused(
         &["--json", "install", "--unapply"],
         "cleanup",
