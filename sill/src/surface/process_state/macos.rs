@@ -92,8 +92,9 @@ pub(super) fn process_group_members_terminal(pid: u32) -> ProcessState {
         Err(state) => return state,
     };
     let mut members = vec![0 as libc::pid_t; capacity];
-    let Ok(bytes) = libc::c_int::try_from(size_of_val(members.as_slice())) else {
-        return ProcessState::Indeterminate;
+    let bytes = match listing_bytes(size_of_val(members.as_slice())) {
+        Ok(bytes) => bytes,
+        Err(state) => return state,
     };
     // SAFETY: the PID buffer is writable for its complete byte capacity.
     let found = unsafe { libc::proc_listpgrppids(pid, members.as_mut_ptr().cast(), bytes) };
@@ -121,6 +122,14 @@ pub(super) fn listing_capacity(required: libc::c_int) -> Result<usize, ProcessSt
     // the guard is what keeps that assumption from becoming an overflow if it
     // ever stops holding.
     required.checked_add(1).ok_or(ProcessState::Indeterminate)
+}
+
+/// Convert the PID buffer's byte count to the width libproc accepts.
+///
+/// A byte count that does not fit means the listing call cannot be made, so it
+/// leaves the group unreadable rather than answering anything about its state.
+pub(super) fn listing_bytes(bytes: usize) -> Result<libc::c_int, ProcessState> {
+    libc::c_int::try_from(bytes).map_err(|_| ProcessState::Indeterminate)
 }
 
 /// How many PIDs the listing actually wrote, or why the listing cannot be used.

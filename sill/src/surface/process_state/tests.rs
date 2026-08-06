@@ -296,6 +296,23 @@ mod libproc {
     }
 
     #[test]
+    fn a_listing_buffer_wider_than_the_kernel_count_reports_indeterminate() {
+        let ordinary = size_of::<libc::pid_t>() * 614;
+        assert_eq!(
+            macos::listing_bytes(ordinary),
+            Ok(libc::c_int::try_from(ordinary).expect("ordinary byte count fits")),
+            "an ordinary listing buffer could not be passed to libproc"
+        );
+
+        let wider_than_c_int = usize::try_from(libc::c_int::MAX).expect("c_int fits usize") + 1;
+        assert_eq!(
+            macos::listing_bytes(wider_than_c_int),
+            Err(ProcessState::Indeterminate),
+            "a listing buffer wider than the kernel count was accepted"
+        );
+    }
+
+    #[test]
     fn a_listing_that_filled_the_buffer_reports_indeterminate() {
         assert_eq!(macos::listing_length(1, 614), Ok(1));
         assert_eq!(
