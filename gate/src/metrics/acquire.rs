@@ -240,6 +240,15 @@ fn file_shape_metrics(
     declaration: ArmDeclaration,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
+    let baselines = match source.baselines {
+        BaselineCapture::Reached(baselines) => baselines,
+        BaselineCapture::Unreachable(reason) => {
+            return unavailable(
+                declaration,
+                &format!("committed file-shape parents could not be read: {reason}"),
+            );
+        }
+    };
     let policy = source.contract.rule_policy();
     let suffixes = policy.document().file_classes().file_shape();
     let mut metrics = Vec::new();
@@ -256,7 +265,14 @@ fn file_shape_metrics(
             continue;
         }
         let key = MetricKey::path(path).map_err(MetricAcquisitionError::Evidence)?;
-        metrics.extend(file_shape_rows(source, declaration, path, &key, bounds)?);
+        metrics.extend(file_shape_rows(
+            source,
+            declaration,
+            path,
+            &key,
+            baselines,
+            bounds,
+        )?);
     }
     if metrics.is_empty() {
         return declared_rows(
@@ -276,11 +292,17 @@ fn file_shape_metrics(
 /// it, because the two metrics answer for the same bytes: a lines row that
 /// measured beside a bytes row that refused would claim this file was half
 /// observed, and the arm would report a keyset its declaration forbids.
+///
+/// A file a pending merge inherits verbatim from a parent reports both rows the
+/// same way, and for the same reason it takes no bound decision: this run is not
+/// where that shape was authored, so measuring it would hold the merging lane to
+/// a limit and hand it the flex slice for a file it never wrote.
 fn file_shape_rows(
     source: &MetricSource<'_>,
     declaration: ArmDeclaration,
     path: &str,
     key: &MetricKey,
+    baselines: &CommittedTexts,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let bytes = match std::fs::read(source.root().join(path)) {
@@ -295,6 +317,18 @@ fn file_shape_rows(
             );
         }
     };
+    if baselines.merge_inherits(path, &bytes) {
+        return declared_rows(
+            declaration,
+            key,
+            &EvidenceState::NotApplicable {
+                reason: format!(
+                    "{path:?} is byte-identical to a parent of this merge, so its shape was \
+                     authored by the commit that already answered for it"
+                ),
+            },
+        );
+    }
     let shape = match measure_file_shape(path, &bytes) {
         Ok(shape) => shape,
         Err(error) => return declared_rows(declaration, key, &error.into_evidence_state()),
@@ -768,22 +802,36 @@ fn not_applicable_magic() -> Result<Vec<MetricEvidence>, MetricAcquisitionError>
 /// mint skip provenance over it. Of the two, only the class refusal outranks a
 /// measurement.
 ///
-/// A path `HEAD` does not carry is then reported inapplicable rather than
-/// scanned against nothing. A regression is a literal this file did not have
-/// before, so a file that did not exist before has no delta to take: scanning it
-/// against an empty baseline would count every literal it was born with, and the
-/// count would be a property of the file's size rather than of any change to it.
-/// The fold lets a measurement outrank inapplicability, so the paths that do
-/// have a baseline still speak for the arm.
+/// A path no parent or pending merge base carries is then reported inapplicable
+/// rather than scanned against nothing. A regression is a literal this file did
+/// not have before, so a file that did not exist before has no delta to take:
+/// scanning it against an empty baseline would count every literal it was born
+/// with, and the count would be a property of the file's size rather than of any
+/// change to it. The fold lets a measurement outrank inapplicability, so the
+/// paths that do have a baseline still speak for the arm.
+///
+/// The current text is read before the baseline is asked for, because which
+/// parent answers depends on it: a merge is measured against the parent holding
+/// this file verbatim when one does. A file that cannot be read has no current
+/// side either, so it reports that rather than an absence it never established.
 fn magic_state(source: &MetricSource<'_>, path: &str, baselines: &CommittedTexts) -> EvidenceState {
     if let Err(unreadable) = admit_magic_source(path) {
         return unreadable.into_evidence_state();
     }
-    let Some(baseline) = baselines.text(path) else {
+    let current = match std::fs::read_to_string(source.root().join(path)) {
+        Ok(text) => text,
+        Err(error) => {
+            return EvidenceState::Unavailable {
+                reason: format!("selected magic-number source could not be read: {error}"),
+            };
+        }
+    };
+    let Some(baseline) = baselines.baseline(path, current.as_bytes()) else {
         let reason = match baselines.commit() {
-            Some(commit) => {
-                format!("{path:?} is absent from {commit}, so it has no baseline to regress from")
-            }
+            Some(commit) => format!(
+                "{path:?} is absent from every committed baseline rooted at {commit}, so it has \
+                 no baseline to regress from"
+            ),
             None => format!("{path:?} has no baseline: this repository has no commit yet"),
         };
         return EvidenceState::NotApplicable { reason };
@@ -796,14 +844,6 @@ fn magic_state(source: &MetricSource<'_>, path: &str, baselines: &CommittedTexts
         Err(error) => {
             return EvidenceState::Unavailable {
                 reason: format!("magic threshold did not resolve for {path:?}: {error}"),
-            };
-        }
-    };
-    let current = match std::fs::read_to_string(source.root().join(path)) {
-        Ok(text) => text,
-        Err(error) => {
-            return EvidenceState::Unavailable {
-                reason: format!("selected magic-number source could not be read: {error}"),
             };
         }
     };

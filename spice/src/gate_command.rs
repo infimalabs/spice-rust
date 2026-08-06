@@ -58,7 +58,11 @@ pub(crate) fn pre_commit() -> Outcome<BatteryReport> {
                 .encode()
                 .ok()
                 .and_then(|bytes| String::from_utf8(bytes).ok()),
-            remedy: "repair the typed failing results; never launch a predecessor gate".to_owned(),
+            remedy: "repair the typed failing results; never launch a predecessor gate. A \
+                     merge is recorded by plain git commit like any other commit: the gate \
+                     measures each file against the parent that carries it, so what refuses \
+                     here is what this merge itself wrote"
+                .to_owned(),
         }),
         Err(error) => battery_failure(error),
     }

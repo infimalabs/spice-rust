@@ -377,6 +377,7 @@ impl Jurisdiction {
     ///
     /// Returns the first tracked path or derived parent that cannot be named or
     /// inspected.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn walk_tracked(
         root: &Path,
         ignore: &Ignore,
