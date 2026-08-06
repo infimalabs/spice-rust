@@ -625,8 +625,7 @@ async fn run_surface(
     let app = canvas::AppSource::resolve(&paths.worktree)
         .map_err(|error| environment_fault("canvas::app-source-invalid", &error.to_string()))?;
     let (server, control) = canvas::axum::Server::bind_streaming(
-        binding.listen,
-        binding.access,
+        canvas::axum::Binding::new(binding.listen, binding.access),
         epoch,
         capabilities.clone(),
         app,

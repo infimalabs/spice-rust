@@ -324,8 +324,7 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, _control) = Server::bind_streaming(
-        LOOPBACK_EPHEMERAL,
-        Access::local(),
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
         embedded(),
@@ -391,8 +390,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, _control) = Server::bind_streaming(
-        LOOPBACK_EPHEMERAL,
-        Access::local(),
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities.clone(),
         embedded(),
@@ -446,8 +444,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, mut control) = Server::bind_streaming(
-        LOOPBACK_EPHEMERAL,
-        Access::local(),
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
         embedded(),
@@ -555,8 +552,10 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, _control) = Server::bind_with_capacity(
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-        Access::authenticated("correct-horse-battery-staple".to_owned()),
+        Binding::new(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            Access::authenticated("correct-horse-battery-staple".to_owned()),
+        ),
         epoch(),
         capabilities,
         embedded(),
@@ -657,8 +656,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
 async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
     let unavailable: SocketAddr = "192.0.2.1:9".parse().expect("documentation address");
     let error = Server::bind_with_capacity(
-        unavailable,
-        Access::local(),
+        Binding::new(unavailable, Access::local()),
         epoch(),
         Capabilities::default(),
         embedded(),
@@ -938,8 +936,7 @@ async fn live_server_serves_a_local_stage_and_refuses_when_it_goes_away() {
     let (root, stage) = local_worktree();
     let app = crate::AppSource::resolve(&root).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(
-        LOOPBACK_EPHEMERAL,
-        Access::local(),
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         Capabilities::default(),
         app,
@@ -1237,8 +1234,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
-        LOOPBACK_EPHEMERAL,
-        Access::local(),
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
         embedded(),
@@ -1326,8 +1322,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, _control) = Server::bind_with_capacity(
-        LOOPBACK_EPHEMERAL,
-        Access::local(),
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
         embedded(),

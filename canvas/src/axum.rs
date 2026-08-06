@@ -287,6 +287,21 @@ impl fmt::Debug for Access {
     }
 }
 
+/// Listener address and the authentication boundary guarding it.
+#[derive(Clone, Debug)]
+pub struct Binding {
+    requested: SocketAddr,
+    access: Access,
+}
+
+impl Binding {
+    /// Pair a caller-owned listener address with its access policy.
+    #[must_use]
+    pub const fn new(requested: SocketAddr, access: Access) -> Self {
+        Self { requested, access }
+    }
+}
+
 fn query_secret(query: Option<&str>) -> Option<&str> {
     query?
         .strip_prefix("auth=")
@@ -592,8 +607,7 @@ impl Server {
         speech: crate::SpeechConfig,
     ) -> Result<(Self, Control), std::io::Error> {
         Self::bind_with_capacity(
-            LOOPBACK_EPHEMERAL,
-            Access::local(),
+            Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
             epoch,
             capabilities,
             crate::AppSource::Embedded,
@@ -606,12 +620,11 @@ impl Server {
 
     /// Bind the command socket and Bus-backed canvas stream to one generation.
     ///
-    /// `requested` is the address to listen on, which the caller owns: an
+    /// `binding` carries the address and access policy the caller owns: an
     /// operator reaching this surface from another machine needs a routable one
     /// and a port that survives a restart, so neither can be decided here.
     pub async fn bind_streaming(
-        requested: SocketAddr,
-        access: Access,
+        binding: Binding,
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
         app: crate::AppSource,
@@ -620,8 +633,7 @@ impl Server {
         rows: usize,
     ) -> Result<(Self, Control), std::io::Error> {
         Self::bind_with_capacity(
-            requested,
-            access,
+            binding,
             epoch,
             capabilities,
             app,
@@ -633,8 +645,7 @@ impl Server {
     }
 
     async fn bind_with_capacity(
-        requested: SocketAddr,
-        access: Access,
+        binding: Binding,
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
         app: crate::AppSource,
@@ -642,6 +653,7 @@ impl Server {
         stream: Option<crate::stream::Source>,
         capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
+        let Binding { requested, access } = binding;
         if !is_loopback(requested) && !access.is_authenticated() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
