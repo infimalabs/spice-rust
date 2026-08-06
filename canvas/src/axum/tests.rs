@@ -887,6 +887,11 @@ async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
         .expect("response carries headers")
         + 4;
     assert!(admitted.starts_with(b"HTTP/1.1 200 OK\r\n"));
+    assert!(
+        admitted[..split]
+            .windows(b"img-src 'self' data:".len())
+            .any(|window| window == b"img-src 'self' data:")
+    );
     assert_eq!(&admitted[split..], EMBEDDED_APP.bytes());
 
     let script = request(address, &address.to_string(), "/app.module").await;
