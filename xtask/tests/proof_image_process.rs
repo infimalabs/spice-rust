@@ -45,6 +45,16 @@ fn proof_image_build_returns_the_buildx_exit_and_diagnoses_an_unexpected_eof() {
     ] {
         assert!(diagnostic.contains(text), "missing {text:?}: {diagnostic}");
     }
+    let context = fs::canonicalize(&fixture.repository)
+        .expect("canonicalize fixture repository")
+        .join("target/proof-image/context");
+    assert!(
+        diagnostic.trim_end().ends_with(&format!(
+            "Clean up only this lane's disposable build context, {}, and rerun",
+            context.display()
+        )),
+        "unsafe cleanup diagnostic: {diagnostic}"
+    );
     assert_eq!(
         fs::read_to_string(fixture.repository.join("target/proof-image/build.status")).unwrap(),
         "73\n"
