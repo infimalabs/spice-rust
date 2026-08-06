@@ -1,4 +1,4 @@
-//! Repository-local development commands.
+//! Repository-local build, verification, and release commands.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -14,7 +14,7 @@ mod release;
 
 use app::WASM_TARGET;
 
-pub use app::{AppBuildError, local_app};
+pub use app::{AppBuildError, app};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 pub use reference_transaction::ReferenceTransactionError;
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};

@@ -12,7 +12,10 @@
 //! file the second parent brings in as newly written by the merging lane, which
 //! is the one thing a merge demonstrably did not do. Each current file is
 //! therefore measured against the parent that carries it verbatim when one does,
-//! and against the nearest parent that carries the path at all otherwise.
+//! and against the nearest parent that carries the path at all otherwise. If no
+//! parent carries the path, the merge base is the last baseline: both sides can
+//! delete a file that the merge then restores, and treating that as a new path
+//! would erase the delta the shared history still supplies.
 //!
 //! The guarantee is for files a merge left alone, and it stops there. A file the
 //! merging lane edited matches no parent, so it is measured against the nearest
@@ -49,7 +52,7 @@ const BLOB_MODES: [u16; 2] = [0o100644, 0o100755];
 /// reports the input it lacks, and the other three arms are unaffected by it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BaselineCapture {
-    /// The committed texts read from one named commit.
+    /// The selected committed blobs read from the pending commit's ancestry.
     Reached(CommittedTexts),
     /// The committed state could not be read, and why.
     Unreachable(String),
@@ -66,15 +69,25 @@ impl BaselineCapture {
     }
 }
 
-/// Every selected text captured from each parent of the pending commit.
+/// Every selected blob captured from each parent of the pending commit.
 ///
 /// The parents are held in Git's own order: `HEAD` first, then each
 /// `MERGE_HEAD` line. "Nearest" therefore means earliest in this vector, which
-/// is the same order `git log` and `git diff` name a merge's parents in.
+/// is the same order `git log` and `git diff` name a merge's parents in. A
+/// pending merge also retains its one octopus merge base for the path no parent
+/// carries.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CommittedTexts {
     commit: Option<String>,
-    parents: Vec<BTreeMap<String, String>>,
+    parents: Vec<BTreeMap<String, CommittedText>>,
+    merge_base: Option<BTreeMap<String, CommittedText>>,
+}
+
+/// One selected blob retained both losslessly and as the text metrics read it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CommittedText {
+    bytes: Vec<u8>,
+    text: String,
 }
 
 impl CommittedTexts {
@@ -87,24 +100,30 @@ impl CommittedTexts {
     /// newly authored; on an ordinary commit there is one parent, and the
     /// preference resolves to it either way.
     ///
-    /// Otherwise the nearest parent that carries the path is the baseline, and
-    /// `None` means no parent carries it at all. The two answers are kept apart
-    /// deliberately. A path no parent carries is not a path committed empty: the
-    /// first has no baseline for a delta to be taken against, and the second has
-    /// one that happens to hold nothing.
+    /// Otherwise the nearest parent that carries the path is the baseline. If
+    /// no parent carries it, the pending merge's base is consulted exactly once;
+    /// `None` means neither a parent nor that base carries it. The absent answer
+    /// is kept apart deliberately from committed empty text: the first has no
+    /// baseline for a delta to be taken against, and the second has one that
+    /// happens to hold nothing.
     #[must_use]
-    pub fn baseline(&self, path: &str, current: &str) -> Option<&str> {
+    pub fn baseline(&self, path: &str, current: &[u8]) -> Option<&str> {
         let mut nearest = None;
         for texts in &self.parents {
-            let Some(text) = texts.get(path).map(String::as_str) else {
+            let Some(committed) = texts.get(path) else {
                 continue;
             };
-            if text == current {
-                return Some(text);
+            if committed.bytes == current {
+                return Some(&committed.text);
             }
-            nearest = nearest.or(Some(text));
+            nearest = nearest.or(Some(committed.text.as_str()));
         }
-        nearest
+        nearest.or_else(|| {
+            self.merge_base
+                .as_ref()?
+                .get(path)
+                .map(|committed| committed.text.as_str())
+        })
     }
 
     /// The commit these texts were read from, absent on an unborn `HEAD`.
@@ -113,7 +132,7 @@ impl CommittedTexts {
         self.commit.as_deref()
     }
 
-    /// Whether a pending merge left this file exactly as a parent already had it.
+    /// Whether a pending merge left this file byte-for-byte as a parent had it.
     ///
     /// This is an authorship question, not a delta one, and it is asked only of
     /// a merge. An ordinary commit's one parent is the tree it is being written
@@ -123,15 +142,15 @@ impl CommittedTexts {
     /// lane that wrote it: charging it again bills the merging lane for a limit
     /// another lane's commit passed.
     #[must_use]
-    pub fn merge_inherits(&self, path: &str, current: &str) -> bool {
+    pub fn merge_inherits(&self, path: &str, current: &[u8]) -> bool {
         self.parents.len() > 1
             && self
                 .parents
                 .iter()
-                .any(|texts| texts.get(path).is_some_and(|text| text == current))
+                .any(|texts| texts.get(path).is_some_and(|text| text.bytes == current))
     }
 
-    /// Walk each parent's committed tree, retaining every selected path's text.
+    /// Walk each parent and the pending merge base, retaining selected blobs.
     ///
     /// A repository with no commit yet is read as an empty baseline naming no
     /// commit rather than refused. An unborn `HEAD` is a real repository state,
@@ -146,14 +165,28 @@ impl CommittedTexts {
         let Some(commit_id) = head.id().map(gix::Id::detach) else {
             return Ok(Self::default());
         };
+        let merging = merge_heads(&repo)?;
+        let merge_base = if merging.is_empty() {
+            None
+        } else {
+            let base = repo
+                .merge_base_octopus(std::iter::once(commit_id).chain(merging.iter().copied()))
+                .map_err(|source| TreeError::Repository {
+                    path: repo.path().join("MERGE_HEAD"),
+                    evidence: format!("cannot resolve the pending merge base: {source}"),
+                })?
+                .detach();
+            Some(parent_texts(&repo, base, "merge base", suffixes)?)
+        };
         let mut parents = vec![parent_texts(&repo, commit_id, "HEAD", suffixes)?];
-        for (index, merging) in merge_heads(&repo)?.into_iter().enumerate() {
+        for (index, merging) in merging.into_iter().enumerate() {
             let revision = format!("MERGE_HEAD line {}", index + 1);
             parents.push(parent_texts(&repo, merging, &revision, suffixes)?);
         }
         Ok(Self {
             commit: Some(commit_id.to_string()),
             parents,
+            merge_base,
         })
     }
 }
@@ -189,13 +222,13 @@ fn merge_heads(repo: &gix::Repository) -> Result<Vec<gix::ObjectId>, TreeError> 
         .collect()
 }
 
-/// One parent's selected texts, read from the commit that names its tree.
+/// One ancestor's selected blobs, read from the commit that names its tree.
 fn parent_texts(
     repo: &gix::Repository,
     commit_id: gix::ObjectId,
     revision: &str,
     suffixes: &[String],
-) -> Result<BTreeMap<String, String>, TreeError> {
+) -> Result<BTreeMap<String, CommittedText>, TreeError> {
     let mut texts = BTreeMap::new();
     collect(
         repo,
@@ -263,7 +296,7 @@ fn collect(
     tree_id: gix::ObjectId,
     prefix: &str,
     suffixes: &[String],
-    texts: &mut BTreeMap<String, String>,
+    texts: &mut BTreeMap<String, CommittedText>,
 ) -> Result<(), TreeError> {
     let label = if prefix.is_empty() { "." } else { prefix };
     let object = verified_object(repo, tree_id, label)?;
@@ -305,14 +338,18 @@ fn collect(
     Ok(())
 }
 
-/// One committed blob's text.
+/// One committed blob's lossless identity and text projection.
 ///
-/// Bytes that are not UTF-8 are replaced rather than refused, because the
-/// current side of the same comparison is read the same way. A baseline that
-/// refused here would leave a file with one stray byte looking like a file with
-/// no committed state at all, and every literal it already had would read as
-/// newly introduced.
-fn blob_text(repo: &gix::Repository, id: gix::ObjectId, path: &str) -> Result<String, TreeError> {
+/// Bytes that are not UTF-8 are replaced only in the projection the text
+/// metrics consume. Exact bytes remain beside it for parent selection and merge
+/// inheritance; decoding both sides lossily would let different invalid byte
+/// sequences collapse to the same text and exempt a file the merge really
+/// changed.
+fn blob_text(
+    repo: &gix::Repository,
+    id: gix::ObjectId,
+    path: &str,
+) -> Result<CommittedText, TreeError> {
     let object = verified_object(repo, id, path)?;
     if object.kind != gix::objs::Kind::Blob {
         return Err(TreeError::UnexpectedObject {
@@ -322,5 +359,9 @@ fn blob_text(repo: &gix::Repository, id: gix::ObjectId, path: &str) -> Result<St
             actual: object.kind.to_string(),
         });
     }
-    Ok(String::from_utf8_lossy(&object.data).into_owned())
+    let bytes = object.data.to_vec();
+    Ok(CommittedText {
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+        bytes,
+    })
 }

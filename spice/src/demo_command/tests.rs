@@ -14,6 +14,48 @@ use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+fn fixture_app() -> canvas::AppSource {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let root = ROOT.get_or_init(|| {
+        let root = std::env::temp_dir().join(format!("spice-demo-unit-app-{}", std::process::id()));
+        let stage = root.join(canvas::APP_STAGE);
+        let identity = "5555555555555555555555555555555555555555555555555555555555555555";
+        let generation = stage.join(canvas::APP_STAGE_GENERATIONS).join(identity);
+        fs::create_dir_all(&generation).expect("demo fixture app generation");
+        for asset in canvas::APP.assets() {
+            fs::write(
+                generation.join(asset.file()),
+                format!("demo fixture app {}\n", asset.file()),
+            )
+            .expect("demo fixture app asset");
+        }
+        fs::write(
+            stage.join(canvas::APP_STAGE_CURRENT),
+            format!("{identity}\n"),
+        )
+        .expect("demo fixture app pointer");
+        root
+    });
+    canvas::AppSource::resolve(root).expect("demo fixture app resolves")
+}
+
+fn seed_test_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Environment> {
+    require_utf8(executable, "current spice executable")?;
+    let (root, automatic) = prepare_root(root)?;
+    let result = born_repository(&root)
+        .and_then(|()| finish_seed_prepared_root(&root, executable, automatic, &fixture_app()));
+    result.map_err(|failure| preserve_failure(&root, executable, *failure).into())
+}
+
+fn seed_test_prepared_root(
+    root: &Path,
+    executable: &Path,
+    automatic: bool,
+) -> DemoResult<Environment> {
+    born_repository(root)?;
+    finish_seed_prepared_root(root, executable, automatic, &fixture_app())
+}
+
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -43,7 +85,7 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
     let scratch = Scratch::new("seed");
     let root = scratch.child("demo root's");
     let executable = Path::new("/opt/spice bin/spice's");
-    let environment = seed_environment(Some(&root), executable).expect("demo seed succeeds");
+    let environment = seed_test_environment(Some(&root), executable).expect("demo seed succeeds");
 
     assert_eq!(environment.root, fs::canonicalize(&root).unwrap());
     assert_eq!(
@@ -92,7 +134,8 @@ fn seeded_roots_are_born_on_one_commit_wherever_they_are_created() {
     let first = scratch.child("first root");
     let second = scratch.child("a second root under a much longer name");
     for root in [&first, &second] {
-        seed_environment(Some(root), Path::new("/opt/spice")).expect("born demo seed succeeds");
+        seed_test_environment(Some(root), Path::new("/opt/spice"))
+            .expect("born demo seed succeeds");
     }
 
     let born = "refs/heads/main at a53ad58b1356a5f7abea7437975321850e04b217";
@@ -118,7 +161,8 @@ fn reuse_refuses_a_seeded_root_whose_branch_or_commit_moved() {
     let scratch = Scratch::new("moved");
     let root = scratch.child("moved-root");
     let executable = Path::new("/opt/spice");
-    let environment = seed_environment(Some(&root), executable).expect("moved-root seed succeeds");
+    let environment =
+        seed_test_environment(Some(&root), executable).expect("moved-root seed succeeds");
     let head = environment.root.join(".git/HEAD");
     let branch = environment.root.join(".git/refs/heads/main");
     let seeded = fs::read(&branch).unwrap();
@@ -161,7 +205,7 @@ fn new_seed_refuses_nonempty_and_non_directory_roots_without_mutation() {
     fs::write(&file, b"also operator bytes\n").unwrap();
 
     for root in [&nonempty, &file] {
-        let outcome = *seed_environment(Some(root), Path::new("/opt/spice"))
+        let outcome = *seed_test_environment(Some(root), Path::new("/opt/spice"))
             .expect_err("protected root refuses");
         let Outcome::Refusal(refusal) = outcome else {
             panic!("protected root must refuse: {outcome:?}");
@@ -184,7 +228,7 @@ fn non_utf8_executable_refuses_before_the_demo_root_exists() {
     let scratch = Scratch::new("executable-refusal");
     let root = scratch.child("uncreated-root");
     let executable = PathBuf::from(OsString::from_vec(b"/opt/spice-\xff".to_vec()));
-    let outcome = *seed_environment(Some(&root), &executable)
+    let outcome = *seed_test_environment(Some(&root), &executable)
         .expect_err("non-reproducible executable path refuses");
 
     let Outcome::Refusal(refusal) = outcome else {
@@ -198,8 +242,8 @@ fn non_utf8_executable_refuses_before_the_demo_root_exists() {
 fn native_canvas_stream_renders_seeded_lane_task_and_canned_turns() {
     let scratch = Scratch::new("browser");
     let root = scratch.child("browser-root");
-    let environment =
-        seed_environment(Some(&root), Path::new("/opt/spice")).expect("browser demo seed succeeds");
+    let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
+        .expect("browser demo seed succeeds");
     let root_for_down = environment.root.clone();
     let outcome = canvas_environment(environment, false, false, |discovery_path| {
         crate::command_client::open_canvas_with(
@@ -239,8 +283,8 @@ fn native_canvas_stream_renders_seeded_lane_task_and_canned_turns() {
 fn launch_failure_preserves_one_reusable_or_removable_recovery_root() {
     let scratch = Scratch::new("launch-failure");
     let root = scratch.child("failed-root");
-    let environment =
-        seed_environment(Some(&root), Path::new("/opt/spice")).expect("failure demo seed succeeds");
+    let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
+        .expect("failure demo seed succeeds");
     let outcome = canvas_environment(environment, true, false, |discovery_path| {
         crate::command_client::open_canvas_with(
             discovery_path,
@@ -264,7 +308,7 @@ fn interruption_preserves_even_an_automatic_cleanup_root() {
     let scratch = Scratch::new("interruption");
     let root = scratch.child("automatic-root");
     fs::create_dir(&root).unwrap();
-    let environment = seed_prepared_root(&root, Path::new("/opt/spice"), true)
+    let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
         .expect("automatic demo seed succeeds");
     let outcome = canvas_environment_with(environment, true, false, true, |discovery_path| {
         crate::command_client::open_canvas_with(discovery_path, || {}, |_endpoint| Ok(()))
@@ -283,7 +327,7 @@ fn clean_automatic_service_removes_only_its_demo_root() {
     let scratch = Scratch::new("cleanup");
     let root = scratch.child("automatic-root");
     fs::create_dir(&root).unwrap();
-    let environment = seed_prepared_root(&root, Path::new("/opt/spice"), true)
+    let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
         .expect("automatic cleanup seed succeeds");
     let root_for_down = fs::canonicalize(&root).unwrap();
     let outcome = canvas_environment(environment, true, false, |discovery_path| {

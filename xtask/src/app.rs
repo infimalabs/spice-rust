@@ -20,7 +20,7 @@ const GENERATED_REFERENCES: [(&str, usize); 3] =
     [("/app.module", 2), ("/app_bg.wasm", 2), ("/style.css", 1)];
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 
-/// Run `cargo xtask local-app` to compile the browser app into the one stage
+/// Run `cargo xtask app` to compile the browser app into the one stage
 /// this worktree's resident serves.
 ///
 /// The stage is ignored by Git and rebuilt by each lane. Compilation and
@@ -32,24 +32,21 @@ static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 ///
 /// Returns an unreadable workspace root, a stage that cannot be removed, a
 /// missing Cargo home, Trunk execution failure, or a refused generated stage.
-pub fn local_app(
-    environment: &ReleaseEnvironment,
-    output: &mut impl Write,
-) -> Result<(), AppBuildError> {
+pub fn app(environment: &ReleaseEnvironment, output: &mut impl Write) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
-    local_app_at(&root, output, |stage, output| {
+    app_at(&root, output, |stage, output| {
         run_trunk(&root, environment, stage, output)
     })
 }
 
-fn local_app_at<W: Write>(
+fn app_at<W: Write>(
     root: &Path,
     output: &mut W,
     build: impl FnOnce(&Path, &mut W) -> Result<(), AppBuildError>,
 ) -> Result<(), AppBuildError> {
-    let stage = root.join(spice::canvas::LOCAL_STAGE);
+    let stage = root.join(spice::canvas::APP_STAGE);
     let temporary = root.join("dist").join(format!(
-        ".stage-local-build-{}-{}",
+        ".stage-app-build-{}-{}",
         std::process::id(),
         NEXT_BUILD.fetch_add(1, Ordering::Relaxed)
     ));
@@ -86,13 +83,13 @@ fn publish_generation(
     temporary: &Path,
     identity: &Digest,
 ) -> Result<(), AppBuildError> {
-    if stage.exists() && !stage.join(spice::canvas::LOCAL_STAGE_CURRENT).is_file() {
+    if stage.exists() && !stage.join(spice::canvas::APP_STAGE_CURRENT).is_file() {
         fs::remove_dir_all(stage).map_err(|source| AppBuildError::Io {
             path: stage.to_path_buf(),
             source,
         })?;
     }
-    let generations = stage.join(spice::canvas::LOCAL_STAGE_GENERATIONS);
+    let generations = stage.join(spice::canvas::APP_STAGE_GENERATIONS);
     fs::create_dir_all(&generations).map_err(|source| AppBuildError::Io {
         path: generations.clone(),
         source,
@@ -115,7 +112,7 @@ fn publish_generation(
         })?;
     }
 
-    let pointer = stage.join(spice::canvas::LOCAL_STAGE_CURRENT);
+    let pointer = stage.join(spice::canvas::APP_STAGE_CURRENT);
     let destination = atomic::Destination::new(&pointer).map_err(AppBuildError::Atomic)?;
     let mut staged = destination.stage().map_err(AppBuildError::Atomic)?;
     writeln!(staged, "{identity}").map_err(|source| AppBuildError::Io {
@@ -467,7 +464,7 @@ mod tests {
     }
 
     fn publish_fixture(root: &Path, label: &str) {
-        local_app_at(root, &mut Vec::new(), |stage, _| {
+        app_at(root, &mut Vec::new(), |stage, _| {
             write_raw_generation(stage, label, true);
             Ok(())
         })
@@ -574,7 +571,7 @@ mod tests {
         std::thread::scope(|scope| {
             let build_root = root.clone();
             let build = scope.spawn(move || {
-                local_app_at(&build_root, &mut Vec::new(), |stage, _| {
+                app_at(&build_root, &mut Vec::new(), |stage, _| {
                     started_tx.send(()).expect("announce build barrier");
                     release_rx.recv().expect("release build barrier");
                     write_raw_generation(stage, "second", true);
@@ -643,7 +640,7 @@ mod tests {
             .identity()
             .clone();
 
-        let error = local_app_at(&root, &mut Vec::new(), |stage, _| {
+        let error = app_at(&root, &mut Vec::new(), |stage, _| {
             write_raw_generation(stage, "broken", false);
             Ok(())
         })
@@ -658,13 +655,13 @@ mod tests {
         );
 
         let fresh = fixture("lane-app-first-failure");
-        local_app_at(&fresh, &mut Vec::new(), |stage, _| {
+        app_at(&fresh, &mut Vec::new(), |stage, _| {
             write_raw_generation(stage, "broken", false);
             Ok(())
         })
         .expect_err("first invalid finalization refuses");
         assert!(
-            !fresh.join(spice::canvas::LOCAL_STAGE).exists(),
+            !fresh.join(spice::canvas::APP_STAGE).exists(),
             "a failed first build published a visible stage"
         );
         fs::remove_dir_all(root).expect("remove fixture");
@@ -682,7 +679,7 @@ mod tests {
             .identity()
             .clone();
 
-        let error = local_app_at(&root, &mut Vec::new(), |stage, _| fail_partial_build(stage))
+        let error = app_at(&root, &mut Vec::new(), |stage, _| fail_partial_build(stage))
             .expect_err("failed rebuild refuses");
         assert!(matches!(error, AppBuildError::Exit(Some(42))));
         assert_eq!(
@@ -694,13 +691,13 @@ mod tests {
         );
 
         let fresh = fixture("lane-app-first-build-failure");
-        let error = local_app_at(&fresh, &mut Vec::new(), |stage, _| {
+        let error = app_at(&fresh, &mut Vec::new(), |stage, _| {
             fail_partial_build(stage)
         })
         .expect_err("failed first build refuses");
         assert!(matches!(error, AppBuildError::Exit(Some(42))));
         assert!(
-            !fresh.join(spice::canvas::LOCAL_STAGE).exists(),
+            !fresh.join(spice::canvas::APP_STAGE).exists(),
             "a failed first build published a visible stage"
         );
         assert!(

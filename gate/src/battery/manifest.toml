@@ -79,6 +79,12 @@ family = "toolchain"
 declaration = "gate::toolchain::taste::toolchain-v1"
 
 [[arms]]
+disposition = "compiled"
+gate_id = "rust-typecheck"
+family = "toolchain"
+declaration = "gate::toolchain::rust-typecheck::toolchain-v1"
+
+[[arms]]
 predecessor = "serve-web-typecheck"
 disposition = "compiled"
 gate_id = "canvas-web-typecheck"

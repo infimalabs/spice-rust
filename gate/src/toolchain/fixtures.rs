@@ -36,7 +36,10 @@ fn unprobed_like(evidence: &ToolEvidence, resolved: &str) -> ToolEvidence {
 fn fixture_finding(gate: GateId, suffix: &str) -> ArmFinding {
     if matches!(
         gate,
-        GateId::Formatters | GateId::CanvasWebTypecheck | GateId::PythonTypecheck
+        GateId::Formatters
+            | GateId::RustTypecheck
+            | GateId::CanvasWebTypecheck
+            | GateId::PythonTypecheck
     ) {
         fixture_external_finding(gate, suffix)
     } else {
@@ -46,7 +49,7 @@ fn fixture_finding(gate: GateId, suffix: &str) -> ArmFinding {
 
 /// One current-shaped finding for a gate an external tool analyzes.
 ///
-/// The column is chosen per gate because these three do not agree on having
+/// The column is chosen per gate because these arms do not agree on having
 /// one, and one shared literal hid that. Each arm below carries the reason its
 /// own producer gives.
 fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
@@ -59,6 +62,17 @@ fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
             None,
             FindingDetail::Formatting {
                 formatter: "rustfmt".to_owned(),
+            },
+        ),
+        // The native analysis shares the canvas parse, so it produces the same
+        // located shape; it differs only in the detail it publishes and in
+        // reaching sources outside `app`, which the path below carries.
+        GateId::RustTypecheck => (
+            format!("xtask/src/{suffix}.rs"),
+            Some(3),
+            FindingDetail::RustTypeOutput {
+                code: "E0425".to_owned(),
+                message: "cannot find function in this scope".to_owned(),
             },
         ),
         // The canvas analysis parses `path:line:column` out of the location its
@@ -304,7 +318,7 @@ fn fixture_report_result_with(
 
 #[test]
 fn declarations_are_closed_ordered_explicit_and_never_python_wrappers() {
-    let expected = &GateId::ALL[8..17];
+    let expected = &GateId::ALL[8..18];
     assert_eq!(
         TOOLCHAIN_ARMS.map(|arm| arm.id).as_slice(),
         expected,

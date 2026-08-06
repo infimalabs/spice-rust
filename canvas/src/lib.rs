@@ -1,4 +1,4 @@
-//! Loopback operator surface, derived reads, and causal thread walks.
+//! Loopback operator surface, atomic app generations, derived reads, and causal thread walks.
 
 #![forbid(unsafe_code)]
 
@@ -14,8 +14,8 @@ pub mod thread;
 pub mod view;
 
 pub use asset::{
-    APP, APP_GENERATION_ROUTE, App, AppAsset, AppGeneration, AppSource, AppSourceError, Discovery,
-    LOCAL_STAGE, LOCAL_STAGE_CURRENT, LOCAL_STAGE_GENERATIONS, PublishError, ServedAsset,
+    APP, APP_GENERATION_ROUTE, APP_STAGE, APP_STAGE_CURRENT, APP_STAGE_GENERATIONS, App, AppAsset,
+    AppGeneration, AppSource, AppSourceError, Discovery, PublishError, ServedAsset,
 };
 pub use config::{Config, ConfigError};
 pub use speech::{SpeechBackend, SpeechConfig, SpeechConfigError};

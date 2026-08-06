@@ -5,6 +5,7 @@
 //! Existing long-line text is consumed as a per-file multiset; every remaining
 //! current occurrence is an introduced line and retains its current locus.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
@@ -31,6 +32,7 @@ pub struct LongLineFinding {
 }
 
 impl LongLineFinding {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn new(
         path: impl Into<String>,
         line: u64,
@@ -96,7 +98,7 @@ pub(crate) fn scan_jurisdiction(
             })?;
         let source = String::from_utf8_lossy(&bytes).into_owned();
         inputs.push(LongLineInput {
-            baseline: baselines.baseline(&path, &source).map(str::to_owned),
+            baseline: baselines.baseline(&path, &bytes).map(str::to_owned),
             path,
             source,
         });
@@ -104,12 +106,14 @@ pub(crate) fn scan_jurisdiction(
     Ok(scan(inputs))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct LongLineInput {
     path: String,
     source: String,
     baseline: Option<String>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn scan(mut inputs: Vec<LongLineInput>) -> Vec<LongLineFinding> {
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
     let mut findings = Vec::new();
@@ -147,6 +151,7 @@ pub(crate) fn validate(findings: &[LongLineFinding]) -> Result<(), &'static str>
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn scan_file(path: &str, current: &str, baseline: &str, findings: &mut Vec<LongLineFinding>) {
     let mut inherited = BTreeMap::<&str, u64>::new();
     let mut baseline_debt = 0_u64;

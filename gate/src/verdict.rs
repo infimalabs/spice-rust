@@ -9,6 +9,7 @@
 use std::fmt;
 use std::fmt::Write as _;
 use std::io::Write as _;
+use std::marker::PhantomData;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -16,13 +17,18 @@ use wire::{Digest, Domain};
 
 use crate::input::{Contract, ToolIdentity};
 use crate::jurisdiction::{Jurisdiction, WalkError};
-use crate::long_lines::{LongLineFinding, scan_jurisdiction, validate as validate_long_lines};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::long_lines::scan_jurisdiction;
+use crate::long_lines::{LongLineFinding, validate as validate_long_lines};
 use crate::measure::{
-    Bounds, MeasureError, Measurement, Policy, measurement_digest, render_measurements,
+    Bounds, JurisdictionMode, MeasureError, Measurement, Policy, measurement_digest,
+    render_measurements,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use crate::metrics::CommittedTexts;
 use crate::ratchet::{Finding, Ratchet};
-use crate::tree::TreeError;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::tree::{TreeError, tracked_paths};
 
 /// The one receipt schema this build emits and admits.
 pub const GATE_RECEIPT_VERSION: u64 = 2;
@@ -443,6 +449,27 @@ impl SnapshotIntegrity {
     }
 }
 
+#[derive(Clone, Copy)]
+enum LongLineBaselines<'a> {
+    None(PhantomData<&'a ()>),
+    #[cfg(not(target_arch = "wasm32"))]
+    Captured(&'a CommittedTexts),
+}
+
+impl LongLineBaselines<'_> {
+    const fn none() -> Self {
+        Self::None(PhantomData)
+    }
+
+    const fn captured(self) -> bool {
+        match self {
+            Self::None(_) => false,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Captured(_) => true,
+        }
+    }
+}
+
 impl Run {
     /// Walk a foreign repository, measure it, and judge it against a ratchet.
     ///
@@ -467,7 +494,14 @@ impl Run {
         bounds: &Bounds,
         snapshot_integrity: SnapshotIntegrity,
     ) -> Result<Self, RunError> {
-        Self::adjudicate_with_inputs(policy, root, ratchet, bounds, snapshot_integrity, None)
+        Self::adjudicate_with_inputs(
+            policy,
+            root,
+            ratchet,
+            bounds,
+            snapshot_integrity,
+            LongLineBaselines::none(),
+        )
     }
 
     fn adjudicate_with_inputs(
@@ -476,13 +510,14 @@ impl Run {
         ratchet: &Ratchet,
         bounds: &Bounds,
         snapshot_integrity: SnapshotIntegrity,
-        long_line_baselines: Option<&CommittedTexts>,
+        long_line_baselines: LongLineBaselines<'_>,
     ) -> Result<Self, RunError> {
         if snapshot_integrity == SnapshotIntegrity::Unsupported {
             return Err(RunError::SnapshotIntegrityUnsupported);
         }
 
-        let jurisdiction = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
+        let selection = CapturedJurisdiction::capture(policy.jurisdiction(), root)?;
+        let jurisdiction = selection.walk(root, policy)?;
         let inventory = jurisdiction.inventory_digest();
         let snapshot = jurisdiction.snapshot().map_err(RunError::Walk)?;
         let tree = snapshot.tree();
@@ -501,33 +536,44 @@ impl Run {
             measurements.push(measurement.map_err(RunError::Measure)?);
         }
 
-        let (head, long_lines) = if let Some(baselines) = long_line_baselines {
-            let findings =
-                scan_jurisdiction(snapshot.jurisdiction(), baselines).map_err(|error| {
-                    RunError::LongLineRead {
-                        path: error.path,
-                        source: error.source,
-                    }
-                })?;
-            if let Some(changed) = snapshot.verify().map_err(RunError::Walk)? {
-                return Err(RunError::SnapshotChanged {
-                    metric: "rust.long-lines".to_owned(),
-                    measured: None,
-                    path: changed.path,
-                    tree: changed.tree,
-                    observed_tree: changed.observed_tree,
-                });
+        let (head, long_lines) = match long_line_baselines {
+            #[cfg(not(target_arch = "wasm32"))]
+            LongLineBaselines::Captured(baselines) => {
+                let findings =
+                    scan_jurisdiction(snapshot.jurisdiction(), baselines).map_err(|error| {
+                        RunError::LongLineRead {
+                            path: error.path,
+                            source: error.source,
+                        }
+                    })?;
+                if let Some(changed) = snapshot.verify().map_err(RunError::Walk)? {
+                    return Err(RunError::SnapshotChanged {
+                        metric: "rust.long-lines".to_owned(),
+                        measured: None,
+                        path: changed.path,
+                        tree: changed.tree,
+                        observed_tree: changed.observed_tree,
+                    });
+                }
+                (baselines.commit().unwrap_or("unborn").to_owned(), findings)
             }
-            (baselines.commit().unwrap_or("unborn").to_owned(), findings)
-        } else {
-            ("not-captured".to_owned(), Vec::new())
+            LongLineBaselines::None(_) => ("not-captured".to_owned(), Vec::new()),
         };
 
-        let observed = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
+        let observed = selection.walk(root, policy)?;
         let observed_inventory = observed.inventory_digest();
-        let observed_tree = observed.tree_digest().map_err(RunError::Walk)?;
-        if inventory != observed_inventory || tree != observed_tree {
+        let observed_snapshot = observed.snapshot().map_err(RunError::Walk)?;
+        let observed_tree = observed_snapshot.tree();
+        let mut paths = snapshot
+            .jurisdiction()
+            .changed_paths(observed_snapshot.jurisdiction())
+            .map_err(RunError::Walk)?;
+        paths.extend(selection.changed_paths(root)?);
+        paths.sort();
+        paths.dedup();
+        if inventory != observed_inventory || tree != observed_tree || !paths.is_empty() {
             return Err(RunError::JurisdictionChanged {
+                paths,
                 inventory,
                 observed_inventory,
                 tree,
@@ -542,7 +588,7 @@ impl Run {
             } else {
                 Standing::Refused
             };
-        let measurement = if long_line_baselines.is_some() {
+        let measurement = if long_line_baselines.captured() {
             run_evidence_digest(&measurements, &head, &long_lines)
         } else {
             measurement_digest(&measurements)
@@ -631,6 +677,64 @@ impl Run {
     }
 }
 
+enum CapturedJurisdiction {
+    WholeWalk,
+    #[cfg(not(target_arch = "wasm32"))]
+    TrackedIndex(Vec<String>),
+}
+
+impl CapturedJurisdiction {
+    fn capture(mode: JurisdictionMode, root: &Path) -> Result<Self, RunError> {
+        #[cfg(target_arch = "wasm32")]
+        let _ = root;
+        match mode {
+            JurisdictionMode::WholeWalk => Ok(Self::WholeWalk),
+            #[cfg(not(target_arch = "wasm32"))]
+            JurisdictionMode::TrackedIndex => tracked_paths(root)
+                .map(Self::TrackedIndex)
+                .map_err(RunError::TrackedIndex),
+            #[cfg(target_arch = "wasm32")]
+            JurisdictionMode::TrackedIndex => Err(RunError::TrackedIndexUnsupported),
+        }
+    }
+
+    fn walk(&self, root: &Path, policy: &Policy) -> Result<Jurisdiction, RunError> {
+        match self {
+            Self::WholeWalk => Jurisdiction::walk(root, policy.ignore()),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::TrackedIndex(paths) => Jurisdiction::walk_tracked(root, policy.ignore(), paths),
+        }
+        .map_err(RunError::Walk)
+    }
+
+    fn changed_paths(&self, root: &Path) -> Result<Vec<String>, RunError> {
+        #[cfg(target_arch = "wasm32")]
+        let _ = root;
+        match self {
+            Self::WholeWalk => Ok(Vec::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::TrackedIndex(captured) => {
+                let observed = tracked_paths(root).map_err(RunError::TrackedIndex)?;
+                Ok(changed_tracked_paths(captured, &observed))
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn changed_tracked_paths(captured: &[String], observed: &[String]) -> Vec<String> {
+    captured
+        .iter()
+        .filter(|path| observed.binary_search(path).is_err())
+        .chain(
+            observed
+                .iter()
+                .filter(|path| captured.binary_search(path).is_err()),
+        )
+        .cloned()
+        .collect()
+}
+
 impl Contract {
     /// Execute this current contract and bind its complete identity to the
     /// completed run in one receipt.
@@ -640,16 +744,21 @@ impl Contract {
     /// Returns the run failure. A partial run never reaches receipt
     /// construction.
     pub fn adjudicate(&self, root: &Path) -> Result<CurrentRun, RunError> {
-        let baselines =
-            CommittedTexts::read(root, &[".rs".to_owned()]).map_err(RunError::CommittedBaseline)?;
-        let run = Run::adjudicate_with_inputs(
-            self.policy(),
-            root,
-            self.ratchet(),
-            self.bounds(),
-            SnapshotIntegrity::native(),
-            Some(&baselines),
-        )?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let run = {
+            let baselines = CommittedTexts::read(root, &[".rs".to_owned()])
+                .map_err(RunError::CommittedBaseline)?;
+            Run::adjudicate_with_inputs(
+                self.policy(),
+                root,
+                self.ratchet(),
+                self.bounds(),
+                SnapshotIntegrity::native(),
+                LongLineBaselines::Captured(&baselines),
+            )?
+        };
+        #[cfg(target_arch = "wasm32")]
+        let run = Run::adjudicate(self.policy(), root, self.ratchet(), self.bounds())?;
         let receipt = Verdict::current(self, &run);
         Ok(CurrentRun { run, receipt })
     }
@@ -697,8 +806,16 @@ pub enum RunError {
     /// A metric could not be measured.
     Measure(MeasureError),
     /// The committed `HEAD` source baseline could not be captured.
+    #[cfg(not(target_arch = "wasm32"))]
     CommittedBaseline(TreeError),
+    /// The current Git index path set could not be captured.
+    #[cfg(not(target_arch = "wasm32"))]
+    TrackedIndex(TreeError),
+    /// This target cannot capture the current Git index path set.
+    #[cfg(target_arch = "wasm32")]
+    TrackedIndexUnsupported,
     /// One current Rust source selected for attribution could not be read.
+    #[cfg(not(target_arch = "wasm32"))]
     LongLineRead {
         /// Repository-relative selected source path.
         path: String,
@@ -707,6 +824,8 @@ pub enum RunError {
     },
     /// The inventory or admitted contents moved during measurement.
     JurisdictionChanged {
+        /// Sorted repository-relative paths whose inventory or bytes moved.
+        paths: Vec<String>,
         /// Inventory established before measurement.
         inventory: Digest,
         /// Inventory observed after measurement.
@@ -740,24 +859,36 @@ impl fmt::Display for RunError {
             ),
             Self::Walk(source) => write!(formatter, "{source}"),
             Self::Measure(source) => write!(formatter, "{source}"),
+            #[cfg(not(target_arch = "wasm32"))]
             Self::CommittedBaseline(source) => {
                 write!(
                     formatter,
                     "capture committed HEAD for rust.long-lines: {source}"
                 )
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::TrackedIndex(source) => {
+                write!(formatter, "capture tracked-index jurisdiction: {source}")
+            }
+            #[cfg(target_arch = "wasm32")]
+            Self::TrackedIndexUnsupported => {
+                formatter.write_str("tracked-index jurisdiction is unsupported on this target")
+            }
+            #[cfg(not(target_arch = "wasm32"))]
             Self::LongLineRead { path, source } => {
                 write!(formatter, "read rust.long-lines source {path}: {source}")
             }
             Self::JurisdictionChanged {
+                paths,
                 inventory,
                 observed_inventory,
                 tree,
                 observed_tree,
             } => write!(
                 formatter,
-                "jurisdiction changed during measurement: inventory {inventory} became \
-                 {observed_inventory}; tree {tree} became {observed_tree}"
+                "jurisdiction changed during measurement at {}: inventory {inventory} became \
+                 {observed_inventory}; tree {tree} became {observed_tree}",
+                paths.join(", ")
             ),
             Self::SnapshotChanged {
                 metric,
@@ -779,8 +910,14 @@ impl std::error::Error for RunError {
         match self {
             Self::Walk(source) => Some(source),
             Self::Measure(source) => Some(source),
+            #[cfg(not(target_arch = "wasm32"))]
             Self::CommittedBaseline(source) => Some(source),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::TrackedIndex(source) => Some(source),
+            #[cfg(not(target_arch = "wasm32"))]
             Self::LongLineRead { source, .. } => Some(source),
+            #[cfg(target_arch = "wasm32")]
+            Self::TrackedIndexUnsupported => None,
             Self::SnapshotIntegrityUnsupported
             | Self::JurisdictionChanged { .. }
             | Self::SnapshotChanged { .. } => None,

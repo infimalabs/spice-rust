@@ -9,7 +9,7 @@ use sill::Deadlines;
 
 const USAGE_EXIT: u8 = 2;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <verify|local-app|stage-target TARGET|",
+    "usage: cargo xtask <verify|app|stage-target TARGET|",
     "commit-msg MESSAGE_FILE|reference-transaction STATE>"
 );
 
@@ -18,12 +18,13 @@ fn main() -> ExitCode {
     let command = arguments.next();
 
     let mut output = io::stdout().lock();
+    // Dispatch only current spellings; removed command names have no alias arm.
     let result: Result<(), Box<dyn std::error::Error>> = match command.as_deref() {
         Some(value) if value == OsStr::new("verify") && arguments.len() == 0 => {
             xtask::verify(&mut output).map_err(Into::into)
         }
-        Some(value) if value == OsStr::new("local-app") && arguments.len() == 0 => {
-            xtask::local_app(&release_environment(), &mut output).map_err(Into::into)
+        Some(value) if value == OsStr::new("app") && arguments.len() == 0 => {
+            xtask::app(&release_environment(), &mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("stage-target") && arguments.len() == 1 => {
             let target = arguments.next().expect("one release target was admitted");
