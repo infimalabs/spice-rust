@@ -14,6 +14,9 @@ use spice::placeholder::PlaceholderReason;
 use tape::Tape;
 use wire::{Outcome, ReplyPosition, Version};
 
+#[path = "support/staged_app.rs"]
+mod staged_app;
+
 /// The exit a refused request carries, in either form.
 const REFUSAL_EXIT: i32 = 2;
 /// The exit a landed command's typed environment fault carries.
@@ -325,7 +328,10 @@ fn version_reports_the_running_artifacts_and_finalized_schema_in_both_forms() {
     assert_eq!(text_body.journal, journal::SCHEMA_VERSION);
     assert_eq!(
         text_body.app,
-        wire::Digest::compute(wire::Domain::DistArtifact, b"version test canvas-app.html")
+        canvas::AppSource::resolve(repository.path())
+            .expect("fixture app source resolves")
+            .digest()
+            .expect("fixture app shell reads")
     );
     assert_eq!(text.out.iter().filter(|byte| **byte == b'\n').count(), 1);
     assert_eq!(json.out.iter().filter(|byte| **byte == b'\n').count(), 1);
@@ -631,15 +637,7 @@ impl RepositoryScratch {
                 Ok(()) => {
                     fs::create_dir_all(path.join(".git/.spice/data"))
                         .expect("create repository-common Spice state");
-                    let stage = path.join(canvas::DEV_STAGE);
-                    fs::create_dir_all(&stage).expect("create version app stage");
-                    for asset in canvas::APP.assets() {
-                        fs::write(
-                            stage.join(asset.file()),
-                            format!("version test {}", asset.file()),
-                        )
-                        .expect("write version app asset");
-                    }
+                    staged_app::seed(&path);
                     return Self { path };
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,

@@ -19,6 +19,9 @@ use wire::{
     ReplyPosition, TaskHead, WorkflowHead,
 };
 
+#[path = "support/staged_app.rs"]
+mod staged_app;
+
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
 /// The longest a client command may take, and the longest a fixture socket
@@ -84,15 +87,7 @@ impl Fixture {
     }
 
     fn install_app(&self) {
-        let stage = self.root.join(canvas::DEV_STAGE);
-        fs::create_dir_all(&stage).expect("fixture app stage");
-        for asset in canvas::APP.assets() {
-            fs::write(
-                stage.join(asset.file()),
-                format!("resident test app {}", asset.file()),
-            )
-            .expect("fixture app asset");
-        }
+        staged_app::seed(&self.root);
     }
     fn journal(&self) -> PathBuf {
         self.runtime.join("data/spicejournal.sqlite3")
