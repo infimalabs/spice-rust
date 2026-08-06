@@ -22,6 +22,7 @@ use wire::{
 use crate::cli::Contract;
 
 include!("board_command/client.rs");
+include!("board_command/client_document.rs");
 include!("board_command/mutation.rs");
 include!("board_command/progress.rs");
 include!("board_command/read_guard.rs");
