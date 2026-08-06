@@ -357,7 +357,7 @@ export function monitorPage(page) {
 /// none failed. Two seconds is roughly a hundred times the slowest observation,
 /// so a timeout at this bound is a defect rather than a busy machine, and the
 /// earlier ten seconds bounded nothing that was ever slow.
-const TRANSITION_MS = 2_000;
+export const TRANSITION_MS = 2_000;
 
 export async function chooseCanvasView(page, name) {
   const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
@@ -372,9 +372,14 @@ export async function chooseCanvasView(page, name) {
   // Returning here would return on dispatch, which is what made every later
   // wait ambiguous: a selector wait that follows an unapplied switch is deaf
   // rather than slow, and both spell the same bare TimeoutError. The two modes
-  // confirm differently because the mosaic replaces the whole command bar --
-  // `chrome.rs` returns `render_mosaic_command_bar` when `mosaic` is set, so
-  // the Agents pill it was chosen from no longer exists to carry the marker.
+  // confirm differently, but not because the marker stops being rendered: the
+  // mosaic bar at `chrome.rs:141` renders `render_canvas_menu`, which carries
+  // its own Agents pill at `chrome.rs:159` whose selected argument is the
+  // mosaic state, so `aria-current` really is set on it. That pill is never
+  // *visible*, because it sits inside the `<details class="canvas-menu">` this
+  // function has just closed and `waitFor` defaults to the visible state.
+  // Confirming on the workspace class instead asks for the state directly
+  // rather than for a marker whose visibility is incidental to it.
   const applied =
     name === "Agents"
       ? page.locator(".mosaic-workspace")
@@ -684,6 +689,25 @@ export async function assertResidentRestart(fixture, page, previous) {
   return resident;
 }
 
+/// Wait for the canvas to report offline, on the one bound that was measured.
+///
+/// Three call sites share this: the resident stopping, a stale generation being
+/// refused, and the fixture closing the socket from inside the page. All three
+/// are the same class of transition -- the page has already been handed the
+/// input by the time the wait arms -- so all three take `TRANSITION_MS` rather
+/// than a bound chosen per site to outlast whatever last went wrong there.
+/// Every one of them reports through the instrument, because a bare
+/// `TimeoutError` on `.status.offline` cannot say whether the page never
+/// processed the close or the status was never on screen to carry the class.
+export async function assertOfflineObserved(page, cause, context = {}) {
+  await observedWait(
+    page,
+    `canvas reports offline after ${cause}`,
+    () => page.waitForSelector(".status.offline", { timeout: TRANSITION_MS }),
+    context,
+  );
+}
+
 /// The canvas must notice the resident is gone.
 ///
 /// The status flips Offline and a fault lands in the event stream. Both waits
@@ -703,12 +727,7 @@ export async function assertResidentLossObserved(page, resident) {
     () => page.waitForSelector(".status", { timeout: TRANSITION_MS }),
     { resident },
   );
-  await observedWait(
-    page,
-    "canvas reports offline after the resident stops",
-    () => page.waitForSelector(".status.offline", { timeout: TRANSITION_MS }),
-    { resident },
-  );
+  await assertOfflineObserved(page, "the resident stops", { resident });
   await observedWait(
     page,
     "a fault event is recorded after the resident stops",

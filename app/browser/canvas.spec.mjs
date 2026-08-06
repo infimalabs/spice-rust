@@ -9,6 +9,7 @@ import { chromium } from "playwright";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
   assertEndpointProbeStates,
+  assertOfflineObserved,
   assertLineageLifeIsolation,
   assertResidentLossObserved,
   assertResidentRestart,
@@ -1288,7 +1289,7 @@ async function assertStaleGeneration(browser, endpoint, currentEpoch) {
   });
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
   await chooseCanvasView(page, "Chronology");
-  await page.waitForSelector(".status.offline", { timeout: 10_000 });
+  await assertOfflineObserved(page, "refusing a stale generation");
   const fault = page.locator(".event.fault");
   await fault.waitFor();
   assert.match(await fault.innerText(), /Canvas connection reset/);
@@ -1313,7 +1314,7 @@ async function assertSameGenerationResume(
     if (!socket) throw new Error("canvas WebSocket was not captured");
     socket.close(4000, "fixture reconnect");
   });
-  await page.waitForSelector(".status.offline", { timeout: 10_000 });
+  await assertOfflineObserved(page, "the fixture closes its socket");
   assert.match(await page.locator(".status-copy").innerText(), /Reconnecting/);
   await chooseCanvasView(page, "Chronology");
   await page.locator(".event.fault").waitFor();
