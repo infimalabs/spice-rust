@@ -166,6 +166,46 @@ fn steering_a_blank_message_is_refused_by_name() {
     }
 }
 
+#[test]
+fn a_task_observation_returns_the_typed_handle_and_trimmed_text() {
+    let note = compose::note("  SPICE-aBcD  ", "  one observation  ")
+        .expect("a complete task observation composes");
+    assert_eq!(note.task.as_str(), "SPICE-aBcD");
+    assert_eq!(note.text, "one observation");
+}
+
+#[test]
+fn an_unparseable_task_handle_is_refused_with_a_visible_sentence() {
+    for written in ["not a handle", "spice-aBcD", "SPICE_123", "SPICE-"] {
+        let refusal =
+            compose::note(written, "observation").expect_err("an unparseable task handle refuses");
+        assert_eq!(
+            refusal,
+            Refusal::Task {
+                written: written.to_owned(),
+            }
+        );
+        let sentence = refusal.to_string();
+        assert!(sentence.contains("Task must be"), "{sentence}");
+        assert!(sentence.contains(&format!("{written:?}")), "{sentence}");
+    }
+}
+
+#[test]
+fn note_fields_refuse_in_form_order() {
+    let task = compose::note(" ", " ").expect_err("a blank form refuses its task first");
+    assert!(task.to_string().starts_with("Task is required"));
+
+    let observation = compose::note("SPICE-aBcD", " ")
+        .expect_err("a blank observation refuses after a valid task");
+    assert!(
+        observation
+            .to_string()
+            .starts_with("Observation is required"),
+        "{observation}"
+    );
+}
+
 /// A notice shows a refusal and shows nothing otherwise.
 ///
 /// The view asks `is_some` before rendering anything, so a notice that carried
