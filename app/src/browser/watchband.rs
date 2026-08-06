@@ -26,6 +26,7 @@ pub(super) use state::ComposerDrafts;
 
 const MAX_ATTACHMENTS: usize = 8;
 const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
+const RENEWAL_REQUEST: &str = "Renew your current task lease now.";
 
 /// The four one-click views of one live team.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -490,6 +491,25 @@ fn render_agent_composer(
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let occupant = member.occupant;
     let send_enabled = can_send && occupant.is_some();
+    let renew_enabled = send_enabled;
+    let renew = {
+        let sender = sender.clone();
+        Callback::from(move |_| {
+            if let Some(occupant) = occupant {
+                let _sent = send_action(
+                    &sender,
+                    ClientAction::Steer {
+                        lane: lane_id,
+                        occupant,
+                        epoch,
+                        message: RENEWAL_REQUEST.to_owned(),
+                        attachments: Vec::new(),
+                        resolve: None,
+                    },
+                );
+            }
+        })
+    };
     let onkeydown = keyboard_submit(
         lane_id,
         occupant,
@@ -536,6 +556,8 @@ fn render_agent_composer(
                 drafts,
                 mode,
                 onkeydown,
+                renew_enabled,
+                renew,
             )}
         </section>
     }
@@ -554,6 +576,8 @@ fn render_composer_body(
     drafts: &UseReducerHandle<ComposerDrafts>,
     mode: &UseStateHandle<LineageMode>,
     onkeydown: Callback<KeyboardEvent>,
+    renew_enabled: bool,
+    renew: Callback<MouseEvent>,
 ) -> Html {
     let markdown = compose(draft);
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
@@ -565,6 +589,16 @@ fn render_composer_body(
                 <span>{format!("{pending} pending")}</span>
                 <span>{standing.liveness.as_str()}</span>
             </div>
+            <button
+                class="agent-renew-request"
+                type="button"
+                disabled={!renew_enabled}
+                title="Ask this agent to renew its current task lease"
+                onclick={renew}
+            >
+                <strong>{"Renew this agent"}</strong>
+                <span>{"request renewal"}</span>
+            </button>
             <textarea
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for {lane}")}

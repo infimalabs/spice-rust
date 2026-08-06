@@ -499,6 +499,29 @@
   font-size: .52rem;
 }
 
+.agent-renew-request {
+  display: grid;
+  gap: 2px;
+  min-height: 34px;
+  padding: 5px 7px;
+  border-color: color-mix(in srgb, var(--identity, var(--accent)) 58%, var(--line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--identity, var(--accent)) 8%, var(--panel));
+  color: var(--ink);
+  text-align: left;
+}
+.agent-renew-request strong {
+  overflow: hidden;
+  font: 600 .65rem/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-renew-request span {
+  color: var(--muted);
+  font: .56rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.agent-renew-request:disabled { opacity: .46; }
+
 .team-surface .mosaic-composer {
   gap: 5px;
   height: 100%;
