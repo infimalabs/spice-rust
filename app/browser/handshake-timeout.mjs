@@ -82,10 +82,10 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
         { cause: error },
       );
     });
-    await page.getByLabel("Open Spice Canvas menu").waitFor();
-    await chooseCanvasView(page, "Chronology");
     const firstClosed = observedEvent(events, "close:0");
     const secondRequest = observedEvent(events, "request:1");
+    await page.getByLabel("Open Spice Canvas menu").waitFor();
+    await chooseCanvasView(page, "Chronology");
     const status = page.locator(".status.offline");
     const statusOutcome = status
       .waitFor({
