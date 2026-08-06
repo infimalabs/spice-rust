@@ -670,12 +670,6 @@
   padding: 7px;
   border-top: 1px solid var(--line);
 }
-.agent-stream-anchor {
-  position: absolute;
-  inset-block-start: 0;
-  width: 1px;
-  height: 1px;
-}
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
 .lane-mosaic-plane {
   --mosaic-gap: .75rem;
