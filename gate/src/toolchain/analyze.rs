@@ -493,18 +493,17 @@ fn env_name_ledger_with(
 
     let mut referenced: BTreeMap<String, Vec<SourceLocus>> = BTreeMap::new();
     for path in &sources {
-        let family = extension(path).and_then(|found| environment::family(&found));
-        let lines = match numbered_lines(root, path, read_source) {
-            Ok(lines) => lines,
+        let extension = extension(path);
+        let family = extension.as_deref().and_then(environment::family);
+        let text = match decoded(root, path, read_source) {
+            Ok(text) => text,
             Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
         };
-        for (line, text) in lines {
-            for name in environment::references(family, &text) {
-                referenced.entry(name).or_default().push(SourceLocus {
-                    path: path.clone(),
-                    line,
-                });
-            }
+        for (line, name) in environment::references_in(extension.as_deref(), family, &text) {
+            referenced.entry(name).or_default().push(SourceLocus {
+                path: path.clone(),
+                line,
+            });
         }
     }
 
