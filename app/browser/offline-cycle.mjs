@@ -37,7 +37,7 @@ import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
-import { chromium } from "playwright";
+import { launchBrowser } from "./headless-launch.mjs";
 
 import {
   buildResident,
@@ -195,7 +195,7 @@ const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-offline-la
 await mkdir(join(fixture, "artifacts"), { recursive: true });
 await configureFixture(fixture, linkedRoot);
 
-const browser = await chromium.launch({ headless: true });
+const browser = await launchBrowser();
 const results = [];
 try {
   for (let index = 0; index < iterations; index += 1) {
