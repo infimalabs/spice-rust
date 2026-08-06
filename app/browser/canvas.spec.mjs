@@ -6,9 +6,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
+import { assertComposerShards } from "./composer-shards.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
-import { assertComposerShardContract } from "./composer-shards.mjs";
-import { captureReferenceControls } from "./control-reference.mjs";
+import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
+import { assertReferenceControlStack } from "./control-stack.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
   assertEndpointProbeClosesWithoutResponse,
@@ -229,6 +230,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
   await lifetime.fill("0");
   await console.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  await assertReferenceControlStack(page, console, artifacts);
   const messages = [
     "browser direction survives streaming",
     "## Gate contract\n\n- green on the integrated tip\n- exact checks retained",
@@ -821,35 +823,7 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   await waitForPage(page, "Narrate dispatches speech", TRANSITION_MS,
     () => window.__speechLog.some((row) => row.action === "speak"));
 
-  const renewalRequest = "Renew your current task lease now.";
-  const renewalDrawer = primarySurface
-    .locator(".agent-composer-drawer:has(.agent-renew-request:not(:disabled))")
-    .first();
-  await renewalDrawer.locator("summary").click();
-  const renew = renewalDrawer.locator(".agent-renew-request");
-  await renew.waitFor();
-  assert.equal(
-    (await renew.innerText()).replaceAll("\n", " "),
-    "Renew this agent request renewal",
-    "the operator card names both the action and its renewal request",
-  );
-  const renewalLane = await renew.evaluate(
-    (button) => button.closest(".team-agent")?.dataset.agentLane,
-  );
-  assert.ok(renewalLane, "the renewal control retains its exact agent lane");
-  await renew.click();
-  await primarySurface
-    .locator(`.mosaic-message-card[data-agent-lane="${renewalLane}"]`)
-    .filter({ hasText: renewalRequest })
-    .waitFor({ timeout: 10_000 });
-  const renewalInbox = await reply(fixture, ["inbox", renewalLane]);
-  assert.ok(
-    renewalInbox.body.lanes[0].pending.some(
-      (directive) => directive.text === renewalRequest,
-    ),
-    "Renew this agent routes a residency-witnessed renewal request through the resident",
-  );
-  await renewalDrawer.locator("summary").click();
+  await assertAgentRenewalRequest(primarySurface, fixture);
 
   const policyMessage = "drain lifetime is task policy, not occupant teardown";
   await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);
@@ -1018,20 +992,23 @@ async function assertMosaicComposer(page, fixture, seeded) {
   );
   await activity.filter({ hasText: "browser direction survives streaming" }).waitFor();
 
-  await assertComposerShardContract(
+  await assertComposerShards({
     page,
     team,
     quoteLane,
     quoteActivity,
-    { laneId: seeded.quoteLane, nestedQuotePreview, nestedQuoteMessage, entirelyQuotedMessage },
-  );
+    seeded,
+    nestedQuotePreview,
+    nestedQuoteMessage,
+    entirelyQuotedMessage,
+  });
 
   await activity
     .filter({ hasText: "browser direction survives streaming" })
     .getByRole("button", { name: "Quote this message" })
     .click();
   const composer = lane.locator(".composer-shard--primary");
-  const quotedComposer = lane.locator(".composer-shard--draft");
+  const quotedComposer = lane.locator(".composer-shard--quote");
   await quotedComposer.waitFor();
   await composer.getByLabel("Markdown preview").waitFor();
   assert.equal(
@@ -1056,15 +1033,10 @@ async function assertMosaicComposer(page, fixture, seeded) {
     2,
     "draft images are appended to the generated Markdown preview",
   );
-  const visualDrawer = composer.locator(".agent-composer-drawer");
-  await composer.scrollIntoViewIfNeeded();
-  await visualDrawer.locator("summary").click();
-  await visualDrawer.locator(".agent-composer-drawer-panel").waitFor();
   await page.screenshot({
     path: join(artifacts, "canvas-light-mosaic-composer.png"),
     fullPage: true,
   });
-  await visualDrawer.locator("summary").click();
   await quotedComposer.getByRole("textbox").press("Control+Enter");
   await activity.filter({ hasText: "canvas quote reply" }).waitFor({
     timeout: 10_000,
@@ -1077,8 +1049,8 @@ async function assertMosaicComposer(page, fixture, seeded) {
     "quote keyboard submission returns focus to that target's primary composer",
   );
   assert.equal(
-    await quoteLane.locator(".composer-shard--draft").count(),
-    3,
+    await quoteLane.locator(".composer-shard--quote").count(),
+    2,
     "target keyboard submission leaves sibling target drafts unchanged",
   );
   assert.equal(

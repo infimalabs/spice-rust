@@ -20,7 +20,7 @@ use app::WASM_TARGET;
 
 pub use app::{AppBuildError, app};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
-pub use hooks::{HookActivationError, activate_hooks};
+pub use hooks::{HookActivationError, activate_hooks, audit_entry_point};
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use reference_transaction::{ReferenceTransactionError, WorktreeDamage};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
@@ -66,7 +66,8 @@ pub fn reference_transaction(
 /// is the one non-Cargo runtime check and requires its end-of-run receipt.
 /// Contract landing remains terminal: no alternate executable discovered from
 /// `PATH` repeats policy after the Rust-owned checks finish.
-const VERIFY_ACTIONS: [Action; 9] = [
+const VERIFY_ACTIONS: [Action; 10] = [
+    Action::EntryPoint,
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
         &["fmt", "--all", "--", "--check"],
@@ -115,6 +116,13 @@ const VERIFY_ACTIONS: [Action; 9] = [
 ];
 
 const BATTERY_LABEL: &str = "canonical Rust gate battery";
+/// Precondition rather than a check of this tree, which is why it runs first.
+///
+/// Every other action asks whether the tree is correct. This one asks whether
+/// the guard Git is enforcing right now is the one this tree describes, and a
+/// battery that passes while eleven worktrees enforce an older guard is green
+/// about the wrong repository. It costs one file read and no build.
+const ENTRY_POINT_LABEL: &str = "published reference-transaction guard is this build's";
 /// Real-browser guard for the production Mosaic engine edge.
 ///
 /// BROWSER-1kKSWhZk removed one of the two former surfaces. This mandatory
@@ -138,6 +146,7 @@ impl Step {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Action {
+    EntryPoint,
     Command(Step),
     Browser,
     Battery,
@@ -148,6 +157,7 @@ impl Action {
     const fn label(self) -> &'static str {
         match self {
             Self::Command(step) => step.label,
+            Self::EntryPoint => ENTRY_POINT_LABEL,
             Self::Browser => BROWSER_LABEL,
             Self::Battery => BATTERY_LABEL,
             Self::Landing => landing::LABEL,
@@ -162,6 +172,7 @@ struct Status {
 }
 
 trait Runner {
+    fn entry_point(&mut self) -> Result<String, String>;
     fn run(&mut self, step: Step) -> io::Result<Status>;
     fn browser(&mut self) -> io::Result<BrowserRun>;
     fn battery(&mut self) -> Result<BatteryRun, String>;
@@ -182,6 +193,12 @@ struct BrowserRun {
 struct SystemRunner;
 
 impl Runner for SystemRunner {
+    fn entry_point(&mut self) -> Result<String, String> {
+        let mut report = Vec::new();
+        hooks::audit_entry_point(Path::new("."), &mut report).map_err(|error| error.to_string())?;
+        String::from_utf8(report).map_err(|error| error.to_string())
+    }
+
     fn run(&mut self, step: Step) -> io::Result<Status> {
         let status = Command::new("cargo").args(step.arguments).status()?;
         Ok(Status {
@@ -316,6 +333,12 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
     for action in VERIFY_ACTIONS {
         writeln!(output, "[verify] {}", action.label()).map_err(VerifyError::Output)?;
         match action {
+            Action::EntryPoint => {
+                let report = runner.entry_point().map_err(VerifyError::EntryPoint)?;
+                output
+                    .write_all(report.as_bytes())
+                    .map_err(VerifyError::Output)?;
+            }
             Action::Command(step) => {
                 let status = runner.run(step).map_err(|source| VerifyError::Launch {
                     label: step.label,
@@ -371,6 +394,7 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
 pub enum VerifyError {
     Output(io::Error),
     Encode(serde_json::Error),
+    EntryPoint(String),
     Landing(String),
     LandingRefused,
     Battery(String),
@@ -397,6 +421,7 @@ impl fmt::Display for VerifyError {
         match self {
             Self::Output(source) => write!(formatter, "[verify] output failed: {source}"),
             Self::Encode(source) => write!(formatter, "[verify] landing output failed: {source}"),
+            Self::EntryPoint(detail) => write!(formatter, "[verify] {detail}"),
             Self::Landing(detail) => {
                 write!(formatter, "[verify] landing acquisition failed: {detail}")
             }
@@ -443,7 +468,8 @@ impl std::error::Error for VerifyError {
                 Some(source)
             }
             Self::Encode(source) => Some(source),
-            Self::Landing(_)
+            Self::EntryPoint(_)
+            | Self::Landing(_)
             | Self::LandingRefused
             | Self::Battery(_)
             | Self::BatteryRefused
@@ -466,8 +492,13 @@ mod tests {
         Launch,
     }
 
+    /// The report a current entry point produces, so the order test can pin
+    /// that the audit ran without reaching a real repository.
+    const ENTRY_POINT_FIXTURE: &str = "fixture guard matches this build\n";
+
     struct FakeRunner {
         outcomes: VecDeque<Outcome>,
+        entry_point: Option<Result<String, String>>,
         browser: Option<io::Result<BrowserRun>>,
         battery: Option<Result<BatteryRun, String>>,
         landing: Option<Result<landing::Report, landing::Error>>,
@@ -475,6 +506,13 @@ mod tests {
     }
 
     impl Runner for FakeRunner {
+        fn entry_point(&mut self) -> Result<String, String> {
+            self.calls.push(ENTRY_POINT_LABEL);
+            self.entry_point
+                .take()
+                .expect("fixture has one entry-point outcome")
+        }
+
         fn run(&mut self, step: Step) -> io::Result<Status> {
             self.calls.push(step.label);
             match self.outcomes.pop_front().expect("fixture has an outcome") {
@@ -527,6 +565,9 @@ mod tests {
             .into_iter()
             .map(|action| match action {
                 Action::Command(step) => format!("[verify] {}\n", step.label),
+                Action::EntryPoint => {
+                    format!("[verify] {ENTRY_POINT_LABEL}\n{ENTRY_POINT_FIXTURE}")
+                }
                 Action::Browser => format!("[verify] {BROWSER_LABEL}\n"),
                 Action::Battery => format!("[verify] {BATTERY_LABEL}\n{{\"admitted\":true}}\n"),
                 Action::Landing => format!("[verify] {}\n{report}\n", landing::LABEL),
@@ -537,7 +578,8 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 9] = [
+        const GUARDED_ACTIONS: [Action; 10] = [
+            Action::EntryPoint,
             Action::Command(Step::cargo(
                 "cargo fmt --all -- --check",
                 &["fmt", "--all", "--", "--check"],
@@ -632,7 +674,7 @@ mod tests {
             .position(|action| *action == Action::Browser)
             .expect("the verifier has a browser action");
 
-        assert_eq!(browser, 4);
+        assert_eq!(browser, 5);
         assert!(
             matches!(VERIFY_ACTIONS[browser - 1], Action::Command(step) if step.arguments.contains(&WASM_TARGET))
         );
@@ -659,7 +701,7 @@ mod tests {
             .expect_err("a skipped browser body emits no completion receipt");
 
         assert!(matches!(error, VerifyError::BrowserIncomplete));
-        assert_eq!(runner.calls, labels()[..=4]);
+        assert_eq!(runner.calls, labels()[..=5]);
     }
 
     #[test]
@@ -750,6 +792,35 @@ mod tests {
         );
     }
 
+    /// The audit sits in front of the battery to stop it, not to narrate it, so
+    /// a refusal has to end the run before the first build rather than be
+    /// printed and walked past.
+    ///
+    /// Ordering alone would not settle this: an action that reports and admits
+    /// occupies the same slot and passes every order assertion here. What is
+    /// pinned is that the labels stop at the first one and that the refusal
+    /// reaches the operator verbatim, because the state it names is one no
+    /// amount of re-running the battery clears.
+    #[test]
+    fn a_stale_published_guard_stops_verify_before_the_first_build() {
+        let mut runner = runner(successful_commands());
+        runner.entry_point = Some(Err("published guard is not this build's".to_owned()));
+        let mut output = Vec::new();
+
+        let error = verify_with(&mut runner, &mut output).expect_err("a stale guard surfaces");
+
+        assert!(matches!(error, VerifyError::EntryPoint(_)));
+        assert_eq!(
+            error.to_string(),
+            "[verify] published guard is not this build's"
+        );
+        assert_eq!(runner.calls, labels()[..1]);
+        assert_eq!(
+            String::from_utf8(output).expect("labels are UTF-8"),
+            format!("[verify] {ENTRY_POINT_LABEL}\n")
+        );
+    }
+
     #[test]
     fn command_failure_stops_before_the_next_step() {
         let mut runner = runner([Outcome::Success, Outcome::Exit(9), Outcome::Success]);
@@ -758,7 +829,7 @@ mod tests {
         let error = verify_with(&mut runner, &mut output).expect_err("clippy failure surfaces");
 
         assert!(matches!(error, VerifyError::Exit { code: Some(9), .. }));
-        assert_eq!(runner.calls, labels()[..2]);
+        assert_eq!(runner.calls, labels()[..3]);
     }
 
     #[test]
@@ -769,7 +840,7 @@ mod tests {
         let error = verify_with(&mut runner, &mut output).expect_err("launch refusal surfaces");
 
         assert!(matches!(error, VerifyError::Launch { .. }));
-        assert_eq!(runner.calls, labels()[..1]);
+        assert_eq!(runner.calls, labels()[..2]);
     }
 
     #[test]
@@ -836,6 +907,7 @@ mod tests {
     fn runner(outcomes: impl IntoIterator<Item = Outcome>) -> FakeRunner {
         FakeRunner {
             outcomes: outcomes.into_iter().collect(),
+            entry_point: Some(Ok(ENTRY_POINT_FIXTURE.to_owned())),
             browser: Some(Ok(BrowserRun {
                 status: Status {
                     success: true,

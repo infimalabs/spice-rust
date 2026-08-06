@@ -60,14 +60,6 @@ pub(super) fn focus_after_render(id: String) {
     });
 }
 
-pub(super) fn lane_stream_id(lane_key: &str) -> String {
-    format!("agent-stream-{lane_key}")
-}
-
-fn message_stream_id(identity: &str) -> String {
-    format!("message-stream-{identity}")
-}
-
 pub(super) fn render_agent_message_card(
     member: &crate::runtime::LaneMember,
     quote_lane: CanonicalUuid,
@@ -96,9 +88,9 @@ pub(super) fn render_agent_message_card(
         message.locus.length,
         message.locus.event,
     );
+    let source_id = format!("message-{quote_identity}");
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.clone();
-    let stream_id = message_stream_id(&quote_identity);
     let producer = format!(
         "{} · {}",
         watchband::leaf(&member.worktree),
@@ -132,8 +124,8 @@ pub(super) fn render_agent_message_card(
                 message.locus.offset,
                 message.locus.event,
             )}
+            id={source_id}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
-            id={stream_id}
             draggable="true"
             aria-label={format!("Agent message from {producer}")}
             data-card-kind="agent-message"
@@ -200,9 +192,9 @@ pub(super) fn render_directive_card(
     let quote_preview = directive.preview.clone();
     let quote_text = directive.text.clone();
     let quote_identity = format!("directive-{}", directive.directive);
+    let source_id = format!("message-{quote_identity}");
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.to_owned();
-    let stream_id = message_stream_id(&quote_identity);
     let correspondent = view::chrome::Correspondent {
         name: watchband::short(lane),
         accent: watchband::accent(lane),
@@ -231,8 +223,8 @@ pub(super) fn render_directive_card(
     html! {
         <article
             key={directive.directive.to_string()}
+            id={source_id}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
-            id={stream_id}
             draggable="true"
             data-directive={directive.directive.to_string()}
             data-card-kind="directive"
@@ -282,7 +274,7 @@ pub(super) fn render_quote_shards(
     target_submit: Callback<KeyboardEvent>,
 ) -> Html {
     html! {
-        <>
+        <div class="composer-quote-stack" data-composer-quote-stack-target-id={lane_key.to_owned()}>
             {for draft.quotes.iter().map(|quote| {
                 let remove_key = lane_key.to_owned();
                 let remove_drafts = drafts.clone();
@@ -306,27 +298,25 @@ pub(super) fn render_quote_shards(
                 });
                 let shown = crate::composer_markdown::quote_label(quote.preview.as_deref());
                 let textarea_id = quote_textarea_id(lane_key, &quote.identity);
-                let stream_id = message_stream_id(&quote.identity);
+                let source_id = format!("message-{}", quote.identity);
                 html! {
                     <article
                         key={quote.identity.clone()}
-                        class={classes!(
-                            "mosaic-composer",
-                            "composer-shard",
-                            "composer-shard--draft",
-                        )}
+                        class="mosaic-composer composer-shard composer-shard--quote"
                         title={quote.quote.clone()}
+                        data-shard-kind="quote"
+                        data-shard-target-id={lane_key.to_owned()}
                         data-quote-identity={quote.identity.clone()}
                         data-quote-target-id={lane_key.to_owned()}
-                        data-stream-target-id={stream_id.clone()}
                     >
                         <header class="composer-shard-heading">
                             <a
-                                class="composer-shard-age"
-                                href={format!("#{stream_id}")}
-                                aria-label="Open quoted message in stream"
-                            >{"quote"}</a>
-                            <strong title={quote.quote.clone()}>{shown}</strong>
+                                class="composer-shard-link"
+                                href={format!("#{source_id}")}
+                                aria-label={format!("Return to quoted message: {shown}")}
+                                title="Return to this message in the stream"
+                            >{"↩"}</a>
+                            <strong>{shown}</strong>
                             <button
                                 type="button"
                                 aria-label="Remove quoted composer shard"
@@ -346,7 +336,7 @@ pub(super) fn render_quote_shards(
                     </article>
                 }
             })}
-        </>
+        </div>
     }
 }
 

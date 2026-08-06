@@ -14,7 +14,7 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    choose_images, drop_on_lane, focus_after_render, keyboard_submit, lane_stream_id, paste_images,
+    choose_images, drop_on_lane, focus_after_render, keyboard_submit, paste_images,
     primary_textarea_id, render_agent_message_card, render_attachments, render_directive_card,
     render_markdown, render_quote_shards, update_body,
 };
@@ -337,17 +337,16 @@ fn render_activity(
             aria-label="Live agent activity"
             data-empty={empty.to_string()}
         >
-            <div class="agent-stream-anchors" aria-hidden="true">
-                {for lineage.members.iter().map(|member| html! {
-                    <span
-                        id={lane_stream_id(&member.lane.to_string())}
-                        class="agent-stream-anchor"
-                    ></span>
-                })}
-            </div>
             if empty {
                 <div class="mosaic-message-empty">{"No pending direction."}</div>
             }
+            {for lineage.members.iter().map(|member| html! {
+                <span
+                    id={format!("agent-stream-{}", member.lane)}
+                    class="agent-stream-anchor"
+                    aria-hidden="true"
+                ></span>
+            })}
             <MosaicPlane
                 key={lineage.lane.to_string()}
                 lane={lineage.lane}
@@ -544,23 +543,28 @@ fn render_agent_composer(
                 (!send_enabled).then_some("team-agent--vacant"),
             )}
             data-agent-lane={lane_id.to_string()}
-            data-agent-stack-target-id={lane_id.to_string()}
             title={standing_title(standing)}
             {ondragover}
             {ondrop}
         >
-            {render_quote_shards(&lane_key, &draft, drafts, onkeydown.clone())}
-            {render_composer_body(
-                lane_id,
-                &lane_key,
-                &draft,
-                standing,
-                pending,
-                drafts,
-                onkeydown,
-                renew_enabled,
-                renew,
-            )}
+            <div
+                class="agent-composer-stack"
+                data-agent-composer-stack={lane_id.to_string()}
+                data-has-quote-shards={(!draft.quotes.is_empty()).to_string()}
+            >
+                {render_composer_body(
+                    lane_id,
+                    &lane_key,
+                    &draft,
+                    standing,
+                    pending,
+                    drafts,
+                    onkeydown.clone(),
+                    renew_enabled,
+                    renew,
+                )}
+                {render_quote_shards(&lane_key, &draft, drafts, onkeydown)}
+            </div>
         </section>
     }
 }
@@ -585,19 +589,31 @@ fn render_composer_body(
     let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
     html! {
         <div
-            class={classes!("mosaic-composer", "composer-shard", "composer-shard--primary")}
-            data-stream-target-id={lane_stream_id(lane_key)}
+            class="mosaic-composer composer-shard composer-shard--primary"
+            data-shard-kind="primary"
+            data-shard-target-id={lane.to_string()}
         >
             {render_composer_heading(
+                lane,
                 lane_key,
                 standing,
                 renew_enabled,
-                renew,
+                renew.clone(),
             )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
                 <span>{standing.liveness.as_str()}</span>
             </div>
+            <button
+                class="agent-renew-request"
+                type="button"
+                disabled={!renew_enabled}
+                title="Ask this agent to renew its current task lease"
+                onclick={renew}
+            >
+                <strong>{"Renew this agent"}</strong>
+                <span>{"request renewal"}</span>
+            </button>
             <textarea
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for {lane}")}
@@ -624,6 +640,7 @@ fn render_composer_body(
 }
 
 fn render_composer_heading(
+    lane: CanonicalUuid,
     lane_key: &str,
     standing: &Standing,
     renew_enabled: bool,
@@ -634,15 +651,17 @@ fn render_composer_heading(
         .as_deref()
         .or(standing.handle.as_deref())
         .unwrap_or(&standing.disposition);
-    let focus_id = primary_textarea_id(lane_key);
-    let focus = Callback::from(move |_| focus_after_render(focus_id.clone()));
-    let stream_id = lane_stream_id(lane_key);
+    let focus_lane = lane_key.to_owned();
+    let focus = Callback::from(move |_| {
+        focus_after_render(primary_textarea_id(&focus_lane));
+    });
+    let stream = format!("#agent-stream-{lane}");
     html! {
         <header class="composer-shard-heading">
             <a
-                class="composer-shard-age"
-                href={format!("#{stream_id}")}
-                aria-label={format!("Open message stream for {}", standing.label)}
+                class="composer-shard-link composer-shard-age"
+                href={stream.clone()}
+                aria-label={format!("Jump to {} message stream", standing.label)}
             >{
                 standing
                     .held
@@ -650,37 +669,15 @@ fn render_composer_heading(
                     .unwrap_or_else(|| "now".to_owned())
             }</a>
             <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
-            <details
-                class="agent-composer-drawer"
-                data-agent-target-id={lane_key.to_owned()}
-            >
-                <summary
-                    aria-label={format!("Open controls for {}", standing.label)}
-                >{"☰"}</summary>
+            <details class="agent-action-menu">
+                <summary aria-label={format!("Actions for {}", standing.label)}>{"☰"}</summary>
                 <div
-                    class="agent-composer-drawer-panel"
-                    role="group"
-                    aria-label={format!("Controls for {}", standing.label)}
+                    class="agent-action-drawer"
+                    data-agent-drawer-target-id={lane.to_string()}
                 >
-                    <button
-                        class="agent-focus-composer"
-                        type="button"
-                        data-agent-target-id={lane_key.to_owned()}
-                        onclick={focus}
-                    >
-                        <strong>{"Message this agent"}</strong>
-                        <span>{"focus composer"}</span>
-                    </button>
-                    <button
-                        class="agent-renew-request"
-                        type="button"
-                        data-agent-target-id={lane_key.to_owned()}
-                        disabled={!renew_enabled}
-                        title="Ask this agent to renew its current task lease"
-                        onclick={renew}
-                    >
-                        <strong>{"Renew this agent"}</strong>
-                        <span>{"request renewal"}</span>
+                    <button type="button" onclick={focus}>{"Focus message editor"}</button>
+                    <button type="button" disabled={!renew_enabled} onclick={renew}>
+                        {"Renew this agent"}
                     </button>
                 </div>
             </details>
