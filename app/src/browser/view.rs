@@ -155,16 +155,7 @@ fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
                     <span class="pane-chip">{title(pane.as_str())}</span>
                 })}
             </div>
-            {render_axis(
-                active_axis,
-                render.surface,
-                render.connection,
-                render.sender,
-                render.note_task,
-                render.note_text,
-                render.note_notice,
-                render.submit_note.clone(),
-            )}
+            {render_axis(active_axis, render)}
         </>
     }
 }
@@ -251,21 +242,18 @@ pub(super) fn speech_control(
     }
 }
 
-pub(super) fn render_axis(
-    axis: Axis,
-    surface: &SurfaceData,
-    connection: &Connection,
-    sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    note_notice: &UseStateHandle<Notice>,
-    submit_note: Callback<SubmitEvent>,
-) -> Html {
+pub(super) fn render_axis(axis: Axis, render: &CanvasRender<'_>) -> Html {
     match axis {
-        Axis::Magnitude => render_magnitude(surface),
-        Axis::Flow => render_flow(surface, note_task, note_text, note_notice, submit_note),
-        Axis::Topology => render_topology(surface),
-        Axis::Chronology => render_chronology(surface, sender, connection),
+        Axis::Magnitude => render_magnitude(render.surface),
+        Axis::Flow => render_flow(
+            render.surface,
+            render.note_task,
+            render.note_text,
+            render.note_notice,
+            render.submit_note.clone(),
+        ),
+        Axis::Topology => render_topology(render.surface),
+        Axis::Chronology => render_chronology(render.surface, render.sender, render.connection),
     }
 }
 

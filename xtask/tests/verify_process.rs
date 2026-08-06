@@ -27,7 +27,7 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         );
     }
 
-    // The process under test is the real verifier binary. Its five Cargo build
+    // The process under test is the real verifier binary. Its six Cargo build
     // and test actions and browser receipt are satisfied by logged fixtures so
     // this integration test does not recursively launch either toolchain from
     // inside Cargo. The following battery action is not replaceable and
@@ -85,11 +85,12 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         fs::read_to_string(&cargo_log)
             .expect("read verifier Cargo actions")
             .lines()
-            .take(5)
+            .take(6)
             .collect::<Vec<_>>(),
         [
             "fmt --all -- --check",
             "clippy --locked --workspace --all-targets -- -D warnings",
+            "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
             "test --locked --workspace --all-targets",
             "test --locked --workspace --doc",
@@ -247,6 +248,7 @@ fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() 
         [
             "fmt --all -- --check",
             "clippy --locked --workspace --all-targets -- -D warnings",
+            "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
         ]
     );
@@ -255,6 +257,113 @@ fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() 
         "{}",
         streams(&output)
     );
+}
+
+#[test]
+fn verifier_wasm_clippy_rejects_a_lint_hidden_from_the_native_target() {
+    let fixture = Fixture::new();
+    wasm_lint_fixture(&fixture.repository);
+    let programs = fixture.root.join("programs");
+    fs::create_dir(&programs).expect("create wasm lint fixture programs");
+    let cargo_log = fixture.root.join("cargo-actions");
+    executable(
+        &programs.join("cargo"),
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$*\" >> '{cargo_log}'\n",
+                "if [ \"$*\" = \"clippy --locked -p app --target ",
+                "wasm32-unknown-unknown -- -D warnings\" ]; then\n",
+                "  {path_name}=${{{path_name}#*:}}\n",
+                "  export {path_name}\n",
+                "  exec cargo \"$@\"\n",
+                "fi\n",
+                "exit 0\n",
+            ),
+            cargo_log = cargo_log.display(),
+            path_name = PROCESS_PATH,
+        ),
+    );
+    let launcher = programs.join("verify");
+    executable(
+        &launcher,
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "{path_name}='{programs}':${{{path_name}}}\n",
+                "export {path_name}\n",
+                "exec '{xtask}' verify\n",
+            ),
+            path_name = PROCESS_PATH,
+            programs = programs.display(),
+            xtask = env!("CARGO_BIN_EXE_xtask"),
+        ),
+    );
+
+    let output = Command::new(launcher)
+        .current_dir(&fixture.repository)
+        .output()
+        .expect("launch verifier against the wasm lint fixture");
+
+    assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("variable does not need to be mutable"),
+        "{}",
+        streams(&output),
+    );
+    assert_eq!(
+        fs::read_to_string(cargo_log)
+            .expect("read wasm lint Cargo actions")
+            .lines()
+            .collect::<Vec<_>>(),
+        [
+            "fmt --all -- --check",
+            "clippy --locked --workspace --all-targets -- -D warnings",
+            "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+        ],
+    );
+}
+
+fn wasm_lint_fixture(repository: &Path) {
+    fs::write(
+        repository.join("Cargo.toml"),
+        concat!(
+            "[package]\n",
+            "name = \"app\"\n",
+            "version = \"0.0.0\"\n",
+            "edition = \"2024\"\n",
+        ),
+    )
+    .expect("write wasm lint manifest");
+    fs::write(
+        repository.join("Cargo.lock"),
+        concat!(
+            "version = 4\n\n",
+            "[[package]]\n",
+            "name = \"app\"\n",
+            "version = \"0.0.0\"\n",
+        ),
+    )
+    .expect("write wasm lint lock");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask manifest has a workspace parent");
+    fs::copy(
+        workspace.join("rust-toolchain.toml"),
+        repository.join("rust-toolchain.toml"),
+    )
+    .expect("copy the workspace wasm lint toolchain");
+    fs::write(
+        repository.join("src/lib.rs"),
+        concat!(
+            "#[cfg(target_arch = \"wasm32\")]\n",
+            "pub fn wasm_only_lint() {\n",
+            "    let mut value = 7;\n",
+            "    assert_eq!(value, 7);\n",
+            "}\n",
+        ),
+    )
+    .expect("write wasm-only lint source");
 }
 
 struct Fixture {

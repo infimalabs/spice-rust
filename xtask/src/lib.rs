@@ -66,7 +66,7 @@ pub fn reference_transaction(
 /// is the one non-Cargo runtime check and requires its end-of-run receipt.
 /// Contract landing remains terminal: no alternate executable discovered from
 /// `PATH` repeats policy after the Rust-owned checks finish.
-const VERIFY_ACTIONS: [Action; 8] = [
+const VERIFY_ACTIONS: [Action; 9] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
         &["fmt", "--all", "--", "--check"],
@@ -78,6 +78,20 @@ const VERIFY_ACTIONS: [Action; 8] = [
             "--locked",
             "--workspace",
             "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )),
+    Action::Command(Step::cargo(
+        "cargo clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+        &[
+            "clippy",
+            "--locked",
+            "-p",
+            "app",
+            "--target",
+            WASM_TARGET,
             "--",
             "-D",
             "warnings",
@@ -523,7 +537,7 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 8] = [
+        const GUARDED_ACTIONS: [Action; 9] = [
             Action::Command(Step::cargo(
                 "cargo fmt --all -- --check",
                 &["fmt", "--all", "--", "--check"],
@@ -535,6 +549,20 @@ mod tests {
                     "--locked",
                     "--workspace",
                     "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )),
+            Action::Command(Step::cargo(
+                "cargo clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "app",
+                    "--target",
+                    "wasm32-unknown-unknown",
                     "--",
                     "-D",
                     "warnings",
@@ -604,7 +632,7 @@ mod tests {
             .position(|action| *action == Action::Browser)
             .expect("the verifier has a browser action");
 
-        assert_eq!(browser, 3);
+        assert_eq!(browser, 4);
         assert!(
             matches!(VERIFY_ACTIONS[browser - 1], Action::Command(step) if step.arguments.contains(&WASM_TARGET))
         );
@@ -631,7 +659,7 @@ mod tests {
             .expect_err("a skipped browser body emits no completion receipt");
 
         assert!(matches!(error, VerifyError::BrowserIncomplete));
-        assert_eq!(runner.calls, labels()[..=3]);
+        assert_eq!(runner.calls, labels()[..=4]);
     }
 
     #[test]
@@ -661,19 +689,52 @@ mod tests {
         ));
     }
 
-    /// The battery builds for a second target, and says which one.
+    #[test]
+    fn verifier_lints_the_browser_crate_for_the_wasm_target() {
+        let step = VERIFY_ACTIONS
+            .iter()
+            .find_map(|action| match action {
+                Action::Command(step)
+                    if step.arguments.first() == Some(&"clippy")
+                        && step.arguments.contains(&WASM_TARGET) =>
+                {
+                    Some(step)
+                }
+                _ => None,
+            })
+            .expect("the verifier has a wasm Clippy step");
+
+        assert_eq!(
+            step.arguments,
+            [
+                "clippy",
+                "--locked",
+                "-p",
+                "app",
+                "--target",
+                WASM_TARGET,
+                "--",
+                "-D",
+                "warnings",
+            ],
+        );
+        assert!(step.label.contains(WASM_TARGET));
+    }
+
+    /// The battery builds the whole workspace for a second target and says
+    /// which one.
     ///
-    /// Every other step is a host build, so without this one the far side of
-    /// each `cfg(not(target_arch = "wasm32"))` is never compiled by anything
-    /// and breaks in a build no step runs. The label carries the triple because
-    /// the same cargo command fails for host reasons too, and a reader seeing
-    /// only "check failed" would look for a defect that is not there.
+    /// The app-only Clippy step reaches browser code; this distinct check also
+    /// reaches every other workspace crate's target-specific surface. The
+    /// label carries the triple because the same Cargo command can fail for
+    /// host reasons too, and a reader seeing only "check failed" would look
+    /// for a defect that is not there.
     #[test]
     fn verifier_builds_the_workspace_for_the_browser_target() {
         let step = VERIFY_ACTIONS
             .iter()
             .find_map(|action| match action {
-                Action::Command(step) if step.arguments.contains(&"--target") => Some(step),
+                Action::Command(step) if step.arguments.first() == Some(&"check") => Some(step),
                 _ => None,
             })
             .expect("the verifier has a cross-target step");
@@ -759,8 +820,8 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(action, Action::Command(_)))
                 .count(),
-            5,
-            "exactly five declared Cargo commands precede compiled landing"
+            6,
+            "exactly six declared Cargo commands precede compiled landing"
         );
         assert_eq!(
             VERIFY_ACTIONS
