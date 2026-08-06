@@ -17,7 +17,7 @@ The launcher supplies the lane identity through `SPICE_LANE`. Treat a missing
 lane, resident, or repository as a real refusal; do not fall back to another
 runtime or infer work from this skill invocation.
 
-Start the installed appliance with `.spice/bin/spice up`.
+Start the shared installed appliance with `$(git rev-parse --path-format=absolute --git-common-dir)/.spice-install/bin/spice up`.
 
 ## Work loop
 

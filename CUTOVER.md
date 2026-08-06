@@ -12,6 +12,8 @@ Choose the reviewed worktree and keep every path explicit:
 ```sh
 CUTOVER_REPO=/absolute/path/to/the/reviewed-worktree
 CUTOVER_COMMON=$(git -C "$CUTOVER_REPO" rev-parse --path-format=absolute --git-common-dir)
+CUTOVER_BIN="$CUTOVER_COMMON/.spice-install/bin/spice"
+CUTOVER_HOOKS="$CUTOVER_COMMON/.spice-install/git-hooks"
 CUTOVER_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 CUTOVER_EVIDENCE="$CUTOVER_COMMON/cutover-$CUTOVER_STAMP"
 mkdir -p "$CUTOVER_EVIDENCE"
@@ -130,8 +132,8 @@ fi
 test ! -e "$CUTOVER_COMMON/.spice-rust"
 target/debug/spice install
 target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW
-test -x .spice/bin/spice
-shasum -a 256 target/debug/spice .spice/bin/spice | tee "$CUTOVER_EVIDENCE/new-binary.sha256"
+test -x "$CUTOVER_BIN"
+shasum -a 256 target/debug/spice "$CUTOVER_BIN" | tee "$CUTOVER_EVIDENCE/new-binary.sha256"
 mv "$CUTOVER_OLD_BIN" "$CUTOVER_OLD_BIN.pre-spice-0.31.0"
 test ! -e "$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3"
 git diff --exit-code -- spice.toml
@@ -140,10 +142,10 @@ target/debug/spice --json config policy.admission |
 cargo metadata --no-deps --offline --format-version 1 \
   > "$CUTOVER_EVIDENCE/native-admission-metadata.json"
 ./scripts/install-hooks.sh
-test "$(git config --worktree --get core.hooksPath)" = .spice/git-hooks
+test "$(git config --get core.hooksPath)" = "$CUTOVER_HOOKS"
 ```
 
-The two staged-binary hashes must match. Do not run `.spice/bin/spice up` yet:
+The two staged-binary hashes must match. Do not run `$CUTOVER_BIN up` yet:
 that is the forward-only boundary. The retired release-one root is archived
 between the drain and the install because the installer refuses while it exists
 and a live lane holding a release-one binary writes it back. Both archives,
@@ -152,8 +154,9 @@ staged binary identity, predecessor configuration and hook path, and native
 admission evidence are the rollback record. The journal assertion proves the
 current authority is absent. The clean diff proves the worktree still carries
 exactly the policy committed at `HEAD`. The hook activation follows the install
-because its three executable inputs are installer-owned assets, and it
-configures only this reviewed worktree.
+because its three executable inputs are installer-owned assets. It clears
+worktree-specific hook overrides and configures one absolute common hook path,
+so existing and future linked worktrees resolve the same installed hooks.
 
 ## Start the singular appliance
 
@@ -161,7 +164,7 @@ In terminal A, keep the foreground resident attached:
 
 ```sh
 cd "$CUTOVER_REPO"
-.spice/bin/spice up
+"$CUTOVER_BIN" up
 ```
 
 Once `up` has been invoked, the transition is forward-only. In terminal B,
@@ -169,9 +172,9 @@ read readiness and the empty board through the installed binary:
 
 ```sh
 cd "$CUTOVER_REPO"
-.spice/bin/spice --json version
-.spice/bin/spice --json journal verify
-.spice/bin/spice --json board
+"$CUTOVER_BIN" --json version
+"$CUTOVER_BIN" --json journal verify
+"$CUTOVER_BIN" --json board
 ```
 
 The board must contain no task rows. Create only wanted work with `task add` or
@@ -179,17 +182,17 @@ preview and apply a native task document; every resulting handle is new. Seat
 fresh lanes and verify steering by their returned lane identities:
 
 ```sh
-.spice/bin/spice --json lane add --vendor claude
-.spice/bin/spice --json lane add /absolute/path/to/codex-worktree --vendor codex
-.spice/bin/spice --json steer LANE_ID 'cutover readiness'
-.spice/bin/spice --json inbox LANE_ID
+"$CUTOVER_BIN" --json lane add --vendor claude
+"$CUTOVER_BIN" --json lane add /absolute/path/to/codex-worktree --vendor codex
+"$CUTOVER_BIN" --json steer LANE_ID 'cutover readiness'
+"$CUTOVER_BIN" --json inbox LANE_ID
 ```
 
 Shutdown remains a separate operator command. Terminal A exits only after the
 durable shutdown sequence completes:
 
 ```sh
-.spice/bin/spice down
+"$CUTOVER_BIN" down
 ```
 
 ## Rollback boundary
@@ -214,6 +217,7 @@ if test -e "$CUTOVER_EVIDENCE/retired-release-one-state"; then
 fi
 git diff --exit-code -- spice.toml
 spice config show > /dev/null
+git config --local --unset-all core.hooksPath || true
 git config --worktree core.hooksPath "$(cat "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt")"
 test "$(git config --worktree --get core.hooksPath)" = \
   "$(cat "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt")"

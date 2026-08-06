@@ -326,7 +326,11 @@ impl fmt::Display for StateError {
             ),
             Self::RetiredState { path, release } => write!(
                 formatter,
-                "retired state root belongs to release={release} at {}; archive or remove it after preserving evidence before starting current Spice",
+                concat!(
+                    "retired state root belongs to release={} at {}; archive or remove it ",
+                    "after preserving evidence before starting current Spice"
+                ),
+                release,
                 path.display()
             ),
         }
