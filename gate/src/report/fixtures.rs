@@ -17,7 +17,8 @@ mod tests {
         assert_eq!(report.version(), GATE_REPORT_VERSION);
         assert_eq!(report.standing(), report.verdict().standing());
         assert_eq!(report.findings(), report.verdict().findings());
-        assert_eq!(report.measurements().len(), 1);
+        assert!(report.long_lines().is_empty());
+        assert!(report.measurements().is_empty());
         assert!(report.tightening().is_some());
 
         let encoded = report.encode().expect("encode gate report");
@@ -59,9 +60,9 @@ mod tests {
         ));
 
         let nested_unknown = mutate(&value, |value| {
-            value["findings"][0]["movement"]
+            value["verdict"]["tools"][0]
                 .as_object_mut()
-                .expect("movement object")
+                .expect("tool object")
                 .insert("unknown".to_owned(), json!(true));
         });
         assert!(matches!(
@@ -87,12 +88,33 @@ mod tests {
             ),
             (
                 "findings",
-                mutate(&value, |value| value["findings"] = json!([])),
+                mutate(&value, |value| {
+                    value["findings"] = json!([{
+                        "metric": "rust.lines",
+                        "movement": {"movement": "unbaselined", "measured": 1}
+                    }]);
+                }),
+            ),
+            (
+                "long_lines",
+                mutate(&value, |value| {
+                    value["long_lines"] = json!([{
+                        "path": "src/lib.rs",
+                        "line": 1,
+                        "bytes": crate::LONG_LINE_LIMIT + 1,
+                        "baseline_debt": 0,
+                        "current_debt": 1
+                    }]);
+                }),
             ),
             (
                 "measurements",
                 mutate(&value, |value| {
-                    value["measurements"][0]["value"] = json!(999)
+                    value["measurements"] = json!([{
+                        "metric": "rust.lines",
+                        "value": 999,
+                        "files": ["src/lib.rs"]
+                    }]);
                 }),
             ),
             (
@@ -106,9 +128,7 @@ mod tests {
             ),
             (
                 "verdict",
-                mutate(&value, |value| {
-                    value["verdict"]["standing"] = json!("refused")
-                }),
+                mutate(&value, |value| value["verdict"]["head"] = json!("fedcba9876543210")),
             ),
         ] {
             assert!(
@@ -140,31 +160,70 @@ mod tests {
         changed.standing = Standing::Refused;
         assert_moved(changed, "standing");
         let mut changed = report.clone();
-        changed.findings[0].metric.push('!');
+        changed.findings.push(Finding {
+            metric: "rust.lines".to_owned(),
+            movement: Movement::Held { baseline: 1 },
+        });
         assert_moved(changed, "finding.metric");
         let mut changed = report.clone();
-        changed.findings[0].movement = Movement::Held { baseline: u64::MAX };
+        changed.findings.push(Finding {
+            metric: "rust.lines".to_owned(),
+            movement: Movement::Held { baseline: u64::MAX },
+        });
         assert_moved(changed, "finding.movement");
         let mut changed = report.clone();
-        changed.measurements[0].metric.push('!');
+        changed.long_lines.push(LongLineFinding::new(
+            "src/lib.rs",
+            1,
+            u64::try_from(crate::LONG_LINE_LIMIT + 1).expect("line limit fits u64"),
+            0,
+            1,
+        ));
+        assert_moved(changed, "long_lines");
+        let mut changed = report.clone();
+        changed.measurements.push(ReportMeasurement {
+            metric: "rust.lines!".to_owned(),
+            value: 1,
+            files: vec!["src/lib.rs".to_owned()],
+        });
         assert_moved(changed, "measurement.metric");
         let mut changed = report.clone();
-        changed.measurements[0].value += 1;
+        changed.measurements.push(ReportMeasurement {
+            metric: "rust.lines".to_owned(),
+            value: 2,
+            files: vec!["src/lib.rs".to_owned()],
+        });
         assert_moved(changed, "measurement.value");
         let mut changed = report.clone();
-        changed.measurements[0].files.push("other.rs".to_owned());
+        changed.measurements.push(ReportMeasurement {
+            metric: "rust.lines".to_owned(),
+            value: 1,
+            files: vec!["other.rs".to_owned()],
+        });
         assert_moved(changed, "measurement.files");
         let mut changed = report.clone();
-        changed.tightening.as_mut().expect("clean proposal")[0]
-            .metric
-            .push('!');
+        changed
+            .tightening
+            .as_mut()
+            .expect("clean proposal")
+            .push(ReportFloor {
+                metric: "rust.lines!".to_owned(),
+                value: 1,
+            });
         assert_moved(changed, "floor.metric");
         let mut changed = report.clone();
-        changed.tightening.as_mut().expect("clean proposal")[0].value += 1;
+        changed
+            .tightening
+            .as_mut()
+            .expect("clean proposal")
+            .push(ReportFloor {
+                metric: "rust.lines".to_owned(),
+                value: 2,
+            });
         assert_moved(changed, "floor.value");
         let mut changed = report;
         let mut verdict = serde_json::to_value(&changed.verdict).expect("verdict JSON value");
-        verdict["standing"] = json!("refused");
+        verdict["head"] = json!("fedcba9876543210");
         changed.verdict = serde_json::from_value(verdict).expect("changed typed verdict");
         assert_moved(changed, "verdict");
     }
@@ -172,15 +231,39 @@ mod tests {
     #[test]
     fn gate_report_refuses_a_finding_that_disagrees_with_its_measurement() {
         let mut report = fixture_gate_report();
-        let forged = report.measurements[0].value.wrapping_add(1);
-        report.findings[0].movement = Movement::Unbaselined { measured: forged };
-        report.tightening.as_mut().expect("clean proposal")[0].value = forged;
+        let measured = 1;
+        let forged = 2;
+        report.measurements.push(ReportMeasurement {
+            metric: "rust.lines".to_owned(),
+            value: measured,
+            files: vec!["src/lib.rs".to_owned()],
+        });
+        report.findings.push(Finding {
+            metric: "rust.lines".to_owned(),
+            movement: Movement::Unbaselined { measured: forged },
+        });
+        report
+            .tightening
+            .as_mut()
+            .expect("clean proposal")
+            .push(ReportFloor {
+                metric: "rust.lines".to_owned(),
+                value: forged,
+            });
 
         let mut verdict = serde_json::to_value(&report.verdict).expect("verdict JSON value");
-        verdict["findings"][0]["movement"] = json!({
-            "movement": "unbaselined",
-            "measured": forged
-        });
+        verdict["findings"] = serde_json::to_value(&report.findings).expect("finding JSON");
+        let measurements = report
+            .measurements
+            .iter()
+            .map(ReportMeasurement::measurement)
+            .collect::<Vec<_>>();
+        verdict["measurement"] = serde_json::to_value(run_evidence_digest(
+            &measurements,
+            report.verdict.head(),
+            &[],
+        ))
+        .expect("measurement digest JSON");
         report.verdict = serde_json::from_value(verdict).expect("forged typed verdict");
 
         assert!(matches!(
@@ -743,13 +826,26 @@ mod tests {
                 root.join("baseline.toml"),
                 concat!(
                     "version = 1\n\n",
-                    "[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n",
                     "[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
                 ),
             )
             .expect("write report fixture baseline");
             fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n")
                 .expect("write report fixture source");
+            for arguments in [
+                ["init", "-q", "-b", "main"].as_slice(),
+                ["config", "user.name", "Gate Report Fixture"].as_slice(),
+                ["config", "user.email", "gate-report@example.invalid"].as_slice(),
+                ["add", "--all"].as_slice(),
+                ["commit", "-q", "-m", "report fixture"].as_slice(),
+            ] {
+                let status = Command::new("/usr/bin/git")
+                    .args(arguments)
+                    .current_dir(&root)
+                    .status()
+                    .expect("run report fixture Git");
+                assert!(status.success(), "git {arguments:?} creates report fixture");
+            }
             Self { root }
         }
     }
