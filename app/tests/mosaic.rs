@@ -190,3 +190,42 @@ fn extent_grid_rows_and_scroll_compensation_share_the_module() {
     assert_eq!(scroll_compensation(4, 6, 60, false, false), None);
     assert_eq!(scroll_compensation(4, 6, 60, true, true), None);
 }
+
+/// Two seated lanes are two planes, not one skyline they take turns landing on.
+///
+/// The mosaic mounts one inbox per seated lane and each inbox packs only its
+/// own lane's messages. A single-lane fixture cannot tell that apart from one
+/// shared row floor, because with one lane there is nothing for a shared floor
+/// to carry over. So this packs a busy lane and a quiet lane separately, then
+/// packs the two concatenated the way a single shared plane would, and pins the
+/// difference. The concatenated run is what gives the per-lane numbers meaning:
+/// without it they are just numbers that any implementation would produce.
+#[test]
+fn two_lanes_each_pack_against_their_own_row_floor() {
+    let busy = vec![
+        candidates(3, 3),
+        candidates(3, 5),
+        candidates(3, 2),
+        candidates(3, 4),
+        candidates(6, 6),
+    ];
+    let quiet = vec![candidates(3, 2), candidates(3, 3)];
+
+    let busy_cards = pack(&busy, TRACK_COUNT);
+    let quiet_cards = pack(&quiet, TRACK_COUNT);
+
+    // Each lane's extent is the top of that lane's own tallest card. The two
+    // disagree, so neither number can quietly stand in for the other.
+    assert_eq!(extent(&busy_cards).0, 10);
+    assert_eq!(extent(&quiet_cards).0, 3);
+
+    // The quiet lane starts at the bottom of its own plane.
+    assert!(quiet_cards.iter().any(|card| card.base == 0));
+
+    // One shared floor instead: every quiet card lands above the busy lane's
+    // skyline, and the quiet lane reports the busy lane's height as its own.
+    let shared = pack(&[busy.clone(), quiet].concat(), TRACK_COUNT);
+    let carried = &shared[busy.len()..];
+    assert!(carried.iter().all(|card| card.base > 0));
+    assert_eq!(extent(&shared).0, 10);
+}
