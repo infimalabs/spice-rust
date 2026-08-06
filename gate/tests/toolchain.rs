@@ -33,12 +33,13 @@ const DRIFTED_PROGRAM: &str = "cargo";
 const REFUSING_STATUS: i32 = 41;
 
 /// The arms this build analyzes itself rather than owing an analyzer.
-const COMPILED_ARMS: [GateId; 8] = [
+const COMPILED_ARMS: [GateId; 9] = [
     GateId::Formatters,
     GateId::LocalPaths,
     GateId::Taste,
     GateId::JavascriptUnused,
     GateId::CsharpUnusedCandidates,
+    GateId::RustTypecheck,
     GateId::CanvasWebTypecheck,
     GateId::EnvPolicy,
     GateId::EnvNameLedger,

@@ -1,13 +1,13 @@
-//! The compiled manifest contract: exactly 26 canonical arms, or nothing.
+//! The compiled manifest contract: exactly 27 canonical arms, or nothing.
 
 use super::*;
 
 #[test]
-fn canonical_manifest_is_the_exact_26_arm_compiled_contract() {
+fn canonical_manifest_is_the_exact_27_arm_compiled_contract() {
     let manifest = BatteryManifest::canonical().expect("canonical manifest");
     assert_eq!(manifest.version(), GATE_BATTERY_VERSION);
     assert_eq!(manifest.predecessor_release(), PREDECESSOR_GATE_RELEASE);
-    assert_eq!(manifest.arms().len(), 26);
+    assert_eq!(manifest.arms().len(), 27);
 
     for (position, (arm, expected)) in manifest.arms().iter().zip(GateId::ALL).enumerate() {
         assert_eq!(

@@ -175,6 +175,13 @@ const FORMATTER_TOOLS: &[ToolRequirement] = &[
         role: "Rust formatter",
     },
 ];
+const RUST_TYPECHECK_TOOLS: &[ToolRequirement] = &[ToolRequirement {
+    name: "cargo",
+    program: "cargo",
+    version_argv: &["--version"],
+    exact_version: "cargo 1.97.1 (c980f4866 2026-06-30)",
+    role: "native typecheck driver",
+}];
 const CANVAS_TOOLS: &[ToolRequirement] = &[
     ToolRequirement {
         name: "cargo",
@@ -200,7 +207,7 @@ const PYRIGHT_TOOLS: &[ToolRequirement] = &[ToolRequirement {
 }];
 
 /// Every toolchain declaration in its fixed interval of the predecessor battery.
-pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 9] = [
+pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
     ToolchainDeclaration {
         id: GateId::Formatters,
         measurement_engine: MeasurementEngine::ToolchainV1,
@@ -251,6 +258,25 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 9] = [
         },
         tools: &[],
         analysis: &["compiled PACKAGED_TASTE_WORDS scan over selected changes"],
+    },
+    ToolchainDeclaration {
+        id: GateId::RustTypecheck,
+        measurement_engine: MeasurementEngine::ToolchainV1,
+        jurisdiction: TreeJurisdiction {
+            input: TreeInput::CompleteSelectedTree,
+            roots: &["."],
+            // Every Rust source, not just `**/src/**`, because the analysis
+            // builds test targets and a crate's tests live outside `src`.
+            includes: &["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/*.rs"],
+            excludes: CURRENT_BUILD_EXCLUDES,
+            applicability: "workspace Cargo.toml is selected",
+        },
+        configuration: ConfigurationSource {
+            source: "rust-toolchain.toml",
+            field: "toolchain.channel",
+        },
+        tools: RUST_TYPECHECK_TOOLS,
+        analysis: &["cargo check --locked --workspace --all-targets"],
     },
     ToolchainDeclaration {
         id: GateId::CanvasWebTypecheck,

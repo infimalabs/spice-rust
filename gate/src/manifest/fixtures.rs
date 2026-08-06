@@ -64,7 +64,7 @@ fn error(repository: &str, worktree: &str) -> MigrationError {
 fn current_manifest_is_exactly_the_ordered_compiled_battery() {
     let manifest = GateManifest::default();
     assert_eq!(manifest.version(), GATE_MANIFEST_VERSION);
-    assert_eq!(manifest.gates().len(), 26);
+    assert_eq!(manifest.gates().len(), 27);
     assert_eq!(
         manifest
             .gates()
@@ -370,7 +370,10 @@ fn release_standard_arm_table_is_complete_and_names_what_the_release_declared() 
         .into_iter()
         .filter(|id| absent_from_battery(*id))
         .collect();
-    assert_eq!(grown_past, vec![GateId::CsharpUnusedCandidates]);
+    assert_eq!(
+        grown_past,
+        vec![GateId::RustTypecheck, GateId::CsharpUnusedCandidates]
+    );
     for id in GateId::ALL {
         assert_eq!(id.predecessor_declared(), !absent_from_battery(id), "{id}");
     }
