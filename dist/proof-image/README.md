@@ -28,11 +28,14 @@ disabled network boundary.
 
 ## Cleaning up
 
-Reclaim only what this lane owns. Its throwaway build context is
-`target/proof-image/context`, which `build.sh` already removes at the start of
-every run, and its archive, checksum, identity, and build log sit beside it
-under `target/proof-image/`. Deleting that directory costs this lane one
-rebuild and costs no other lane anything.
+Reclaim only what this lane owns, and reclaim the throwaway part rather than
+all of it. The throwaway part is the build context `target/proof-image/context`,
+which `build.sh` already removes at the start of every run: deleting it costs
+this lane nothing and costs no other lane anything. Its archive, checksum,
+identity, build log, and build status sit beside it under `target/proof-image/`
+and are not throwaway. The archive is what `load.sh` restores from below, so
+deleting `target/proof-image/` itself gives up the cheap recovery and leaves the
+next prune costing this lane the emulated `linux/amd64` rebuild.
 
 Never reach for a global cleanup. `docker system prune`, `docker image prune`,
 `docker volume prune`, and `docker builder prune` are machine-wide on a host
