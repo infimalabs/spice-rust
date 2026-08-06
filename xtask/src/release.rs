@@ -397,11 +397,7 @@ struct CommandBuilder<'a, E> {
 
 impl<E: Executor> Builder for CommandBuilder<'_, E> {
     fn build_app(&mut self) -> Result<Vec<u8>, BuildError> {
-        self.run(CommandSpec::new(
-            "app-build",
-            &self.programs.xtask,
-            ["local-app"],
-        ))?;
+        self.run(CommandSpec::new("app-build", &self.programs.xtask, ["app"]))?;
         read_lane_app_asset(self.root, "/app_bg.wasm")
     }
 
@@ -887,7 +883,7 @@ impl SystemExecutor {
         entries.extend([
             (OsString::from("RUSTC"), rustc.as_os_str().to_owned()),
             // Named rather than dropped, because one of the commands below is
-            // this same binary: `app-build` re-invokes `xtask local-app`, which
+            // this same binary: `app-build` re-invokes `xtask app`, which
             // resolves its own build root from this variable at its own rim. An
             // absent value there is not a neutral default but a second answer —
             // the app rebuild would write under the workspace while everything

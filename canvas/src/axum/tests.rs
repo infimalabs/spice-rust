@@ -126,9 +126,9 @@ fn speech() -> crate::SpeechConfig {
 const FIXTURE_GENERATION: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 
 fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBuf {
-    let stage = root.join(crate::LOCAL_STAGE);
+    let stage = root.join(crate::APP_STAGE);
     let generation = stage
-        .join(crate::LOCAL_STAGE_GENERATIONS)
+        .join(crate::APP_STAGE_GENERATIONS)
         .join(FIXTURE_GENERATION);
     std::fs::create_dir_all(&generation).expect("fixture app generation");
     for asset in APP.assets() {
@@ -143,7 +143,7 @@ fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBu
         std::fs::write(generation.join(asset.file()), bytes).expect("fixture app asset");
     }
     std::fs::write(
-        stage.join(crate::LOCAL_STAGE_CURRENT),
+        stage.join(crate::APP_STAGE_CURRENT),
         format!("{FIXTURE_GENERATION}\n"),
     )
     .expect("fixture app pointer");
@@ -823,7 +823,7 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
     assert!(task.await.expect_err("aborted server task").is_cancelled());
 }
 
-/// A worktree holding a complete local stage, and that stage's path.
+/// A worktree holding a complete app stage, and that stage's path.
 ///
 /// The bytes name their own file so a route served from the wrong one is
 /// visible in the assertion.
@@ -831,7 +831,7 @@ fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
     let root = std::env::temp_dir().join(format!(
-        "spice-canvas-local-app-{}-{}",
+        "spice-canvas-app-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
@@ -840,7 +840,7 @@ fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn live_server_serves_a_local_stage_and_refuses_when_it_goes_away() {
+async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
     let (root, stage) = local_worktree();
     let app = crate::AppSource::resolve(&root).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(

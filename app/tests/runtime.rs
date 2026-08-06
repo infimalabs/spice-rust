@@ -491,8 +491,13 @@ fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_dispos
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
-    let body = format!(r#"{{"directive":"{LANE}","key":"1kKQtLsP","disposition":"acked"}}"#);
-    let reply = format!(r#"{{"kind":"reply","cursor":41,"body":{body}}}"#);
+    let reply = format!(
+        concat!(
+            r#"{{"kind":"reply","cursor":41,"body":{{"directive":"{LANE}","#,
+            r#""key":"1kKQtLsP","disposition":"acked"}}}}"#,
+        ),
+        LANE = LANE
+    );
     let bytes = format!(r#"{{"v":1,"id":"{REQUEST}","epoch":"{EPOCH}","outcome":{reply}}}"#);
     let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
         .admit_frame(bytes.as_bytes())

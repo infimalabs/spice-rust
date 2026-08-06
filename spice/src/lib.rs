@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 /// The canvas this appliance serves, re-exported so the lane-local builder and
-/// resident share the one [`canvas::LOCAL_STAGE`] path.
+/// resident share the one [`canvas::APP_STAGE`] path.
 pub use canvas;
 
 pub mod agent_launch;

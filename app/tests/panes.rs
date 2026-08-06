@@ -259,7 +259,13 @@ fn an_acceptance_carrying_a_capability_does_not_decode() {
     // echoed it would place a live credential on the return path of every
     // accepted connection, including every lane-scoped one.
     let bytes = format!(
-        r#"{{ "wire": 1, "actor": "lane:{LANE}", "epoch": "{EPOCH}", "capability": "{LANE_CAPABILITY}" }}"#
+        concat!(
+            r#"{{ "wire": 1, "actor": "lane:{LANE}", "epoch": "{EPOCH}", "#,
+            r#""capability": "{LANE_CAPABILITY}" }}"#,
+        ),
+        LANE = LANE,
+        EPOCH = EPOCH,
+        LANE_CAPABILITY = LANE_CAPABILITY
     )
     .into_bytes();
 

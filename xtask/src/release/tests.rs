@@ -23,8 +23,8 @@ impl Fixture {
         ));
         fs::create_dir_all(root.join("dist/stage")).expect("fixture stage directory");
         let app = root
-            .join(spice::canvas::LOCAL_STAGE)
-            .join(spice::canvas::LOCAL_STAGE_GENERATIONS)
+            .join(spice::canvas::APP_STAGE)
+            .join(spice::canvas::APP_STAGE_GENERATIONS)
             .join(GENERATION);
         fs::create_dir_all(&app).expect("fixture app generation");
         fs::write(app.join("app_bg.wasm"), TEST_WASM).expect("write lane-built Wasm");
@@ -32,8 +32,8 @@ impl Fixture {
         fs::write(app.join("app.module"), b"lane-built module").expect("write lane module");
         fs::write(app.join("style.css"), b"lane-built style").expect("write lane style");
         fs::write(
-            root.join(spice::canvas::LOCAL_STAGE)
-                .join(spice::canvas::LOCAL_STAGE_CURRENT),
+            root.join(spice::canvas::APP_STAGE)
+                .join(spice::canvas::APP_STAGE_CURRENT),
             format!("{GENERATION}\n"),
         )
         .expect("write lane app pointer");
@@ -203,7 +203,7 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
                 .collect::<Vec<_>>(),
             ["app-build", "embed-build", "native-build"]
         );
-        assert_eq!(build_records[0].arguments, [OsString::from("local-app")]);
+        assert_eq!(build_records[0].arguments, [OsString::from("app")]);
         assert_eq!(build_records[0].program, programs.xtask);
         assert_eq!(
             build_records[1].arguments,
@@ -312,7 +312,7 @@ fn system_executor_overrides_machine_local_cargo_build_state() {
         "the resolved RUSTC already outranks CARGO_BUILD_RUSTC"
     );
     // Pinned to the resolved answer rather than left absent: absence would
-    // let the one child that reads this variable — `xtask local-app` — pick
+    // let the one child that reads this variable — `xtask app` — pick
     // a build root of its own.
     assert_eq!(
         value("CARGO_TARGET_DIR"),

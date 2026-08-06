@@ -680,7 +680,7 @@ async fn app(
         Ok(Some(asset)) => asset,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         // The source was whole when this generation started, so a read that
-        // fails now is the local stage being rebuilt or removed underneath the
+        // fails now is the app stage being rebuilt or removed underneath the
         // resident, which is a served answer nobody should cache.
         Err(error) => {
             return (

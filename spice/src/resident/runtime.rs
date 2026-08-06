@@ -656,7 +656,7 @@ async fn run_surface(
     let capabilities = surface_capabilities(operator, residency.body())?;
     let timer_commits = bus.reader().subscribe();
     let timers = timers::Runtime::start(config.projects.clone())?;
-    // Settled before the listener exists, so a local stage that cannot serve
+    // Settled before the listener exists, so a app stage that cannot supply
     // the whole app stops the resident with its own name rather than turning
     // into a page the operator has to diagnose from the browser.
     let app = canvas::AppSource::resolve(&paths.worktree)
@@ -825,7 +825,7 @@ async fn drive_surface(
                     let _ = shutdown.send(());
                     return match server_task.await {
                         Ok(Ok(())) => Ok(()),
-                        served => Err(server_outcome(served)),
+                        ending => Err(server_outcome(ending)),
                     };
                 }
             }
@@ -844,8 +844,8 @@ async fn drive_surface(
                 lane_surface::capture_failed(bus, epoch, seats, &failure)?;
             }
             timed = &mut timer => return timed,
-            served = &mut server_task => {
-                return Err(server_outcome(served));
+            ending = &mut server_task => {
+                return Err(server_outcome(ending));
             }
         }
     }

@@ -17,12 +17,12 @@ static APP_ASSETS: [AppAsset; 4] = [
     AppAsset::new("/app_bg.wasm", "app_bg.wasm", "application/wasm"),
 ];
 
-/// The one browser app stage, built at [`LOCAL_STAGE`] and served per worktree.
-pub const LOCAL_STAGE: &str = "dist/stage-local";
+/// The one browser app stage, built at [`APP_STAGE`] and served per worktree.
+pub const APP_STAGE: &str = "dist/stage-app";
 /// Atomic pointer to the active immutable lane-app generation.
-pub const LOCAL_STAGE_CURRENT: &str = "current";
-/// Immutable lane-app generations beneath [`LOCAL_STAGE`].
-pub const LOCAL_STAGE_GENERATIONS: &str = "generations";
+pub const APP_STAGE_CURRENT: &str = "current";
+/// Immutable lane-app generations beneath [`APP_STAGE`].
+pub const APP_STAGE_GENERATIONS: &str = "generations";
 /// Route prefix that pins a page's dependent assets to one generation.
 pub const APP_GENERATION_ROUTE: &str = "/_spice/app";
 
@@ -133,7 +133,7 @@ impl AppSource {
     /// its named generation is absent.
     pub fn resolve(worktree: &Path) -> Result<Self, AppSourceError> {
         let source = Self {
-            stage: worktree.join(LOCAL_STAGE),
+            stage: worktree.join(APP_STAGE),
         };
         source.current_generation()?;
         Ok(source)
@@ -145,11 +145,11 @@ impl AppSource {
     ///
     /// Returns a named pointer, identity, inventory, or file-system failure.
     pub fn current_generation(&self) -> Result<AppGeneration, AppSourceError> {
-        let pointer = self.stage.join(LOCAL_STAGE_CURRENT);
+        let pointer = self.stage.join(APP_STAGE_CURRENT);
         let text =
             std::fs::read_to_string(&pointer).map_err(|source| AppSourceError::Incomplete {
                 directory: self.stage.clone(),
-                missing: vec![LOCAL_STAGE_CURRENT.to_owned()],
+                missing: vec![APP_STAGE_CURRENT.to_owned()],
                 source: Some(source),
             })?;
         let spelling = text.strip_suffix('\n').ok_or_else(|| {
@@ -167,7 +167,7 @@ impl AppSource {
     fn generation(&self, identity: wire::Digest) -> Result<AppGeneration, AppSourceError> {
         let directory = self
             .stage
-            .join(LOCAL_STAGE_GENERATIONS)
+            .join(APP_STAGE_GENERATIONS)
             .join(identity.as_str());
         validate_generation(&directory)?;
         Ok(AppGeneration {
@@ -374,7 +374,7 @@ impl fmt::Debug for ServedAsset {
 /// Why a canvas could not settle or serve its app source.
 #[derive(Debug)]
 pub enum AppSourceError {
-    /// A local stage directory exists without the whole app in it.
+    /// A app stage directory exists without the whole app in it.
     Incomplete {
         /// The directory that was read.
         directory: PathBuf,
@@ -403,7 +403,7 @@ impl fmt::Display for AppSourceError {
                 directory, missing, ..
             } => write!(
                 formatter,
-                "the lane app stage {} is missing {}; build it with cargo xtask local-app",
+                "the lane app stage {} is missing {}; build it with cargo xtask app",
                 directory.display(),
                 missing.join(", ")
             ),
@@ -580,16 +580,15 @@ mod tests {
         root
     }
 
-    /// Fill that worktree's local stage with exactly the named files.
+    /// Fill that worktree's app stage with exactly the named files.
     fn staged_as(root: &Path, identity: &str, files: &[(&str, Vec<u8>)]) -> PathBuf {
-        let stage = root.join(LOCAL_STAGE);
-        let generation = stage.join(LOCAL_STAGE_GENERATIONS).join(identity);
+        let stage = root.join(APP_STAGE);
+        let generation = stage.join(APP_STAGE_GENERATIONS).join(identity);
         fs::create_dir_all(&generation).expect("fixture generation");
         for (file, bytes) in files {
             fs::write(generation.join(file), bytes).expect("fixture asset");
         }
-        fs::write(stage.join(LOCAL_STAGE_CURRENT), format!("{identity}\n"))
-            .expect("fixture pointer");
+        fs::write(stage.join(APP_STAGE_CURRENT), format!("{identity}\n")).expect("fixture pointer");
         generation
     }
 
@@ -599,7 +598,7 @@ mod tests {
 
     /// Bytes for every staged file, each naming itself, so no route can be
     /// served from another route's file without the assertion seeing it.
-    fn local_app() -> Vec<(&'static str, Vec<u8>)> {
+    fn app() -> Vec<(&'static str, Vec<u8>)> {
         APP.assets()
             .iter()
             .map(|asset| {
@@ -618,16 +617,16 @@ mod tests {
         let error = AppSource::resolve(&root).expect_err("an absent stage refuses");
 
         let message = error.to_string();
-        assert!(message.contains(LOCAL_STAGE));
-        assert!(message.contains("cargo xtask local-app"));
+        assert!(message.contains(APP_STAGE));
+        assert!(message.contains("cargo xtask app"));
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
     #[test]
     fn one_page_generation_remains_addressable_after_atomic_publication() {
         let root = worktree();
-        let first = staged(&root, &local_app());
-        let stage = root.join(LOCAL_STAGE);
+        let first = staged(&root, &app());
+        let stage = root.join(APP_STAGE);
 
         let source = AppSource::resolve(&root).expect("a complete stage resolves");
         let first_generation = source
@@ -655,7 +654,7 @@ mod tests {
         assert_eq!(wasm.content_type(), "application/wasm");
         assert_eq!(wasm.into_bytes(), b"locally built app_bg.wasm");
 
-        let mut rebuilt = local_app();
+        let mut rebuilt = app();
         rebuilt
             .iter_mut()
             .find(|(file, _)| *file == "canvas-app.html")
@@ -690,9 +689,9 @@ mod tests {
     }
 
     #[test]
-    fn a_local_stage_missing_files_refuses_rather_than_mixing_sources() {
+    fn an_app_stage_missing_files_refuses_rather_than_mixing_sources() {
         let root = worktree();
-        let whole = local_app();
+        let whole = app();
         let stage = staged(&root, &whole[..2]);
 
         let error = AppSource::resolve(&root).expect_err("a partial stage refuses");
@@ -711,7 +710,7 @@ mod tests {
             "the refusal does not name what is missing: {message}"
         );
         assert!(
-            message.contains("cargo xtask local-app"),
+            message.contains("cargo xtask app"),
             "the refusal does not say how to build the stage: {message}"
         );
         fs::remove_dir_all(root).expect("fixture cleanup");
@@ -720,7 +719,7 @@ mod tests {
     #[test]
     fn a_staged_file_lost_after_startup_names_itself() {
         let root = worktree();
-        let stage = staged(&root, &local_app());
+        let stage = staged(&root, &app());
         let source = AppSource::resolve(&root).expect("a complete stage resolves");
         let generation = source
             .current_generation()

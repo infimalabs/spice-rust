@@ -173,7 +173,9 @@ fn render_standing(standing: &Standing, selected: bool, choose: UseStateHandle<S
         >
             <span class="watchband-line">
                 <span class="agent-presence"></span>
-                <span class="watchband-name">{watchband::truncate(&standing.label, watchband::FIELD_BUDGET)}</span>
+                <span class="watchband-name">
+                    {watchband::truncate(&standing.label, watchband::FIELD_BUDGET)}
+                </span>
                 <span class="tag vendor">{standing.vendor.clone()}</span>
             </span>
             <span class="watchband-line muted">
