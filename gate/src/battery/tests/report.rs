@@ -229,6 +229,78 @@ fn decoded_family_evidence_cannot_be_forged() {
 }
 
 #[test]
+fn serialized_timed_rust_terminal_evidence_cannot_omit_or_outlive_its_timing() {
+    let fixture = Fixture::new();
+    for outcome in [ArmOutcome::Timeout, ArmOutcome::Cancelled] {
+        let report = battery_report_with_rust_typecheck_outcome(&fixture, outcome);
+        let rust_position = report
+            .results()
+            .iter()
+            .position(|result| result.gate_id() == GateId::RustTypecheck)
+            .expect("battery contains the Rust typecheck arm");
+        let ArmEvidence::Toolchain {
+            report: measurement,
+        } = report.results()[rust_position].evidence()
+        else {
+            panic!("Rust typecheck retains toolchain evidence")
+        };
+        assert_eq!(measurement.outcome, outcome);
+        let canonical = report.encode().expect("timed terminal report encodes");
+        assert_eq!(
+            BatteryReport::decode(&canonical).expect("timed terminal report decodes"),
+            report,
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_slice(&canonical).expect("battery report JSON");
+        let observation_bound_ms = value["results"][rust_position]["evidence"]["report"]["timing"]
+            ["observation_bound_ms"]
+            .as_u64()
+            .expect("Rust typecheck observation bound");
+        let timing_invariant =
+            "invalid toolchain evidence: rust-typecheck process timing is invalid";
+        assert_refusals(vec![
+            (
+                timing_invariant,
+                mutate(&value, |candidate| {
+                    candidate["results"][rust_position]["evidence"]["report"]
+                        .as_object_mut()
+                        .expect("Rust typecheck report is an object")
+                        .remove("timing");
+                }),
+            ),
+            (
+                timing_invariant,
+                mutate(&value, |candidate| {
+                    let timing =
+                        &mut candidate["results"][rust_position]["evidence"]["report"]["timing"];
+                    timing["elapsed_ms"] = serde_json::json!(observation_bound_ms + 1);
+                }),
+            ),
+        ]);
+    }
+}
+
+fn battery_report_with_rust_typecheck_outcome(
+    fixture: &Fixture,
+    outcome: ArmOutcome,
+) -> BatteryReport {
+    let mut evidence = fixtures::passing(&fixture.source);
+    let rust_typecheck = evidence
+        .iter_mut()
+        .find(|evidence| evidence.gate_id() == GateId::RustTypecheck)
+        .expect("fixture contains the Rust typecheck arm");
+    let ArmEvidence::Toolchain { report } = rust_typecheck else {
+        panic!("Rust typecheck fixture carries toolchain evidence")
+    };
+    report.outcome = outcome;
+
+    let inputs = fixture.inputs();
+    let mut executor = RecordingExecutor::with_evidence(evidence);
+    run_battery(&inputs, &mut executor).expect("complete timed terminal report")
+}
+
+#[test]
 fn admitted_skip_provenance_and_reason_cannot_be_forged() {
     let fixture = Fixture::new();
     let inputs = fixture.inputs();
