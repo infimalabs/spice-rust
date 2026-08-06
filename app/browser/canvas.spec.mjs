@@ -9,6 +9,7 @@ import { chromium } from "playwright";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
   assertEndpointProbeStates,
+  assertHeldTaskCount,
   assertLineageLifeIsolation,
   assertResidentLossObserved,
   assertResidentRestart,
@@ -508,6 +509,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
+  await assertHeldTaskCount(console, fixture, seated[0].lane);
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);
