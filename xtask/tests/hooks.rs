@@ -344,7 +344,7 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
     );
     assert_stale_entry_point_is_republished(scratch, entry_point);
     assert_unusable_entry_point_is_repaired(scratch, entry_point);
-    assert_guard_audit_refuses_a_foreign_guard(scratch, entry_point);
+    assert_guard_audit_refuses_a_prior_build(scratch, entry_point);
     assert_an_absent_entry_point_aborts_ref_updates(scratch, entry_point);
     let shared_hooks = common_hooks(scratch);
     assert_eq!(
@@ -642,18 +642,42 @@ fn assert_unusable_entry_point_is_repaired(scratch: &Scratch, source: &Path) {
 /// Activation is the only writer of the guard stamp, so the audit is what makes
 /// a stale publication visible to anyone who did not just run activation.
 ///
-/// The three states are distinct answers and each is asserted separately: a
-/// stamp equal to this build passes and names the digit string it matched, a
-/// stamp from some other build is refused naming both digests, and no stamp at
-/// all is refused too. Without the last one a repository that never published
-/// would be indistinguishable from a current one. Re-activating at the end both
-/// restores the stamp for the assertions that follow and proves the
-/// already-current branch of activation stamps as well, which is the branch a
-/// second lane running activation over the first lane's copy takes.
-fn assert_guard_audit_refuses_a_foreign_guard(scratch: &Scratch, source: &Path) {
+/// Build A is the real xtask executable activation publishes. Build B changes
+/// `PROTECTED_COMMIT_LIMIT`, a runtime bound that changes the guard's refusal
+/// account, and reaches the same production audit with the digest that source
+/// would compile. B must name and refuse A. The explicit source-to-compiled
+/// digest equality is what makes severing `include_str!` fail rather than
+/// letting a synthetic sidecar mutation stand in for a build transition.
+///
+/// An absent stamp is refused separately. Re-activating at the end restores the
+/// stamp for the assertions that follow and proves the already-current branch
+/// of activation stamps as well, which is the branch a second lane running
+/// activation over the first lane's copy takes.
+fn assert_guard_audit_refuses_a_prior_build(scratch: &Scratch, source: &Path) {
     let stamp = published_guard_stamp(scratch.path());
     let published = fs::read_to_string(&stamp).expect("activation stamps the guard it published");
     let published = published.trim().to_owned();
+    let guard_a_source = include_str!("../src/reference_transaction.rs");
+    let behavior_a = "const PROTECTED_COMMIT_LIMIT: usize = 5;";
+    let behavior_b = "const PROTECTED_COMMIT_LIMIT: usize = 6;";
+    assert_eq!(
+        guard_a_source.matches(behavior_a).count(),
+        1,
+        "the fixture changes one runtime guard bound rather than arbitrary prose"
+    );
+    let guard_b_source = guard_a_source.replacen(behavior_a, behavior_b, 1);
+    let guard_a = xtask::compiled_reference_transaction_guard_digest();
+    assert_eq!(
+        guard_a,
+        xtask::reference_transaction_guard_digest(guard_a_source.as_bytes()),
+        "the published build identity is bound to the guard source it carries"
+    );
+    assert_eq!(published, format!("{guard_a:016x}"));
+    let guard_b = xtask::reference_transaction_guard_digest(guard_b_source.as_bytes());
+    assert_ne!(
+        guard_b, guard_a,
+        "changing the number of protected commits the guard reports moves the next build"
+    );
 
     let mut current = Vec::new();
     xtask::audit_entry_point(scratch.path(), &mut current)
@@ -664,13 +688,12 @@ fn assert_guard_audit_refuses_a_foreign_guard(scratch: &Scratch, source: &Path) 
         "the audit names the guard it matched: {current}"
     );
 
-    fs::write(&stamp, "0123456789abcdef\n").expect("stamp a guard from some other build");
-    let foreign = xtask::audit_entry_point(scratch.path(), &mut Vec::new())
-        .expect_err("a guard from another build is refused")
+    let stale = xtask::audit_entry_point_for_guard(scratch.path(), guard_b, &mut Vec::new())
+        .expect_err("build B refuses the guard published by build A")
         .to_string();
-    assert!(foreign.contains("0123456789abcdef"), "{foreign}");
-    assert!(foreign.contains(&published), "{foreign}");
-    assert!(foreign.contains("cargo xtask activate-hooks"), "{foreign}");
+    assert!(stale.contains(&published), "{stale}");
+    assert!(stale.contains(&format!("{guard_b:016x}")), "{stale}");
+    assert!(stale.contains("cargo xtask activate-hooks"), "{stale}");
 
     fs::remove_file(&stamp).expect("remove the published guard stamp");
     let unstamped = xtask::audit_entry_point(scratch.path(), &mut Vec::new())

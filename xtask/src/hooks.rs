@@ -40,11 +40,13 @@ const GUARD_STAMP_PATH: &str = ".spice-install/bin/xtask.guard";
 /// source is outside what this notices; the alternative that would catch that
 /// case is the whole-binary comparison rejected above, which catches everything
 /// and is therefore read by no one.
-const GUARD_DIGEST: u64 = digest(include_str!("reference_transaction.rs").as_bytes());
+const GUARD_DIGEST: u64 =
+    reference_transaction_guard_digest(include_str!("reference_transaction.rs").as_bytes());
 
 /// FNV-1a, in a `const fn` so the digest is fixed at build time rather than
 /// read from a file the published copy could disagree with.
-const fn digest(bytes: &[u8]) -> u64 {
+#[doc(hidden)]
+pub const fn reference_transaction_guard_digest(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut index = 0;
     while index < bytes.len() {
@@ -53,6 +55,12 @@ const fn digest(bytes: &[u8]) -> u64 {
         index += 1;
     }
     hash
+}
+
+/// Return the reference-transaction guard identity compiled into this build.
+#[doc(hidden)]
+pub const fn compiled_reference_transaction_guard_digest() -> u64 {
+    GUARD_DIGEST
 }
 
 /// Point the repository and every linked worktree at the installed hook set.
@@ -278,17 +286,30 @@ fn stamp_guard(repository: &spice::repository::Repository) -> Result<(), HookAct
 /// [`HookActivationError::EntryPointStale`] when the published guard is absent
 /// or differs from this build's.
 pub fn audit_entry_point(root: &Path, output: &mut impl Write) -> Result<(), HookActivationError> {
+    audit_entry_point_for_guard(root, GUARD_DIGEST, output)
+}
+
+/// Audit the published entry point from a build carrying `expected_guard`.
+///
+/// Production always reaches this through [`audit_entry_point`] with the digest
+/// compiled into the running build. Keeping the expected build identity at this
+/// seam lets the cross-build fixture exercise build B against a copy published
+/// by build A without replacing the executable that fixture is currently
+/// running.
+#[doc(hidden)]
+pub fn audit_entry_point_for_guard(
+    root: &Path,
+    expected_guard: u64,
+    output: &mut impl Write,
+) -> Result<(), HookActivationError> {
     let repository = spice::repository::Repository::discover(root)
         .map_err(|error| HookActivationError::Repository(error.to_string()))?;
     let hooks = repository.common_dir().join(".spice-install/git-hooks");
-    let configured = git(
+    let configured = configured_hooks_path(git(
         repository.worktree_root(),
         &["config", "--get", "core.hooksPath"],
         "read the active hooks path",
-    )
-    .ok()
-    .filter(|listed| listed.status.success())
-    .map(|listed| String::from_utf8_lossy(&listed.stdout).trim().to_owned())
+    ))?
     .unwrap_or_default();
     if configured != hooks.to_string_lossy() {
         return writeln!(
@@ -301,14 +322,33 @@ pub fn audit_entry_point(root: &Path, output: &mut impl Write) -> Result<(), Hoo
     let published = fs::read_to_string(&path)
         .ok()
         .and_then(|stamp| u64::from_str_radix(stamp.trim(), 16).ok());
-    if published != Some(GUARD_DIGEST) {
-        return Err(HookActivationError::EntryPointStale { path, published });
+    if published != Some(expected_guard) {
+        return Err(HookActivationError::EntryPointStale {
+            path,
+            published,
+            expected: expected_guard,
+        });
     }
     writeln!(
         output,
-        "reference-transaction guard published at {GUARD_DIGEST:016x} matches this build"
+        "reference-transaction guard published at {expected_guard:016x} matches this build"
     )
     .map_err(HookActivationError::Output)
+}
+
+/// Treat only Git's documented absent-value status as an inactive hook path.
+fn configured_hooks_path(
+    configured: Result<Output, HookActivationError>,
+) -> Result<Option<String>, HookActivationError> {
+    match configured {
+        Ok(configured) => Ok(Some(
+            utf8("git config --get core.hooksPath", &configured.stdout)?
+                .trim()
+                .to_owned(),
+        )),
+        Err(HookActivationError::Exit { code: Some(1), .. }) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn write_executable(path: &Path, bytes: &[u8]) -> Result<(), HookActivationError> {
@@ -387,6 +427,7 @@ pub enum HookActivationError {
     EntryPointStale {
         path: PathBuf,
         published: Option<u64>,
+        expected: u64,
     },
     UnnameablePath(PathBuf),
     Launch {
@@ -431,7 +472,11 @@ impl fmt::Display for HookActivationError {
                     path.display()
                 )
             }
-            Self::EntryPointStale { path, published } => {
+            Self::EntryPointStale {
+                path,
+                published,
+                expected,
+            } => {
                 let published = published.map_or_else(
                     || "no stamp".to_owned(),
                     |published| format!("{published:016x}"),
@@ -439,7 +484,7 @@ impl fmt::Display for HookActivationError {
                 write!(
                     formatter,
                     "the reference-transaction guard Git enforces is not this build's: \
-                     {} records {published} and this build carries {GUARD_DIGEST:016x}; \
+                     {} records {published} and this build carries {expected:016x}; \
                      run `cargo xtask activate-hooks` to publish this build's guard",
                     path.display()
                 )
@@ -503,7 +548,12 @@ impl std::error::Error for HookActivationError {
 
 #[cfg(test)]
 mod tests {
-    use super::digest;
+    use std::io;
+
+    use super::{
+        GUARD_DIGEST, HookActivationError, configured_hooks_path,
+        reference_transaction_guard_digest,
+    };
 
     /// The stamp is a detector only if editing the guard moves it, so the edits
     /// it must not be blind to are pinned here rather than assumed from the
@@ -515,8 +565,54 @@ mod tests {
     /// guard whose only change is a deleted trailing clause must still move.
     #[test]
     fn the_stamp_moves_for_edits_the_guard_can_receive() {
-        assert_ne!(digest(b"refuse then admit"), digest(b"admit then refuse"));
-        assert_ne!(digest(b"admit unless upstream"), digest(b"admit unless"));
-        assert_ne!(digest(b""), digest(b"\0"));
+        assert_ne!(
+            reference_transaction_guard_digest(b"refuse then admit"),
+            reference_transaction_guard_digest(b"admit then refuse")
+        );
+        assert_ne!(
+            reference_transaction_guard_digest(b"admit unless upstream"),
+            reference_transaction_guard_digest(b"admit unless")
+        );
+        assert_ne!(
+            reference_transaction_guard_digest(b""),
+            reference_transaction_guard_digest(b"\0")
+        );
+    }
+
+    #[test]
+    fn the_compiled_stamp_is_bound_to_the_exact_guard_source() {
+        assert_eq!(
+            GUARD_DIGEST,
+            reference_transaction_guard_digest(include_str!("reference_transaction.rs").as_bytes())
+        );
+    }
+
+    #[test]
+    fn only_an_unset_hook_path_is_an_inactive_configuration() {
+        let unset = configured_hooks_path(Err(HookActivationError::Exit {
+            operation: "read the active hooks path",
+            code: Some(1),
+            diagnostic: String::new(),
+        }))
+        .expect("Git status 1 means the value is unset");
+        assert_eq!(unset, None);
+
+        let launch = configured_hooks_path(Err(HookActivationError::Launch {
+            operation: "read the active hooks path",
+            source: io::Error::other("fixture Git launch failure"),
+        }))
+        .expect_err("a Git launch failure is not an inactive repository");
+        assert!(matches!(launch, HookActivationError::Launch { .. }));
+
+        let unexpected = configured_hooks_path(Err(HookActivationError::Exit {
+            operation: "read the active hooks path",
+            code: Some(2),
+            diagnostic: "fixture Git config failure".to_owned(),
+        }))
+        .expect_err("an unexpected Git exit is not an inactive repository");
+        assert!(matches!(
+            unexpected,
+            HookActivationError::Exit { code: Some(2), .. }
+        ));
     }
 }
