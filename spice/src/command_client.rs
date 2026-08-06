@@ -557,7 +557,7 @@ fn open_session(
     discovery: DiscoveryRead,
     timeout: Duration,
 ) -> ClientResult<AuthenticatedSession> {
-    let (authority, address) = loopback_endpoint(&discovery.value.endpoint)?;
+    let (authority, address) = dialable_endpoint(&discovery.value.endpoint)?;
     discovery.verify_current()?;
     let stream = match DeadlineStream::connect(&address, timeout) {
         Ok(stream) => stream,
@@ -648,7 +648,7 @@ fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
     let Some(authority) = endpoint.strip_prefix("http://") else {
         return Err(protocol_fault(
             "canvas::endpoint-invalid",
-            "canvas endpoint is not the current HTTP loopback origin",
+            "canvas endpoint is not the current HTTP origin",
         ));
     };
     if authority.is_empty() || authority.contains(['/', '?', '#', '@']) {
@@ -660,14 +660,18 @@ fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
     Ok(authority)
 }
 
-fn loopback_endpoint(endpoint: &str) -> ClientResult<(&str, SocketAddr)> {
+/// The one socket a published discovery document names.
+///
+/// This once required loopback, and no longer can: the resident binds the
+/// address its operator asked for, and refusing to dial the address it
+/// published would leave every local command unable to reach a surface that is
+/// running and healthy. What the endpoint must still be is one literal socket
+/// authority, which is what keeps a corrupted document from steering a client
+/// at a name it resolves somewhere else.
+fn dialable_endpoint(endpoint: &str) -> ClientResult<(&str, SocketAddr)> {
     let authority = endpoint_authority(endpoint)?;
     match authority.parse::<SocketAddr>() {
-        Ok(address) if address.ip().is_loopback() => Ok((authority, address)),
-        Ok(_) => Err(protocol_fault(
-            "canvas::endpoint-not-loopback",
-            "canvas discovery does not name a loopback socket",
-        )),
+        Ok(address) => Ok((authority, address)),
         Err(_) => Err(protocol_fault(
             "canvas::endpoint-invalid",
             "canvas discovery does not name one socket authority",

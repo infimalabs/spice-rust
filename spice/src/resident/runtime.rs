@@ -173,15 +173,66 @@ impl Drop for PublishedDiscovery {
     }
 }
 
-pub(crate) fn up() -> Outcome<()> {
+/// The address the surface listens on when the operator names neither flag.
+///
+/// The port is fixed rather than ephemeral because the operator's browser holds
+/// the URL: a port the kernel picks is a different address after every restart,
+/// which invalidates every bookmark and open tab. Loopback stays the default
+/// because reaching this surface from another machine is a decision only the
+/// operator can make, and `--host` is how they make it.
+const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8765);
+
+/// The address a caller that owns no operator intent should listen on.
+///
+/// A demo is not the operator's surface and must not take the port theirs
+/// answers on, so it asks the kernel for one nobody is using.
+pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+
+pub(crate) fn up(leaf: &clap::ArgMatches) -> Outcome<()> {
+    let listen = match requested_listen(leaf) {
+        Ok(listen) => listen,
+        Err(outcome) => return outcome,
+    };
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
     };
-    up_from(&current)
+    up_from(&current, listen)
 }
 
-pub(crate) fn up_from(current: &Path) -> Outcome<()> {
+/// The address `--host` and `--port` asked for, each defaulted on its own.
+///
+/// Both are parsed strictly: what the operator named is what gets bound, so a
+/// host that is not an address of this machine has to fail here by name rather
+/// than resolve to something they did not ask for.
+fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
+    let host = match leaf.get_one::<String>("host") {
+        Some(host) => host.parse::<IpAddr>().map_err(|_| {
+            listen_refusal("resident::host-invalid", "one IP address to listen on", host)
+        })?,
+        None => DEFAULT_LISTEN.ip(),
+    };
+    let port = match leaf.get_one::<String>("port") {
+        Some(port) => port.parse::<u16>().map_err(|_| {
+            listen_refusal("resident::port-invalid", "one port from 0 to 65535", port)
+        })?,
+        None => DEFAULT_LISTEN.port(),
+    };
+    Ok(SocketAddr::new(host, port))
+}
+
+fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
+    Outcome::Refusal(Refusal {
+        reason: reason.to_owned(),
+        witness: Some("requested-listen-address".to_owned()),
+        expected: Some(expected.to_owned()),
+        observed: Some(observed.to_owned()),
+        remedy: format!("name an address this machine can listen on, or omit the flag for {DEFAULT_LISTEN}"),
+    })
+}
+
+pub(crate) fn up_from(current: &Path, listen: SocketAddr) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
@@ -242,6 +293,7 @@ pub(crate) fn up_from(current: &Path) -> Outcome<()> {
             &repository,
             &paths,
             epoch,
+            listen,
             &startup_surface.config,
             &mut seats,
         )),
@@ -487,6 +539,7 @@ async fn run_surface(
     repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
+    listen: SocketAddr,
     config: &SurfaceConfig,
     seats: &mut Seats,
 ) -> CommandResult<()> {
@@ -496,6 +549,7 @@ async fn run_surface(
     let timer_commits = bus.reader().subscribe();
     let timers = timers::Runtime::start(config.projects.clone())?;
     let (server, control) = canvas::axum::Server::bind_streaming(
+        listen,
         epoch,
         capabilities.clone(),
         config.speech.clone(),
@@ -503,7 +557,15 @@ async fn run_surface(
         config.canvas.rows(),
     )
     .await
-    .map_err(|error| environment_fault("canvas::bind-failed", &error.to_string()))?;
+    // Naming the address is the whole diagnosis now that one can be asked for:
+    // the common failure is a port another process already holds, and "address
+    // already in use" alone does not say which address or how to pick another.
+    .map_err(|error| {
+        environment_fault(
+            "canvas::bind-failed",
+            &format!("listening on {listen} failed: {error}"),
+        )
+    })?;
     let discovery = server
         .discovery(operator)
         .map_err(|error| environment_fault("canvas::discovery-invalid", &error.to_string()))?;

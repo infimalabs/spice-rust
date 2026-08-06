@@ -148,7 +148,7 @@ fn main() {
     deliver_target_refusal(contract.path, form);
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
-        ["up"] => resident::up(),
+        ["up"] => resident::up(leaf),
         ["down"] => resident::down(contract),
         _ => not_landed(contract),
     };

@@ -316,10 +316,16 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) =
-        Server::bind_streaming(epoch(), capabilities, speech(), bus.reader(), 8)
-            .await
-            .expect("streaming server binds");
+    let (server, _control) = Server::bind_streaming(
+        LOOPBACK_EPHEMERAL,
+        epoch(),
+        capabilities,
+        speech(),
+        bus.reader(),
+        8,
+    )
+    .await
+    .expect("streaming server binds");
     let address = server.local_addr().expect("address");
     let (shutdown, stopped) = oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
@@ -375,10 +381,16 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) =
-        Server::bind_streaming(epoch(), capabilities.clone(), speech(), bus.reader(), 8)
-            .await
-            .expect("streaming server binds");
+    let (server, _control) = Server::bind_streaming(
+        LOOPBACK_EPHEMERAL,
+        epoch(),
+        capabilities.clone(),
+        speech(),
+        bus.reader(),
+        8,
+    )
+    .await
+    .expect("streaming server binds");
     let address = server.local_addr().expect("address");
     let server_task = tokio::spawn(server.up());
     let (mut socket, _) = authenticate(address, operator(), epoch()).await;
@@ -422,10 +434,16 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) =
-        Server::bind_streaming(epoch(), capabilities, speech(), bus.reader(), 8)
-            .await
-            .expect("streaming server binds");
+    let (server, mut control) = Server::bind_streaming(
+        LOOPBACK_EPHEMERAL,
+        epoch(),
+        capabilities,
+        speech(),
+        bus.reader(),
+        8,
+    )
+    .await
+    .expect("streaming server binds");
     let address = server.local_addr().expect("address");
     let server_task = tokio::spawn(server.up());
     let (mut socket, _) = authenticate(address, operator(), epoch()).await;
@@ -507,6 +525,67 @@ async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
     assert!(is_loopback(address));
     assert_eq!(discovery.endpoint, format!("http://{address}"));
     assert_eq!(discovery.epoch, epoch());
+}
+
+/// A surface bound off loopback answers to the address the operator dialed.
+///
+/// This is the remote case the whole flag exists for: the operator's browser is
+/// on another machine, so the `Host` it sends is a routable address this
+/// process never chose and cannot enumerate. The wildcard bind therefore admits
+/// it by port, hands the bootstrap that same address back so the socket the
+/// page opens reaches here rather than the browser's own loopback, and still
+/// refuses a request carrying another site's origin.
+#[tokio::test(flavor = "current_thread")]
+async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin() {
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind_with_capacity(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+        epoch(),
+        capabilities,
+        speech(),
+        None,
+        1,
+    )
+    .await
+    .expect("binds every address");
+    let address = server.local_addr().expect("local address");
+    assert!(!is_loopback(address), "a wildcard bind is not loopback");
+
+    // Nothing routable can be published for a bind with no address of its own,
+    // so the local clients that read this document keep a dialable one.
+    let discovery = server.discovery(operator()).expect("operator discovery");
+    assert_eq!(
+        discovery.endpoint,
+        format!("http://127.0.0.1:{}", address.port())
+    );
+
+    let dial = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), address.port());
+    let task = tokio::spawn(server.up());
+    let remote = format!("10.0.0.5:{}", address.port());
+
+    let admitted = request(dial, &remote, "/bootstrap").await;
+    assert!(admitted.starts_with(b"HTTP/1.1 200 OK\r\n"));
+    let bootstrap: wire::CanvasBootstrap =
+        wire::decode(response_body(&admitted)).expect("bootstrap decodes");
+    assert_eq!(bootstrap.endpoint, format!("http://{remote}"));
+
+    // The port is all a wildcard bind can check, so a host naming another one
+    // is not this surface however it was routed here.
+    let elsewhere = request(dial, "10.0.0.5:1", "/bootstrap").await;
+    assert!(elsewhere.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
+
+    // Same host, another site's origin: the check that survives the wildcard.
+    let body = wire::encode(&wire::SpeechRequest {
+        text: "spoken from somewhere else".to_owned(),
+    })
+    .expect("request encodes");
+    let foreign = speech_request(dial, &remote, "https://attacker.example", &body).await;
+    assert!(foreign.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
+
+    task.abort();
 }
 
 async fn request(address: SocketAddr, host: &str, path: &str) -> Vec<u8> {
@@ -973,7 +1052,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
     let (server, mut control) =
-        Server::bind_with_capacity(epoch(), capabilities, speech(), None, 1)
+        Server::bind_with_capacity(LOOPBACK_EPHEMERAL, epoch(), capabilities, speech(), None, 1)
             .await
             .expect("binds");
     let state = Arc::clone(&server.state);
@@ -1053,9 +1132,10 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind_with_capacity(epoch(), capabilities, speech(), None, 1)
-        .await
-        .expect("binds");
+    let (server, _control) =
+        Server::bind_with_capacity(LOOPBACK_EPHEMERAL, epoch(), capabilities, speech(), None, 1)
+            .await
+            .expect("binds");
     let state = Arc::clone(&server.state);
     let mut observed = state.admission_observed.subscribe();
     let address = server.local_addr().expect("local address");
@@ -1251,7 +1331,7 @@ fn unknown_capability_refuses_without_echoing_the_credential() {
 #[test]
 fn host_and_origin_must_name_the_published_endpoint() {
     let state = SurfaceState {
-        authority: "127.0.0.1:48123".to_owned(),
+        authority: Authority::Only("127.0.0.1:48123".to_owned()),
         origin: "http://127.0.0.1:48123".to_owned(),
         epoch: epoch(),
         capabilities: Capabilities::default(),
@@ -1273,5 +1353,11 @@ fn host_and_origin_must_name_the_published_endpoint() {
 
     headers.insert(HOST, HeaderValue::from_static("127.0.0.1:48123"));
     headers.insert(ORIGIN, HeaderValue::from_static("http://127.0.0.1:48123"));
-    assert_eq!(admit_headers(&state, &headers, true), Ok(()));
+    assert_eq!(admit_headers(&state, &headers, true), Ok("127.0.0.1:48123"));
+
+    // A specific bind admits its own name alone, so a second address of this
+    // machine is refused even though the surface is listening on this port.
+    headers.insert(HOST, HeaderValue::from_static("10.0.0.5:48123"));
+    headers.insert(ORIGIN, HeaderValue::from_static("http://10.0.0.5:48123"));
+    assert!(admit_headers(&state, &headers, true).is_err());
 }

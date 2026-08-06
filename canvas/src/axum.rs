@@ -1,4 +1,4 @@
-//! Axum loopback binding, web-origin checks, and socket capability admission.
+//! Axum listener binding, web-origin checks, and socket capability admission.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -31,6 +31,9 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 
 use crate::{Discovery, EMBEDDED_APP};
 
+/// The listener a caller that names no address gets: reachable from this
+/// machine alone, on whatever port the kernel has free.
+const LOOPBACK_EPHEMERAL: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 const SESSION_DRAIN_GRACE: Duration = Duration::from_secs(1);
 const SPEECH_REQUEST_BYTES: usize = 64 * 1_024;
 const SPEECH_TEXT_BYTES: usize = 32 * 1_024;
@@ -204,7 +207,7 @@ impl Error for OpeningError {}
 
 #[derive(Debug)]
 struct SurfaceState {
-    authority: String,
+    authority: Authority,
     origin: String,
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
@@ -219,6 +222,33 @@ struct SurfaceState {
     sessions_closed: Notify,
     #[cfg(test)]
     admission_observed: watch::Sender<Option<AdmissionObservation>>,
+}
+
+/// Which `Host` headers a bound listener answers to.
+#[derive(Debug, Eq, PartialEq)]
+enum Authority {
+    /// The one `host:port` a specific bind can be reached at.
+    Only(String),
+    /// Any host at this port, because a wildcard bind has no single name.
+    AnyHostAt(u16),
+}
+
+impl Authority {
+    /// Whether a `Host` header names this surface.
+    ///
+    /// A specific bind knows its own name and accepts nothing else. A wildcard
+    /// bind answers on every address the machine has, including ones added
+    /// after it started, so the port is the only part of the name it can check;
+    /// the same-origin check that follows admission is what keeps another site
+    /// from driving this one through a browser that reached it.
+    fn admits(&self, host: &str) -> bool {
+        match self {
+            Self::Only(authority) => host == authority,
+            Self::AnyHostAt(port) => host.rsplit_once(':').is_some_and(|(named, listening)| {
+                !named.is_empty() && listening.parse::<u16>() == Ok(*port)
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -478,7 +508,7 @@ impl Control {
     }
 }
 
-/// One loopback-only listener and its generation-scoped router.
+/// One listener and its generation-scoped router.
 #[derive(Debug)]
 pub struct Server {
     listener: ClosingListener,
@@ -492,11 +522,16 @@ impl Server {
         capabilities: Capabilities,
         speech: crate::SpeechConfig,
     ) -> Result<(Self, Control), std::io::Error> {
-        Self::bind_with_capacity(epoch, capabilities, speech, None, 64).await
+        Self::bind_with_capacity(LOOPBACK_EPHEMERAL, epoch, capabilities, speech, None, 64).await
     }
 
     /// Bind the command socket and Bus-backed canvas stream to one generation.
+    ///
+    /// `requested` is the address to listen on, which the caller owns: an
+    /// operator reaching this surface from another machine needs a routable one
+    /// and a port that survives a restart, so neither can be decided here.
     pub async fn bind_streaming(
+        requested: SocketAddr,
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
         speech: crate::SpeechConfig,
@@ -504,6 +539,7 @@ impl Server {
         rows: usize,
     ) -> Result<(Self, Control), std::io::Error> {
         Self::bind_with_capacity(
+            requested,
             epoch,
             capabilities,
             speech,
@@ -514,16 +550,15 @@ impl Server {
     }
 
     async fn bind_with_capacity(
+        requested: SocketAddr,
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
         speech: crate::SpeechConfig,
         stream: Option<crate::stream::Source>,
         capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
-        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let address = listener.local_addr()?;
-        let authority = address.to_string();
-        let origin = format!("http://{authority}");
+        let listener = tokio::net::TcpListener::bind(requested).await?;
+        let (authority, origin) = reachable_as(listener.local_addr()?);
         let (commands, receiver) = mpsc::channel(capacity);
         let (closed, _) = watch::channel(false);
         let connections = CancellationToken::new();
@@ -557,7 +592,7 @@ impl Server {
         ))
     }
 
-    /// Bound address, always IPv4 loopback.
+    /// Bound address, which is what was asked for with the port resolved.
     pub fn local_addr(&self) -> Result<SocketAddr, std::io::Error> {
         self.listener.listener.local_addr()
     }
@@ -633,14 +668,17 @@ async fn app(
 }
 
 async fn bootstrap(State(state): State<Arc<SurfaceState>>, headers: HeaderMap) -> Response {
-    if admit_headers(&state, &headers, false).is_err() {
+    let Ok(host) = admit_headers(&state, &headers, false) else {
         return StatusCode::FORBIDDEN.into_response();
-    }
+    };
     let Some(capability) = state.capabilities.operator() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    // The socket this names has to be one the asking client can reach, which
+    // the published endpoint is not when a remote browser is on the other end
+    // of a wildcard bind. It reached this surface somehow; that is the address.
     let discovery = wire::CanvasBootstrap {
-        endpoint: state.origin.clone(),
+        endpoint: format!("http://{host}"),
         capability,
         epoch: state.epoch,
         speech: state.speech.playback(),
@@ -849,23 +887,54 @@ async fn socket(
         .into_response()
 }
 
-fn admit_headers(
+/// Which names a bound listener answers to, and the endpoint it publishes.
+///
+/// A wildcard bind has no address of its own to publish: the operator reaches
+/// it by whatever route their network produces, and only the port is known
+/// here. Loopback is published instead, because it is the one address this
+/// machine can always dial itself, and every local client does.
+fn reachable_as(bound: SocketAddr) -> (Authority, String) {
+    if bound.ip().is_unspecified() {
+        let local = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bound.port());
+        return (
+            Authority::AnyHostAt(bound.port()),
+            format!("http://{local}"),
+        );
+    }
+    (
+        Authority::Only(bound.to_string()),
+        format!("http://{bound}"),
+    )
+}
+
+/// Admit a request by the endpoint it names, answering with that endpoint.
+///
+/// The origin is checked against the admitted `Host` rather than against the
+/// published one. For a specific bind those are the same string, since only one
+/// `Host` is admitted at all. For a wildcard bind they are not, and this is the
+/// check that still holds: a browser sends the origin it loaded the page from,
+/// so requiring it to match the host it is now addressing keeps another site
+/// from driving this surface, whichever of the machine's addresses was used.
+fn admit_headers<'headers>(
     state: &SurfaceState,
-    headers: &HeaderMap,
+    headers: &'headers HeaderMap,
     origin_required: bool,
-) -> Result<(), ()> {
-    let host = headers.get(HOST).and_then(|value| value.to_str().ok());
-    if host != Some(state.authority.as_str()) {
+) -> Result<&'headers str, ()> {
+    let Some(host) = headers.get(HOST).and_then(|value| value.to_str().ok()) else {
+        return Err(());
+    };
+    if !state.authority.admits(host) {
         return Err(());
     }
+    let same_origin = format!("http://{host}");
     let origin = headers.get(ORIGIN).and_then(|value| value.to_str().ok());
-    if origin_required && origin != Some(state.origin.as_str()) {
+    if origin_required && origin != Some(same_origin.as_str()) {
         return Err(());
     }
-    if origin.is_some_and(|origin| origin != state.origin) {
+    if origin.is_some_and(|origin| origin != same_origin) {
         return Err(());
     }
-    Ok(())
+    Ok(host)
 }
 
 async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
@@ -1341,7 +1410,7 @@ async fn send_encoded<T: serde::Serialize>(socket: &mut WebSocket, value: &T) ->
     socket.send(Message::Binary(bytes.into())).await.is_ok()
 }
 
-/// True only for the one address family this surface may bind.
+/// Whether an address is reachable from this machine alone.
 #[must_use]
 pub const fn is_loopback(address: SocketAddr) -> bool {
     matches!(address.ip(), IpAddr::V4(ip) if ip.is_loopback())
