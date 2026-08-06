@@ -16,7 +16,7 @@
 
 .composer-quote-stack { display: grid; gap: 5px; }
 
-.composer-quote-band {
+.composer-shard--draft {
   display: grid;
   flex: 0 0 92px;
   grid-template-rows: 28px minmax(0, 1fr);
@@ -29,20 +29,21 @@
   font-size: .76rem;
 }
 
-.composer-quote-band header {
+.composer-shard--draft header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 22px;
   align-items: center;
   gap: 6px;
   padding: 2px 4px 2px 7px;
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
+  color: inherit;
 }
-.composer-quote-band header span {
+.composer-shard-locus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.composer-quote-band textarea {
+.composer-shard--draft textarea {
   width: 100%;
   min-height: 0;
   padding: 6px 7px;
@@ -54,7 +55,7 @@
   resize: none;
 }
 
-.composer-quote-band button,
+.composer-shard--draft button,
 .composer-attachment-chip button,
 .mosaic-message-card footer button {
   display: grid;
@@ -490,6 +491,32 @@
   color: var(--muted);
   font-size: .55rem;
 }
+/* The agent menu glyph sits in the column the heading grid reserves for it,
+   while its drawer opens in flow underneath so it pushes the shard rather than
+   floating over a stack that scrolls. */
+.composer-shard--primary { position: relative; }
+.composer-shard-menu > summary {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: .55rem;
+  list-style: none;
+  place-items: center;
+}
+.composer-shard-menu > summary::-webkit-details-marker { display: none; }
+.composer-shard-menu[open] > summary { color: var(--accent); }
+.composer-shard-drawer {
+  display: grid;
+  gap: 4px;
+  padding-top: 4px;
+}
+
 .composer-shard-standing {
   display: flex;
   justify-content: space-between;

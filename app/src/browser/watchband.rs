@@ -14,9 +14,9 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    choose_images, drop_on_lane, keyboard_submit, paste_images, primary_textarea_id,
-    render_agent_message_card, render_attachments, render_directive_card, render_markdown,
-    render_quote_bands, update_body,
+    agent_anchor, choose_images, drop_on_lane, keyboard_submit, paste_images, primary_textarea_id,
+    render_agent_message_card, render_attachments, render_directive_card, render_draft_shards,
+    render_markdown, render_shard_locus, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -128,7 +128,6 @@ pub(super) fn render_lineage(
                                     can_send,
                                     sender,
                                     drafts,
-                                    mode,
                                     lineage_controls,
                                     can_configure,
                                     controls,
@@ -244,7 +243,6 @@ fn render_compose(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
     lineage_controls: &UseReducerHandle<LineageControls>,
     can_configure: bool,
     controls: &view::AgentControls,
@@ -276,7 +274,7 @@ fn render_compose(
                             can_send,
                             sender,
                             drafts,
-                            mode,
+                            latest_anchor(runtime, member.lane),
                         )
                     })}
                 </div>
@@ -294,6 +292,20 @@ fn render_compose(
             {render_activity(runtime, lineage, drafts, controls, control.speech, control.life)}
         </div>
     }
+}
+
+/// The message this agent's primary composer answers, as a link target.
+///
+/// Chosen by the largest tape offset rather than by position in the stream, so
+/// the answer does not depend on which end the runtime appends to. An agent that
+/// has not spoken yet has no point to link to and renders no link.
+fn latest_anchor(runtime: &CanvasRuntime, lane: CanonicalUuid) -> Option<String> {
+    runtime
+        .messages()
+        .iter()
+        .filter(|message| message.lane == lane)
+        .max_by_key(|message| (message.locus.offset, message.locus.event))
+        .map(agent_anchor)
 }
 
 fn render_activity(
@@ -484,7 +496,7 @@ fn render_agent_composer(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
+    anchor: Option<String>,
 ) -> Html {
     let lane_id = member.lane;
     let lane_key = lane_id.to_string();
@@ -537,7 +549,6 @@ fn render_agent_composer(
             key={lane_key.clone()}
             class={classes!(
                 "team-agent",
-                "composer-shard",
                 (!send_enabled).then_some("team-agent--vacant"),
             )}
             data-agent-lane={lane_id.to_string()}
@@ -546,19 +557,21 @@ fn render_agent_composer(
             {ondragover}
             {ondrop}
         >
-            {render_quote_bands(&lane_key, &draft, drafts, onkeydown.clone())}
-            {render_composer_body(
-                lane_id,
-                &lane_key,
-                &draft,
-                standing,
-                pending,
-                drafts,
-                mode,
-                onkeydown,
-                renew_enabled,
-                renew,
-            )}
+            <article class="composer-shard composer-shard--primary" data-shard-kind="primary">
+                {render_composer_body(
+                    lane_id,
+                    &lane_key,
+                    &draft,
+                    standing,
+                    pending,
+                    drafts,
+                    anchor.as_deref(),
+                    onkeydown.clone(),
+                    renew_enabled,
+                    renew,
+                )}
+            </article>
+            {render_draft_shards(&lane_key, &draft, drafts, onkeydown)}
         </section>
     }
 }
@@ -574,7 +587,7 @@ fn render_composer_body(
     standing: &Standing,
     pending: usize,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
+    anchor: Option<&str>,
     onkeydown: Callback<KeyboardEvent>,
     renew_enabled: bool,
     renew: Callback<MouseEvent>,
@@ -584,21 +597,12 @@ fn render_composer_body(
     let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
     html! {
         <div class="mosaic-composer">
-            {render_composer_heading(standing, mode)}
+            {render_composer_heading(standing, anchor)}
+            {render_agent_menu(standing, renew_enabled, renew)}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
                 <span>{standing.liveness.as_str()}</span>
             </div>
-            <button
-                class="agent-renew-request"
-                type="button"
-                disabled={!renew_enabled}
-                title="Ask this agent to renew its current task lease"
-                onclick={renew}
-            >
-                <strong>{"Renew this agent"}</strong>
-                <span>{"request renewal"}</span>
-            </button>
             <textarea
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for {lane}")}
@@ -624,28 +628,61 @@ fn render_composer_body(
     }
 }
 
-fn render_composer_heading(standing: &Standing, mode: &UseStateHandle<LineageMode>) -> Html {
+fn render_composer_heading(standing: &Standing, anchor: Option<&str>) -> Html {
     let activity = standing
         .headline
         .as_deref()
         .or(standing.handle.as_deref())
         .unwrap_or(&standing.disposition);
-    let open = mode.clone();
+    let elapsed = standing
+        .held
+        .map(watchband::elapsed_label)
+        .unwrap_or_else(|| "now".to_owned());
     html! {
         <header class="composer-shard-heading">
-            <span class="composer-shard-age">{
-                standing
-                    .held
-                    .map(watchband::elapsed_label)
-                    .unwrap_or_else(|| "now".to_owned())
-            }</span>
+            if let Some(anchor) = anchor {
+                {render_shard_locus(anchor, &elapsed)}
+            } else {
+                <span class="composer-shard-age">{elapsed}</span>
+            }
             <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
-            <button
-                type="button"
-                aria-label={format!("Details for {}", standing.label)}
-                onclick={Callback::from(move |_| open.set(LineageMode::Info))}
-            >{"☰"}</button>
         </header>
+    }
+}
+
+/// The drawer of actions that steer this one agent.
+///
+/// It is deliberately not the team Info panel. That panel describes the lane and
+/// is opened from the surface toolbar; this drawer holds the controls aimed at a
+/// single agent, so opening one must neither open nor restate the other. The
+/// open state is the element's own, so the drawer a reader sees is the drawer
+/// the DOM reports and there is no separate copy of that fact to fall out of
+/// step. Only the primary shard renders it: a draft shard is a reply to one
+/// message and owns none of these actions.
+fn render_agent_menu(
+    standing: &Standing,
+    renew_enabled: bool,
+    renew: Callback<MouseEvent>,
+) -> Html {
+    html! {
+        <details class="composer-shard-menu" data-agent-menu={standing.label.clone()}>
+            <summary
+                aria-label={format!("Agent actions for {}", standing.label)}
+                title={format!("Actions for {}", standing.label)}
+            >{"☰"}</summary>
+            <div class="composer-shard-drawer" role="group">
+                <button
+                    class="agent-renew-request"
+                    type="button"
+                    disabled={!renew_enabled}
+                    title="Ask this agent to renew its current task lease"
+                    onclick={renew}
+                >
+                    <strong>{"Renew this agent"}</strong>
+                    <span>{"request renewal"}</span>
+                </button>
+            </div>
+        </details>
     }
 }
 

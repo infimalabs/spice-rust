@@ -60,6 +60,22 @@ fn focus_after_render(id: String) {
     });
 }
 
+/// The one identity an agent message card answers to.
+///
+/// Quoting keys a draft by this string and the card carries it as its DOM id, so
+/// a shard's deep link resolves to the exact card it came from. Both readings
+/// come from here so the link target and the element can never drift apart.
+pub(super) fn agent_anchor(message: &wire::AgentMessage) -> String {
+    format!(
+        "agent-{}-{}-{}-{}-{}",
+        message.lane,
+        message.locus.member,
+        message.locus.offset,
+        message.locus.length,
+        message.locus.event,
+    )
+}
+
 pub(super) fn render_agent_message_card(
     member: &crate::runtime::LaneMember,
     quote_lane: CanonicalUuid,
@@ -80,15 +96,9 @@ pub(super) fn render_agent_message_card(
     let quote_key = lane_key.clone();
     let quote_drafts = drafts.clone();
     let quote_text = message.text.clone();
-    let quote_identity = format!(
-        "agent-{}-{}-{}-{}-{}",
-        message.lane,
-        message.locus.member,
-        message.locus.offset,
-        message.locus.length,
-        message.locus.event,
-    );
+    let quote_identity = agent_anchor(message);
     let focus_identity = quote_identity.clone();
+    let anchor = quote_identity.clone();
     let focus_lane = lane_key.clone();
     let producer = format!(
         "{} · {}",
@@ -123,6 +133,7 @@ pub(super) fn render_agent_message_card(
                 message.locus.offset,
                 message.locus.event,
             )}
+            id={anchor}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             draggable="true"
             aria-label={format!("Agent message from {producer}")}
@@ -191,6 +202,7 @@ pub(super) fn render_directive_card(
     let quote_text = directive.text.clone();
     let quote_identity = format!("directive-{}", directive.directive);
     let focus_identity = quote_identity.clone();
+    let anchor = quote_identity.clone();
     let focus_lane = lane_key.to_owned();
     let correspondent = view::chrome::Correspondent {
         name: watchband::short(lane),
@@ -220,6 +232,7 @@ pub(super) fn render_directive_card(
     html! {
         <article
             key={directive.directive.to_string()}
+            id={anchor}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             draggable="true"
             data-directive={directive.directive.to_string()}
@@ -263,7 +276,30 @@ pub(super) fn render_directive_card(
     }
 }
 
-pub(super) fn render_quote_bands(
+/// The deep link every composer shard carries in its top left.
+///
+/// `anchor` is the DOM id of the card the shard came from, which is the same
+/// string quoting keys the draft by, so the link lands on that exact message
+/// rather than on the lane it belongs to.
+pub(super) fn render_shard_locus(anchor: &str, label: &str) -> Html {
+    html! {
+        <a
+            class="composer-shard-locus composer-shard-age"
+            href={format!("#{anchor}")}
+            data-shard-locus={anchor.to_owned()}
+            title="Jump to this point in the message stream"
+        >{label.to_owned()}</a>
+    }
+}
+
+/// Render one draft composer shard per quote, stacked under the primary shard.
+///
+/// A quote is a composer in its own right: it has its own body and its own
+/// submission, so it renders as a shard rather than as an ornament inside the
+/// primary one. Only the primary shard carries the agent menu; a draft carries
+/// the deep link back to the message it was quoted from and the control that
+/// discards it.
+pub(super) fn render_draft_shards(
     lane_key: &str,
     draft: &ComposerDraft,
     drafts: &UseReducerHandle<ComposerDrafts>,
@@ -295,15 +331,16 @@ pub(super) fn render_quote_bands(
                 let shown = crate::composer_markdown::quote_label(quote.preview.as_deref());
                 let textarea_id = quote_textarea_id(lane_key, &quote.identity);
                 html! {
-                    <div
+                    <article
                         key={quote.identity.clone()}
-                        class="composer-quote-band"
+                        class="composer-shard composer-shard--draft"
+                        data-shard-kind="draft"
                         title={quote.quote.clone()}
                         data-quote-identity={quote.identity.clone()}
                         data-quote-target-id={lane_key.to_owned()}
                     >
-                        <header>
-                            <span>{shown}</span>
+                        <header class="composer-shard-heading">
+                            {render_shard_locus(&quote.identity, shown)}
                             <button
                                 type="button"
                                 aria-label="Remove quoted composer"
@@ -320,7 +357,7 @@ pub(super) fn render_quote_bands(
                             oninput={update}
                             onkeydown={target_submit.clone()}
                         ></textarea>
-                    </div>
+                    </article>
                 }
             })}
         </div>
