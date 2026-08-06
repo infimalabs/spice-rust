@@ -12,11 +12,8 @@ pub(super) struct AgentControls {
     pub(super) seat_worktree: UseStateHandle<String>,
     pub(super) seat_vendor: UseStateHandle<String>,
     pub(super) seat_life: UseStateHandle<String>,
-    pub(super) steer_text: UseStateHandle<String>,
     pub(super) seat_notice: UseStateHandle<Notice>,
-    pub(super) steer_notice: UseStateHandle<Notice>,
     pub(super) submit_seat: Callback<SubmitEvent>,
-    pub(super) submit_steer: Callback<SubmitEvent>,
     /// Read one message aloud, using the resident's current speech settings.
     pub(super) speak: Callback<String>,
 }
@@ -103,6 +100,9 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                         render.surface,
                         render.sender,
                         render.composer_drafts,
+                        &|lane, pending| {
+                            lane_inbox(lane, pending, render.agents, render.composer_drafts)
+                        },
                     )}
                 } else {
                     {render_analytics(render, active_axis)}
@@ -174,29 +174,58 @@ pub(super) fn render_agent_console(surface: &SurfaceData, controls: &AgentContro
         .and_then(CanvasRuntime::lanes)
         .map(|lanes| lanes.lanes.as_slice())
         .unwrap_or(&[]);
-    let selected = selected_agent(lanes, &controls.selected_lane);
-    let pending = selected_inbox(runtime, selected);
-
     html! {
         <section class="agent-console" data-pane="agent-console">
             <div class="agent-console-heading">
                 <div>
                     <span class="eyebrow">{"Live workspace"}</span>
                     <h1>{"Agents"}</h1>
-                    <p>{"Seat a lane, send direction, and keep its inbox in view."}</p>
+                    <p>{"Seat a lane here; direct it from its own tile below."}</p>
                 </div>
                 <span class="agent-count">{format!("{} active", lanes.len())}</span>
             </div>
             {chrome::render_watchband(surface, controls)}
             {chrome::render_ticker(surface)}
-            <div class="agent-stage">
-                {render_conversation(runtime, selected, pending, controls)}
-                {render_seat_panel(runtime, controls)}
-            </div>
+            {render_seat_panel(runtime, controls)}
         </section>
     }
 }
 
+/// The packed inbox belonging to one seated lane.
+///
+/// Every lane gets its own, which is what the predecessor did: each lane there
+/// owned an engine-packed plane keyed to itself, rather than one plane
+/// following whichever lane was selected. Quoting a card therefore has an
+/// unambiguous destination -- the draft of the lane the card is waiting on --
+/// so this builds the correspondent from the lane rather than from a selection.
+pub(super) fn lane_inbox(
+    lane: &crate::runtime::LaneRow,
+    pending: &[wire::intent::PendingDirective],
+    controls: &AgentControls,
+    drafts: &UseReducerHandle<composer::ComposerDrafts>,
+) -> Html {
+    let lane_key = lane.lane.to_string();
+    let drafts = drafts.clone();
+    let correspondent = Correspondent {
+        name: crate::watchband::leaf(&lane.worktree).to_owned(),
+        accent: crate::watchband::accent(lane.lane),
+        speak: controls.speak.clone(),
+        quote: Callback::from(move |text: String| {
+            drafts.dispatch(composer::ComposerAction::AddQuote {
+                lane: lane_key.clone(),
+                quote: text,
+            });
+        }),
+    };
+    html! { <MosaicInbox pending={pending.to_vec()} correspondent={correspondent} /> }
+}
+
+/// Which lane the watchband is currently showing as its selected tab.
+///
+/// The band is an ARIA tablist, so exactly one tab carries the selection even
+/// before the operator has chosen; falling back to the first seated lane is
+/// what keeps that true on a fresh load. Nothing else reads the selection now
+/// that each lane carries its own inbox and composer.
 fn selected_agent<'a>(
     lanes: &'a [crate::runtime::LaneRow],
     requested: &str,
@@ -206,106 +235,6 @@ fn selected_agent<'a>(
         .ok()
         .and_then(|requested| lanes.iter().find(|lane| lane.lane == requested))
         .or_else(|| lanes.first())
-}
-
-fn selected_inbox<'a>(
-    runtime: Option<&'a CanvasRuntime>,
-    selected: Option<&crate::runtime::LaneRow>,
-) -> &'a [wire::intent::PendingDirective] {
-    selected
-        .and_then(|selected| {
-            runtime
-                .and_then(CanvasRuntime::inbox)
-                .and_then(|inbox| inbox.lanes.iter().find(|lane| lane.lane == selected.lane))
-        })
-        .map(|lane| lane.pending.as_slice())
-        .unwrap_or(&[])
-}
-
-fn render_conversation(
-    runtime: Option<&CanvasRuntime>,
-    selected: Option<&crate::runtime::LaneRow>,
-    pending: &[wire::intent::PendingDirective],
-    controls: &AgentControls,
-) -> Html {
-    let can_steer = selected.is_some_and(|lane| lane.occupant.is_some())
-        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::SteerSend));
-    html! {
-        <section class="conversation" aria-label="Selected agent conversation">
-            {render_conversation_heading(selected)}
-            {render_inbox(pending, correspondent(selected, controls))}
-            <form class="agent-compose" onsubmit={controls.submit_steer.clone()}>
-                <label for="agent-message">{"Message"}</label>
-                <textarea
-                    id="agent-message" placeholder="Send direction to the selected agent…"
-                    value={(*controls.steer_text).clone()} disabled={!can_steer}
-                    oninput={state_from_textarea(controls.steer_text.clone())}
-                ></textarea>
-                <button
-                    type="submit"
-                    disabled={!can_steer || controls.steer_text.trim().is_empty()}
-                >{"Send direction"}</button>
-                {render_notice(&controls.steer_notice)}
-            </form>
-        </section>
-    }
-}
-
-fn render_conversation_heading(selected: Option<&crate::runtime::LaneRow>) -> Html {
-    html! {
-        <div class="conversation-heading">
-            <div>
-                <h2>{selected.map_or_else(|| "Conversation".to_owned(), |lane| {
-                    format!("{} / {}", lane.vendor, short(&lane.lane.to_string()))
-                })}</h2>
-                <p>{selected.map_or_else(|| "Seat an agent to begin.".to_owned(), |lane| {
-                    format!("{} / {} / {}", lane.disposition, lane.life, lane.worktree)
-                })}</p>
-            </div>
-            if let Some(lane) = selected {
-                <span class={classes!("tag", lane.occupant.is_some().then_some("active"))}>
-                    {if lane.occupant.is_some() { "online" } else { "vacant" }}
-                </span>
-            }
-        </div>
-    }
-}
-
-/// Who the open conversation is with, and what its cards can do.
-///
-/// The lane is the correspondent because the operator authored every pending
-/// directive; keying the accent to it means the whole feed changes colour when
-/// the selection moves, which is the signal the reference band carries.
-fn correspondent(
-    selected: Option<&crate::runtime::LaneRow>,
-    controls: &AgentControls,
-) -> Correspondent {
-    let steer = controls.steer_text.clone();
-    Correspondent {
-        name: selected.map_or_else(
-            || "no lane".to_owned(),
-            |lane| crate::watchband::leaf(&lane.worktree).to_owned(),
-        ),
-        accent: selected.map_or(0, |lane| crate::watchband::accent(lane.lane)),
-        speak: controls.speak.clone(),
-        quote: Callback::from(move |text: String| {
-            let quoted = text
-                .lines()
-                .map(|line| format!("> {line}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let standing = (*steer).clone();
-            steer.set(if standing.is_empty() {
-                format!("{quoted}\n\n")
-            } else {
-                format!("{standing}\n{quoted}\n\n")
-            });
-        }),
-    }
-}
-
-fn render_inbox(pending: &[wire::intent::PendingDirective], correspondent: Correspondent) -> Html {
-    html! { <MosaicInbox pending={pending.to_vec()} correspondent={correspondent} /> }
 }
 
 #[derive(Properties, PartialEq)]

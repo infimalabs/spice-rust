@@ -107,10 +107,19 @@ impl ComposerDrafts {
     }
 }
 
+/// Renders the packed inbox belonging to one lane.
+///
+/// The mosaic owns which lanes exist and what each composer does with a quote;
+/// the engine that packs a lane's cards lives beside the chrome that styles
+/// them. Passing the feed in keeps that split intact, so this module never
+/// reaches across it to place a card itself.
+type LaneFeed<'a> = &'a dyn Fn(&crate::runtime::LaneRow, &[wire::intent::PendingDirective]) -> Html;
+
 pub(super) fn render_mosaic(
     surface: &SurfaceData,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
+    feed: LaneFeed<'_>,
 ) -> Html {
     let Some(runtime) = surface.as_ref() else {
         return empty("No admitted mosaic is available.");
@@ -138,7 +147,7 @@ pub(super) fn render_mosaic(
                             .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == lane.lane))
                             .map(|row| row.pending.as_slice())
                             .unwrap_or(&[]);
-                        render_lane(lane, lanes.epoch, directives, can_send, sender, drafts)
+                        render_lane(lane, lanes.epoch, directives, can_send, sender, drafts, feed)
                     })}
                 </div>
             }
@@ -153,6 +162,7 @@ fn render_lane(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
+    feed: LaneFeed<'_>,
 ) -> Html {
     let lane_id = lane.lane;
     let lane_key = lane_id.to_string();
@@ -239,15 +249,7 @@ fn render_lane(
                     >{"Send"}</button>
                 </div>
             </form>
-            <div class="mosaic-message-grid">
-                if directives.is_empty() {
-                    <div class="mosaic-message-empty">{"No pending direction."}</div>
-                } else {
-                    {for directives.iter().map(|directive| {
-                        render_directive_card(lane_id, directive, &lane_key, drafts)
-                    })}
-                }
-            </div>
+            {feed(lane, directives)}
         </section>
     }
 }
@@ -328,56 +330,6 @@ fn keyboard_submit(submit: Callback<SubmitEvent>) -> Callback<KeyboardEvent> {
             submit.emit(event);
         }
     })
-}
-
-fn render_directive_card(
-    lane: CanonicalUuid,
-    directive: &wire::intent::PendingDirective,
-    lane_key: &str,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-) -> Html {
-    let drag_text = directive.text.clone();
-    let ondragstart = Callback::from(move |event: DragEvent| {
-        if let Some(transfer) = event.data_transfer() {
-            let _ = transfer.set_data("text/plain", &drag_text);
-            transfer.set_effect_allowed("copy");
-        }
-    });
-    let quote_text = directive.text.clone();
-    let quote_key = lane_key.to_owned();
-    let quote_drafts = drafts.clone();
-    let quote = Callback::from(move |_| {
-        quote_drafts.dispatch(ComposerAction::AddQuote {
-            lane: quote_key.clone(),
-            quote: quote_text.clone(),
-        });
-    });
-    html! {
-        <article
-            class="mosaic-message-card"
-            draggable="true"
-            data-directive={directive.directive.to_string()}
-            data-lane={lane.to_string()}
-            {ondragstart}
-        >
-            <p>{directive.text.clone()}</p>
-            if !directive.attachments.is_empty() {
-                <div class="message-attachments">
-                    {for directive.attachments.iter().map(|attachment| html! {
-                        <img
-                            src={attachment.data_url.clone()}
-                            alt={attachment.name.clone()}
-                            title={attachment.name.clone()}
-                        />
-                    })}
-                </div>
-            }
-            <footer>
-                <span>{format!("{} / {}", directive.key, directive.expires)}</span>
-                <button type="button" aria-label="Quote reply" onclick={quote}>{"❝"}</button>
-            </footer>
-        </article>
-    }
 }
 
 fn render_quote_bands(
