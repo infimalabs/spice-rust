@@ -429,6 +429,13 @@ pub struct LineageConfigure {
     pub lineage_id: CanonicalUuid,
     /// Authoritative task-subscription policy to commit for the lineage.
     pub life: LineageLife,
+    /// Replacement operator-pinned project set, or absent to preserve it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub manual_projects: Option<Vec<String>>,
 }
 
 /// Change a seated lane's state.

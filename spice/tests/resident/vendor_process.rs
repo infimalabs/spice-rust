@@ -220,7 +220,6 @@ fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
     let mut resident =
         RunningResident::spawn_with_path(&fixture, &installed_binary, &resident_path);
     resident.assert_ready(&fixture);
-    let created = add_cutover_tasks(&fixture, &installed_binary);
     let claude = add_lane_with(&fixture, &installed_binary, None, Dialect::Claude);
     let codex = add_lane_with(
         &fixture,
@@ -229,6 +228,7 @@ fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
         Dialect::Codex,
     );
     let lanes = [(Dialect::Claude, claude), (Dialect::Codex, codex)];
+    let created = add_cutover_tasks(&fixture, &installed_binary, &lanes);
     assert_launches_with_executable(
         &fixture,
         &rig,
@@ -413,11 +413,16 @@ fn stage_cutover_appliance(fixture: &Fixture) -> (PathBuf, String, String) {
     (installed_binary, digest.as_str().to_owned(), binary_digest)
 }
 
-fn add_cutover_tasks(fixture: &Fixture, installed_binary: &Path) -> [wire::TaskHandle; 2] {
+fn add_cutover_tasks(
+    fixture: &Fixture,
+    installed_binary: &Path,
+    lanes: &[(Dialect, wire::CanonicalUuid); 2],
+) -> [wire::TaskHandle; 2] {
     [
-        reply_body::<wire::intent::TaskAnswer>(&operator_with(
+        reply_body::<wire::intent::TaskAnswer>(&lane_with(
             fixture,
             installed_binary,
+            lanes[0].1,
             &[
                 "task",
                 "add",
@@ -428,9 +433,10 @@ fn add_cutover_tasks(fixture: &Fixture, installed_binary: &Path) -> [wire::TaskH
             true,
         ))
         .task,
-        reply_body::<wire::intent::TaskAnswer>(&operator_with(
+        reply_body::<wire::intent::TaskAnswer>(&lane_with(
             fixture,
             installed_binary,
+            lanes[1].1,
             &[
                 "task",
                 "add",
@@ -919,6 +925,25 @@ fn operator_with(fixture: &Fixture, executable: &Path, arguments: &[&str], json:
         .current_dir(&fixture.root)
         .output()
         .expect("operator command launches")
+}
+
+fn lane_with(
+    fixture: &Fixture,
+    executable: &Path,
+    lane: wire::CanonicalUuid,
+    arguments: &[&str],
+    json: bool,
+) -> Output {
+    let mut process = Command::new(executable);
+    process.env(spice::agent_launch::SPICE_LANE, lane.to_string());
+    if json {
+        process.arg("--json");
+    }
+    process
+        .args(arguments)
+        .current_dir(&fixture.root)
+        .output()
+        .expect("lane command launches")
 }
 
 fn operator_with_path(

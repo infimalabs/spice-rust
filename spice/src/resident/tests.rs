@@ -574,20 +574,29 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
             wire::LineageSubscription {
                 lineage_id: lineage,
                 policy: wire::intent::LineageLife::Drive,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
             },
             wire::LineageSubscription {
                 lineage_id: sibling,
                 policy: wire::intent::LineageLife::Steer,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
             },
         ]
     );
+    let mut projected = migrated.clone();
+    projected[0].auto_projects = vec!["task.derived".to_owned()];
     assert_eq!(
-        super::startup_subscriptions(&lanes, migrated.clone())
+        super::startup_subscriptions(&lanes, projected)
             .expect("the current complete table is preserved"),
-        migrated
+        migrated,
+        "startup discards derived auto projects before fact replay",
     );
 
-    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, vec![migrated[0]]) else {
+    let Err(Outcome::Fault(fault)) =
+        super::startup_subscriptions(&lanes, vec![migrated[0].clone()])
+    else {
         panic!("a partial current subscription table must fault")
     };
     assert_eq!(fault.reason, "lineage::subscription-misaligned");
@@ -599,15 +608,46 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
     };
     assert_eq!(fault.reason, "lineage::subscription-ambiguous");
 
-    let duplicated = vec![migrated[0], migrated[0], migrated[1]];
+    let duplicated = vec![
+        migrated[0].clone(),
+        migrated[0].clone(),
+        migrated[1].clone(),
+    ];
     let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, duplicated) else {
         panic!("duplicate current subscription authority must fault")
     };
     assert_eq!(fault.reason, "lineage::subscription-ambiguous");
 }
 
+fn assert_lineage_configuration_fact(bus: &Bus, lineage: CanonicalUuid) {
+    let snapshot = bus.canvas_snapshot().expect("configured journal reads");
+    let configured = snapshot
+        .facts()
+        .facts()
+        .iter()
+        .find(|fact| fact.fact.kind() == wire::FactKind::LineageConfigured)
+        .expect("lineage configuration is durable");
+    assert_eq!(
+        configured.fact.body().get("lineage_id"),
+        Some(&serde_json::Value::String(lineage.to_string())),
+    );
+    assert_eq!(
+        configured.fact.body().get("from"),
+        Some(&serde_json::json!("drive"))
+    );
+    assert_eq!(
+        configured.fact.body().get("life"),
+        Some(&serde_json::json!("drain"))
+    );
+    assert_eq!(configured.fact.body().get("from_manual_projects"), None);
+    assert_eq!(
+        configured.fact.body().get("manual_projects"),
+        Some(&serde_json::json!(["task.manual"]))
+    );
+}
+
 #[test]
-fn lineage_configuration_changes_only_the_typed_subscription_policy() {
+fn lineage_configuration_changes_only_the_typed_task_subscription() {
     let (root, paths) = resident_fixture("lineage-configuration");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let surface =
@@ -642,6 +682,7 @@ fn lineage_configuration_changes_only_the_typed_subscription_policy() {
     let request = wire::intent::LineageConfigure {
         lineage_id: lineage,
         life: wire::intent::LineageLife::Drain,
+        manual_projects: Some(vec!["task.manual".to_owned()]),
     };
     let command = Command {
         v: wire::WireVersion::CURRENT,
@@ -658,8 +699,10 @@ fn lineage_configuration_changes_only_the_typed_subscription_policy() {
     })
     .expect("operator lineage configuration admits");
 
+    let projects =
+        board::ProjectPolicy::new(Vec::new(), Vec::new(), 2, 4).expect("fixture project policy");
     let Outcome::Reply(reply) =
-        super::lane_surface::configure(&bus, epoch, &seats, &command, &request)
+        super::lane_surface::configure(&bus, epoch, &seats, &projects, &command, &request)
     else {
         panic!("lineage configuration replies");
     };
@@ -675,6 +718,8 @@ fn lineage_configuration_changes_only_the_typed_subscription_policy() {
         vec![wire::LineageSubscription {
             lineage_id: lineage,
             policy: wire::intent::LineageLife::Drain,
+            manual_projects: vec!["task.manual".to_owned()],
+            auto_projects: Vec::new(),
         }]
     );
     assert_eq!(answer.lanes[0].occupant, Some(first_occupant));
@@ -690,25 +735,7 @@ fn lineage_configuration_changes_only_the_typed_subscription_policy() {
         .into_body();
     assert!(durable.lanes.iter().all(|row| row.life == "drive"));
     assert_eq!(durable.subscriptions, answer.subscriptions);
-    let snapshot = bus.canvas_snapshot().expect("configured journal reads");
-    let configured = snapshot
-        .facts()
-        .facts()
-        .iter()
-        .find(|fact| fact.fact.kind() == wire::FactKind::LineageConfigured)
-        .expect("lineage configuration is durable");
-    assert_eq!(
-        configured.fact.body().get("lineage_id"),
-        Some(&serde_json::Value::String(lineage.to_string())),
-    );
-    assert_eq!(
-        configured.fact.body().get("from"),
-        Some(&serde_json::json!("drive"))
-    );
-    assert_eq!(
-        configured.fact.body().get("life"),
-        Some(&serde_json::json!("drain"))
-    );
+    assert_lineage_configuration_fact(&bus, lineage);
     for lane in [first_lane, second_lane] {
         seats
             .vacate(lane)
@@ -783,6 +810,8 @@ fn seed_lane_in_lineage(
         head.subscriptions.push(wire::LineageSubscription {
             lineage_id,
             policy: wire::intent::LineageLife::Drive,
+            manual_projects: Vec::new(),
+            auto_projects: Vec::new(),
         });
         head.subscriptions
             .sort_by_key(|subscription| subscription.lineage_id);

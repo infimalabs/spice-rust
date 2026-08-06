@@ -71,13 +71,12 @@ fn answer_at(
     let subscriptions = lineage_ids
         .into_iter()
         .map(|lineage_id| {
-            let policy = subscription_policy(head, lineage_id)?.ok_or_else(|| {
+            subscription_row(head, lineage_id)?.cloned().ok_or_else(|| {
                 store_fault(
                     "lineage::subscription-missing",
                     "a returned lineage has no task-subscription policy",
                 )
-            })?;
-            Ok(wire::LineageSubscription { lineage_id, policy })
+            })
         })
         .collect::<CommandResult<Vec<_>>>()?;
     Ok(LaneAnswer {
@@ -393,6 +392,8 @@ mod tests {
         vec![wire::LineageSubscription {
             lineage_id: uuid(1),
             policy: wire::intent::LineageLife::Drive,
+            manual_projects: Vec::new(),
+            auto_projects: Vec::new(),
         }]
     }
 

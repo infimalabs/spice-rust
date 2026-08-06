@@ -215,6 +215,8 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
                 wire::LineageSubscription {
                     lineage_id,
                     policy: wire::intent::LineageLife::Steer,
+                    manual_projects: Vec::new(),
+                    auto_projects: Vec::new(),
                 },
             )
         })

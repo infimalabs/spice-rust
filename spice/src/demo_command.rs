@@ -745,6 +745,8 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
             subscriptions: vec![wire::LineageSubscription {
                 lineage_id,
                 policy: wire::intent::LineageLife::Drive,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
             }],
         }
     });
