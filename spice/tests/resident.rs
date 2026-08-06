@@ -195,6 +195,26 @@ impl RunningResident {
         Self { child: Some(child) }
     }
 
+    fn spawn_text_authenticated(fixture: &Fixture, token: &str) -> Self {
+        let child = Command::new(env!("CARGO_BIN_EXE_spice"))
+            .args([
+                "up",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "0",
+                "--allow-insecure-bind",
+                "--auth-token",
+                token,
+            ])
+            .current_dir(&fixture.root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("authenticated foreground resident launches");
+        Self { child: Some(child) }
+    }
+
     fn spawn_with_form(
         fixture: &Fixture,
         executable: &Path,

@@ -1329,3 +1329,21 @@ fn resident_text_startup_reports_an_explicit_bound_endpoint_on_stdout() {
     assert!(down.status.success(), "lane resident down failed");
     assert!(resident.wait().status.success(), "lane resident failed");
 }
+
+#[test]
+fn resident_authenticated_startup_announces_a_fragment_bearing_opening() {
+    const TOKEN: &str = "correct-horse-battery-staple";
+
+    let lane = Fixture::new("authenticated-endpoint-announcement");
+    let mut resident = RunningResident::spawn_text_authenticated(&lane, TOKEN);
+    resident.assert_ready(&lane);
+    let published = lane.discovery().endpoint;
+    assert_eq!(
+        resident.read_stdout_line(),
+        format!("canvas endpoint: {published}#{TOKEN}\n")
+    );
+
+    let down = invoke(&lane, "down");
+    assert!(down.status.success(), "authenticated resident down failed");
+    assert!(resident.wait().status.success(), "resident failed");
+}

@@ -76,12 +76,16 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
     let wrong = request(dial, &remote, "/bootstrap?auth=wrong-token-value").await;
     assert!(wrong.starts_with(b"HTTP/1.1 401 Unauthorized\r\n"));
 
-    let admitted = request(
-        dial,
-        &remote,
-        "/bootstrap?auth=correct-horse-battery-staple",
-    )
-    .await;
+    let opening = format!("http://{remote}#{REMOTE_TOKEN}");
+    let (origin, fragment) = opening
+        .split_once('#')
+        .expect("opening carries auth fragment");
+    let opening_host = origin
+        .strip_prefix("http://")
+        .expect("opening has HTTP origin");
+    assert_eq!(opening_host, remote);
+    assert!(!origin.contains(REMOTE_TOKEN));
+    let admitted = request(dial, opening_host, &format!("/bootstrap?auth={fragment}")).await;
     assert!(admitted.starts_with(b"HTTP/1.1 200 OK\r\n"));
     let bootstrap: wire::CanvasBootstrap =
         wire::decode(response_body(&admitted)).expect("bootstrap decodes");
