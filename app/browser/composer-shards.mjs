@@ -44,6 +44,7 @@ export async function assertComposerShards({
   nestedQuotePreview,
   nestedQuoteMessage,
   entirelyQuotedMessage,
+  latestPrimaryProse,
 }) {
   const nestedCard = quoteActivity
     .filter({ hasText: nestedQuotePreview })
@@ -51,7 +52,7 @@ export async function assertComposerShards({
   const quoteStack = quoteLane.locator(".agent-composer-stack");
   const quotePrimary = quoteStack.locator(".composer-shard--primary");
   const primaryHeading = team.locator(
-    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary .composer-shard-heading strong`,
+    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary .composer-shard-heading > strong`,
   );
   assert.equal(
     await primaryHeading.innerText(),
@@ -82,6 +83,53 @@ export async function assertComposerShards({
     await quotePrimary.locator(":scope > .agent-renew-request").count(),
     0,
     "the primary shard exposes no renewal action outside its hamburger drawer",
+  );
+
+  const quoteHeading = quotePrimary.locator(".composer-shard-heading");
+  const quoteProse = quoteHeading.locator(".composer-shard-prose");
+  assert.equal(
+    await quoteProse.innerText(),
+    latestPrimaryProse,
+    "the primary header shows the latest exact-lane agent response",
+  );
+  assert.equal(
+    await quoteProse.getAttribute("title"),
+    latestPrimaryProse,
+    "the complete prose remains available when the one-line header truncates it",
+  );
+  assert.notEqual(await quoteProse.innerText(), "Dee", "the header is prose-led, not agent-named");
+  assert.deepEqual(
+    await quoteHeading.locator(":scope > *").evaluateAll((children) =>
+      children.map((child) => child.className),
+    ),
+    [
+      "composer-shard-link composer-shard-age",
+      "composer-shard-prose",
+      "composer-shard-image-indicators",
+      "agent-action-menu",
+    ],
+    "the primary header orders age, prose, image indicators, then its hamburger",
+  );
+
+  const activityChrome = await team
+    .locator(".team-agent .composer-shard--primary .composer-shard-age")
+    .evaluateAll((ages) => ages.map((age) => ({
+      accent: age.closest(".team-agent")?.dataset.accent,
+      color: getComputedStyle(age).color,
+      label: age.textContent?.trim(),
+    })));
+  assert.ok(activityChrome.length >= 2, "multiple composer activity ages are visible");
+  assert.ok(
+    activityChrome.every((age) => /^(?:now|\d+[smhd])$/.test(age.label)),
+    `every composer activity age is relative: ${JSON.stringify(activityChrome)}`,
+  );
+  assert.ok(
+    new Set(activityChrome.map((age) => age.accent)).size >= 2,
+    "the fixture exposes multiple composer identity accent slots",
+  );
+  assert.ok(
+    new Set(activityChrome.map((age) => age.color)).size >= 2,
+    "composer activity ages visibly retain their agents' identity colors",
   );
 
   const primarySources = [];

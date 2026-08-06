@@ -99,6 +99,7 @@ pub(super) fn render_agent_message_card(
     let quote_key = lane_key.clone();
     let quote_drafts = drafts.clone();
     let quote_text = message.text.clone();
+    let quote_preview = watchband::first_nonquoted_prose(&message.text);
     let quote_identity = agent_message_quote_identity(message);
     let source_id = agent_message_source_id(message);
     let focus_identity = quote_identity.clone();
@@ -118,7 +119,7 @@ pub(super) fn render_agent_message_card(
                 identity: quote_identity.clone(),
                 order,
                 quote: quote_text.clone(),
-                preview: None,
+                preview: quote_preview.clone(),
             });
             focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
         }),
@@ -328,7 +329,7 @@ pub(super) fn render_quote_shards(
                                 aria-label={format!("Return to quoted message: {shown}")}
                                 title="Return to this message in the stream"
                             >{"↩"}</a>
-                            <strong>{shown}</strong>
+                            <strong title={shown.to_owned()}>{shown}</strong>
                             <button
                                 type="button"
                                 aria-label="Remove quoted composer shard"

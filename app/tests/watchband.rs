@@ -1,7 +1,7 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, leaf, one_line, reported_tasks,
-    short, standing_title, standings, ticker_line, truncate,
+    ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, first_nonquoted_prose, leaf,
+    one_line, reported_tasks, short, standing_title, standings, ticker_line, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -382,6 +382,26 @@ fn elapsed_names_one_unit_at_each_boundary() {
     assert_eq!(elapsed_label(3_600_000), "1h");
     assert_eq!(elapsed_label(86_399_999), "23h");
     assert_eq!(elapsed_label(86_400_000), "1d");
+}
+
+#[test]
+fn composer_prose_skips_blank_and_borrowed_lines_at_any_quote_depth() {
+    assert_eq!(
+        first_nonquoted_prose(
+            "\r\n  > > borrowed nested context\r\n\t> borrowed context\r\n\r\n  authored first line  \r\nauthored second line"
+        )
+        .as_deref(),
+        Some("authored first line")
+    );
+}
+
+#[test]
+fn an_entirely_quoted_message_has_no_composer_prose() {
+    assert_eq!(
+        first_nonquoted_prose("> borrowed\n> > borrowed deeper\n  > borrowed after whitespace"),
+        None
+    );
+    assert_eq!(first_nonquoted_prose(" \r\n\t\r\n"), None);
 }
 
 #[test]
