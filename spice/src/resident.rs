@@ -29,11 +29,15 @@ mod capture;
 mod command_surface;
 mod lane_recovery;
 mod lane_surface;
+mod message_surface;
 mod policy_surface;
 mod shutdown;
 mod steering;
 mod timers;
 
+use message_surface::accept_capture_record;
+#[cfg(test)]
+use message_surface::{AgentMessagePublisher, publish_agent_messages};
 use shutdown::{current_residency, drive_shutdown};
 
 include!("resident/runtime.rs");

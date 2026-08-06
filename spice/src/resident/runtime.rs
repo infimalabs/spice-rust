@@ -775,6 +775,7 @@ async fn run_surface(
         message_publisher,
         records,
         failures,
+        progress,
         timers.drive(bus, timer_commits),
     )
     .await
@@ -873,6 +874,7 @@ async fn drive_surface(
     message_publisher: canvas::stream::MessagePublisher,
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
     mut failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
+    diagnostic: &mut dyn io::Write,
     timer: impl std::future::Future<Output = CommandResult<()>>,
 ) -> CommandResult<()> {
     tokio::pin!(timer);
@@ -893,13 +895,14 @@ async fn drive_surface(
                     "lane::capture-records-closed",
                     "lane capture record receiver closed",
                 ))?;
-                let current = seats
-                    .occupant(record.lane)
-                    .is_some_and(|occupant| occupant.occupant() == record.occupant);
-                lane_surface::capture_record(bus, epoch, seats, &record)?;
-                if current {
-                    publish_agent_messages(&message_publisher, &record)?;
-                }
+                accept_capture_record(
+                    bus,
+                    epoch,
+                    seats,
+                    &message_publisher,
+                    &record,
+                    diagnostic,
+                )?;
             }
             failure = failures.recv() => {
                 let failure = failure.ok_or_else(|| environment_fault(
@@ -914,36 +917,6 @@ async fn drive_surface(
             }
         }
     }
-}
-
-fn publish_agent_messages(
-    publisher: &canvas::stream::MessagePublisher,
-    record: &lane::capture::CaptureRecord,
-) -> CommandResult<()> {
-    for (event, decoded) in record.decoded.events().iter().enumerate() {
-        let listen::Event::Prose(prose) = decoded else {
-            continue;
-        };
-        let event = u32::try_from(event).map_err(|error| {
-            store_fault("canvas::message-locus-invalid", &error.to_string())
-        })?;
-        publisher
-            .publish(wire::AgentMessage {
-                lane: record.lane,
-                author: record.occupant,
-                locus: wire::MessageLocus {
-                    member: prose.locus.member,
-                    offset: prose.locus.offset,
-                    length: prose.locus.length,
-                    event,
-                },
-                text: prose.text.clone(),
-            })
-            .map_err(|error| {
-                store_fault("canvas::message-publish-failed", &error.to_string())
-            })?;
-    }
-    Ok(())
 }
 
 async fn dispatch_control(
