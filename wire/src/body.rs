@@ -2,8 +2,8 @@
 //!
 //! Every kind in the closed vocabulary registers exactly one body here, and the
 //! registry in [`crate::fact`] binds them. A body's fields are the nouns its
-//! WIRE.md vocabulary row names, or the head content that row points at; a
-//! field with no anchor in that row does not belong in the body.
+//! own kind names, or the head content that kind points at; a field anchored in
+//! neither does not belong in the body.
 //!
 //! Bodies flatten beside the discriminant, so their field names are the fact
 //! object's own keys and cannot collide with `kind`.

@@ -603,6 +603,66 @@ fn rust_doc_markdown_citations_use_live_inventory_and_refuse_the_unfixed_arm() {
     assert!(ordinary.findings().is_empty());
 }
 
+/// A prose citation is judged, and a longer suffix is not one.
+///
+/// The first case is the exact sentence EFFORT-1kKmTLZQ deleted from the
+/// retirement gate, restored here as the fixture it should always have been.
+/// It carries no code span, which is why it survived the arm that already
+/// existed: an appeal to authority is written as prose, so requiring backticks
+/// admitted the one spelling that did damage and refused the decorated ones
+/// that never had. Reading the target back proves the refusal names the
+/// document it could not resolve, not merely that something was wrong.
+///
+/// The second case is what the closing backtick used to do for free. Once the
+/// span stops delimiting the match, a Markdown name sits inside every longer
+/// suffix, and a pattern that stopped there would read one out of `page.mdoc`
+/// and then refuse the file for not tracking a document nobody wrote.
+#[test]
+fn a_prose_citation_is_judged_and_a_longer_suffix_is_not_one() {
+    let tracked = vec!["README.md".to_owned()];
+
+    let prose = scan_rust_doc_markdown_citations(
+        "gate/tests/retired_names.rs",
+        "//! NAMES.md scopes this deny-list in the sentence directly beneath its own\n",
+        &tracked,
+    )
+    .expect("a prose citation scans");
+    assert_eq!(prose.citations(), 1);
+    assert_eq!(prose.findings().len(), 1);
+    assert_eq!(
+        prose.findings()[0].source_path(),
+        "gate/tests/retired_names.rs"
+    );
+    assert_eq!(prose.findings()[0].line(), 1);
+    assert_eq!(
+        prose.findings()[0].target_path(),
+        "NAMES.md",
+        "the refusal has to name the document it could not resolve"
+    );
+    assert_eq!(rust_doc_citation_arm_state(&prose), BatteryState::Failed);
+
+    let resolved = scan_rust_doc_markdown_citations(
+        "src/lib.rs",
+        "//! The contract this states is README.md's, carried without a code span.\n",
+        &tracked,
+    )
+    .expect("a resolved prose citation scans");
+    assert_eq!(resolved.citations(), 1);
+    assert!(resolved.findings().is_empty());
+
+    let suffix = scan_rust_doc_markdown_citations(
+        "src/lib.rs",
+        "//! The reference/page.mdoc bundle is not a Markdown document.\n",
+        &tracked,
+    )
+    .expect("a longer suffix scans");
+    assert_eq!(
+        suffix.citations(),
+        0,
+        "a longer suffix carries no citation, so nothing may be read out of it"
+    );
+}
+
 #[test]
 fn rust_doc_markdown_allowances_are_exact_and_each_states_its_reason() {
     let expected = [

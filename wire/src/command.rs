@@ -21,8 +21,9 @@ use crate::witness::{Witness, WitnessKind};
 
 /// Every admitted command discriminant.
 ///
-/// Each variant is one row of WIRE.md's command registry. The discriminant
-/// selects the body DTO, witness schema, transition, and reply DTO together.
+/// Each variant is one row of the command registry [`Self::law`] states. The
+/// discriminant selects the body DTO, witness schema, transition, and reply DTO
+/// together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CommandKind {
     /// Read the validated current board heads.
@@ -215,7 +216,7 @@ impl Law {
     }
 }
 
-/// The rows of WIRE.md's command registry, one constant apiece.
+/// The rows of the command registry, one constant apiece.
 ///
 /// Each row is named for the move it governs rather than for a single
 /// command, because several commands share one law: possession changes hands
@@ -372,10 +373,10 @@ impl Law {
     /// Exact request disposition, named rule, and budget predicate when a rule
     /// spends or renews a budget, decided as the operator.
     ///
-    /// WIRE.md's registry row states the predicates without naming a
-    /// capability. Consent is the operator's answer to a request raised on
-    /// their behalf, and a lane deciding its own request would be granting
-    /// itself the consent it was asked to wait for.
+    /// This row states the predicates without naming a capability. Consent is
+    /// the operator's answer to a request raised on their behalf, and a lane
+    /// deciding its own request would be granting itself the consent it was
+    /// asked to wait for.
     pub const DECIDE: Self = Self {
         required: &[WitnessKind::Consent, WitnessKind::Rule],
         optional: &[WitnessKind::Budget],
@@ -653,8 +654,9 @@ impl CommandKind {
     ///
     /// This is the registry. The match is exhaustive, so a command added
     /// without an explicit row fails to compile — the law cannot be forgotten
-    /// or defaulted, only stated. Each row it names states, verbatim, the
-    /// predicates the matching WIRE.md registry row demands.
+    /// or defaulted, only stated. Each row it names states its predicates in
+    /// full rather than deriving them from a neighbour, so the law governing
+    /// one command is read in one place.
     #[must_use]
     pub const fn law(self) -> Law {
         match self {

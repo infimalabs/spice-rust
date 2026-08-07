@@ -35,7 +35,7 @@ pub enum Producer {
 }
 
 impl Producer {
-    /// Every producer class, in the order WIRE.md enumerates them.
+    /// Every producer class, in the order the enum above declares them.
     ///
     /// The set is closed, so a caller sweeping it is sweeping the whole of
     /// what can mint a fact rather than a list it restated by hand.
