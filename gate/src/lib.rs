@@ -38,13 +38,14 @@ pub mod tree;
 pub mod verdict;
 
 pub use battery::{
-    ActorEvidence, ArmDisposition, ArmEvidence, ArmExecution, ArmFamily, BatteryArmResult,
-    BatteryContext, BatteryError, BatteryExecutor, BatteryInputs, BatteryManifest,
-    BatteryManifestArm, BatteryReceipt, BatteryReport, BatteryScope, BatteryState,
-    BatteryToolEvidence, BoundActorInputsEvidence, BoundEvidence, CANONICAL_BATTERY_MANIFEST,
-    CompiledArm, ConfigurationEvidence, GATE_BATTERY_RECEIPT_VERSION, GATE_BATTERY_VERSION,
-    LatchEvidence, ReceiptRefusal, ResultProvenance, UnsupportedReceipt, run_battery,
-    run_battery_arm, supported_pairs,
+    ActorEvidence, ArmDisposition, ArmEvidence, ArmExecution, ArmFamily,
+    BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryArmResult, BatteryContext, BatteryError,
+    BatteryExecutor, BatteryInputs, BatteryManifest, BatteryManifestArm, BatteryReceipt,
+    BatteryRefusalFold, BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence,
+    BoundActorInputsEvidence, BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm,
+    ConfigurationEvidence, GATE_BATTERY_RECEIPT_VERSION, GATE_BATTERY_VERSION, LatchEvidence,
+    ReceiptRefusal, ResultProvenance, UnsupportedReceipt, run_battery, run_battery_arm,
+    supported_pairs,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use battery::{BatteryCapture, RepositoryExecutionEvent};

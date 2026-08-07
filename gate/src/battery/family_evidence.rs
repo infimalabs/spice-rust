@@ -32,6 +32,22 @@ impl BatteryState {
     pub const fn admits(self) -> bool {
         matches!(self, Self::Passed | Self::NotApplicable | Self::Excluded)
     }
+
+    /// Stable terminal-state spelling used by bounded human diagnostics.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::Unavailable => "unavailable",
+            Self::Unsupported => "unsupported",
+            Self::Unmeasured => "unmeasured",
+            Self::TimedOut => "timed-out",
+            Self::ExplicitSkip => "explicit-skip",
+            Self::NotApplicable => "not-applicable",
+            Self::Excluded => "excluded",
+        }
+    }
 }
 
 /// Exact provenance required for an admitted non-execution.
@@ -368,7 +384,7 @@ fn metric_state(report: &StructuralArmEvidence) -> Result<BatteryState, BatteryE
     }
 }
 
-fn metric_terminal(evidence: &MetricEvidence) -> BatteryState {
+pub(super) fn metric_terminal(evidence: &MetricEvidence) -> BatteryState {
     match evidence.state() {
         MetricState::Measured { measurement } if over_bound(evidence.unit(), measurement) => {
             BatteryState::Failed
