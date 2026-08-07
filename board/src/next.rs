@@ -11,6 +11,7 @@ pub struct Selection<'a> {
     entry: &'a Entry,
     urgency: Urgency,
     effective_priority: i64,
+    downstream_weight: usize,
     self_review: bool,
 }
 
@@ -25,6 +26,12 @@ impl<'a> Selection<'a> {
     #[must_use]
     pub const fn urgency(self) -> Urgency {
         self.urgency
+    }
+
+    /// Unsettled public entries transitively downstream of the selection.
+    #[must_use]
+    pub const fn downstream_weight(self) -> usize {
+        self.downstream_weight
     }
 }
 
@@ -100,9 +107,10 @@ pub fn project_subscription_history(
 ///
 /// This is the only allocation path in `board`. It derives completed
 /// dependencies from the same supplied head set, ranks peer work before the
-/// actor's own review, then effective priority, then urgency. Scores inside
-/// `band` are equivalent and break by ascending handle spelling. Identical
-/// heads, actor, and band always return the same task regardless of slice order.
+/// actor's own review, then effective priority, downstream weight, and urgency.
+/// Scores inside `band` are equivalent and break by ascending handle spelling.
+/// Identical heads, actor, and band always return the same task regardless of
+/// slice order.
 #[must_use]
 pub fn select<'a>(
     entries: &'a [Entry],
@@ -112,6 +120,7 @@ pub fn select<'a>(
 ) -> Option<Selection<'a>> {
     let completed = satisfied_handles(entries);
     let priorities = effective_priorities(entries);
+    let downstream = downstream_weights(entries);
 
     let candidates = entries
         .iter()
@@ -129,6 +138,10 @@ pub fn select<'a>(
                     effective_priority,
                 ),
                 effective_priority,
+                downstream_weight: downstream
+                    .get(&entry.statement().handle)
+                    .copied()
+                    .unwrap_or(0),
                 self_review: is_self_review(entry, actor),
             }
         })
@@ -139,11 +152,20 @@ pub fn select<'a>(
         .filter(|candidate| candidate.self_review != peer_class)
         .map(|candidate| candidate.effective_priority)
         .max()?;
+    let downstream_weight = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.self_review != peer_class
+                && candidate.effective_priority == effective_priority
+        })
+        .map(|candidate| candidate.downstream_weight)
+        .max()?;
     let urgency = candidates
         .iter()
         .filter(|candidate| {
             candidate.self_review != peer_class
                 && candidate.effective_priority == effective_priority
+                && candidate.downstream_weight == downstream_weight
         })
         .map(|candidate| candidate.urgency)
         .max()?;
@@ -152,6 +174,7 @@ pub fn select<'a>(
         .filter(|candidate| {
             candidate.self_review != peer_class
                 && candidate.effective_priority == effective_priority
+                && candidate.downstream_weight == downstream_weight
                 && urgency.value().abs_diff(candidate.urgency.value()) <= band
         })
         .min_by_key(|candidate| &candidate.entry.statement().handle)
@@ -185,12 +208,7 @@ fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskHandle, i64> {
 
     loop {
         let mut changed = false;
-        for dependent in entries.iter().filter(|entry| {
-            let workflow = entry.workflow();
-            !entry.project().visibility().is_hidden()
-                && workflow.status == "pending"
-                && workflow.completion.is_none()
-        }) {
+        for dependent in entries.iter().filter(|entry| unsettled_public(entry)) {
             let inherited = priorities
                 .get(&dependent.statement().handle)
                 .copied()
@@ -209,6 +227,55 @@ fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskHandle, i64> {
             return priorities;
         }
     }
+}
+
+/// Count distinct unsettled public dependents reachable from every entry.
+///
+/// The reverse graph is derived entirely from the supplied heads. Filtering an
+/// edge at its dependent means a settled or hidden row ends that branch: work
+/// the allocator cannot release neither contributes weight nor acts as a bridge
+/// to public work beyond it. A per-root visited set both counts converging paths
+/// once and makes malformed cycles finite.
+fn downstream_weights(entries: &[Entry]) -> BTreeMap<TaskHandle, usize> {
+    let mut dependents: BTreeMap<TaskHandle, BTreeSet<TaskHandle>> = BTreeMap::new();
+    for dependent in entries.iter().filter(|entry| unsettled_public(entry)) {
+        for prerequisite in &dependent.statement().dependencies {
+            dependents
+                .entry(prerequisite.clone())
+                .or_default()
+                .insert(dependent.statement().handle.clone());
+        }
+    }
+
+    entries
+        .iter()
+        .map(|entry| {
+            let root = &entry.statement().handle;
+            let mut downstream = BTreeSet::new();
+            let mut pending = dependents
+                .get(root)
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>();
+            while let Some(dependent) = pending.pop() {
+                if &dependent == root || !downstream.insert(dependent.clone()) {
+                    continue;
+                }
+                if let Some(transitive) = dependents.get(&dependent) {
+                    pending.extend(transitive.iter().cloned());
+                }
+            }
+            (root.clone(), downstream.len())
+        })
+        .collect()
+}
+
+fn unsettled_public(entry: &Entry) -> bool {
+    let workflow = entry.workflow();
+    !entry.project().visibility().is_hidden()
+        && workflow.status == "pending"
+        && workflow.completion.is_none()
 }
 
 /// Whether this lane may be *handed* the entry.
