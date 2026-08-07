@@ -69,7 +69,7 @@ pub fn reference_transaction(
 /// is the one non-Cargo runtime check and requires its end-of-run receipt.
 /// Contract landing remains terminal: no alternate executable discovered from
 /// `PATH` repeats policy after the Rust-owned checks finish.
-const VERIFY_ACTIONS: [Action; 10] = [
+const VERIFY_ACTIONS: [Action; 11] = [
     Action::EntryPoint,
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
@@ -111,6 +111,17 @@ const VERIFY_ACTIONS: [Action; 10] = [
         &["test", "--locked", "--workspace", "--all-targets"],
     )),
     Action::Command(Step::cargo(
+        DOCUMENTATION_LABEL,
+        &[
+            "doc",
+            "--locked",
+            "--workspace",
+            "--lib",
+            "--bins",
+            "--no-deps",
+        ],
+    )),
+    Action::Command(Step::cargo(
         "cargo test --locked --workspace --doc",
         &["test", "--locked", "--workspace", "--doc"],
     )),
@@ -126,6 +137,19 @@ const SCOPED_COMMANDS: [ScopedCommand; 4] = [
 ];
 
 const BATTERY_LABEL: &str = "canonical Rust gate battery";
+/// Documentation is swept with the targets named, not with cargo's default set.
+///
+/// `spice` and `xtask` each auto-discover a `src/lib.rs` and a same-named
+/// `src/main.rs`, and both targets would write `target/doc/<name>/index.html`.
+/// Left to choose, cargo settles that collision by documenting the library and
+/// dropping the binary silently: no warning, exit 0. `--lib --bins` asks for
+/// both, so cargo documents each binary too, prints its own
+/// `rust-lang/cargo#6313` collision note, and runs rustdoc over
+/// `spice/src/main.rs` and `xtask/src/main.rs` — including the twenty-three
+/// modules `spice/src/main.rs` declares that its library does not. Under
+/// `-D warnings` a broken intra-doc link in either file is a hard error, and
+/// under the default target set nothing in this tree ever raised it.
+const DOCUMENTATION_LABEL: &str = "cargo doc --locked --workspace --lib --bins --no-deps";
 /// Precondition rather than a check of this tree, which is why it runs first.
 ///
 /// Every other action asks whether the tree is correct. This one asks whether
@@ -902,7 +926,7 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 10] = [
+        const GUARDED_ACTIONS: [Action; 11] = [
             Action::EntryPoint,
             Action::Command(Step::cargo(
                 "cargo fmt --all -- --check",
@@ -950,6 +974,17 @@ mod tests {
                 &["test", "--locked", "--workspace", "--all-targets"],
             )),
             Action::Command(Step::cargo(
+                "cargo doc --locked --workspace --lib --bins --no-deps",
+                &[
+                    "doc",
+                    "--locked",
+                    "--workspace",
+                    "--lib",
+                    "--bins",
+                    "--no-deps",
+                ],
+            )),
+            Action::Command(Step::cargo(
                 "cargo test --locked --workspace --doc",
                 &["test", "--locked", "--workspace", "--doc"],
             )),
@@ -958,6 +993,29 @@ mod tests {
         ];
 
         assert_eq!(VERIFY_ACTIONS.as_slice(), GUARDED_ACTIONS.as_slice());
+    }
+
+    /// Cargo's default target set documents `spice` and `xtask` as libraries
+    /// only: each has a binary whose name collides with its library
+    /// (`rust-lang/cargo#6313`) and cargo drops it without a word. Both
+    /// `main.rs` files carry doc comments, so the sweep has to name its targets
+    /// or those two files are never rustdoc-linted at all.
+    #[test]
+    fn documentation_names_its_targets_so_the_colliding_binaries_are_linted() {
+        let sweep = VERIFY_ACTIONS
+            .iter()
+            .find_map(|action| match action {
+                Action::Command(step) if step.label == DOCUMENTATION_LABEL => Some(step.arguments),
+                _ => None,
+            })
+            .expect("the verifier has a documentation step");
+
+        assert!(sweep.contains(&"--bins"), "{sweep:?} selects no binaries");
+        assert!(sweep.contains(&"--lib"), "{sweep:?} selects no libraries");
+        assert!(
+            sweep.contains(&"--workspace"),
+            "{sweep:?} leaves packages out of the sweep"
+        );
     }
 
     #[test]
@@ -1237,8 +1295,8 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(action, Action::Command(_)))
                 .count(),
-            6,
-            "exactly six declared Cargo commands precede compiled landing"
+            7,
+            "exactly seven declared Cargo commands precede compiled landing"
         );
         assert_eq!(
             VERIFY_ACTIONS
