@@ -22,10 +22,17 @@ hook whose entry point is absent, and Git aborts every ref update rather than
 degrading to no guard. Nothing republishes that copy afterwards, so a landed
 change to the guard leaves Git enforcing the older one until this command runs
 again; `cargo xtask verify` refuses while that is true and names the command
-above. Activation is repository-wide rather than per-worktree: it clears the
-worktree-scoped `core.hooksPath` in every linked worktree, so run it only when
-the whole repository is meant to run these hooks. Build this lane's Canvas app,
-then start Spice with:
+above. Activation is repository-wide rather than per-worktree, so it inspects
+every linked worktree first and refuses, before publishing anything or writing
+any configuration, when one selects a `core.hooksPath` it does not recognize.
+Only two are recognized: the tracked `.githooks` a fresh checkout runs, and the
+path being activated. Everything else belongs to another system and is reported
+instead of replaced, which is why the command is safe to run — and why it does
+nothing on a repository whose worktrees select the predecessor's `.spice/hooks`
+until an operator moves them across. What it does clear, once that inspection
+passes, is a recognized worktree-scoped override, so run it only when the whole
+repository is meant to run these hooks. Build this lane's Canvas app, then start
+Spice with:
 
 ```sh
 cargo xtask app
@@ -57,7 +64,8 @@ machine, so by default the app is reachable only from the host running it.
 A non-loopback listener requires explicit consent and a URL-safe bearer token:
 
 ```sh
-spice up --host 0.0.0.0 --allow-insecure-bind \
+"$(git rev-parse --path-format=absolute --git-common-dir)/.spice-install/bin/spice" \
+  up --host 0.0.0.0 --allow-insecure-bind \
   --auth-token correct-horse-battery-staple --open
 ```
 
