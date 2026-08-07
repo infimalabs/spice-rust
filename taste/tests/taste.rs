@@ -1,7 +1,7 @@
 use listen::{Event, Locus, Prose, Usage};
 use taste::{
-    Bag, Decision, JudgmentFact, REMINDER_MARKER, Taste, Trigger, TriggerError, is_reminder_echo,
-    judge, normalize_prose, reminder_identity, reminder_text,
+    Bag, REMINDER_MARKER, Taste, Trigger, TriggerError, is_reminder_echo, normalize_prose,
+    reminder_identity, reminder_text,
 };
 use wire::FactKind;
 
@@ -130,92 +130,51 @@ fn only_typed_assistant_prose_is_a_candidate_surface() {
 }
 
 #[test]
-fn judgment_is_the_only_door_from_a_hit_to_a_historical_curation_fact() {
+fn a_harmless_mention_still_selects_a_candidate_the_runtime_must_weigh() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
-    let hit = bag
-        .hits(&prose(BEHAVIOR))
-        .into_iter()
-        .next()
-        .expect("behavior fixture hits");
 
-    let cleared = judge(hit.clone(), Decision::Clear).into_fact();
-    assert_eq!(cleared.kind(), FactKind::TasteCleared);
-    assert!(fold::FactPlane::Taste.contains(cleared.kind()));
-    let JudgmentFact::Cleared(cleared) = cleared else {
-        panic!("a clearance minted the wrong typed body");
-    };
-    assert_eq!(cleared.body.taste, "fallbacks");
-    assert_eq!(cleared.body.locus, locus(BEHAVIOR).to_string());
-
-    let confirmed = judge(hit, Decision::Confirm).into_fact();
-    assert_eq!(confirmed.kind(), FactKind::TasteConfirmed);
-    assert!(fold::FactPlane::Taste.contains(confirmed.kind()));
-    let JudgmentFact::Confirmed(confirmed) = confirmed else {
-        panic!("a confirmation minted the wrong typed body");
-    };
-    assert_eq!(confirmed.body.taste, "fallbacks");
-    assert_eq!(confirmed.body.locus, locus(BEHAVIOR).to_string());
-}
-
-#[test]
-fn a_harmless_mention_reaches_the_clearance_fact_path() {
-    let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let hit = bag
         .hits(&prose(MENTION))
         .into_iter()
         .next()
         .expect("mention still selects a candidate");
 
-    assert_eq!(
-        judge(hit, Decision::Clear).into_fact().kind(),
-        FactKind::TasteCleared
-    );
+    // The bag is a selector, not a verdict. A mention costs one reminder that
+    // the operator may decline; that interruption is the design cost recorded
+    // in TASTES.md, and it is why nothing here adjudicates the candidate.
+    assert_eq!(hit.taste().as_str(), "fallbacks");
+    assert_eq!(hit.context(), MENTION);
 }
 
 #[test]
-fn judgment_and_reminder_origins_cover_the_taste_plane_without_overlap() {
-    let bag = Bag::new(vec![fallback_taste()]).expect("bag");
-    let hit = bag
-        .hits(&prose(BEHAVIOR))
-        .into_iter()
-        .next()
-        .expect("behavior fixture hits");
-    let mut judgment_produced = [
-        judge(hit.clone(), Decision::Confirm).into_fact().kind(),
-        judge(hit, Decision::Clear).into_fact().kind(),
-    ];
-    judgment_produced.sort_unstable();
-
-    assert_eq!(
-        judgment_produced,
-        [FactKind::TasteConfirmed, FactKind::TasteCleared],
-        "the judge owns historical curation evidence only"
-    );
-
-    let reminder_originated = [FactKind::TasteReminded];
-    assert_eq!(
-        FactKind::TasteReminded.producer(),
-        wire::Producer::ResidentRecognition,
-        "the live judge-free path belongs to resident recognition"
-    );
-    assert!(
-        reminder_originated
-            .iter()
-            .all(|kind| !judgment_produced.contains(kind))
-    );
-
-    let mut produced = judgment_produced
-        .into_iter()
-        .chain(reminder_originated)
-        .collect::<Vec<_>>();
-    produced.sort_unstable();
-
-    let mut taste_plane = FactKind::ALL
+fn one_live_reminder_and_two_historical_kinds_cover_the_taste_plane() {
+    let mut plane = FactKind::ALL
         .iter()
         .copied()
         .filter(|kind| fold::FactPlane::Taste.contains(*kind))
         .collect::<Vec<_>>();
-    taste_plane.sort_unstable();
+    plane.sort_unstable();
+    let mut expected = [
+        FactKind::TasteConfirmed,
+        FactKind::TasteCleared,
+        FactKind::TasteReminded,
+    ];
+    expected.sort_unstable();
 
-    assert_eq!(produced, taste_plane);
+    assert_eq!(
+        plane, expected,
+        "the taste plane is exactly one live kind and the two historical ones"
+    );
+    assert_eq!(
+        FactKind::TasteReminded.producer(),
+        wire::Producer::ResidentRecognition,
+        "the one current runtime law is judge-free resident recognition"
+    );
+    for historical in [FactKind::TasteConfirmed, FactKind::TasteCleared] {
+        assert_eq!(
+            historical.producer(),
+            wire::Producer::Judge,
+            "historical curation evidence keeps the producer it was written with"
+        );
+    }
 }

@@ -8,9 +8,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
 use serde::de::DeserializeOwned;
-use wire::body::{TasteCleared, TasteConfirmed};
+use wire::body::{
+    LaneSeated, SteerAcked, SteerDeclined, SteerResent, TasteCleared, TasteConfirmed,
+    TasteReminded, TranscriptLocus,
+};
 use wire::intent::{BoardAnswer, CommandAnswer, TaskAdd, TaskAnswer, TextAnswer};
-use wire::{Actor, FactKind, Instant, Outcome, Producer, ReplyPosition};
+use wire::{
+    Actor, CanonicalUuid, Digest, Domain, FactKind, Instant, Outcome, Producer, ReplyPosition,
+};
 
 #[path = "support/readiness.rs"]
 mod readiness;
@@ -38,6 +43,20 @@ message = "Observe the real completion event."
 words = ["alias*"]
 message = "Keep one current name."
 "#;
+
+/// Steering keys the fire fixtures spell, each eight alphanumeric characters.
+///
+/// `FIRST_RUNG` and `RESENT_RUNG` are one ladder: the resend climbs the key the
+/// reminder opened, so an answer landing on the upper rung is the answer the
+/// one fire below it carries.
+const FIRST_RUNG: &str = "1kKmT001";
+const RESENT_RUNG: &str = "1kKmT002";
+const RENEWED_RUNG: &str = "1kKmT003";
+const ALPHA_RUNG: &str = "1kKmT004";
+const UNSEATED_RUNG: &str = "1kKmT005";
+/// Prose the `zeta` bag selects, authored once and written again after
+/// compaction so one unchanged identity spans two epochs.
+const REPEATED_PROSE: &str = "we will wait for the build and sleep between checks";
 
 struct Fixture {
     root: PathBuf,
@@ -227,6 +246,118 @@ fn taste_reporting_and_review_plans_survive_restart() {
             && plan.flow.as_deref() == Some("todo,review")
             && plan.acceptance.len() == 2
     }));
+}
+
+#[test]
+fn live_fires_count_one_lineage_once_and_keep_one_durable_driver() {
+    let fixture = Fixture::new();
+    seed_fires(&fixture);
+    let resident = Resident::start(&fixture);
+
+    let before = fixture.cursor();
+    let report = text_reply::<serde_json::Value>(&fixture.invoke(&["taste"]));
+    // Deriving the view appended nothing, so the report persists no counter.
+    assert_eq!(fixture.cursor(), before);
+
+    let zeta = &report["tastes"][0];
+    assert_eq!(zeta["name"], "zeta");
+    let fires = zeta["fires"].as_array().expect("zeta fires");
+    assert_eq!(fires.len(), 2, "{zeta}");
+    // Newest first. The resent rung minted no reminder, so the acknowledgment
+    // that landed above it is the standing this one fire carries.
+    assert_eq!(fires[0]["key"], RENEWED_RUNG);
+    assert_eq!(fires[0]["standing"], "declined");
+    assert_eq!(fires[0]["compaction"], 20);
+    assert_eq!(fires[1]["key"], FIRST_RUNG);
+    assert_eq!(fires[1]["standing"], "acked");
+    assert_eq!(fires[1]["compaction"], 10);
+    assert!(
+        fires
+            .iter()
+            .all(|fire| fire["key"] != RESENT_RUNG && fire["driver"] == "claude")
+    );
+    // Two occupant generations, one seat: a renewal cannot split the driver.
+    assert_ne!(fires[0]["occupant"], fires[1]["occupant"]);
+    assert_eq!(
+        zeta["drivers"],
+        serde_json::json!([{"driver": "claude", "fires": 2, "acked": 1, "declined": 1}])
+    );
+    assert_eq!(
+        zeta["recurrence"],
+        serde_json::json!([{
+            "content": fires[0]["content"],
+            "epochs": 2,
+            "latest": fires[0]["position"],
+        }])
+    );
+    // The pre-reminder curation evidence is still readable beside the fires.
+    assert_eq!(zeta["judgments"][0]["verdict"], "confirmed");
+    assert_eq!(zeta["judgments"][0]["locus"], "tape:zeta");
+
+    let alpha = &report["tastes"][1];
+    assert_eq!(alpha["name"], "alpha");
+    assert_eq!(alpha["fires"].as_array().expect("alpha fires").len(), 1);
+    assert_eq!(alpha["fires"][0]["standing"], "live");
+    assert_eq!(
+        alpha["drivers"],
+        serde_json::json!([{"driver": "claude", "fires": 1, "acked": 0, "declined": 0}])
+    );
+    assert_eq!(alpha["recurrence"], serde_json::json!([]));
+    assert_eq!(alpha["judgments"][0]["verdict"], "cleared");
+    assert_eq!(alpha["judgments"][0]["locus"], "tape:alpha");
+
+    let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&["--json", "taste", "drop", "zeta"]));
+    assert_review_plan(
+        &board(&fixture),
+        &dropped.body,
+        "Propose tracked taste retirement: zeta",
+    );
+    let retirement = task_add_requests(&fixture)
+        .into_iter()
+        .find(|plan| plan.title == "Propose tracked taste retirement: zeta")
+        .expect("retirement receipt is durable");
+    let cited = retirement
+        .description
+        .as_deref()
+        .expect("retirement carries its evidence");
+    // The reminder's own locus, not the transcript locus the decline was read
+    // at: the operator narrows a bag by rereading the prose that fired it.
+    assert!(
+        cited.contains("- tape 1+40 event 0 line 20 column 1 on claude"),
+        "{cited}"
+    );
+    assert!(!cited.contains("line 11 column 1"), "{cited}");
+    assert!(
+        cited.contains("Historical cleared loci:\n- none"),
+        "{cited}"
+    );
+    resident.stop(&fixture);
+}
+
+#[test]
+fn a_reminder_naming_an_unseated_lane_refuses_rather_than_disappearing() {
+    let fixture = Fixture::new();
+    seed_unseated_reminder(&fixture);
+    let resident = Resident::start(&fixture);
+
+    let output = fixture.invoke(&["--json", "taste"]);
+    assert_eq!(
+        output.status.code(),
+        Some(REFUSAL_EXIT),
+        "{}",
+        spoken(&output)
+    );
+    let Outcome::Refusal(refusal) =
+        wire::decode::<Outcome<serde_json::Value>>(&output.stderr).expect("refusal is typed")
+    else {
+        panic!("an unseated reminder did not refuse")
+    };
+    assert_eq!(refusal.reason, "taste::lane-unseated");
+    assert_eq!(refusal.observed, Some(uuid(0x20).to_string()));
+    // The whole report is withheld: an unjoinable fire cannot be dropped from a
+    // row that still renders as if it were the current answer.
+    assert!(output.stdout.is_empty(), "{}", spoken(&output));
+    resident.stop(&fixture);
 }
 
 #[test]
@@ -424,6 +555,190 @@ fn seed_judgments(fixture: &Fixture) {
         CommitOutcome::Committed(_)
     ));
     bus.shutdown().expect("fixture bus stops");
+}
+
+/// Seed the live reminder evidence the report derives its fire rows from.
+///
+/// One lane is seated once with one driver. `zeta` fires twice on the same
+/// prose across two occupant generations and two compaction epochs; the first
+/// lineage is resent before it is acknowledged, and the second is declined.
+/// `alpha` fires once and is left live.
+fn seed_fires(fixture: &Fixture) {
+    let bus = open_bus(fixture);
+    commit(&bus, Producer::ResidentRecognition, "01", |write| {
+        write
+            .fact(seated("claude"), FactCause::Root)
+            .expect("lane seating");
+        write
+            .fact(
+                reminded(FIRST_RUNG, "zeta", uuid(0x21), REPEATED_PROSE, 10),
+                FactCause::Root,
+            )
+            .expect("first zeta reminder");
+    });
+    climb_and_acknowledge(&bus);
+    commit(&bus, Producer::ResidentRecognition, "04", |write| {
+        write
+            .fact(
+                reminded(RENEWED_RUNG, "zeta", uuid(0x22), REPEATED_PROSE, 20),
+                FactCause::Root,
+            )
+            .expect("renewed zeta reminder");
+        write
+            .fact(
+                reminded(ALPHA_RUNG, "alpha", uuid(0x22), "keep the alias", 20),
+                FactCause::Root,
+            )
+            .expect("alpha reminder");
+    });
+    commit(&bus, Producer::AckScanner, "05", |write| {
+        write
+            .fact(
+                SteerDeclined {
+                    directive: directive(RENEWED_RUNG),
+                    key: RENEWED_RUNG.to_owned(),
+                    lane: uuid(0x20),
+                    epoch: uuid(0x2f),
+                    locus: locus(11),
+                    reason: "the wait is the observed completion event".to_owned(),
+                },
+                FactCause::Root,
+            )
+            .expect("the renewed reminder is declined");
+    });
+    bus.shutdown().expect("fixture bus stops");
+}
+
+/// Climb the first lineage one rung, then answer the rung above it.
+///
+/// The answer never touches the key the reminder opened, so a report that
+/// counted rungs instead of reminders would show two fires and one answer.
+fn climb_and_acknowledge(bus: &Bus) {
+    commit(bus, Producer::CommandDoor, "02", |write| {
+        write
+            .fact(
+                SteerResent {
+                    directive: directive(RESENT_RUNG),
+                    key: RESENT_RUNG.to_owned(),
+                    ancestor: FIRST_RUNG.to_owned(),
+                    lane: uuid(0x20),
+                    escalation: 1,
+                },
+                FactCause::Root,
+            )
+            .expect("the first lineage climbs one rung");
+    });
+    commit(bus, Producer::AckScanner, "03", |write| {
+        write
+            .fact(
+                SteerAcked {
+                    directive: directive(RESENT_RUNG),
+                    key: RESENT_RUNG.to_owned(),
+                    lane: uuid(0x20),
+                    epoch: uuid(0x2f),
+                    locus: locus(9),
+                },
+                FactCause::Root,
+            )
+            .expect("the upper rung is acknowledged");
+    });
+}
+
+/// Seed one reminder whose lane the durable stream never seated.
+fn seed_unseated_reminder(fixture: &Fixture) {
+    let bus = open_bus(fixture);
+    commit(&bus, Producer::ResidentRecognition, "01", |write| {
+        write
+            .fact(
+                reminded(UNSEATED_RUNG, "zeta", uuid(0x21), REPEATED_PROSE, 10),
+                FactCause::Root,
+            )
+            .expect("reminder for an unseated lane");
+    });
+    bus.shutdown().expect("fixture bus stops");
+}
+
+fn open_bus(fixture: &Fixture) -> Bus {
+    let journal = journal::Journal::open(&fixture.journal).expect("fixture journal opens");
+    Bus::start(journal).expect("fixture bus starts")
+}
+
+/// Commit one batch of facts, which is why the producer is a parameter: a
+/// registered body admits exactly one producer class, and these span three.
+fn commit(bus: &Bus, producer: Producer, minute: &str, facts: impl FnOnce(&mut JournalWrite)) {
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        "taste:fixture".parse().expect("fixture origin"),
+        format!("2030-04-12T19:{minute}:00.000Z")
+            .parse::<Instant>()
+            .expect("fixture instant"),
+        producer,
+    );
+    facts(&mut write);
+    assert!(matches!(
+        bus.commit(write).expect("facts reach writer"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+fn seated(vendor: &str) -> LaneSeated {
+    LaneSeated {
+        lane: uuid(0x20),
+        lineage_id: uuid(0x20),
+        capability: uuid(0x2e),
+        name: Some("Ava".to_owned()),
+        worktree: "/worktrees/lane-a".to_owned(),
+        life: "drive".to_owned(),
+        vendor: vendor.parse().expect("fixture vendor"),
+    }
+}
+
+fn reminded(
+    key: &str,
+    taste: &str,
+    occupant: CanonicalUuid,
+    prose: &str,
+    compaction: u64,
+) -> TasteReminded {
+    TasteReminded {
+        directive: directive(key),
+        key: key.to_owned(),
+        lane: uuid(0x20),
+        taste: taste.to_owned(),
+        content: Digest::compute(Domain::TasteProse, prose.as_bytes()),
+        occupant,
+        compaction,
+        locus: locus(compaction as u32),
+        text: format!("[TASTE] {taste}"),
+        expires: "2031-01-01T00:00:00.000Z".parse().expect("fixture expiry"),
+    }
+}
+
+/// A distinct durable identity per key, so no two rungs collide.
+fn directive(key: &str) -> CanonicalUuid {
+    let suffix = key.bytes().fold(0_u64, |value, byte| {
+        value.wrapping_mul(131).wrapping_add(u64::from(byte))
+    });
+    format!("00000000-0000-4000-8000-{:012x}", suffix & 0xffff_ffff_ffff)
+        .parse()
+        .expect("fixture directive UUID")
+}
+
+fn uuid(tail: u8) -> CanonicalUuid {
+    format!("018f82d4-6f59-7d06-92e3-bce9131163{tail:02x}")
+        .parse()
+        .expect("fixture UUID")
+}
+
+fn locus(line: u32) -> TranscriptLocus {
+    TranscriptLocus {
+        member: 1,
+        offset: 40,
+        length: 80,
+        event: 0,
+        line,
+        column: 1,
+    }
 }
 
 fn text_reply<T: DeserializeOwned>(output: &Output) -> T {

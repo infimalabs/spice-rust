@@ -6,15 +6,23 @@ A taste is a stable, near-universal operator preference about how work should
 be shaped. It is deliberately blunter than a lint and broader than a task
 instruction. A useful taste applies across files, tasks, and lanes; names an
 action the author can take immediately; and remains worth hearing when a
-harmless mention triggers judgment. Guidance that depends on one task, one
-subsystem, or a long exception list belongs in that task or its review instead.
+harmless mention fires it. Guidance that depends on one task, one subsystem, or
+a long exception list belongs in that task or its review instead.
 
-The word bag selects candidate prose. It does not decide whether the prose
-violates the taste. The judge receives the taste, the trigger span, and enough
-surrounding context to distinguish use from mention. Prose that exhibits the
-disfavored shape confirms; prose that quotes, cites, or analyzes the rule
-clears. The journal records the outcome and locus as `taste::confirmed` or
-`taste::cleared`. A trigger hit alone is neither a fact nor steering.
+One runtime law is executable, and selection is the whole decision. A
+configured bag hit in authored prose emits one `[TASTE]` ordinary directive to
+the lane that wrote the prose, carrying the taste's message unchanged. Nothing
+separates use from mention first. The same taste and normalized prose fire at
+most once per authored content and compaction epoch, and prose already carrying
+the reserved `[TASTE]` marker is classified as the runtime's own echo before
+matching, so a quoted reminder never fires again. From there it is ordinary
+steering: acknowledged, declined, resent, and expiring like any other
+directive. A decline is the operator's judgment recorded after the
+interruption, not a gate placed before it.
+
+Historical `taste::confirmed` and `taste::cleared` facts predate that law. They
+remain decodable and visible as curation evidence; no current command mints
+another one.
 
 The active set is the tracked `[taste]` configuration. `TASTES.md` owns the
 curation law and the rationale for the installed seeds; it does not form a
@@ -30,7 +38,7 @@ A taste must satisfy all of these rules:
   removes one taste and adds another.
 - Keep the word bag small. Include the words authors naturally use when
   proposing the disfavored shape. Avoid project nouns and overloaded words
-  whose ordinary uses would dominate judgment.
+  whose ordinary uses would dominate the fires.
 - Use exact words, phrases, or word globs. Matching is over
   whitespace-normalized, case-insensitive tokens: a bare word matches one
   whole token, a trailing `*` covers suffixes of that token, and an entry
@@ -43,18 +51,20 @@ A taste must satisfy all of these rules:
 - Prefer the general failure over one narrow symptom. If one message needs
   several unrelated bags, merge the bags; if one bag needs several unrelated
   messages, split the taste.
-- Treat false positives as a design cost. A harmless candidate must still be
-  cheap to judge and useful to reconsider; otherwise the taste is too
+- Treat false positives as a design cost paid in interruptions. A mention fires
+  the same reminder a violation does, so a harmless candidate must still be
+  cheap to decline and useful to reconsider; otherwise the taste is too
   contextual.
-- Prove use and mention separately. The behavior fixture must confirm, the
-  taste's own text must clear, and the documents of record must clear every
-  active bag in full.
+- Prove selection on both a use and a mention. Each fixture must select the
+  candidate, because the bag cannot tell them apart and the authoring rules are
+  what keep the mention worth reading.
 
-The gauntlet the wave-zero TASTES leaf archives under `docs/record/` is the
-standing non-hit corpus. A change to a word bag or message is incomplete until
-that corpus clears and the paired behavior fixture still confirms; the
-`fallbacks` fixture exercises a phrase trigger specifically, so the phrase
-clause of the matching law cannot rot silently.
+The paired fixtures are `taste/tests/fixtures/behavior.txt` and
+`taste/tests/fixtures/mention.txt`. A change to a word bag or message is
+incomplete until both still select and every published seed still selects prose
+built from its own tracked words; the `fallbacks` seed carries a phrase
+trigger specifically, so the phrase clause of the matching law cannot rot
+silently.
 
 ## 3. Curation lifecycle
 
@@ -68,16 +78,25 @@ that motivated it. It does not activate the taste. Admission requires the
 authoring checks, the paired confirm-and-clear fixtures, and an operator commit
 of the exact entry.
 
-Every judgment preserves its locus. The curation view shows confirmations,
-clearances, and their ages rather than presenting an all-time count as current
-truth. Recent repeated confirmations support retention. Repeated clearances
-mean either that the bag is too broad or that the preference no longer earns
-its interruption; the attached loci let the operator distinguish those cases.
+Every fire preserves its locus. The curation view is derived from the journal
+at one snapshot: recent reminders per taste and per driver, how each was
+answered, and how often one unchanged identity returned across compaction
+epochs. It shows those fires and their ages rather than presenting an all-time
+count as current truth, and it persists no counter of its own. A lineage that
+was resent counts once, because the resend climbs the same ladder rather than
+starting a second reminder.
 
-`spice taste drop NAME` prepares a retirement proposal carrying the cleared
-loci that provoked it. The operator may narrow the bag, revise the message, or
-delete the tracked entry. Only the commit changes membership. Earlier facts
-remain history after deletion; they never reactivate the taste.
+Recurrence with acknowledgment supports retention: the preference keeps being
+worth saying. Repeated declines mean either that the bag is too broad or that
+the preference no longer earns its interruption; the attached loci let the
+operator distinguish those cases. Historical clearances read the same way and
+stay visible for as long as the journal holds them.
+
+`spice taste drop NAME` prepares a retirement proposal carrying the recent
+declined loci and the historical clearances that provoked it. The operator may
+narrow the bag, revise the message, or delete the tracked entry. Only the
+commit changes membership. Earlier facts remain history after deletion; they
+never reactivate the taste.
 
 ## 4. The starter set install seeds
 
