@@ -25,11 +25,20 @@ pub(super) fn keyboard_submit(
     lane_key: String,
     sender: SenderHandle,
     drafts: UseReducerHandle<ComposerDrafts>,
+    submissions: SubmissionHandle,
 ) -> Callback<KeyboardEvent> {
     Callback::from(move |event: KeyboardEvent| {
         if event.key() == "Enter" && (event.meta_key() || event.ctrl_key()) {
             event.prevent_default();
-            if submit_draft(lane, occupant, epoch, &lane_key, &sender, &drafts) {
+            if submit_draft(
+                lane,
+                occupant,
+                epoch,
+                &lane_key,
+                &sender,
+                &drafts,
+                &submissions,
+            ) {
                 focus_after_render(primary_textarea_id(&lane_key));
             }
         }
@@ -429,7 +438,6 @@ pub(super) fn drop_on_lane(
                 epoch,
                 message,
                 attachments: Vec::new(),
-                resolve: None,
             },
         );
     })

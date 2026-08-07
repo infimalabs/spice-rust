@@ -23,6 +23,7 @@ use wire::{
 use yew::prelude::*;
 
 use crate::compose::{self, Notice};
+use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
 use crate::{
     Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective, stale_reads,
 };
@@ -33,6 +34,7 @@ mod watchband;
 
 use connection::{request_external_speech, run_surface};
 use view::{CanvasRender, render_canvas};
+use watchband::ComposerAction;
 use watchband::{ComposerDrafts, LineageControlAction, LineageControls, LineageMode};
 
 /// Source identity injected by `cargo xtask app` and verified before publish.
@@ -54,6 +56,34 @@ struct EstablishedConnection {
     reader: SocketReader,
     principal: Principal,
     pending: BTreeMap<CanonicalUuid, PendingKind>,
+}
+
+#[derive(Clone)]
+struct SubmissionHandle {
+    queue: Rc<RefCell<SubmissionQueue>>,
+    status: UseStateHandle<SubmissionStatus>,
+}
+
+impl SubmissionHandle {
+    fn publish(&self) {
+        let status = self.queue.borrow().status();
+        // This handle is retained by the connection effect from its first
+        // render. Its dereferenced value is therefore that render's snapshot,
+        // not a live comparison point; comparing here suppresses transitions
+        // back to the initial empty state. Publish the queue projection
+        // unconditionally so every stage transition reaches the current tree.
+        self.status.set(status);
+    }
+}
+
+#[derive(Clone)]
+struct SurfaceHandles {
+    connection: UseStateHandle<Connection>,
+    surface: UseStateHandle<SurfaceData>,
+    speech: UseStateHandle<wire::SpeechPlayback>,
+    lineage_controls: UseReducerHandle<LineageControls>,
+    composer_drafts: UseReducerHandle<ComposerDrafts>,
+    submissions: SubmissionHandle,
 }
 
 #[derive(Clone, PartialEq)]
@@ -128,6 +158,8 @@ type SurfaceData = Option<CanvasRuntime>;
 
 #[derive(Clone)]
 enum ClientAction {
+    /// Wake the connection driver after a composer synchronously queues work.
+    DrainSubmissions,
     Refresh,
     Seat {
         name: Option<String>,
@@ -173,8 +205,6 @@ enum ClientAction {
         epoch: CanonicalUuid,
         message: String,
         attachments: Vec<DirectiveAttachment>,
-        /// Composer sends restore through this receipt; non-draft sends omit it.
-        resolve: Option<Callback<bool>>,
     },
 }
 
@@ -182,7 +212,10 @@ enum ClientAction {
 enum PendingKind {
     Board,
     Lanes,
-    Inbox,
+    Inbox {
+        /// Accepted keys a successful answer can reconstruct as settled.
+        covered: BTreeMap<CanonicalUuid, String>,
+    },
     Consent,
     Policy,
     LaneSeat,
@@ -201,7 +234,9 @@ enum PendingKind {
     /// whichever lane the operator is looking at now.
     Steer {
         lane: CanonicalUuid,
-        resolve: Option<Callback<bool>>,
+    },
+    SteerSubmission {
+        lane: CanonicalUuid,
     },
     Note(TaskHandle),
     ConsentDecision,
@@ -221,6 +256,11 @@ fn canvas_app() -> Html {
     let lineage_mode = use_state(|| LineageMode::Compose);
     let lineage_controls = use_reducer(LineageControls::default);
     let composer_drafts = use_reducer(ComposerDrafts::default);
+    let submission_status = use_state(SubmissionStatus::default);
+    let submissions = SubmissionHandle {
+        queue: use_mut_ref(SubmissionQueue::default),
+        status: submission_status.clone(),
+    };
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let note_notice = use_state(Notice::none);
@@ -228,78 +268,37 @@ fn canvas_app() -> Html {
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
-    let agents = use_agent_controls(
+    let speak = speech_speak(
+        speech.clone(),
+        speech_status.clone(),
+        speech_controller.clone(),
+    );
+    let agents = use_agent_controls(sender.clone(), speak);
+    let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
+    use_surface_connection(
         sender.clone(),
-        speech_speak(
-            speech.clone(),
-            speech_status.clone(),
-            speech_controller.clone(),
-        ),
+        SurfaceHandles {
+            connection: connection.clone(),
+            surface: surface.clone(),
+            speech: speech.clone(),
+            lineage_controls: lineage_controls.clone(),
+            composer_drafts: composer_drafts.clone(),
+            submissions: submissions.clone(),
+        },
+    );
+    use_speech_reset(
+        speech.clone(),
+        speech_controller.clone(),
+        speech_status.clone(),
     );
 
-    {
-        let connection = connection.clone();
-        let surface = surface.clone();
-        let sender = sender.clone();
-        let speech = speech.clone();
-        let lineage_controls = lineage_controls.clone();
-        use_effect_with((), move |()| {
-            let active = Rc::new(Cell::new(true));
-            let (tx, rx) = mpsc::unbounded();
-            *sender.borrow_mut() = Some(tx);
-            spawn_local(run_surface(
-                active.clone(),
-                connection,
-                surface,
-                speech,
-                lineage_controls,
-                rx,
-            ));
-            move || {
-                active.set(false);
-                sender.borrow_mut().take();
-            }
-        });
-    }
-    {
-        let effective = (*speech).clone();
-        let speech_controller = speech_controller.clone();
-        let speech_status = speech_status.clone();
-        use_effect_with(effective, move |_| {
-            speech_controller.borrow_mut().stop();
-            speech_status.set(SpeechStatus::Idle);
-        });
-    }
-
-    let refresh = {
-        let sender = sender.clone();
-        Callback::from(move |_| {
-            send_action(&sender, ClientAction::Refresh);
-        })
-    };
-    let submit_note = {
-        let sender = sender.clone();
-        let note_task = note_task.clone();
-        let note_text = note_text.clone();
-        let note_notice = note_notice.clone();
-        Callback::from(move |event: SubmitEvent| {
-            event.prevent_default();
-            match compose::note(&note_task, &note_text) {
-                Ok(note) => {
-                    note_notice.set(Notice::none());
-                    send_action(
-                        &sender,
-                        ClientAction::Note {
-                            task: note.task,
-                            note: note.text,
-                        },
-                    );
-                    note_text.set(String::new());
-                }
-                Err(refusal) => note_notice.set(refusal.into()),
-            }
-        })
-    };
+    let refresh = refresh_callback(sender.clone());
+    let submit_note = note_submit_callback(
+        sender.clone(),
+        note_task.clone(),
+        note_text.clone(),
+        note_notice.clone(),
+    );
     let toggle_speech = speech_toggle(
         speech_status.clone(),
         speech_controller.clone(),
@@ -314,6 +313,8 @@ fn canvas_app() -> Html {
         lineage_mode: &lineage_mode,
         lineage_controls: &lineage_controls,
         composer_drafts: &composer_drafts,
+        submissions: &submissions,
+        unsafe_intent,
         sender: &sender,
         agents: &agents,
         note_task: &note_task,
@@ -325,6 +326,110 @@ fn canvas_app() -> Html {
         speech_status: &speech_status,
         toggle_speech,
     })
+}
+
+#[hook]
+fn use_surface_connection(sender: SenderHandle, handles: SurfaceHandles) {
+    use_effect_with((), move |()| {
+        let active = Rc::new(Cell::new(true));
+        let (tx, rx) = mpsc::unbounded();
+        *sender.borrow_mut() = Some(tx);
+        spawn_local(run_surface(active.clone(), handles, rx));
+        move || {
+            active.set(false);
+            sender.borrow_mut().take();
+        }
+    });
+}
+
+#[hook]
+fn use_speech_reset(
+    speech: UseStateHandle<wire::SpeechPlayback>,
+    speech_controller: Rc<RefCell<crate::speech::Controller>>,
+    speech_status: UseStateHandle<SpeechStatus>,
+) {
+    let effective = (*speech).clone();
+    use_effect_with(effective, move |_| {
+        speech_controller.borrow_mut().stop();
+        speech_status.set(SpeechStatus::Idle);
+    });
+}
+
+fn note_submit_callback(
+    sender: SenderHandle,
+    note_task: UseStateHandle<String>,
+    note_text: UseStateHandle<String>,
+    note_notice: UseStateHandle<Notice>,
+) -> Callback<SubmitEvent> {
+    Callback::from(move |event: SubmitEvent| {
+        event.prevent_default();
+        match compose::note(&note_task, &note_text) {
+            Ok(note) => {
+                note_notice.set(Notice::none());
+                send_action(
+                    &sender,
+                    ClientAction::Note {
+                        task: note.task,
+                        note: note.text,
+                    },
+                );
+                note_text.set(String::new());
+            }
+            Err(refusal) => note_notice.set(refusal.into()),
+        }
+    })
+}
+
+fn refresh_callback(sender: SenderHandle) -> Callback<MouseEvent> {
+    Callback::from(move |_| {
+        send_action(&sender, ClientAction::Refresh);
+    })
+}
+
+#[hook]
+fn use_unsafe_intent(
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    submissions: &UseStateHandle<SubmissionStatus>,
+) -> bool {
+    let unsafe_intent =
+        ComposerDrafts::is_unsafe(drafts) || SubmissionStatus::is_unsafe(submissions);
+    use_unsafe_intent_guard(unsafe_intent);
+    unsafe_intent
+}
+
+#[hook]
+fn use_unsafe_intent_guard(unsafe_intent: bool) {
+    use_effect_with(unsafe_intent, move |unsafe_intent| {
+        let registration = (*unsafe_intent)
+            .then(|| {
+                let window = web_sys::window()?;
+                let callback =
+                    Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+                        event.prevent_default();
+                        let _ = js_sys::Reflect::set(
+                            event.as_ref(),
+                            &JsValue::from_str("returnValue"),
+                            &JsValue::from_str(""),
+                        );
+                    });
+                window
+                    .add_event_listener_with_callback(
+                        "beforeunload",
+                        callback.as_ref().unchecked_ref(),
+                    )
+                    .ok()?;
+                Some((window, callback))
+            })
+            .flatten();
+        move || {
+            if let Some((window, callback)) = registration {
+                let _ = window.remove_event_listener_with_callback(
+                    "beforeunload",
+                    callback.as_ref().unchecked_ref(),
+                );
+            }
+        }
+    });
 }
 
 #[hook]
@@ -592,6 +697,28 @@ fn send_action(sender: &SenderHandle, action: ClientAction) -> bool {
         .borrow_mut()
         .as_mut()
         .is_some_and(|sender| sender.unbounded_send(action).is_ok())
+}
+
+fn queue_submission(
+    sender: &SenderHandle,
+    submissions: &SubmissionHandle,
+    submission: Submission,
+) -> bool {
+    let id = submission.id;
+    if submissions.queue.borrow_mut().enqueue(submission).is_err() {
+        return false;
+    }
+    submissions.publish();
+    if send_action(sender, ClientAction::DrainSubmissions) {
+        return true;
+    }
+    let removed = submissions.queue.borrow_mut().rollback(id);
+    assert!(
+        removed.is_some(),
+        "a failed submission wake rolls back the enqueue it just made"
+    );
+    submissions.publish();
+    false
 }
 
 fn metric(label: &'static str, value: String, detail: String) -> Html {

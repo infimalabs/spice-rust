@@ -18,6 +18,7 @@ import {
   primaryDestination,
 } from "./composer-shards.mjs";
 import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
+import { assertComposerRecovery } from "./composer-recovery.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
@@ -749,6 +750,7 @@ try {
   seeded.extent = await journalExtent(fixture);
   await assertAuthoritySurface(lightPage, seeded);
   await assertMosaicComposer(lightPage, fixture, seeded);
+  await assertComposerRecovery(lightPage, fixture, seeded, lightMonitor);
   await assertPackedHistory(lightPage, await journalExtent(fixture), true);
   await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
   await assertSystemSpeech(lightPage);

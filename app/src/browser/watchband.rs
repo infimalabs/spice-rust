@@ -21,8 +21,7 @@ use composer::{
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
 use mosaic_view::{ActivityCard, CardLayout, MosaicPlane};
-use state::ComposerAction;
-pub(super) use state::ComposerDrafts;
+pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
 
 const MAX_ATTACHMENTS: usize = 8;
 const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
@@ -89,6 +88,7 @@ pub(super) fn render_lineage(
     surface: &SurfaceData,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
+    submissions: &SubmissionHandle,
     mode: &UseStateHandle<LineageMode>,
     lineage_controls: &UseReducerHandle<LineageControls>,
     controls: &view::AgentControls,
@@ -107,7 +107,16 @@ pub(super) fn render_lineage(
         .board()
         .map(|board| board.tasks.as_slice())
         .unwrap_or(&[]);
-    let standings = watchband::standings(&lanes.lanes, waiting, tasks, js_sys::Date::now() as i64);
+    let mut standings =
+        watchband::standings(&lanes.lanes, waiting, tasks, js_sys::Date::now() as i64);
+    for standing in &mut standings {
+        let backend = waiting
+            .iter()
+            .find(|row| row.lane == standing.lane)
+            .map(|row| row.pending.as_slice())
+            .unwrap_or(&[]);
+        standing.pending = submissions.status.pending(standing.lane, backend);
+    }
     let can_send = runtime.offers(CommandKind::SteerSend);
     let can_configure = runtime.offers(CommandKind::LineageConfigure);
     // Two drags, two laws: a card moves one lane, a grip restates the whole
@@ -116,30 +125,79 @@ pub(super) fn render_lineage(
     let can_arrange_lineages = runtime.offers(CommandKind::LineageArrange);
     let topology = watchband::topology(&lanes.lanes);
     if lanes.lanes.is_empty() {
-        let empty_lineage = crate::runtime::LaneRow {
-            lane: lanes.epoch,
-            subscription: wire::intent::LineageLife::Steer,
-            members: Vec::new(),
-        };
-        return html! {
-            <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic">
-                <section class="team-surface" data-lineage-weight="1">
-                    {render_lineage_toolbar(mode, &empty_lineage, &[], false)}
-                    <div class="team-pane" data-team-mode={(**mode).label()}>
-                        {match **mode {
-                            LineageMode::Compose => empty("No agents are assigned. Open Info to add one."),
-                            LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => {
-                                render_details(runtime, &empty_lineage, &[], **mode, controls)
-                            }
-                        }}
-                    </div>
-                </section>
-            </div>
-        };
+        return render_empty_fleet(runtime, lanes.epoch, mode, controls);
     }
+    let render = FleetRender {
+        runtime,
+        epoch: lanes.epoch,
+        can_send,
+        can_arrange_lanes,
+        can_arrange_lineages,
+        can_configure,
+        topology,
+        sender,
+        drafts,
+        submissions,
+        lineage_controls,
+        controls,
+    };
+    render_populated_fleet(&lanes.lanes, &standings, mode, &render)
+}
+
+struct FleetRender<'a> {
+    runtime: &'a CanvasRuntime,
+    epoch: CanonicalUuid,
+    can_send: bool,
+    can_arrange_lanes: bool,
+    can_arrange_lineages: bool,
+    can_configure: bool,
+    topology: Vec<(CanonicalUuid, Vec<CanonicalUuid>)>,
+    sender: &'a SenderHandle,
+    drafts: &'a UseReducerHandle<ComposerDrafts>,
+    submissions: &'a SubmissionHandle,
+    lineage_controls: &'a UseReducerHandle<LineageControls>,
+    controls: &'a view::AgentControls,
+}
+
+fn render_empty_fleet(
+    runtime: &CanvasRuntime,
+    epoch: CanonicalUuid,
+    mode: &UseStateHandle<LineageMode>,
+    controls: &view::AgentControls,
+) -> Html {
+    let empty_lineage = crate::runtime::LaneRow {
+        lane: epoch,
+        subscription: wire::intent::LineageLife::Steer,
+        members: Vec::new(),
+    };
     html! {
         <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic">
-            {for lanes.lanes.iter().map(|lineage| {
+            <section class="team-surface" data-lineage-weight="1">
+                {render_lineage_toolbar(mode, &empty_lineage, &[], false)}
+                <div class="team-pane" data-team-mode={(**mode).label()}>
+                    {match **mode {
+                        LineageMode::Compose => {
+                            empty("No agents are assigned. Open Info to add one.")
+                        }
+                        LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => {
+                            render_details(runtime, &empty_lineage, &[], **mode, controls)
+                        }
+                    }}
+                </div>
+            </section>
+        </div>
+    }
+}
+
+fn render_populated_fleet(
+    lanes: &[crate::runtime::LaneRow],
+    standings: &[watchband::Standing],
+    mode: &UseStateHandle<LineageMode>,
+    render: &FleetRender<'_>,
+) -> Html {
+    html! {
+        <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic">
+            {for lanes.iter().map(|lineage| {
                 let lineage_standings = standings
                     .iter()
                     .filter(|standing| standing.lineage_id == lineage.lane)
@@ -150,44 +208,48 @@ pub(super) fn render_lineage(
                         class="team-surface"
                         data-lineage-id={lineage.lane.to_string()}
                         data-lineage-weight={lineage_standings.len().max(1).to_string()}
-                        ondragover={lineage_dragover(can_arrange_lineages)}
+                        ondragover={lineage_dragover(render.can_arrange_lineages)}
                         ondrop={lineage_drop(
-                            can_arrange_lineages,
-                            &topology,
+                            render.can_arrange_lineages,
+                            &render.topology,
                             lineage.lane,
-                            sender,
+                            render.sender,
                         )}
                     >
                         {render_lineage_toolbar(
                             mode,
                             lineage,
                             &lineage_standings,
-                            can_arrange_lineages,
+                            render.can_arrange_lineages,
                         )}
                         <div class="team-pane" data-team-mode={(**mode).label()}>
                             {match **mode {
                                 LineageMode::Compose => render_compose(
-                                    runtime,
+                                    render.runtime,
                                     lineage,
                                     &lineage_standings,
-                                    lanes.epoch,
-                                    can_send,
-                                    can_arrange_lanes,
-                                    sender,
-                                    drafts,
-                                    lineage_controls,
-                                    can_configure,
-                                    controls,
+                                    render.epoch,
+                                    render.can_send,
+                                    render.can_arrange_lanes,
+                                    render.sender,
+                                    render.drafts,
+                                    render.submissions,
+                                    render.lineage_controls,
+                                    render.can_configure,
+                                    render.controls,
                                 ),
                                 LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => html! {
                                     <>
-                                        {view::chrome::render_lineage_ticker(runtime, lineage)}
+                                        {view::chrome::render_lineage_ticker(
+                                            render.runtime,
+                                            lineage,
+                                        )}
                                         {render_details(
-                                            runtime,
+                                            render.runtime,
                                             lineage,
                                             &lineage_standings,
                                             **mode,
-                                            controls,
+                                            render.controls,
                                         )}
                                     </>
                                 },
@@ -395,6 +457,7 @@ fn render_compose(
     can_arrange: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
+    submissions: &SubmissionHandle,
     lineage_controls: &UseReducerHandle<LineageControls>,
     can_configure: bool,
     controls: &view::AgentControls,
@@ -404,7 +467,13 @@ fn render_compose(
     }
     let authoritative_life = lineage.subscription;
     let control = lineage_controls.current(lineage.lane, authoritative_life);
-    let submit = submit_lineage_callback(&lineage.members, epoch, sender.clone(), drafts.clone());
+    let submit = submit_lineage_callback(
+        &lineage.members,
+        epoch,
+        sender.clone(),
+        drafts.clone(),
+        submissions.clone(),
+    );
     let ready = can_send
         && !control.pending_life
         && lineage.members.iter().any(|member| {
@@ -430,6 +499,7 @@ fn render_compose(
                             can_arrange,
                             sender,
                             drafts,
+                            submissions,
                             stream,
                             prose,
                         )
@@ -701,7 +771,6 @@ fn renewal_callback(
                     epoch,
                     message: RENEWAL_REQUEST.to_owned(),
                     attachments: Vec::new(),
-                    resolve: None,
                 },
             );
         }
@@ -802,6 +871,7 @@ fn render_agent_composer(
     can_arrange: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
+    submissions: &SubmissionHandle,
     stream: ComposerStreamLink,
     prose: String,
 ) -> Html {
@@ -819,6 +889,7 @@ fn render_agent_composer(
         lane_key.clone(),
         sender.clone(),
         drafts.clone(),
+        submissions.clone(),
     );
     let ondragover = copy_dragover();
     let ondrop = drop_on_lane(
@@ -894,6 +965,11 @@ fn render_composer_body(
             data-shard-kind="primary"
             data-shard-target-id={lane.to_string()}
             data-primary-composer-draggable={dragging.enabled.to_string()}
+            data-draft-unsafe={(
+                !draft.body.is_empty()
+                    || !draft.quotes.is_empty()
+                    || !draft.attachments.is_empty()
+            ).to_string()}
             draggable={dragging.enabled.to_string()}
             ondragstart={dragging.start}
             ondragover={dragging.over}
@@ -1009,6 +1085,7 @@ fn submit_lineage_callback(
     epoch: CanonicalUuid,
     sender: SenderHandle,
     drafts: UseReducerHandle<ComposerDrafts>,
+    submissions: SubmissionHandle,
 ) -> Callback<SubmitEvent> {
     let targets = members
         .iter()
@@ -1017,7 +1094,15 @@ fn submit_lineage_callback(
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
         for (lane, occupant, lane_key) in &targets {
-            submit_draft(*lane, *occupant, epoch, lane_key, &sender, &drafts);
+            submit_draft(
+                *lane,
+                *occupant,
+                epoch,
+                lane_key,
+                &sender,
+                &drafts,
+                &submissions,
+            );
         }
     })
 }
@@ -1029,6 +1114,7 @@ fn submit_draft(
     lane_key: &str,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
+    submissions: &SubmissionHandle,
 ) -> bool {
     let Some(occupant) = occupant else {
         return false;
@@ -1036,27 +1122,21 @@ fn submit_draft(
     let Some(prepared) = drafts.0.prepare(lane_key) else {
         return false;
     };
-    let restore_drafts = drafts.clone();
-    let restore_lane = lane_key.to_owned();
-    let snapshot = prepared.snapshot;
-    let resolve = Callback::from(move |accepted: bool| {
-        if !accepted {
-            restore_drafts.dispatch(ComposerAction::Restore {
-                lane: restore_lane.clone(),
-                draft: snapshot.clone(),
-            });
-        }
-    });
-    if !send_action(
+    let Ok(id) = random_uuid() else {
+        return false;
+    };
+    if !queue_submission(
         sender,
-        ClientAction::Steer {
+        submissions,
+        Submission::new(
+            id,
             lane,
             occupant,
             epoch,
-            message: prepared.message,
-            attachments: prepared.attachments,
-            resolve: Some(resolve),
-        },
+            prepared.message,
+            prepared.attachments,
+            prepared.snapshot,
+        ),
     ) {
         return false;
     }

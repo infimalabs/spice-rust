@@ -1,0 +1,622 @@
+//! Browser-owned steering submissions that survive socket replacement.
+//!
+//! A submission stops being a draft before the resident has necessarily seen
+//! it. This queue owns that interval. Socket code may advance a record, but a
+//! socket attempt never owns the record itself, so dropping a reader or writer
+//! cannot drop operator prose with it.
+
+use std::collections::{BTreeMap, VecDeque};
+
+use wire::CanonicalUuid;
+use wire::Disposition;
+use wire::body::DirectiveAttachment;
+use wire::intent::PendingDirective;
+
+use crate::composer_drafts::ComposerDraft;
+
+/// One target-specific document detached from its composer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Submission {
+    pub(crate) id: CanonicalUuid,
+    pub(crate) lane: CanonicalUuid,
+    pub(crate) occupant: CanonicalUuid,
+    pub(crate) epoch: CanonicalUuid,
+    pub(crate) message: String,
+    pub(crate) attachments: Vec<DirectiveAttachment>,
+    pub(crate) snapshot: ComposerDraft,
+    stage: Stage,
+}
+
+impl Submission {
+    pub(crate) fn new(
+        id: CanonicalUuid,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        epoch: CanonicalUuid,
+        message: String,
+        attachments: Vec<DirectiveAttachment>,
+        snapshot: ComposerDraft,
+    ) -> Self {
+        Self {
+            id,
+            lane,
+            occupant,
+            epoch,
+            message,
+            attachments,
+            snapshot,
+            stage: Stage::Queued,
+        }
+    }
+}
+
+/// How far one submission has crossed the browser-to-resident boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Stage {
+    Queued,
+    Sent,
+    Accepted {
+        directive: CanonicalUuid,
+        key: String,
+        disposition: Disposition,
+    },
+}
+
+/// Renderable projection of all submissions not yet covered by a fresh inbox.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Prediction {
+    directive: CanonicalUuid,
+    key: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SubmissionStatus {
+    rows: BTreeMap<CanonicalUuid, Vec<Prediction>>,
+    keyless: usize,
+}
+
+impl SubmissionStatus {
+    pub(crate) fn is_unsafe(&self) -> bool {
+        self.keyless != 0
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.rows.values().map(Vec::len).sum()
+    }
+
+    /// Backend truth plus predictions whose stable identity it does not carry.
+    pub(crate) fn pending(&self, lane: CanonicalUuid, backend: &[PendingDirective]) -> usize {
+        backend.len() + self.uncovered(lane, backend)
+    }
+
+    /// Every backend row plus predictions absent from their own lane's row.
+    pub(crate) fn total_pending<'a>(
+        &self,
+        backend: impl Iterator<Item = (CanonicalUuid, &'a [PendingDirective])>,
+    ) -> usize {
+        let backend = backend.collect::<BTreeMap<_, _>>();
+        backend.values().map(|pending| pending.len()).sum::<usize>()
+            + self
+                .rows
+                .keys()
+                .map(|lane| self.uncovered(*lane, backend.get(lane).copied().unwrap_or(&[])))
+                .sum::<usize>()
+    }
+
+    fn uncovered(&self, lane: CanonicalUuid, backend: &[PendingDirective]) -> usize {
+        let durable = backend
+            .iter()
+            .map(|directive| (directive.directive, directive.key.as_str()))
+            .collect::<BTreeMap<_, _>>();
+        self.rows
+            .get(&lane)
+            .into_iter()
+            .flatten()
+            .filter(|prediction| match prediction.key.as_deref() {
+                Some(key) => durable
+                    .get(&prediction.directive)
+                    .is_none_or(|backend_key| *backend_key != key),
+                None => !durable.contains_key(&prediction.directive),
+            })
+            .count()
+    }
+}
+
+/// Per-lane submission queues shared across every connection attempt.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SubmissionQueue(
+    BTreeMap<CanonicalUuid, VecDeque<Submission>>,
+    BTreeMap<CanonicalUuid, String>,
+);
+
+impl SubmissionQueue {
+    pub(crate) fn enqueue(&mut self, submission: Submission) -> Result<(), String> {
+        if self
+            .0
+            .values()
+            .flatten()
+            .any(|candidate| candidate.id == submission.id)
+        {
+            return Err(format!(
+                "composer submission identity {} is already queued",
+                submission.id
+            ));
+        }
+        self.0
+            .entry(submission.lane)
+            .or_default()
+            .push_back(submission);
+        Ok(())
+    }
+
+    /// Remove an enqueue whose wake could not reach the connection driver.
+    pub(crate) fn rollback(&mut self, id: CanonicalUuid) -> Option<Submission> {
+        let lane = self.lane_for(id)?;
+        let rows = self.0.get_mut(&lane)?;
+        let index = rows
+            .iter()
+            .position(|submission| submission.id == id && submission.stage == Stage::Queued)?;
+        let removed = rows.remove(index);
+        if rows.is_empty() {
+            self.0.remove(&lane);
+        }
+        removed
+    }
+
+    /// At most one ready submission from each concrete lane.
+    pub(crate) fn ready(&self) -> Vec<Submission> {
+        self.0
+            .values()
+            .filter(|rows| {
+                !rows
+                    .iter()
+                    .any(|submission| submission.stage == Stage::Sent)
+            })
+            .filter_map(|rows| {
+                rows.iter()
+                    .find(|submission| submission.stage == Stage::Queued)
+                    .cloned()
+            })
+            .collect()
+    }
+
+    pub(crate) fn sent(&mut self, id: CanonicalUuid) -> Result<(), String> {
+        let submission = self.submission_mut(id)?;
+        if submission.stage != Stage::Queued {
+            return Err(format!(
+                "composer submission {id} was not queued when its bytes were sent"
+            ));
+        }
+        submission.stage = Stage::Sent;
+        Ok(())
+    }
+
+    /// Make every result-less write eligible for replay with the same identity.
+    pub(crate) fn reconnect(&mut self) {
+        for submission in self.0.values_mut().flatten() {
+            if submission.stage == Stage::Sent {
+                submission.stage = Stage::Queued;
+            }
+        }
+    }
+
+    pub(crate) fn accept(
+        &mut self,
+        id: CanonicalUuid,
+        directive: CanonicalUuid,
+        key: String,
+        disposition: Disposition,
+    ) -> Result<(), String> {
+        if directive != id {
+            return Err(format!(
+                "composer submission {id} received mismatched directive {directive}"
+            ));
+        }
+        if self.submission_mut(id)?.stage != Stage::Sent {
+            return Err(format!(
+                "composer submission {id} received a result before it was sent"
+            ));
+        }
+        let observed = self.1.get(&directive);
+        if let Some(backend_key) = observed
+            && backend_key != &key
+        {
+            return Err(format!(
+                "composer submission {id} received key {key} after backend key {backend_key}"
+            ));
+        }
+        if disposition != Disposition::Live || observed.is_some() {
+            self.remove(id);
+        } else {
+            self.submission_mut(id)?.stage = Stage::Accepted {
+                directive,
+                key,
+                disposition,
+            };
+        }
+        Ok(())
+    }
+
+    /// Restore the refused write and every later write that never became durable.
+    pub(crate) fn refuse(&mut self, id: CanonicalUuid) -> Result<Vec<ComposerDraft>, String> {
+        let lane = self
+            .lane_for(id)
+            .ok_or_else(|| format!("composer result named unknown submission {id}"))?;
+        let rows = self
+            .0
+            .get_mut(&lane)
+            .expect("a located submission retains its lane queue");
+        let index = rows
+            .iter()
+            .position(|submission| submission.id == id)
+            .expect("a located submission remains in its lane queue");
+        if rows[index].stage != Stage::Sent {
+            return Err(format!(
+                "composer submission {id} was not awaiting a result"
+            ));
+        }
+        let restored = rows
+            .drain(index..)
+            .map(|submission| submission.snapshot)
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            self.0.remove(&lane);
+        }
+        Ok(restored)
+    }
+
+    pub(crate) fn accepted(&self) -> BTreeMap<CanonicalUuid, String> {
+        self.0
+            .values()
+            .flatten()
+            .filter_map(|submission| match &submission.stage {
+                Stage::Accepted { directive, key, .. } => Some((*directive, key.clone())),
+                Stage::Queued | Stage::Sent => None,
+            })
+            .collect()
+    }
+
+    /// Retire by stable backend key or a read issued after acceptance.
+    pub(crate) fn observe_backend<'a>(
+        &mut self,
+        pending: impl Iterator<Item = &'a PendingDirective>,
+        covered: &BTreeMap<CanonicalUuid, String>,
+    ) -> Result<(), String> {
+        let backend = pending
+            .map(|directive| (directive.directive, directive.key.clone()))
+            .collect::<BTreeMap<_, _>>();
+        for submission in self.0.values().flatten() {
+            let Stage::Accepted { directive, key, .. } = &submission.stage else {
+                continue;
+            };
+            for (source, observed) in [
+                ("backend", backend.get(directive)),
+                ("captured", covered.get(directive)),
+            ] {
+                if let Some(observed) = observed
+                    && observed != key
+                {
+                    return Err(format!(
+                        concat!("composer submission {} has {} key {} ", "instead of {}"),
+                        directive, source, observed, key,
+                    ));
+                }
+            }
+        }
+        self.1 = backend;
+        self.0.retain(|_, rows| {
+            rows.retain(|submission| match &submission.stage {
+                Stage::Accepted { directive, key, .. } => {
+                    self.1
+                        .get(directive)
+                        .is_none_or(|backend_key| backend_key != key)
+                        && covered
+                            .get(directive)
+                            .is_none_or(|captured_key| captured_key != key)
+                }
+                Stage::Queued | Stage::Sent => true,
+            });
+            !rows.is_empty()
+        });
+        Ok(())
+    }
+
+    pub(crate) fn status(&self) -> SubmissionStatus {
+        SubmissionStatus {
+            rows: self
+                .0
+                .iter()
+                .map(|(lane, rows)| {
+                    (
+                        *lane,
+                        rows.iter()
+                            .map(|submission| Prediction {
+                                directive: submission.id,
+                                key: match &submission.stage {
+                                    Stage::Accepted { key, .. } => Some(key.clone()),
+                                    Stage::Queued | Stage::Sent => None,
+                                },
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+            keyless: self
+                .0
+                .values()
+                .flatten()
+                .filter(|submission| matches!(submission.stage, Stage::Queued | Stage::Sent))
+                .count(),
+        }
+    }
+
+    fn lane_for(&self, id: CanonicalUuid) -> Option<CanonicalUuid> {
+        self.0.iter().find_map(|(lane, rows)| {
+            rows.iter()
+                .any(|submission| submission.id == id)
+                .then_some(*lane)
+        })
+    }
+
+    fn submission_mut(&mut self, id: CanonicalUuid) -> Result<&mut Submission, String> {
+        self.0
+            .values_mut()
+            .flatten()
+            .find(|submission| submission.id == id)
+            .ok_or_else(|| format!("composer result named unknown submission {id}"))
+    }
+
+    fn remove(&mut self, id: CanonicalUuid) {
+        self.0.retain(|_, rows| {
+            rows.retain(|submission| submission.id != id);
+            !rows.is_empty()
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use wire::Instant;
+
+    const LANE_A: &str = "11111111-1111-4111-8111-111111111111";
+    const LANE_B: &str = "22222222-2222-4222-8222-222222222222";
+    const OCCUPANT: &str = "33333333-3333-4333-8333-333333333333";
+    const EPOCH: &str = "44444444-4444-4444-8444-444444444444";
+    const ID_A: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const ID_B: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const ID_C: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+
+    fn uuid(value: &str) -> CanonicalUuid {
+        value.parse().expect("fixture UUID is canonical")
+    }
+
+    fn draft(body: &str) -> ComposerDraft {
+        ComposerDraft {
+            body: body.to_owned(),
+            quotes: Vec::new(),
+            attachments: Vec::new(),
+            issue: None,
+        }
+    }
+
+    fn submission(id: &str, lane: &str, body: &str) -> Submission {
+        Submission::new(
+            uuid(id),
+            uuid(lane),
+            uuid(OCCUPANT),
+            uuid(EPOCH),
+            body.to_owned(),
+            Vec::new(),
+            draft(body),
+        )
+    }
+
+    fn pending(id: &str) -> PendingDirective {
+        PendingDirective {
+            directive: uuid(id),
+            key: "1kKey".to_owned(),
+            text: "durable".to_owned(),
+            preview: Some("durable".to_owned()),
+            control: None,
+            attachments: Vec::new(),
+            authored: "2030-01-01T00:00:00.000Z".parse::<Instant>().unwrap(),
+            expires: "2030-01-01T00:05:00.000Z".parse::<Instant>().unwrap(),
+        }
+    }
+
+    #[test]
+    fn lanes_drain_independently_and_replay_the_same_identity() {
+        let mut queue = SubmissionQueue::default();
+        queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
+        queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
+        queue.enqueue(submission(ID_C, LANE_B, "sibling")).unwrap();
+        assert_eq!(queue.status().len(), 3);
+
+        assert_eq!(
+            queue
+                .ready()
+                .iter()
+                .map(|submission| submission.id)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([uuid(ID_A), uuid(ID_C)])
+        );
+        queue.sent(uuid(ID_A)).unwrap();
+        queue.sent(uuid(ID_C)).unwrap();
+        assert!(queue.ready().is_empty());
+
+        queue.reconnect();
+        assert_eq!(
+            queue
+                .ready()
+                .iter()
+                .map(|submission| submission.id)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([uuid(ID_A), uuid(ID_C)]),
+            "connection replacement replays the original command identities"
+        );
+    }
+
+    #[test]
+    fn an_acceptance_opens_only_its_lane_and_a_refusal_restores_the_tail() {
+        let mut queue = SubmissionQueue::default();
+        queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
+        queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
+        queue.enqueue(submission(ID_C, LANE_A, "third")).unwrap();
+        queue.sent(uuid(ID_A)).unwrap();
+        queue
+            .accept(
+                uuid(ID_A),
+                uuid(ID_A),
+                "1kFirst".to_owned(),
+                Disposition::Live,
+            )
+            .unwrap();
+        assert_eq!(queue.ready()[0].id, uuid(ID_B));
+        queue.sent(uuid(ID_B)).unwrap();
+
+        let restored = queue.refuse(uuid(ID_B)).unwrap();
+        assert_eq!(
+            restored
+                .iter()
+                .map(|draft| draft.body.as_str())
+                .collect::<Vec<_>>(),
+            ["second", "third"]
+        );
+        assert!(queue.accepted().contains_key(&uuid(ID_A)));
+    }
+
+    #[test]
+    fn pending_is_key_aware_and_a_post_acceptance_read_retires_the_floor() {
+        let mut queue = SubmissionQueue::default();
+        queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
+        queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
+        assert_eq!(queue.status().pending(uuid(LANE_A), &[]), 2);
+        assert_eq!(
+            queue.status().total_pending(
+                [
+                    (uuid(LANE_A), [pending(ID_A)].as_slice()),
+                    (uuid(LANE_B), [pending(ID_C)].as_slice()),
+                ]
+                .into_iter()
+            ),
+            3,
+            "the global total retains unmatched backend lanes and uncovered predictions"
+        );
+        assert_eq!(
+            queue.status().pending(uuid(LANE_A), &[pending(ID_A)]),
+            2,
+            "a durable identity is counted once, never as backend plus prediction"
+        );
+
+        queue.sent(uuid(ID_A)).unwrap();
+        queue
+            .accept(
+                uuid(ID_A),
+                uuid(ID_A),
+                "1kKey".to_owned(),
+                Disposition::Live,
+            )
+            .unwrap();
+        queue
+            .observe_backend([pending(ID_A)].iter(), &BTreeMap::new())
+            .unwrap();
+        assert_eq!(queue.status().pending(uuid(LANE_A), &[pending(ID_A)]), 2);
+        assert!(
+            queue.status().is_unsafe(),
+            "the second draft remains queued"
+        );
+    }
+
+    #[test]
+    fn accepted_stage_retains_the_backend_key_until_reconciliation() {
+        let mut queue = SubmissionQueue::default();
+        queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
+        queue.sent(uuid(ID_A)).unwrap();
+        queue
+            .accept(
+                uuid(ID_A),
+                uuid(ID_A),
+                "1kFirst".to_owned(),
+                Disposition::Live,
+            )
+            .unwrap();
+        let row = &queue.0[&uuid(LANE_A)][0];
+        assert_eq!(
+            row.stage,
+            Stage::Accepted {
+                directive: uuid(ID_A),
+                key: "1kFirst".to_owned(),
+                disposition: Disposition::Live,
+            }
+        );
+        assert!(
+            !queue.status().is_unsafe(),
+            "a keyed accepted record no longer risks operator prose"
+        );
+    }
+
+    #[test]
+    fn backend_key_or_reconstructed_retirement_settles_a_late_response() {
+        let mut observed = SubmissionQueue::default();
+        observed.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
+        observed.sent(uuid(ID_A)).unwrap();
+        observed
+            .observe_backend([pending(ID_A)].iter(), &BTreeMap::new())
+            .unwrap();
+        observed
+            .accept(
+                uuid(ID_A),
+                uuid(ID_A),
+                "1kKey".to_owned(),
+                Disposition::Live,
+            )
+            .unwrap();
+        assert_eq!(observed.status().len(), 0);
+
+        let mut retired = SubmissionQueue::default();
+        retired.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
+        retired.sent(uuid(ID_B)).unwrap();
+        retired
+            .accept(
+                uuid(ID_B),
+                uuid(ID_B),
+                "1kRetired".to_owned(),
+                Disposition::Acked,
+            )
+            .unwrap();
+        assert_eq!(retired.status().len(), 0);
+
+        let mut reconstructed = SubmissionQueue::default();
+        reconstructed
+            .enqueue(submission(ID_C, LANE_A, "third"))
+            .unwrap();
+        reconstructed.sent(uuid(ID_C)).unwrap();
+        reconstructed
+            .accept(
+                uuid(ID_C),
+                uuid(ID_C),
+                "1kConsumed".to_owned(),
+                Disposition::Live,
+            )
+            .unwrap();
+        let covered = reconstructed.accepted();
+        reconstructed.observe_backend([].iter(), &covered).unwrap();
+        assert_eq!(
+            reconstructed.status().len(),
+            0,
+            "a later inbox absence reconstructs the live receipt as consumed"
+        );
+    }
+
+    #[test]
+    fn a_failed_connection_wake_rolls_back_only_its_newest_queued_identity() {
+        let mut queue = SubmissionQueue::default();
+        queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
+        queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
+        assert_eq!(queue.rollback(uuid(ID_B)).unwrap().snapshot.body, "second");
+        assert_eq!(queue.ready()[0].id, uuid(ID_A));
+        assert!(queue.rollback(uuid(ID_C)).is_none());
+    }
+}
