@@ -651,7 +651,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
   );
 }
 
-async function assertPackedHistory(page, extent, linked = false) {
+async function assertPackedHistory(page, fixture, extent, linked = false) {
   await chooseCanvasView(page, "Chronology");
   const journal = page.locator('[data-pane="commands"]');
   const facts = journal.locator(".event strong");
@@ -665,6 +665,10 @@ async function assertPackedHistory(page, extent, linked = false) {
     if (!Number.isInteger(value)) throw new Error(`invalid rendered sequence: ${node.textContent}`);
     return value;
   }));
+  // Sampled after the snapshot, so it closes the other side of the sandwich.
+  // The journal only grows, so a fact the page rendered legitimately was
+  // admitted before the snapshot and is therefore counted here too.
+  const settled = await journalExtent(fixture);
   // A floor, not an equality. `extent` was sampled before this read, and the
   // resident admits facts of its own while the suite runs -- accounting a lane's
   // transcript is one of them -- so a page that is correctly caught up can hold
@@ -672,6 +676,14 @@ async function assertPackedHistory(page, extent, linked = false) {
   assert.ok(
     sequences.length >= extent.facts,
     `all ${extent.facts} admitted facts render (rendered ${sequences.length})`,
+  );
+  // And a ceiling, which is the half a floor alone gives up. A page inventing a
+  // fact past the horizon renders a sequence no one admitted, and that tail
+  // stays distinct and stays contiguous, so neither proof below would see it.
+  // Only a count the journal itself bounds can.
+  assert.ok(
+    sequences.length <= settled.facts,
+    `no fact renders that the journal never admitted (rendered ${sequences.length} > ${settled.facts})`,
   );
 
   const provenance = await journal.locator('[data-subject="facts"]').allTextContents();
@@ -706,8 +718,9 @@ async function assertPackedHistory(page, extent, linked = false) {
     "continuation fabricates no duplicate fact",
   );
   // Contiguous from one, so nothing between the origin and the rendered horizon
-  // is missing either. Together with the floor above, a page that dropped a fact
-  // and a page that invented one both still fail.
+  // is missing either. A dropped fact fails here, a repeated one fails above,
+  // and an invented one fails against the ceiling -- it is contiguous and
+  // distinct, so those two are the wrong instrument for it.
   assert.deepEqual(
     [...sequences].sort((left, right) => left - right),
     Array.from({ length: sequences.length }, (_, index) => index + 1),
@@ -819,7 +832,7 @@ async function assertHalfOpenSocket(browser, endpoint, epoch, fixture, seeded) {
   // sampled here is already behind by the time the page is read.
   // `assertPackedHistory` proves duplicate application from the rendered
   // sequences themselves rather than from that count.
-  await assertPackedHistory(page, advanced);
+  await assertPackedHistory(page, fixture, advanced);
   monitor.assertClean();
   await context.close();
 }
@@ -851,7 +864,7 @@ async function assertSameGenerationResume(
 
   await assertGenerationOnline(page, epoch, "the socket is reopened", RECONNECT_MS);
   monitor.expectNetworkInterruption(false);
-  await assertPackedHistory(page, advanced);
+  await assertPackedHistory(page, fixture, advanced);
   const after = await page.locator('[data-pane="commands"] .event strong').allTextContents();
   assert.ok(after.length > before.length, "same-generation resume appends missed facts");
 }
@@ -924,7 +937,7 @@ try {
   await assertAuthoritySurface(lightPage, seeded);
   await assertMosaicComposer(lightPage, fixture, seeded);
   await assertComposerRecovery(lightPage, fixture, seeded, lightMonitor);
-  await assertPackedHistory(lightPage, await journalExtent(fixture), true);
+  await assertPackedHistory(lightPage, fixture, await journalExtent(fixture), true);
   await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
   await assertSystemSpeech(lightPage);
   await chooseCanvasView(lightPage, "Flow");
@@ -957,7 +970,7 @@ try {
   await chooseCanvasView(lightPage, "Chronology");
   await lightPage.locator(".event.refusal").waitFor({ timeout: 10_000 });
   const beforeReconnect = await journalExtent(fixture);
-  await assertPackedHistory(lightPage, beforeReconnect);
+  await assertPackedHistory(lightPage, fixture, beforeReconnect);
 
   const dark = await browser.newContext({
     colorScheme: "dark",
@@ -1027,7 +1040,7 @@ try {
     "new generation clears prior command reply state",
   );
   const restartedExtent = await journalExtent(fixture);
-  await assertPackedHistory(lightPage, restartedExtent);
+  await assertPackedHistory(lightPage, fixture, restartedExtent);
   await assertAuthoritySurface(lightPage, seeded);
   await assertNoCredentialOrLandingGap(lightPage, [firstCapability, resident.discovery.capability]);
   lightMonitor.assertClean();
