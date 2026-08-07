@@ -22,6 +22,7 @@ import { assertComposerRecovery } from "./composer-recovery.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
+import { assertMotionPreference } from "./mosaic-motion.mjs";
 import { assertTeamArrangement } from "./team-arrangement.mjs";
 import { assertTeamMenu } from "./team-menu.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
@@ -938,6 +939,7 @@ try {
   await assertAuthoritySurface(darkPage, seeded);
   await assertNoCredentialOrLandingGap(darkPage, [resident.discovery.capability]);
   darkMonitor.assertClean();
+  await assertMotionPreference(browser, resident.discovery.endpoint, artifacts);
   await assertSpeechVariants(browser, resident.discovery.endpoint);
   await assertStaleGeneration(browser, resident.discovery.endpoint, resident.discovery.epoch);
 

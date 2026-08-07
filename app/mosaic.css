@@ -864,6 +864,14 @@
 }
 .lane-mosaic-plane .mosaic-message-card.liquid { transition: opacity 180ms ease-out; }
 .lane-mosaic-plane .mosaic-message-card.frozen { transition: none; }
+/* A reader who asked their system for less motion keeps the settled card and
+   never the fade. This governs the transition and nothing else: the same-frame
+   scroll correction stays on for them, because dropping it would trade a tween
+   they did not want for a reading position they did. See scroll_compensation in
+   app/src/mosaic.rs, which takes no motion input for exactly this reason. */
+@media (prefers-reduced-motion: reduce) {
+  .lane-mosaic-plane .mosaic-message-card.liquid { transition: none; }
+}
 .team-surface .mosaic-message-card {
   gap: 7px;
   margin: 0;
