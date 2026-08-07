@@ -65,6 +65,17 @@ impl LockFile {
         try_acquire(self)
     }
 
+    /// Try to possess the lock, exposing each provisional contention.
+    ///
+    /// The callback runs after an exclusive attempt was denied but before the
+    /// contention is classified as a real exclusive holder or a concurrent
+    /// availability probe. It exists so callers can prove that a starting
+    /// owner survives that exact overlap without relying on scheduler timing.
+    #[doc(hidden)]
+    pub fn try_acquire_with(&self, after_contention: impl FnMut()) -> io::Result<Acquisition> {
+        try_acquire_with(self, after_contention)
+    }
+
     /// Try to possess a caller-opened lock file without reopening its pathname.
     ///
     /// The caller owns how the descriptor is resolved. The descriptor must be
@@ -82,8 +93,8 @@ impl LockFile {
     /// Observe whether the kernel would grant this existing lock now.
     ///
     /// Missing lock files are available. This operation never creates a file;
-    /// an existing file is opened without following symlinks and held only for
-    /// the duration of the nonblocking kernel probe.
+    /// an existing file is opened without following symlinks and shared only
+    /// for the duration of the nonblocking kernel probe.
     ///
     /// # Errors
     ///
@@ -91,6 +102,16 @@ impl LockFile {
     /// target.
     pub fn availability(&self) -> io::Result<Availability> {
         availability(self)
+    }
+
+    /// Observe availability while exposing the instant the probe is held.
+    ///
+    /// The callback runs only when the target is available, after the shared
+    /// probe lands and before it is released. It exists to make overlap with
+    /// an exclusive acquisition deterministic in tests.
+    #[doc(hidden)]
+    pub fn availability_with(&self, while_held: impl FnOnce()) -> io::Result<Availability> {
+        availability_with(self, while_held)
     }
 
     pub(crate) fn availability_opened(&self, file: File) -> io::Result<Availability> {
@@ -192,19 +213,43 @@ pub(crate) fn replacement_record(mut record: Vec<u8>, spanned: u64) -> Vec<u8> {
 
 #[cfg(unix)]
 fn try_acquire(lock: &LockFile) -> io::Result<Acquisition> {
-    match acquire_with(lock, platform::LOCK_EX | platform::LOCK_NB) {
-        Ok(possession) => Ok(Acquisition::Acquired(possession)),
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(Acquisition::Contended),
-        Err(error) => Err(error),
+    try_acquire_with(lock, || {})
+}
+
+#[cfg(unix)]
+fn try_acquire_with(
+    lock: &LockFile,
+    mut after_contention: impl FnMut(),
+) -> io::Result<Acquisition> {
+    loop {
+        match acquire_with(lock, platform::LOCK_EX | platform::LOCK_NB) {
+            Ok(possession) => return Ok(Acquisition::Acquired(possession)),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => after_contention(),
+            Err(error) => return Err(error),
+        }
+        match availability(lock)? {
+            Availability::Available => {}
+            Availability::Held => return Ok(Acquisition::Contended),
+        }
     }
 }
 
 #[cfg(unix)]
 fn try_acquire_opened(lock: &LockFile, file: File) -> io::Result<Acquisition> {
-    match acquire_opened(lock, file, platform::LOCK_EX | platform::LOCK_NB) {
-        Ok(possession) => Ok(Acquisition::Acquired(possession)),
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(Acquisition::Contended),
-        Err(error) => Err(error),
+    loop {
+        match acquire_opened(
+            lock,
+            file.try_clone()?,
+            platform::LOCK_EX | platform::LOCK_NB,
+        ) {
+            Ok(possession) => return Ok(Acquisition::Acquired(possession)),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error),
+        }
+        match availability_opened(file.try_clone()?)? {
+            Availability::Available => {}
+            Availability::Held => return Ok(Acquisition::Contended),
+        }
     }
 }
 
@@ -251,6 +296,11 @@ fn acquire_opened(
 
 #[cfg(unix)]
 fn availability(lock: &LockFile) -> io::Result<Availability> {
+    availability_with(lock, || {})
+}
+
+#[cfg(unix)]
+fn availability_with(lock: &LockFile, while_held: impl FnOnce()) -> io::Result<Availability> {
     use std::os::unix::fs::OpenOptionsExt;
 
     let file = match OpenOptions::new()
@@ -265,18 +315,24 @@ fn availability(lock: &LockFile) -> io::Result<Availability> {
         }
         Err(error) => return Err(error),
     };
-    availability_opened(file)
+    availability_opened_with(file, while_held)
 }
 
 #[cfg(unix)]
 fn availability_opened(file: File) -> io::Result<Availability> {
+    availability_opened_with(file, || {})
+}
+
+#[cfg(unix)]
+fn availability_opened_with(file: File, while_held: impl FnOnce()) -> io::Result<Availability> {
     use std::os::fd::AsRawFd;
 
     require_regular(&file)?;
     ensure_cloexec(&file)?;
     let result =
-        unsafe { platform::flock(file.as_raw_fd(), platform::LOCK_EX | platform::LOCK_NB) };
+        unsafe { platform::flock(file.as_raw_fd(), platform::LOCK_SH | platform::LOCK_NB) };
     if result == 0 {
+        while_held();
         release_probe(&file)?;
         return Ok(Availability::Available);
     }
@@ -343,6 +399,14 @@ fn try_acquire(_lock: &LockFile) -> io::Result<Acquisition> {
 }
 
 #[cfg(not(unix))]
+fn try_acquire_with(_lock: &LockFile, _after_contention: impl FnMut()) -> io::Result<Acquisition> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "flock possession requires a Unix target",
+    ))
+}
+
+#[cfg(not(unix))]
 fn try_acquire_opened(_lock: &LockFile, _file: File) -> io::Result<Acquisition> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -360,6 +424,14 @@ fn acquire(_lock: &LockFile) -> io::Result<Possession> {
 
 #[cfg(not(unix))]
 fn availability(_lock: &LockFile) -> io::Result<Availability> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "flock observation requires a Unix target",
+    ))
+}
+
+#[cfg(not(unix))]
+fn availability_with(_lock: &LockFile, _while_held: impl FnOnce()) -> io::Result<Availability> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "flock observation requires a Unix target",
@@ -396,6 +468,7 @@ mod platform {
 
     pub const F_GETFD: c_int = 1;
     pub const FD_CLOEXEC: c_int = 1;
+    pub const LOCK_SH: c_int = 1;
     pub const LOCK_EX: c_int = 2;
     pub const LOCK_NB: c_int = 4;
     pub const LOCK_UN: c_int = 8;

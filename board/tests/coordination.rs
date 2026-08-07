@@ -804,6 +804,153 @@ fn priority_inheritance_terminates_on_a_dependency_cycle() {
 }
 
 #[test]
+fn downstream_weight_precedes_native_urgency_and_handle_order() {
+    let eager = entry("BOARD-a1");
+    let mut weighted_workflow = workflow("todo");
+    weighted_workflow.assignment = Some(Actor::Spice);
+    let weighted = admitted(statement("BOARD-z1"), weighted_workflow, None, None)
+        .expect("assigned weighted candidate");
+    let mut direct_head = statement("BOARD-z2");
+    direct_head.dependencies.push(handle("BOARD-z1"));
+    let direct = admitted(direct_head, workflow("todo"), None, None).expect("direct dependent");
+    let mut transitive_head = statement("BOARD-z3");
+    transitive_head.dependencies.push(handle("BOARD-z2"));
+    let transitive =
+        admitted(transitive_head, workflow("todo"), None, None).expect("transitive dependent");
+
+    assert!(
+        Urgency::from_heads(&eager, &BTreeSet::new())
+            > Urgency::from_heads(&weighted, &BTreeSet::new()),
+        "native urgency favors the unweighted candidate",
+    );
+    let ordered = [
+        eager.clone(),
+        weighted.clone(),
+        direct.clone(),
+        transitive.clone(),
+    ];
+    let reversed = [transitive, direct, weighted, eager];
+
+    // Removing the downstream rung makes urgency choose BOARD-a1; retaining
+    // the rung but moving it above effective priority is caught separately.
+    let selected =
+        select(&ordered, &Actor::Spice, &all_projects(), 2).expect("weighted candidate is ready");
+    let selected_again = select(&reversed, &Actor::Spice, &all_projects(), 2)
+        .expect("reversed weighted candidate is ready");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.downstream_weight(), 2);
+    assert_eq!(
+        selected_again.entry().statement().handle,
+        selected.entry().statement().handle,
+    );
+    assert_eq!(
+        selected_again.downstream_weight(),
+        selected.downstream_weight(),
+    );
+    assert_eq!(selected_again.urgency(), selected.urgency());
+}
+
+#[test]
+fn effective_priority_precedes_greater_downstream_weight() {
+    let mut priority_head = statement("BOARD-z9");
+    priority_head.tags.push("priority:medium".to_owned());
+    let priority =
+        admitted(priority_head, workflow("todo"), None, None).expect("higher-priority candidate");
+    let weighted = entry("BOARD-a1");
+    let mut direct_head = statement("BOARD-a2");
+    direct_head.dependencies.push(handle("BOARD-a1"));
+    let direct = admitted(direct_head, workflow("todo"), None, None).expect("direct dependent");
+    let mut transitive_head = statement("BOARD-a3");
+    transitive_head.dependencies.push(handle("BOARD-a2"));
+    let transitive =
+        admitted(transitive_head, workflow("todo"), None, None).expect("transitive dependent");
+    let entries = [weighted, direct, transitive, priority];
+
+    // Moving downstream weight above effective priority makes BOARD-a1 win.
+    let selected =
+        select(&entries, &Actor::Spice, &all_projects(), 2).expect("priority candidate is ready");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-z9"));
+    assert_eq!(selected.downstream_weight(), 0);
+}
+
+#[test]
+fn downstream_weight_ignores_hidden_and_settled_branches() {
+    let root = entry("BOARD-a1");
+    let mut hidden_head = statement("BOARD-h1");
+    hidden_head.project = ".oops.correctness".to_owned();
+    hidden_head.dependencies.push(handle("BOARD-a1"));
+    let hidden = admitted(hidden_head, workflow("todo"), None, None).expect("hidden dependent");
+    let mut after_hidden_head = statement("BOARD-z1");
+    after_hidden_head.dependencies.push(handle("BOARD-h1"));
+    let after_hidden = admitted(after_hidden_head, workflow("todo"), None, None)
+        .expect("public task beyond hidden branch");
+
+    let mut settled_head = statement("BOARD-s1");
+    settled_head.dependencies.push(handle("BOARD-a1"));
+    let mut settled_workflow = workflow("review");
+    settled_workflow.status = "completed".to_owned();
+    settled_workflow.completion = Some(instant("2026-08-01T06:06:00.000Z"));
+    let settled = admitted(
+        settled_head,
+        settled_workflow,
+        Some(claim(ClaimDisposition::Active)),
+        Some(lease()),
+    )
+    .expect("settled dependent");
+    let mut after_settled_head = statement("BOARD-z2");
+    after_settled_head.dependencies.push(handle("BOARD-s1"));
+    let after_settled = admitted(after_settled_head, workflow("todo"), None, None)
+        .expect("public task beyond settled branch");
+    let ordered = [
+        root.clone(),
+        hidden.clone(),
+        after_hidden.clone(),
+        settled.clone(),
+        after_settled.clone(),
+    ];
+    let reversed = [after_settled, settled, after_hidden, hidden, root];
+
+    let selected = select(&ordered, &Actor::Spice, &all_projects(), 2)
+        .expect("root remains an unweighted candidate");
+    let selected_again = select(&reversed, &Actor::Spice, &all_projects(), 2)
+        .expect("reversed root remains an unweighted candidate");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-a1"));
+    assert_eq!(selected.downstream_weight(), 0);
+    assert_eq!(
+        selected_again.entry().statement().handle,
+        selected.entry().statement().handle,
+    );
+    assert_eq!(selected_again.downstream_weight(), 0);
+}
+
+#[test]
+fn downstream_weight_terminates_on_a_dependency_cycle() {
+    let root = entry("BOARD-z1");
+    let mut first_head = statement("BOARD-z2");
+    first_head
+        .dependencies
+        .extend([handle("BOARD-z1"), handle("BOARD-z3")]);
+    let first = admitted(first_head, workflow("todo"), None, None).expect("first cycle entry");
+    let mut second_head = statement("BOARD-z3");
+    second_head.dependencies.push(handle("BOARD-z2"));
+    let second = admitted(second_head, workflow("todo"), None, None).expect("second cycle entry");
+    let ordered = [root.clone(), first.clone(), second.clone()];
+    let reversed = [second, first, root];
+
+    let selected =
+        select(&ordered, &Actor::Spice, &all_projects(), 2).expect("cycle root is ready");
+    let selected_again =
+        select(&reversed, &Actor::Spice, &all_projects(), 2).expect("reversed cycle root is ready");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.downstream_weight(), 2);
+    assert_eq!(
+        selected_again.entry().statement().handle,
+        selected.entry().statement().handle,
+    );
+    assert_eq!(selected_again.downstream_weight(), 2);
+}
+
+#[test]
 fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
     let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
     let other = uuid("019fbbde-5105-75a3-a76a-722afde1e409");

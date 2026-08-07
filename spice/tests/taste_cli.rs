@@ -249,7 +249,7 @@ fn taste_reporting_and_review_plans_survive_restart() {
 }
 
 #[test]
-fn live_fires_count_one_lineage_once_and_keep_one_durable_driver() {
+fn live_fires_count_one_lineage_once_and_keep_one_durable_vendor() {
     let fixture = Fixture::new();
     seed_fires(&fixture);
     let resident = Resident::start(&fixture);
@@ -274,13 +274,13 @@ fn live_fires_count_one_lineage_once_and_keep_one_durable_driver() {
     assert!(
         fires
             .iter()
-            .all(|fire| fire["key"] != RESENT_RUNG && fire["driver"] == "claude")
+            .all(|fire| fire["key"] != RESENT_RUNG && fire["vendor"] == "claude")
     );
-    // Two occupant generations, one seat: a renewal cannot split the driver.
+    // Two occupant generations, one seat: a renewal cannot split the vendor.
     assert_ne!(fires[0]["occupant"], fires[1]["occupant"]);
     assert_eq!(
-        zeta["drivers"],
-        serde_json::json!([{"driver": "claude", "fires": 2, "acked": 1, "declined": 1}])
+        zeta["vendors"],
+        serde_json::json!([{"vendor": "claude", "fires": 2, "acked": 1, "declined": 1}])
     );
     assert_eq!(
         zeta["recurrence"],
@@ -299,8 +299,8 @@ fn live_fires_count_one_lineage_once_and_keep_one_durable_driver() {
     assert_eq!(alpha["fires"].as_array().expect("alpha fires").len(), 1);
     assert_eq!(alpha["fires"][0]["standing"], "live");
     assert_eq!(
-        alpha["drivers"],
-        serde_json::json!([{"driver": "claude", "fires": 1, "acked": 0, "declined": 0}])
+        alpha["vendors"],
+        serde_json::json!([{"vendor": "claude", "fires": 1, "acked": 0, "declined": 0}])
     );
     assert_eq!(alpha["recurrence"], serde_json::json!([]));
     assert_eq!(alpha["judgments"][0]["verdict"], "cleared");
@@ -559,7 +559,7 @@ fn seed_judgments(fixture: &Fixture) {
 
 /// Seed the live reminder evidence the report derives its fire rows from.
 ///
-/// One lane is seated once with one driver. `zeta` fires twice on the same
+/// One lane is seated once with one vendor. `zeta` fires twice on the same
 /// prose across two occupant generations and two compaction epochs; the first
 /// lineage is resent before it is acknowledged, and the second is declined.
 /// `alpha` fires once and is left live.

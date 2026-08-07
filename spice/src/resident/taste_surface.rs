@@ -89,9 +89,7 @@ where
             .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
         let mut unsuppressed = Vec::new();
         for candidate in &candidates {
-            let reminded = was_reminded(&snapshot, &candidate.content, anchor)
-                .map_err(|detail| store_fault("taste::reminder-invalid", &detail))?;
-            if !reminded {
+            if !was_reminded(&snapshot, &candidate.content, anchor) {
                 unsuppressed.push(candidate.clone());
             }
         }
@@ -307,9 +305,7 @@ fn reminder_guard(
         let ledger = steer::Ledger::from_snapshot(&snapshot)
             .map_err(|error| GuardError::Invalid(error.to_string()))?;
         for opening in &openings {
-            if was_reminded(&snapshot, &opening.candidate.content, anchor)
-                .map_err(GuardError::Invalid)?
-            {
+            if was_reminded(&snapshot, &opening.candidate.content, anchor) {
                 return Err(GuardError::refused("taste::reminder-recorded"));
             }
             if ledger.directive(opening.directive).is_some()
@@ -328,20 +324,15 @@ fn context_anchor(
     occupant: CanonicalUuid,
 ) -> Result<Seq, String> {
     for envelope in snapshot.facts().iter().rev() {
-        let matches = match envelope.fact.kind() {
-            wire::FactKind::LaneCompacted => {
-                let body = body::<wire::body::LaneCompacted>(envelope)?;
-                body.lane == lane && body.occupant == occupant
-            }
-            wire::FactKind::LaneRenewed => {
-                let body = body::<wire::body::LaneRenewed>(envelope)?;
-                body.lane == lane && body.occupant == occupant
-            }
-            wire::FactKind::LaneStarted => {
-                let body = body::<wire::body::LaneStarted>(envelope)?;
-                body.lane == lane && body.occupant == occupant
-            }
-            _ => false,
+        let fact = &envelope.fact;
+        let matches = if let Some(body) = fact.read::<wire::body::LaneCompacted>() {
+            body.lane == lane && body.occupant == occupant
+        } else if let Some(body) = fact.read::<wire::body::LaneRenewed>() {
+            body.lane == lane && body.occupant == occupant
+        } else if let Some(body) = fact.read::<wire::body::LaneStarted>() {
+            body.lane == lane && body.occupant == occupant
+        } else {
+            false
         };
         if matches {
             return Ok(envelope.seq);
@@ -352,29 +343,13 @@ fn context_anchor(
     ))
 }
 
-fn was_reminded(
-    snapshot: &journal::FactSnapshot,
-    content: &Digest,
-    anchor: Seq,
-) -> Result<bool, String> {
-    for envelope in snapshot.facts() {
-        if envelope.fact.kind() != wire::FactKind::TasteReminded {
-            continue;
-        }
-        let body = body::<wire::body::TasteReminded>(envelope)?;
-        if &body.content == content && body.compaction == anchor.get() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn body<T: serde::de::DeserializeOwned>(
-    envelope: &wire::Envelope<wire::AnyFact>,
-) -> Result<T, String> {
-    wire::encode(envelope.fact.body())
-        .and_then(|bytes| wire::decode(&bytes))
-        .map_err(|error| error.to_string())
+fn was_reminded(snapshot: &journal::FactSnapshot, content: &Digest, anchor: Seq) -> bool {
+    snapshot.facts().iter().any(|envelope| {
+        envelope
+            .fact
+            .read::<wire::body::TasteReminded>()
+            .is_some_and(|body| &body.content == content && body.compaction == anchor.get())
+    })
 }
 
 #[cfg(test)]

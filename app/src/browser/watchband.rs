@@ -576,8 +576,13 @@ fn render_activity(
     let speak = if speech == LineageSpeech::Quiet {
         Callback::from(|_: String| {})
     } else {
-        controls.speak.clone()
+        let lane = lineage.lane.to_string();
+        let speech_queue = controls.speak.clone();
+        Callback::from(move |text: String| {
+            speech_queue.emit(SpeechRequest::manual(Some(lane.clone()), text));
+        })
     };
+    let narrate = controls.narrate.clone();
     html! {
         <div
             id={format!("lineage-stream-{}", lineage.lane)}
@@ -597,6 +602,7 @@ fn render_activity(
                 cards={cards.to_vec()}
                 drafts={drafts.clone()}
                 {speak}
+                {narrate}
                 {speech}
             />
         </div>

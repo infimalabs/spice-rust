@@ -14,6 +14,7 @@
 /// arrangement laws share a table, and neither may stand in for the other.
 
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { reply, waitForPageFunction, TRANSITION_MS } from "./canvas-fixture.mjs";
@@ -178,6 +179,43 @@ export async function assertTeamArrangement(page, fixture, artifacts) {
   );
   crowded.lanes = moved;
 
+  const laneRows = (await reply(fixture, ["lane"])).body.lanes;
+  const primaryNarrator = laneRows.find((lane) => lane.lane === primary.lanes[0]);
+  const secondaryNarrator = laneRows.find((lane) => lane.lane === secondary.lanes[0]);
+  assert.ok(primaryNarrator && secondaryNarrator, "both teams expose a live narrator worktree");
+  await agents.locator(`.team-surface[data-lineage-id="${primary.lineage}"]`)
+    .locator('.team-speech input[type="range"]').fill("2");
+  await agents.locator(`.team-surface[data-lineage-id="${secondary.lineage}"]`)
+    .locator('.team-speech input[type="range"]').fill("2");
+  await page.evaluate(() => {
+    window.__speechLog = [];
+    window.__speechUtterances = [];
+    window.__speechActive = 0;
+    window.__speechMaxActive = 0;
+  });
+  const primaryCards = agents.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${primaryNarrator.lane}"]`,
+  );
+  const secondaryCards = agents.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${secondaryNarrator.lane}"]`,
+  );
+  let before = await primaryCards.count();
+  await writeFile(join(primaryNarrator.worktree, ".spice-prose-trigger"), "emit\n");
+  await primaryCards.nth(before).waitFor({ timeout: TRANSITION_MS * 4 });
+  await waitForPageFunction(page, "the surviving team owns narration", TRANSITION_MS,
+    () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
+  before = await secondaryCards.count();
+  await writeFile(join(secondaryNarrator.worktree, ".spice-prose-trigger"), "emit\n");
+  await secondaryCards.nth(before).waitFor({ timeout: TRANSITION_MS * 4 });
+  before = await primaryCards.count();
+  await writeFile(join(primaryNarrator.worktree, ".spice-prose-trigger"), "emit\n");
+  await primaryCards.nth(before).waitFor({ timeout: TRANSITION_MS * 4 });
+  assert.equal(
+    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
+    1,
+    "both lineage tails wait behind the committed head",
+  );
+
   const gathered = await dragTeam(page, {
     dragged: secondary.lineage,
     target: primary.lineage,
@@ -204,6 +242,31 @@ export async function assertTeamArrangement(page, fixture, artifacts) {
     await renderedTeams(agents),
     [{ lineage: primary.lineage, lanes: [...primary.lanes, ...secondary.lanes] }],
     "the canvas draws one team whose first composer never moved",
+  );
+  await page.evaluate(() => {
+    const utterance = window.__speechUtterances.at(-1);
+    if (!utterance?.onend) throw new Error("the narration head has no completion callback");
+    utterance.onend(new Event("end"));
+  });
+  await waitForPageFunction(page, "only the surviving team's queued narration advances",
+    TRANSITION_MS, () =>
+      window.__speechLog.filter((row) => row.action === "speak").length === 2);
+  assert.equal(
+    await page.evaluate(() => window.__speechMaxActive),
+    1,
+    "removing one lane never overlaps its abandoned speech with the survivor",
+  );
+  await page.evaluate(() => {
+    const utterance = window.__speechUtterances.at(-1);
+    if (!utterance?.onend) throw new Error("the surviving narration has no completion callback");
+    utterance.onend(new Event("end"));
+  });
+  await waitForPageFunction(page, "the surviving narration drains without the removed tail",
+    TRANSITION_MS, () => window.__speechActive === 0);
+  assert.equal(
+    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
+    2,
+    "lane removal abandons only that lane's queued entry",
   );
   await page.screenshot({
     path: join(artifacts, "canvas-light-team-arrangement.png"),

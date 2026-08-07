@@ -50,6 +50,7 @@ mod reconnect;
 pub mod runtime;
 pub mod socket;
 pub mod speech_owner;
+pub mod speech_queue;
 pub mod state;
 pub mod view;
 pub mod watchband;

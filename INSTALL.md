@@ -101,7 +101,7 @@ its bearer token.
 Discovery is a single file, `$SPICE_COMMON/.spice/canvas`. A resident withdraws
 it on exit, `up` clears a stale one after taking the resident lock
 (`spice/src/resident/runtime.rs:386`), and `down` faults with
-`canvas::release-incomplete` when a record survives the release (`:535`).
+`canvas::release-incomplete` when a record survives the release (`:531`).
 Neither path covers a resident that died without unwinding, so the client does
 not trust the record alone: before dialing it probes the resident lock beside
 the record and faults `canvas::publisher-gone` when the kernel reports that

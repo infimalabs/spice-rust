@@ -401,12 +401,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .agent-tab-empty { padding: 6px 4px; color: var(--muted); font-size: .76rem; }
 
-[data-accent="0"] { --identity: var(--accent-0); }
-[data-accent="1"] { --identity: var(--accent-1); }
-[data-accent="2"] { --identity: var(--accent-2); }
-[data-accent="3"] { --identity: var(--accent-3); }
-[data-accent="4"] { --identity: var(--accent-4); }
-[data-accent="5"] { --identity: var(--accent-5); }
+[data-accent="0"] { --accent-slot: var(--accent-0); }
+[data-accent="1"] { --accent-slot: var(--accent-1); }
+[data-accent="2"] { --accent-slot: var(--accent-2); }
+[data-accent="3"] { --accent-slot: var(--accent-3); }
+[data-accent="4"] { --accent-slot: var(--accent-4); }
+[data-accent="5"] { --accent-slot: var(--accent-5); }
 
 .watchband { align-items: stretch; gap: 10px; }
 
@@ -419,13 +419,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   min-height: 76px;
   padding: 8px 10px;
   border: 1px solid var(--line);
-  border-top: 2px solid var(--identity, var(--line));
+  border-top: 2px solid var(--accent-slot, var(--line));
   border-radius: 9px;
   background: var(--panel);
   text-align: left;
 }
 
-.watchband-card.selected { border-color: var(--identity, var(--accent)); }
+.watchband-card.selected { border-color: var(--accent-slot, var(--accent)); }
 
 .watchband-line {
   display: flex;
@@ -441,7 +441,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .watchband-line.muted { color: var(--muted); font-size: .68rem; }
 .watchband-line.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
 .watchband-name { font-weight: 700; }
-.watchband-card .agent-presence { background: var(--identity, var(--accent)); box-shadow: none; }
+.watchband-card .agent-presence { background: var(--accent-slot, var(--accent)); box-shadow: none; }
 
 .tag.vendor {
   margin-left: auto;
@@ -560,7 +560,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   bottom: 8px;
   width: 4px;
   border-radius: 999px;
-  background: var(--identity, var(--accent));
+  background: var(--accent-slot, var(--accent));
 }
 
 .message-meta {
@@ -574,7 +574,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 .message-meta span { color: var(--muted); }
-.message-author { color: var(--identity, var(--accent)) !important; font-weight: 700; }
+.message-author { color: var(--accent-slot, var(--accent)) !important; font-weight: 700; }
 
 .message-actions { display: flex; gap: 5px; }
 
@@ -592,7 +592,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   font-size: .62rem;
 }
 
-.card-action:hover { border-color: var(--identity, var(--accent)); color: var(--identity, var(--accent)); }
+.card-action:hover { border-color: var(--accent-slot, var(--accent)); color: var(--accent-slot, var(--accent)); }
 .message p { margin: 7px 0 0; font-size: .84rem; line-height: 1.45; white-space: pre-wrap; }
 
 .message-attachments { display: grid; gap: 8px; margin-top: 10px; }

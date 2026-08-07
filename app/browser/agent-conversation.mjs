@@ -16,9 +16,17 @@ const AGENT_SEAT_MS = 15_000;
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 export const agentNames = ["Ava", "Bex", "Cy", "Dee"];
+/// The fourth identity ends in 6 rather than 3 on purpose, and tidying it back
+/// to a run of four consecutive values would silently delete coverage. An
+/// accent slot is the lane identity modulo six, so consecutive identities can
+/// never collide, and a fixture built from them would prove only the easy half
+/// of the contract. Ending in 6 puts the fourth lane on the first lane's slot,
+/// which is the ordinary case a lineage meets -- six members hold six distinct
+/// slots 720 times in 46656 -- and lets this file assert that a shared colour
+/// still leaves two agents told apart by name.
 const teamLaneIds = [
   "00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000001",
-  "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003",
+  "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000006",
 ];
 export const nestedQuoteMessage = [
   "> > The final review found no alternate execution path.", "> >",
@@ -275,6 +283,33 @@ export async function assertAgentConversation(
   );
   assert.ok(distinctChrome, "the fixture exposes a different lane accent slot");
   assert.notEqual(distinctChrome.edge, repeatedChrome[0].edge);
+
+  // The first and fourth lanes hold one slot between them, by the construction
+  // teamLaneIds explains. That is the ordinary case for a lineage, so the
+  // colour is decoration and the assertions below are what an operator and a
+  // test actually read to tell the two apart. A message card names its producer
+  // as the worktree leaf beside the short author; a directive card names only
+  // the short lane, which is why the pairing is asserted on message cards.
+  const messageChrome = await console.locator('[data-card-kind="agent-message"]').evaluateAll(
+    (cards) => cards.map((card) => ({
+      lane: card.dataset.agentLane,
+      accent: card.dataset.accent,
+      producer: card.querySelector(".message-author")?.textContent?.trim() ?? "",
+    })),
+  );
+  const sharedSlot = [seated[0].lane, seated[3].lane].map(
+    (lane) => messageChrome.find((card) => card.lane === lane),
+  );
+  assert.ok(sharedSlot.every(Boolean), "both lanes sharing a slot render a message card");
+  assert.equal(
+    sharedSlot[0].accent, sharedSlot[1].accent,
+    "the seeded pair holds one accent slot, so the colour names neither lane",
+  );
+  assert.notEqual(sharedSlot[0].lane, sharedSlot[1].lane);
+  assert.notEqual(
+    sharedSlot[0].producer, sharedSlot[1].producer,
+    "the producer name is what stays distinct when the colour does not",
+  );
   const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
   for (const kind of ["agent-message", "directive"]) {
     const card = console.locator(`[data-card-kind="${kind}"]`).first();
@@ -503,25 +538,31 @@ async function assertPersistentMosaic(page, fixture, console, plane, member) {
   // re-renders from freshly cloned props while nothing a card measures moved.
   // The command-bar cursor is the positive control: without it a refresh that
   // never arrived would answer this probe with exactly the silence a correct
-  // one does, and the assertions below would pass having tested nothing.
+  // one does, and the assertions below would pass having tested nothing. Bind
+  // that control to this command's committed range so an unrelated cursor
+  // advance cannot satisfy it.
   //
   // The missing `--acceptance` is load-bearing, not an omission: a task added
   // without one starts in `plan`, which `workable` never selects, so this task
   // can never be held and cannot disturb `assertHeldTaskCount`. Give it
   // acceptance criteria and a distant assertion about badges goes red.
-  const cursor = page.locator(".bar-meta").first();
-  const cursorBefore = await cursor.textContent();
   const refreshProbe = await armPlacementProbe(plane);
-  await reply(fixture, [
+  const refresh = await reply(fixture, [
     "task",
     "add",
     `mosaic no-op refresh ${crypto.randomUUID()}`,
     "--project",
     "spice.browser",
   ]);
-  await waitForPage(page, "a no-op refresh reaches the surface", TRANSITION_MS, (before) => (
-    document.querySelector(".bar-meta")?.textContent !== before
-  ), cursorBefore);
+  assert.ok(
+    Number.isSafeInteger(refresh.seq?.last)
+      && typeof refresh.body?.task === "string"
+      && refresh.body.task.length > 0,
+    "the no-op refresh command commits an exact journal range",
+  );
+  await waitForPage(page, "a no-op refresh reaches the surface", TRANSITION_MS, (expected) => (
+    document.querySelector(".bar-meta")?.textContent === expected
+  ), `cursor ${refresh.seq.last}`);
   const refreshed = await finishPlacementProbe(plane, refreshProbe);
   assert.ok(refreshed.retained, "a no-op refresh retains every committed card node");
   assert.deepEqual(refreshed.writes, [], "a no-op refresh writes no card placement");

@@ -13,8 +13,10 @@ pub(super) struct AgentControls {
     pub(super) seat_life: UseStateHandle<String>,
     pub(super) seat_notice: UseStateHandle<Notice>,
     pub(super) submit_seat: Callback<SubmitEvent>,
-    /// Read one message aloud, using the resident's current speech settings.
-    pub(super) speak: Callback<String>,
+    /// Admit manual speech to the one browser-global playback queue.
+    pub(super) speak: Callback<SpeechRequest>,
+    /// Advance durable narration cursors and admit their live suffix.
+    pub(super) narrate: Callback<NarrationBatch>,
 }
 
 /// Render the reason the last submission was refused, or nothing.

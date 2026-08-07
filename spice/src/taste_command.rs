@@ -9,8 +9,8 @@ use spice::repository::Repository;
 use wire::body::{LaneSeated, TasteCleared, TasteConfirmed, TasteReminded};
 use wire::intent::{CommandAnswer, TaskAdd, TaskAnswer};
 use wire::{
-    CanonicalUuid, ConfigSource, Digest, Disposition, Domain, Fact, FactKind, Fault, FaultClass,
-    Instant, Name, Outcome, Refusal, Reply, ReplyPosition, Seq,
+    CanonicalUuid, ConfigSource, Digest, Disposition, Domain, Fault, FaultClass, Instant, Name,
+    Outcome, Refusal, Reply, ReplyPosition, Seq,
 };
 
 use crate::cli::Contract;
@@ -103,7 +103,7 @@ struct TasteRow {
     words: Vec<String>,
     message: String,
     fires: Vec<TasteFire>,
-    drivers: Vec<DriverTally>,
+    vendors: Vec<VendorTally>,
     recurrence: Vec<Recurrence>,
     judgments: Vec<TasteJudgment>,
 }
@@ -114,7 +114,7 @@ struct TasteFire {
     position: Seq,
     at: Instant,
     lane: CanonicalUuid,
-    driver: Name,
+    vendor: Name,
     occupant: CanonicalUuid,
     compaction: u64,
     content: Digest,
@@ -123,10 +123,10 @@ struct TasteFire {
     locus: String,
 }
 
-/// Fires and answers for one driver, over the fires this report carries.
+/// Fires and answers for one vendor, over the fires this report carries.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-struct DriverTally {
-    driver: Name,
+struct VendorTally {
+    vendor: Name,
     fires: usize,
     acked: usize,
     declined: usize,
@@ -142,8 +142,6 @@ struct Recurrence {
 
 /// A join this report refuses to guess at.
 enum EvidenceError {
-    /// A registered body in the snapshot did not decode.
-    Invalid(String),
     /// A reminder names a lane the durable stream never seated.
     ///
     /// Nothing in the stream requires a reminded lane to have been seated
@@ -268,14 +266,17 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
             "read the current tracked taste set and name one active taste",
         );
     };
-    let declines = cited(row.fires.iter().filter_map(|fire| {
-        (fire.standing == Disposition::Declined).then(|| {
-            format!(
-                "- {} on {} at {} (journal {})",
-                fire.locus, fire.driver, fire.at, fire.position
-            )
-        })
-    }));
+    let declines = cited(
+        row.fires
+            .iter()
+            .filter(|fire| fire.standing == Disposition::Declined)
+            .map(|fire| {
+                format!(
+                    "- {} on {} at {} (journal {})",
+                    fire.locus, fire.vendor, fire.at, fire.position
+                )
+            }),
+    );
     let clearances = cited(
         row.judgments
             .iter()
@@ -381,8 +382,7 @@ fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), 
             "the authenticated resident has no durable journal position".to_owned(),
         ));
     };
-    let judgments = collect_judgments(&facts)
-        .map_err(|detail| fault(FaultClass::Store, "taste::judgment-invalid", detail))?;
+    let judgments = collect_judgments(&facts);
     // One snapshot answers the whole view: steering standing, lane seating, and
     // reminders are all read from these same facts, so no two parts of the row
     // can describe different moments.
@@ -393,7 +393,7 @@ fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), 
             error.to_string(),
         )
     })?;
-    let seating = lane_seating(&facts).map_err(evidence_failure)?;
+    let seating = lane_seating(&facts);
     let fires = collect_fires(&facts, &ledger, &seating).map_err(evidence_failure)?;
     let current = Surface::load(&repository).map_err(|error| load_failure(&error))?;
     if current != surface {
@@ -413,7 +413,7 @@ fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), 
                 name: taste.name.clone(),
                 words: taste.words.clone(),
                 message: taste.message.clone(),
-                drivers: tally(&fires),
+                vendors: tally(&fires),
                 recurrence: recurrence(&fires),
                 fires,
                 judgments: judgments
@@ -437,21 +437,15 @@ fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), 
     ))
 }
 
-fn collect_judgments(
-    snapshot: &journal::FactSnapshot,
-) -> Result<BTreeMap<String, Vec<TasteJudgment>>, String> {
+fn collect_judgments(snapshot: &journal::FactSnapshot) -> BTreeMap<String, Vec<TasteJudgment>> {
     let mut judgments = BTreeMap::<String, Vec<TasteJudgment>>::new();
     for envelope in snapshot.facts() {
-        let (taste, verdict, locus) = match envelope.fact.kind() {
-            FactKind::TasteConfirmed => {
-                let fact = decode_fact::<TasteConfirmed>(&envelope.fact)?;
-                (fact.body.taste, Verdict::Confirmed, fact.body.locus)
-            }
-            FactKind::TasteCleared => {
-                let fact = decode_fact::<TasteCleared>(&envelope.fact)?;
-                (fact.body.taste, Verdict::Cleared, fact.body.locus)
-            }
-            _ => continue,
+        let (taste, verdict, locus) = if let Some(body) = envelope.fact.read::<TasteConfirmed>() {
+            (body.taste, Verdict::Confirmed, body.locus)
+        } else if let Some(body) = envelope.fact.read::<TasteCleared>() {
+            (body.taste, Verdict::Cleared, body.locus)
+        } else {
+            continue;
         };
         judgments.entry(taste).or_default().push(TasteJudgment {
             position: envelope.seq,
@@ -460,7 +454,7 @@ fn collect_judgments(
             locus,
         });
     }
-    Ok(judgments)
+    judgments
 }
 
 /// Every reminder in the snapshot, grouped by taste and newest first.
@@ -471,13 +465,10 @@ fn collect_fires(
 ) -> Result<BTreeMap<String, Vec<TasteFire>>, EvidenceError> {
     let mut fires = BTreeMap::<String, Vec<TasteFire>>::new();
     for envelope in snapshot.facts() {
-        if envelope.fact.kind() != FactKind::TasteReminded {
+        let Some(body) = envelope.fact.read::<TasteReminded>() else {
             continue;
-        }
-        let body = decode_fact::<TasteReminded>(&envelope.fact)
-            .map_err(EvidenceError::Invalid)?
-            .body;
-        let driver = seating
+        };
+        let vendor = seating
             .get(&body.lane)
             .ok_or(EvidenceError::LaneUnseated(body.lane))?
             .clone();
@@ -495,7 +486,7 @@ fn collect_fires(
                 position: envelope.seq,
                 at: envelope.at,
                 lane: body.lane,
-                driver,
+                vendor,
                 occupant: body.occupant,
                 compaction: body.compaction,
                 content: body.content,
@@ -505,45 +496,40 @@ fn collect_fires(
             });
     }
     for rows in fires.values_mut() {
-        rows.sort_by(|left, right| right.position.cmp(&left.position));
+        rows.sort_by_key(|row| std::cmp::Reverse(row.position));
         rows.truncate(RECENT_FIRES);
     }
     Ok(fires)
 }
 
-/// The driver each lane was seated with.
+/// The vendor each lane was seated with.
 ///
 /// Attribution reads seating rather than the occupant a fire happened to name,
 /// because the durable lane laws make the seat the stable answer: a lane is
 /// seated exactly once, and a worktree transfer must retain the same vendor.
-/// Every renewal therefore attributes to the driver the lane has always had,
-/// instead of splitting one driver into a bucket per occupant generation. A
-/// lane the stream never seated has no driver at all, and the report refuses
-/// rather than inventing a bucket that sums with a real one.
-fn lane_seating(
-    snapshot: &journal::FactSnapshot,
-) -> Result<BTreeMap<CanonicalUuid, Name>, EvidenceError> {
+/// Every renewal therefore attributes to the vendor the lane has always had,
+/// instead of splitting one vendor into a bucket per occupant generation. A
+/// lane the stream never seated has no vendor at all, and the report refuses
+/// rather than inventing a bucket that sums with a real one — a refusal the
+/// fire join raises, since absence is only knowable once a reminder names it.
+fn lane_seating(snapshot: &journal::FactSnapshot) -> BTreeMap<CanonicalUuid, Name> {
     let mut seating = BTreeMap::<CanonicalUuid, Name>::new();
     for envelope in snapshot.facts() {
-        if envelope.fact.kind() != FactKind::LaneSeated {
-            continue;
+        if let Some(body) = envelope.fact.read::<LaneSeated>() {
+            seating.insert(body.lane, body.vendor);
         }
-        let body = decode_fact::<LaneSeated>(&envelope.fact)
-            .map_err(EvidenceError::Invalid)?
-            .body;
-        seating.insert(body.lane, body.vendor);
     }
-    Ok(seating)
+    seating
 }
 
-/// Fires and answers per driver, over the fires the row carries.
-fn tally(fires: &[TasteFire]) -> Vec<DriverTally> {
-    let mut tallies = BTreeMap::<Name, DriverTally>::new();
+/// Fires and answers per vendor, over the fires the row carries.
+fn tally(fires: &[TasteFire]) -> Vec<VendorTally> {
+    let mut tallies = BTreeMap::<Name, VendorTally>::new();
     for fire in fires {
         let tally = tallies
-            .entry(fire.driver.clone())
-            .or_insert_with(|| DriverTally {
-                driver: fire.driver.clone(),
+            .entry(fire.vendor.clone())
+            .or_insert_with(|| VendorTally {
+                vendor: fire.vendor.clone(),
                 fires: 0,
                 acked: 0,
                 declined: 0,
@@ -584,14 +570,6 @@ fn locus_text(locus: &wire::body::TranscriptLocus) -> String {
         "tape {}+{} event {} line {} column {}",
         locus.member, locus.offset, locus.event, locus.line, locus.column
     )
-}
-
-fn decode_fact<T>(fact: &wire::AnyFact) -> Result<Fact<T>, String>
-where
-    T: wire::Body,
-{
-    let bytes = wire::encode(fact).map_err(|error| error.to_string())?;
-    wire::decode(&bytes).map_err(|error| error.to_string())
 }
 
 fn submit_plan(repository: &Repository, contract: &Contract, plan: TaskAdd) -> Outcome<TaskAnswer> {
@@ -673,9 +651,6 @@ fn current_repository<B>() -> Result<Repository, Outcome<B>> {
 /// naming the exact identity that did not join.
 fn evidence_failure<B>(error: EvidenceError) -> Outcome<B> {
     match error {
-        EvidenceError::Invalid(detail) => {
-            fault(FaultClass::Store, "taste::reminder-invalid", detail)
-        }
         EvidenceError::LaneUnseated(lane) => refusal(
             "taste::lane-unseated",
             Some("one durable lane seating at or before the reminder".to_owned()),

@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::os::unix::fs::PermissionsExt as _;
     use std::process::Output;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -508,18 +509,23 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&hook, permissions).expect("make hook executable");
 
-        let started = Instant::now();
-        let error = run(
+        let grace_started = Cell::new(None::<Instant>);
+        let mut observe_grace = || grace_started.set(Some(Instant::now()));
+        let error = run_observing_descendant_grace(
             &fixture.agent,
             &["update-ref", "refs/heads/hook-descendant", &head],
+            &mut observe_grace,
         )
         .expect_err("a hook descendant cannot outlive Git");
 
         assert_eq!(error.reason(), "git::descendant-survived");
+        let cleanup_elapsed = grace_started
+            .get()
+            .expect("the survivor passed through its production grace")
+            .elapsed();
         assert!(
-            started.elapsed() < Duration::from_secs(3),
-            "task Git exceeded its descendant cleanup bound: {:?}",
-            started.elapsed(),
+            cleanup_elapsed < Duration::from_secs(3),
+            "task Git exceeded its descendant cleanup bound: {cleanup_elapsed:?}",
         );
         let pid = fs::read_to_string(&descendant_pid)
             .expect("read descendant pid")

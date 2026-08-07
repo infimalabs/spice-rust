@@ -350,12 +350,9 @@ impl From<Envelope<AnyFact>> for StreamFact {
 }
 
 fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value> {
-    if fact.kind() != FactKind::LaneSeated {
+    let Some(durable) = fact.read::<crate::body::LaneSeated>() else {
         return fact.body().clone();
-    }
-    let durable: crate::body::LaneSeated =
-        serde_json::from_value(serde_json::Value::Object(fact.body().clone()))
-            .expect("validated lane::seated decodes through its registered DTO");
+    };
     let crate::body::LaneSeated {
         lane,
         lineage_id,

@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::time::{Duration, Instant as Monotonic};
 
 use sill::{
@@ -258,6 +259,67 @@ fn contended_resident_names_the_holder_while_its_record_is_rewritten() {
         "pid=4242;epoch=replacement"
     );
     drop(possession);
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+/// A liveness observation cannot impersonate the resident it is checking.
+///
+/// The probe hook freezes the shared observation lock after it lands. Only
+/// then does startup make its exclusive attempt; its contention hook releases
+/// the probe, proving the two operations overlapped at the kernel lock rather
+/// than merely running in nearby threads. Startup must retry that observation,
+/// while the same availability path must still distinguish its resulting live
+/// exclusive holder from the available lock after release.
+#[cfg(unix)]
+#[test]
+fn resident_start_survives_an_overlapping_liveness_probe() {
+    let root = fixture("startup-probe-overlap");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
+    fs::create_dir_all(&paths.runtime).expect("runtime directory");
+    fs::write(&paths.resident, b"stale holder record\n").expect("existing resident lock file");
+    let lock = LockFile::new(
+        LockName::new("resident").expect("resident lock name"),
+        &paths.resident,
+    );
+    let (probe_held, probe_landed) = mpsc::sync_channel(0);
+    let (release_probe, released) = mpsc::sync_channel(0);
+
+    std::thread::scope(|scope| {
+        let observed_lock = lock.clone();
+        let observer = scope.spawn(move || {
+            observed_lock
+                .availability_with(|| {
+                    probe_held.send(()).expect("announce held probe");
+                    released.recv().expect("startup releases probe");
+                })
+                .expect("probe answers")
+        });
+        probe_landed.recv().expect("probe lands before startup");
+
+        let mut release_probe = Some(release_probe);
+        let resident = ResidentLock::acquire_with(&paths, || {
+            if let Some(release) = release_probe.take() {
+                release.send(()).expect("release overlapping probe");
+            }
+        })
+        .expect("probe-width contention cannot become already-up");
+
+        assert_eq!(
+            observer.join().expect("probe thread"),
+            sill::Availability::Available
+        );
+        assert_eq!(
+            lock.availability().expect("live resident probe"),
+            sill::Availability::Held
+        );
+        drop(resident);
+        assert_eq!(
+            lock.availability().expect("released resident probe"),
+            sill::Availability::Available
+        );
+    });
+
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
