@@ -69,27 +69,56 @@ impl Fixture {
     }
 
     /// Publish the current tip through the same configuration `apply` reads.
-    fn publish_current_tip(&self) {
-        self.pair_with("origin", "refs/heads/main");
-        self.publish("refs/remotes/origin/main");
-    }
-
-    /// Pair the current branch with a remote and a branch on that remote.
     ///
-    /// Both halves are written because both are read: the pairing is the whole
-    /// of what names a baseline, and a `merge` carrying no `remote` names no
-    /// upstream at all. Writing one alone is a configuration this repository
-    /// can hold, so the arms that hold it are tests rather than an oversight.
-    fn pair_with(&self, remote: &str, merge: &str) {
-        self.expect(&["config", "branch.main.remote", remote]);
-        self.expect(&["config", "branch.main.merge", merge]);
+    /// Both halves of the pairing are set because the guard reads both: a
+    /// `merge` with no `remote` names no remote-tracking reference and is not
+    /// a lane that tracks anything.
+    fn publish_current_tip(&self) {
+        let tip = self.head();
+        self.add_origin_remote();
+        self.track("origin", "refs/heads/main");
+        self.expect(&["update-ref", "refs/remotes/origin/main", &tip]);
     }
 
-    /// Stand a remote-tracking reference at the current tip.
-    fn publish(&self, reference: &str) -> String {
+    /// Pair the current branch with a remote and an integration branch, in the
+    /// local scope the guard reads.
+    fn track(&self, remote: &str, merge: &str) {
+        self.expect(&["config", "--local", "branch.main.remote", remote]);
+        self.expect(&["config", "--local", "branch.main.merge", merge]);
+    }
+
+    /// Poison the *effective* pairing the way a lane's git shadow poisons it,
+    /// leaving the local scope intact.
+    ///
+    /// Measured in a lane worktree rather than imagined: the shadow overrides
+    /// `branch.<lane>.remote` to `.` at command scope while the local scope
+    /// still names the real remote, so `git config --get` answers `.` and
+    /// `git config --local --get` answers `origin`. Worktree scope stands in
+    /// for command scope here because both outrank local and a fixture cannot
+    /// set the agent's command line; what is reproduced is the disagreement
+    /// between the effective value and the local one, which is the whole trap.
+    fn poison_effective_remote(&self) {
+        self.expect(&["config", "extensions.worktreeConfig", "true"]);
+        self.expect(&["config", "--worktree", "branch.main.remote", SELF_REMOTE]);
+    }
+
+    /// The origin remote alone, with nothing published through it yet.
+    fn add_origin_remote(&self) {
+        let origin = self.path().to_str().expect("scratch path is UTF-8");
+        self.expect(&["remote", "add", "origin", origin]);
+    }
+
+    /// Publish the tip under a second remote-tracking name reachable only
+    /// through `origin/HEAD`.
+    ///
+    /// The name differs from the integration branch's on purpose: a refusal
+    /// that names this one cannot have arrived through `branch.<lane>.merge`,
+    /// and a refusal that names the other cannot have arrived through here.
+    fn point_origin_head_at(&self, branch: &str) {
         let tip = self.head();
-        self.expect(&["update-ref", reference, &tip]);
-        self.expect(&["rev-parse", "--short", reference])
+        let reference = format!("refs/remotes/origin/{branch}");
+        self.expect(&["update-ref", &reference, &tip]);
+        self.expect(&["symbolic-ref", "refs/remotes/origin/HEAD", &reference]);
     }
 
     /// Refuse the branch update the way the real guard refuses it, recording
@@ -654,25 +683,152 @@ fn refusal_message(fixture: &Fixture) -> String {
 }
 
 /// A refusal that names no baseline cannot be told apart from a misresolved
-/// one, so the resolution has to say which reference it reached.
+/// one, so each resolution has to say which reference it reached.
 ///
-/// The pairing here names neither `origin` nor the branch's own name, and the
-/// branch it does name is published while `refs/remotes/origin/main` is not.
-/// So a refusal quoting `refs/remotes/upstream/trunk` can only have been
-/// assembled out of `branch.main.remote` and `branch.main.merge`, and a guard
-/// that had gone back to assuming a remote or a branch would find nothing to
-/// refuse at all.
+/// Both resolutions are configured here and they name different references, so
+/// this assertion fails if the guard reaches the backstop instead.
 #[test]
 fn a_refusal_names_the_integration_reference_it_resolved() {
     let fixture = Fixture::history("names-integration");
-    fixture.pair_with("upstream", "refs/heads/trunk");
-    let published = fixture.publish("refs/remotes/upstream/trunk");
+    fixture.publish_current_tip();
+    fixture.point_origin_head_at("trunk");
+    let published = fixture.expect(&["rev-parse", "--short", "refs/remotes/origin/main"]);
+
+    let message = refusal_message(&fixture);
+
+    assert!(
+        message.contains("refs/remotes/origin/main"),
+        "the refusal never named the integration reference it resolved: {message}"
+    );
+    assert!(
+        !message.contains("refs/remotes/origin/trunk"),
+        "the refusal named the backstop instead of the integration branch: {message}"
+    );
+    assert!(
+        message.contains(&published),
+        "the refusal named a reference without the commit it stood at: {message}"
+    );
+}
+
+/// The pairing is the only resolution, so a published `origin/HEAD` behind a
+/// branch that pairs with nothing resolves no baseline at all.
+///
+/// This is the shape that would previously have been refused through the
+/// backstop, kept as a test because deleting the backstop without pinning its
+/// absence would leave the guard free to grow a second resolution back. The
+/// predecessor has no such fallback, and a baseline reached only on this side
+/// is a policy this side invented.
+#[test]
+fn a_branch_that_pairs_with_nothing_is_inert_even_where_origin_head_is_published() {
+    let fixture = Fixture::history("no-backstop");
+    fixture.add_origin_remote();
+    fixture.point_origin_head_at("trunk");
+    let tip = fixture.head();
+    let base = fixture.expect(&["rev-parse", "HEAD~2"]);
+
+    apply(
+        fixture.path(),
+        OsStr::new(PREPARED),
+        &format!("{tip} {base} refs/heads/main\n"),
+    )
+    .expect("origin/HEAD is not a baseline this guard resolves");
+}
+
+/// A pairing whose remote is the self remote names no reference at all.
+///
+/// `.` is what the shadow writes to aim a lane's upstream at itself, and the
+/// predecessor rejects it by name rather than letting it through to be
+/// resolved. This asserts the resolution rather than the guard's end state on
+/// purpose: a `.` remote spells `refs/remotes/./<branch>`, which git does not
+/// normalise and never resolves, so the guard falls inert either way and an
+/// end-to-end assertion would pass just as well with the rule deleted. Only
+/// the resolved value separates the stated rule from that accident. The arm
+/// below then confirms the accident is not doing the work.
+#[test]
+fn a_branch_paired_with_the_self_remote_names_no_reference() {
+    let fixture = Fixture::history("self-remote");
+    let tip = fixture.head();
+    let base = fixture.expect(&["rev-parse", "HEAD~2"]);
+    fixture.add_origin_remote();
+    fixture.expect(&["update-ref", "refs/remotes/origin/main", &tip]);
+    fixture.track(SELF_REMOTE, "refs/heads/main");
+
+    assert_eq!(
+        declared_upstream_reference(fixture.path(), "refs/heads/main")
+            .expect("the pairing is readable"),
+        None,
+        "the self remote was carried into a reference instead of being refused by name"
+    );
+
+    apply(
+        fixture.path(),
+        OsStr::new(PREPARED),
+        &format!("{tip} {base} refs/heads/main\n"),
+    )
+    .expect("a branch paired with the self remote tracks no published history");
+}
+
+/// The pairing names the remote, so a lane that publishes through a remote
+/// other than `origin` is protected under that remote's name.
+///
+/// Nothing in the pairing rule privileges `origin`, and a resolution that
+/// hardcoded it would answer a reference this fixture never publishes while
+/// silently protecting nothing. The integration branch is deliberately not
+/// `main` either, so a hardcoded branch name fails here too.
+#[test]
+fn the_pairing_names_the_remote_rather_than_assuming_origin() {
+    let fixture = Fixture::history("named-remote");
+    let tip = fixture.head();
+    let upstream = fixture.path().to_str().expect("scratch path is UTF-8");
+    fixture.expect(&["remote", "add", "upstream", upstream]);
+    fixture.expect(&["update-ref", "refs/remotes/upstream/trunk", &tip]);
+    fixture.track("upstream", "refs/heads/trunk");
 
     let message = refusal_message(&fixture);
 
     assert!(
         message.contains("refs/remotes/upstream/trunk"),
-        "the refusal never named the integration reference it resolved: {message}"
+        "the guard did not resolve the remote and branch the pairing named: {message}"
+    );
+}
+
+/// The baseline this guard resolves under a lane's real shadow configuration
+/// must be the one the predecessor resolves there.
+///
+/// The predecessor's `_declared_upstream_ref` in `spice/hooks/refguard.py`
+/// reads `branch.<lane>.remote` and `branch.<lane>.merge` from local scope and
+/// from nowhere else, so under the shadow it answers `refs/remotes/origin/main`
+/// and the guard stays live. Reading the effective value instead answers `.`
+/// there, which this guard treats as no upstream, and the whole guard would go
+/// quietly inert in every lane while its battery stayed green -- a rewind that
+/// abandons published work would simply be permitted.
+///
+/// So this fixture carries the disagreement itself: local scope names `origin`
+/// while the effective scope answers `.`. The refusal is asserted rather than
+/// merely the resolution, because being live is the property that is lost.
+#[test]
+fn the_baseline_under_a_poisoned_effective_remote_is_the_one_local_scope_names() {
+    let fixture = Fixture::history("shadow-parity");
+    fixture.publish_current_tip();
+    fixture.poison_effective_remote();
+    let published = fixture.expect(&["rev-parse", "--short", "refs/remotes/origin/main"]);
+
+    assert_eq!(
+        fixture.expect(&["config", "--get", "branch.main.remote"]),
+        SELF_REMOTE,
+        "the fixture never reproduced the shadow: the effective remote is not poisoned"
+    );
+    assert_eq!(
+        fixture.expect(&["config", "--local", "--get", "branch.main.remote"]),
+        "origin",
+        "the fixture never reproduced the shadow: local scope lost the real remote"
+    );
+
+    let message = refusal_message(&fixture);
+
+    assert!(
+        message.contains("refs/remotes/origin/main"),
+        "the guard did not resolve the reference local scope names: {message}"
     );
     assert!(
         message.contains(&published),
@@ -687,19 +843,22 @@ fn a_refusal_names_the_integration_reference_it_resolved() {
 /// checkout that may be absent: a differential that skipped itself when the
 /// other side went missing would stop checking at exactly the moment the two
 /// guards were free to drift. What it costs is that this transcription can go
-/// stale against a predecessor that moves, which is the trade the same
-/// decision already makes in `spice/tests/config_coexistence.rs`.
+/// stale against a predecessor that moves, which is the trade the same decision
+/// already makes in `spice/tests/config_coexistence.rs`.
 ///
-/// Written as its own resolution rather than by calling the production one, so
-/// the two answers below are genuinely two answers. It spells its own literals
-/// for the same reason: sharing `SELF_REMOTE` or `LOCAL_PREFIX` with the guard
-/// would let a redefinition of either move both sides at once, and two sides
-/// that move together agree about everything. These are the strings the
-/// predecessor's own constants hold.
-fn predecessor_upstream_reference(fixture: &Fixture, branch: &str) -> Option<String> {
-    let read = |key: &str| {
+/// Written as its own resolution rather than by calling the guard's, so the two
+/// answers compared below are genuinely two answers. It spells its own literals
+/// for the same reason: sharing `SELF_REMOTE` or `LOCAL_PREFIX` would let a
+/// redefinition of either move both sides at once, and two sides that move
+/// together agree about everything. These are the strings the predecessor's own
+/// constants hold.
+fn predecessor_upstream_reference(fixture: &Fixture, current_ref: &str) -> Option<String> {
+    let branch = current_ref
+        .strip_prefix("refs/heads/")
+        .unwrap_or(current_ref);
+    let read = |key: String| {
         let output =
-            git(fixture.path(), &["config", "--local", "--get", key]).expect("git launches");
+            git(fixture.path(), &["config", "--local", "--get", &key]).expect("git launches");
         let value = String::from_utf8(output.stdout)
             .expect("git output is UTF-8")
             .trim()
@@ -707,8 +866,8 @@ fn predecessor_upstream_reference(fixture: &Fixture, branch: &str) -> Option<Str
         (output.status.success() && !value.is_empty()).then_some(value)
     };
 
-    let remote = read(&format!("branch.{branch}.remote"))?;
-    let merge = read(&format!("branch.{branch}.merge"))?;
+    let remote = read(format!("branch.{branch}.remote"))?;
+    let merge = read(format!("branch.{branch}.merge"))?;
     if remote == "." {
         return None;
     }
@@ -716,46 +875,51 @@ fn predecessor_upstream_reference(fixture: &Fixture, branch: &str) -> Option<Str
     Some(format!("refs/remotes/{remote}/{name}"))
 }
 
-/// The two guards resolve one baseline, on the configuration a lane runs under.
+/// The two guards resolve one baseline, row for row.
 ///
-/// The shadow row is the one this worktree actually carries: `branch.<lane>.
-/// merge` set, and `branch.<lane>.remote` poisoned to `.` so the branch is
-/// paired with itself. Both guards have to read that as no upstream, because a
-/// branch that is its own upstream reads every local commit as published and
-/// refuses the ordinary amends the guard exists to allow. A real published
-/// reference stands there too, so declining it is a decision rather than an
-/// empty repository's only available answer.
+/// The test above pins that this guard stays live under the shadow; this one
+/// pins that the predecessor stays live there too, and on the same reference.
+/// Those are separate claims: a port could hold its own behaviour still while
+/// drifting away from the system it has to agree with, and nothing that asserts
+/// only this side's answer would notice. Each row compares the declared
+/// reference and then the resolved commit, so a side that changed either --
+/// or changed whether it answered at all -- parts from the other here.
 ///
-/// Agreement on that row alone would be agreement between two functions that
-/// answer nothing, so the table carries rows that resolve as well, and the
-/// final assertion refuses to accept a run in which nothing resolved.
+/// The reference is compared and not just the commit because one row is only
+/// visible there. A `.` remote composes `refs/remotes/./<branch>`, which git
+/// never resolves -- measured, not assumed -- so dropping the `.` refusal
+/// outright would still reach no commit and agree on the commit alone.
 ///
-/// Both the name and the commit are compared, because the shadow row is only
-/// visible in the name. A `.` remote composes `refs/remotes/./<branch>`, which
-/// git never resolves -- measured, not assumed -- so a guard that dropped the
-/// refusal outright would still reach no baseline and agree here on the commit
-/// alone. What it would stop agreeing about is the reference it declared, which
-/// is the answer `_declared_upstream_ref` actually gives, and which decides
-/// whether an unresolvable pairing reads as no pairing at all.
+/// The rows resolve as well as decline, and the closing assertion refuses a run
+/// in which none resolved, because two resolutions that both answer nothing
+/// agree about everything.
 #[test]
 fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
     /// One row: the scratch repository's label, and the pairing it carries.
     type Row = (&'static str, fn(&Fixture));
 
     let rows: [Row; 4] = [
+        // The configuration a lane actually runs under, where both sides must
+        // read past the shadow to the same live reference.
         ("agree-shadow", |fixture| {
-            fixture.publish("refs/remotes/origin/main");
-            fixture.pair_with(SELF_REMOTE, "refs/heads/main");
+            fixture.publish_current_tip();
+            fixture.poison_effective_remote();
         }),
-        ("agree-published", |fixture| {
-            fixture.pair_with("upstream", "refs/heads/trunk");
-            fixture.publish("refs/remotes/upstream/trunk");
+        // A pairing that names `.` in local scope, which is the one the shadow
+        // cannot produce and both sides refuse outright.
+        ("agree-self-paired", |fixture| {
+            fixture.publish_current_tip();
+            fixture.track(SELF_REMOTE, "refs/heads/main");
         }),
-        ("agree-unpublished", |fixture| {
-            fixture.pair_with("upstream", "refs/heads/trunk");
+        // Neither `origin` nor the branch's own name, so agreement here cannot
+        // come from either side assuming one.
+        ("agree-named-remote", |fixture| {
+            let tip = fixture.head();
+            fixture.expect(&["update-ref", "refs/remotes/upstream/trunk", &tip]);
+            fixture.track("upstream", "refs/heads/trunk");
         }),
         ("agree-merge-alone", |fixture| {
-            fixture.expect(&["config", "branch.main.merge", "refs/heads/main"]);
+            fixture.expect(&["config", "--local", "branch.main.merge", "refs/heads/main"]);
         }),
     ];
 
@@ -763,30 +927,31 @@ fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
     for (label, configure) in rows {
         let fixture = Fixture::history(label);
         configure(&fixture);
+        let current_ref = fixture.expect(&["symbolic-ref", "--quiet", "HEAD"]);
 
-        let our_reference =
-            integration_reference(fixture.path()).expect("the pairing reaches an answer");
-        let their_reference = predecessor_upstream_reference(&fixture, "main");
+        let ours = declared_upstream_reference(fixture.path(), &current_ref)
+            .expect("the pairing reaches an answer");
+        let theirs = predecessor_upstream_reference(&fixture, &current_ref);
         assert_eq!(
-            our_reference, their_reference,
+            ours, theirs,
             "on {label} this guard and the predecessor declared different \
              upstreams, so the two systems no longer read the same pairing"
         );
 
-        let ours = publication_baseline(fixture.path())
+        let our_baseline = publication_baseline(fixture.path(), &current_ref)
             .expect("the baseline resolution reaches an answer")
             .map(|baseline| (baseline.reference, baseline.commit));
-        let theirs = their_reference.and_then(|reference| {
+        let their_baseline = theirs.and_then(|reference| {
             commit_oid(fixture.path(), &reference)
                 .expect("the transcribed reference resolves or does not")
                 .map(|commit| (reference, commit))
         });
         assert_eq!(
-            ours, theirs,
+            our_baseline, their_baseline,
             "on {label} this guard and the predecessor resolved different \
              baselines, so the two systems no longer refuse the same rewinds"
         );
-        resolved += usize::from(ours.is_some());
+        resolved += usize::from(our_baseline.is_some());
     }
 
     assert!(
@@ -797,9 +962,8 @@ fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
 }
 
 /// Carrying the reference out of the resolution must not give the guard a
-/// baseline it never resolved. Each arm holds one of the configurations the
-/// pairing cannot be assembled from, and the rewind the test above refuses is
-/// permitted in every one of them.
+/// baseline it never resolved. Each arm leaves it inert, and the rewind that
+/// the two tests above refuse is permitted here instead.
 #[test]
 fn a_lane_with_no_resolvable_baseline_permits_the_rewind_it_would_otherwise_refuse() {
     let unpublished = |label: &str| {
@@ -809,26 +973,24 @@ fn a_lane_with_no_resolvable_baseline_permits_the_rewind_it_would_otherwise_refu
         (fixture, format!("{tip} {base} refs/heads/main\n"))
     };
 
-    let (fixture, queue) = unpublished("inert-unpaired");
+    let (fixture, queue) = unpublished("inert-no-pairing");
+    fixture.add_origin_remote();
     apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect("a branch paired with nothing has no published history to protect");
+        .expect("a branch whose pairing names no remote tracks no published history");
 
-    let (fixture, queue) = unpublished("inert-merge-alone");
-    fixture.expect(&["config", "branch.main.merge", "refs/heads/main"]);
+    let (fixture, queue) = unpublished("inert-no-merge");
+    fixture.add_origin_remote();
+    fixture.expect(&["config", "--local", "branch.main.remote", "origin"]);
     apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect("a merge naming no remote names no upstream");
-
-    let (fixture, queue) = unpublished("inert-remote-alone");
-    fixture.expect(&["config", "branch.main.remote", "origin"]);
-    apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect("a remote naming no branch names no upstream");
+        .expect("a pairing naming a remote but no integration branch is inert");
 
     let (fixture, queue) = unpublished("inert-never-published");
-    fixture.pair_with("origin", "refs/heads/main");
+    fixture.add_origin_remote();
+    fixture.track("origin", "refs/heads/main");
     apply(fixture.path(), OsStr::new(PREPARED), &queue)
         .expect("an integration branch never published is inert");
 
-    // Without this the four passes above are indistinguishable from a guard
+    // Without this the three passes above are indistinguishable from a guard
     // that stopped refusing anything: the same queue, in the same fixture
     // shape, must still be refused once a baseline exists.
     let (fixture, queue) = unpublished("inert-control");
