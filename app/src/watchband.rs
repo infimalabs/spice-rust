@@ -128,7 +128,12 @@ pub const LINEAGE_JOIN_GUTTER: f64 = 0.2;
 /// What a drop on a team states, decided by where in that team it landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineageDrop {
-    /// Move the dragged team into the target team's position.
+    /// Insert the dragged team immediately before the target team.
+    ///
+    /// Stated as "before the target" rather than "into the target's position"
+    /// because those coincide only when the dragged team came from later in
+    /// the row. Dragging one forward lands it one place ahead of where the
+    /// target stood, since removing it first shifts the target back.
     Reorder,
     /// Give the dragged team's agents to the target team.
     Join,
@@ -185,9 +190,16 @@ pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
 ///
 /// A join appends the dragged team's agents *after* the target's, never
 /// before. The target's first agent is its primary composer, so prepending
-/// would silently hand the composer to whichever team was dragged in. A drop
-/// of a team onto itself, or of a team that is no longer on the surface,
-/// states nothing and returns `None` rather than a no-op command.
+/// would silently hand the composer to whichever team was dragged in.
+///
+/// A drop that states nothing returns `None` rather than a no-op command, and
+/// the arrangement it would have stated is what decides that. Dropping a team
+/// on itself and dropping one that is no longer on the surface are the cases
+/// that can be recognised up front; a team dropped on the neighbour it already
+/// sits in front of is not, because that gesture is a real drag of a live team
+/// onto a different live team and only the result gives it away. Every one of
+/// them would otherwise commit a complete restatement of the table the canvas
+/// is already showing, writing a durable fact that records no change.
 #[must_use]
 pub fn arrangement(
     teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
@@ -198,21 +210,21 @@ pub fn arrangement(
     if dragged == target {
         return None;
     }
-    let mut teams = teams.to_vec();
-    let dragged_at = teams.iter().position(|(team, _)| *team == dragged)?;
-    if !teams.iter().any(|(team, _)| *team == target) {
+    let mut arranged = teams.to_vec();
+    let dragged_at = arranged.iter().position(|(team, _)| *team == dragged)?;
+    if !arranged.iter().any(|(team, _)| *team == target) {
         return None;
     }
-    let (_, moved) = teams.remove(dragged_at);
-    let target_at = teams
+    let (_, moved) = arranged.remove(dragged_at);
+    let target_at = arranged
         .iter()
         .position(|(team, _)| *team == target)
         .expect("the target survives removing a different team");
     match drop {
-        LineageDrop::Reorder => teams.insert(target_at, (dragged, moved)),
-        LineageDrop::Join => teams[target_at].1.extend(moved),
+        LineageDrop::Reorder => arranged.insert(target_at, (dragged, moved)),
+        LineageDrop::Join => arranged[target_at].1.extend(moved),
     }
-    Some(teams)
+    (arranged != teams).then_some(arranged)
 }
 
 /// Join the lane table, the inbox and the board into one row per lane.

@@ -19,7 +19,7 @@ mod canvas_announcement;
 mod message_unavailable;
 
 use canvas_announcement::{
-    fact_u64, process_spec, resident_fixture, seed_lane_in_lineage, test_uuid,
+    fact_u64, process_spec, resident_fixture, seed_lane, seed_lane_in_lineage, test_uuid,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
