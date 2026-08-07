@@ -1,9 +1,9 @@
 # Coexistence — this port beside the Python predecessor
 
-`CUTOVER.md` describes a one-time clean break. This describes where the fleet
-is before that break, and is today: both systems installed, both reading this
-repository, neither decommissioned. It names every boundary where the two
-touch, gives each a verdict, and records the command behind it.
+[INSTALL.md](INSTALL.md) installs this port beside the Python predecessor,
+keeping both. This is where the fleet stands today: both systems installed,
+both reading this repository, neither decommissioned. It names every boundary
+where the two touch, gives each a verdict, and records the command behind it.
 
 Every command here is read-only, and every output was taken on 2026-08-07; the
 PIDs and mtimes below belong to that snapshot and will not survive it. The one
