@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use rusqlite::{Connection, params};
@@ -44,6 +47,39 @@ impl Scratch {
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(unix)]
+struct PermissionRestore {
+    path: PathBuf,
+    permissions: Option<fs::Permissions>,
+}
+
+#[cfg(unix)]
+impl PermissionRestore {
+    fn new(path: &Path, permissions: fs::Permissions) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            permissions: Some(permissions),
+        }
+    }
+
+    fn restore(mut self) {
+        let permissions = self
+            .permissions
+            .take()
+            .expect("permission restoration remains armed");
+        fs::set_permissions(&self.path, permissions).expect("restore fixture permissions");
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PermissionRestore {
+    fn drop(&mut self) {
+        if let Some(permissions) = self.permissions.take() {
+            let _ = fs::set_permissions(&self.path, permissions);
+        }
     }
 }
 
@@ -996,6 +1032,88 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
     assert_eq!(deduped["sources"].as_array().map(Vec::len), Some(1));
     assert_eq!(deduped["sources"][0]["compressed"], true);
     assert_eq!(deduped["turns"], 2);
+
+    scratch.remove();
+}
+
+#[cfg(unix)]
+#[test]
+fn public_thread_refusal_preserves_an_incomplete_claude_search_before_codex() {
+    let scratch = Scratch::new("unreadable-thread");
+    let claude_home = scratch.path().join("claude-home");
+    let projects = claude_home.join("projects");
+    let denied = projects.join("denied");
+    fs::create_dir_all(&denied).expect("denied Claude project branch exists");
+    let original = fs::metadata(&denied)
+        .expect("denied branch metadata exists")
+        .permissions();
+    let restore = PermissionRestore::new(&denied, original.clone());
+    let mut blocked = original;
+    blocked.set_mode(0o0);
+    fs::set_permissions(&denied, blocked).expect("deny Claude project branch reads");
+
+    let read_error = fs::read_dir(&denied)
+        .expect_err("fixture must force a real read_dir failure")
+        .to_string();
+    let codex_home = scratch.path().join("codex-home");
+    fs::create_dir_all(codex_home.join("sessions")).expect("empty Codex session storage exists");
+    let spoken = invoke(
+        &strings(&["--json", "session", "thread", CLAUDE_THREAD_DASHED]),
+        &[
+            (
+                "CLAUDE_CONFIG_DIR",
+                claude_home.to_string_lossy().into_owned(),
+            ),
+            ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+            ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
+        ],
+    );
+    restore.restore();
+
+    assert_eq!(
+        spoken.code,
+        Some(REFUSAL_EXIT),
+        "refusal stdout: {} stderr: {}",
+        utf8(&spoken.out),
+        utf8(&spoken.err)
+    );
+    assert!(
+        spoken.out.is_empty(),
+        "refusal does not impersonate a reply"
+    );
+    assert_eq!(
+        spoken.err.iter().filter(|byte| **byte == b'\n').count(),
+        1,
+        "public refusal is one JSON outcome"
+    );
+    let envelope: Value =
+        serde_json::from_slice(&spoken.err).expect("refusal is a structured outcome DTO");
+    assert_eq!(envelope["kind"], "refusal");
+    assert_eq!(envelope["reason"], "session::thread-unresolved");
+    let remedy = envelope["remedy"]
+        .as_str()
+        .expect("thread refusal carries a remedy");
+    let claude_failure = format!(
+        "transcript search was incomplete: could not read directory {}: {read_error}",
+        denied.display()
+    );
+    let codex_failure = format!(
+        "missing Codex state database {}",
+        codex_home.join("state_5.sqlite").display()
+    );
+    assert_eq!(
+        remedy,
+        format!(
+            "restore the owning Codex state index or Claude project transcript, then retry; \
+             {claude_failure}; {codex_failure}"
+        ),
+        "selected Claude failure precedes the prepared Codex failure"
+    );
+    let former_absence = format!(
+        "Claude thread {CLAUDE_THREAD} is absent beneath {}",
+        projects.display()
+    );
+    assert!(!remedy.contains(&former_absence), "{remedy}");
 
     scratch.remove();
 }
