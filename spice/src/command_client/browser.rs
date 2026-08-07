@@ -37,10 +37,11 @@ pub(crate) fn open_canvas_result_with(
     before_current_check: impl FnOnce(),
     launch: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<wire::CanvasOpen, Fault> {
-    let discovery = DiscoveryRead::open_fault(discovery_path)?;
+    let discovery = DiscoveryRead::open_fault(discovery_path, &resident_lock_path(discovery_path))?;
     dialable_endpoint(&discovery.value.endpoint)?;
     before_current_check();
     discovery.verify_current_fault()?;
+    discovery.require_live_publisher()?;
     if let Err(detail) = launch(&discovery.value.endpoint) {
         return Err(Fault {
             class: FaultClass::Environment,
