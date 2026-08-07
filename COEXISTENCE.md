@@ -1,14 +1,16 @@
 # Coexistence — this port beside the Python predecessor
 
 [INSTALL.md](INSTALL.md) installs this port beside the Python predecessor,
-keeping both. This is where the fleet stands today: both systems installed,
-both reading this repository, neither decommissioned. It names every boundary
-where the two touch, gives each a verdict, and records the command behind it.
+keeping both. This document is where the fleet actually stands: the
+predecessor installed, this port running from a build directory, both reading
+this repository, neither decommissioned. It names every boundary where the two
+touch, gives each a verdict, and records the command behind it.
 
-Every command here is read-only, and every output was taken on 2026-08-07; the
-PIDs and mtimes below belong to that snapshot and will not survive it. The one
-command that would change a boundary is named where it applies, and was not
-run.
+Every command here is read-only but one: `cargo xtask activate-hooks` would
+change a boundary, and is recorded because it refuses before its first write,
+with the state it would have changed shown unchanged beside it. Every output
+was taken on 2026-08-07; the PIDs and mtimes below belong to that snapshot and
+will not survive it.
 
 ## Register
 
@@ -19,21 +21,28 @@ run.
 | 3 | Discovery | writes `$COMMON/.spice/canvas` | writes no such file | **conflicting** |
 | 4 | Hooks | `.spice-install/git-hooks` via `core.hooksPath` | `.spice/hooks` via `core.hooksPath` | **conflicting** |
 | 5 | Configuration | authors root `spice.toml`, predecessor roots only | reads that same file as its `repository` layer, and refuses unknown keys | **decided** |
-| 6 | Processes | transient CLI invocations, plus listeners on non-default ports | long-lived serve residents, PIDs 10865 and 25690 | disjoint |
-| 7 | Ports | `127.0.0.1:8765` (`resident/runtime.rs:195`) | `serve.port = 8765` | **conflicting** |
+| 6 | Processes | lane listeners on loopback, never on 8765 or 8766 | serve residents on `*:8765` and `*:8766` | disjoint |
+| 7 | Ports | `127.0.0.1:8765` (`resident/runtime.rs:199`) | `serve.port = 8765` | **conflicting** |
 | 8 | Browser assets | `dist/stage-app/`, per worktree | embedded in `spice-z/spice/serve/web.py` | disjoint |
 
 ## Evidence
 
-Outputs below are as produced, with one substitution: the home prefix is shown
-as `~`, because the commit gate refuses absolute user-path literals.
+Outputs below are as produced, with two edits: the home prefix is shown as `~`,
+because the commit gate refuses absolute user-path literals, and `…` marks an
+elision. Every block runs from a lane worktree, after:
+
+```
+$ COMMON=$(git rev-parse --path-format=absolute --git-common-dir)
+$ echo "$COMMON"
+~/devel/spice-rust.git
+```
 
 Boundary 1 — executables.
 
 ```
 $ command -v spice
 ~/.local/bin/spice
-$ ls -d "$(git rev-parse --path-format=absolute --git-common-dir)/.spice-install"
+$ ls -d "$COMMON/.spice-install"
 ls: ~/devel/spice-rust.git/.spice-install: No such file or directory
 ```
 
@@ -43,14 +52,18 @@ owns the `spice` name on `PATH`.
 Boundary 2 — durable state.
 
 ```
-$ ls "$COMMON/.spice/data/"
-spiceacks.sqlite3  spicejournal.sqlite3  spicemaxims.sqlite3
-spiceprojections.sqlite3  spiceteams.sqlite3  taskchampion.sqlite3
+$ ls -1 "$COMMON/.spice/data/"
+spiceacks.sqlite3
+spicejournal.sqlite3
+spicemaxims.sqlite3
+spiceprojections.sqlite3
+spiceteams.sqlite3
+taskchampion.sqlite3
 ```
 
 One directory, six databases, disjoint filenames. Shared by design: neither
 system opens the other's file. Both source trees independently name `.spice`
-(`spice/src/repository.rs:10`, `spice-z/spice/paths.py:21`), so the sharing is
+(`spice/src/repository.rs:37`, `spice-z/spice/paths.py:21`), so the sharing is
 convergent, not negotiated.
 
 Boundaries 3 and 7 — discovery and ports, one realized failure.
@@ -59,10 +72,10 @@ Boundaries 3 and 7 — discovery and ports, one realized failure.
 $ cat "$COMMON/.spice/canvas"
 {"endpoint":"http://127.0.0.1:8765","capability":"0386d1ba-…","epoch":"a3b7…"}
 $ ls -l "$COMMON/.spice/canvas"
--rw------- 1 c staff 135 Aug 6 04:05 …/.spice/canvas
-$ lsof -nP -iTCP:8765 -sTCP:LISTEN
-COMMAND   PID USER  FD  TYPE  … NAME
-Python  10865    c   3u  IPv4  … TCP *:8765 (LISTEN)
+-rw-------@ 1 c staff 135 Aug 6 04:05 …/.spice/canvas
+$ lsof -nP -iTCP:8765 -sTCP:LISTEN | awk '{print $1, $9}'
+COMMAND NAME
+Python *:8765
 $ curl -sS -i --max-time 5 http://127.0.0.1:8765/ | head -2
 HTTP/1.1 200 OK
 Server: spice-serve Python/3.14.6
@@ -73,14 +86,29 @@ returns nothing, against a control of `grep -c STATE_DIRNAME …/paths.py` → `
 so the empty result is absence and not a broken search. Yet the endpoint it
 advertises is answered by the predecessor.
 
-This is not a latent clash. It has already happened: a stale discovery file
-from Aug 6 04:05 outlived the resident that wrote it, was never invalidated on
-exit, and now points this port's clients at a foreign server. The record
-carries a `capability` token, and `capability` appears nowhere in the
-predecessor's serve code — so a client that follows discovery presents a
-capability to a process with no concept of one.
+The clash is real but no longer blind. That record, from Aug 6 04:05, outlived
+the resident that wrote it and still names an endpoint the predecessor answers —
+where `capability` appears nowhere in the serve code, so a client following it
+would present a capability to a process with no concept of one. Two orderly
+paths already retire such records: `resident/runtime.rs:390` clears surfaces on
+start, and `:537` faults `canvas::release-incomplete` when one outlives release.
+Neither runs when a resident is killed, so RESIDEN-1kKhyz64 landed a third that
+does not depend on the exit path — `require_live_publisher`
+(`spice/src/command_client.rs:326`) probes the resident lock before dialing and
+faults `canvas::publisher-gone` when it is free. The record above is refused,
+not followed:
 
-Both sides default to the same port independently: `resident/runtime.rs:195`
+```
+$ cargo run -q -p spice -- lane
+spice: canvas::publisher-gone; canvas discovery outlived the resident that published it
+```
+
+One ordering stays open in the tree: `:386` takes the lock, `:390` clears the
+stale surfaces, and the probe asks only whether *a* resident holds the lock,
+not whether it is the one that published the record. A client arriving between
+those two lines reads the lock as held and dials the dead endpoint.
+
+Both sides default to the same port independently: `resident/runtime.rs:199`
 pins `127.0.0.1:8765`, and `spice config show` reports
 `effective.serve.port = 8765`. There is no resolver to fall back through, by
 intent — the comment above that constant says the port is fixed rather than
@@ -91,33 +119,46 @@ Boundary 6 — processes. Filters must be ANDed with `-a`; `lsof` ORs them
 otherwise, which silently returns every listener on the machine.
 
 ```
-$ lsof -nP -a -c spice -iTCP -sTCP:LISTEN
-spice   49177  c  11u  IPv4  … TCP 127.0.0.1:8791 (LISTEN)
-spice   57538  c  11u  IPv4  … TCP 127.0.0.1:63524 (LISTEN)
-$ lsof -nP -a -c Python -iTCP -sTCP:LISTEN
-Python  10865  c   3u  IPv4  … TCP *:8765 (LISTEN)
-Python  25690  c   3u  IPv4  … TCP *:8766 (LISTEN)
+$ lsof -nP -a -c spice -iTCP -sTCP:LISTEN | awk 'NR>1{print $1, $2, $9}'
+spice 49177 127.0.0.1:8791
+spice 57538 127.0.0.1:63524
+spice 63318 127.0.0.1:61583
+spice 67527 127.0.0.1:62061
+$ lsof -nP -a -c Python -iTCP -sTCP:LISTEN | awk 'NR>1{print $1, $2, $9}'
+Python 25690 *:8766
+Python 50021 *:8765
 ```
 
-The processes are disjoint: separate executables, no shared handles, and this
-port binds loopback where the predecessor binds every interface. Repeating the
-probe turns this port's PIDs over while the predecessor's two hold steady,
-which is what marks one side transient and the other resident.
+The processes are disjoint on the evidence above: separate executables, and
+addresses that cannot collide — no `spice` listener is on 8765 or 8766, and
+every one is loopback where the predecessor binds every interface. Lifetime is
+not the separator: three passes minutes apart turned PIDs over on *each* side —
+8765 read 25843, then 64921, then this — while 49177, 57538 and 25690 held
+through all three.
 
-But neither live `spice` listener is on 8765, and no config names a port —
-`grep -n port spice.toml` is empty and the worktree layer sets only `agent`
-and `say`. Peer lanes pass `--port` per invocation to step around a default
-they cannot bind, because the predecessor holds 8765 and 8766 permanently. The
-collision is not absent; it is worked around by hand, once per lane, with
-nothing recording that it must be.
+No config names a port, either. An anchored pattern finds no assignment here
+and finds the predecessor's, so the empty result is absence and not a dead
+pattern:
+
+```
+$ grep -nE '^[[:space:]]*port[[:space:]]*=' spice.toml
+$ grep -nE '^[[:space:]]*port[[:space:]]*=' ~/devel/spice-z/spice/spice.toml
+350:port = 8765
+```
+
+The worktree layer sets only `agent` and `say`. Peer lanes pass `--port` per
+invocation to step around a default they cannot bind, because the predecessor
+holds 8765 and 8766 permanently. The collision is not absent; it is worked
+around by hand, once per lane, with nothing recording that it must be.
 
 Boundary 5 — configuration.
 
 ```
-$ spice config show   # grouped by scope
-repository  ~/devel/spice-rust-a/spice.toml   (31 keys)
-system      ~/devel/spice-z/spice/spice.toml  (249 keys)
-worktree    …/worktrees/spice-rust-a/.spice/config/spice.toml (7 keys)
+$ spice config show \
+  | jq -r '[.provenance[]] | group_by(.scope)[] | "\(.[0].scope) \(.[0].path) (\(length) keys)"'
+repository ~/devel/spice-rust-d/spice.toml (31 keys)
+system ~/devel/spice-z/spice/spice.toml (249 keys)
+worktree ~/devel/spice-rust.git/worktrees/spice-rust-d/.spice/config/spice.toml (7 keys)
 
 $ cargo run -q -p spice -- config --json \
   | jq -r '.body.provenance[]|select(.source=="tracked")|.path' | cut -d. -f1 | sort -u
@@ -133,15 +174,17 @@ one root this port's registry admits, in memory and never in the file:
 
 ```
 $ cd ~/devel/spice-z   # this repo's own spice/ shadows the Python package
-$ REPO=~/devel/spice-rust-b python3 -c 'import os, tomllib
+$ REPO=~/devel/spice-rust-d python3 -c 'import os, tomllib
 from pathlib import Path
 from spice.config.schema import validate_config_keys as check
 p = Path(os.environ["REPO"]) / "spice.toml"; d = tomllib.loads(p.read_text())
 check(d, source_name="repository", source_path=p); print("accepted as written")
 check(dict(d, gate={}), source_name="repository", source_path=p)'
 accepted as written
-SpiceError: unknown configuration key gate (source=repository path=…/spice.toml);
-            did you mean taste?
+Traceback (most recent call last):
+  …
+spice.errors.SpiceError: unknown configuration key gate
+    (source=repository path=…/spice.toml); did you mean taste?
 ```
 
 The file is accepted as written and refused with one port root added, so the
@@ -152,8 +195,9 @@ agent tool call, that advice lands on every lane at once.
 Boundary 8 — browser assets.
 
 ```
-$ ls dist/stage-app/
-generations/  current
+$ ls -1 dist/stage-app/
+current
+generations
 $ grep -c "<!doctype html>" ~/devel/spice-z/spice/serve/web.py
 1
 ```
@@ -167,9 +211,9 @@ predecessor's UI comes from its own package source. No shared path.
 
 ```
 $ git config --show-origin --get-all core.hooksPath
-file:…/worktrees/spice-rust-a/config.worktree   .spice/hooks
+file:~/devel/spice-rust.git/worktrees/spice-rust-d/config.worktree	.spice/hooks
 $ git config --show-origin --get extensions.worktreeConfig
-file:~/devel/spice-rust.git/config       true
+file:~/devel/spice-rust.git/config	true
 ```
 
 Because `extensions.worktreeConfig` is enabled, each worktree selects its own
@@ -202,9 +246,22 @@ anything is published or written. It accepts two values — the tracked
 worktree. The check is on the effective value across all scopes, so two values
 configured anywhere refuse even when each alone would pass. It once cleared
 every worktree unconditionally; it now cannot strip the predecessor's hooks,
-because it stops before the first write. On this fleet every lane selects
-`.spice/hooks`, so the command refuses immediately and changes nothing, which is
-also why it was not needed to produce this document.
+because it stops before the first write.
+
+That is not the refusal a reader gets here. Boundary 1 fires first: the hooks
+to be published are checked for the executable bit at `hooks.rs:92`, seven
+lines above the preflight call, and this port is not installed.
+
+```
+$ cargo xtask activate-hooks
+hook installation failed: …/.spice-install/git-hooks/pre-commit is not executable
+$ git config --show-origin --get-all core.hooksPath
+file:~/devel/spice-rust.git/worktrees/spice-rust-d/config.worktree	.spice/hooks
+```
+
+The hook path is unchanged, so nothing was written. Every lane does select
+`.spice/hooks`, so the preflight *would* refuse — but it is never reached, and
+becomes the operative refusal only once this port is installed.
 
 ## May the two systems share a repository?
 
@@ -222,10 +279,13 @@ by hand, one `--port` per invocation.
 
 So the honest answer is *shared repository yes, shared worktree no, shared
 resident never*. What each protection leaves open is narrower than the boundary
-itself: a stale `canvas` record is refused rather than dialed, but only once
-its publisher is actually gone; the config validator still reads a file the
-other system owns, decided rather than prevented; and the fixed default port
-remains unbindable in every lane with nothing to raise it.
+itself: a stale `canvas` record is refused rather than dialed, but not in the
+window where a new resident already holds the lock and has not yet cleared the
+record; the hooks preflight refuses on paper and is never reached on this
+fleet, because the port it would install is not installed; the config validator
+still reads a file the other system owns, decided rather than prevented; and
+the fixed default port remains unbindable in every lane with nothing to raise
+it.
 
 Schema ownership is decided: the predecessor owns root `spice.toml`, because
 its validator runs on every agent tool call fleet-wide while this port's
