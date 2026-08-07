@@ -1,13 +1,19 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, first_nonquoted_prose, leaf,
-    one_line, reported_tasks, short, standing_title, standings, ticker_line, truncate,
+    ACCENTS, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN, accent, arrangement, badge,
+    elapsed_label, first_nonquoted_prose, leaf, one_line, reported_tasks, short, standing_title,
+    standings, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
 
 const LANE_A: &str = "11111111-1111-4111-8111-111111111111";
 const LANE_B: &str = "22222222-2222-4222-8222-222222222222";
+const LANE_C: &str = "66666666-6666-4666-8666-666666666666";
+const LANE_D: &str = "77777777-7777-4777-8777-777777777777";
+const LINEAGE_ONE: &str = "88888888-8888-4888-8888-888888888888";
+const LINEAGE_TWO: &str = "99999999-9999-4999-8999-999999999999";
+const LINEAGE_THREE: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OCCUPANT: &str = "33333333-3333-4333-8333-333333333333";
 const EPOCH: &str = "44444444-4444-4444-8444-444444444444";
 const TASK_UUID: &str = "55555555-5555-4555-8555-555555555555";
@@ -446,4 +452,150 @@ fn the_ticker_folds_a_command_onto_one_line_within_its_budget() {
     assert_eq!(truncate("exec", 4), "exec");
     assert_eq!(truncate("exécut", 4), "exé…");
     assert_eq!(one_line("  spaced \r\n words  "), "spaced \\n words");
+}
+
+/// One team holding several agents, so a join has more than one agent to move.
+fn seated(id: &str, members: &[(&str, &str)]) -> LaneRow {
+    LaneRow {
+        lane: uuid(id),
+        subscription: wire::intent::LineageLife::Steer,
+        members: members
+            .iter()
+            .map(|(lane, worktree)| member(lane, worktree))
+            .collect(),
+    }
+}
+
+fn arranged(
+    lanes: &[LaneRow],
+    dragged: &str,
+    target: &str,
+    drop: LineageDrop,
+) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
+    arrangement(&topology(lanes), uuid(dragged), uuid(target), drop)
+        .expect("a drop of one live team onto another states an arrangement")
+}
+
+#[test]
+fn a_reorder_moves_the_dragged_lineage_into_the_target_position_without_moving_an_agent() {
+    // No team is named for one of its own members: a team read off its first
+    // member would arrange the same three teams into the same three orders.
+    let lanes = [
+        seated(LINEAGE_ONE, &[(LANE_A, "main-a"), (LANE_B, "main-b")]),
+        seated(LINEAGE_TWO, &[(LANE_C, "main-c")]),
+        seated(LINEAGE_THREE, &[(LANE_D, "main-d")]),
+    ];
+
+    let forward = arranged(&lanes, LINEAGE_THREE, LINEAGE_ONE, LineageDrop::Reorder);
+    assert_eq!(
+        forward,
+        vec![
+            (uuid(LINEAGE_THREE), vec![uuid(LANE_D)]),
+            (uuid(LINEAGE_ONE), vec![uuid(LANE_A), uuid(LANE_B)]),
+            (uuid(LINEAGE_TWO), vec![uuid(LANE_C)]),
+        ],
+        "the dragged team takes the target's position and every agent stays put",
+    );
+
+    // Dragging the other way is not the mirror image: the dragged team still
+    // lands where the target stood, which for a forward drag is one position
+    // later than the target's index in the arrangement it was read from.
+    let backward = arranged(&lanes, LINEAGE_ONE, LINEAGE_THREE, LineageDrop::Reorder);
+    assert_eq!(
+        backward,
+        vec![
+            (uuid(LINEAGE_TWO), vec![uuid(LANE_C)]),
+            (uuid(LINEAGE_ONE), vec![uuid(LANE_A), uuid(LANE_B)]),
+            (uuid(LINEAGE_THREE), vec![uuid(LANE_D)]),
+        ],
+    );
+}
+
+#[test]
+fn a_join_gives_the_dragged_agents_to_the_target_and_keeps_its_primary_composer() {
+    let lanes = [
+        seated(LINEAGE_ONE, &[(LANE_A, "main-a")]),
+        seated(LINEAGE_TWO, &[(LANE_C, "main-c"), (LANE_D, "main-d")]),
+    ];
+
+    let joined = arranged(&lanes, LINEAGE_TWO, LINEAGE_ONE, LineageDrop::Join);
+    assert_eq!(
+        joined,
+        vec![(
+            uuid(LINEAGE_ONE),
+            vec![uuid(LANE_A), uuid(LANE_C), uuid(LANE_D)]
+        )],
+        "the target keeps its agents first and the emptied team is gone",
+    );
+    assert_eq!(
+        joined[0].1.first(),
+        Some(&uuid(LANE_A)),
+        "the target's first agent stays its primary composer",
+    );
+}
+
+#[test]
+fn a_drop_that_states_nothing_sends_nothing() {
+    let lanes = [
+        seated(LINEAGE_ONE, &[(LANE_A, "main-a")]),
+        seated(LINEAGE_TWO, &[(LANE_C, "main-c")]),
+    ];
+
+    assert_eq!(
+        arrangement(
+            &topology(&lanes),
+            uuid(LINEAGE_ONE),
+            uuid(LINEAGE_ONE),
+            LineageDrop::Reorder
+        ),
+        None,
+        "a team dropped on itself is not an arrangement",
+    );
+    assert_eq!(
+        arrangement(
+            &topology(&lanes),
+            uuid(LINEAGE_THREE),
+            uuid(LINEAGE_ONE),
+            LineageDrop::Join
+        ),
+        None,
+        "a team the surface no longer shows cannot be dragged",
+    );
+    assert_eq!(
+        arrangement(
+            &topology(&lanes),
+            uuid(LINEAGE_ONE),
+            uuid(LINEAGE_THREE),
+            LineageDrop::Join
+        ),
+        None,
+        "a team the surface no longer shows cannot be dropped on",
+    );
+    assert_eq!(
+        arrangement(
+            &topology(&lanes),
+            uuid(LANE_A),
+            uuid(LINEAGE_TWO),
+            LineageDrop::Join
+        ),
+        None,
+        "one member of a team is not the team, and drags nothing",
+    );
+}
+
+#[test]
+fn the_gutter_that_joins_is_the_outer_fifth_of_the_lineage_under_the_pointer() {
+    assert_eq!(LINEAGE_JOIN_GUTTER, 0.2);
+    assert_eq!(LineageDrop::at(0.0, 100.0), LineageDrop::Join);
+    assert_eq!(LineageDrop::at(20.0, 100.0), LineageDrop::Join);
+    assert_eq!(LineageDrop::at(20.001, 100.0), LineageDrop::Reorder);
+    assert_eq!(LineageDrop::at(50.0, 100.0), LineageDrop::Reorder);
+    assert_eq!(LineageDrop::at(79.999, 100.0), LineageDrop::Reorder);
+    assert_eq!(LineageDrop::at(80.0, 100.0), LineageDrop::Join);
+    assert_eq!(LineageDrop::at(100.0, 100.0), LineageDrop::Join);
+    // A team with no width has no gutter, so it can only be reordered. The
+    // offset outside it is the case that needs stating: dividing by a zero
+    // width there is an infinite fraction, which lands in a gutter.
+    assert_eq!(LineageDrop::at(0.0, 0.0), LineageDrop::Reorder);
+    assert_eq!(LineageDrop::at(-5.0, 0.0), LineageDrop::Reorder);
 }

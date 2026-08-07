@@ -449,6 +449,32 @@ pub struct LineageConfigure {
     pub manual_projects: Option<Vec<String>>,
 }
 
+/// One Canvas lineage and the seated lanes it holds, in operator order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineageArrangement {
+    /// Stable Canvas lineage identifying the group.
+    pub lineage_id: CanonicalUuid,
+    /// Every lane this lineage holds after the arrangement commits.
+    pub lanes: Vec<CanonicalUuid>,
+}
+
+/// Rearrange every Canvas lineage: their order, and which lanes each holds.
+///
+/// The operator drags one team lane to reorder the teams, or drops one team
+/// lane onto another to join them. Both gestures are the same durable
+/// commitment -- a complete restatement of the topology -- so the authority
+/// never has to reconcile a reorder against a concurrent join. Stating the
+/// whole arrangement rather than one delta is what makes the two gestures a
+/// single law: a request that names a lane twice, drops one, or invents one is
+/// refused as a whole rather than half-applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineageArrange {
+    /// Every surviving lineage, in the order the operator arranged them.
+    pub lineages: Vec<LineageArrangement>,
+}
+
 /// Place one seated lane immediately before another seated lane.
 ///
 /// The target lane supplies both the durable insertion point and the target

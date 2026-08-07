@@ -87,6 +87,9 @@ impl<'a> Surface<'a> {
             (CommandKind::LaneState, Intent::LaneState(state)) => lane_surface::state(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
             ),
+            (CommandKind::LineageArrange, Intent::LineageArrange(arrange)) => {
+                lane_surface::arrange_lineages(self.bus, self.epoch, seats, command, arrange)
+            }
             (CommandKind::LineageConfigure, Intent::LineageConfigure(configure)) => {
                 lane_surface::configure(
                     self.bus,

@@ -176,6 +176,24 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
+        CommandKind::LineageArrange,
+        r#"{
+  "lineages": [
+    {
+      "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "lanes": [
+        "018f82d4-6f59-7d06-92e3-bce9131163c3",
+        "018f82d4-6f59-7d06-92e3-bce9131163c4"
+      ]
+    },
+    {
+      "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+      "lanes": ["018f82d4-6f59-7d06-92e3-bce9131163c6"]
+    }
+  ]
+}"#,
+    ),
+    (
         CommandKind::LaneRecall,
         r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2" }"#,
     ),
@@ -883,6 +901,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::LaneState,
     BodyShape::LaneArrange,
     BodyShape::LineageConfigure,
+    BodyShape::LineageArrange,
     BodyShape::LaneRecall,
     BodyShape::TasteRecord,
     BodyShape::Recognize,

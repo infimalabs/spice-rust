@@ -214,6 +214,9 @@ vocabulary! {
     LaneArranged = "lane::arranged" by ResidentRecognition;
     /// One Canvas lineage adopted a shared task-subscription life.
     LineageConfigured = "lineage::configured" by ResidentRecognition;
+    /// The operator rearranged which lanes each Canvas lineage holds, and in
+    /// what order the lineages stand.
+    LineageArranged = "lineage::arranged" by ResidentRecognition;
     /// A selected vendor record declared the exact resumable lane session.
     LaneSessionDeclared = "lane::declared" by ResidentRecognition;
     /// An occupant became live under the lane.

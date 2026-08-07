@@ -301,3 +301,207 @@ fn first_free_derived_lineage(head: &wire::ResidencyHead, source: CanonicalUuid)
             .expect("the finite residency cannot occupy the complete UUID space");
     }
 }
+
+/// Group the head's lanes into lineage standings in first-appearance order.
+///
+/// First appearance is not an arbitrary choice: it is exactly how the Canvas
+/// groups the lane answer into team surfaces, so the head's lane order *is* the
+/// durable team order. Rewriting that order below is what makes a drag durable
+/// without teaching the canvas a second ordering to disagree with.
+fn standings(lanes: &[wire::LaneResidency]) -> Vec<wire::body::LineageStanding> {
+    let mut standings = Vec::<wire::body::LineageStanding>::new();
+    for row in lanes {
+        if let Some(standing) = standings
+            .iter_mut()
+            .find(|standing| standing.lineage_id == row.lineage_id)
+        {
+            standing.lanes.push(row.lane);
+        } else {
+            standings.push(wire::body::LineageStanding {
+                lineage_id: row.lineage_id,
+                lanes: vec![row.lane],
+            });
+        }
+    }
+    standings
+}
+
+/// Refuse an arrangement that is not a faithful restatement of the lane table.
+///
+/// Every rule here is stated over the arrangement as a whole. A partial
+/// arrangement is never repaired by inference: a lane the operator forgot would
+/// otherwise be silently dropped from every team, which is a lane that exists
+/// in the resident and appears nowhere on the canvas.
+fn admit_arrangement(
+    head: &wire::ResidencyHead,
+    request: &LineageArrange,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let current = standings(&head.lanes);
+    if request.lineages.is_empty() {
+        return Err(lane_refusal(
+            "lineage::arrangement-empty",
+            Some("at least one lineage".to_owned()),
+            Some("0".to_owned()),
+            "state every surviving lineage; an arrangement never removes a lane",
+        ));
+    }
+    let mut seen_lineages = Vec::<CanonicalUuid>::new();
+    let mut seen_lanes = Vec::<CanonicalUuid>::new();
+    for lineage in &request.lineages {
+        if !current
+            .iter()
+            .any(|standing| standing.lineage_id == lineage.lineage_id)
+        {
+            return Err(lane_refusal(
+                "lineage::arrangement-unknown-lineage",
+                Some("one current Canvas lineage".to_owned()),
+                Some(lineage.lineage_id.to_string()),
+                "join teams by naming the surviving lineage; a new lineage is created by seating",
+            ));
+        }
+        if seen_lineages.contains(&lineage.lineage_id) {
+            return Err(lane_refusal(
+                "lineage::arrangement-duplicate-lineage",
+                Some("each lineage stated once".to_owned()),
+                Some(lineage.lineage_id.to_string()),
+                "state one arrangement per lineage",
+            ));
+        }
+        seen_lineages.push(lineage.lineage_id);
+        if lineage.lanes.is_empty() {
+            return Err(lane_refusal(
+                "lineage::arrangement-vacant-lineage",
+                Some("at least one lane".to_owned()),
+                Some(lineage.lineage_id.to_string()),
+                "omit an emptied lineage entirely rather than arranging it with no lanes",
+            ));
+        }
+        for lane in &lineage.lanes {
+            if !head.lanes.iter().any(|row| row.lane == *lane) {
+                return Err(lane_refusal(
+                    "lineage::arrangement-unknown-lane",
+                    Some("one current lane".to_owned()),
+                    Some(lane.to_string()),
+                    "read lane state and retry with the current lane table",
+                ));
+            }
+            if seen_lanes.contains(lane) {
+                return Err(lane_refusal(
+                    "lineage::arrangement-duplicate-lane",
+                    Some("each lane held once".to_owned()),
+                    Some(lane.to_string()),
+                    "hold every lane in exactly one lineage",
+                ));
+            }
+            seen_lanes.push(*lane);
+        }
+    }
+    if let Some(missing) = head
+        .lanes
+        .iter()
+        .find(|row| !seen_lanes.contains(&row.lane))
+    {
+        return Err(lane_refusal(
+            "lineage::arrangement-incomplete",
+            Some(format!("{} arranged lanes", head.lanes.len())),
+            Some(missing.lane.to_string()),
+            "state every current lane; an arrangement moves lanes, it never drops them",
+        ));
+    }
+    Ok(())
+}
+
+/// Commit one complete Canvas lineage arrangement.
+///
+/// This is the durable end of both drag gestures. Reordering the teams and
+/// joining two of them differ only in the arrangement the operator sends, so
+/// they commit through one law and one fact rather than racing two.
+pub(in crate::resident) fn arrange(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    command: &wire::AdmittedCommand,
+    request: &LineageArrange,
+) -> Outcome<CommandAnswer> {
+    let observed = match current_residency(bus, epoch) {
+        Ok(head) => head,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    if let Err(outcome) = admit_arrangement(observed.body(), request) {
+        return outcome;
+    }
+    let from = standings(&observed.body().lanes);
+    let mut next = observed.body().clone();
+    let mut arranged = Vec::with_capacity(next.lanes.len());
+    for lineage in &request.lineages {
+        for lane in &lineage.lanes {
+            let Some(row) = next.lanes.iter().find(|row| row.lane == *lane) else {
+                return typed_store_fault(
+                    "lineage::arrangement-lane-lost",
+                    "an admitted arrangement named a lane the residency head no longer holds",
+                );
+            };
+            let mut row = row.clone();
+            row.lineage_id = lineage.lineage_id;
+            arranged.push(row);
+        }
+    }
+    next.lanes = arranged;
+    // A lineage the arrangement emptied keeps no durable subscription: leaving
+    // one behind would silently re-apply that policy to a later lineage seated
+    // under the same identity.
+    next.subscriptions.retain(|subscription| {
+        request
+            .lineages
+            .iter()
+            .any(|lineage| lineage.lineage_id == subscription.lineage_id)
+    });
+    let lineages = standings(&next.lanes);
+    let lane_answer = match answer(&next, None, seats) {
+        Ok(answer) => answer,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let mut write = match write(
+        command.actor().clone(),
+        epoch,
+        Producer::ResidentRecognition,
+    ) {
+        Ok(write) => write,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    guard_residency(&mut write, &observed);
+    let fact = match write.fact(
+        wire::body::LineageArranged { from, lineages },
+        FactCause::Existing(observed.position()),
+    ) {
+        Ok(fact) => fact,
+        Err(error) => {
+            return typed_store_fault("lineage::fact-invalid", &error.to_string());
+        }
+    };
+    write.residency_head(fact, move |_| next);
+    if let Err(error) = write.command_result(
+        Command {
+            v: wire::WireVersion::CURRENT,
+            id: command.id(),
+            epoch: command.epoch(),
+            kind: command.kind(),
+            expected: command.expected().to_vec(),
+            body: request.clone(),
+        },
+        epoch,
+        lane_answer.clone(),
+    ) {
+        return typed_store_fault("lineage::receipt-invalid", &error.to_string());
+    }
+    match commit(bus, write) {
+        Ok(committed) => Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(committed.first()),
+                last: seq(committed.last()),
+            }),
+            body: CommandAnswer::Lane(Box::new(lane_answer)),
+        }),
+        Err(outcome) => typed_outcome(outcome),
+    }
+}

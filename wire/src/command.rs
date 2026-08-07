@@ -105,6 +105,8 @@ pub enum CommandKind {
     LaneState,
     /// Change the shared task-subscription life of one Canvas lineage.
     LineageConfigure,
+    /// Rearrange the order of every Canvas lineage and the lanes each holds.
+    LineageArrange,
     /// Build one bounded continuity account from the current resident barrier.
     LaneRecall,
 
@@ -497,6 +499,7 @@ impl CommandKind {
         Self::LaneArrange,
         Self::LaneState,
         Self::LineageConfigure,
+        Self::LineageArrange,
         Self::LaneRecall,
         Self::TasteRecord,
         Self::CanaryRecognize,
@@ -552,6 +555,7 @@ impl CommandKind {
             | Self::LaneArrange
             | Self::LaneState
             | Self::LineageConfigure
+            | Self::LineageArrange
             | Self::LaneRecall
             | Self::TasteRecord
             | Self::CanaryRecognize
@@ -614,6 +618,7 @@ impl CommandKind {
             Self::LaneArrange => "lane::arrange",
             Self::LaneState => "lane::state",
             Self::LineageConfigure => "lineage::configure",
+            Self::LineageArrange => "lineage::arrange",
             Self::LaneRecall => "lane::recall",
             Self::TasteRecord => "taste::record",
             Self::CanaryRecognize => "canary::recognize",
@@ -660,9 +665,11 @@ impl CommandKind {
             Self::TrustPend => Law::PEND,
             Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
             Self::LaneRead => Law::LANE_READ,
-            Self::LaneSeat | Self::LaneArrange | Self::LaneState | Self::LineageConfigure => {
-                Law::LANE
-            }
+            Self::LaneSeat
+            | Self::LaneArrange
+            | Self::LaneState
+            | Self::LineageConfigure
+            | Self::LineageArrange => Law::LANE,
             Self::LaneRecall => Law::LANE_RECALL,
             Self::TasteRecord => Law::TASTE,
             Self::CanaryRecognize

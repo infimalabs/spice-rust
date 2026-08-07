@@ -118,6 +118,7 @@ fold_registry! {
         content: [
             Facts(Lane => "lane::*"),
             Fact(LineageConfigured),
+            Fact(LineageArranged),
             Fact(ClaimCarried),
             Fact(ClaimRenewed),
             Facts(Resident => "up::*"),
@@ -127,6 +128,7 @@ fold_registry! {
         sources: [
             Facts(Lane => "lane::*"),
             Fact(LineageConfigured),
+            Fact(LineageArranged),
             Fact(ClaimCarried),
             Fact(ClaimRenewed),
             Facts(Resident => "up::*"),
@@ -140,6 +142,7 @@ fold_registry! {
         content: [
             Facts(Lane => "lane::*"),
             Fact(LineageConfigured),
+            Fact(LineageArranged),
             Facts(Steering => "steer::*"),
             Facts(Consent => "consent::*"),
             Facts(Canary => "canary::*"),
@@ -154,6 +157,7 @@ fold_registry! {
         sources: [
             Facts(Lane => "lane::*"),
             Fact(LineageConfigured),
+            Fact(LineageArranged),
             Facts(Steering => "steer::*"),
             Facts(Consent => "consent::*"),
             Facts(Canary => "canary::*"),
