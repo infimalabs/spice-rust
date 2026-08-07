@@ -73,6 +73,9 @@ fn stream_event(record: &Object, locus: Locus) -> Events {
     }
 }
 
+/// The only Claude spend source. Assistant records repeat one per-turn usage
+/// block, so metering them would count the same turn once per content block.
+/// This record exists only when the vendor launches with partial messages.
 fn message_delta(event: &Object, locus: Locus) -> Events {
     let usage = object(event, "usage")?;
     let reasoning_output_tokens = match usage.get("output_tokens_details") {
