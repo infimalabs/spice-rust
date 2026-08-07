@@ -31,6 +31,13 @@ import { describeConnection, describeResident } from "./canvas-endpoint-probes.m
 
 export { describeConnection, describeResident, TOOL_ACTIVITY_TEXT };
 
+/// File in which a fixture's vendor stand-ins enrol their own pids.
+///
+/// Named once because two unrelated things must agree on it: the shell written
+/// by `configureFixture`, which appends to it, and the teardown owner, which
+/// reads it back to decide exactly which processes this run is responsible for.
+export const VENDOR_PID_LEDGER = ".spice-vendor-pids";
+
 const execute = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
@@ -327,6 +334,10 @@ export async function configureFixture(
   await writeFile(vendor, [
     "#!/bin/sh",
     "trap 'exit 0' TERM INT",
+    // Each stand-in enrols its own pid in the ledger of the fixture that wrote
+    // this script, derived from $0 so it can never enrol in another one.
+    "vendors=${0%/*}/" + VENDOR_PID_LEDGER,
+    'printf \'%s\\n\' "$$" >> "$vendors"',
     "name=${PWD##*/}",
     `printf '%s\\n' '${sessionRecord}'`,
     `if [ "$name" != "${noCardWorktree}" ]; then`,
@@ -386,7 +397,8 @@ export async function configureFixture(
   ].join("\n"));
   await writeFile(
     join(fixture, ".gitignore"),
-    ["dist/stage-app", ".spice-tool-trigger", ".spice-prose-trigger", ""].join("\n"),
+    ["dist/stage-app", ".spice-tool-trigger", ".spice-prose-trigger", VENDOR_PID_LEDGER, ""]
+      .join("\n"),
   );
   await execute("git", ["add", ".gitignore", "fake-claude", "spice.toml"], { cwd: fixture });
   await execute("git", [
