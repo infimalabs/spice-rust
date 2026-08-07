@@ -7,7 +7,7 @@
 use gate::{
     ActorCapture, ActorInputs, ActorSource, ClaimCapture, ClaimStatus, CoreEvidence,
     CoreObservation, CoreStanding, CurrentState, GateId, LatchEntry, LatchKind, LatchTransition,
-    PeerClaim, PredecessorSources, RenameMap, RepoDocLimit, StateKey, evaluate_core,
+    PeerClaim, RenameMap, RepoDocLimit, StateKey, evaluate_core,
 };
 
 mod support;
@@ -323,9 +323,7 @@ fn measured_documents(repository: &Tree) -> Vec<String> {
 /// A claim assembled by the test could disagree with the ownership rule
 /// acquisition resolves against; one minted by a real transaction cannot.
 fn minted_claims(repository: &Tree, actor: &str, paths: &[&str]) -> Vec<PeerClaim> {
-    let state_root = repository.path(".spice");
-    let sources = PredecessorSources::new(&state_root, &state_root);
-    let mut state = CurrentState::load(repository.path("current-state.json"), &sources)
+    let mut state = CurrentState::load(repository.path("current-state.json"))
         .expect("load one empty current ledger");
     let renames = RenameMap::new(Vec::<(String, String)>::new()).expect("no staged renames");
     state

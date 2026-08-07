@@ -130,26 +130,41 @@ fn row_for<'report>(
     row
 }
 
-/// Seed the predecessor file-line latch at the exact location capture imports.
+/// Seed the current file-line latch through the production state transaction.
 ///
-/// The fixture repository has no current ledger, so the next capture reads
-/// this as its durable state authority. Resolving the Git directory through the
-/// same repository model as production keeps the test about the latch input,
-/// rather than about a hard-coded `.git` layout that linked worktrees reject.
+/// Resolving the common Git directory through the same repository model as
+/// production keeps the test about the latch input rather than about a
+/// hard-coded `.git` layout that linked worktrees reject.
 fn seed_file_line_latch(repository: &Path, path: &str) {
-    let (worktree_git, _) = crate::tree::git_directories(repository)
+    let (_, common_git) = crate::tree::git_directories(repository)
         .expect("the fixture repository publishes its Git state directories");
-    let predecessor = worktree_git.join(".spice");
-    fs::create_dir_all(&predecessor).expect("predecessor state directory");
-    let ledger = serde_json::json!({
-        "version": 1,
-        "paths": [path],
-    });
-    fs::write(
-        predecessor.join("file-loc-sticky.json"),
-        wire::encode(&ledger).expect("predecessor file-line ledger JSON"),
-    )
-    .expect("seed the file-line latch");
+    let destination = crate::current_state_path(&common_git);
+    let mut state = CurrentState::load(&destination).expect("load current gate state");
+    state
+        .begin_run(&RenameMap::default(), [path], 100.0)
+        .expect("begin file-line latch seed");
+    state
+        .reconcile([LatchObservation::new(
+            LatchEntry::new(
+                LatchKind::FileLoc,
+                StateKey::path(path).expect("fixture path key"),
+            )
+            .expect("file-line latch key"),
+            BoundRule::new("fixture-seed", "file-loc", 10, 15, false, false)
+                .expect("file-line seed bound"),
+            20,
+            ActorInputs::new(path)
+                .expect("file-line seed actor inputs")
+                .with_active_actor("fixture-actor"),
+            0,
+        )
+        .expect("file-line seed observation")])
+        .expect("reconcile file-line latch seed");
+    state
+        .finish()
+        .expect("finish file-line latch seed")
+        .accept()
+        .expect("persist file-line latch seed");
 }
 
 /// Selected sources and routines publish their bounds; documents keep their own.

@@ -53,6 +53,8 @@ pub struct StatePaths {
     data: PathBuf,
     journal: PathBuf,
     folds: PathBuf,
+    gate_state: PathBuf,
+    gate_state_lock: PathBuf,
     locks: PathBuf,
     proof: PathBuf,
     resident: PathBuf,
@@ -74,6 +76,8 @@ impl StatePaths {
         Self {
             journal: data.join("spicejournal.sqlite3"),
             folds: data.join("spicefolds.sqlite3"),
+            gate_state: data.join("gate-state.json"),
+            gate_state_lock: data.join("gate-state.lock"),
             locks: runtime.join("locks"),
             proof: runtime.join("proof"),
             resident: runtime.join("resident"),
@@ -113,6 +117,18 @@ impl StatePaths {
     #[must_use]
     pub fn folds(&self) -> &Path {
         &self.folds
+    }
+
+    /// Current Rust gate-state ledger shared by every linked worktree.
+    #[must_use]
+    pub fn gate_state(&self) -> &Path {
+        &self.gate_state
+    }
+
+    /// Publication lock paired with the current Rust gate-state ledger.
+    #[must_use]
+    pub fn gate_state_lock(&self) -> &Path {
+        &self.gate_state_lock
     }
 
     /// Parent of daemonless resource locks.
@@ -260,8 +276,9 @@ impl StatePaths {
     /// inside them has to be enumerated. The two directories deliberately left
     /// out are the ones both systems write into: the root itself, which holds
     /// the predecessor's `taskrc` beside this port's `config.toml`, and `data`,
-    /// which holds its databases beside this port's journal. Ownership there is
-    /// per file, which is why [`Self::owned_files`] names each one.
+    /// which holds its databases beside this port's journals and gate state.
+    /// Ownership there is per file, which is why [`Self::owned_files`] names
+    /// each one.
     #[must_use]
     pub fn exclusive_directories(&self) -> [&Path; 8] {
         [
@@ -277,8 +294,15 @@ impl StatePaths {
     }
 
     /// Files whose shape this runtime admits before it does any work.
-    fn admitted_files(&self) -> [&Path; 4] {
-        [self.journal(), self.folds(), self.resident(), self.canvas()]
+    fn admitted_files(&self) -> [&Path; 6] {
+        [
+            self.journal(),
+            self.folds(),
+            self.gate_state(),
+            self.gate_state_lock(),
+            self.resident(),
+            self.canvas(),
+        ]
     }
 
     /// Every regular file this runtime claims under the shared state root.
@@ -291,11 +315,20 @@ impl StatePaths {
     /// an operator repairing a bad `config.toml` needs the runtime to reach the
     /// refusal that names it rather than stop at a shape check.
     #[must_use]
-    pub fn owned_files(&self) -> [&Path; 6] {
-        let [journal, folds, resident, canvas] = self.admitted_files();
+    pub fn owned_files(&self) -> [&Path; 8] {
+        let [
+            journal,
+            folds,
+            gate_state,
+            gate_state_lock,
+            resident,
+            canvas,
+        ] = self.admitted_files();
         [
             journal,
             folds,
+            gate_state,
+            gate_state_lock,
             resident,
             canvas,
             self.install_record(),
