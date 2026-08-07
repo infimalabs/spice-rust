@@ -263,6 +263,11 @@ fn list_scope_matches(board: &BoardAnswer, task: &BoardTask, options: &TaskListO
     options.all || actor_route_matches(board, task)
 }
 
+/// Whether the actor may *read* the row.
+///
+/// Stem scoped, not subscription scoped, and deliberately wider than the
+/// allocation scope in `board::next::selectable`, which states the rule and
+/// why the two must stay apart.
 fn actor_route_matches(board: &BoardAnswer, task: &BoardTask) -> bool {
     let statement = &task.statement.body;
     statement.project == board.actor_route.project
