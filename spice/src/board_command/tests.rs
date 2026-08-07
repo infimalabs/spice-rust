@@ -19,6 +19,10 @@ mod tests {
     // Renewal and restart assertions are one bounded reclaim scenario seam.
     include!("tests/reclaim.rs");
 
+    // Each allocator re-read refusal is pinned by a scenario that moves only
+    // what that one comparison reads, so severing them apart is observable.
+    include!("tests/allocation_guard.rs");
+
     fn at<'a>(answer: &'a BoardAnswer, task: &TaskHandle) -> &'a BoardTask {
         task_heads(answer, task).expect("fixture task is visible")
     }
