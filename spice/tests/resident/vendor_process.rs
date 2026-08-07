@@ -226,17 +226,18 @@ impl PredecessorSystem {
             ".spice/hooks",
             "{verb} stopped resolving predecessor steering hooks"
         );
-        assert_eq!(
-            self.process.id(),
-            self.pid,
-            "{verb} replaced the predecessor PID"
-        );
+        // `Child::id` reports the pid recorded at spawn and keeps reporting it
+        // after the process is killed and reaped, so comparing it with the pid
+        // captured from that same `Child` cannot fail and proved nothing about
+        // the predecessor. Asking the operating system whether the child has
+        // exited is the check that can, and it is the only one here that does.
         assert!(
             self.process
                 .try_wait()
                 .expect("inspect predecessor process")
                 .is_none(),
-            "{verb} stopped the predecessor process"
+            "{verb} stopped the predecessor process (pid {})",
+            self.pid
         );
     }
 }
