@@ -6,11 +6,12 @@ const REMOTE_TOKEN: &str = "correct-horse-battery-staple";
 
 #[tokio::test(flavor = "current_thread")]
 async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
+    let app = TestApp::new();
     let capabilities = Capabilities::default();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, app(), speech())
+    let (server, _control) = Server::bind(epoch(), capabilities, app.source(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -31,6 +32,7 @@ async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
 /// refuses a request carrying another site's origin.
 #[tokio::test(flavor = "current_thread")]
 async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin() {
+    let app = TestApp::new();
     let capabilities = Capabilities::default();
     capabilities
         .insert(operator(), wire::Actor::Operator)
@@ -42,7 +44,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
         ),
         epoch(),
         capabilities,
-        app(),
+        app.source(),
         speech(),
         None,
         1,
@@ -145,12 +147,13 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
+    let app = TestApp::new();
     let unavailable: SocketAddr = "192.0.2.1:9".parse().expect("documentation address");
     let error = Server::bind_with_capacity(
         Binding::new(unavailable, Access::local()),
         epoch(),
         Capabilities::default(),
-        app(),
+        app.source(),
         speech(),
         None,
         1,
@@ -174,6 +177,7 @@ async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
 /// only `Ipv4Addr` would still admit `::`.
 #[tokio::test(flavor = "current_thread")]
 async fn ipv6_loopback_binds_unauthenticated_while_both_wildcards_refuse() {
+    let app = TestApp::new();
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
@@ -181,7 +185,7 @@ async fn ipv6_loopback_binds_unauthenticated_while_both_wildcards_refuse() {
         ),
         epoch(),
         Capabilities::default(),
-        app(),
+        app.source(),
         speech(),
         None,
         1,
@@ -199,7 +203,7 @@ async fn ipv6_loopback_binds_unauthenticated_while_both_wildcards_refuse() {
             Binding::new(SocketAddr::new(wildcard, 0), Access::local()),
             epoch(),
             Capabilities::default(),
-            app(),
+            app.source(),
             speech(),
             None,
             1,

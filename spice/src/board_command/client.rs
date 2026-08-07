@@ -1422,7 +1422,7 @@ pub(crate) fn dispatch_with_repository(
         }
         wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects),
         wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add, projects),
-        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
+        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects),
         wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, projects),
         wire::intent::Intent::TaskDelete(delete) => {
             task_delete(bus, command, delete, projects)

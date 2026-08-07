@@ -33,6 +33,7 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { childExited } from "./canvas-child-state.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 import {
   buildResident,
@@ -131,7 +132,7 @@ try {
   await context.close();
 } finally {
   if (browser) await browser.close();
-  if (resident?.child.exitCode === null) {
+  if (resident && !childExited(resident.child)) {
     const exited = once(resident.child, "exit");
     resident.child.kill("SIGKILL");
     await exited;

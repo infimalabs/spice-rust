@@ -421,6 +421,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
                 task,
                 holder,
                 warnings: Vec::new(),
+                next: None,
             },
         )
         .map_err(LapseError::Build)?;

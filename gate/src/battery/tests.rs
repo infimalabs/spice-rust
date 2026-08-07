@@ -42,6 +42,7 @@ const PREDECESSOR_CLASS_SOURCES: [&str; 3] =
 
 mod executor;
 mod file_shape;
+mod fold;
 mod latch_wire;
 mod magic;
 mod manifest;

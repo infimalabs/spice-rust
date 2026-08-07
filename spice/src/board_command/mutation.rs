@@ -80,6 +80,19 @@ fn create_task<B: serde::Serialize>(
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let post = Entry::new(
+        prepared.statement.clone(),
+        prepared.workflow.clone(),
+        None,
+        None,
+        projects,
+    )
+    .expect("prepared task already passed entry validation");
+    let next = next_action(&snapshot, &post, true);
     let mut write = JournalWrite::new(
         command.actor().clone(),
         prepared.origin,
@@ -118,6 +131,7 @@ fn create_task<B: serde::Serialize>(
     let answer = wire::intent::TaskAnswer {
         task: prepared.task,
         status: "pending".to_owned(),
+        next,
     };
     if let Err(error) = write.command_result(
         request(command, request_body),
@@ -226,7 +240,24 @@ fn task_note(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     note: &TaskNote,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let Some(entry) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.statement().handle == note.task)
+    else {
+        return refusal(
+            "task::unknown",
+            Some(note.task.to_string()),
+            "read board and name one current task handle",
+        );
+    };
+    let next = next_action(&snapshot, entry, false);
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
@@ -249,6 +280,7 @@ fn task_note(
     let answer = wire::intent::TaskAnswer {
         task: note.task.clone(),
         status: "noted".to_owned(),
+        next,
     };
     if let Err(error) = write.command_result(
         request(command, note.clone()),
@@ -351,6 +383,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
     let answer = wire::intent::TaskAnswer {
         task: task.clone(),
         status: status.to_owned(),
+        next: None,
     };
     if let Err(error) =
         write.command_result(request(command, intent), command.epoch(), answer.clone())
@@ -465,8 +498,12 @@ fn task_delete(
         });
     }
     let answer = wire::intent::TaskAnswer {
+        // A withdrawn task admits no further transition, so it offers no next
+        // action. Naming one would point the caller at a row that can never
+        // advance; the work goes on somewhere else, not here.
         task: delete.task.clone(),
         status: "deleted".to_owned(),
+        next: None,
     };
     if let Err(error) = write.command_result(
         request(command, delete.clone()),
@@ -528,19 +565,23 @@ fn task_depends(
         }
         statement.dependencies.push(after.clone());
     }
-    if let Err(error) = Entry::new(
+    let post = match Entry::new(
         statement.clone(),
         entry.workflow().clone(),
         entry.claim().cloned(),
         entry.lease().cloned(),
         projects,
     ) {
-        return refusal(
-            "task::dependency-refused",
-            Some(error.to_string()),
-            "submit a valid acyclic dependency edit",
-        );
-    }
+        Ok(post) => post,
+        Err(error) => {
+            return refusal(
+                "task::dependency-refused",
+                Some(error.to_string()),
+                "submit a valid acyclic dependency edit",
+            );
+        }
+    };
+    let next = next_action(&snapshot, &post, false);
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
@@ -571,6 +612,7 @@ fn task_depends(
     let answer = wire::intent::TaskAnswer {
         task: depends.task.clone(),
         status: "edited".to_owned(),
+        next,
     };
     if let Err(error) = write.command_result(
         request(command, depends.clone()),
@@ -633,19 +675,26 @@ fn task_edit(
     if !edit.acceptance.is_empty() {
         statement.acceptance = edit.acceptance.clone();
     }
-    if let Err(error) = Entry::new(
+    let post = match Entry::new(
         statement.clone(),
         entry.workflow().clone(),
         entry.claim().cloned(),
         entry.lease().cloned(),
         projects,
     ) {
-        return refusal(
-            "task::edit-refused",
-            Some(error.to_string()),
-            "submit a statement the board admits",
-        );
-    }
+        Ok(post) => post,
+        Err(error) => {
+            return refusal(
+                "task::edit-refused",
+                Some(error.to_string()),
+                "submit a statement the board admits",
+            );
+        }
+    };
+    // A correction replaces statement text and leaves the workflow where it
+    // was, so the next action is whatever it already was, derived from the
+    // corrected statement rather than restated here.
+    let next = next_action(&snapshot, &post, false);
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
@@ -676,6 +725,7 @@ fn task_edit(
     let answer = wire::intent::TaskAnswer {
         task: edit.task.clone(),
         status: "edited".to_owned(),
+        next,
     };
     if let Err(error) = write.command_result(
         request(command, edit.clone()),
@@ -728,6 +778,17 @@ fn claim_win(
         Ok(git) => git,
         Err(outcome) => return outcome,
     };
+    let next = projected_claim_next_action(
+        &snapshot,
+        selected,
+        command,
+        lane,
+        occupant,
+        at,
+        expiry,
+        maximum,
+        projects,
+    );
     let origin = match task_origin(&task) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
@@ -771,6 +832,7 @@ fn claim_win(
                 surface: overlap.surface,
             })
             .collect(),
+        next,
     };
     if let Err(error) = write.command_result(
         request(command, win.clone()),
@@ -783,6 +845,50 @@ fn claim_win(
         );
     }
     committed(bus, write, CommandAnswer::Claim(answer))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the projected claim is the exact pair of heads the transaction appends"
+)]
+fn projected_claim_next_action(
+    snapshot: &ValidatedSnapshot,
+    selected: &Entry,
+    command: &wire::AdmittedCommand,
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+    at: Instant,
+    expiry: Instant,
+    maximum: Instant,
+    projects: &ProjectPolicy,
+) -> Option<Box<str>> {
+    let mut workflow = selected.workflow().clone();
+    if workflow.phase.as_str() == "review" {
+        workflow.assignment = Some(command.actor().clone());
+        workflow.review = "assigned".to_owned();
+    }
+    let post = Entry::new(
+        selected.statement().clone(),
+        workflow,
+        Some(ClaimHead {
+            actor: command.actor().clone(),
+            fact: snapshot.cursor,
+            lane,
+            occupant,
+            epoch: command.epoch(),
+            disposition: ClaimDisposition::Active,
+        }),
+        Some(LeaseHead {
+            start: at,
+            renewal: at,
+            expiry,
+            maximum,
+            epoch: command.epoch(),
+        }),
+        projects,
+    )
+    .expect("a validated selected entry accepts the transaction's claim heads");
+    next_action(snapshot, &post, false)
 }
 
 /// Which possession law one claim win asks the board to apply.

@@ -141,6 +141,40 @@ mod tests {
     }
 
     #[test]
+    fn a_nonfinal_review_phase_prints_the_transition_it_can_accept() {
+        let (root, bus, epoch, seats) = fixture("nonfinal-review-next-action", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        let task = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "FLOW-review01",
+            "Advance through a nonfinal review phase",
+            Some("review,verify"),
+        );
+        let available = board(&bus, epoch, lane.clone());
+        let answer = assert_committed(issue(
+            &bus,
+            epoch,
+            lane,
+            CommandKind::ClaimWin,
+            claim_expected(&available, &task, &seats[0]),
+            &ClaimWin {
+                rule: "next".parse().expect("allocator rule"),
+            },
+        ));
+        let CommandAnswer::Claim(claim) = answer else {
+            panic!("claim win returned another answer shape");
+        };
+        assert_eq!(
+            claim.next.as_deref(),
+            Some("spice task done"),
+            "review is printable only when task review can settle the final phase",
+        );
+        clean(&root, bus);
+    }
+
+    #[test]
     fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
         let (root, bus, epoch, _) = fixture("task-bootstrap", 1);
         let task = "CLI-context01"

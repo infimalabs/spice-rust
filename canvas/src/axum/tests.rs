@@ -167,16 +167,44 @@ fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBu
     generation
 }
 
-/// One complete lane-built app shared by tests that do not inspect its bytes.
-fn app() -> crate::AppSource {
-    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    let root = ROOT.get_or_init(|| {
-        let root =
-            std::env::temp_dir().join(format!("spice-canvas-test-app-{}", std::process::id()));
-        seed_app_generation(&root, "test app");
+/// One complete lane-built app whose directory lives exactly as long as its test.
+struct TestApp {
+    source: crate::AppSource,
+    root: tempfile::TempDir,
+}
+
+impl TestApp {
+    fn new() -> Self {
+        let root = tempfile::Builder::new()
+            .prefix("spice-canvas-test-app-")
+            .tempdir()
+            .expect("fixture temp directory");
+        seed_app_generation(root.path(), "test app");
+        let source = crate::AppSource::resolve(root.path()).expect("fixture app resolves");
+        Self { source, root }
+    }
+
+    fn source(&self) -> crate::AppSource {
+        self.source.clone()
+    }
+}
+
+#[test]
+fn app_fixture_directory_does_not_outlive_its_owner() {
+    let root = {
+        let fixture = TestApp::new();
+        let root = fixture.root.path().to_path_buf();
+        assert!(
+            root.is_dir(),
+            "fixture directory exists while its owner lives"
+        );
         root
-    });
-    crate::AppSource::resolve(root).expect("fixture app resolves")
+    };
+    assert!(
+        !root.exists(),
+        "fixture directory is removed when its owner drops: {}",
+        root.display()
+    );
 }
 
 #[test]
@@ -379,6 +407,7 @@ async fn assert_live_stream(
 
 #[tokio::test(flavor = "current_thread")]
 async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_shutdown() {
+    let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "initial", true);
@@ -392,7 +421,7 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
-        app(),
+        app.source(),
         speech(),
         bus.reader(),
         8,
@@ -447,6 +476,7 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
 
 #[tokio::test(flavor = "current_thread")]
 async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author() {
+    let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "message horizon", false);
@@ -458,7 +488,7 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
-        app(),
+        app.source(),
         speech(),
         bus.reader(),
         8,
@@ -520,6 +550,7 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
 
 #[tokio::test(flavor = "current_thread")]
 async fn capability_replacement_faults_the_live_stream_without_disclosure() {
+    let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "initial", false);
@@ -531,7 +562,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities.clone(),
-        app(),
+        app.source(),
         speech(),
         bus.reader(),
         8,
@@ -574,6 +605,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() {
+    let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "initial", false);
@@ -585,7 +617,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
-        app(),
+        app.source(),
         speech(),
         bus.reader(),
         8,
@@ -760,10 +792,11 @@ fn external_speech(command: &[&str]) -> crate::SpeechConfig {
 
 #[tokio::test(flavor = "current_thread")]
 async fn speech_endpoint_executes_only_the_server_owned_argv_contract() {
+    let app = TestApp::new();
     let (server, _control) = Server::bind(
         epoch(),
         Capabilities::default(),
-        app(),
+        app.source(),
         external_speech(&["/bin/cat"]),
     )
     .await
@@ -796,6 +829,7 @@ async fn speech_endpoint_executes_only_the_server_owned_argv_contract() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
+    let app = TestApp::new();
     for speech in [
         crate::SpeechConfig::new(
             crate::SpeechBackend::Disabled,
@@ -809,9 +843,10 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
         external_speech(&[]),
         external_speech(&["/definitely/missing/spice-speech"]),
     ] {
-        let (server, _control) = Server::bind(epoch(), Capabilities::default(), app(), speech)
-            .await
-            .expect("binds");
+        let (server, _control) =
+            Server::bind(epoch(), Capabilities::default(), app.source(), speech)
+                .await
+                .expect("binds");
         let address = server.local_addr().expect("local address");
         let task = tokio::spawn(server.up());
         let body = wire::encode(&wire::SpeechRequest {
@@ -837,7 +872,7 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
     let (server, _control) = Server::bind(
         epoch(),
         Capabilities::default(),
-        app(),
+        app.source(),
         external_speech(&["/bin/cat"]),
     )
     .await
@@ -867,7 +902,8 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn live_server_serves_the_lane_app_and_refuses_another_host() {
-    let (server, _control) = Server::bind(epoch(), Capabilities::default(), app(), speech())
+    let app = TestApp::new();
+    let (server, _control) = Server::bind(epoch(), Capabilities::default(), app.source(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -913,26 +949,63 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
     assert!(task.await.expect_err("aborted server task").is_cancelled());
 }
 
-/// A worktree holding a complete app stage, and that stage's path.
+/// One worktree holding a complete app stage for exactly as long as its owner.
+struct AppWorktree {
+    root: tempfile::TempDir,
+    generation: std::path::PathBuf,
+}
+
+impl AppWorktree {
+    fn root(&self) -> &std::path::Path {
+        self.root.path()
+    }
+
+    fn generation(&self) -> &std::path::Path {
+        &self.generation
+    }
+}
+
+/// Build an owned worktree and return the generation containing its app stage.
 ///
 /// The bytes name their own file so a route served from the wrong one is
 /// visible in the assertion.
-fn app_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
+fn app_worktree() -> AppWorktree {
+    let root = tempfile::Builder::new()
+        .prefix("spice-canvas-app-")
+        .tempdir()
+        .expect("fixture temp directory");
+    let generation = seed_app_generation(root.path(), "locally built");
+    AppWorktree { root, generation }
+}
 
-    let root = std::env::temp_dir().join(format!(
-        "spice-canvas-app-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let generation = seed_app_generation(&root, "locally built");
-    (root, generation)
+#[test]
+fn app_worktree_directory_is_removed_during_assertion_unwind() {
+    let mut root = None;
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let fixture = app_worktree();
+        root = Some(fixture.root().to_path_buf());
+        assert!(
+            fixture
+                .root()
+                .join("injected-missing-assertion-path")
+                .is_file(),
+            "injected fixture assertion failure"
+        );
+    }));
+
+    assert!(failure.is_err(), "the injected fixture assertion fails");
+    let root = root.expect("the failing assertion recorded its fixture root");
+    assert!(
+        !root.exists(),
+        "fixture directory is removed while the assertion unwinds: {}",
+        root.display()
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
-    let (root, stage) = app_worktree();
-    let app = crate::AppSource::resolve(&root).expect("a complete stage resolves");
+    let fixture = app_worktree();
+    let app = crate::AppSource::resolve(fixture.root()).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
@@ -958,7 +1031,8 @@ async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
 
     // A stage that stops answering mid-flight is reported as this endpoint's
     // own failure, not as the app the operator asked to stop serving.
-    std::fs::remove_file(stage.join("canvas-app.html")).expect("fixture removes one staged file");
+    std::fs::remove_file(fixture.generation().join("canvas-app.html"))
+        .expect("fixture removes one staged file");
 
     let refused = request(address, &address.to_string(), "/").await;
     assert!(refused.starts_with(b"HTTP/1.1 503 Service Unavailable\r\n"));
@@ -969,7 +1043,6 @@ async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
 
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());
-    std::fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 mod lifecycle;

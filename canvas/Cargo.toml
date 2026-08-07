@@ -17,6 +17,7 @@ wire = { path = "../wire" }
 
 [dev-dependencies]
 futures-util = { version = "0.3.33", default-features = false, features = ["sink", "std"] }
+tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["time"] }
 tokio-tungstenite = "0.29.0"
 toml = "1.1.4"

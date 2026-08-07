@@ -186,6 +186,21 @@
             heads.claim.as_ref().expect("review claim head").body.disposition,
             ClaimDisposition::Freed
         );
+        let entries = actor_entries(&settled).expect("settled board projects to entries");
+        let entry = entries
+            .iter()
+            .find(|entry| entry.statement().handle == *task)
+            .expect("settled task remains on the board");
+        assert_eq!(
+            accepted_transition(
+                &settled.principal,
+                &settled.residency.body,
+                &entries,
+                entry,
+            ),
+            NextTransition::Settled,
+            "completion outranks the retained final review phase",
+        );
         let facts = bus.fact_snapshot().expect("workflow facts read");
         assert!(facts.facts().iter().any(|fact| {
             fact.fact.kind() == wire::FactKind::TaskReviewed

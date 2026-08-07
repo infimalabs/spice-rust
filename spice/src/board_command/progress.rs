@@ -63,6 +63,7 @@ fn claim_free(
         task: task.task.clone(),
         holder: command.actor().clone(),
         warnings: Vec::new(),
+        next: None,
     };
     if let Err(error) = write.command_result(
         request(command, task.clone()),
@@ -118,6 +119,7 @@ fn claim_reclaim(
         task: renew.task.clone(),
         holder: command.actor().clone(),
         warnings: Vec::new(),
+        next: None,
     };
     if let Err(error) = write.command_result(
         request(command, renew.clone()),
@@ -274,6 +276,7 @@ fn task_done(
         Ok(git) => git,
         Err(outcome) => return outcome,
     };
+    let next = projected_done_next_action(&snapshot, entry, &transition, projects);
     let mut write = JournalWrite::new(
         command.actor().clone(),
         origin,
@@ -287,6 +290,7 @@ fn task_done(
         entry,
         &transition,
         git,
+        next,
     ) {
         Ok(answer) => answer,
         Err(outcome) => return outcome,
@@ -382,6 +386,7 @@ fn append_done(
     entry: &Entry,
     transition: &board::Transition,
     git: Option<GitBoundary>,
+    next: Option<Box<str>>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
     let completed = write
         .fact(
@@ -431,7 +436,30 @@ fn append_done(
     Ok(wire::intent::TaskAnswer {
         task: done.task.clone(),
         status: transition.next().status.clone(),
+        next,
     })
+}
+
+fn projected_done_next_action(
+    snapshot: &ValidatedSnapshot,
+    entry: &Entry,
+    transition: &board::Transition,
+    projects: &ProjectPolicy,
+) -> Option<Box<str>> {
+    let mut claim = entry
+        .claim()
+        .expect("an admitted done transition has a claim")
+        .clone();
+    claim.disposition = ClaimDisposition::Freed;
+    let post = Entry::new(
+        entry.statement().clone(),
+        transition.next().clone(),
+        Some(claim),
+        entry.lease().cloned(),
+        projects,
+    )
+    .expect("an admitted transition preserves a valid task entry");
+    next_action(snapshot, &post, false)
 }
 
 /// Resolve the one entry this actor may settle, and the transition it completes.
@@ -573,6 +601,7 @@ fn task_review(
     let answer = wire::intent::TaskAnswer {
         task: review.task.clone(),
         status: "completed".to_owned(),
+        next: None,
     };
     if let Err(error) = write.command_result(
         request(command, review.clone()),
