@@ -55,7 +55,7 @@ export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, 
   // particular: the fixture installs it on the suite's context, and a fresh one
   // starts without it.
   await installSocketControl(context);
-  const gate = { open: true, held: [], stalled: 0, socket: null };
+  const gate = { open: true, held: [], socket: null };
   const page = await context.newPage();
   const monitor = monitorPage(page);
   await page.routeWebSocket(/.*/, (socket) => {
@@ -66,7 +66,6 @@ export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, 
         socket.send(message);
         return;
       }
-      gate.stalled += 1;
       gate.held.push(message);
     });
   });
@@ -173,7 +172,7 @@ async function observeOneBoundary(card) {
     });
 
     const writes = [];
-    const observer = new MutationObserver((mutations) => {
+    const record = (mutations) => {
       for (const mutation of mutations) {
         writes.push({
           attribute: mutation.attributeName,
@@ -181,7 +180,8 @@ async function observeOneBoundary(card) {
           after: element.getAttribute(mutation.attributeName),
         });
       }
-    });
+    };
+    const observer = new MutationObserver(record);
     observer.observe(element, {
       attributes: true,
       attributeOldValue: true,
@@ -197,7 +197,11 @@ async function observeOneBoundary(card) {
       if (after.label !== before.label) break;
     }
     const elapsed = performance.now() - startedAt;
-    observer.takeRecords();
+    // `takeRecords` empties the queue whether or not anyone reads what it
+    // returns, so discarding its result would delete exactly the evidence this
+    // observation exists to collect: a placement write issued between the last
+    // poll and this line, whose callback has not been dispatched yet.
+    record(observer.takeRecords());
     observer.disconnect();
 
     return {
@@ -206,12 +210,21 @@ async function observeOneBoundary(card) {
       elapsed,
       writes,
       authored,
-      // The page's own clock at the moment the new label was read. This is what
-      // binds the observed text to a cause: the label has to be what *this*
-      // browser's clock implies right now, so a label that changed for any
+      // What the page's own clock implies for the label just read, which is
+      // what binds the observed text to a cause: a label that changed for any
       // other reason -- a re-render carrying stale text, a server frame that
-      // slipped through -- fails rather than counting as an advance.
-      expected: elapsedLabel(Date.now() - authored),
+      // slipped through -- lands outside this pair and fails rather than
+      // counting as an advance.
+      //
+      // A pair rather than one string, because the label is the shared clock's
+      // most recent publication and the render it triggers can be scheduled
+      // behind it. Demanding sub-tick agreement would be demanding something
+      // the design never promised; one tick is exactly the lag it does allow,
+      // and a frozen label leaves even that window within two seconds.
+      expected: [
+        elapsedLabel(Date.now() - authored),
+        elapsedLabel(Date.now() - config.tickMs - authored),
+      ],
       connected: element.isConnected,
     };
 
@@ -224,7 +237,7 @@ async function observeOneBoundary(card) {
       const days = Math.trunc(seconds / 86_400);
       return days <= 99 ? `${days}d` : "99d+";
     }
-  }, { attributes: PLACEMENT_ATTRIBUTES, waitMs: BOUNDARY_WAIT_MS });
+  }, { attributes: PLACEMENT_ATTRIBUTES, waitMs: BOUNDARY_WAIT_MS, tickMs: TICK_MS });
 }
 
 /// Let the stalled frames through and put the socket back in pass-through mode.
@@ -244,9 +257,8 @@ function assertAdvancedLocally(advance, delivered) {
     advance.before.label,
     `the age advanced within ${BOUNDARY_WAIT_MS}ms of silence: ${JSON.stringify(advance)}`,
   );
-  assert.equal(
-    advance.after.label,
-    advance.expected,
+  assert.ok(
+    advance.expected.includes(advance.after.label),
     `the advanced label is what the browser's own clock implies: ${JSON.stringify(advance)}`,
   );
   assert.ok(
