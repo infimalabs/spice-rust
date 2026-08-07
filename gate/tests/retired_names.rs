@@ -462,8 +462,6 @@ fn scan_field(scan: &mut Scan, field: &syn::Field) {
     scan_attributes(scan, &field.attrs);
 }
 
-/// Published spellings carried in attributes, such as a serde rename or a clap
-/// flag, which name a surface without ever appearing as an identifier.
 /// Command paths published by a const table of rows, such as `CONTRACTS`.
 ///
 /// Nothing above reaches these. The table is an `Item::Const`, which is scanned
@@ -517,6 +515,8 @@ fn leading_path(input: syn::parse::ParseStream) -> syn::Result<Vec<String>> {
         .collect())
 }
 
+/// Published spellings carried in attributes, such as a serde rename or a clap
+/// flag, which name a surface without ever appearing as an identifier.
 fn scan_attributes(scan: &mut Scan, attributes: &[syn::Attribute]) {
     for attribute in attributes {
         if !NAMING_ATTRIBUTES
