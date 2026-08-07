@@ -182,9 +182,20 @@ trait Runner {
     fn landing(&mut self) -> Result<landing::Report, landing::Error>;
 }
 
-struct BatteryRun {
-    document: Vec<u8>,
-    admitted: bool,
+/// The sole human-verifier rendering selected from one typed battery report.
+///
+/// Keeping the alternatives disjoint prevents a refusal from retaining raw
+/// report bytes that a later write could accidentally expose.
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(
+        dead_code,
+        reason = "native battery acquisition is explicitly unavailable on wasm32"
+    )
+)]
+enum BatteryRun {
+    Admitted(Vec<u8>),
+    Refused(Vec<u8>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -237,9 +248,12 @@ impl Runner for SystemRunner {
         {
             let report =
                 spice::gate::run(gate::Selector::staged()).map_err(|error| error.to_string())?;
-            let admitted = report.admits();
-            let document = report.encode().map_err(|error| error.to_string())?;
-            Ok(BatteryRun { document, admitted })
+            if report.admits() {
+                let document = report.encode().map_err(|error| error.to_string())?;
+                Ok(BatteryRun::Admitted(document))
+            } else {
+                Ok(BatteryRun::Refused(report.refusal_fold().into_bytes()))
+            }
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -369,12 +383,15 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
             }
             Action::Battery => {
                 let run = runner.battery().map_err(VerifyError::Battery)?;
-                output
-                    .write_all(&run.document)
-                    .map_err(VerifyError::Output)?;
-                writeln!(output).map_err(VerifyError::Output)?;
-                if !run.admitted {
-                    return Err(VerifyError::BatteryRefused);
+                match run {
+                    BatteryRun::Admitted(document) => {
+                        output.write_all(&document).map_err(VerifyError::Output)?;
+                        writeln!(output).map_err(VerifyError::Output)?;
+                    }
+                    BatteryRun::Refused(diagnostic) => {
+                        output.write_all(&diagnostic).map_err(VerifyError::Output)?;
+                        return Err(VerifyError::BatteryRefused);
+                    }
                 }
             }
             Action::Landing => {
@@ -498,6 +515,22 @@ mod tests {
     /// The report a current entry point produces, so the order test can pin
     /// that the audit ran without reaching a real repository.
     const ENTRY_POINT_FIXTURE: &str = "fixture guard matches this build\n";
+
+    struct RefuseDiagnosticWrite;
+
+    impl Write for RefuseDiagnosticWrite {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if bytes.starts_with(b"bounded battery refusal") {
+                Err(io::Error::other("fixture diagnostic output refusal"))
+            } else {
+                Ok(bytes.len())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     struct FakeRunner {
         outcomes: VecDeque<Outcome>,
@@ -861,15 +894,37 @@ mod tests {
     #[test]
     fn battery_refusal_is_terminal_before_landing() {
         let mut runner = runner(successful_commands());
-        runner.battery = Some(Ok(BatteryRun {
-            document: br#"{"admitted":false}"#.to_vec(),
-            admitted: false,
-        }));
+        runner.battery = Some(Ok(BatteryRun::Refused(
+            b"bounded battery refusal\n".to_vec(),
+        )));
         let mut output = Vec::new();
 
         let error = verify_with(&mut runner, &mut output).expect_err("battery refusal surfaces");
 
         assert!(matches!(error, VerifyError::BatteryRefused));
+        assert_eq!(runner.calls, labels()[..labels().len() - 1]);
+        assert!(
+            String::from_utf8(output)
+                .expect("fixture diagnostic is UTF-8")
+                .ends_with("bounded battery refusal\n")
+        );
+    }
+
+    #[test]
+    fn battery_refusal_does_not_hide_its_diagnostic_write_failure() {
+        let mut runner = runner(successful_commands());
+        runner.battery = Some(Ok(BatteryRun::Refused(
+            b"bounded battery refusal\n".to_vec(),
+        )));
+
+        let error = verify_with(&mut runner, &mut RefuseDiagnosticWrite)
+            .expect_err("diagnostic write refusal surfaces");
+
+        assert!(matches!(error, VerifyError::Output(_)));
+        assert_eq!(
+            error.to_string(),
+            "[verify] output failed: fixture diagnostic output refusal"
+        );
         assert_eq!(runner.calls, labels()[..labels().len() - 1]);
     }
 
@@ -918,10 +973,7 @@ mod tests {
                 },
                 completed: true,
             })),
-            battery: Some(Ok(BatteryRun {
-                document: br#"{"admitted":true}"#.to_vec(),
-                admitted: true,
-            })),
+            battery: Some(Ok(BatteryRun::Admitted(br#"{"admitted":true}"#.to_vec()))),
             landing: Some(Ok(landing::fixture_report(true))),
             calls: Vec::new(),
         }

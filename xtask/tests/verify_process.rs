@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gate::{BatteryArmResult, BatteryReport, GateId};
+use gate::metrics::{EvidenceState, MetricId, MetricKey};
+use gate::{ArmEvidence, BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryArmResult, BatteryReport, GateId};
 
 const PROCESS_PATH: &str = concat!("PA", "TH");
 
 #[test]
-fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
+fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
     let fixture = Fixture::new();
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create process fixture directory");
@@ -62,7 +63,9 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         ),
     );
 
+    install_file_shape_overrun(&fixture);
     let selected_result = run_selected_gate(&fixture, &programs, &cargo_log, &browser_log);
+    let refused_result = run_refusing_selected_gate(&fixture, &programs);
 
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("verify")
@@ -103,7 +106,8 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         "unexpected browser action: {browser:?}"
     );
 
-    assert_full_battery(&output, &selected_result);
+    assert_bounded_refusal(&output, &refused_result);
+    assert_eq!(selected_result.gate_id(), GateId::EnvNameLedger);
 }
 
 fn run_selected_gate(
@@ -131,31 +135,101 @@ fn run_selected_gate(
     result
 }
 
-fn assert_full_battery(output: &std::process::Output, selected: &BatteryArmResult) {
+fn run_refusing_selected_gate(fixture: &Fixture, programs: &Path) -> BatteryArmResult {
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "file-shape"])
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, programs)
+        .output()
+        .expect("launch the refusing file-shape gate arm");
+    assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
+    let lines = output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines.iter().filter(|line| !line.is_empty()).count(),
+        1,
+        "a refusing selected arm still emits exactly one machine row: {}",
+        streams(&output)
+    );
+    let result: BatteryArmResult =
+        serde_json::from_slice(lines[0]).expect("refusing selected arm emits canonical JSON");
+    assert_eq!(result.gate_id(), GateId::FileShape);
+    assert!(!result.state().admits());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("[verify]"));
+    result
+}
+
+fn assert_bounded_refusal(output: &std::process::Output, selected: &BatteryArmResult) {
+    let stdout = String::from_utf8(output.stdout.clone()).expect("verifier stdout is UTF-8");
+    let fold_start = stdout
+        .find("non-authoritative battery refusal fold:")
+        .expect("verifier emits the named refusal fold");
+    let fold = &stdout.as_bytes()[fold_start..];
+    assert!(
+        fold.len() <= BATTERY_REFUSAL_FOLD_MAX_BYTES,
+        "battery diagnostic is {} bytes, limit is {}",
+        fold.len(),
+        BATTERY_REFUSAL_FOLD_MAX_BYTES
+    );
+    assert!(
+        stdout.contains("full-evidence: cargo xtask gate file-shape"),
+        "refusal omits the exact selected-arm recovery command: {}",
+        streams(output)
+    );
+    assert!(
+        !stdout.contains("[verify] contract landing"),
+        "a refused battery crossed contract landing: {}",
+        streams(output)
+    );
+
+    let ArmEvidence::Metrics { report } = selected.evidence() else {
+        panic!("the selected file-shape arm carries structural metrics")
+    };
+    let metric = report
+        .metrics()
+        .iter()
+        .find(|metric| {
+            metric.metric() == MetricId::FileLines
+                && metric.key() == &MetricKey::path("src/overrun.rs").expect("fixture overrun path")
+        })
+        .expect("selected file-shape evidence names the overrun path");
+    let EvidenceState::Measured { measurement } = metric.state() else {
+        panic!("the overrun is a measured file-lines value")
+    };
+    let latch = measurement
+        .latch()
+        .expect("file lines carry their active latch");
+    let exact_finding = format!(
+        concat!(
+            "finding gate=file-shape metric=file.lines key=path=\"src/overrun.rs\" ",
+            "state=failed unit=source-lines value={} base_limit={} ",
+            "configured_ratchet_limit={} ratchet_limit={} active_limit={} ",
+            "latch_transition={}"
+        ),
+        measurement.value(),
+        latch.base_limit(),
+        latch.configured_ratchet_limit(),
+        latch.ratchet_limit(),
+        latch.active_limit(),
+        latch.transition(),
+    );
+    assert!(
+        stdout.contains(&exact_finding),
+        "refusal omits the exact actionable file-shape finding {exact_finding:?}: {}",
+        streams(output)
+    );
+
     let reports = output
         .stdout
         .split(|byte| *byte == b'\n')
         .filter_map(|line| BatteryReport::decode(line).ok())
         .collect::<Vec<_>>();
-    assert_eq!(reports.len(), 1, "{}", streams(output));
-    let report = &reports[0];
-    assert_eq!(GateId::ALL.len(), 27);
-    assert_eq!(report.results().len(), 27);
-    assert_eq!(
-        selected,
-        report
-            .results()
-            .iter()
-            .find(|result| result.gate_id() == GateId::EnvNameLedger)
-            .expect("full battery contains env-name-ledger")
-    );
-    assert_eq!(
-        report
-            .results()
-            .iter()
-            .map(|result| result.gate_id())
-            .collect::<Vec<_>>(),
-        GateId::ALL
+    assert!(
+        reports.is_empty(),
+        "a refusing human verifier emitted a complete canonical BatteryReport: {}",
+        streams(output)
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout)
@@ -169,6 +243,14 @@ fn assert_full_battery(output: &std::process::Output, selected: &BatteryArmResul
             .count(),
         1
     );
+}
+
+fn install_file_shape_overrun(fixture: &Fixture) {
+    const OVERLONG_LINES: usize = 4_000;
+    let path = fixture.repository.join("src/overrun.rs");
+    fs::write(&path, "// measured overrun\n".repeat(OVERLONG_LINES))
+        .expect("write real file-shape overrun");
+    git(&fixture.repository, &["add", "src/overrun.rs"]);
 }
 
 #[test]
