@@ -20,7 +20,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-#[cfg(not(target_arch = "wasm32"))]
 use wire::body::{
     DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed,
     SteerRecovered, SteerResent, SteerSent, TasteReminded,
