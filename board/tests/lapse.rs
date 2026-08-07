@@ -4,12 +4,11 @@ use std::path::{Path, PathBuf};
 use board::Snapshot;
 use board::allocate::{Mint, mint};
 use board::lapse::{LapseError, Refusal, Request, lapse};
-use board::possession::{FreeRequest, free};
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Instant,
-    LaneResidency, Origin, Phase, Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead,
-    WireVersion, Witness, WorkflowHead, body, intent,
+    LaneResidency, LeaseHead, Origin, Phase, Producer, ResidencyHead, ResidentState, TaskHandle,
+    TaskHead, WireVersion, Witness, WorkflowHead, body, intent,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -122,14 +121,150 @@ fn claim(journal: &mut Journal, command: u8) {
     journal.apply(write).expect("the claim commits");
 }
 
-fn lapse_request(command: u8) -> Request {
+/// Current claim and lease heads with the witnesses a possession command spends.
+///
+/// `Law::POSSESSION` requires exactly the claim, lease, and residency
+/// witnesses, so both writers below re-read the heads instead of restating
+/// positions an earlier write happened to leave behind.
+fn possession(journal: &Journal) -> (ClaimHead, LeaseHead, Vec<Witness>) {
+    let heads = journal
+        .read_with(|read| read.task_heads())
+        .expect("heads before the possession change");
+    let selected = heads
+        .iter()
+        .find(|heads| heads.statement().body().handle == task())
+        .expect("the fixture task is on the board");
+    let claim = selected.claim().expect("the fixture task is claimed");
+    let lease = selected.lease().expect("an active claim carries its lease");
+    let witnesses = vec![
+        Witness::Claim {
+            task: task(),
+            head: Some(claim.position()),
+        },
+        Witness::Lease {
+            task: task(),
+            head: lease.position(),
+        },
+        Witness::Residency {
+            lane: uuid(20),
+            occupant: uuid(21),
+            epoch: uuid(22),
+        },
+    ];
+    (claim.body().clone(), lease.body().clone(), witnesses)
+}
+
+/// Release the claim the way the resident's own free command writes it.
+///
+/// `spice::board_command::progress` amends the claim head it already read and
+/// moves only the disposition. Building a head from scratch here would seed a
+/// shape no production writer produces, so the refusal it sets up would be
+/// answering the fixture rather than the board.
+fn free(journal: &mut Journal, command: u8) {
+    let (claim, _, expected) = possession(journal);
+    let actor = Actor::Lane(uuid(20));
+    let mut write = JournalWrite::new(
+        actor.clone(),
+        "task:BOARD-a1".parse().expect("release origin"),
+        instant(10),
+        Producer::CommandDoor,
+    );
+    let freed = write
+        .fact(
+            body::ClaimFreed {
+                task: task(),
+                actor: actor.clone(),
+            },
+            FactCause::Root,
+        )
+        .expect("release fact");
+    let mut next = claim;
+    next.disposition = ClaimDisposition::Freed;
+    write.claim_head(task(), freed, move |fact| ClaimHead { fact, ..next });
+    write
+        .command_result(
+            Command {
+                v: WireVersion::CURRENT,
+                id: uuid(command),
+                epoch: uuid(22),
+                kind: CommandKind::ClaimFree,
+                expected,
+                body: intent::TaskRef { task: task() },
+            },
+            uuid(22),
+            intent::ClaimAnswer {
+                task: task(),
+                holder: actor,
+                warnings: Vec::new(),
+                next: None,
+            },
+        )
+        .expect("the release receipt builds");
+    journal.apply(write).expect("the release commits");
+}
+
+/// Extend the lease the way the resident's own reclaim command writes it.
+///
+/// The resident amends the lease head in place, so only the renewal and expiry
+/// move and the durable maximum stays where the claim set it. A lapse that
+/// meets this expiry is meeting one that travelled the production path.
+fn renew(journal: &mut Journal, command: u8, until: u8) {
+    let (_, lease, expected) = possession(journal);
+    let actor = Actor::Lane(uuid(20));
+    let mut write = JournalWrite::new(
+        actor.clone(),
+        "task:BOARD-a1".parse().expect("renewal origin"),
+        instant(10),
+        Producer::BusTimer,
+    );
+    let renewed = write
+        .fact(
+            body::ClaimRenewed {
+                task: task(),
+                epoch: uuid(22),
+                until: instant(until),
+                maximum: lease.maximum,
+            },
+            FactCause::Root,
+        )
+        .expect("renewal fact");
+    let mut next = lease;
+    next.renewal = instant(10);
+    next.expiry = instant(until);
+    write.lease_head(task(), renewed, move |_| next);
+    write
+        .command_result(
+            Command {
+                v: WireVersion::CURRENT,
+                id: uuid(command),
+                epoch: uuid(22),
+                kind: CommandKind::ClaimRenew,
+                expected,
+                body: intent::ClaimRenew {
+                    task: task(),
+                    lease_seconds: 15,
+                },
+            },
+            uuid(22),
+            intent::ClaimAnswer {
+                task: task(),
+                holder: actor,
+                warnings: Vec::new(),
+                next: None,
+            },
+        )
+        .expect("the renewal receipt builds");
+    journal.apply(write).expect("the renewal commits");
+}
+
+fn lapse_request(command: u8, expiry: u8) -> Request {
     Request {
         projects: projects(),
         command: uuid(command),
         occupant: uuid(21),
         epoch: uuid(22),
-        expiry: instant(20),
-        at: instant(20),
+        expiry: instant(expiry),
+        at: instant(expiry),
         intent: intent::TaskRef { task: task() },
     }
 }
@@ -228,7 +363,7 @@ fn lapse_preserves_lease_and_makes_the_task_allocatable_again() {
     let workflow = before.entries()[0].workflow().clone();
     let lease = before.entries()[0].lease().expect("lease").clone();
 
-    let expired = lapse(&mut journal, lapse_request(32)).expect("lapse claim");
+    let expired = lapse(&mut journal, lapse_request(32, 20)).expect("lapse claim");
     assert_eq!(expired.task(), &task());
     assert_eq!(expired.first(), expired.last());
     let after = Snapshot::read(&journal, &projects()).expect("lapsed snapshot");
@@ -254,13 +389,13 @@ fn lapse_preserves_lease_and_makes_the_task_allocatable_again() {
 fn timer_and_authority_refusals_leave_the_journal_unchanged() {
     let cases = [
         {
-            let mut request = lapse_request(40);
+            let mut request = lapse_request(40, 20);
             request.intent.task = "BOARD-missing".parse().expect("missing task");
             let expected = Refusal::MissingTask(request.intent.task.clone());
             (request, expected)
         },
         {
-            let mut request = lapse_request(41);
+            let mut request = lapse_request(41, 20);
             request.at = instant(19);
             let expected = Refusal::Early {
                 at: request.at,
@@ -269,7 +404,7 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
             (request, expected)
         },
         {
-            let mut request = lapse_request(42);
+            let mut request = lapse_request(42, 20);
             request.expiry = instant(19);
             let expected = Refusal::StaleExpiry {
                 stored: instant(20),
@@ -278,7 +413,7 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
             (request, expected)
         },
         {
-            let mut request = lapse_request(43);
+            let mut request = lapse_request(43, 20);
             request.occupant = uuid(24);
             let expected = Refusal::ClaimOccupant {
                 holding: uuid(21),
@@ -287,7 +422,7 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
             (request, expected)
         },
         {
-            let mut request = lapse_request(44);
+            let mut request = lapse_request(44, 20);
             request.epoch = uuid(23);
             let expected = Refusal::ClaimEpoch {
                 holding: uuid(22),
@@ -312,30 +447,11 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
     }
 
     let mut journal = claimed();
-    free(
-        &mut journal,
-        FreeRequest {
-            projects: board::ProjectPolicy::new(
-                ["board".to_owned()],
-                Vec::new(),
-                dialect::PROJECT_MIN_DEPTH as u64,
-                dialect::PROJECT_MAX_DEPTH as u64,
-            )
-            .expect("fixture project policy"),
-            command: uuid(45),
-            actor: Actor::Lane(uuid(20)),
-            lane: uuid(20),
-            occupant: uuid(21),
-            epoch: uuid(22),
-            at: instant(10),
-            intent: intent::TaskRef { task: task() },
-        },
-    )
-    .expect("free first");
+    free(&mut journal, 45);
     let before = journal.fact_snapshot().expect("before inactive refusal");
     let heads = Snapshot::read(&journal, &projects()).expect("heads before inactive refusal");
     assert!(matches!(
-        lapse(&mut journal, lapse_request(46)),
+        lapse(&mut journal, lapse_request(46, 20)),
         Err(LapseError::Refused(Refusal::Inactive(
             ClaimDisposition::Freed
         )))
@@ -384,7 +500,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
     let before = journal.fact_snapshot().expect("before malformed refusal");
     let heads = Snapshot::read(&journal, &projects()).expect("heads before malformed refusal");
     assert!(matches!(
-        lapse(&mut journal, lapse_request(48)),
+        lapse(&mut journal, lapse_request(48, 20)),
         Err(LapseError::Refused(Refusal::MissingLease))
     ));
     assert_eq!(
@@ -409,7 +525,7 @@ fn duplicate_receipt_rolls_back_and_independent_connections_share_lapse() {
     let before = first.fact_snapshot().expect("before duplicate");
     let heads = Snapshot::read(&first, &projects()).expect("heads before duplicate");
     assert!(matches!(
-        lapse(&mut first, lapse_request(31)),
+        lapse(&mut first, lapse_request(31, 20)),
         Err(LapseError::Commit(_))
     ));
     assert_eq!(first.fact_snapshot().expect("duplicate rolls back"), before);
@@ -418,7 +534,7 @@ fn duplicate_receipt_rolls_back_and_independent_connections_share_lapse() {
         heads
     );
 
-    lapse(&mut second, lapse_request(52)).expect("second connection lapses");
+    lapse(&mut second, lapse_request(52, 20)).expect("second connection lapses");
     let shared = Snapshot::read(&first, &projects()).expect("first sees the lapse");
     assert!(
         board::eligible_entry(
@@ -431,6 +547,61 @@ fn duplicate_receipt_rolls_back_and_independent_connections_share_lapse() {
     assert_eq!(
         first.verify().expect("shared authority verifies").receipts,
         2
+    );
+}
+
+/// A timer armed at a superseded expiry writes nothing; the current one still ends the claim.
+///
+/// This coverage lived in the renew suite, because a renewal was the only
+/// thing that could move an expiry out from under an armed timer. What it
+/// proves is a property of lapse, not of renew: the timer carries the expiry
+/// it was armed with, and authority refuses it once the lease has moved past
+/// that instant. Losing it would leave a timer left over from before a
+/// renewal free to end a claim its holder had already extended.
+///
+/// The refusal is read for both instants rather than matched loosely, because
+/// a stale timer and a current one differ only in which expiry they name.
+#[test]
+fn a_superseded_expiry_is_refused_and_the_renewed_one_still_lapses() {
+    let mut journal = claimed();
+    renew(&mut journal, 52, 25);
+
+    let before = journal.fact_snapshot().expect("before the stale timer");
+    let heads = Snapshot::read(&journal, &projects()).expect("heads before the stale timer");
+    match lapse(&mut journal, lapse_request(53, 20)) {
+        Err(LapseError::Refused(observed)) => assert_eq!(
+            observed,
+            Refusal::StaleExpiry {
+                stored: instant(25),
+                fired: instant(20),
+            }
+        ),
+        other => panic!("expected a stale expiry refusal, found {other:?}"),
+    }
+    assert_eq!(
+        journal
+            .fact_snapshot()
+            .expect("the stale timer writes nothing"),
+        before
+    );
+    assert_eq!(
+        Snapshot::read(&journal, &projects()).expect("the stale timer preserves heads"),
+        heads
+    );
+
+    let renewed = Snapshot::read(&journal, &projects()).expect("renewed heads");
+    board::Active::admit(&renewed.entries()[0], &Actor::Lane(uuid(20)), instant(24))
+        .expect("the renewed lease is still active past the expiry the timer named");
+
+    lapse(&mut journal, lapse_request(54, 25)).expect("the renewed expiry lapses");
+    let reallocatable = Snapshot::read(&journal, &projects()).expect("heads after the lapse");
+    assert!(
+        board::eligible_entry(
+            reallocatable.entries(),
+            &reallocatable.entries()[0],
+            &Actor::Lane(uuid(20))
+        ),
+        "a lease lapsed at its renewed expiry leaves the task allocatable again"
     );
 }
 
