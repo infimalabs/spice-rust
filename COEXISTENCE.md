@@ -91,7 +91,7 @@ the resident that wrote it and still names an endpoint the predecessor answers â
 where `capability` appears nowhere in the serve code, so a client following it
 would present a capability to a process with no concept of one. Two orderly
 paths already retire such records: `resident/runtime.rs:390` clears surfaces on
-start, and `:537` faults `canvas::release-incomplete` when one outlives release.
+start, and `:531` faults `canvas::release-incomplete` when one outlives release.
 Neither runs when a resident is killed, so RESIDEN-1kKhyz64 landed a third that
 does not depend on the exit path â€” `require_live_publisher`
 (`spice/src/command_client.rs:326`) probes the resident lock before dialing and
