@@ -111,6 +111,7 @@ const fn is_steering(kind: wire::FactKind) -> bool {
             | wire::FactKind::SteerMissed
             | wire::FactKind::SteerLapsed
             | wire::FactKind::SteerCanceled
+            | wire::FactKind::TasteReminded
     )
 }
 
@@ -143,10 +144,20 @@ const fn is_lane(kind: wire::FactKind) -> bool {
     )
 }
 
+/// Membership is a per-plane predicate rather than a partition, which is what
+/// lets one kind belong to two planes without being copied into either.
+///
+/// `taste::reminded` is the only kind that uses it. The reminder is a live
+/// directive and taste evidence in the same row, so a reader that rebuilds
+/// steering and a reader that rebuilds taste both have to see it; giving either
+/// one its own copy is what would let the two disagree about whether a reminder
+/// exists.
 const fn is_taste(kind: wire::FactKind) -> bool {
     matches!(
         kind,
-        wire::FactKind::TasteConfirmed | wire::FactKind::TasteCleared
+        wire::FactKind::TasteConfirmed
+            | wire::FactKind::TasteCleared
+            | wire::FactKind::TasteReminded
     )
 }
 

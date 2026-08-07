@@ -153,6 +153,8 @@ pub enum Domain {
     GateStateReceipt,
     /// The exact tracked and machine-local executable policy documents.
     ConfigExecutableSurface,
+    /// The normalized authored prose one taste reminder was derived from.
+    TasteProse,
 }
 
 impl Domain {
@@ -183,7 +185,8 @@ impl Domain {
             | Self::DistSourceCommit
             | Self::DistReleaseManifest
             | Self::DistReleaseNotes
-            | Self::DistReleasePlan => self.product_tag(),
+            | Self::DistReleasePlan
+            | Self::TasteProse => self.product_tag(),
             Self::ProofBattery
             | Self::ProofReplayV3
             | Self::ProofReceiptV3
@@ -232,6 +235,7 @@ impl Domain {
             Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
             Self::DistReleaseNotes => "spice.dist.release-notes.v1",
             Self::DistReleasePlan => "spice.dist.release-plan.v1",
+            Self::TasteProse => "spice.taste.prose.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }
     }

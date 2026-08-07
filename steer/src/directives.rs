@@ -24,7 +24,7 @@ use std::fmt;
 use serde::de::DeserializeOwned;
 use wire::body::{
     DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed,
-    SteerRecovered, SteerResent, SteerSent,
+    SteerRecovered, SteerResent, SteerSent, TasteReminded,
 };
 use wire::{CanonicalUuid, Disposition, Instant};
 
@@ -134,6 +134,12 @@ pub enum Steering<'a> {
     Lapsed(&'a SteerLapsed),
     /// The operator withdrew a lineage.
     Canceled(&'a SteerCanceled),
+    /// A taste fired on authored prose and opened a directive.
+    ///
+    /// It reads as a steering fact because it is one. The taste evidence it
+    /// also carries is read by the taste plane from the same row, and never by
+    /// anything here.
+    Reminded(&'a TasteReminded),
 }
 
 /// Why a steering fact could not be folded into standing.
@@ -311,6 +317,10 @@ impl Ledger {
                     let body = decode_body::<SteerSent>(envelope)?;
                     ledger.absorb(Steering::Sent(&body))
                 }
+                wire::FactKind::TasteReminded => {
+                    let body = decode_body::<TasteReminded>(envelope)?;
+                    ledger.absorb(Steering::Reminded(&body))
+                }
                 wire::FactKind::SteerResent => {
                     let body = decode_body::<SteerResent>(envelope)?;
                     ledger.absorb(Steering::Resent(&body))
@@ -359,6 +369,7 @@ impl Ledger {
     pub fn absorb(&mut self, steering: Steering<'_>) -> Result<(), Refusal> {
         match steering {
             Steering::Sent(body) => self.send(body),
+            Steering::Reminded(body) => self.remind(body),
             Steering::Resent(body) => self.resend(body),
             Steering::Recovered(body) => self.recover(body),
             Steering::Acked(body) => {
@@ -435,17 +446,29 @@ impl Ledger {
             .find(|directive| directive.directive == id)
     }
 
-    fn send(&mut self, body: &SteerSent) -> Result<(), Refusal> {
-        let key = read("key", &body.key)?;
-        if self.directives.contains_key(&key) {
-            return Err(Refusal::Duplicate { key });
+    /// Open standing for a directive that descends from nothing.
+    ///
+    /// Both ways a lineage can begin land here rather than each stating the
+    /// admission for itself. The two refusals are the whole of what "first rung"
+    /// means -- a key already standing, and an identity already spent -- so
+    /// sharing them is what stops one origin from drifting into accepting a
+    /// duplicate the other rejects.
+    fn open(&mut self, opened: Directive) -> Result<(), Refusal> {
+        if self.directives.contains_key(&opened.key) {
+            return Err(Refusal::Duplicate { key: opened.key });
         }
-        if self.directive(body.directive).is_some() {
+        if self.directive(opened.directive).is_some() {
             return Err(Refusal::IdentityDuplicate {
-                directive: body.directive,
+                directive: opened.directive,
             });
         }
-        self.place(Directive {
+        self.place(opened);
+        Ok(())
+    }
+
+    fn send(&mut self, body: &SteerSent) -> Result<(), Refusal> {
+        let key = read("key", &body.key)?;
+        self.open(Directive {
             directive: body.directive,
             key,
             lane: body.lane,
@@ -456,8 +479,34 @@ impl Ledger {
             escalation: 0,
             ancestor: None,
             disposition: Disposition::Live,
-        });
-        Ok(())
+        })
+    }
+
+    /// A taste reminder opens standing exactly as an operator send does.
+    ///
+    /// Everything a directive is asked afterwards -- whether it is live, what
+    /// retires it, when it lapses, how it resends, what the inbox renders -- is
+    /// answered from the standing this places, so none of those readers needs to
+    /// know a taste produced it. That is the point of routing it here: a
+    /// taste-only branch downstream is a second definition of "live", and two
+    /// definitions are what let a reminder become unretirable.
+    ///
+    /// A reminder drives no control channel and carries no attachments. It is
+    /// prose addressed to a lane, which is what an operator's plainest send is.
+    fn remind(&mut self, body: &TasteReminded) -> Result<(), Refusal> {
+        let key = read("key", &body.key)?;
+        self.open(Directive {
+            directive: body.directive,
+            key,
+            lane: body.lane,
+            text: body.text.clone(),
+            control: None,
+            attachments: Vec::new(),
+            expires: body.expires,
+            escalation: 0,
+            ancestor: None,
+            disposition: Disposition::Live,
+        })
     }
 
     fn resend(&mut self, body: &SteerResent) -> Result<(), Refusal> {
@@ -743,547 +792,4 @@ fn read(field: &'static str, text: &str) -> Result<Key, Refusal> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{LADDER, Ledger, Refusal, Steering};
-    use crate::ack::keys::Key;
-    use crate::ack::scan::Standing;
-    use wire::body::{
-        AcknowledgmentMiss, DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined,
-        SteerLapsed, SteerMissed, SteerRecovered, SteerResent, SteerSent, TranscriptLocus,
-    };
-    use wire::{CanonicalUuid, Disposition, Instant};
-
-    const ROOT: &str = "1kJK6N3R";
-    const SECOND: &str = "1kJK6M0V";
-    const THIRD: &str = "1kJK7Sqy";
-    const FOURTH: &str = "1kJK8KcW";
-    const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
-    const ELSEWHERE: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
-    const EXPIRES: &str = "2026-08-01T07:07:19.000Z";
-
-    #[test]
-    fn a_sent_directive_stands_pending_until_something_retires_it() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-
-        let pending = ledger.pending(lane());
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].key(), &key(ROOT));
-        assert_eq!(pending[0].text(), "hold the line");
-        assert_eq!(pending[0].control(), Some("drive-drain-queue"));
-        assert_eq!(pending[0].escalation(), 0);
-        assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Live));
-    }
-
-    #[test]
-    fn a_lane_hears_only_its_own_direction() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-
-        assert!(ledger.pending(elsewhere()).is_empty());
-    }
-
-    #[test]
-    fn a_repeated_key_is_refused() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-
-        assert_eq!(
-            ledger.absorb(Steering::Sent(&sent(ROOT))),
-            Err(Refusal::Duplicate { key: key(ROOT) })
-        );
-    }
-
-    /// A key from the retired base-62 mint is durable, so replay must pass it.
-    ///
-    /// The envelopes are shaped after a real pair out of the resident's own
-    /// journal, where the pre-codec fact sits ahead of a current one. Replay
-    /// propagates a refusal rather than skipping the fact, so a grammar that
-    /// turns the first key away does not lose one directive, it loses that one
-    /// and every fact behind it.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn a_retired_alphabet_key_replays_and_does_not_bury_the_facts_behind_it() {
-        let facts = [
-            fact_bytes(1, "YTVtQvOX", "sent before the moment codec landed"),
-            fact_bytes(2, "1kJK6N3R", "sent after it"),
-        ]
-        .iter()
-        .map(|text| wire::decode(text.as_bytes()).expect("registered steer::sent envelope"))
-        .collect();
-        let snapshot = journal::FactSnapshot::from_facts(facts).expect("fixture snapshot");
-
-        let ledger = Ledger::from_snapshot(&snapshot).expect("replay admits the retired key");
-
-        let pending = ledger.pending(lane());
-        assert_eq!(pending.len(), 2, "a fact behind the retired key was lost");
-        assert_eq!(pending[0].key().as_str(), "YTVtQvOX");
-        assert_eq!(pending[1].key().as_str(), "1kJK6N3R");
-    }
-
-    /// One `steer::sent` envelope as the journal stores it.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn fact_bytes(seq: u64, key: &str, text: &str) -> String {
-        format!(
-            concat!(
-                r#"{{"v":1,"seq":{},"at":"2026-08-06T03:00:0{}.000Z","actor":"operator","#,
-                r#""origin":"resident:e2e9f1f2-19b2-4ddc-83fa-340b02dee2c4","#,
-                r#""fact":{{"kind":"steer::sent","#,
-                r#""directive":"a0ae31a7-eb68-463a-b3c0-272bfeaaa5d{}","#,
-                r#""expires":"{}","key":"{}","lane":"{}","text":"{}"}}}}"#
-            ),
-            seq, seq, seq, EXPIRES, key, LANE, text
-        )
-    }
-
-    /// A ladder is one directive said again, so the lane is asked once.
-    #[test]
-    fn a_resend_climbs_one_rung_and_leaves_the_lineage_pending_once() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        ledger
-            .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-            .expect("resent");
-
-        let pending = ledger.pending(lane());
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].key(), &key(SECOND));
-        assert_eq!(pending[0].escalation(), 1);
-        assert_eq!(pending[0].ancestor(), Some(&key(ROOT)));
-        assert_eq!(pending[0].text(), "hold the line");
-        assert_eq!(ledger.lineage(&key(ROOT)).len(), 2);
-    }
-
-    #[test]
-    fn a_resend_that_skips_or_repeats_a_rung_is_refused() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-
-        assert_eq!(
-            ledger.absorb(Steering::Resent(&resent(SECOND, ROOT, 2))),
-            Err(Refusal::Rung {
-                key: key(SECOND),
-                expected: 1,
-                observed: 2,
-            })
-        );
-        assert_eq!(
-            ledger.absorb(Steering::Resent(&resent(SECOND, ROOT, 0))),
-            Err(Refusal::Rung {
-                key: key(SECOND),
-                expected: 1,
-                observed: 0,
-            })
-        );
-    }
-
-    /// Past the top rung the ladder stops rather than escalating forever.
-    #[test]
-    fn an_exhausted_ladder_is_refused() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        let rungs = [SECOND, THIRD, FOURTH];
-        for (index, minted) in rungs.iter().enumerate() {
-            let below = if index == 0 { ROOT } else { rungs[index - 1] };
-            let climbed = u32::try_from(index + 1).expect("rung fits");
-            ledger
-                .absorb(Steering::Resent(&resent(minted, below, climbed)))
-                .expect("rung within the ladder");
-        }
-
-        let over = "1kJK8yRS";
-        assert_eq!(
-            ledger.absorb(Steering::Resent(&resent(over, FOURTH, LADDER + 1))),
-            Err(Refusal::Exhausted {
-                key: key(over),
-                ladder: LADDER,
-            })
-        );
-    }
-
-    #[test]
-    fn a_resend_addressing_another_lane_is_refused() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-
-        let mut wandered = resent(SECOND, ROOT, 1);
-        wandered.lane = elsewhere();
-        assert_eq!(
-            ledger.absorb(Steering::Resent(&wandered)),
-            Err(Refusal::Lane {
-                key: key(SECOND),
-                expected: lane(),
-                observed: elsewhere(),
-            })
-        );
-    }
-
-    /// Acknowledging the rung the lane was first asked at answers the ladder
-    /// climbed above it, which is what stops later escalation.
-    #[test]
-    fn acknowledging_any_live_rung_retires_the_whole_lineage() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        ledger
-            .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-            .expect("resent");
-        ledger
-            .absorb(Steering::Acked(&acked(ROOT)))
-            .expect("acked at the first rung");
-
-        for rung in [ROOT, SECOND] {
-            assert_eq!(
-                ledger.disposition(&key(rung)),
-                Some(Disposition::Acked),
-                "{rung} did not retire with its lineage"
-            );
-        }
-        assert!(ledger.pending(lane()).is_empty());
-    }
-
-    #[test]
-    fn a_retired_lineage_refuses_a_second_disposition() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        ledger.absorb(Steering::Acked(&acked(ROOT))).expect("acked");
-
-        assert_eq!(
-            ledger.absorb(Steering::Declined(&declined(ROOT))),
-            Err(Refusal::Retired {
-                key: key(ROOT),
-                disposition: Disposition::Acked,
-            })
-        );
-        assert_eq!(
-            ledger.absorb(Steering::Resent(&resent(SECOND, ROOT, 1))),
-            Err(Refusal::Retired {
-                key: key(ROOT),
-                disposition: Disposition::Acked,
-            })
-        );
-    }
-
-    #[test]
-    fn a_declined_directive_retires_as_declined() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        ledger
-            .absorb(Steering::Declined(&declined(ROOT)))
-            .expect("declined");
-
-        assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Declined));
-    }
-
-    #[test]
-    fn an_acknowledgment_binds_the_directive_identity_and_lane() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        let before = ledger.clone();
-
-        let mut wrong_identity = acked(ROOT);
-        wrong_identity.directive = directive(SECOND);
-        assert!(matches!(
-            ledger.absorb(Steering::Acked(&wrong_identity)),
-            Err(Refusal::Identity { .. })
-        ));
-        assert_eq!(ledger, before);
-
-        let mut wrong_lane = acked(ROOT);
-        wrong_lane.lane = "018f82d4-6f59-7d06-92e3-bce913116399"
-            .parse()
-            .expect("other lane");
-        assert!(matches!(
-            ledger.absorb(Steering::Acked(&wrong_lane)),
-            Err(Refusal::Lane { .. })
-        ));
-        assert_eq!(ledger, before);
-    }
-
-    #[test]
-    fn an_operator_cancel_retires_a_live_lineage() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        ledger
-            .absorb(Steering::Canceled(&SteerCanceled {
-                key: ROOT.to_owned(),
-                lane: lane(),
-            }))
-            .expect("canceled");
-
-        assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Canceled));
-        assert!(ledger.pending(lane()).is_empty());
-    }
-
-    #[test]
-    fn a_lapse_must_name_the_expiry_the_lineage_carries() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-
-        let early: Instant = "2026-08-01T06:00:00.000Z".parse().expect("instant");
-        assert_eq!(
-            ledger.absorb(Steering::Lapsed(&SteerLapsed {
-                key: ROOT.to_owned(),
-                lane: lane(),
-                expires: early,
-            })),
-            Err(Refusal::Expiry {
-                key: key(ROOT),
-                expected: expires(),
-                observed: early,
-            })
-        );
-
-        ledger
-            .absorb(Steering::Lapsed(&SteerLapsed {
-                key: ROOT.to_owned(),
-                lane: lane(),
-                expires: expires(),
-            }))
-            .expect("lapsed at its own expiry");
-        assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Lapsed));
-    }
-
-    #[test]
-    fn recovery_restores_only_the_exact_lapsed_directive_without_losing_payload() {
-        let mut ledger = Ledger::new();
-        let original = sent(ROOT);
-        ledger.absorb(Steering::Sent(&original)).expect("sent");
-        ledger
-            .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-            .expect("resent");
-        ledger
-            .absorb(Steering::Lapsed(&SteerLapsed {
-                key: SECOND.to_owned(),
-                lane: lane(),
-                expires: expires(),
-            }))
-            .expect("lapsed at its own expiry");
-        let recovered_expiry: Instant = "2026-08-01T08:07:19.000Z"
-            .parse()
-            .expect("recovery instant");
-        let recovered = SteerRecovered {
-            directive: directive(SECOND),
-            key: SECOND.to_owned(),
-            lane: lane(),
-            lapsed_at: expires(),
-            expires: recovered_expiry,
-        };
-
-        ledger
-            .absorb(Steering::Recovered(&recovered))
-            .expect("exact lapsed directive recovers");
-
-        let restored = ledger
-            .directive(directive(SECOND))
-            .expect("recovered directive retains identity");
-        assert_eq!(restored.text(), original.text);
-        assert_eq!(restored.control(), original.control.as_deref());
-        assert_eq!(restored.attachments(), original.attachments);
-        assert_eq!(restored.expires(), recovered_expiry);
-        assert_eq!(restored.disposition(), Disposition::Live);
-        assert_eq!(ledger.pending(lane()), vec![restored]);
-        for member in ledger.lineage(&key(SECOND)) {
-            assert_eq!(member.disposition(), Disposition::Live);
-            assert_eq!(member.expires(), recovered_expiry);
-        }
-        assert_eq!(
-            ledger.absorb(Steering::Recovered(&recovered)),
-            Err(Refusal::Retired {
-                key: key(SECOND),
-                disposition: Disposition::Live,
-            }),
-            "the same failed directive cannot be recovered twice",
-        );
-        ledger
-            .absorb(Steering::Acked(&acked(SECOND)))
-            .expect("the recovered lineage can retire normally");
-        for member in ledger.lineage(&key(SECOND)) {
-            assert_eq!(member.disposition(), Disposition::Acked);
-        }
-    }
-
-    /// A missed acknowledgment is a diagnostic, never a retirement. Its key is
-    /// not even read, because the fact exists precisely when the key was
-    /// unknown or malformed.
-    #[test]
-    fn a_missed_acknowledgment_alters_nothing() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        let before = ledger.clone();
-
-        for named in [ROOT, "nothing", ""] {
-            ledger
-                .absorb(Steering::Missed(&SteerMissed {
-                    key: named.to_owned(),
-                    lane: lane(),
-                    epoch: epoch(),
-                    locus: transcript_locus(12, 1),
-                    miss: AcknowledgmentMiss::Unknown,
-                }))
-                .expect("a missed acknowledgment is always absorbed");
-        }
-
-        assert_eq!(ledger, before, "a missed acknowledgment altered standing");
-    }
-
-    #[test]
-    fn a_key_that_is_not_spelled_as_one_names_the_field() {
-        let mut ledger = Ledger::new();
-        let mut malformed = sent(ROOT);
-        malformed.key = "1kJK6N3".to_owned();
-
-        assert_eq!(
-            ledger.absorb(Steering::Sent(&malformed)),
-            Err(Refusal::Malformed {
-                field: "key",
-                text: "1kJK6N3".to_owned(),
-            })
-        );
-
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        let mut wandering = resent(SECOND, ROOT, 1);
-        wandering.ancestor = "nope".to_owned();
-        assert_eq!(
-            ledger.absorb(Steering::Resent(&wandering)),
-            Err(Refusal::Malformed {
-                field: "ancestor",
-                text: "nope".to_owned(),
-            })
-        );
-    }
-
-    #[test]
-    fn an_acknowledgment_of_nothing_is_refused() {
-        let mut ledger = Ledger::new();
-
-        assert_eq!(
-            ledger.absorb(Steering::Acked(&acked(ROOT))),
-            Err(Refusal::Unknown { key: key(ROOT) })
-        );
-    }
-
-    /// A refusal is not a half-applied fact.
-    #[test]
-    fn a_refused_fact_leaves_standing_untouched() {
-        let mut ledger = Ledger::new();
-        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-        let before = ledger.clone();
-
-        for refused in [
-            Steering::Sent(&sent(ROOT)),
-            Steering::Resent(&resent(SECOND, ROOT, 2)),
-            Steering::Acked(&acked(SECOND)),
-        ] {
-            assert!(ledger.absorb(refused).is_err(), "fact was admitted");
-            assert_eq!(ledger, before, "a refused fact altered standing");
-        }
-    }
-
-    /// Replay is the same reduction, so standing does not depend on when the
-    /// facts were read.
-    #[test]
-    fn replaying_the_same_facts_produces_the_same_standing() {
-        let build = || {
-            let mut ledger = Ledger::new();
-            ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-            ledger
-                .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-                .expect("resent");
-            ledger
-                .absorb(Steering::Acked(&acked(SECOND)))
-                .expect("acked");
-            ledger
-        };
-
-        assert_eq!(build(), build());
-    }
-
-    fn key(text: &str) -> Key {
-        text.parse().expect("test key")
-    }
-
-    fn lane() -> CanonicalUuid {
-        LANE.parse().expect("test lane")
-    }
-
-    fn elsewhere() -> CanonicalUuid {
-        ELSEWHERE.parse().expect("other lane")
-    }
-
-    fn expires() -> Instant {
-        EXPIRES.parse().expect("test instant")
-    }
-
-    fn sent(key: &str) -> SteerSent {
-        SteerSent {
-            directive: directive(key),
-            key: key.to_owned(),
-            lane: lane(),
-            text: "hold the line".to_owned(),
-            control: Some("drive-drain-queue".to_owned()),
-            attachments: vec![DirectiveAttachment {
-                name: "operator-note.txt".to_owned(),
-                content_type: "text/plain".to_owned(),
-                data_url: "data:text/plain;base64,aG9sZCB0aGUgbGluZQ==".to_owned(),
-            }],
-            expires: expires(),
-        }
-    }
-
-    fn resent(key: &str, ancestor: &str, escalation: u32) -> SteerResent {
-        SteerResent {
-            directive: directive(key),
-            key: key.to_owned(),
-            ancestor: ancestor.to_owned(),
-            lane: lane(),
-            escalation,
-        }
-    }
-
-    fn acked(key: &str) -> SteerAcked {
-        SteerAcked {
-            directive: directive(key),
-            key: key.to_owned(),
-            lane: lane(),
-            epoch: epoch(),
-            locus: transcript_locus(3, 1),
-        }
-    }
-
-    fn declined(key: &str) -> SteerDeclined {
-        SteerDeclined {
-            directive: directive(key),
-            key: key.to_owned(),
-            lane: lane(),
-            epoch: epoch(),
-            locus: transcript_locus(3, 1),
-            reason: "the tree is red".to_owned(),
-        }
-    }
-
-    fn transcript_locus(line: u32, column: u32) -> TranscriptLocus {
-        TranscriptLocus {
-            member: 1,
-            offset: 40,
-            length: 80,
-            event: 0,
-            line,
-            column,
-        }
-    }
-
-    fn epoch() -> CanonicalUuid {
-        "018f82d4-6f59-7d06-92e3-bce913116303"
-            .parse()
-            .expect("fixture epoch")
-    }
-
-    fn directive(key: &str) -> CanonicalUuid {
-        let suffix = key.bytes().fold(0_u64, |value, byte| {
-            value.wrapping_mul(131).wrapping_add(u64::from(byte))
-        });
-        format!("00000000-0000-4000-8000-{:012x}", suffix & 0xffff_ffff_ffff)
-            .parse()
-            .expect("fixture directive UUID")
-    }
-}
+mod tests;

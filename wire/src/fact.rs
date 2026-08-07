@@ -244,6 +244,8 @@ vocabulary! {
     TasteConfirmed = "taste::confirmed" by Judge;
     /// The judge cleared a taste at an evidence locus.
     TasteCleared = "taste::cleared" by Judge;
+    /// A taste fired on authored prose and raised one live directive.
+    TasteReminded = "taste::reminded" by ResidentRecognition;
 
     /// An expected listening event remained absent past its armed window.
     CanaryAlarmed = "canary::alarmed" by ResidentRecognition;
