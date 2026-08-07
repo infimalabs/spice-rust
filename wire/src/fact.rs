@@ -438,6 +438,41 @@ impl AnyFact {
     pub const fn body(&self) -> &serde_json::Map<String, serde_json::Value> {
         &self.body
     }
+
+    /// This body decoded as `F`, when `F` is registered against this kind.
+    ///
+    /// Naming the wrong body type is the only thing a caller can get wrong here,
+    /// and it answers [`None`]. The decode behind it cannot fail: an [`AnyFact`]
+    /// is only ever built by its [`Deserialize`] impl, and that impl runs the
+    /// kind's registered DTO across these exact fields before keeping them, so
+    /// reading them back through that DTO repeats a decode that already
+    /// succeeded on the same bytes.
+    ///
+    /// This is why a caller pairs no error arm with this call. A reader that
+    /// wrote one would be describing a corrupt body the store cannot hold, and
+    /// no fixture could ever reach it.
+    ///
+    /// ```
+    /// let fact: wire::AnyFact = wire::decode(
+    ///     br#"{"kind":"taste::confirmed","taste":"polling","locus":"turn:48213#3"}"#,
+    /// )
+    /// .expect("a registered body decodes");
+    ///
+    /// // The annotation is the point: an answer, or the wrong kind asked for.
+    /// let confirmed: Option<wire::body::TasteConfirmed> = fact.read();
+    /// assert_eq!(confirmed.expect("the registered kind").taste, "polling");
+    /// assert!(fact.read::<wire::body::TasteCleared>().is_none());
+    /// ```
+    #[must_use]
+    pub fn read<F: Body>(&self) -> Option<F> {
+        if self.kind != F::KIND {
+            return None;
+        }
+        Some(
+            decode_registered_body(&self.body)
+                .expect("a body validated on decode reads back through its registered DTO"),
+        )
+    }
 }
 
 impl<F: Body> Fact<F> {

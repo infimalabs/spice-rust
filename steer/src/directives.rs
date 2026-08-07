@@ -21,7 +21,6 @@ use std::error::Error;
 use std::fmt;
 
 #[cfg(not(target_arch = "wasm32"))]
-use serde::de::DeserializeOwned;
 use wire::body::{
     DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed,
     SteerRecovered, SteerResent, SteerSent, TasteReminded,
@@ -305,55 +304,40 @@ impl Ledger {
     ///
     /// # Errors
     ///
-    /// Returns the exact fact position whose registered body or steering
-    /// transition contradicts the durable stream.
+    /// Returns the exact fact position whose steering transition contradicts
+    /// the durable stream. A body cannot be the reason: the snapshot holds only
+    /// bodies its registered DTO already accepted.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, ReplayError> {
         let mut ledger = Self::new();
         for envelope in snapshot.facts() {
-            let kind = envelope.fact.kind();
-            let result = match kind {
-                wire::FactKind::SteerSent => {
-                    let body = decode_body::<SteerSent>(envelope)?;
-                    ledger.absorb(Steering::Sent(&body))
-                }
-                wire::FactKind::TasteReminded => {
-                    let body = decode_body::<TasteReminded>(envelope)?;
-                    ledger.absorb(Steering::Reminded(&body))
-                }
-                wire::FactKind::SteerResent => {
-                    let body = decode_body::<SteerResent>(envelope)?;
-                    ledger.absorb(Steering::Resent(&body))
-                }
-                wire::FactKind::SteerRecovered => {
-                    let body = decode_body::<SteerRecovered>(envelope)?;
-                    ledger.absorb(Steering::Recovered(&body))
-                }
-                wire::FactKind::SteerAcked => {
-                    let body = decode_body::<SteerAcked>(envelope)?;
-                    ledger.absorb(Steering::Acked(&body))
-                }
-                wire::FactKind::SteerDeclined => {
-                    let body = decode_body::<SteerDeclined>(envelope)?;
-                    ledger.absorb(Steering::Declined(&body))
-                }
-                wire::FactKind::SteerMissed => {
-                    let body = decode_body::<SteerMissed>(envelope)?;
-                    ledger.absorb(Steering::Missed(&body))
-                }
-                wire::FactKind::SteerLapsed => {
-                    let body = decode_body::<SteerLapsed>(envelope)?;
-                    ledger.absorb(Steering::Lapsed(&body))
-                }
-                wire::FactKind::SteerCanceled => {
-                    let body = decode_body::<SteerCanceled>(envelope)?;
-                    ledger.absorb(Steering::Canceled(&body))
-                }
-                _ => continue,
+            // Each read is the kind test and the decode at once, so a kind is
+            // named here exactly once, by the body type registered against it.
+            let fact = &envelope.fact;
+            let result = if let Some(body) = fact.read::<SteerSent>() {
+                ledger.absorb(Steering::Sent(&body))
+            } else if let Some(body) = fact.read::<TasteReminded>() {
+                ledger.absorb(Steering::Reminded(&body))
+            } else if let Some(body) = fact.read::<SteerResent>() {
+                ledger.absorb(Steering::Resent(&body))
+            } else if let Some(body) = fact.read::<SteerRecovered>() {
+                ledger.absorb(Steering::Recovered(&body))
+            } else if let Some(body) = fact.read::<SteerAcked>() {
+                ledger.absorb(Steering::Acked(&body))
+            } else if let Some(body) = fact.read::<SteerDeclined>() {
+                ledger.absorb(Steering::Declined(&body))
+            } else if let Some(body) = fact.read::<SteerMissed>() {
+                ledger.absorb(Steering::Missed(&body))
+            } else if let Some(body) = fact.read::<SteerLapsed>() {
+                ledger.absorb(Steering::Lapsed(&body))
+            } else if let Some(body) = fact.read::<SteerCanceled>() {
+                ledger.absorb(Steering::Canceled(&body))
+            } else {
+                continue;
             };
             result.map_err(|error| ReplayError {
                 seq: envelope.seq,
-                kind,
+                kind: fact.kind(),
                 detail: error.to_string(),
             })?;
         }
@@ -760,22 +744,6 @@ impl fmt::Display for ReplayError {
 }
 
 impl Error for ReplayError {}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn decode_body<T: DeserializeOwned>(
-    envelope: &wire::Envelope<wire::AnyFact>,
-) -> Result<T, ReplayError> {
-    let bytes = wire::encode(envelope.fact.body()).map_err(|error| ReplayError {
-        seq: envelope.seq,
-        kind: envelope.fact.kind(),
-        detail: error.to_string(),
-    })?;
-    wire::decode(&bytes).map_err(|error| ReplayError {
-        seq: envelope.seq,
-        kind: envelope.fact.kind(),
-        detail: error.to_string(),
-    })
-}
 
 impl Standing for Ledger {
     fn disposition(&self, key: &Key) -> Option<Disposition> {

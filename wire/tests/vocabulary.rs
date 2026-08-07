@@ -233,6 +233,25 @@ fn an_opaque_read_still_validates_the_registered_body() {
 }
 
 #[test]
+fn an_opaque_read_answers_only_the_kind_its_body_is_registered_against() {
+    let fact: AnyFact = wire::decode(TASTE_CONFIRMED.as_bytes()).expect("opaque fact decodes");
+
+    let confirmed = fact
+        .read::<body::TasteConfirmed>()
+        .expect("the registered kind reads back");
+    assert_eq!(confirmed.taste, "polling");
+    assert_eq!(confirmed.locus, "turn:48213#3");
+    // taste::cleared carries the same two fields as taste::confirmed, so the
+    // body alone cannot tell them apart and the kind is the only thing that
+    // answers here. Reading one as the other must be absent rather than a
+    // curation verdict flipped from confirmed to cleared.
+    assert!(
+        fact.read::<body::TasteCleared>().is_none(),
+        "a kind the body is not registered against has no answer"
+    );
+}
+
+#[test]
 fn every_digest_carrying_fact_refuses_a_noncanonical_spelling() {
     assert_noncanonical_digest_refused::<body::DocApplied>(DOC_APPLIED, "digest");
     assert_noncanonical_digest_refused::<body::TrustPended>(TRUST_PENDED, "digest");

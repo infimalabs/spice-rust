@@ -697,8 +697,7 @@ fn reminders(snapshot: &journal::FactSnapshot) -> Vec<wire::body::TasteReminded>
     snapshot
         .facts()
         .iter()
-        .filter(|envelope| envelope.fact.kind() == wire::FactKind::TasteReminded)
-        .map(|envelope| body(envelope).expect("reminder body"))
+        .filter_map(|envelope| envelope.fact.read())
         .collect()
 }
 
