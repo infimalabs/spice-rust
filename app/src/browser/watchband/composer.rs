@@ -124,16 +124,13 @@ pub(super) fn render_agent_message_card(
     let reported_tasks = watchband::reported_tasks(&message.text);
     html! {
         <article
-            key={format!(
-                "agent-{}-{}-{}",
-                message.locus.member,
-                message.locus.offset,
-                message.locus.event,
-            )}
-            id={source_id}
+            key={source_id.clone()}
+            id={source_id.clone()}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             aria-label={format!("Agent message from {producer}")}
             data-card-kind="agent-message"
+            data-mosaic-card-key={source_id}
+            data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
             data-producer-target-id={quote_lane.to_string()}
             data-accent={correspondent.accent.to_string()}
@@ -219,11 +216,13 @@ pub(super) fn render_directive_card(
         .collect::<Vec<_>>();
     html! {
         <article
-            key={directive.directive.to_string()}
-            id={source_id}
+            key={source_id.clone()}
+            id={source_id.clone()}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             data-directive={directive.directive.to_string()}
             data-card-kind="directive"
+            data-mosaic-card-key={source_id}
+            data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={lane.to_string()}
             data-accent={correspondent.accent.to_string()}
             data-accent-slot={correspondent.accent.to_string()}
