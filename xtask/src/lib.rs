@@ -118,6 +118,13 @@ const VERIFY_ACTIONS: [Action; 10] = [
     Action::Landing,
 ];
 
+const SCOPED_COMMANDS: [ScopedCommand; 4] = [
+    ScopedCommand::Format,
+    ScopedCommand::Clippy,
+    ScopedCommand::Test,
+    ScopedCommand::DocTest,
+];
+
 const BATTERY_LABEL: &str = "canonical Rust gate battery";
 /// Precondition rather than a check of this tree, which is why it runs first.
 ///
@@ -156,6 +163,59 @@ enum Action {
     Landing,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScopedCommand {
+    Format,
+    Clippy,
+    Test,
+    DocTest,
+}
+
+impl ScopedCommand {
+    fn label(self, package: &str) -> String {
+        match self {
+            Self::Format => format!("cargo fmt --package {package} -- --check"),
+            Self::Clippy => {
+                format!("cargo clippy --locked --package {package} --all-targets -- -D warnings")
+            }
+            Self::Test => {
+                format!("cargo test --locked --package {package} --all-targets")
+            }
+            Self::DocTest => format!("cargo test --locked --package {package} --doc"),
+        }
+    }
+
+    fn arguments(self, package: &str) -> Vec<String> {
+        match self {
+            Self::Format => ["fmt", "--package", package, "--", "--check"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            Self::Clippy => [
+                "clippy",
+                "--locked",
+                "--package",
+                package,
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            Self::Test => ["test", "--locked", "--package", package, "--all-targets"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            Self::DocTest => ["test", "--locked", "--package", package, "--doc"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        }
+    }
+}
+
 impl Action {
     const fn label(self) -> &'static str {
         match self {
@@ -177,6 +237,7 @@ struct Status {
 trait Runner {
     fn entry_point(&mut self) -> Result<String, String>;
     fn run(&mut self, step: Step) -> io::Result<Status>;
+    fn run_scoped(&mut self, step: ScopedCommand, package: &str) -> io::Result<Status>;
     fn browser(&mut self) -> io::Result<BrowserRun>;
     fn battery(&mut self) -> Result<BatteryRun, String>;
     fn landing(&mut self) -> Result<landing::Report, landing::Error>;
@@ -215,6 +276,16 @@ impl Runner for SystemRunner {
 
     fn run(&mut self, step: Step) -> io::Result<Status> {
         let status = Command::new("cargo").args(step.arguments).status()?;
+        Ok(Status {
+            success: status.success(),
+            code: status.code(),
+        })
+    }
+
+    fn run_scoped(&mut self, step: ScopedCommand, package: &str) -> io::Result<Status> {
+        let status = Command::new("cargo")
+            .args(step.arguments(package))
+            .status()?;
         Ok(Status {
             success: status.success(),
             code: status.code(),
@@ -306,6 +377,22 @@ pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), Ga
 /// subsequent command.
 pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
     verify_with(&mut SystemRunner, output)
+}
+
+/// Run formatter, lint, test, and documentation feedback for one Cargo package.
+///
+/// This is deliberately not the completion battery. Its first output records
+/// every full verifier action and canonical battery arm it does not execute.
+/// The policy battery remains repository-wide, so executing its arms here would
+/// make an unrelated baseline refusal package-local in name only. Callers must
+/// still run [`verify`] before completing a task.
+///
+/// # Errors
+///
+/// Returns an invalid package name or the first output, launch, or command
+/// failure.
+pub fn verify_package(package: &str, output: &mut impl Write) -> Result<(), VerifyError> {
+    verify_package_with(package, &mut SystemRunner, output)
 }
 
 /// One selected gate-arm command failure.
@@ -409,11 +496,84 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
     Ok(())
 }
 
+fn verify_package_with<R: Runner>(
+    package: &str,
+    runner: &mut R,
+    output: &mut impl Write,
+) -> Result<(), VerifyError> {
+    if !valid_package_name(package) {
+        return Err(VerifyError::Package(package.to_owned()));
+    }
+
+    let skipped_actions = VERIFY_ACTIONS
+        .iter()
+        .filter(|action| !matches!(action, Action::EntryPoint))
+        .map(|action| action.label())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let skipped_arms = gate::GateId::ALL
+        .into_iter()
+        .map(|gate_id| gate_id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(
+        output,
+        concat!(
+            "[verify] scoped package {}; feedback only: ",
+            "run `cargo xtask verify` before task completion"
+        ),
+        package
+    )
+    .map_err(VerifyError::Output)?;
+    writeln!(
+        output,
+        "[verify] scoped full actions skipped: {skipped_actions}"
+    )
+    .map_err(VerifyError::Output)?;
+    writeln!(output, "[verify] scoped gate arms run: none").map_err(VerifyError::Output)?;
+    writeln!(output, "[verify] scoped gate arms skipped: {skipped_arms}")
+        .map_err(VerifyError::Output)?;
+
+    writeln!(output, "[verify] {ENTRY_POINT_LABEL}").map_err(VerifyError::Output)?;
+    let report = runner.entry_point().map_err(VerifyError::EntryPoint)?;
+    output
+        .write_all(report.as_bytes())
+        .map_err(VerifyError::Output)?;
+
+    for command in SCOPED_COMMANDS {
+        let label = command.label(package);
+        writeln!(output, "[verify] {label}").map_err(VerifyError::Output)?;
+        let status =
+            runner
+                .run_scoped(command, package)
+                .map_err(|source| VerifyError::ScopedLaunch {
+                    label: label.clone(),
+                    source,
+                })?;
+        if !status.success {
+            return Err(VerifyError::ScopedExit {
+                label,
+                code: status.code,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn valid_package_name(package: &str) -> bool {
+    !package.is_empty()
+        && package
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
 /// A bounded verifier failure that identifies the first incomplete step.
 #[derive(Debug)]
 pub enum VerifyError {
     Output(io::Error),
     Encode(serde_json::Error),
+    Package(String),
     EntryPoint(String),
     Landing(String),
     LandingRefused,
@@ -430,8 +590,16 @@ pub enum VerifyError {
         label: &'static str,
         source: io::Error,
     },
+    ScopedLaunch {
+        label: String,
+        source: io::Error,
+    },
     Exit {
         label: &'static str,
+        code: Option<i32>,
+    },
+    ScopedExit {
+        label: String,
         code: Option<i32>,
     },
 }
@@ -441,6 +609,10 @@ impl fmt::Display for VerifyError {
         match self {
             Self::Output(source) => write!(formatter, "[verify] output failed: {source}"),
             Self::Encode(source) => write!(formatter, "[verify] landing output failed: {source}"),
+            Self::Package(package) => write!(
+                formatter,
+                "[verify] invalid package scope {package:?}: use one Cargo package name"
+            ),
             Self::EntryPoint(detail) => write!(formatter, "[verify] {detail}"),
             Self::Landing(detail) => {
                 write!(formatter, "[verify] landing acquisition failed: {detail}")
@@ -470,11 +642,21 @@ impl fmt::Display for VerifyError {
             Self::Launch { label, source } => {
                 write!(formatter, "[verify] failed to launch: {label} ({source})")
             }
+            Self::ScopedLaunch { label, source } => {
+                write!(formatter, "[verify] failed to launch: {label} ({source})")
+            }
             Self::Exit {
                 label,
                 code: Some(code),
             } => write!(formatter, "[verify] failed: {label} (exit {code})"),
             Self::Exit { label, code: None } => {
+                write!(formatter, "[verify] failed: {label} (terminated by signal)")
+            }
+            Self::ScopedExit {
+                label,
+                code: Some(code),
+            } => write!(formatter, "[verify] failed: {label} (exit {code})"),
+            Self::ScopedExit { label, code: None } => {
                 write!(formatter, "[verify] failed: {label} (terminated by signal)")
             }
         }
@@ -484,18 +666,21 @@ impl fmt::Display for VerifyError {
 impl std::error::Error for VerifyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Output(source) | Self::Launch { source, .. } | Self::BrowserLaunch { source } => {
-                Some(source)
-            }
+            Self::Output(source)
+            | Self::Launch { source, .. }
+            | Self::ScopedLaunch { source, .. }
+            | Self::BrowserLaunch { source } => Some(source),
             Self::Encode(source) => Some(source),
-            Self::EntryPoint(_)
+            Self::Package(_)
+            | Self::EntryPoint(_)
             | Self::Landing(_)
             | Self::LandingRefused
             | Self::Battery(_)
             | Self::BatteryRefused
             | Self::BrowserExit { .. }
             | Self::BrowserIncomplete
-            | Self::Exit { .. } => None,
+            | Self::Exit { .. }
+            | Self::ScopedExit { .. } => None,
         }
     }
 }
@@ -534,11 +719,13 @@ mod tests {
 
     struct FakeRunner {
         outcomes: VecDeque<Outcome>,
+        scoped_outcomes: VecDeque<Outcome>,
         entry_point: Option<Result<String, String>>,
         browser: Option<io::Result<BrowserRun>>,
         battery: Option<Result<BatteryRun, String>>,
         landing: Option<Result<landing::Report, landing::Error>>,
         calls: Vec<&'static str>,
+        scoped_calls: Vec<(ScopedCommand, String)>,
     }
 
     impl Runner for FakeRunner {
@@ -561,6 +748,25 @@ mod tests {
                     code: Some(code),
                 }),
                 Outcome::Launch => Err(io::Error::other("fixture launch refusal")),
+            }
+        }
+
+        fn run_scoped(&mut self, step: ScopedCommand, package: &str) -> io::Result<Status> {
+            self.scoped_calls.push((step, package.to_owned()));
+            match self
+                .scoped_outcomes
+                .pop_front()
+                .expect("fixture has a scoped outcome")
+            {
+                Outcome::Success => Ok(Status {
+                    success: true,
+                    code: Some(0),
+                }),
+                Outcome::Exit(code) => Ok(Status {
+                    success: false,
+                    code: Some(code),
+                }),
+                Outcome::Launch => Err(io::Error::other("fixture scoped launch refusal")),
             }
         }
 
@@ -610,6 +816,88 @@ mod tests {
             })
             .collect::<String>();
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn scoped_verify_runs_only_package_commands_and_names_every_omission() {
+        let mut runner = scoped_runner();
+        let mut output = Vec::new();
+
+        verify_package_with("gate", &mut runner, &mut output)
+            .expect("scoped package verification succeeds");
+
+        assert_eq!(runner.calls, [ENTRY_POINT_LABEL]);
+        let expected_calls = SCOPED_COMMANDS
+            .into_iter()
+            .map(|command| (command, "gate".to_owned()))
+            .collect::<Vec<_>>();
+        assert_eq!(runner.scoped_calls, expected_calls);
+
+        let output = String::from_utf8(output).expect("scoped verifier output is UTF-8");
+        assert!(output.starts_with(concat!(
+            "[verify] scoped package gate; feedback only: ",
+            "run `cargo xtask verify` before task completion\n"
+        )));
+        let skipped_actions = VERIFY_ACTIONS
+            .iter()
+            .filter(|action| !matches!(action, Action::EntryPoint))
+            .map(|action| action.label())
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(output.contains(&format!(
+            "[verify] scoped full actions skipped: {skipped_actions}\n"
+        )));
+        assert!(output.contains("[verify] scoped gate arms run: none\n"));
+        let skipped_arms = gate::GateId::ALL
+            .into_iter()
+            .map(|gate_id| gate_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(output.contains(&format!(
+            "[verify] scoped gate arms skipped: {skipped_arms}\n"
+        )));
+        assert!(!runner.calls.contains(&BROWSER_LABEL));
+        assert!(!runner.calls.contains(&BATTERY_LABEL));
+        assert!(!runner.calls.contains(&landing::LABEL));
+    }
+
+    #[test]
+    fn scoped_verify_refuses_an_injected_or_empty_package_name_before_output() {
+        for package in ["", "gate\n[verify] forged", "gate/path", "gate package"] {
+            let mut runner = scoped_runner();
+            let mut output = Vec::new();
+
+            let error = verify_package_with(package, &mut runner, &mut output)
+                .expect_err("invalid package scope refuses");
+
+            assert!(matches!(error, VerifyError::Package(_)));
+            assert!(runner.calls.is_empty());
+            assert!(runner.scoped_calls.is_empty());
+            assert!(output.is_empty());
+        }
+    }
+
+    #[test]
+    fn scoped_command_failure_stops_before_later_package_commands() {
+        let mut runner = scoped_runner();
+        runner.scoped_outcomes = [Outcome::Success, Outcome::Exit(17)].into_iter().collect();
+        let mut output = Vec::new();
+
+        let error = verify_package_with("gate", &mut runner, &mut output)
+            .expect_err("scoped Clippy refusal surfaces");
+
+        assert!(matches!(
+            error,
+            VerifyError::ScopedExit { code: Some(17), .. }
+        ));
+        assert_eq!(runner.calls, [ENTRY_POINT_LABEL]);
+        assert_eq!(
+            runner.scoped_calls,
+            [
+                (ScopedCommand::Format, "gate".to_owned()),
+                (ScopedCommand::Clippy, "gate".to_owned()),
+            ]
+        );
     }
 
     #[test]
@@ -965,6 +1253,7 @@ mod tests {
     fn runner(outcomes: impl IntoIterator<Item = Outcome>) -> FakeRunner {
         FakeRunner {
             outcomes: outcomes.into_iter().collect(),
+            scoped_outcomes: VecDeque::new(),
             entry_point: Some(Ok(ENTRY_POINT_FIXTURE.to_owned())),
             browser: Some(Ok(BrowserRun {
                 status: Status {
@@ -976,7 +1265,14 @@ mod tests {
             battery: Some(Ok(BatteryRun::Admitted(br#"{"admitted":true}"#.to_vec()))),
             landing: Some(Ok(landing::fixture_report(true))),
             calls: Vec::new(),
+            scoped_calls: Vec::new(),
         }
+    }
+
+    fn scoped_runner() -> FakeRunner {
+        let mut runner = runner([]);
+        runner.scoped_outcomes = SCOPED_COMMANDS.iter().map(|_| Outcome::Success).collect();
+        runner
     }
 
     fn successful_commands() -> Vec<Outcome> {

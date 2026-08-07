@@ -9,7 +9,7 @@ use sill::Deadlines;
 
 const USAGE_EXIT: u8 = 2;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <help|verify|gate ARM|app|activate-hooks|",
+    "usage: cargo xtask <help|verify [--package PACKAGE]|gate ARM|app|activate-hooks|",
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "stage-target TARGET|",
     "commit-msg MESSAGE_FILE|reference-transaction STATE>"
@@ -30,8 +30,22 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("help") && arguments.len() == 0 => {
             writeln!(output, "{}", help()).map_err(Into::into)
         }
-        Some(value) if value == OsStr::new("verify") && arguments.len() == 0 => {
-            xtask::verify(&mut output).map_err(Into::into)
+        Some(value) if value == OsStr::new("verify") => {
+            let arguments = arguments.collect::<Vec<_>>();
+            match arguments.as_slice() {
+                [] => xtask::verify(&mut output).map_err(Into::into),
+                [option, package] if option == OsStr::new("--package") => {
+                    let Some(package) = package.to_str() else {
+                        eprintln!("{}", help());
+                        return ExitCode::from(USAGE_EXIT);
+                    };
+                    xtask::verify_package(package, &mut output).map_err(Into::into)
+                }
+                _ => {
+                    eprintln!("{}", help());
+                    return ExitCode::from(USAGE_EXIT);
+                }
+            }
         }
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
             let arm = arguments.next().expect("one gate arm was admitted");

@@ -94,6 +94,17 @@ cargo xtask verify
 The command discovers the repository from the current directory and runs the
 one canonical verifier; there is no wrapper or second suite.
 
+For fast feedback while changing one Cargo package, scope the formatter,
+Clippy, all-target tests, and doctests to that package:
+
+```sh
+cargo xtask verify --package gate
+```
+
+The scoped command identifies every full-verifier action and compiled gate arm
+it skips. It is feedback only; run the zero-argument command before completing
+or handing off work.
+
 [SHELL.md](SHELL.md) inventories the few shell-bound entrypoints that remain
 and every orchestration script retired into these Rust commands.
 
