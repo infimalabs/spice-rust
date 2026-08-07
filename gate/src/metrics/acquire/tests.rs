@@ -66,10 +66,13 @@ fn measured(state: &EvidenceState) -> &MetricMeasurement {
 /// A planted citation names its line and its unresolved target in the report.
 ///
 /// The plant reproduces the shape that exposed the defect: a doc comment whose
-/// third line cites `NAMES.md`, a document the inventory does not carry. Before
-/// this arm carried findings the same plant encoded the value `1` and nothing
-/// else, so the reader was told a file had one absence and had to search the
-/// file to learn which citation was phantom.
+/// third line cites a Markdown document the inventory does not carry. That name
+/// is spelled in the fixture below and never in this prose, because this arm
+/// measures doc comments: naming a phantom document here would refuse the very
+/// file that proves the naming works. Before this arm carried findings the same
+/// plant encoded the value `1` and nothing else, so the reader was told a file
+/// had one absence and had to search the file to learn which citation was
+/// phantom.
 #[test]
 fn a_planted_citation_names_its_line_and_target_in_the_encoded_report() {
     let tree = Tree::new("absence");
