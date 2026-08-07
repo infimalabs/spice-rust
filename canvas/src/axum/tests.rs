@@ -474,6 +474,86 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
     bus.shutdown().expect("bus shuts down");
 }
 
+/// A probe is answered on a socket that carries no subscription at all.
+///
+/// The client sends this when nothing has arrived for a while, which on a quiet
+/// board is the normal state rather than a broken one. So the answer cannot
+/// depend on there being a subscription to answer from, and it has to name the
+/// probe that asked: a fixed identity would let one stale answer satisfy every
+/// later probe, which is exactly the half-open socket the probe exists to catch.
+#[tokio::test(flavor = "current_thread")]
+async fn a_liveness_probe_is_answered_per_probe_and_still_admits_its_generation() {
+    let app = TestApp::new();
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "probe horizon", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind_streaming(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        epoch(),
+        capabilities,
+        app.source(),
+        speech(),
+        bus.reader(),
+        8,
+    )
+    .await
+    .expect("streaming server binds");
+    let address = server.local_addr().expect("address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+
+    for probe in [identity(0xf1), identity(0xf2)] {
+        send_client(
+            &mut socket,
+            &wire::StreamRequest::Ping {
+                v: wire::WireVersion::CURRENT,
+                id: probe,
+                epoch: epoch(),
+            },
+        )
+        .await;
+        assert!(
+            matches!(
+                stream_frame(&mut socket).await,
+                wire::StreamFrame::Pong { id, epoch: answered, .. }
+                    if id == probe && answered == epoch()
+            ),
+            "each probe is answered by its own identity"
+        );
+    }
+
+    // A probe addressed to a replaced generation is told so. Answering it with
+    // a Pong would report a healthy socket to a client whose whole view is
+    // stale, which is the one case where staying connected is the wrong move.
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Ping {
+            v: wire::WireVersion::CURRENT,
+            id: identity(0xf3),
+            epoch: identity(0xf9),
+        },
+    )
+    .await;
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Fault { fault, .. } if fault.reason == "stream::epoch-mismatch"
+    ));
+
+    shutdown.send(()).expect("shutdown signals");
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+    bus.shutdown().expect("bus shuts down");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author() {
     let app = TestApp::new();

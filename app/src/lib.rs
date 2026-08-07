@@ -43,6 +43,8 @@ mod composer_markdown;
 pub mod mosaic;
 pub mod mosaic_plane;
 pub mod pane;
+#[cfg(any(target_arch = "wasm32", test))]
+mod reconnect;
 pub mod runtime;
 pub mod socket;
 pub mod speech_owner;

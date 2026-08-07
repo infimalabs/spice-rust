@@ -42,7 +42,13 @@ const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY")
     None => "unbound-development-build",
 };
 const CONNECTION_HANDSHAKE_TIMEOUT_MILLIS: u32 = 5_000;
-const RECONNECT_DELAY_MILLIS: u32 = 1_200;
+
+/// How long the socket may stay silent before the resident is probed.
+///
+/// A quiet board sends nothing, so silence alone says nothing about the socket.
+/// The probe is what makes the next interval meaningful: after it, silence is a
+/// resident that did not answer rather than a resident with nothing to say.
+const LIVENESS_PROBE_MILLIS: u32 = 15_000;
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;

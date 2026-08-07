@@ -672,6 +672,9 @@ impl CanvasRuntime {
                 self.observe_message(message);
                 Vec::new()
             }
+            // Proof the socket answered, and nothing else. It reports no state,
+            // so applying it changes none.
+            StreamFrame::Pong { .. } => Vec::new(),
             StreamFrame::Refusal { refusal, .. } => {
                 self.push_event("refusal", refusal.reason.clone(), refusal.remedy.clone());
                 Vec::new()

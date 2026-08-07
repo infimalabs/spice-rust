@@ -787,6 +787,57 @@ fn a_stale_thread_reply_cannot_merge_into_the_latest_requested_walk() {
     assert_eq!(runtime.pending_thread(), None);
 }
 
+/// A liveness answer proves the socket carries traffic and nothing else.
+///
+/// The cursor it must not move is the one a reconnect resumes strictly after,
+/// so a probe that advanced it would not show up as a redraw or a stray row --
+/// it would show up later, as the frames between the old cursor and the new one
+/// never being asked for again.
+#[test]
+fn a_liveness_answer_moves_neither_the_resume_cursor_nor_any_page() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    runtime.apply_stream(&admitted_stream(
+        &session,
+        &packed_frame("facts", &[task_fact(41, None)], None, 41),
+    ));
+    let settled = runtime.resume().expect("resume cursor");
+    // Debug covers rows, horizon and overflow together, so this compares more
+    // of the page than an assertion naming the fields a probe was expected to
+    // leave alone.
+    let pages = format!("{:?}", runtime.fact_pages());
+    let events = format!("{:?}", runtime.events());
+    let pending = runtime.pending_thread();
+    let terminal = runtime.terminal();
+
+    let pong = wire::encode(&StreamFrame::Pong {
+        v: WireVersion::CURRENT,
+        id: uuid(REQUEST),
+        epoch: uuid(EPOCH),
+    })
+    .expect("liveness answer encodes");
+    assert_eq!(
+        runtime.apply_stream(&admitted_stream(&session, &pong)),
+        vec![],
+        "a liveness answer asks the surface to do nothing"
+    );
+
+    assert_eq!(runtime.resume(), Some(settled));
+    assert_eq!(format!("{:?}", runtime.fact_pages()), pages);
+    assert_eq!(format!("{:?}", runtime.events()), events);
+    // Both are asserted unchanged rather than absent: the fact applied above
+    // already opened a thread walk, so requiring absence here would have passed
+    // only by describing the fixture wrongly.
+    assert_eq!(runtime.pending_thread(), pending);
+    assert_eq!(runtime.terminal(), terminal);
+
+    // Reconnecting to the same generation still continues from the cursor the
+    // fact settled, which is the property the probe could have quietly spent.
+    assert!(!runtime.reconnect(&acceptance(&session, "operator", EPOCH)));
+    assert_eq!(runtime.resume(), Some(settled));
+}
+
 #[test]
 fn same_scope_reconnect_preserves_pages_and_changed_scope_clears_everything() {
     let session = session(OPERATOR, EPOCH);

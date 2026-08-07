@@ -46,6 +46,10 @@ import {
   installSocketControl,
 } from "./canvas-speech.mjs";
 import {
+  assertHalfOpenSocketRecovers,
+  routeCanvasSocket,
+} from "./half-open-socket.mjs";
+import {
   assertGenerationOnline,
   assertOfflineObserved,
   assertResidentLossObserved,
@@ -650,6 +654,31 @@ async function assertStaleGeneration(browser, endpoint, currentEpoch) {
   await context.close();
 }
 
+/// Drive the half-open case on a context of its own.
+///
+/// The route has to be in place before the first navigation, and every other
+/// page in this suite has already connected by the time it gets here. Reusing
+/// one would mean routing a socket that was opened before the route existed.
+async function assertHalfOpenSocket(browser, endpoint, epoch, fixture, seeded) {
+  const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  const page = await context.newPage();
+  const monitor = monitorPage(page);
+  const route = await routeCanvasSocket(page);
+  await page.goto(endpoint, { waitUntil: "domcontentloaded" });
+  let advanced;
+  await assertHalfOpenSocketRecovers(page, monitor, route, epoch, async () => {
+    await reply(fixture, ["task", "note", seeded.task, "written while the socket was half open"]);
+    advanced = await journalExtent(fixture);
+  });
+  // Taken during the outage, so it counts a fact the page could not have had.
+  // `assertPackedHistory` asserts the rendered count *equals* the extent, which
+  // is what makes this a proof against duplicate application and not only
+  // against a missing one.
+  await assertPackedHistory(page, advanced);
+  monitor.assertClean();
+  await context.close();
+}
+
 async function assertSameGenerationResume(
   page,
   monitor,
@@ -807,6 +836,13 @@ try {
     seeded,
     resident.discovery.epoch,
     beforeReconnect,
+  );
+  await assertHalfOpenSocket(
+    browser,
+    resident.discovery.endpoint,
+    resident.discovery.epoch,
+    fixture,
+    seeded,
   );
   const configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
   await assertTeamArrangement(lightPage, fixture, artifacts);
