@@ -1,0 +1,151 @@
+use app::speech_queue::{
+    Advance, Enqueue, MAX_NARRATION_CURSORS, NarrationCursors, NarrationMessage, SpeechQueue,
+    SpeechRequest,
+};
+
+fn narration(lane: &str, text: &str) -> SpeechRequest {
+    SpeechRequest::narration(lane.to_owned(), text.to_owned())
+}
+
+fn started(result: Enqueue) -> app::speech_queue::SpeechEntry {
+    match result {
+        Enqueue::Start(entry) => entry,
+        Enqueue::Queued => panic!("an idle queue must start its head"),
+    }
+}
+
+#[test]
+fn one_global_head_survives_a_burst_and_each_lineage_keeps_one_fresh_tail() {
+    let mut queue = SpeechQueue::default();
+    let head = started(queue.enqueue(narration("lineage-a", "a1")));
+
+    assert_eq!(
+        queue.enqueue(narration("lineage-b", "stale b")),
+        Enqueue::Queued
+    );
+    assert_eq!(
+        queue.enqueue(narration("lineage-b", "fresh b")),
+        Enqueue::Queued
+    );
+    assert_eq!(
+        queue.enqueue(narration("lineage-a", "fresh a")),
+        Enqueue::Queued
+    );
+    assert!(queue.is_active(head.id()));
+    assert_eq!(queue.pending(), 2);
+
+    let b = match queue.finish(head.id()) {
+        Advance::Start(entry) => entry,
+        other => panic!("head did not advance to the oldest fresh tail: {other:?}"),
+    };
+    assert_eq!(b.lane(), Some("lineage-b"));
+    assert_eq!(b.text(), "fresh b");
+    let a = match queue.finish(b.id()) {
+        Advance::Start(entry) => entry,
+        other => panic!("second lineage did not advance: {other:?}"),
+    };
+    assert_eq!(a.lane(), Some("lineage-a"));
+    assert_eq!(a.text(), "fresh a");
+    assert_eq!(queue.finish(a.id()), Advance::Idle);
+}
+
+#[test]
+fn stop_and_lane_abandonment_cannot_revive_superseded_playback() {
+    let mut queue = SpeechQueue::default();
+    let head = started(queue.enqueue(SpeechRequest::manual(None, "surface".to_owned())));
+    assert_eq!(
+        queue.enqueue(narration("removed", "drop me")),
+        Enqueue::Queued
+    );
+    assert_eq!(
+        queue.enqueue(narration("survivor", "keep me")),
+        Enqueue::Queued
+    );
+
+    queue.abandon_lane("removed");
+    let survivor = match queue.finish(head.id()) {
+        Advance::Start(entry) => entry,
+        other => panic!("abandonment removed another lineage: {other:?}"),
+    };
+    assert_eq!(survivor.lane(), Some("survivor"));
+    queue.stop();
+    queue.stop();
+    assert!(!queue.active());
+    assert_eq!(queue.pending(), 0);
+    assert_eq!(queue.finish(survivor.id()), Advance::Ignored);
+}
+
+#[test]
+fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes() {
+    let mut cursors = NarrationCursors::default();
+    let history = vec![
+        message("agent-a", "a1", "old a"),
+        message("agent-b", "b1", "old b"),
+    ];
+    assert!(cursors.observe(true, &history).is_empty());
+
+    let live = vec![
+        history[0].clone(),
+        message("agent-a", "a2", "live a"),
+        history[1].clone(),
+        message("agent-b", "b2", "live b"),
+    ];
+    assert_eq!(
+        cursors.observe(false, &live),
+        [
+            app::speech_queue::NarrationLine {
+                lane: "agent-a".to_owned(),
+                text: "live a".to_owned(),
+            },
+            app::speech_queue::NarrationLine {
+                lane: "agent-b".to_owned(),
+                text: "live b".to_owned(),
+            },
+        ]
+    );
+
+    let restored = NarrationCursors::restore(cursors.rows());
+    let old_reconnect = vec![
+        live[1].clone(),
+        message("agent-a", "a3", "arrived while disconnected"),
+        live[3].clone(),
+    ];
+    let mut restored = restored;
+    assert!(restored.observe(true, &old_reconnect).is_empty());
+}
+
+#[test]
+fn cursor_storage_is_bounded_and_a_missing_cursor_rebases_without_reading_history() {
+    let mut cursors = NarrationCursors::default();
+    for index in 0..=MAX_NARRATION_CURSORS {
+        let lane = format!("agent-{index}");
+        let key = format!("message-{index}");
+        assert!(
+            cursors
+                .observe(false, &[message(&lane, &key, "history")])
+                .is_empty()
+        );
+    }
+    assert_eq!(cursors.len(), MAX_NARRATION_CURSORS);
+    assert_eq!(cursors.rows().first().unwrap().0, "agent-1");
+
+    assert!(
+        cursors
+            .observe(
+                false,
+                &[
+                    message("agent-1", "history-not-containing-cursor", "old"),
+                    message("agent-1", "newest", "also old"),
+                ],
+            )
+            .is_empty()
+    );
+}
+
+fn message(lane: &str, key: &str, text: &str) -> NarrationMessage {
+    NarrationMessage {
+        lane: lane.to_owned(),
+        key: key.to_owned(),
+        text: text.to_owned(),
+    }
+}

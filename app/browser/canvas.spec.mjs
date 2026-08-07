@@ -130,6 +130,22 @@ async function assertDistinctWaitCallSites(page) {
 
 const nestedQuotePreview = "The author words belong in the composer band.";
 
+async function settleLatestSystemSpeech(page, event = "end") {
+  await page.evaluate((event) => {
+    const utterance = window.__speechUtterances.at(-1);
+    if (!utterance) throw new Error("no system utterance is available to settle");
+    const callback = event === "error" ? utterance.onerror : utterance.onend;
+    if (!callback) throw new Error(`system utterance has no ${event} callback`);
+    callback(new Event(event));
+  }, event);
+}
+
+async function triggerAgentProse(worktree, cards) {
+  const before = await cards.count();
+  await writeFile(join(worktree, ".spice-prose-trigger"), "emit\n");
+  await cards.nth(before).waitFor({ timeout: CONNECT_MS });
+}
+
 async function assertPerTeamWatchbands(page, fixture, worktrees) {
   const before = await reply(fixture, ["lane"]);
   const primary = before.body.lanes.find((lane) => lane.worktree === worktrees[0]);
@@ -300,6 +316,66 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   await secondarySurface.getByLabel("Speak this message").first().click();
   await waitForPage(page, "Narrate dispatches speech", TRANSITION_MS,
     () => window.__speechLog.some((row) => row.action === "speak"));
+  await settleLatestSystemSpeech(page);
+  await waitForPage(page, "manual speech releases the global head", TRANSITION_MS,
+    () => window.__speechActive === 0);
+
+  await primarySpeech.fill("2");
+  await page.evaluate(() => {
+    window.__speechLog = [];
+    window.__speechUtterances = [];
+    window.__speechActive = 0;
+    window.__speechMaxActive = 0;
+  });
+  const primaryNarrator = primaryRows.find((lane) => lane.worktree === worktrees[0]);
+  assert.ok(primaryNarrator, "the first team exposes a real narrator worktree");
+  const primaryNarrationCards = primarySurface.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${primaryNarrator.lane}"]`,
+  );
+  const secondaryNarrationCards = secondarySurface.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${secondary.lane}"]`,
+  );
+  await triggerAgentProse(primaryNarrator.worktree, primaryNarrationCards);
+  await waitForPage(page, "the first lineage owns the global narration head", CONNECT_MS,
+    () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
+  await triggerAgentProse(secondary.worktree, secondaryNarrationCards);
+  await triggerAgentProse(secondary.worktree, secondaryNarrationCards);
+  assert.equal(
+    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
+    1,
+    "a two-lineage burst preserves the active head and queues its tail",
+  );
+  const transcriptCards = await console.locator('.mosaic-message-card[data-card-kind="agent-message"]')
+    .count();
+  await settleLatestSystemSpeech(page, "error");
+  await waitForPage(page, "a failed head advances to the coalesced lineage tail", TRANSITION_MS,
+    () => window.__speechLog.filter((row) => row.action === "speak").length === 2);
+  assert.equal(
+    await console.locator('.mosaic-message-card[data-card-kind="agent-message"]').count(),
+    transcriptCards,
+    "speech failure neither removes nor rewrites the admitted transcript",
+  );
+  assert.equal(
+    await page.evaluate(() => window.__speechMaxActive),
+    1,
+    "the browser-global narration arbiter never overlaps two clips",
+  );
+  const storedNarrationCursors = await page.evaluate(() => JSON.parse(
+    localStorage.getItem("spice:narration-cursors:v1") ?? "[]",
+  ));
+  assert.ok(
+    storedNarrationCursors.length > 0 && storedNarrationCursors.length <= 256,
+    "durable narration cursors are present and bounded in browser storage",
+  );
+  await settleLatestSystemSpeech(page);
+  await waitForPage(page, "the coalesced narration tail drains", TRANSITION_MS,
+    () => window.__speechActive === 0);
+  assert.equal(
+    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
+    2,
+    "two stale entries from one queued lineage coalesce to one successor",
+  );
+  await primarySpeech.fill("0");
 
   await assertAgentRenewalRequest(primarySurface, fixture);
 
@@ -387,6 +463,40 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
     path: join(artifacts, "canvas-light-watchband-teams.png"),
     fullPage: true,
   });
+  await page.evaluate(() => {
+    window.__speechLog = [];
+    window.__speechUtterances = [];
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  const reconnected = page.locator('[data-pane="agent-console"]');
+  await reconnected.getByRole("tab", { name: /^Compose/ }).first().click();
+  const restoredPrimary = reconnected.locator(
+    `.team-surface[data-lineage-id="${primary.lineage_id}"]`,
+  );
+  const restoredSecondary = reconnected.locator(
+    `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
+  );
+  await restoredPrimary.locator('.team-speech input[type="range"]').fill("2");
+  await restoredSecondary.locator('.team-speech input[type="range"]').fill("2");
+  await reconnected.getByRole("tab", { name: /^Info/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Compose/ }).first().click();
+  await page.evaluate(() => new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak")),
+    [],
+    "reconnect and rematerialization never narrate retained history",
+  );
+  const restoredNarrationCards = restoredPrimary.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${primaryNarrator.lane}"]`,
+  );
+  await triggerAgentProse(primaryNarrator.worktree, restoredNarrationCards);
+  await waitForPage(page, "live narration resumes after reconnect history suppression", CONNECT_MS,
+    () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
+  await settleLatestSystemSpeech(page);
+  await waitForPage(page, "post-reconnect narration drains", TRANSITION_MS,
+    () => window.__speechActive === 0);
   return { lineage: primary.lineage_id, policy: "drain" };
 }
 
