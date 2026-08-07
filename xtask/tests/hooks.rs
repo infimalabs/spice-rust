@@ -210,8 +210,8 @@ fn activation_refuses_mixed_tolerated_and_repeated_foreign_hook_values() {
 
 /// A lane running under the git shadow environment sees its own branch as its
 /// upstream, deliberately, so `git status` never moves when origin advances.
-/// The reference guard must read the integration branch the shadow keeps
-/// readable instead, or every backwards move of an unpublished lane commit is
+/// The reference guard must read the pairing the lane's own local scope keeps
+/// intact instead, or every backwards move of an unpublished lane commit is
 /// reported as abandoning published history.
 #[test]
 fn a_shadowed_upstream_does_not_publish_a_lanes_local_commits() {
@@ -219,11 +219,14 @@ fn a_shadowed_upstream_does_not_publish_a_lanes_local_commits() {
     let (base, protected, local) = repository_history(&scratch);
     shadow_lane_branch(&scratch, "main-b", &local, &base);
 
+    // The shadow is in force for every ordinary reader, and stops at `--local`.
     assert_eq!(rev_parse(&scratch, "@{upstream}^{commit}"), local);
+    assert_eq!(config_get(&scratch, "branch.main-b.remote"), ".");
     assert_eq!(
-        config_get(&scratch, "branch.main-b.merge"),
+        local_config_get(&scratch, "branch.main-b.merge"),
         "refs/heads/main"
     );
+    assert_eq!(local_config_get(&scratch, "branch.main-b.remote"), "origin");
     assert_eq!(rev_parse(&scratch, "refs/remotes/origin/main"), protected);
     assert_eq!(rev_parse(&scratch, "refs/heads/main"), base);
 
@@ -242,9 +245,31 @@ fn a_shadowed_upstream_does_not_publish_a_lanes_local_commits() {
     );
 }
 
-/// Put `lane` under the shadow: the self-merge the shadow pins in system scope
-/// is recorded first, so `@{upstream}` resolves to the lane itself, and the true
-/// integration branch is appended last, where `git config --get` reports it.
+/// Put `lane` under the shadow, in the scopes the shadow actually occupies.
+///
+/// Measured on a live lane worktree rather than assumed: `git config --list
+/// --show-scope` reports the self-merge in *system* scope, from a generated
+/// per-worktree `agent.gitconfig`, and `branch.<lane>.remote=.` in *command*
+/// scope, while the repository's own local scope holds the true pairing --
+/// `origin` and `refs/heads/main`, untouched. Both halves of the poison sit
+/// outside local scope, which is the whole reason the guard reads `--local`.
+///
+/// The fixture reproduces that at the two interfaces it can be read through,
+/// which it does rather than reproducing the scopes literally: writing the real
+/// system and command scopes would mean installing machine-wide git
+/// configuration from a test, on a machine other lanes share. The poisoned
+/// `remote` -- the half that would defeat the guard outright if local scope
+/// held it -- goes to worktree scope, which overrides local for every ordinary
+/// reader and which `--local` excludes. The self-merge is added first within
+/// local scope, where `@{upstream}` reads it as `merge[0]` exactly as it reads
+/// the system-scope one, and where `--get` still answers with the true
+/// integration branch appended after it.
+///
+/// Measured, not assumed: this shape answers the lane's own tip for
+/// `@{upstream}`, `refs/heads/main` for `--local --get ...merge`, and `origin`
+/// for `--local --get ...remote` -- the same three answers the live worktree
+/// gives. Writing the poison into local scope instead, as this fixture once
+/// did, models a shadow that has already defeated the mechanism under test.
 ///
 /// The local `refs/heads/main` is left behind at `stale` so it cannot stand in
 /// for the remote-tracking reference the contract names; a lane worktree has no
@@ -256,16 +281,27 @@ fn shadow_lane_branch(scratch: &Scratch, lane: &str, tip: &str, stale: &str) {
         &["symbolic-ref", "HEAD", &format!("refs/heads/{lane}")],
     );
     git(scratch, &["update-ref", "refs/heads/main", stale]);
+
     let merge = format!("branch.{lane}.merge");
+    let remote = format!("branch.{lane}.remote");
     git(
         scratch,
-        &["config", "--add", &merge, &format!("refs/heads/{lane}")],
+        &[
+            "config",
+            "--local",
+            "--add",
+            &merge,
+            &format!("refs/heads/{lane}"),
+        ],
     );
     git(
         scratch,
-        &["config", "--add", &format!("branch.{lane}.remote"), "."],
+        &["config", "--local", "--add", &merge, "refs/heads/main"],
     );
-    git(scratch, &["config", "--add", &merge, "refs/heads/main"]);
+    git(scratch, &["config", "--local", &remote, "origin"]);
+
+    git(scratch, &["config", "extensions.worktreeConfig", "true"]);
+    git(scratch, &["config", "--worktree", &remote, "."]);
 }
 
 fn guard(scratch: &Scratch, prepared: &str) -> Result<(), impl std::error::Error + use<>> {
@@ -274,6 +310,14 @@ fn guard(scratch: &Scratch, prepared: &str) -> Result<(), impl std::error::Error
 
 fn config_get(scratch: &Scratch, key: &str) -> String {
     String::from_utf8(git(scratch, &["config", "--get", key]).stdout)
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+/// What the guard reads: the repository's own scope, past every override.
+fn local_config_get(scratch: &Scratch, key: &str) -> String {
+    String::from_utf8(git(scratch, &["config", "--local", "--get", key]).stdout)
         .unwrap()
         .trim()
         .to_owned()
