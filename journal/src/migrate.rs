@@ -29,9 +29,9 @@ pub(crate) fn baseline(connection: &mut Connection) -> Result<Option<Migration>,
         }));
     }
 
-    finalized_version(&transaction)?;
+    let migration = advance(&transaction, stored_state(&transaction)?)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
-    Ok(None)
+    Ok(migration)
 }
 
 /// One schema transition completed by this journal open.
@@ -56,6 +56,10 @@ impl Migration {
 }
 
 pub(crate) fn finalized_version(connection: &Connection) -> Result<u32, OpenError> {
+    admit_state(connection, stored_state(connection)?)
+}
+
+fn stored_state(connection: &Connection) -> Result<SchemaState, OpenError> {
     let count: u32 = connection
         .query_row("SELECT count(*) FROM journal_schema", [], |row| row.get(0))
         .map_err(OpenError::Sqlite)?;
@@ -79,7 +83,7 @@ pub(crate) fn finalized_version(connection: &Connection) -> Result<u32, OpenErro
         .optional()
         .map_err(OpenError::Sqlite)?
         .ok_or(MigrationError::MissingSingleton)?;
-    admit_state(connection, state)
+    Ok(state)
 }
 
 /// Reads an existing schema identity without performing baseline or migration.
@@ -96,7 +100,37 @@ pub(crate) fn inspect_version(connection: &Connection) -> Result<u32, OpenError>
     finalized_version(connection)
 }
 
+/// Admit a schema identity for a caller that will not migrate it.
+///
+/// Read-only opens and post-open verification land here, so a version behind the
+/// current one is refused two different ways on purpose. One this build could
+/// step forward names the write open that would do it; one it could not names
+/// the release that owns it. Answering both with the same text would tell a
+/// reader holding a migratable authority to go find another release.
 fn admit_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenError> {
+    let version = admit_readable_state(connection, state)?;
+    if version != SCHEMA_VERSION {
+        return Err(if migration_path(version).is_some() {
+            MigrationError::UnmigratedRead {
+                found: version,
+                current: SCHEMA_VERSION,
+            }
+        } else {
+            MigrationError::UnknownVersion { found: version }
+        }
+        .into());
+    }
+    Ok(version)
+}
+
+/// Admit a schema identity this build can read, migrated or not.
+///
+/// The version equality check is deliberately not here: a version behind the
+/// current one is a candidate for migration rather than a refusal, and it can
+/// only be judged one after the state and the two version records agree. A
+/// disagreement between the row and the pragma is corruption at any version, so
+/// it is answered before anything decides to write to the database.
+fn admit_readable_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenError> {
     if state.state == PREPARED {
         return Err(MigrationError::Unfinalized {
             from: state.from_version,
@@ -114,12 +148,6 @@ fn admit_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenE
         }
         .into());
     }
-    if state.version != SCHEMA_VERSION {
-        return Err(MigrationError::UnknownVersion {
-            found: state.version,
-        }
-        .into());
-    }
 
     let pragma: u32 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -132,6 +160,73 @@ fn admit_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenE
         .into());
     }
     Ok(state.version)
+}
+
+/// Step an admitted authority forward to the schema this build reads.
+///
+/// Every step runs inside the caller's exclusive transaction together with the
+/// two version records it advances, so a failure part-way leaves the authority
+/// at the version it started from rather than between two. That is what lets
+/// these steps be additive DDL rather than a copy: the facts are never rewritten
+/// and never move, so a migration cannot lose one.
+fn advance(connection: &Connection, state: SchemaState) -> Result<Option<Migration>, OpenError> {
+    let from = admit_readable_state(connection, state)?;
+    if from == SCHEMA_VERSION {
+        return Ok(None);
+    }
+
+    let path = migration_path(from).ok_or(MigrationError::UnknownVersion { found: from })?;
+    for step in path {
+        connection.execute_batch(step).map_err(OpenError::Sqlite)?;
+    }
+    connection
+        .execute(
+            "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
+            params![SCHEMA_VERSION],
+        )
+        .map_err(OpenError::Sqlite)?;
+    connection
+        .pragma_update(None, "user_version", SCHEMA_VERSION)
+        .map_err(OpenError::Sqlite)?;
+    Ok(Some(Migration {
+        from,
+        to: SCHEMA_VERSION,
+    }))
+}
+
+/// The ordered steps from `from` up to the current schema, if all of them exist.
+///
+/// An unbroken chain is the whole question, so this answers it once and both
+/// callers ask it the same way. A version whose first step exists but whose
+/// chain breaks later is not migratable, and admitting it would refuse a
+/// read-only open with an offer to migrate that the write open cannot keep.
+fn migration_path(from: u32) -> Option<Vec<&'static str>> {
+    (from..SCHEMA_VERSION)
+        .map(|version| {
+            MIGRATIONS
+                .iter()
+                .find(|(leaves, _)| *leaves == version)
+                .map(|(_, step)| *step)
+        })
+        .collect()
+}
+
+/// Versions this build can step forward from, rendered for a refusal.
+///
+/// Answers the reader's actual next question -- which older authority this build
+/// does accept -- so the refusal points at a release to route through instead of
+/// at discarding the authority. A build that carries no steps at all says so
+/// rather than rendering an empty list into the sentence.
+fn migratable_versions() -> String {
+    let versions: Vec<String> = (1..SCHEMA_VERSION)
+        .filter(|version| migration_path(*version).is_some())
+        .map(|version| version.to_string())
+        .collect();
+    if versions.is_empty() {
+        "no earlier schema".to_owned()
+    } else {
+        format!("schema {}", versions.join(", "))
+    }
 }
 
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, OpenError> {
@@ -226,6 +321,7 @@ pub enum MigrationError {
     Unfinalized { from: Option<u32>, to: Option<u32> },
     UnknownState { state: String },
     ForwardSchema { found: u32, current: u32 },
+    UnmigratedRead { found: u32, current: u32 },
     UnknownVersion { found: u32 },
     VersionDisagreement { row: u32, pragma: u32 },
 }
@@ -259,9 +355,18 @@ impl fmt::Display for MigrationError {
                 formatter,
                 "journal schema {found} is newer than this build's schema {current}; use the release that owns schema {found}"
             ),
+            Self::UnmigratedRead { found, current } => write!(
+                formatter,
+                "journal schema {found} is behind this build's schema {current} and a \
+                 read-only open never migrates; open this authority for writing once \
+                 to step it forward"
+            ),
             Self::UnknownVersion { found } => write!(
                 formatter,
-                "journal schema {found} has no migration path in release 1; back up and start an empty authority"
+                "journal schema {found} has no migration path to schema \
+                 {SCHEMA_VERSION}; this build steps forward from {}, so use the \
+                 release that owns schema {found} to reach one of those first",
+                migratable_versions()
             ),
             Self::VersionDisagreement { row, pragma } => write!(
                 formatter,
@@ -272,6 +377,28 @@ impl fmt::Display for MigrationError {
 }
 
 impl Error for MigrationError {}
+
+/// Every schema version this build steps forward from, and the step it runs.
+///
+/// Indexed by the version the step *leaves*, so `advance` can walk one entry at
+/// a time up to `SCHEMA_VERSION` instead of needing a pair for every reachable
+/// combination. A version absent from this table is refused by name.
+const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATE_1_TO_2_SQL)];
+
+/// Schema 1 to 2: the table transcript accounting reads its heads from.
+///
+/// Schema 2 added exactly this one table to the baseline and nothing else --
+/// no column changed and no row moved -- so stepping forward is a create rather
+/// than a copy, and a schema-1 authority keeps every fact it already holds. A
+/// journal that has never accounted a transcript has no head rows to backfill,
+/// and one that has will re-derive them as it ingests.
+const MIGRATE_1_TO_2_SQL: &str = r#"
+CREATE TABLE transcript_source_heads (
+    stream TEXT PRIMARY KEY,
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
+"#;
 
 const BASELINE_SQL: &str = r#"
 CREATE TABLE journal_schema (

@@ -2,9 +2,10 @@
 
 /// The one journal schema this build reads and writes.
 ///
-/// A journal written at any other version is refused by name rather than
-/// stepped forward: the baseline is the single current schema, so there is no
-/// per-release migration arm to accumulate.
+/// An authority written at an older version is stepped forward to this one on
+/// open when `migrate::MIGRATIONS` carries the step, and refused by name when it
+/// does not. A newer version is always refused: this build cannot know what the
+/// release that wrote it added.
 pub const SCHEMA_VERSION: u32 = 2;
 
 #[cfg(not(target_arch = "wasm32"))]
