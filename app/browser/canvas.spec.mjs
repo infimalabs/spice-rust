@@ -651,6 +651,29 @@ async function assertMosaicComposer(page, fixture, seeded) {
   );
 }
 
+/// How those same admitted facts were split into pages, under the same bracket.
+///
+/// Every assertion here reads packed-page metadata rather than a rendered fact
+/// row, which is why it cannot be folded into the sequence proofs: a horizon is
+/// not a row, so nothing about the rows can bound one.
+function assertPackedPaging(provenance, horizonValues, extent, settled) {
+  assert.ok(provenance.length > 1, "two-row packing produces multiple fact pages");
+  assert.match(provenance[0], /omitted \/ continue/, "first page exposes overflow continuation");
+  assert.doesNotMatch(provenance.at(-1), /omitted \/ continue/, "final page closes continuation");
+  // A floor for the same reason the fact count is one: the cursor the caller
+  // sampled has already been passed if the resident admitted anything since.
+  // Reaching it is the claim; standing exactly on it was never the claim. The
+  // ceiling is that same bracket, and it is the only one this metadata has.
+  assert.ok(
+    horizonValues.at(-1) >= extent.cursor && horizonValues.at(-1) <= settled.cursor,
+    `latest page reaches the current horizon (${horizonValues.at(-1)} outside ${extent.cursor}..${settled.cursor})`,
+  );
+  assert.ok(
+    horizonValues.every((value, index) => index === 0 || value >= horizonValues[index - 1]),
+    "continued and later live pages retain monotone packed horizons",
+  );
+}
+
 async function assertPackedHistory(page, fixture, extent, linked = false) {
   await chooseCanvasView(page, "Chronology");
   const journal = page.locator('[data-pane="commands"]');
@@ -665,10 +688,18 @@ async function assertPackedHistory(page, fixture, extent, linked = false) {
     if (!Number.isInteger(value)) throw new Error(`invalid rendered sequence: ${node.textContent}`);
     return value;
   }));
-  // Sampled after the snapshot, so it closes the other side of the sandwich.
-  // The journal only grows, so a fact the page rendered legitimately was
-  // admitted before the snapshot and is therefore counted here too.
+  const provenance = await journal.locator('[data-subject="facts"]').allTextContents();
+  const horizons = await journal
+    .locator('[data-subject="facts"] span')
+    .evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim()).filter((text) => text?.startsWith("horizon ")));
+  // Sampled after every page read above rather than right after the snapshot,
+  // so one read closes the other side of the sandwich for all of them. The
+  // journal only grows, so a fact the page rendered legitimately was admitted
+  // before the snapshot and is counted here too. An earlier sample would bound
+  // the counts a few facts more tightly and leave the horizon with no ceiling
+  // at all, because nothing read after a sample can be bracketed by it.
   const settled = await journalExtent(fixture);
+  const horizonValues = horizons.map((text) => Number(text.split(" ")[1]));
   // A floor, not an equality. `extent` was sampled before this read, and the
   // resident admits facts of its own while the suite runs -- accounting a lane's
   // transcript is one of them -- so a page that is correctly caught up can hold
@@ -686,25 +717,7 @@ async function assertPackedHistory(page, fixture, extent, linked = false) {
     `no fact renders that the journal never admitted (rendered ${sequences.length} > ${settled.facts})`,
   );
 
-  const provenance = await journal.locator('[data-subject="facts"]').allTextContents();
-  assert.ok(provenance.length > 1, "two-row packing produces multiple fact pages");
-  assert.match(provenance[0], /omitted \/ continue/, "first page exposes overflow continuation");
-  assert.doesNotMatch(provenance.at(-1), /omitted \/ continue/, "final page closes continuation");
-  const horizons = await journal
-    .locator('[data-subject="facts"] span')
-    .evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim()).filter((text) => text?.startsWith("horizon ")));
-  const horizonValues = horizons.map((text) => Number(text.split(" ")[1]));
-  // A floor for the same reason the fact count is one: the cursor the caller
-  // sampled has already been passed if the resident admitted anything since.
-  // Reaching it is the claim; standing exactly on it was never the claim.
-  assert.ok(
-    horizonValues.at(-1) >= extent.cursor,
-    `latest page reaches the current horizon (${horizonValues.at(-1)} < ${extent.cursor})`,
-  );
-  assert.ok(
-    horizonValues.every((value, index) => index === 0 || value >= horizonValues[index - 1]),
-    "continued and later live pages retain monotone packed horizons",
-  );
+  assertPackedPaging(provenance, horizonValues, extent, settled);
 
   // This is the duplicate-application proof, and it needs no extent at all:
   // applying one fact twice renders its sequence twice, so distinct-equals-total
@@ -727,6 +740,17 @@ async function assertPackedHistory(page, fixture, extent, linked = false) {
     "continuation loses no fact before the packed horizon",
   );
 
+  await assertCausalThread(page, linked);
+
+  await chooseCanvasView(page, "Chronology");
+  await page.screenshot({ path: join(artifacts, "canvas-chronology.png"), fullPage: true });
+}
+
+/// The Topology walk behind the same admitted history, asserted on its own.
+///
+/// It reads a different pane against a different terminal condition than the
+/// packed fact pages above, and shares only the page they are both views of.
+async function assertCausalThread(page, linked) {
   await chooseCanvasView(page, "Topology");
   const thread = page.locator('[data-pane="lineage"]');
   const minimumRows = linked ? 2 : 1;
@@ -767,9 +791,6 @@ async function assertPackedHistory(page, fixture, extent, linked = false) {
   if (linked) {
     assert.ok(threadRows.some((row) => !row.endsWith("root")), "causal walk includes a linked cause");
   }
-
-  await chooseCanvasView(page, "Chronology");
-  await page.screenshot({ path: join(artifacts, "canvas-chronology.png"), fullPage: true });
 }
 
 async function assertNoCredentialOrLandingGap(page, capabilities) {
