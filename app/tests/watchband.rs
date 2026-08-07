@@ -317,7 +317,7 @@ fn two_lanes_sharing_one_accent_slot_are_still_told_apart_by_name() {
     // 46656, so sharing is the ordinary case and the colour never names a lane.
     let lanes = [lane(LANE_A, "main-c"), lane(LANE_D, "main-h")];
 
-    let rows = standings(&lanes, &[], &[], at(0));
+    let rows = standings(&lanes, &[], &[]);
 
     assert_eq!(
         rows[0].accent, rows[1].accent,
