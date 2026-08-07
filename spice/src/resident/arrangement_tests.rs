@@ -9,6 +9,13 @@
 
 use super::*;
 
+// The source boundary law spans all three membership transitions rather than
+// the arrangement alone, so it is proven beside this fixture rather than inside
+// it: the cases there drive the lineage configuration surface too, which this
+// module otherwise never touches.
+#[path = "arrangement/boundary.rs"]
+mod boundary;
+
 /// Supervised lanes standing in two teams, the shape an arrangement starts from.
 struct Arranged {
     root: PathBuf,
