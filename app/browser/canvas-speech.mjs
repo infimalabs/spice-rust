@@ -25,6 +25,11 @@ async function routeSpeechBootstrap(page, speech) {
 export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) {
   await context.addInitScript((voiceNames) => {
     window.__speechLog = [];
+    window.__speechUtterances = [];
+    window.__speechActive = 0;
+    window.__speechMaxActive = 0;
+    window.__holdSpeechPlay = false;
+    window.__speechPlayPending = [];
     class FakeVoice {
       constructor(name) { this.name = name; }
     }
@@ -47,6 +52,11 @@ export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) 
       }
       play() {
         window.__speechLog.push({ action: "play" });
+        if (window.__holdSpeechPlay) {
+          return new Promise((resolve, reject) => {
+            window.__speechPlayPending.push({ resolve, reject });
+          });
+        }
         return Promise.resolve();
       }
       pause() { window.__speechLog.push({ action: "pause" }); }
@@ -57,9 +67,25 @@ export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) 
     Object.defineProperty(window, "speechSynthesis", {
       configurable: true,
       value: {
-        cancel() { window.__speechLog.push({ action: "cancel" }); },
+        cancel() {
+          window.__speechLog.push({ action: "cancel" });
+          window.__speechActive = 0;
+        },
         getVoices() { return voiceNames.map((name) => new FakeVoice(name)); },
         speak(utterance) {
+          const ended = utterance.onend;
+          const failed = utterance.onerror;
+          utterance.onend = (...args) => {
+            window.__speechActive = Math.max(0, window.__speechActive - 1);
+            ended?.(...args);
+          };
+          utterance.onerror = (...args) => {
+            window.__speechActive = Math.max(0, window.__speechActive - 1);
+            failed?.(...args);
+          };
+          window.__speechUtterances.push(utterance);
+          window.__speechActive += 1;
+          window.__speechMaxActive = Math.max(window.__speechMaxActive, window.__speechActive);
           window.__speechLog.push({
             action: "speak",
             text: utterance.text,
@@ -161,8 +187,14 @@ export async function assertSpeechVariants(browser, endpoint) {
     available: true,
   });
   let submitted;
+  let speechRequest = 0;
+  let releaseRender;
   await external.route("**/speech", async (route) => {
+    speechRequest += 1;
     submitted = route.request().postDataJSON();
+    if (speechRequest === 1) {
+      await new Promise((resolve) => { releaseRender = resolve; });
+    }
     await route.fulfill({
       status: 200,
       contentType: "audio/wav",
@@ -174,11 +206,34 @@ export async function assertSpeechVariants(browser, endpoint) {
   await assertOnlineObserved(external, "the page loads against the external backend", CONNECT_MS);
   const externalButton = external.locator(".speech-button");
   await externalButton.click();
+  await external.locator('.speech-button[data-state="loading"]').waitFor();
+  await externalButton.click();
+  await external.locator('.speech-button[data-state="idle"]').waitFor();
+  const lateResponse = external.waitForResponse((response) =>
+    response.url().endsWith("/speech") && response.request().method() === "POST");
+  releaseRender();
+  await (await lateResponse).finished();
+  await external.evaluate(() => new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(
+    await external.evaluate(() => window.__speechLog.some((row) => row.action === "audio")),
+    false,
+    "stopping an external render prevents its late bytes from creating media",
+  );
+
+  await external.evaluate(() => { window.__holdSpeechPlay = true; });
+  await externalButton.click();
   await external.locator('.speech-button[data-state="playing"]').waitFor();
   assert.deepEqual(Object.keys(submitted), ["text"]);
   assert.match(submitted.text, /Flow/);
   await externalButton.click();
   await external.locator('.speech-button[data-state="idle"]').waitFor();
+  await external.evaluate(() => {
+    window.__speechPlayPending.splice(0).forEach(({ resolve }) => resolve());
+  });
+  await external.evaluate(() => new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await externalButton.getAttribute("data-state"), "idle");
   const externalActions = await external.evaluate(() => window.__speechLog.map((row) => row.action));
   assert.ok(externalActions.includes("play"));
   assert.ok(externalActions.includes("pause"));

@@ -142,6 +142,7 @@ pub(super) struct MosaicPlaneProps {
     pub(super) cards: Vec<ActivityCard>,
     pub(super) drafts: UseReducerHandle<ComposerDrafts>,
     pub(super) speak: Callback<String>,
+    pub(super) narrate: Callback<NarrationBatch>,
     pub(super) speech: LineageSpeech,
 }
 
@@ -271,9 +272,10 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         (*image_revisions).clone(),
     );
     use_narration(
+        properties.lane,
         properties.cards.clone(),
         properties.speech,
-        properties.speak.clone(),
+        properties.narrate.clone(),
     );
     let committed_plane = committed.as_ref();
     let geometry_width = committed_plane.map_or(
@@ -336,13 +338,19 @@ fn use_plane_scroll(host: NodeRef, max_row: Option<i32>, module: i32, card_count
 }
 
 #[hook]
-fn use_narration(cards: Vec<ActivityCard>, speech: LineageSpeech, speak: Callback<String>) {
-    let narration = use_mut_ref(|| (false, BTreeMap::<String, ()>::new()));
+fn use_narration(
+    lineage: CanonicalUuid,
+    cards: Vec<ActivityCard>,
+    speech: LineageSpeech,
+    narrate: Callback<NarrationBatch>,
+) {
+    let materialized = use_mut_ref(|| false);
     let messages = cards
         .iter()
         .filter_map(|card| match card {
-            ActivityCard::Agent { message, .. } => Some((
-                format!(
+            ActivityCard::Agent { message, .. } => Some(NarrationMessage {
+                lane: message.lane.to_string(),
+                key: format!(
                     "{}:{}:{}:{}:{}",
                     message.lane,
                     message.locus.member,
@@ -350,32 +358,20 @@ fn use_narration(cards: Vec<ActivityCard>, speech: LineageSpeech, speak: Callbac
                     message.locus.length,
                     message.locus.event,
                 ),
-                message.text.clone(),
-            )),
+                text: message.text.clone(),
+            }),
             ActivityCard::Directive { .. } => None,
         })
         .collect::<Vec<_>>();
     use_effect_with((speech, messages), move |(speech, messages)| {
-        let mut narration = narration.borrow_mut();
-        if !narration.0 {
-            narration.0 = true;
-            for (key, _) in messages {
-                narration.1.insert(key.clone(), ());
-            }
-            return;
-        }
-        let newest = messages
-            .iter()
-            .rev()
-            .find_map(|(key, text)| (!narration.1.contains_key(key)).then_some(text.clone()));
-        for (key, _) in messages {
-            narration.1.insert(key.clone(), ());
-        }
-        if *speech == LineageSpeech::Narrate
-            && let Some(text) = newest
-        {
-            speak.emit(text);
-        }
+        let first = !*materialized.borrow();
+        *materialized.borrow_mut() = true;
+        narrate.emit(NarrationBatch {
+            lineage: lineage.to_string(),
+            materialization: first,
+            enabled: *speech == LineageSpeech::Narrate,
+            messages: messages.clone(),
+        });
     });
 }
 
