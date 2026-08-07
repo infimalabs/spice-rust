@@ -140,7 +140,7 @@ impl ResidentLock {
         {
             Acquisition::Acquired(possession) => {
                 possession
-                    .rewrite_record(format!("pid={};epoch=pending", std::process::id()).as_bytes())
+                    .rewrite_record(holder_record(std::process::id(), None).as_bytes())
                     .map_err(|error| {
                         environment_fault("resident::holder-unwritable", &error.to_string())
                     })?;
@@ -169,7 +169,7 @@ impl ResidentLock {
 
     fn set_epoch(&self, epoch: CanonicalUuid) -> io::Result<()> {
         self.possession
-            .rewrite_record(format!("pid={};epoch={epoch}", std::process::id()).as_bytes())
+            .rewrite_record(holder_record(std::process::id(), Some(epoch)).as_bytes())
     }
 }
 

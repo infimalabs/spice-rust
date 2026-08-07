@@ -128,10 +128,12 @@ pub(super) fn test_uuid(last: u8) -> CanonicalUuid {
 
 /// One published discovery, at a path the caller owns for the test.
 ///
-/// The returned possession is the publisher. A resident announces its own
-/// discovery while it is running and holding the runtime lock, so a fixture
-/// that published without one would be announcing a record a client is
-/// required to refuse — the caller has to keep it alive for the announcement.
+/// The returned possession is the publisher, holding the runtime lock and
+/// naming the generation it published. A resident announces its own discovery
+/// while it is running, and a client admits that record only from a holder
+/// that claims it, so a fixture missing either half would be announcing a
+/// record a client is required to refuse — the caller has to keep the
+/// possession alive for the announcement.
 fn published_discovery(
     name: &str,
     port: u16,
@@ -155,6 +157,9 @@ fn published_discovery(
     else {
         panic!("an announcement fixture nothing else has seen cannot be contended");
     };
+    publisher
+        .rewrite_record(holder_record(std::process::id(), Some(discovery.epoch)).as_bytes())
+        .expect("fixture holder record writes");
     (root, path, discovery, publisher)
 }
 
