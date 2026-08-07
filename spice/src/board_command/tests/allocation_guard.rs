@@ -252,7 +252,10 @@ fn a_residency_head_moved_after_the_observation_refuses_the_allocator_write() {
 /// means identical facts, identical entries, and -- `board::select` reading no
 /// clock -- an identical winner. The comparison can therefore only refuse an
 /// observation whose winner was never the selection, which the allocator does
-/// not produce. It is a backstop, and this pins it as one.
+/// not produce. It is a backstop, and this pins it as one. Keeping it was
+/// decided rather than inherited; `guard_allocation` carries the reason and the
+/// one change that would make it reachable, and this test is the only proof it
+/// works, so it stays as long as the comparison does.
 #[test]
 fn a_winner_that_was_never_the_selection_refuses_the_allocator_write() {
     let (_root, bus, epoch, seats) = fixture("allocation-guard-winner", 1);

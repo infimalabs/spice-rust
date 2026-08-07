@@ -608,6 +608,30 @@ fn allocation_heads(board: &BoardAnswer) -> AllocationHeads {
         .collect()
 }
 
+/// Refuse the allocator's write if the board it selected over has moved.
+///
+/// Four comparisons run in order and the caller sees the first one only: the
+/// client's own witnesses, the residency position, the head set, the winner.
+/// The last cannot refuse in production, and it is kept anyway.
+///
+/// It is unreachable because the head set precedes it. `AllocationHeads` carries
+/// every task's statement, workflow, claim and lease position, so a head set
+/// comparing equal means identical facts, and the entries rebuilt below are the
+/// entries the snapshot selected over. The `board` crate reads no clock at all,
+/// and eligibility turns on `workflow.deferral`, a head field only a commit can
+/// clear, so waiting changes nothing the selection reads. Actor, subscription
+/// and band all arrive from that same snapshot. Recomputing the selection here
+/// therefore returns what it returned there, against itself.
+///
+/// It is kept because it is the only place the invariant is written down: the
+/// head set is a conservative proxy that refuses on any movement anywhere, while
+/// this says the lane is granted the task the allocator picked for it. Narrowing
+/// the head set is what would make it live -- fewer fields, a digest, or only the
+/// subscribed projects -- and a lease or workflow change that flips the selection
+/// would then arrive here. Until that happens its only proof is fixture-level:
+/// `a_winner_that_was_never_the_selection_refuses_the_allocator_write` hands it
+/// an observation by hand, and reds when this comparison is severed while the
+/// other six tests in that file stay green.
 fn guard_allocation(
     write: &mut JournalWrite,
     expected: Vec<Witness>,
