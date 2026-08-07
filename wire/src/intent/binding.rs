@@ -8,11 +8,11 @@ use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
     ConsentRead, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger, InboxAnswer,
-    LaneAnswer, LaneChangeAnswer, LaneRead, LaneRecall, LaneSeat, LaneState, LineageConfigure,
-    RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose,
-    SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDepends, TaskDone,
-    TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer, TasteRecord,
-    TextAnswer, TrustAnswer, TrustRef, UpChange,
+    LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneSeat, LaneState,
+    LineageConfigure, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish, StateAnswer,
+    SteerDispose, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDepends,
+    TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer,
+    TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -76,6 +76,8 @@ pub enum BodyShape {
     LaneRead,
     /// [`LaneSeat`]
     LaneSeat,
+    /// [`LaneArrange`]
+    LaneArrange,
     /// [`LaneState`]
     LaneState,
     /// [`LineageConfigure`]
@@ -318,6 +320,7 @@ impl CommandKind {
             | Self::TrustRevoke
             | Self::LaneRead
             | Self::LaneSeat
+            | Self::LaneArrange
             | Self::LaneState
             | Self::LineageConfigure
             | Self::LaneRecall
@@ -377,6 +380,7 @@ impl CommandKind {
             }
             Self::LaneRead => Binding::of(B::LaneRead, A::Lane),
             Self::LaneSeat => Binding::of(B::LaneSeat, A::LaneChange),
+            Self::LaneArrange => Binding::of(B::LaneArrange, A::Lane),
             Self::LaneState => Binding::of(B::LaneState, A::LaneChange),
             Self::LineageConfigure => Binding::of(B::LineageConfigure, A::Lane),
             Self::LaneRecall => Binding::of(B::LaneRecall, A::Recall),
@@ -457,6 +461,8 @@ pub enum Intent {
     LaneRead(LaneRead),
     /// [`BodyShape::LaneSeat`]
     LaneSeat(LaneSeat),
+    /// [`BodyShape::LaneArrange`]
+    LaneArrange(LaneArrange),
     /// [`BodyShape::LaneState`]
     LaneState(LaneState),
     /// [`BodyShape::LineageConfigure`]
@@ -507,6 +513,7 @@ impl Intent {
             | Self::TrustRef(_)
             | Self::LaneRead(_)
             | Self::LaneSeat(_)
+            | Self::LaneArrange(_)
             | Self::LaneState(_)
             | Self::LineageConfigure(_)
             | Self::LaneRecall(_)
@@ -554,6 +561,7 @@ impl Intent {
             Self::TrustRef(_) => BodyShape::TrustRef,
             Self::LaneRead(_) => BodyShape::LaneRead,
             Self::LaneSeat(_) => BodyShape::LaneSeat,
+            Self::LaneArrange(_) => BodyShape::LaneArrange,
             Self::LaneState(_) => BodyShape::LaneState,
             Self::LineageConfigure(_) => BodyShape::LineageConfigure,
             Self::LaneRecall(_) => BodyShape::LaneRecall,
@@ -694,6 +702,7 @@ impl BodyShape {
         Ok(match self {
             Self::LaneRead => Intent::LaneRead(crate::decode(bytes)?),
             Self::LaneSeat => Intent::LaneSeat(crate::decode(bytes)?),
+            Self::LaneArrange => Intent::LaneArrange(crate::decode(bytes)?),
             Self::LaneState => Intent::LaneState(crate::decode(bytes)?),
             Self::LineageConfigure => Intent::LineageConfigure(crate::decode(bytes)?),
             Self::LaneRecall => Intent::LaneRecall(crate::decode(bytes)?),

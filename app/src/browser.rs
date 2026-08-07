@@ -14,8 +14,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, LineageConfigure, LineageLife,
-    SteerInbox, SteerSend, TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, LaneArrange, LaneRead, LaneSeat, LineageConfigure,
+    LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
@@ -133,8 +133,13 @@ enum ClientAction {
         life: String,
         vendor: wire::Name,
     },
+    ArrangeLane {
+        lane: CanonicalUuid,
+        before: CanonicalUuid,
+    },
     ConfigureLineage {
         lineage: CanonicalUuid,
+        member: Option<CanonicalUuid>,
         life: LineageLife,
     },
     Note {
@@ -734,9 +739,23 @@ async fn dispatch_action(
             )
             .await
         }
-        ClientAction::ConfigureLineage { lineage, life } => {
-            send_lineage_configuration(principal, writer, pending, lineage, life).await
+        ClientAction::ArrangeLane { lane, before } => {
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::Lanes,
+                CommandKind::LaneArrange,
+                vec![],
+                LaneArrange { lane, before },
+            )
+            .await
         }
+        ClientAction::ConfigureLineage {
+            lineage,
+            member,
+            life,
+        } => send_lineage_configuration(principal, writer, pending, lineage, member, life).await,
         ClientAction::Note { task, note } => {
             send_task_note(principal, writer, pending, task, note).await
         }
@@ -782,6 +801,7 @@ async fn send_lineage_configuration(
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     lineage: CanonicalUuid,
+    member: Option<CanonicalUuid>,
     life: LineageLife,
 ) -> Result<(), String> {
     send_typed(
@@ -793,6 +813,7 @@ async fn send_lineage_configuration(
         vec![],
         LineageConfigure {
             lineage_id: lineage,
+            member,
             life,
             manual_projects: None,
         },

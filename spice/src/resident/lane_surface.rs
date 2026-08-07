@@ -11,8 +11,8 @@ use lane::occupant::{Occupant, OccupantWait, Seats};
 use sill::WaitOutcome;
 use spice::repository::Repository;
 use wire::intent::{
-    CommandAnswer, LaneAction, LaneAnswer, LaneChangeAnswer, LaneRecall, LaneSeat, LaneState,
-    LineageConfigure, LineageLife, RecallAnswer, RecallEntry, RecallProvenance,
+    CommandAnswer, LaneAction, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRecall, LaneSeat,
+    LaneState, LineageConfigure, LineageLife, RecallAnswer, RecallEntry, RecallProvenance,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
@@ -20,11 +20,13 @@ use wire::{
 };
 
 mod launch;
+mod lineage;
 mod propose;
 mod reply;
 mod session;
 
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
+pub(super) use lineage::configure;
 use propose::{commit_restored, propose_drain, propose_seat, propose_wake};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
@@ -248,69 +250,74 @@ pub(super) fn seat(
     }
 }
 
-/// Commit one task-subscription policy for a Canvas lineage.
+/// Place one existing member immediately before another existing member.
 ///
-/// `drain` here is a policy spelling. Occupant teardown remains exclusively
-/// owned by `lane::state { action: drain }`, so this transaction changes no
-/// seat, capability, session, occupant, or disposition field.
-pub(super) fn configure(
+/// The target row supplies the destination lineage. Moving the row itself keeps
+/// its lane, occupant, session, worktree, and composer identity unchanged. The
+/// residency head's vector is the durable order read back by Canvas.
+pub(super) fn arrange(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &Seats,
-    projects: &board::ProjectPolicy,
     command: &wire::AdmittedCommand,
-    request: &LineageConfigure,
+    request: &LaneArrange,
 ) -> Outcome<CommandAnswer> {
+    if request.lane == request.before {
+        return lane_refusal(
+            "lane::arrange-self",
+            Some("a different target lane".to_owned()),
+            Some(request.lane.to_string()),
+            "drop the primary composer on another seated member",
+        );
+    }
     let observed = match current_residency(bus, epoch) {
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let members = observed
+    let Some(source_index) = observed
         .body()
         .lanes
         .iter()
-        .filter(|row| row.lineage_id == request.lineage_id)
-        .collect::<Vec<_>>();
-    if members.is_empty() {
-        return lane_refusal(
-            "lineage::missing",
-            Some("one current Canvas lineage".to_owned()),
-            Some(request.lineage_id.to_string()),
-            "read lane state and retry with a current lineage identity",
-        );
-    }
-    let previous = match subscription_row(observed.body(), request.lineage_id) {
-        Ok(Some(subscription)) => subscription.clone(),
-        Ok(None) => {
-            return typed_store_fault(
-                "lineage::subscription-missing",
-                "a current lineage has no task-subscription policy",
-            );
-        }
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let manual_projects = match admit_manual_projects(projects, request.manual_projects.as_deref())
-    {
-        Ok(projects) => projects,
-        Err(outcome) => return outcome,
-    };
-    let mut next = observed.body().clone();
-    let Some(subscription) = next
-        .subscriptions
-        .iter_mut()
-        .find(|subscription| subscription.lineage_id == request.lineage_id)
+        .position(|row| row.lane == request.lane)
     else {
-        return typed_store_fault(
-            "lineage::subscription-missing",
-            "a current lineage lost its task-subscription policy during configuration",
+        return lane_refusal(
+            "lane::arrange-source-missing",
+            Some("one current seated member".to_owned()),
+            Some(request.lane.to_string()),
+            "read lane state and retry with a current source member",
         );
     };
-    subscription.policy = request.life;
-    subscription.auto_projects.clear();
-    if let Some(manual_projects) = manual_projects {
-        subscription.manual_projects = manual_projects;
+    let Some(target) = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == request.before)
+    else {
+        return lane_refusal(
+            "lane::arrange-target-missing",
+            Some("one current seated member".to_owned()),
+            Some(request.before.to_string()),
+            "read lane state and retry with a current target member",
+        );
+    };
+    let target_lineage = target.lineage_id;
+    let from_lineage = observed.body().lanes[source_index].lineage_id;
+    let mut next = observed.body().clone();
+    let mut source = next.lanes.remove(source_index);
+    let Some(target_index) = next.lanes.iter().position(|row| row.lane == request.before) else {
+        return typed_store_fault(
+            "lane::arrange-target-lost",
+            "the target member disappeared while arranging one residency snapshot",
+        );
+    };
+    source.lineage_id = target_lineage;
+    next.lanes.insert(target_index, source);
+    if from_lineage != target_lineage
+        && !next.lanes.iter().any(|row| row.lineage_id == from_lineage)
+    {
+        next.subscriptions
+            .retain(|subscription| subscription.lineage_id != from_lineage);
     }
-    let configured_manual_projects = subscription.manual_projects.clone();
     let lane_answer = match answer(&next, None, seats) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -325,19 +332,16 @@ pub(super) fn configure(
     };
     guard_residency(&mut write, &observed);
     let fact = match write.fact(
-        wire::body::LineageConfigured {
-            lineage_id: request.lineage_id,
-            from: previous.policy,
-            life: request.life,
-            from_manual_projects: previous.manual_projects,
-            manual_projects: configured_manual_projects,
+        wire::body::LaneArranged {
+            lane: request.lane,
+            from_lineage_id: from_lineage,
+            lineage_id: target_lineage,
+            before: request.before,
         },
         FactCause::Existing(observed.position()),
     ) {
         Ok(fact) => fact,
-        Err(error) => {
-            return typed_store_fault("lineage::fact-invalid", &error.to_string());
-        }
+        Err(error) => return typed_store_fault("lane::arrange-fact-invalid", &error.to_string()),
     };
     write.residency_head(fact, move |_| next);
     if let Err(error) = write.command_result(
@@ -347,12 +351,12 @@ pub(super) fn configure(
             epoch: command.epoch(),
             kind: command.kind(),
             expected: command.expected().to_vec(),
-            body: request.clone(),
+            body: *request,
         },
         epoch,
         lane_answer.clone(),
     ) {
-        return typed_store_fault("lineage::receipt-invalid", &error.to_string());
+        return typed_store_fault("lane::arrange-receipt-invalid", &error.to_string());
     }
     match commit(bus, write) {
         Ok(committed) => Outcome::Reply(Reply {

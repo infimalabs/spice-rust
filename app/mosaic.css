@@ -17,7 +17,6 @@
 .composer-quote-stack { display: contents; }
 
 .composer-shard--quote .composer-shard-heading > button,
-.composer-attachment-chip button,
 .mosaic-message-card footer button {
   display: grid;
   place-items: center;
@@ -28,26 +27,6 @@
   padding: 0;
   border-radius: 50%;
 }
-
-.composer-attachment-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.composer-attachment-chip {
-  position: relative;
-  display: inline-flex;
-  width: 46px;
-  height: 46px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-muted);
-}
-
-.composer-attachment-chip img { width: 100%; height: 100%; object-fit: cover; }
-.composer-attachment-chip button { position: absolute; top: 2px; right: 2px; background: var(--panel); }
 
 .composer-issue { margin: 0; color: var(--danger); font-size: .76rem; }
 
@@ -90,23 +69,6 @@
   display: block; max-width: 100%; max-height: 20rem; margin: .5em 0;
   border: 1px solid var(--line); border-radius: 5px; object-fit: contain;
 }
-.mosaic-composer-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: .74rem;
-}
-.image-picker {
-  min-height: 32px;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--panel);
-  color: var(--ink);
-  cursor: pointer;
-  font-weight: 650;
-}
 .composer-send {
   margin-left: auto;
   background: var(--accent);
@@ -126,10 +88,8 @@
   border-radius: 9px;
   background: var(--mosaic-card);
   box-shadow: var(--shadow);
-  cursor: grab;
 }
 
-.mosaic-message-card:active { cursor: grabbing; }
 .mosaic-message-card footer {
   display: flex;
   align-items: center;
@@ -223,21 +183,155 @@
   list-style: none;
 }
 .canvas-menu > summary::-webkit-details-marker { display: none; }
-.canvas-menu nav {
+.canvas-shortcuts {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 3px;
+}
+.canvas-shortcuts .axis-button {
+  min-height: 23px;
+  padding: 0 8px;
+  border-color: color-mix(in srgb, var(--line) 74%, transparent);
+  font-size: .62rem;
+}
+.canvas-menu-panel {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 10;
+  z-index: 20;
   display: grid;
-  gap: 3px;
-  min-width: 150px;
-  padding: 5px;
+  gap: 9px;
+  width: min(500px, calc(100vw - 12px));
+  max-height: calc(100vh - 42px);
+  padding: 12px;
+  overflow-y: auto;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 10px;
   background: var(--panel);
   box-shadow: var(--shadow);
 }
-.canvas-menu .axis-button { justify-content: space-between; min-height: 28px; padding: 0 8px; }
+.canvas-menu-section {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.canvas-menu-page { display: grid; gap: 9px; }
+.canvas-menu-views {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+.canvas-menu-views .axis-button {
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 0 9px;
+  border-color: var(--line);
+}
+.canvas-menu-section > h2,
+.canvas-menu-section > header h2 {
+  margin: 0;
+  color: var(--muted);
+  font: 600 .66rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.canvas-menu-section > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font: .64rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.canvas-menu-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 0 13px;
+  border-radius: 8px;
+  background: var(--page);
+  font-size: .76rem;
+}
+.canvas-menu-setting span { color: var(--muted); font-family: ui-monospace, monospace; }
+.canvas-menu-context-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: .72rem;
+  line-height: 1.45;
+}
+.canvas-open-teams { gap: 9px; }
+.canvas-team {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 3%, var(--panel));
+}
+.canvas-team > header {
+  display: flex;
+  min-width: 0;
+  gap: 10px;
+  color: var(--muted);
+  font: .66rem/1.2 ui-monospace, monospace;
+}
+.canvas-team > header strong { color: var(--ink); }
+.canvas-team > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-team-members { display: grid; gap: 6px; }
+.canvas-team-member {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 9px;
+  min-height: 62px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--identity) 58%, var(--line));
+  border-radius: 8px;
+  background: var(--page);
+  cursor: grab;
+}
+.canvas-team-member[aria-disabled="true"] { cursor: default; opacity: .66; }
+.canvas-member-presence {
+  width: 18px;
+  height: 18px;
+  border: 5px solid color-mix(in srgb, var(--identity) 25%, var(--panel));
+  border-radius: 50%;
+  background: var(--identity);
+  box-sizing: content-box;
+}
+.canvas-member-presence.running-stale { filter: saturate(.58); }
+.canvas-member-presence.bound,
+.canvas-member-presence.unbound { background: var(--muted); }
+.canvas-member-copy { display: grid; min-width: 0; gap: 4px; }
+.canvas-member-copy strong {
+  overflow: hidden;
+  color: var(--identity, var(--ink));
+  font-size: .82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-member-copy small { color: var(--muted); font-size: .67rem; }
+.canvas-member-drag { color: var(--muted); font-family: monospace; }
+.canvas-team-drop,
+.canvas-unteamed {
+  padding: 9px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 9px;
+}
+.canvas-drop-target {
+  display: grid;
+  min-height: 48px;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-radius: 8px;
+  color: var(--accent);
+  font: 600 .68rem/1 ui-monospace, monospace;
+  text-transform: uppercase;
+}
+.canvas-menu-empty { margin: 0; color: var(--muted); font-size: .7rem; }
 
 .mosaic-workspace .content {
   display: flex;
@@ -431,6 +525,8 @@
   background: var(--panel);
 }
 .composer-shard--primary { order: 0; }
+.composer-shard--primary[draggable="true"] { cursor: grab; }
+.composer-shard--primary[draggable="true"]:active { cursor: grabbing; }
 .composer-shard--quote {
   order: 1;
   min-height: 112px;
@@ -468,7 +564,38 @@
 .composer-shard-age {
   color: var(--identity, var(--accent));
 }
-.composer-shard-image-indicators:empty { display: none; }
+
+/* A third of the message-card thumbnail, keeping its border, radius, and crop
+   so a draft image reads as the same object at heading scale. The strip is
+   bounded and scrolls, so attachments never push the prose out of the row. An
+   empty strip stays laid out at zero width rather than `display: none`: it owns
+   the third column of the primary heading, and dropping out of the grid would
+   slide the hamburger a whole column left until the first image arrives. */
+.composer-shard-image-indicators {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+  max-width: 42%;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+}
+.composer-shard-image-indicator {
+  display: block;
+  flex: none;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.composer-shard-image-indicator img {
+  display: block;
+  width: 24px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  object-fit: cover;
+}
+.composer-shard-image-indicator:hover img { border-color: var(--accent); }
 .composer-shard-heading > button,
 .agent-action-menu > summary {
   display: grid;
@@ -564,8 +691,6 @@
   font-size: .72rem;
   line-height: 1.35;
 }
-.team-surface .mosaic-composer-actions { gap: 5px; font-size: .62rem; }
-.team-surface .image-picker { min-height: 25px; padding: 4px 6px; font-size: .62rem; }
 
 /* The lineage control stack is sized against the Python Spice reference, which
    fixes every item to one height and one width so the two sliders and the send

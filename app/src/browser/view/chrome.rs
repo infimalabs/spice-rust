@@ -23,10 +23,11 @@ pub(super) fn render_command_bar(
     active_axis: Axis,
     surface: &SurfaceData,
     cursor: &str,
+    sender: &SenderHandle,
 ) -> Html {
     let runtime = surface.as_ref();
     if **mosaic {
-        return render_mosaic_command_bar(axis, mosaic, active_axis, runtime, cursor);
+        return render_mosaic_command_bar(axis, mosaic, active_axis, runtime, cursor, sender);
     }
     html! {
         <header class="commandbar">
@@ -61,6 +62,7 @@ pub(super) fn render_command_bar(
                 })}
             </nav>
             <span class="bar-meta">{format!("cursor {cursor}")}</span>
+            {render_canvas_menu(axis, mosaic, active_axis, runtime, sender)}
         </header>
     }
 }
@@ -100,6 +102,7 @@ fn render_mosaic_command_bar(
     active_axis: Axis,
     runtime: Option<&CanvasRuntime>,
     cursor: &str,
+    sender: &SenderHandle,
 ) -> Html {
     let task_pills = task_pills(runtime);
     html! {
@@ -138,24 +141,7 @@ fn render_mosaic_command_bar(
                 }
             </nav>
             <span class="bar-meta">{format!("cursor {cursor}")}</span>
-            {render_canvas_menu(axis, mosaic, active_axis, runtime)}
-        </header>
-    }
-}
-
-fn render_canvas_menu(
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
-    active_axis: Axis,
-    runtime: Option<&CanvasRuntime>,
-) -> Html {
-    html! {
-        <details class="canvas-menu">
-            <summary aria-label="Open Spice Canvas menu">
-                <span aria-hidden="true">{"🌶️"}</span>
-                <span>{"Spice"}</span>
-            </summary>
-            <nav aria-label="Canvas views">
+            <nav class="canvas-shortcuts" aria-label="Canvas context views">
                 {render_pill(
                     "Agents",
                     "Converse with seated agents",
@@ -166,7 +152,7 @@ fn render_canvas_menu(
                         Callback::from(move |_| mosaic.set(true))
                     },
                 )}
-                {for Axis::ALL.iter().copied().map(|candidate| {
+                {for [Axis::Topology, Axis::Chronology].map(|candidate| {
                     let axis = axis.clone();
                     let mosaic = mosaic.clone();
                     render_pill(
@@ -181,6 +167,49 @@ fn render_canvas_menu(
                     )
                 })}
             </nav>
+            {render_canvas_menu(axis, mosaic, active_axis, runtime, sender)}
+        </header>
+    }
+}
+
+fn render_canvas_menu(
+    axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
+    active_axis: Axis,
+    runtime: Option<&CanvasRuntime>,
+    sender: &SenderHandle,
+) -> Html {
+    html! {
+        <details class="canvas-menu">
+            <summary aria-label="Open Spice Canvas menu">
+                <span aria-hidden="true">{"🌶️"}</span>
+                <span>{"Spice"}</span>
+            </summary>
+            <div class="canvas-menu-panel">
+                {super::lineage_menu::render(
+                    **mosaic,
+                    active_axis,
+                    axis_count(active_axis, runtime),
+                    runtime,
+                    sender,
+                )}
+                <nav class="canvas-menu-views" aria-label="More Canvas views">
+                    {for [Axis::Magnitude, Axis::Flow].map(|candidate| {
+                        let axis = axis.clone();
+                        let mosaic = mosaic.clone();
+                        render_pill(
+                            &title(candidate.as_str()),
+                            candidate.question(),
+                            !*mosaic && candidate == active_axis,
+                            watchband::badge(axis_count(candidate, runtime)),
+                            Callback::from(move |_| {
+                                axis.set(candidate);
+                                mosaic.set(false);
+                            }),
+                        )
+                    })}
+                </nav>
+            </div>
         </details>
     }
 }
@@ -340,19 +369,28 @@ fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
     }
 }
 
-/// The newest command outcome, folded onto one line.
-pub(in crate::browser) fn render_ticker(surface: &SurfaceData) -> Html {
-    let Some(event) = surface.as_ref().and_then(|runtime| runtime.newest_event()) else {
-        return Html::default();
+/// Newest activity from any member of one lineage.
+///
+/// Team strips never consult command receipts. Those remain visible in the
+/// chronology pane, while this line follows captured transcript activity
+/// exclusively.
+pub(in crate::browser) fn render_lineage_ticker(
+    runtime: &CanvasRuntime,
+    lineage: &crate::runtime::LaneRow,
+) -> Html {
+    let Some(activity) = runtime.newest_lineage_activity(lineage) else {
+        return html! {
+            <div class="ticker" aria-live="polite" data-empty="true"></div>
+        };
     };
-    let detail = if event.detail().is_empty() {
-        event.title()
-    } else {
-        event.detail()
-    };
+    ticker(activity.class(), activity.title(), activity.detail())
+}
+
+fn ticker(class: &'static str, title: &str, detail: &str) -> Html {
+    let detail = if detail.is_empty() { title } else { detail };
     html! {
-        <div class={classes!("ticker", event.class())} aria-live="polite">
-            {watchband::ticker_line(event.title(), detail, TICKER_BUDGET)}
+        <div class={classes!("ticker", class)} aria-live="polite">
+            {watchband::ticker_line(title, detail, TICKER_BUDGET)}
         </div>
     }
 }
