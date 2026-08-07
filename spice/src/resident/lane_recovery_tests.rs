@@ -985,6 +985,27 @@ fn session_proof_separates_a_silent_launch_from_a_talkative_one() {
     );
 }
 
+#[test]
+fn session_proof_witnesses_only_the_stream_it_waits_on() {
+    let proof = proof(None);
+    proof
+        .reporter
+        .record(CaptureRecord {
+            declaration: None,
+            stream: vendor::RecordStream::Stderr,
+            ..declared("successor-session")
+        })
+        .expect("an unselected stream record is still captured");
+    drop(proof.reporter);
+    let refusal = session_refusal(proof.session);
+    // A vendor whose only output is diagnostics on the other stream has said
+    // nothing on the one the deadline waits on, so it stays the silent case.
+    assert_eq!(
+        refusal.observed.as_deref(),
+        Some("no record on the selected stream"),
+    );
+}
+
 // A successful import: one atomic transfer of seat, identity, lineage, session
 // authority, and active claim into the successor worktree.
 

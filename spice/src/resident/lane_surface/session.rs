@@ -197,10 +197,17 @@ impl DeclarationReporter {
 impl CaptureReporter for DeclarationReporter {
     fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
         let Some(declaration) = record.declaration.as_ref() else {
-            self.state
-                .lock()
-                .map_err(|_| CaptureReportError::new("session proof lock is poisoned"))?
-                .witness = DeclarationWitness::of(&record.decoded);
+            // Only the selected stream is witnessed, for the same reason a
+            // declaration off it is refused below. An occupant that writes
+            // nothing but diagnostics to the other stream has said nothing on
+            // the one this deadline waits on, and calling that "records, none
+            // declaring" would replace one wrong observation with another.
+            if record.stream == self.stream {
+                self.state
+                    .lock()
+                    .map_err(|_| CaptureReportError::new("session proof lock is poisoned"))?
+                    .witness = DeclarationWitness::of(&record.decoded);
+            }
             return self.inner.record(record);
         };
         let mut state = self
