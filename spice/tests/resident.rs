@@ -380,6 +380,9 @@ enum FakeBehavior {
     /// makes it the fixture for a resident that answered and then failed to
     /// withdraw.
     RetainedDiscovery,
+    /// Answer and withdraw discovery, but keep the runtime lock past the
+    /// client's release-confirmation bound.
+    ReleaseStall,
     Replay,
     EchoCapability,
     ResidentLoss,
@@ -505,10 +508,13 @@ fn run_fake_resident(
         saturate_control_writes(&mut socket, &stop);
         return;
     }
-    if matches!(behavior, FakeBehavior::Success) {
+    if matches!(behavior, FakeBehavior::Success | FakeBehavior::ReleaseStall) {
         fs::remove_file(canvas).expect("fake resident withdraws discovery");
     }
     send_dark_response(&mut socket, &discovery, &command, behavior);
+    if matches!(behavior, FakeBehavior::ReleaseStall) {
+        hold_adversarial_peer(&stop);
+    }
 }
 
 struct DripStream {
