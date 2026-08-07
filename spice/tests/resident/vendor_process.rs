@@ -1002,12 +1002,14 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
             concat!(
                 "#!/bin/sh\n",
                 "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
+                "trap > {}\n",
                 "printf '%s\\n' \"$$\" > {}\n",
                 "printf '%s\\n' '{{\"type\":\"thread.started\"}}'\n",
                 "while :; do sleep 1; done\n",
             ),
             shell_word(&entered_marker(&stopped).display().to_string()),
             shell_word(&stopped.display().to_string()),
+            shell_word(&trap_record(&stopped).display().to_string()),
             shell_word(&vendor_pid.display().to_string()),
         ),
     )
