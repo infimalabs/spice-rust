@@ -673,6 +673,12 @@ impl CommandKind {
             Self::ClaimCarry | Self::ClaimRenew | Self::ClaimFree | Self::ClaimLapse => {
                 Law::POSSESSION
             }
+            _ => self.non_task_law(),
+        }
+    }
+
+    const fn non_task_law(self) -> Law {
+        match self {
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
             Self::SteerInbox => Law::READ,
@@ -697,6 +703,7 @@ impl CommandKind {
             | Self::ProofRecognize => Law::RECOGNIZE,
             Self::ReleasePublish => Law::PUBLISH,
             Self::UpChange => Law::UP,
+            _ => panic!("command law partition is closed"),
         }
     }
 
