@@ -502,11 +502,16 @@
   padding: 8px 8px 0;
 }
 
+/* Agent columns keep a usable editing width and make their own east/west
+   viewport. The form and page therefore never inherit this overflow. */
 .team-surface .team-agents {
   display: grid;
-  grid-template-columns: repeat(var(--lineage-weight, 4), minmax(0, 1fr));
+  grid-template-columns: repeat(var(--lineage-weight, 4), minmax(10rem, 1fr));
   gap: 5px;
   min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-behavior: smooth;
 }
 
 .team-surface .team-agent {
@@ -540,11 +545,13 @@
   border-radius: 7px;
   background: var(--panel);
 }
-.composer-shard--primary { order: 0; }
+/* Quote shards are the context leading into the primary draft, so the visible
+   stack and the submitted Markdown share quote-then-primary order. */
+.composer-shard--primary { order: 1; }
 .composer-shard--primary[draggable="true"] { cursor: grab; }
 .composer-shard--primary[draggable="true"]:active { cursor: grabbing; }
 .composer-shard--quote {
-  order: 1;
+  order: 0;
   min-height: 112px;
   border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
   background: color-mix(in srgb, var(--accent) 5%, var(--panel));

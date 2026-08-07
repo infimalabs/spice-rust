@@ -69,6 +69,76 @@ export async function assertNoDraftPreview(scope, expectedShards) {
   }
 }
 
+async function assertHorizontalComposerStrip(page, team) {
+  const viewport = page.viewportSize();
+  assert.ok(viewport, "the composer-strip fixture has a viewport to restore");
+  const strip = team.locator(".team-surface .team-agents").first();
+  try {
+    await page.setViewportSize({ width: 520, height: viewport.height });
+    const geometry = await strip.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      return {
+        bodyWidth: document.body.scrollWidth,
+        viewportWidth: innerWidth,
+        left: box.left,
+        right: box.right,
+        clientWidth: node.clientWidth,
+        scrollWidth: node.scrollWidth,
+        overflowX: getComputedStyle(node).overflowX,
+        columns: [...node.querySelectorAll(":scope > .team-agent")].map((agent) => {
+          const column = agent.getBoundingClientRect();
+          return { left: column.left, right: column.right, width: column.width };
+        }),
+      };
+    });
+    assert.ok(
+      ["auto", "scroll"].includes(geometry.overflowX),
+      `the primary composer row owns horizontal scrolling: ${JSON.stringify(geometry)}`,
+    );
+    assert.ok(
+      geometry.scrollWidth > geometry.clientWidth,
+      `primary composers overflow their strip instead of compressing: ${JSON.stringify(geometry)}`,
+    );
+    assert.ok(
+      geometry.columns.every((column) => column.width >= 159),
+      "every narrow-viewport composer retains its usable minimum width: "
+        + JSON.stringify(geometry.columns),
+    );
+    assert.ok(
+      geometry.bodyWidth <= geometry.viewportWidth,
+      `composer overflow stays inside its own strip: ${JSON.stringify(geometry)}`,
+    );
+
+    await strip.evaluate((node) => node.scrollTo({ left: node.scrollWidth, behavior: "instant" }));
+    await waitForPageFunction(
+      page,
+      "the primary composer strip scrolls east",
+      TRANSITION_MS,
+      () => document.querySelector(".team-surface .team-agents")?.scrollLeft > 0,
+    );
+    const eastern = await strip.evaluate((node) => {
+      const stripBox = node.getBoundingClientRect();
+      const last = node.querySelector(":scope > .team-agent:last-child")?.getBoundingClientRect();
+      return {
+        scrollLeft: node.scrollLeft,
+        stripLeft: stripBox.left,
+        stripRight: stripBox.right,
+        last: last && { left: last.left, right: last.right },
+      };
+    });
+    assert.ok(eastern.scrollLeft > 0, "the strip records an eastward scroll position");
+    assert.ok(
+      eastern.last &&
+        eastern.last.left >= eastern.stripLeft - 1 &&
+        eastern.last.right <= eastern.stripRight + 1,
+      `eastward scrolling reveals the final primary composer: ${JSON.stringify(eastern)}`,
+    );
+    await strip.evaluate((node) => node.scrollTo({ left: 0, behavior: "instant" }));
+  } finally {
+    await page.setViewportSize(viewport);
+  }
+}
+
 /** Exercise the quote-created shard, source-link, drawer, and scroll contract. */
 export async function assertComposerShards({
   page,
@@ -151,6 +221,7 @@ export async function assertComposerShards({
     0,
     "the primary shard exposes no renewal action outside its hamburger drawer",
   );
+  await assertHorizontalComposerStrip(page, team);
 
   const quoteHeading = quotePrimary.locator(".composer-shard-heading");
   const quoteProse = quoteHeading.locator(".composer-shard-prose");
@@ -254,6 +325,38 @@ export async function assertComposerShards({
     await quoteStack.locator(".composer-shard").count(),
     2,
     "quoting a card mints a second composer shard in that agent stack",
+  );
+  const verticalStack = await quoteStack.evaluate((stack) => {
+    const primary = stack.querySelector(".composer-shard--primary")?.getBoundingClientRect();
+    const quoteShard = stack.querySelector(".composer-shard--quote");
+    const quote = quoteShard?.getBoundingClientRect();
+    return {
+      owner: stack.dataset.agentComposerStack,
+      primary: primary && { top: primary.top, left: primary.left, right: primary.right },
+      quote: quote && {
+        bottom: quote.bottom,
+        left: quote.left,
+        right: quote.right,
+        owner: quoteShard.closest(".team-agent")?.dataset.agentLane,
+        target: quoteShard.dataset.quoteTargetId,
+      },
+    };
+  });
+  assert.ok(
+    verticalStack.quote &&
+      verticalStack.primary &&
+      verticalStack.quote.bottom <= verticalStack.primary.top + 1,
+    `the quoted draft stacks above its owning primary: ${JSON.stringify(verticalStack)}`,
+  );
+  assert.deepEqual(
+    [verticalStack.quote?.owner, verticalStack.quote?.target],
+    [verticalStack.owner, verticalStack.owner],
+    "the vertical quote shard remains visibly and structurally owned by its agent",
+  );
+  assert.ok(
+    Math.abs(verticalStack.quote.left - verticalStack.primary.left) < 1 &&
+      Math.abs(verticalStack.quote.right - verticalStack.primary.right) < 1,
+    `the quote and primary retain one aligned ownership column: ${JSON.stringify(verticalStack)}`,
   );
   let previewLabel = await previewShard.locator("header strong").innerText();
   assert.equal(previewLabel, nestedQuotePreview);

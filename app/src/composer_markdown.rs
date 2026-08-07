@@ -21,21 +21,19 @@ pub(crate) struct Attachment<'a> {
     pub(crate) data_url: &'a str,
 }
 
-/// Join the body, every nonblank quote with its reply, and every attachment.
+/// Join every visible quote shard, the primary body, and every attachment.
 ///
-/// Parts are separated by the blank line Markdown reads as a block boundary,
-/// and a part that would contribute nothing is dropped rather than emitted as
-/// an empty block, which would double the separator around it.
+/// The quote shards precede the primary composer in the visible vertical stack,
+/// so their document parts precede the primary body here as well. Attachments
+/// belong to the assembled document and follow its text. Parts are separated by
+/// the blank line Markdown reads as a block boundary, and a part that would
+/// contribute nothing is dropped rather than emitted as an empty block.
 pub(crate) fn compose(
     body: &str,
     quotes: &[QuotedReply<'_>],
     attachments: &[Attachment<'_>],
 ) -> String {
     let mut parts = Vec::new();
-    let body = body.trim();
-    if !body.is_empty() {
-        parts.push(body.to_owned());
-    }
     parts.extend(quotes.iter().filter_map(|quoted| {
         let quote = block_quote(quoted.quote);
         let body = quoted.body.trim();
@@ -46,6 +44,10 @@ pub(crate) fn compose(
             .join("\n\n");
         (!part.is_empty()).then_some(part)
     }));
+    let body = body.trim();
+    if !body.is_empty() {
+        parts.push(body.to_owned());
+    }
     parts.extend(attachments.iter().map(|attachment| {
         let name = attachment
             .name
@@ -96,7 +98,7 @@ mod tests {
     }
 
     #[test]
-    fn composed_markdown_keeps_the_body_first_and_drops_blank_parts() {
+    fn composed_markdown_follows_visible_shard_order_and_drops_blank_parts() {
         assert_eq!(compose("  body only  ", &[], &[]), "body only");
         assert_eq!(
             compose(
@@ -108,7 +110,7 @@ mod tests {
         );
         assert_eq!(
             compose("body", &quoted(&[("quoted line", "")]), &[]),
-            "body\n\n> quoted line"
+            "> quoted line\n\nbody"
         );
     }
 

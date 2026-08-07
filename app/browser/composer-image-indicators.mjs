@@ -9,7 +9,7 @@ const FILLER = ["fill-1.png", "fill-2.png", "fill-3.png", "fill-4.png", "fill-5.
 /// With the Images button gone, a paste onto the primary textarea is how the
 /// composer really receives a draft image, so the observation attaches the same
 /// way an operator does instead of reaching for a control that no longer exists.
-async function pasteImages(composer, names) {
+export async function pasteImages(composer, names) {
   await composer.getByRole("textbox").evaluate((textarea, seed) => {
     const bytes = Uint8Array.from(atob(seed.encoded), (character) => character.charCodeAt(0));
     const transfer = new DataTransfer();

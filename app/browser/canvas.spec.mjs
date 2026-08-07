@@ -15,10 +15,9 @@ import {
 } from "./agent-conversation.mjs";
 import {
   assertComposerShards,
-  assertNoDraftPreview,
   primaryDestination,
 } from "./composer-shards.mjs";
-import { assertComposerImageIndicators } from "./composer-image-indicators.mjs";
+import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
@@ -488,6 +487,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
 
   await activity
     .filter({ hasText: "browser direction survives streaming" })
+    .first()
     .getByRole("button", { name: "Quote this message" })
     .click();
   const composer = lane.locator(".composer-shard--primary");
@@ -500,54 +500,18 @@ async function assertMosaicComposer(page, fixture, seeded) {
     "browser direction survives streaming",
     "the quoted message stays reachable from the shard it minted",
   );
-  await assertNoDraftPreview(lane, 2);
-  await quotedComposer.getByRole("textbox").fill("canvas quote reply");
-  assert.equal(await composer.getByRole("textbox").inputValue(), "");
-  await assertComposerImageIndicators(page, composer, ["pixel.png", "pixel-copy.png"]);
-  // Attaching images is where a preview used to appear; the heading indicators
-  // are the whole of what the operator sees, and the draft stays unrendered.
-  await assertNoDraftPreview(lane, 2);
-  await page.screenshot({
-    path: join(artifacts, "canvas-light-mosaic-composer.png"),
-    fullPage: true,
+  await assertCompleteComposerSubmission({
+    page,
+    fixture,
+    lane,
+    activity,
+    quoteLane,
+    quoteActivity,
+    seeded,
+    composer,
+    quotedComposer,
+    artifactPath: join(artifacts, "canvas-light-mosaic-composer.png"),
   });
-  await quotedComposer.getByRole("textbox").press("Control+Enter");
-  await activity.filter({ hasText: "canvas quote reply" }).waitFor({
-    timeout: 10_000,
-  });
-  assert.equal(
-    await lane
-      .locator("textarea[data-primary-composer-target-id]")
-      .evaluate((textarea) => document.activeElement === textarea),
-    true,
-    "quote keyboard submission returns focus to that target's primary composer",
-  );
-  assert.equal(
-    await quoteLane.locator(".composer-shard--quote").count(),
-    2,
-    "target keyboard submission leaves sibling target drafts unchanged",
-  );
-  assert.equal(
-    await activity.filter({ hasText: "canvas quote reply" }).locator(".message-body img").count(),
-    2,
-    "durable image links render through the card Markdown body",
-  );
-  const quoted = await reply(fixture, ["inbox", seeded.lane]);
-  const quotedDirective = quoted.body.lanes[0].pending.find(
-    (directive) => directive.text.includes("canvas quote reply"),
-  );
-  assert.ok(quotedDirective, "quote reply reaches the lane inbox");
-  assert.match(quotedDirective.text, /> browser direction survives streaming/);
-  assert.match(quotedDirective.text, /!\[pixel\.png\]\(data:image\/png;base64,/);
-  assert.equal(quotedDirective.attachments.length, 2);
-  assert.deepEqual(
-    quotedDirective.attachments.map((attachment) => attachment.name).sort(),
-    ["pixel-copy.png", "pixel.png"],
-  );
-  for (const attachment of quotedDirective.attachments) {
-    assert.equal(attachment.content_type, "image/png");
-    assert.match(attachment.data_url, /^data:image\/png;base64,/);
-  }
 
   await lane.evaluate((target) => {
     const transfer = new DataTransfer();
