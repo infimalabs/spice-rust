@@ -300,6 +300,14 @@ fn lapse_request(command: u8, expiry: u8) -> Request {
 }
 
 fn fixture(path: Option<&Path>) -> Journal {
+    seeded(path, true)
+}
+
+/// Seed the board, optionally without the residency head a lapse demands.
+///
+/// `observe` reads it only after the claim, the lease and the expiry chain
+/// pass, so reaching that read empty needs a board that never seated one.
+fn seeded(path: Option<&Path>, residency: bool) -> Journal {
     let mut journal = path.map_or_else(
         || Journal::in_memory().expect("memory journal"),
         |path| Journal::open(path).expect("file journal"),
@@ -352,6 +360,15 @@ fn fixture(path: Option<&Path>) -> Journal {
         deferral: None,
         completion: None,
     });
+    if residency {
+        seat_residency(&mut write, fact);
+    }
+    journal.apply(write).expect("seed authority");
+    journal
+}
+
+/// Seat the lane the fixture claims from, occupied by the fixture occupant.
+fn seat_residency(write: &mut JournalWrite, fact: journal::PendingFact) {
     write.residency_head(fact, |_| ResidencyHead {
         epoch: uuid(22),
         state: ResidentState::Seated,
@@ -375,8 +392,6 @@ fn fixture(path: Option<&Path>) -> Journal {
             auto_projects: Vec::new(),
         }],
     });
-    journal.apply(write).expect("seed authority");
-    journal
 }
 
 fn claimed() -> Journal {
@@ -462,34 +477,15 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
         },
     ];
     for (request, expected) in cases {
-        let mut journal = claimed();
-        let before = journal.fact_snapshot().expect("before refusal");
-        let heads = Snapshot::read(&journal, &projects()).expect("heads before refusal");
-        match lapse(&mut journal, request) {
-            Err(LapseError::Refused(observed)) => assert_eq!(observed, expected),
-            other => panic!("expected {expected:?}, found {other:?}"),
-        }
-        assert_eq!(journal.fact_snapshot().expect("after refusal"), before);
-        assert_eq!(
-            Snapshot::read(&journal, &projects()).expect("heads after refusal"),
-            heads
-        );
+        refuses(&mut claimed(), request, &expected);
     }
 
     let mut journal = claimed();
     free(&mut journal, 45);
-    let before = journal.fact_snapshot().expect("before inactive refusal");
-    let heads = Snapshot::read(&journal, &projects()).expect("heads before inactive refusal");
-    assert!(matches!(
-        lapse(&mut journal, lapse_request(46, 20)),
-        Err(LapseError::Refused(Refusal::Inactive(
-            ClaimDisposition::Freed
-        )))
-    ));
-    assert_eq!(journal.fact_snapshot().expect("after refusal"), before);
-    assert_eq!(
-        Snapshot::read(&journal, &projects()).expect("heads after inactive refusal"),
-        heads
+    refuses(
+        &mut journal,
+        lapse_request(46, 20),
+        &Refusal::Inactive(ClaimDisposition::Freed),
     );
 }
 
@@ -541,6 +537,206 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
     assert_eq!(
         Snapshot::read(&journal, &projects()).expect("heads after malformed refusal"),
         heads
+    );
+}
+
+/// Assert one refusal by variant and payload, and that it wrote nothing.
+///
+/// A refusal that moved a fact or a head is a defect the variant assertion
+/// cannot see, and whole-`Refusal` equality stops a pass on an adjacent guard.
+fn refuses(journal: &mut Journal, request: Request, expected: &Refusal) {
+    let before = journal.fact_snapshot().expect("facts before refusal");
+    let heads = Snapshot::read(journal, &projects()).expect("heads before refusal");
+    match lapse(journal, request) {
+        Err(LapseError::Refused(observed)) => assert_eq!(&observed, expected),
+        other => panic!("expected {expected:?}, found {other:?}"),
+    }
+    let facts = journal.fact_snapshot().expect("facts after refusal");
+    assert_eq!(facts, before);
+    let settled = Snapshot::read(journal, &projects()).expect("heads after refusal");
+    assert_eq!(settled, heads);
+}
+
+/// Amend the lease head the way a renewal does, with a caller-chosen drift.
+///
+/// `renew` above moves only the fields a renewal moves; these fixtures need the
+/// ones it never moves, so the drift lands on the head that was read.
+fn drift_lease(journal: &mut Journal, epoch: CanonicalUuid, drift: impl FnOnce(&mut LeaseHead)) {
+    let (_, lease, _) = possession(journal);
+    let mut write = JournalWrite::new(
+        Actor::Lane(uuid(20)),
+        "task:BOARD-a1".parse().expect("drift origin"),
+        instant(10),
+        Producer::BusTimer,
+    );
+    let fact = write
+        .fact(
+            body::ClaimRenewed {
+                task: task(),
+                epoch,
+                until: lease.expiry,
+                maximum: lease.maximum,
+            },
+            FactCause::Root,
+        )
+        .expect("drifted renewal fact");
+    let mut next = lease;
+    drift(&mut next);
+    write.lease_head(task(), fact, move |_| next);
+    journal.apply(write).expect("the drifted lease commits");
+}
+
+/// Amend the residency head the way the resident amends its own.
+///
+/// `spice::resident::shutdown` clones the head it read, moves one field and
+/// writes it back beside a transition fact; one built here would answer itself.
+fn drift_residency(journal: &mut Journal, drift: impl FnOnce(&mut ResidencyHead)) {
+    let observed = journal
+        .read_with(|read| read.residency_head())
+        .expect("residency read")
+        .expect("the fixture seats a residency head");
+    let mut next = observed.body().clone();
+    drift(&mut next);
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "resident:up".parse().expect("residency origin"),
+        instant(10),
+        Producer::CommandDoor,
+    );
+    let fact = write
+        .fact(
+            body::UpDraining {
+                epoch: next.epoch,
+                occupants: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("residency transition fact");
+    write.residency_head(fact, move |_| next);
+    journal.apply(write).expect("the drifted residency commits");
+}
+
+#[test]
+fn a_task_that_was_never_claimed_refuses_and_claiming_it_makes_it_lapse() {
+    let mut journal = fixture(None);
+    refuses(&mut journal, lapse_request(50, 20), &Refusal::MissingClaim);
+    let mut restored = claimed();
+    lapse(&mut restored, lapse_request(52, 20)).expect("the restored claim lapses");
+}
+
+/// A lease left behind by an epoch change is refused before the named epoch is.
+///
+/// The request names an epoch matching neither head, so both epoch guards in
+/// `admit_expiry` are live at once. It runs claim-versus-lease first; reversing
+/// that calls the command stale when the board itself is what drifted.
+#[test]
+fn a_lease_epoch_that_left_the_claim_behind_is_named_before_the_request_epoch() {
+    let mut journal = claimed();
+    drift_lease(&mut journal, uuid(26), |lease| lease.epoch = uuid(26));
+    let mut request = lapse_request(53, 20);
+    request.epoch = uuid(27);
+    refuses(
+        &mut journal,
+        request,
+        &Refusal::ClaimLeaseEpoch {
+            claim: uuid(22),
+            lease: uuid(26),
+        },
+    );
+}
+
+#[test]
+fn an_expiry_past_the_durable_maximum_refuses_and_one_inside_it_lapses() {
+    let mut journal = claimed();
+    drift_lease(&mut journal, uuid(22), |lease| lease.expiry = instant(40));
+    refuses(
+        &mut journal,
+        lapse_request(54, 40),
+        &Refusal::IncoherentLease,
+    );
+    let mut coherent = claimed();
+    drift_lease(&mut coherent, uuid(22), |lease| lease.expiry = instant(30));
+    lapse(&mut coherent, lapse_request(55, 30)).expect("a coherent lease lapses");
+}
+
+#[test]
+fn a_board_that_seated_no_residency_refuses_and_a_seated_one_lapses() {
+    let mut journal = seeded(None, false);
+    claim(&mut journal, 56);
+    refuses(
+        &mut journal,
+        lapse_request(57, 20),
+        &Refusal::MissingResidency,
+    );
+    let mut seated = claimed();
+    lapse(&mut seated, lapse_request(58, 20)).expect("a seated board lapses");
+}
+
+/// One residency drift and the refusal the drifted head must produce.
+type ResidencyCase = (u8, fn(&mut ResidencyHead), Refusal);
+
+#[test]
+fn residency_refusals_name_the_seat_they_read_and_write_nothing() {
+    let cases: [ResidencyCase; 5] = [
+        (
+            59,
+            |head| head.state = ResidentState::Draining,
+            Refusal::ResidentState(ResidentState::Draining),
+        ),
+        (
+            60,
+            |head| head.epoch = uuid(28),
+            Refusal::StaleResidentEpoch {
+                seated: uuid(28),
+                named: uuid(22),
+            },
+        ),
+        (
+            61,
+            |head| head.lanes.clear(),
+            Refusal::MissingLane(uuid(20)),
+        ),
+        (
+            62,
+            |head| head.lanes[0].disposition = "released".to_owned(),
+            Refusal::LaneDisposition {
+                lane: uuid(20),
+                disposition: "released".to_owned(),
+            },
+        ),
+        (
+            63,
+            |head| head.lanes[0].occupant = Some(uuid(29)),
+            Refusal::Displaced {
+                lane: uuid(20),
+                seated: Some(uuid(29)),
+                named: uuid(21),
+            },
+        ),
+    ];
+    for (command, drift, expected) in cases {
+        let mut journal = claimed();
+        drift_residency(&mut journal, drift);
+        refuses(&mut journal, lapse_request(command, 20), &expected);
+    }
+}
+
+/// A residency that fails two guards reports the first, not the worst.
+///
+/// `admit_residency` is four early returns, so a head both off its seat and
+/// missing the claimed lane reports only one. The state is the honest answer:
+/// the lane is gone because the resident is draining, not because of the seat.
+#[test]
+fn the_residency_chain_reports_the_first_guard_that_fires() {
+    let mut journal = claimed();
+    drift_residency(&mut journal, |head| {
+        head.state = ResidentState::Draining;
+        head.lanes.clear();
+    });
+    refuses(
+        &mut journal,
+        lapse_request(64, 20),
+        &Refusal::ResidentState(ResidentState::Draining),
     );
 }
 
