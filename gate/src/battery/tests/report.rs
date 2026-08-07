@@ -375,13 +375,29 @@ fn markdown_arm(states: Vec<(&str, crate::metrics::EvidenceState)>) -> ArmEviden
     ArmEvidence::Metrics { report }
 }
 
+/// A mismatch count with the located findings a nonzero count must carry.
+///
+/// The findings are synthesized to match the count rather than left empty: a
+/// zero-tolerance breach naming nothing is not an encodable state, so a fixture
+/// that omitted them would be testing a report that cannot occur.
 fn markdown_mismatches(count: u64) -> crate::metrics::EvidenceState {
-    crate::metrics::EvidenceState::measured(crate::metrics::MetricMeasurement::new(
-        count,
-        crate::metrics::ParserEvidence::Native {
-            parser: crate::metrics::ParserId::MarkdownTrackedTargetsV2,
-        },
-    ))
+    let findings = (0..count)
+        .map(|index| crate::metrics::MetricFinding {
+            path: "docs/measured.md".to_owned(),
+            line: index + 1,
+            target: format!("docs/Mismatch{index}.md"),
+            expected: Some(format!("docs/mismatch{index}.md")),
+        })
+        .collect();
+    crate::metrics::EvidenceState::measured(
+        crate::metrics::MetricMeasurement::new(
+            count,
+            crate::metrics::ParserEvidence::Native {
+                parser: crate::metrics::ParserId::MarkdownTrackedTargetsV2,
+            },
+        )
+        .with_findings(findings),
+    )
 }
 
 fn markdown_unavailable(reason: &str) -> crate::metrics::EvidenceState {

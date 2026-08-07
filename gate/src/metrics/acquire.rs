@@ -11,9 +11,9 @@ use std::path::Path;
 
 use super::baseline::{BaselineCapture, CommittedTexts, selects};
 use super::{
-    ArmDeclaration, ComplexityRoutine, EvidenceError, EvidenceState, MetricEvidence, MetricId,
-    MetricKey, MetricMeasurement, MetricStateBinding, ParseError, ParserEvidence, ParserId,
-    ResolvedMagicMetric, STRUCTURAL_ARMS, StructuralArmEvidence, admit_magic_source,
+    ArmDeclaration, ComplexityRoutine, EvidenceError, EvidenceState, MetricEvidence, MetricFinding,
+    MetricId, MetricKey, MetricMeasurement, MetricStateBinding, ParseError, ParserEvidence,
+    ParserId, ResolvedMagicMetric, STRUCTURAL_ARMS, StructuralArmEvidence, admit_magic_source,
     measure_complexity, measure_file_shape, resolve_magic_metric, resolve_metric_rule,
     scan_magic_regressions, scan_markdown_link_case, scan_rust_doc_markdown_citations,
 };
@@ -529,12 +529,27 @@ fn markdown_state(root: &Path, path: &str, tracked: &[String]) -> EvidenceState 
         }
     };
     match scan_markdown_link_case(path, &text, tracked) {
-        Ok(findings) => EvidenceState::measured(MetricMeasurement::new(
-            findings.len() as u64,
-            ParserEvidence::Native {
-                parser: ParserId::MarkdownTrackedTargetsV2,
-            },
-        )),
+        Ok(findings) => EvidenceState::measured(
+            MetricMeasurement::new(
+                findings.len() as u64,
+                ParserEvidence::Native {
+                    parser: ParserId::MarkdownTrackedTargetsV2,
+                },
+            )
+            .with_findings(
+                findings
+                    .iter()
+                    .map(|finding| MetricFinding {
+                        path: finding.source_path().to_owned(),
+                        line: finding.line(),
+                        // The link as written, not where it resolved to. A
+                        // reader searching the file searches for what is in it.
+                        target: finding.raw_target().to_owned(),
+                        expected: Some(finding.expected_path().to_owned()),
+                    })
+                    .collect(),
+            ),
+        ),
         Err(error) => error.into_evidence_state(),
     }
 }
@@ -558,12 +573,27 @@ fn rust_doc_markdown_state(root: &Path, path: &str, tracked: &[String]) -> Optio
     };
     match scan_rust_doc_markdown_citations(path, &text, tracked) {
         Ok(scan) if scan.citations() == 0 => None,
-        Ok(scan) => Some(EvidenceState::measured(MetricMeasurement::new(
-            scan.findings().len() as u64,
-            ParserEvidence::Native {
-                parser: ParserId::MarkdownTrackedTargetsV2,
-            },
-        ))),
+        Ok(scan) => Some(EvidenceState::measured(
+            MetricMeasurement::new(
+                scan.findings().len() as u64,
+                ParserEvidence::Native {
+                    parser: ParserId::MarkdownTrackedTargetsV2,
+                },
+            )
+            .with_findings(
+                scan.findings()
+                    .iter()
+                    .map(|finding| MetricFinding {
+                        path: finding.source_path().to_owned(),
+                        line: finding.line(),
+                        target: finding.target_path().to_owned(),
+                        // An absence has no correct spelling to offer: the
+                        // target is untracked, not misspelled.
+                        expected: None,
+                    })
+                    .collect(),
+            ),
+        )),
         Err(error) => Some(error.into_evidence_state()),
     }
 }
@@ -938,3 +968,6 @@ impl std::error::Error for MetricAcquisitionError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
