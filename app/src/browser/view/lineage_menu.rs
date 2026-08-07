@@ -1,4 +1,4 @@
-//! Agents-page content for the global Spice menu.
+//! Agents-page lineage content for the global Spice menu.
 
 use web_sys::DragEvent;
 
@@ -80,15 +80,15 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
         .map(|inbox| inbox.lanes.as_slice())
         .unwrap_or(&[]);
     let can_configure = runtime.offers(CommandKind::LineageConfigure);
-    let teams = lanes
+    let grouped_lineages = lanes
         .lanes
         .iter()
-        .filter(|lineage| is_team(lineage))
+        .filter(|lineage| is_grouped_lineage(lineage))
         .collect::<Vec<_>>();
-    let unteamed = lanes
+    let solo_members = lanes
         .lanes
         .iter()
-        .filter(|lineage| !is_team(lineage))
+        .filter(|lineage| !is_grouped_lineage(lineage))
         .flat_map(|lineage| &lineage.members)
         .collect::<Vec<_>>();
     let life_by_member = lanes
@@ -101,11 +101,12 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
                 .map(move |member| (member.lane, lineage.subscription))
         })
         .collect::<BTreeMap<_, _>>();
-    let unteamed_ids = unteamed
+    let solo_member_ids = solo_members
         .iter()
         .map(|member| member.lane)
         .collect::<Vec<_>>();
-    let new_team = super::super::random_uuid().expect("browser crypto mints a new team identity");
+    let new_lineage =
+        super::super::random_uuid().expect("browser crypto mints a new lineage identity");
     html! {
         <div class="canvas-menu-page" data-menu-page="agents">
             <section class="canvas-menu-section canvas-menu-global">
@@ -117,24 +118,24 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
             </section>
             <section class="canvas-menu-section canvas-open-teams">
                 <h2>{"Open Team"}</h2>
-                if teams.is_empty() {
+                if grouped_lineages.is_empty() {
                     <p class="canvas-menu-empty">{"No open teams"}</p>
                 } else {
-                    {for teams.into_iter().map(|lineage| {
-                        render_team(lineage, waiting, sender, can_configure)
+                    {for grouped_lineages.into_iter().map(|lineage| {
+                        render_lineage(lineage, waiting, sender, can_configure)
                     })}
                 }
             </section>
-            {render_new_team_drop(
-                new_team,
+            {render_new_lineage_drop(
+                new_lineage,
                 life_by_member.clone(),
                 sender,
                 can_configure,
             )}
-            {render_unteamed_drop(
-                &unteamed,
+            {render_solo_members_drop(
+                &solo_members,
                 waiting,
-                unteamed_ids,
+                solo_member_ids,
                 life_by_member,
                 sender,
                 can_configure,
@@ -143,14 +144,14 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
     }
 }
 
-fn is_team(lineage: &crate::runtime::LaneRow) -> bool {
+fn is_grouped_lineage(lineage: &crate::runtime::LaneRow) -> bool {
     lineage.members.len() > 1
         || lineage
             .host()
             .is_some_and(|member| member.lane != lineage.lane)
 }
 
-fn render_team(
+fn render_lineage(
     lineage: &crate::runtime::LaneRow,
     waiting: &[wire::intent::LaneInbox],
     sender: &SenderHandle,
@@ -164,7 +165,7 @@ fn render_team(
         .map(|member| member.lane)
         .collect::<Vec<_>>();
     let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_team(sender.clone(), target, life, current, can_configure);
+    let ondrop = drop_into_lineage(sender.clone(), target, life, current, can_configure);
     html! {
         <article
             class="canvas-team"
@@ -230,14 +231,14 @@ fn render_member(
     }
 }
 
-fn render_new_team_drop(
+fn render_new_lineage_drop(
     target: CanonicalUuid,
     life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
     sender: &SenderHandle,
     can_configure: bool,
 ) -> Html {
     let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_new_team(sender.clone(), target, life_by_member, can_configure);
+    let ondrop = drop_into_new_lineage(sender.clone(), target, life_by_member, can_configure);
     html! {
         <section class="canvas-menu-section canvas-team-drop" {ondragover} {ondrop}>
             <header><h2>{"New Team"}</h2><span>{"drop agent to create"}</span></header>
@@ -246,7 +247,7 @@ fn render_new_team_drop(
     }
 }
 
-fn render_unteamed_drop(
+fn render_solo_members_drop(
     members: &[&crate::runtime::LaneMember],
     waiting: &[wire::intent::LaneInbox],
     current: Vec<CanonicalUuid>,
@@ -255,7 +256,7 @@ fn render_unteamed_drop(
     can_configure: bool,
 ) -> Html {
     let ondragover = allow_drop(can_configure);
-    let ondrop = drop_without_team(sender.clone(), current, life_by_member, can_configure);
+    let ondrop = drop_into_solo_lineage(sender.clone(), current, life_by_member, can_configure);
     html! {
         <section class="canvas-menu-section canvas-unteamed" {ondragover} {ondrop}>
             <header>
@@ -310,7 +311,7 @@ fn dragged_member(event: &DragEvent) -> Option<CanonicalUuid> {
         .ok()
 }
 
-fn drop_into_team(
+fn drop_into_lineage(
     sender: SenderHandle,
     target: CanonicalUuid,
     life: LineageLife,
@@ -328,7 +329,7 @@ fn drop_into_team(
     })
 }
 
-fn drop_into_new_team(
+fn drop_into_new_lineage(
     sender: SenderHandle,
     target: CanonicalUuid,
     life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
@@ -345,7 +346,7 @@ fn drop_into_new_team(
     })
 }
 
-fn drop_without_team(
+fn drop_into_solo_lineage(
     sender: SenderHandle,
     current: Vec<CanonicalUuid>,
     life_by_member: BTreeMap<CanonicalUuid, LineageLife>,

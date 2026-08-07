@@ -57,8 +57,7 @@ fn access_refusal_for(argv: &[&str]) -> String {
     access_refusal(argv).reason
 }
 
-/// The surface listens on exactly what the operator named, or on one fixed
-/// default it can be told about in advance.
+/// The surface listens exactly where the operator requested or at one stable default.
 ///
 /// Both halves are load-bearing. An operator reaching this surface from another
 /// machine has to be able to say which address it answers on, and an operator

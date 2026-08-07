@@ -644,6 +644,36 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
         epoch,
         seq: seq(48213),
     };
+    law(
+        covered,
+        "AgentMessage",
+        &[
+            AgentMessage {
+                lane: first_id,
+                author: second_id,
+                locus: MessageLocus {
+                    member: 1,
+                    offset: 2,
+                    length: 3,
+                    event: 4,
+                },
+                activity: AgentActivityKind::Prose,
+                text: "settled".to_owned(),
+            },
+            AgentMessage {
+                lane: second_id,
+                author: first_id,
+                locus: MessageLocus {
+                    member: 5,
+                    offset: 6,
+                    length: 7,
+                    event: 8,
+                },
+                activity: AgentActivityKind::Tool,
+                text: "Bash".to_owned(),
+            },
+        ],
+    );
     let requests = stream_request_samples(epoch, first_id, second_id, cursor);
     law(covered, "StreamRequest", &requests);
 
