@@ -29,7 +29,7 @@ pub(crate) fn baseline(connection: &mut Connection) -> Result<Option<Migration>,
         }));
     }
 
-    let migration = advance(&transaction, stored_state(&transaction)?)?;
+    let migration = advance(&transaction)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
     Ok(migration)
 }
@@ -169,8 +169,14 @@ fn admit_readable_state(connection: &Connection, state: SchemaState) -> Result<u
 /// at the version it started from rather than between two. That is what lets
 /// these steps be additive DDL rather than a copy: the facts are never rewritten
 /// and never move, so a migration cannot lose one.
-fn advance(connection: &Connection, state: SchemaState) -> Result<Option<Migration>, OpenError> {
-    let from = admit_readable_state(connection, state)?;
+///
+/// It takes the caller's transaction rather than opening its own, and is visible
+/// to the crate so a test can be that caller: the promise above is a property of
+/// this seam, and it cannot be observed through [`baseline`], which always
+/// commits. A caller that fails after this returns is the case worth pinning,
+/// because both version records are already written by then.
+pub(crate) fn advance(connection: &Connection) -> Result<Option<Migration>, OpenError> {
+    let from = admit_readable_state(connection, stored_state(connection)?)?;
     if from == SCHEMA_VERSION {
         return Ok(None);
     }
