@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use super::*;
 
-fn configure_subscription(
+pub(super) fn configure_subscription(
     bus: &Bus,
     epoch: CanonicalUuid,
     seat: &Seat,
@@ -54,7 +54,7 @@ fn configure_subscription(
     }
 }
 
-fn selectable_handles(answer: &BoardAnswer, actor: &Actor) -> BTreeSet<String> {
+pub(super) fn selectable_handles(answer: &BoardAnswer, actor: &Actor) -> BTreeSet<String> {
     let entries = actor_entries(answer).expect("scoped board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)
         .expect("scoped board has one lineage subscription");

@@ -25,7 +25,17 @@ pub enum Priority {
 }
 
 impl Priority {
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    /// Every admitted priority, strongest first.
+    pub const ALL: [Self; 5] = [
+        Self::Critical,
+        Self::High,
+        Self::Medium,
+        Self::Low,
+        Self::None,
+    ];
+
+    /// Read one authored priority, ignoring surrounding space and case.
+    pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "critical" => Some(Self::Critical),
             "high" => Some(Self::High),

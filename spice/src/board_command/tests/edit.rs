@@ -94,6 +94,8 @@
                     title: None,
                     description: Some("what the task actually means".to_owned()),
                     acceptance: Vec::new(),
+                    priority: None,
+                    project: None,
                 },
             )),
             "edited"
@@ -111,6 +113,8 @@
                         "a clause a reviewer can check".to_owned(),
                         "and a second the first one missed".to_owned(),
                     ],
+                    priority: None,
+                    project: None,
                 },
             )),
             "edited"
@@ -188,6 +192,8 @@
                 title: Some("Rewrite what already shipped".to_owned()),
                 description: None,
                 acceptance: Vec::new(),
+                priority: None,
+                project: None,
             },
         );
         assert!(
@@ -230,6 +236,8 @@
                 title: None,
                 description: None,
                 acceptance: Vec::new(),
+                priority: None,
+                project: None,
             },
         );
         assert!(
@@ -274,6 +282,8 @@
                 title: Some("Correct a task that was never filed".to_owned()),
                 description: None,
                 acceptance: Vec::new(),
+                priority: None,
+                project: None,
             },
         );
         assert!(
@@ -284,4 +294,486 @@
             "{outcome:?}"
         );
         assert!(edit_facts(&bus, &missing).is_empty());
+    }
+
+    /// A correction naming one field, with every other field left alone.
+    fn only(task: &TaskHandle) -> TaskEdit {
+        TaskEdit {
+            task: task.clone(),
+            title: None,
+            description: None,
+            acceptance: Vec::new(),
+            priority: None,
+            project: None,
+        }
+    }
+
+    /// The task this actor's allocator would hand out now, and what it scored.
+    ///
+    /// This is the ranking itself rather than a field read back off the row, so
+    /// a correction that stored a priority the allocator never scores would
+    /// leave the answer unmoved.
+    fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Option<(String, i64)> {
+        let answer = board(bus, epoch, actor.clone());
+        let entries = actor_entries(&answer).expect("allocation board entries validate");
+        let subscription = allocation_subscription(&answer.residency.body, actor)
+            .expect("allocation board has one lineage subscription");
+        board::select(&entries, actor, subscription).map(|selection| {
+            (
+                selection.entry().statement().handle.to_string(),
+                selection.urgency().value(),
+            )
+        })
+    }
+
+    /// The statement head the journal carries, read without a board answer.
+    ///
+    /// A recorded revision points at a durable head, so a test proving the
+    /// record covers a field has to read the record rather than the rendered
+    /// row that a board answer would hand back.
+    fn statement_head(bus: &Bus, task: &TaskHandle) -> Positioned<TaskHead> {
+        let snapshot = bus.task_snapshot().expect("statement head reads");
+        let heads = snapshot
+            .tasks()
+            .iter()
+            .find(|heads| heads.statement().body().handle == *task)
+            .expect("the journal carries this task");
+        positioned(heads.statement())
+    }
+
+    /// Priority tags carried by the current statement, in stored order.
+    fn priority_tags(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Vec<String> {
+        at(&board(bus, epoch, Actor::Operator), task)
+            .statement
+            .body
+            .tags
+            .iter()
+            .filter(|tag| tag.starts_with(board::PRIORITY_TAG_PREFIX))
+            .cloned()
+            .collect()
+    }
+
+    /// A corrected priority moves the allocator's ranking of the task.
+    ///
+    /// Both tasks are filed without a priority, so the allocator ranks them by
+    /// handle alone and hands out the lower one. That tie is what makes the
+    /// test able to fail: a correction the allocator never reads would leave
+    /// the same handle selected every time, and the filed order would stand
+    /// through all three corrections.
+    #[test]
+    fn a_corrected_priority_moves_the_allocator_ranking_off_the_filed_order() {
+        let (_root, bus, epoch, seats) = fixture("task-edit-priority", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        // The handles decide the filed order: EDITED-1kKg6RB1 sorts first, so
+        // the allocator hands it out until a priority says otherwise.
+        let first = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "EDITED-1kKg6RB1",
+            "Filed first and ranked first",
+            Some("todo"),
+        );
+        let second = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "EDITED-1kKg6RB2",
+            "Filed second and ranked second",
+            Some("todo"),
+        );
+        let filed = allocated(&bus, epoch, &lane).expect("a filed task is allocatable");
+        assert_eq!(
+            filed.0,
+            first.to_string(),
+            "with no priority declared the allocator ranks by handle",
+        );
+
+        assert_eq!(
+            edited_status(correct(
+                &bus,
+                epoch,
+                Actor::Operator,
+                &TaskEdit {
+                    priority: Some("high".to_owned()),
+                    ..only(&second)
+                },
+            )),
+            "edited"
+        );
+        let raised = allocated(&bus, epoch, &lane).expect("a corrected task is allocatable");
+        assert_eq!(
+            raised.0,
+            second.to_string(),
+            "the correction has to outrank the filed order, not sit beside it",
+        );
+        assert_eq!(
+            raised.1 - filed.1,
+            4_000,
+            "a high priority is worth exactly what the allocator scores it",
+        );
+
+        // The first task overtakes it, so the ranking is following each
+        // correction rather than having latched onto the second task once.
+        assert_eq!(
+            edited_status(correct(
+                &bus,
+                epoch,
+                Actor::Operator,
+                &TaskEdit {
+                    priority: Some("critical".to_owned()),
+                    ..only(&first)
+                },
+            )),
+            "edited"
+        );
+        assert_eq!(
+            allocated(&bus, epoch, &lane)
+                .expect("a corrected task is allocatable")
+                .0,
+            first.to_string(),
+        );
+
+        // A second correction of the same task replaces its declaration rather
+        // than adding one: two priority tags would let the allocator keep
+        // scoring the stronger one it already stored.
+        assert_eq!(
+            edited_status(correct(
+                &bus,
+                epoch,
+                Actor::Operator,
+                &TaskEdit {
+                    priority: Some("none".to_owned()),
+                    ..only(&first)
+                },
+            )),
+            "edited"
+        );
+        assert_eq!(
+            priority_tags(&bus, epoch, &first),
+            vec!["priority:none".to_owned()],
+            "a corrected task carries exactly one priority declaration",
+        );
+        assert_eq!(
+            allocated(&bus, epoch, &lane)
+                .expect("a corrected task is allocatable")
+                .0,
+            second.to_string(),
+            "lowering a priority has to give the ranking back",
+        );
+    }
+
+    /// A priority the allocator cannot score is refused rather than stored.
+    ///
+    /// Storing it would rank the task as though it had declared nothing, which
+    /// is the silent form of the failure the correction exists to repair.
+    #[test]
+    fn a_priority_the_allocator_does_not_score_is_refused() {
+        let (_root, bus, epoch, _seats) = fixture("task-edit-priority-unknown", 1);
+        let task = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "EDITED-1kKg6RB3",
+            "Filed without a priority",
+            Some("todo"),
+        );
+        let filed = board(&bus, epoch, Actor::Operator);
+        let before = at(&filed, &task).statement.clone();
+
+        let outcome = correct(
+            &bus,
+            epoch,
+            Actor::Operator,
+            &TaskEdit {
+                priority: Some("urgent".to_owned()),
+                ..only(&task)
+            },
+        );
+        assert!(
+            matches!(
+                outcome,
+                Outcome::Refusal(Refusal { ref reason, .. }) if reason == "task::edit-priority-unknown"
+            ),
+            "{outcome:?}"
+        );
+        let after = board(&bus, epoch, Actor::Operator);
+        assert_eq!(
+            at(&after, &task).statement.position,
+            before.position,
+            "a refused priority must not cost a revision",
+        );
+        assert!(priority_tags(&bus, epoch, &task).is_empty());
+        assert!(edit_facts(&bus, &task).is_empty());
+
+        // The same word with the case a caller is likely to type is admitted,
+        // and reaches the tag in the one spelling the allocator scores.
+        assert_eq!(
+            edited_status(correct(
+                &bus,
+                epoch,
+                Actor::Operator,
+                &TaskEdit {
+                    priority: Some("  High  ".to_owned()),
+                    ..only(&task)
+                },
+            )),
+            "edited"
+        );
+        assert_eq!(
+            priority_tags(&bus, epoch, &task),
+            vec!["priority:high".to_owned()],
+            "an authored priority is normalized before it is stored",
+        );
+
+        // Every letter the board renders is a spelling the door takes back, so
+        // an agent correcting the row it just read does not have to translate.
+        for (letter, stored) in [
+            ("C", "priority:critical"),
+            ("h", "priority:high"),
+            ("M", "priority:medium"),
+            ("L", "priority:low"),
+            ("N", "priority:none"),
+        ] {
+            assert_eq!(
+                edited_status(correct(
+                    &bus,
+                    epoch,
+                    Actor::Operator,
+                    &TaskEdit {
+                        priority: Some(letter.to_owned()),
+                        ..only(&task)
+                    },
+                )),
+                "edited",
+                "the board prints {letter}, so the door has to take it",
+            );
+            assert_eq!(priority_tags(&bus, epoch, &task), vec![stored.to_owned()]);
+        }
+    }
+
+    /// A correction cannot move a task onto a resident-owned hidden route.
+    ///
+    /// `task add` refuses to file there, so a correction that reached further
+    /// than creation would be the way to put a manually filed row on a route
+    /// only the resident is supposed to write.
+    #[test]
+    fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
+        let (_root, bus, epoch, _seats) = fixture("task-edit-project-hidden", 1);
+        let task = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "EDITED-1kKg6RB4",
+            "Filed on a public project",
+            Some("todo"),
+        );
+        let filed = board(&bus, epoch, Actor::Operator);
+        let before = at(&filed, &task).statement.clone();
+
+        for destination in [".oops", ".sandbox.secret"] {
+            let outcome = correct(
+                &bus,
+                epoch,
+                Actor::Operator,
+                &TaskEdit {
+                    project: Some(destination.to_owned()),
+                    ..only(&task)
+                },
+            );
+            assert!(
+                matches!(
+                    outcome,
+                    Outcome::Refusal(Refusal { ref reason, .. })
+                        if reason == "task::project-system-reserved"
+                ),
+                "{destination} was not refused by name: {outcome:?}"
+            );
+        }
+
+        // A public project this board does not know is refused too, under a
+        // reason that says the destination rather than the route it protects.
+        let outcome = correct(
+            &bus,
+            epoch,
+            Actor::Operator,
+            &TaskEdit {
+                project: Some("nowhere.at.all".to_owned()),
+                ..only(&task)
+            },
+        );
+        assert!(
+            matches!(
+                outcome,
+                Outcome::Refusal(Refusal { ref reason, .. })
+                    if reason == "task::edit-project-refused"
+            ),
+            "{outcome:?}"
+        );
+
+        let after = board(&bus, epoch, Actor::Operator);
+        assert_eq!(at(&after, &task).statement.body.project, "board.test");
+        assert_eq!(
+            at(&after, &task).statement.position,
+            before.position,
+            "a refused move must not cost a revision",
+        );
+        assert!(edit_facts(&bus, &task).is_empty());
+    }
+
+    /// Moving a task out of the editor's own subscription is a correction, and
+    /// the editor loses the row for work by making it.
+    ///
+    /// This is the point of the leaf: a task filed under the wrong project is
+    /// unreachable to every lane that project does not admit, so the lane that
+    /// can still reach it has to be able to send it where it belongs. The
+    /// predecessor moves the project with no subscription check of its own, so
+    /// the move succeeding is the behavior being matched here.
+    ///
+    /// The cost is asserted rather than implied, and so is its boundary. What
+    /// the editor loses is allocation: the row leaves its selectable set and
+    /// the allocator has nothing left to hand it. What the editor keeps is
+    /// listing, because the read scope is stem-based rather than subscription
+    /// based. Both are pinned so neither is mistaken for the other.
+    #[test]
+    fn a_corrected_project_moves_the_row_out_of_the_editors_own_subscription() {
+        let (_root, bus, epoch, seats) = fixture("task-edit-project-scope", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        subscription::configure_subscription(
+            &bus,
+            epoch,
+            &seats[0],
+            wire::intent::LineageLife::Steer,
+            &["board.test"],
+        );
+        let task = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "EDITED-1kKg6RB5",
+            "Filed under the wrong project",
+            Some("todo"),
+        );
+        assert_eq!(
+            subscription::selectable_handles(&board(&bus, epoch, lane.clone()), &lane),
+            [task.to_string()].into_iter().collect::<std::collections::BTreeSet<_>>(),
+            "the lane has to be able to see the row before it moves it",
+        );
+
+        assert_eq!(
+            edited_status(correct(
+                &bus,
+                epoch,
+                lane.clone(),
+                &TaskEdit {
+                    project: Some("rim.elsewhere".to_owned()),
+                    ..only(&task)
+                },
+            )),
+            "edited"
+        );
+
+        let moved = board(&bus, epoch, lane.clone());
+        assert_eq!(
+            at(&moved, &task).statement.body.project,
+            "rim.elsewhere",
+            "the move is a correction, not a refusal",
+        );
+        assert!(
+            subscription::selectable_handles(&moved, &lane).is_empty(),
+            "the editor loses the row it just moved out of its own subscription",
+        );
+        assert_eq!(
+            allocated(&bus, epoch, &lane),
+            None,
+            "and the allocator has nothing left to hand this lane",
+        );
+
+        // The other half of the cost, so the loss is not read as wider than it
+        // is. Listing is stem scoped rather than subscription scoped, so the
+        // editor can still read the row it can no longer be handed -- which is
+        // what makes the move auditable by the lane that made it.
+        let listed = task_list(
+            &moved,
+            &TaskListOptions {
+                all: false,
+                project: None,
+                limit: None,
+                status: None,
+            },
+        );
+        assert!(
+            listed.contains(&format!("{task} [todo] rim.elsewhere")),
+            "the row the editor can no longer be handed stays readable to it: {listed}",
+        );
+    }
+
+    /// The revision and attribution a correction publishes cover the widened
+    /// fields, read off the durable facts rather than the board.
+    ///
+    /// Each correction here names one widened field and nothing else, so a
+    /// revision or an editor recorded for prose alone would leave both facts
+    /// missing. Two different principals make them, because one editor cannot
+    /// separate recorded attribution from a constant.
+    #[test]
+    fn a_priority_or_project_correction_records_its_revision_and_editor() {
+        let (_root, bus, epoch, seats) = fixture("task-edit-widened-facts", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        let task = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "EDITED-1kKg6RB6",
+            "Filed at the wrong priority and under the wrong project",
+            Some("todo"),
+        );
+        let filed = statement_head(&bus, &task);
+
+        assert_eq!(
+            edited_status(correct(
+                &bus,
+                epoch,
+                lane.clone(),
+                &TaskEdit {
+                    priority: Some("critical".to_owned()),
+                    ..only(&task)
+                },
+            )),
+            "edited"
+        );
+        assert_eq!(
+            edited_status(correct(
+                &bus,
+                epoch,
+                Actor::Operator,
+                &TaskEdit {
+                    project: Some("rim.elsewhere".to_owned()),
+                    ..only(&task)
+                },
+            )),
+            "edited"
+        );
+
+        let editors = edit_facts(&bus, &task);
+        assert_eq!(
+            editors.iter().map(|(actor, _)| actor).collect::<Vec<_>>(),
+            vec![&lane, &Actor::Operator],
+            "a priority correction and a project correction each record their editor",
+        );
+        assert!(
+            editors[0].1 < editors[1].1,
+            "the recorded revision advances with each correction: {editors:?}",
+        );
+
+        // The head the journal carries, not the board answer, is what the
+        // recorded revisions point at.
+        let corrected = statement_head(&bus, &task);
+        assert!(corrected.position > filed.position);
+        assert_eq!(corrected.body.tags, vec!["priority:critical".to_owned()]);
+        assert_eq!(corrected.body.project, "rim.elsewhere");
+        assert_eq!(
+            corrected.body.title, filed.body.title,
+            "a widened correction carries the prose it did not name forward",
+        );
+        assert_eq!(corrected.body.uuid, filed.body.uuid);
     }

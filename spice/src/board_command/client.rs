@@ -327,14 +327,15 @@ fn render_task_list_row(task: &BoardTask) -> String {
         .body
         .tags
         .iter()
-        .find_map(|tag| tag.strip_prefix("priority:"))
-        .map(|priority| match priority {
-            "critical" => "C".to_owned(),
-            "high" => "H".to_owned(),
-            "medium" => "M".to_owned(),
-            "low" => "L".to_owned(),
-            "none" => "N".to_owned(),
-            other => other.to_owned(),
+        .find_map(|tag| tag.strip_prefix(board::PRIORITY_TAG_PREFIX))
+        // A spelling the allocator does not score is rendered as written. It
+        // ranks as if no priority were declared, and printing the word rather
+        // than a letter is how a reader sees which task carries it.
+        .map(|priority| {
+            board::priority_from_wire(priority).map_or_else(
+                || priority.to_owned(),
+                |kind| board::priority_label(kind).to_owned(),
+            )
         });
     let priority = priority.map_or_else(String::new, |value| format!(" P:{value}"));
     format!(
@@ -893,11 +894,18 @@ fn client_modify(
             .get_many::<String>("acceptance")
             .map(|values| values.cloned().collect::<Vec<_>>())
             .unwrap_or_default();
-        if title.is_none() && description.is_none() && acceptance.is_empty() {
+        let priority = matches.get_one::<String>("priority").cloned();
+        let project = matches.get_one::<String>("project").cloned();
+        if title.is_none()
+            && description.is_none()
+            && acceptance.is_empty()
+            && priority.is_none()
+            && project.is_none()
+        {
             return Err(refusal(
                 "task::edit-empty",
                 None,
-                "name at least one of --title, --description, or --acceptance",
+                "name at least one of --title, --description, --acceptance, --priority, or --project",
             ));
         }
         // Law::EDIT names the statement head alone. A workflow witness here is
@@ -912,6 +920,8 @@ fn client_modify(
                 title,
                 description,
                 acceptance,
+                priority,
+                project,
             })
             .expect("typed intent encodes"),
         ))

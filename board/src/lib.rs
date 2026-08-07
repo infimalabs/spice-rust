@@ -42,7 +42,10 @@ pub use task::{
     BUILTIN_HIDDEN_STEMS, BUILTIN_PUBLIC_STEMS, Dependency, Entry, Family, Project, ProjectError,
     ProjectPolicy, ProjectPolicyError, SystemTaskRoute, TaskError,
 };
-pub use urgency::Urgency;
+pub use urgency::{
+    PRIORITY_TAG_PREFIX, Urgency, priority_from_authored, priority_from_tag, priority_from_wire,
+    priority_label, priority_score, priority_tag,
+};
 
 /// One read barrier over current journal task heads.
 ///

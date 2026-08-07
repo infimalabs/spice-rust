@@ -796,7 +796,7 @@ const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "modify"],
         "task modify HANDLE [--title TITLE] [--description DESCRIPTION] \
-         [--acceptance ACCEPTANCE...]",
+         [--acceptance ACCEPTANCE...] [--priority PRIORITY] [--project PROJECT]",
         OperatorOrLane,
         Command,
         [TaskEdited],

@@ -494,6 +494,8 @@
                 title: None,
                 description: Some("a meaning the withdrawn row will never carry".to_owned()),
                 acceptance: Vec::new(),
+                priority: None,
+                project: None,
             },
         );
         assert_eq!(

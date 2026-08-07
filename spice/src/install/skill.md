@@ -31,10 +31,17 @@ Start the shared installed appliance with `$(git rev-parse --path-format=absolut
   `spice task add`, `spice task note`, `spice task oops`, `spice task depends`,
   `spice task done`, and `spice task next`; trust their printed next action.
 - Correct a task filed wrong with `spice task modify <handle>`, naming any of
-  `--title`, `--description`, or `--acceptance`. The correction publishes a new
-  statement revision attributed to you rather than overwriting the old text, so
-  file the correction instead of restating it in a note. A settled task refuses
-  the correction; carry the change forward in a new task.
+  `--title`, `--description`, `--acceptance`, `--priority`, or `--project`. The
+  correction publishes a new statement revision attributed to you rather than
+  overwriting the old text, so file the correction instead of restating it in a
+  note. A settled task refuses the correction; carry the change forward in a new
+  task.
+- `--priority` takes one of `critical`, `high`, `medium`, `low`, or `none`, and
+  the allocator ranks the task on the corrected value immediately. `--project`
+  moves the task to another project, which is how a row filed where no lane
+  looks becomes visible again -- but the move can take the task out of your own
+  subscription, so send it where it belongs rather than where you can still see
+  it.
 - Withdraw a task that should never have been filed with `spice task delete
   <handle> "<reason>"`. The reason is required and recorded: the row leaves the
   working board but stays readable through `spice task list --status deleted`,

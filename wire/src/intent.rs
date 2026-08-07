@@ -107,6 +107,20 @@ pub struct TaskEdit {
     /// Replacement criteria, when they move.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
+    /// Replacement priority, when the allocator's ranking of this task moves.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub priority: Option<String>,
+    /// Replacement project, when the task moves to a different audience.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub project: Option<String>,
 }
 
 /// Withdraw a task from the board with a recorded reason.
