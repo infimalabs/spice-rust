@@ -705,6 +705,7 @@ export async function assertWaitReporting(page, resident) {
     "the report names the self-check that armed the wait rather than an instrument wrapper",
   );
   assert.match(failure.message, /"endpointState":/, "the report probes the resident endpoint");
+  // A dropped load field fails assertBoundaryLoadReading first; neutralise it to reach these two.
   assert.match(failure.message, /load: \{"loadAverage":\d[^}]*"cores":\d/, "the load report names cores");
   assert.match(failure.message, /load: \{[^}]*"factor":\d/, "the load report names factor");
   assert.ok(failure.cause, "the original timeout survives as the cause");
