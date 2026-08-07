@@ -259,6 +259,95 @@ mod tests {
         fs::remove_dir_all(root).expect("capture fixture cleanup");
     }
 
+    /// A killed occupant cannot silently shorten the transcript it emitted.
+    ///
+    /// This is the durability half of the resident's termination grace. An
+    /// occupant that outlives the grace is killed, so what decides whether that
+    /// is cheap is not the size of the grace but what the tape holds afterwards.
+    /// The fixture emits one newline-closed record and one unterminated record
+    /// and then refuses to end, so the kill lands with a record still open. Both
+    /// survive it, and the open one is closed as `Terminal` rather than dropped,
+    /// which is what keeps a kill-truncated capture a named boundary instead of
+    /// a short tape indistinguishable from a quiet occupant.
+    #[test]
+    fn a_killed_occupant_keeps_every_record_it_emitted() {
+        let lane = uuid(5);
+        let occupant = uuid(6);
+        let root =
+            std::env::temp_dir().join(format!("lane-capture-{lane}-{}-killed", std::process::id()));
+        fs::create_dir_all(&root).expect("capture kill root");
+        let tape = Tape::open(root.join("tape")).expect("capture kill tape opens");
+        let record =
+            vendor::codex::record("/bin/sh", &launch()).expect("fixture vendor record contract");
+        let reports = Arc::new(Reports::default());
+        let reporter: Arc<dyn CaptureReporter> = reports.clone();
+        let observation = observation(lane, occupant, record, tape.clone(), 1024, 4, reporter)
+            .expect("capture observation");
+        let complete = concat!(
+            r#"{"type":"item.completed","item":{"id":"item-1","#,
+            r#""type":"agent_message","text":"emitted"}}"#,
+            "\n",
+        )
+        .as_bytes();
+        let terminal = br#"{"type":"turn.failed""#;
+        let mut command = Vec::new();
+        command.extend_from_slice(b"printf '");
+        command.extend_from_slice(complete);
+        command.extend_from_slice(terminal);
+        command.extend_from_slice(b"'; while :; do sleep 1; done");
+        let spec = fixture_spec(String::from_utf8(command).expect("ASCII fixture"));
+        let running = spawn_observed(spec, observation).expect("capture child launches");
+
+        // The complete record closes on its own newline while the child is
+        // still alive, so waiting for it proves the bytes reached the observer
+        // before the kill rather than because of it. The open record cannot
+        // appear until EOF, and only the kill produces that.
+        wait_for_reported_records(&reports, 1);
+        running.signal_kill().expect("capture child is killed");
+        let outcome = running.wait().expect("capture child reaps");
+        assert_eq!(
+            outcome.completion().status().code(),
+            None,
+            "the child ended on a signal rather than an exit of its own"
+        );
+        assert!(
+            outcome.outputs_drained(),
+            "the drain was abandoned with records still outstanding"
+        );
+
+        let records = reports.records.lock().expect("record reports lock");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].boundary, RecordBoundary::Complete);
+        assert_eq!(records[1].boundary, RecordBoundary::Terminal);
+        assert_eq!(
+            tape.read(records[0].locus).expect("complete locus"),
+            complete
+        );
+        assert_eq!(
+            tape.read(records[1].locus).expect("terminal locus"),
+            terminal
+        );
+        drop(records);
+        fs::remove_dir_all(root).expect("capture kill cleanup");
+    }
+
+    /// Block until the observer has reported `count` records.
+    ///
+    /// The bound is a failure threshold rather than a wait: a healthy observer
+    /// has already reported by the first look, and only one that has genuinely
+    /// stopped reaches the end, where it says so instead of letting the kill
+    /// race the bytes it is meant to follow.
+    fn wait_for_reported_records(reports: &Arc<Reports>, count: usize) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            if reports.records.lock().expect("record reports lock").len() >= count {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the observer reported fewer than {count} records before the fixture bound");
+    }
+
     #[test]
     fn tape_refusal_terminates_and_reports_the_occupant() {
         let lane = uuid(3);

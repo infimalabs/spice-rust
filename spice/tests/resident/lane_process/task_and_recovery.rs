@@ -255,10 +255,11 @@ fn missing_and_duplicate_declarations_refuse_and_fully_unwind_lane_add() {
             format!(
                 concat!(
                     "#!/bin/sh\n",
-                    "trap 'printf stopped > {}; exit 0' TERM INT\n",
+                    "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
                     "printf '%s\\n' \"$$\" > {}\n",
                     "while :; do sleep 1; done\n",
                 ),
+                shell_word(&entered_marker(&stopped).display().to_string()),
                 shell_word(&stopped.display().to_string()),
                 shell_word(&vendor_pid.display().to_string()),
             )
@@ -266,12 +267,13 @@ fn missing_and_duplicate_declarations_refuse_and_fully_unwind_lane_add() {
             format!(
                 concat!(
                     "#!/bin/sh\n",
-                    "trap 'printf stopped > {}; exit 0' TERM INT\n",
+                    "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
                     "printf '%s\\n' \"$$\" > {}\n",
                     "printf '%s\\n' {}\n",
                     "printf '%s\\n' {}\n",
                     "while :; do sleep 1; done\n",
                 ),
+                shell_word(&entered_marker(&stopped).display().to_string()),
                 shell_word(&stopped.display().to_string()),
                 shell_word(&vendor_pid.display().to_string()),
                 shell_word(SESSION_RECORD),
@@ -334,11 +336,12 @@ fn mismatched_resume_and_moved_tape_refuse_without_advancing_the_vacant_lane() {
         &format!(
             concat!(
                 "#!/bin/sh\n",
-                "trap 'printf stopped > {}; exit 0' TERM INT\n",
+                "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
                 "printf '%s\\n' \"$$\" > {}\n",
                 "printf '%s\\n' {}\n",
                 "while :; do sleep 1; done\n",
             ),
+            shell_word(&entered_marker(&stopped).display().to_string()),
             shell_word(&stopped.display().to_string()),
             shell_word(&vendor_pid.display().to_string()),
             shell_word(MISMATCHED_SESSION_RECORD),
