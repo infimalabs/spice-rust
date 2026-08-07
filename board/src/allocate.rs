@@ -5,11 +5,11 @@ use std::fmt;
 
 use journal::{
     BuildError, CommitError, FactCause, GuardError, Journal, JournalGuard, JournalHead,
-    JournalWrite, ReadError, TaskHeads,
+    JournalWrite, PendingFact, ReadError, TaskHeads,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Instant, LeaseHead,
-    Name, Producer, Seq, TaskHandle, WireVersion, Witness, body, intent,
+    Name, Producer, Seq, TaskHandle, WireVersion, Witness, WorkflowHead, body, intent,
 };
 
 use crate::{Entry, ProjectPolicy, select};
@@ -250,14 +250,161 @@ fn read_observation(journal: &Journal, request: &Request) -> Result<Observation,
         })
 }
 
+/// Everything one claim writes, apart from the transaction it writes into.
+///
+/// Both ways a claim is minted fill this in: the handle-free allocator
+/// transition below, and the resident's handle-directed claim command. They
+/// share the writer rather than each carrying a copy of it, so a field added
+/// to the claim lifecycle reaches both by construction instead of by
+/// remembering that a second site exists.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Mint<'a> {
+    /// Task the claim takes possession of.
+    pub task: &'a TaskHandle,
+    /// Principal the claim is minted for.
+    pub actor: &'a Actor,
+    /// Workflow head as it stands, read for the review assignment and rewritten
+    /// with it when the phase calls for one.
+    pub workflow: &'a WorkflowHead,
+    /// Lane whose live occupant holds the claim.
+    pub lane: CanonicalUuid,
+    /// Occupant authenticated for that lane.
+    pub occupant: CanonicalUuid,
+    /// Resident generation minting the claim.
+    pub epoch: CanonicalUuid,
+    /// Lease start, which is also its first renewal.
+    pub at: Instant,
+    /// Initial lease expiry.
+    pub expiry: Instant,
+    /// Maximum instant through which the lease may be renewed.
+    pub maximum: Instant,
+    /// Worktree boundary recorded with the claim, for callers that have one.
+    pub git: Option<body::GitBoundary>,
+}
+
+/// Which of a claim's facts failed to build.
+///
+/// The two are kept apart because a caller reporting the failure names the fact
+/// it could not write, and a review assignment and a claim are not the same
+/// report.
+#[derive(Debug)]
+pub enum MintError {
+    /// The review assignment recorded ahead of the claim.
+    Assignment(BuildError),
+    /// The claim itself.
+    Claim(BuildError),
+}
+
+impl MintError {
+    /// The build failure underneath, whichever fact raised it.
+    #[must_use]
+    pub fn into_build(self) -> BuildError {
+        match self {
+            Self::Assignment(error) | Self::Claim(error) => error,
+        }
+    }
+}
+
+impl fmt::Display for MintError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Assignment(error) => write!(formatter, "review assignment: {error}"),
+            Self::Claim(error) => write!(formatter, "claim: {error}"),
+        }
+    }
+}
+
+impl Error for MintError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Assignment(error) | Self::Claim(error) => Some(error),
+        }
+    }
+}
+
+/// Record the review assignment a claim on a review phase carries ahead of it.
+///
+/// The claim then hangs off the assignment rather than off the root, so the two
+/// commit together or not at all.
+fn assignment_cause(write: &mut JournalWrite, request: &Mint<'_>) -> Result<FactCause, MintError> {
+    if request.workflow.phase.as_str() != "review" {
+        return Ok(FactCause::Root);
+    }
+    let assigned = write
+        .fact(
+            body::TaskAssigned {
+                task: request.task.clone(),
+                reviewer: request.actor.clone(),
+                phase: request.workflow.phase.clone(),
+            },
+            FactCause::Root,
+        )
+        .map_err(MintError::Assignment)?;
+    let mut workflow = request.workflow.clone();
+    workflow.assignment = Some(request.actor.clone());
+    workflow.review = "assigned".to_owned();
+    write.workflow_head(request.task.clone(), assigned, move |_| workflow);
+    Ok(FactCause::Pending(assigned))
+}
+
+/// Write one claim's fact and heads into an open transaction.
+///
+/// This is the only place a claim is minted. The allocator transition in this
+/// module reaches it after selecting a task, and the resident reaches it from
+/// the handle-directed claim command, so neither can drift from the other.
+pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, MintError> {
+    let cause = assignment_cause(write, &request)?;
+    let task = request.task.clone();
+    let actor = request.actor.clone();
+    let Mint {
+        lane,
+        occupant,
+        epoch,
+        at,
+        expiry,
+        maximum,
+        git,
+        ..
+    } = request;
+    let won = write
+        .fact(
+            body::ClaimWon {
+                task: task.clone(),
+                actor: actor.clone(),
+                lane,
+                occupant,
+                epoch,
+                until: expiry,
+                git,
+            },
+            cause,
+        )
+        .map_err(MintError::Claim)?;
+    write.claim_head(task.clone(), won, move |fact| ClaimHead {
+        actor,
+        fact,
+        lane,
+        occupant,
+        epoch,
+        disposition: ClaimDisposition::Active,
+    });
+    write.lease_head(task, won, move |_| LeaseHead {
+        start: at,
+        renewal: at,
+        expiry,
+        maximum,
+        epoch,
+    });
+    Ok(won)
+}
+
 fn build_write(
     request: Request,
     observed: Observation,
 ) -> Result<(TaskHandle, JournalWrite), WinError> {
     let winner = observed.winner().clone();
     let expected_witnesses = witnesses(&request, observed.selected());
-    let review_workflow = (observed.selected().workflow().body().phase.as_str() == "review")
-        .then(|| observed.selected().workflow().body().clone());
+    let workflow = observed.selected().workflow().body().clone();
 
     let origin = format!("task:{winner}")
         .parse()
@@ -270,60 +417,24 @@ fn build_write(
     );
     write.guard(change_guard(request.clone(), observed));
 
-    let claim_cause = if let Some(mut workflow) = review_workflow {
-        let assigned = write
-            .fact(
-                body::TaskAssigned {
-                    task: winner.clone(),
-                    reviewer: request.actor.clone(),
-                    phase: workflow.phase.clone(),
-                },
-                FactCause::Root,
-            )
-            .map_err(WinError::Build)?;
-        workflow.assignment = Some(request.actor.clone());
-        workflow.review = "assigned".to_owned();
-        write.workflow_head(winner.clone(), assigned, move |_| workflow);
-        FactCause::Pending(assigned)
-    } else {
-        FactCause::Root
-    };
-    let fact = write
-        .fact(
-            body::ClaimWon {
-                task: winner.clone(),
-                actor: request.actor.clone(),
-                lane: request.lane,
-                occupant: request.occupant,
-                epoch: request.epoch,
-                until: request.expiry,
-                git: None,
-            },
-            claim_cause,
-        )
-        .map_err(WinError::Build)?;
-    let claim_actor = request.actor.clone();
-    let lane = request.lane;
-    let occupant = request.occupant;
-    let epoch = request.epoch;
-    write.claim_head(winner.clone(), fact, move |position| ClaimHead {
-        actor: claim_actor,
-        fact: position,
-        lane,
-        occupant,
-        epoch,
-        disposition: ClaimDisposition::Active,
-    });
-    let start = request.at;
-    let expiry = request.expiry;
-    let maximum = request.maximum;
-    write.lease_head(winner.clone(), fact, move |_| LeaseHead {
-        start,
-        renewal: start,
-        expiry,
-        maximum,
-        epoch,
-    });
+    mint(
+        &mut write,
+        Mint {
+            task: &winner,
+            actor: &request.actor,
+            workflow: &workflow,
+            lane: request.lane,
+            occupant: request.occupant,
+            epoch: request.epoch,
+            at: request.at,
+            expiry: request.expiry,
+            maximum: request.maximum,
+            // This transition is reached without a worktree to record, so the
+            // boundary is the caller's to supply and there is none here.
+            git: None,
+        },
+    )
+    .map_err(|error| WinError::Build(error.into_build()))?;
 
     write
         .command_result(

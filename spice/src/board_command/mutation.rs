@@ -1256,59 +1256,28 @@ fn append_claim_heads(
     maximum: Instant,
     git: Option<GitBoundary>,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    let claim_cause = if selected.workflow().phase.as_str() == "review" {
-        let assigned = write
-            .fact(
-                body::TaskAssigned {
-                    task: task.clone(),
-                    reviewer: command.actor().clone(),
-                    phase: selected.workflow().phase.clone(),
-                },
-                FactCause::Root,
-            )
-            .map_err(|error| store_fault("review::assignment-build", &error.to_string()))?;
-        let mut workflow = selected.workflow().clone();
-        workflow.assignment = Some(command.actor().clone());
-        workflow.review = "assigned".to_owned();
-        write.workflow_head(task.clone(), assigned, move |_| workflow);
-        FactCause::Pending(assigned)
-    } else {
-        FactCause::Root
-    };
-    let won = write
-        .fact(
-            body::ClaimWon {
-                task: task.clone(),
-                actor: command.actor().clone(),
-                lane,
-                occupant,
-                epoch: command.epoch(),
-                until: expiry,
-                git,
-            },
-            claim_cause,
-        )
-        .map_err(|error| {
-            store_fault("claim::win-build", &error.to_string())
-        })?;
-    let actor = command.actor().clone();
-    let epoch = command.epoch();
-    write.claim_head(task.clone(), won, move |fact| {
-        ClaimHead {
-            actor,
-            fact,
+    board::allocate::mint(
+        write,
+        board::allocate::Mint {
+            task,
+            actor: command.actor(),
+            workflow: selected.workflow(),
             lane,
             occupant,
-            epoch,
-            disposition: ClaimDisposition::Active,
+            epoch: command.epoch(),
+            at,
+            expiry,
+            maximum,
+            git,
+        },
+    )
+    .map(|_| ())
+    .map_err(|error| match error {
+        board::allocate::MintError::Assignment(error) => {
+            store_fault("review::assignment-build", &error.to_string())
         }
-    });
-    write.lease_head(task.clone(), won, move |_| LeaseHead {
-        start: at,
-        renewal: at,
-        expiry,
-        maximum,
-        epoch,
-    });
-    Ok(())
+        board::allocate::MintError::Claim(error) => {
+            store_fault("claim::win-build", &error.to_string())
+        }
+    })
 }
