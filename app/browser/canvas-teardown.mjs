@@ -170,8 +170,8 @@ function signal(target, name) {
 /// its occupants per red run, on a machine where eleven worktrees run batteries
 /// at once. Never raises, because the failure being reported is the scenario's.
 async function reapResidue(ready) {
-  const announced = [ready.resident, ...ready.vendors];
-  const owned = announced.filter((pid) => Number.isInteger(pid) && pid > 1);
+  const reported = [ready.resident, ...ready.vendors];
+  const owned = reported.filter((pid) => Number.isInteger(pid) && pid > 1);
   for (const name of ["SIGTERM", "SIGKILL"]) {
     const living = owned.filter(alive);
     if (living.length === 0) break;
