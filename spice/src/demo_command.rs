@@ -144,6 +144,12 @@ struct SignalRelay {
     worker: Option<JoinHandle<()>>,
 }
 
+#[derive(Clone, Copy)]
+struct RunControl {
+    signals: bool,
+    interrupt_after_launch: bool,
+}
+
 impl SignalRelay {
     fn install(events: Sender<Event>) -> io::Result<Self> {
         use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
@@ -177,10 +183,17 @@ impl Drop for SignalRelay {
 
 /// Seed or run one isolated native canvas environment.
 pub(crate) fn run(matches: &ArgMatches) -> Outcome<DemoAnswer> {
-    run_with(matches, true, crate::command_client::system_browser)
+    run_with(
+        matches,
+        RunControl {
+            signals: true,
+            interrupt_after_launch: false,
+        },
+        crate::command_client::system_browser,
+    )
 }
 
-fn run_with<F>(matches: &ArgMatches, signals: bool, browser: F) -> Outcome<DemoAnswer>
+fn run_with<F>(matches: &ArgMatches, control: RunControl, browser: F) -> Outcome<DemoAnswer>
 where
     F: FnOnce(&str) -> Result<(), String>,
 {
@@ -222,7 +235,14 @@ where
         return reply(&environment, "seeded", "preserved", None);
     }
     let cleanup = environment.automatic && !preserve;
-    canvas_environment(environment, cleanup, signals, open, browser)
+    canvas_environment_with(
+        environment,
+        cleanup,
+        control.signals,
+        open,
+        control.interrupt_after_launch,
+        browser,
+    )
 }
 
 fn seed_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Environment> {
@@ -869,19 +889,6 @@ fn environment(
         state,
         automatic,
     })
-}
-
-fn canvas_environment<F>(
-    environment: Environment,
-    cleanup: bool,
-    signals: bool,
-    open: bool,
-    browser: F,
-) -> Outcome<DemoAnswer>
-where
-    F: FnOnce(&str) -> Result<(), String>,
-{
-    canvas_environment_with(environment, cleanup, signals, open, false, browser)
 }
 
 fn canvas_environment_with<F>(
