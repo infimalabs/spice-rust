@@ -1,4 +1,29 @@
 //! Resolve the one repository-common Spice state root from Git's own files.
+//!
+//! # Coexistence with the predecessor
+//!
+//! The state root this module resolves -- `<git-common-dir>/.spice`, spelled by
+//! [`STATE_DIRECTORY`] -- is shared. The Python predecessor keeps its own
+//! durable state in that same directory and is expected to keep doing so
+//! indefinitely; neither system is scheduled to replace the other.
+//!
+//! The policy that shared root imposes:
+//!
+//! 1. No command in this port may import, convert, or rewrite the predecessor's
+//!    durable state, and none may do so as an incidental effect of another verb.
+//!    An in-place rewrite is still an in-place rewrite when it is called a
+//!    migration.
+//! 2. The only paths this runtime creates or writes under that root are the ones
+//!    [`StatePaths::owned_directories`] and [`StatePaths::owned_files`] name.
+//!    Everything else under the root is another system's property and is left
+//!    exactly as found, byte for byte.
+//! 3. A cross-system bridge is refused by default. The sole translator that
+//!    exists, `spice config migrate-tasks`, runs only when an operator names an
+//!    export path on the command line, reads that one file, and writes nothing.
+//!
+//! `tests/coexistence.rs` enforces 2 and 3 by identity rather than by reading
+//! this comment: it seeds predecessor-owned files under a fixture root, runs the
+//! binary, and compares the bytes back.
 
 use std::error::Error;
 use std::fmt;
@@ -121,6 +146,34 @@ impl StatePaths {
     pub fn artifacts(&self) -> &Path {
         &self.artifacts
     }
+
+    /// Every directory this runtime claims under the shared state root.
+    ///
+    /// This list and [`Self::owned_files`] are the whole of what this port owns
+    /// inside `.spice`. Because the root is shared with the predecessor, the
+    /// complement of these two lists is the other system's property, so naming
+    /// them once here is what lets a reader derive that complement by
+    /// subtraction. A second, hand-written list of foreign paths would drift the
+    /// moment this port claimed one more name.
+    #[must_use]
+    pub fn owned_directories(&self) -> [&Path; 8] {
+        [
+            self.runtime(),
+            self.data(),
+            self.locks(),
+            self.proof(),
+            self.degraded(),
+            self.tape(),
+            &self.artifact_data,
+            self.artifacts(),
+        ]
+    }
+
+    /// Every regular file this runtime claims under the shared state root.
+    #[must_use]
+    pub fn owned_files(&self) -> [&Path; 4] {
+        [self.journal(), self.folds(), self.resident(), self.canvas()]
+    }
 }
 
 impl Repository {
@@ -187,24 +240,10 @@ impl Repository {
     pub fn admit_state(&self) -> Result<StatePaths, StateError> {
         refuse_retired_state(&self.common)?;
         let paths = StatePaths::new(self.common.join(STATE_DIRECTORY));
-        for path in [
-            paths.runtime(),
-            paths.data(),
-            paths.locks(),
-            paths.proof(),
-            paths.degraded(),
-            paths.tape(),
-            &paths.artifact_data,
-            paths.artifacts(),
-        ] {
+        for path in paths.owned_directories() {
             admit(path, StateShape::Directory)?;
         }
-        for path in [
-            paths.journal(),
-            paths.folds(),
-            paths.resident(),
-            paths.canvas(),
-        ] {
+        for path in paths.owned_files() {
             admit(path, StateShape::RegularFile)?;
         }
         Ok(paths)
