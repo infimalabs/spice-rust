@@ -1,4 +1,4 @@
-//! Literal fixtures for WIRE.md's nine authoritative head rows.
+//! Literal fixtures for the nine authoritative head rows.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;

@@ -1,9 +1,9 @@
 //! Round-trip fixtures for the crossing types.
 //!
-//! The envelope, hello, command, and reply fixtures are the literal documents
-//! printed in WIRE.md. Decoding those bytes and re-encoding them to the same
-//! value proves the field names and shapes are the specified ones rather than
-//! a paraphrase of them.
+//! The envelope, hello, command, and reply fixtures are literal documents held
+//! here as bytes. Decoding those bytes and re-encoding them to the same value
+//! proves the field names and shapes are the pinned ones rather than a
+//! paraphrase of them.
 
 use serde::{Deserialize, Serialize};
 use wire::manifest::{ReleaseNotesInput, ReleaseTarget};
@@ -14,14 +14,14 @@ use wire::{
     Witness, body,
 };
 
-/// Body of the `task::done` command printed in WIRE.md.
+/// Body of the `task::done` command this fixture pins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DoneBody {
     task: TaskHandle,
     validation: String,
 }
 
-/// Body of the reply printed in WIRE.md.
+/// Body of the reply this fixture pins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DoneResult {
     task: TaskHandle,

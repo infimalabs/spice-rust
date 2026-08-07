@@ -743,8 +743,8 @@ fn a_lane_is_refused_the_consent_decision_an_operator_is_offered() {
     let lane = lane();
     let operator = operator();
 
-    // WIRE.md's consent row names predicates and no capability; the registry
-    // row states the capability, and this is the behaviour that statement buys.
+    // The consent law names predicates and no capability; the registry row
+    // states the capability, and this is the behaviour that statement buys.
     assert!(!SteerPane::over(&lane).offers(CommandKind::ConsentDecide));
     assert!(SteerPane::over(&operator).offers(CommandKind::ConsentDecide));
     assert!(GrantPane::over(&lane).is_none());

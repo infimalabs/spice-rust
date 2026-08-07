@@ -142,12 +142,25 @@ pub fn scan_markdown_link_case(
     Ok(findings)
 }
 
-/// Scan code-spanned Markdown paths in Rust doc comments against tracked paths.
+/// Scan Markdown paths named in Rust doc comments against tracked paths.
 ///
-/// Line and block doc comments are both admitted. Ordinary comments, string
-/// literals, and bare file-name spellings are not citations and never enter the
-/// candidate set. A target absent from the live inventory is clean only when an
-/// exact compiled external or source-bound fixture declaration admits it.
+/// A Markdown path spelled in doc text is a citation whether or not it sits in
+/// a code span, because a code span is typography and carries no intent. The
+/// sentence this arm exists to catch grounds a rule in a document -- "`README.md`
+/// scopes this deny-list" -- and is written as prose without the span far more
+/// often than with it, so reading only the decorated spelling refused the
+/// citations that were merely typeset and admitted the ones doing the work.
+///
+/// What separates a citation from an incidental mention is therefore not the
+/// punctuation around the name but whether the name resolves. Naming a document
+/// in doc text sends the reader to it, so it has to be one they can open here.
+/// A spelling absent from the live inventory is clean only when an exact
+/// compiled declaration says who owns it instead -- an external document this
+/// repository does not track, or a path a test plants rather than one a reader
+/// is being sent to.
+///
+/// Line and block doc comments are both admitted. Ordinary comments and string
+/// literals are not doc text and never enter the candidate set.
 ///
 /// # Errors
 ///
@@ -297,11 +310,17 @@ fn url_scheme_regex() -> &'static Regex {
     })
 }
 
+/// A Markdown path in doc text, decorated or bare.
+///
+/// The trailing `\b` is what a closing backtick used to do. Without it the
+/// pattern reads a Markdown name out of the middle of any longer suffix, so a
+/// bundle spelled `page.mdoc` would be refused for not tracking a document
+/// nobody wrote.
 #[cfg(not(target_arch = "wasm32"))]
 fn rust_doc_citation_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
-        Regex::new(r#"`((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.md)`"#)
+        Regex::new(r"((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.md)\b")
             .expect("compiled Rust doc Markdown citation regex is valid")
     })
 }

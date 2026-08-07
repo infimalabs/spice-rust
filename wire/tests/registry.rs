@@ -1,12 +1,12 @@
 //! The command registry and its witness law.
 //!
-//! WIRE.md states the law directly: the registry carries the witness law with
-//! the command, so a new command without an explicit row does not compile.
-//! That half is enforced by an exhaustive match and cannot be asserted from a
-//! test. These fixtures prove the half that can be: every row names the
-//! witnesses its command requires, a command missing one is refused, a global
-//! journal position is not expressible, and witness order does not move the
-//! canonical bytes an identity binds.
+//! The registry carries the witness law with the command, so a new command
+//! without an explicit row does not compile. That half is enforced by an
+//! exhaustive match and cannot be asserted from a test. These fixtures prove
+//! the half that can be: every row names the witnesses its command requires, a
+//! command missing one is refused, a global journal position is not
+//! expressible, and witness order does not move the canonical bytes an identity
+//! binds.
 
 use std::collections::BTreeSet;
 use std::str::FromStr;
@@ -17,14 +17,14 @@ use wire::{
     TaskHandle, TrustState, Witness, WitnessKind,
 };
 
-/// Body of the `task::done` command printed in WIRE.md.
+/// Body of the `task::done` command this fixture pins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DoneBody {
     task: TaskHandle,
     validation: String,
 }
 
-/// The `task::done` command exactly as WIRE.md prints it.
+/// The `task::done` command exactly as it crosses the wire.
 const COMMAND: &str = r#"{
   "v": 1,
   "id": "018f82d4-6f59-7d06-92e3-bce9131163c4",
@@ -58,7 +58,7 @@ fn the_specified_command_satisfies_its_own_registry_row() {
     assert_eq!(command.kind, CommandKind::TaskDone);
     command
         .witnessed()
-        .expect("WIRE.md's own fixture satisfies the row it documents");
+        .expect("this fixture satisfies the row it documents");
 }
 
 #[test]

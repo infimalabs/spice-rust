@@ -12,11 +12,11 @@
 //! `a == decode(encode(a)) == decode(encode(b)) == b`. Byte equality therefore
 //! forces value equality by substitution rather than by sampling luck.
 //!
-//! This runs the opposite direction from `roundtrip.rs`. There the documents
-//! printed in WIRE.md are decoded and re-encoded, proving the field names and
-//! shapes are the specified ones. Here values are encoded and decoded, proving
-//! no value carries more than its bytes. A type needs both: the first pins the
-//! spelling, the second pins that the spelling is the whole value.
+//! This runs the opposite direction from `roundtrip.rs`. There the literal
+//! documents that fixture holds are decoded and re-encoded, proving the field
+//! names and shapes are the pinned ones. Here values are encoded and decoded,
+//! proving no value carries more than its bytes. A type needs both: the first
+//! pins the spelling, the second pins that the spelling is the whole value.
 //!
 //! Samples must include values built through every narrowing construction
 //! path, because a type that narrows only at render is exactly the defect this

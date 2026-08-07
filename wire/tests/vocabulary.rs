@@ -2,12 +2,12 @@
 //!
 //! Every kind in the closed vocabulary registers one body DTO and one producer
 //! class. These fixtures are literal documents: decoding them and re-encoding
-//! to the same JSON proves the body field names are WIRE.md's own nouns rather
-//! than whatever a constructor happened to spell.
+//! to the same JSON proves the body field names are the nouns pinned here
+//! rather than whatever a constructor happened to spell.
 //!
-//! Its sibling `registry.rs` covers the other registry WIRE.md names, which
-//! binds a command to the witnesses it must re-prove. Both are closed tables
-//! stated in WIRE.md; they share no rows.
+//! Its sibling `registry.rs` covers the other registry, which binds a command
+//! to the witnesses it must re-prove. Both are closed tables; they share no
+//! rows.
 
 use std::collections::BTreeSet;
 
@@ -400,8 +400,8 @@ fn every_kind_names_a_producer_and_every_producer_mints_a_kind() {
 
 #[test]
 fn producer_assignment_follows_the_specified_enumeration() {
-    // WIRE.md names the exceptions to the domain: everything else in a domain
-    // follows its lead, so listing them here fails loudly if a row moves.
+    // The exceptions to the domain are named here: everything else in a domain
+    // follows its lead, so listing them fails loudly if a row moves.
     let bus_timers = [
         FactKind::ClaimLapsed,
         FactKind::ClaimRenewed,
