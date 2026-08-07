@@ -26,22 +26,14 @@ pub(super) async fn run_surface(
         if !active.get() {
             break;
         }
-        let reason = result.unwrap_err_or_else();
-        connection.set(Connection::Offline(reason.clone()));
+        // `run_connection` returns `Ok` only where its own `while active.get()`
+        // guard stops, and the break above has already taken that exit. An `Ok`
+        // arriving here would mean the two guards disagree, so it fails loudly
+        // instead of publishing an offline reason no socket ever produced.
+        let reason =
+            result.expect_err("run_connection returns Ok only once the surface is inactive");
+        connection.set(Connection::Offline(reason));
         TimeoutFuture::new(RECONNECT_DELAY_MILLIS).await;
-    }
-}
-
-trait ConnectionResult {
-    fn unwrap_err_or_else(self) -> String;
-}
-
-impl ConnectionResult for Result<(), String> {
-    fn unwrap_err_or_else(self) -> String {
-        match self {
-            Ok(()) => "resident closed the socket".to_owned(),
-            Err(error) => error,
-        }
     }
 }
 
