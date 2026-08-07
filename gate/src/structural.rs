@@ -343,8 +343,8 @@ const GRAMMARS: &[GrammarBinding] = &[
 /// Parse source with one supported grammar and run every declared structural pattern.
 ///
 /// Language selection, parsing, query execution, and result normalization all
-/// occur in this entrypoint. Grammar-specific knowledge is confined to
-/// [`GRAMMARS`].
+/// occur in this entrypoint. Grammar-specific knowledge is confined to the
+/// private `GRAMMARS` table.
 ///
 /// # Errors
 ///

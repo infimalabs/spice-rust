@@ -1,9 +1,10 @@
 //! Sealed appliance verification.
 //!
 //! [`layout`] resolves the one payload and receipt, [`container`] establishes
-//! the network and cache boundary, [`replay`] runs the complete generated
-//! battery inside it, and [`evidence`] binds that replay to the receipt-free
-//! target payload before publishing its detached receipt atomically.
+//! the network and cache boundary, [`replay`](mod@replay) runs the complete
+//! generated battery inside it, and [`evidence`] binds that replay to the
+//! receipt-free target payload before publishing its detached receipt
+//! atomically.
 
 #![forbid(unsafe_code)]
 
