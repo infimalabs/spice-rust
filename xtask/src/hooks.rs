@@ -162,7 +162,7 @@ fn preflight_worktree_hooks(
             None,
         )?;
         if let Some(values) = configured
-            && (values.len() != 1 || (values[0] != ".githooks" && values[0] != hooks_text))
+            && !is_one_tolerated_hook_selection(&values, hooks_text)
         {
             return Err(HookActivationError::ForeignHookPath {
                 worktree,
@@ -179,6 +179,18 @@ fn preflight_worktree_hooks(
         }
     }
     Ok(overrides)
+}
+
+/// Whether all effective configuration layers repeat one admitted selection.
+///
+/// Git reports the same value once per layer that declares it. Repeating one
+/// tolerated selection does not add another hook path, while even two different
+/// tolerated values would leave activation guessing which layer is authoritative.
+fn is_one_tolerated_hook_selection(values: &[String], hooks_text: &str) -> bool {
+    let Some(first) = values.first() else {
+        return false;
+    };
+    (first == ".githooks" || first == hooks_text) && values.iter().all(|value| value == first)
 }
 
 fn optional_git_config(

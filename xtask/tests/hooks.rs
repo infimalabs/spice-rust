@@ -122,6 +122,92 @@ fn activation_refuses_predecessor_hooks_before_any_publication_or_config_change(
     );
 }
 
+#[test]
+fn activation_admits_repeated_identical_tolerated_hook_values() {
+    for select_target in [false, true] {
+        let scratch = Scratch::new();
+        repository_history(&scratch);
+        install_spice_hooks(&scratch);
+        git(&scratch, &["config", "extensions.worktreeConfig", "true"]);
+        let target = common_hooks(&scratch).display().to_string();
+        let selection = if select_target { &target } else { ".githooks" };
+        git(
+            &scratch,
+            &["config", "--local", "core.hooksPath", selection],
+        );
+        git(
+            &scratch,
+            &["config", "--worktree", "core.hooksPath", selection],
+        );
+        assert_eq!(
+            git_at(scratch.path(), &["config", "--get-all", "core.hooksPath"])
+                .lines()
+                .collect::<Vec<_>>(),
+            [selection, selection]
+        );
+
+        let replacement = scratch.executable("replacement-xtask", b"#!/bin/sh\nexit 0\n");
+        let mut output = Vec::new();
+        xtask::activate_hooks(scratch.path(), &replacement, &mut output)
+            .expect("identical tolerated selections admit activation");
+
+        assert_eq!(configured_hooks(&scratch), target);
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("cleared worktree hook override")
+        );
+    }
+}
+
+#[test]
+fn activation_refuses_mixed_tolerated_and_repeated_foreign_hook_values() {
+    for repeat_foreign in [false, true] {
+        let scratch = Scratch::new();
+        repository_history(&scratch);
+        install_spice_hooks(&scratch);
+        git(&scratch, &["config", "extensions.worktreeConfig", "true"]);
+        let target = common_hooks(&scratch).display().to_string();
+        let (local, worktree) = if repeat_foreign {
+            (".spice/hooks", ".spice/hooks")
+        } else {
+            (".githooks", target.as_str())
+        };
+        git(&scratch, &["config", "--local", "core.hooksPath", local]);
+        git(
+            &scratch,
+            &["config", "--worktree", "core.hooksPath", worktree],
+        );
+        assert_eq!(
+            git_at(scratch.path(), &["config", "--get-all", "core.hooksPath"])
+                .lines()
+                .collect::<Vec<_>>(),
+            [local, worktree]
+        );
+        let repository_config = image(&scratch.join(".git/config"));
+        let worktree_config = image(&scratch.join(".git/config.worktree"));
+        let published = published_entry_point(scratch.path());
+        let published_before = image(&published);
+        let replacement = scratch.executable("replacement-xtask", b"#!/bin/sh\nexit 0\n");
+        let mut output = Vec::new();
+
+        let error = xtask::activate_hooks(scratch.path(), &replacement, &mut output)
+            .expect_err("more than one selection or a foreign selection must refuse");
+
+        assert!(matches!(
+            error,
+            xtask::HookActivationError::ForeignHookPath { .. }
+        ));
+        assert!(output.is_empty());
+        assert_eq!(image(&scratch.join(".git/config")), repository_config);
+        assert_eq!(
+            image(&scratch.join(".git/config.worktree")),
+            worktree_config
+        );
+        assert_eq!(image(&published), published_before);
+    }
+}
+
 /// A lane running under the git shadow environment sees its own branch as its
 /// upstream, deliberately, so `git status` never moves when origin advances.
 /// The reference guard must read the integration branch the shadow keeps
