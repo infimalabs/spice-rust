@@ -22,6 +22,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { HANDSHAKE_TIMEOUT_MS, RECONNECT_DELAY_MS } from "./client-deadlines.mjs";
+import {
+  activityRecord, sessionRecord, TOOL_ACTIVITY_TEXT, toolActivityRecord, toolCallId, toolResultRecord, triggeredActivityRecord,
+} from "./canvas-transcript-records.mjs";
 import { assertTiledWorkspace } from "./tiled-workspace.mjs";
 
 const execute = promisify(execFile);
@@ -29,82 +32,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const binary = join(root, "target/debug/spice");
 const artifacts = join(root, "artifacts/canvas");
-const sessionRecord = JSON.stringify({
-  type: "system",
-  subtype: "init",
-  session_id: "018f7777-7777-7444-8888-999999999999",
-});
-const activityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text: "periodic live witness" }],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
-    },
-  },
-});
-const triggeredActivityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text: "newest lane prose witness" }],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
-    },
-  },
-});
-// The vendor correlation id joins the call to its result and is the exact
-// string an operator must never be shown, so the fixture spells a realistic
-// one rather than a friendly placeholder.
-const toolCallId = "toolu_01LaneStatusStripWitness";
-/// The strip text production publishes for the tool call below.
-///
-/// Two files assert on this one line: this fixture waits for it on the strip,
-/// and the activity replay route captures the same frame off the socket to
-/// redeliver it. It is spelled here alone so that a change to the preview rule
-/// reds one constant instead of leaving a hand-copied duplicate matching
-/// nothing, which is how BROWSER-1kKd6zyV and BROWSER-1kKdBhzf were both filed.
-export const TOOL_ACTIVITY_TEXT = "Bash: git status --short";
-const toolActivityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [
-      {
-        type: "tool_use",
-        id: toolCallId,
-        name: "Bash",
-        input: { command: "git status --short", description: "read the tree" },
-      },
-    ],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
-    },
-  },
-});
-const toolResultRecord = JSON.stringify({
-  type: "user",
-  message: {
-    role: "user",
-    content: [
-      { type: "tool_result", tool_use_id: toolCallId, is_error: false, content: "M app/src/lib.rs" },
-    ],
-  },
-});
-
 export async function buildResident() {
   try {
     await execute("cargo", ["xtask", "app"], {
@@ -380,7 +307,18 @@ function assertNewestLaneActivity(actual, expected) {
   assert.equal(actual, expected, "newest lane activity wins across tool and prose shapes");
 }
 
-export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
+export async function configureFixture(
+  fixture,
+  linkedRoot,
+  memberCount = 5,
+  { noCardMember = null } = {},
+) {
+  assert.ok(
+    noCardMember === null
+      || (Number.isInteger(noCardMember) && noCardMember >= 2 && noCardMember <= memberCount),
+    "a no-card fixture member names one linked worktree",
+  );
+  const noCardWorktree = noCardMember === null ? "" : `lane-${noCardMember}`;
   await execute("git", ["init", "--quiet"], { cwd: fixture });
   await mkdir(join(fixture, "dist"), { recursive: true });
   await cp(join(root, "dist/stage-app"), join(fixture, "dist/stage-app"), { recursive: true });
@@ -390,7 +328,9 @@ export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
     "trap 'exit 0' TERM INT",
     "name=${PWD##*/}",
     `printf '%s\\n' '${sessionRecord}'`,
-    concatAgentRecord(),
+    `if [ "$name" != "${noCardWorktree}" ]; then`,
+    `  ${concatAgentRecord()}`,
+    "fi",
     "periodic=0",
     'case "$PWD" in',
     "  *lane-2) periodic=1 ;;",
