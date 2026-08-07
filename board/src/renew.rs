@@ -456,11 +456,12 @@ fn map_commit_error(error: CommitError) -> RenewError {
 #[cfg(test)]
 mod tests {
     use super::{Refusal, RenewError, Request, renew, renew_after_observation};
-    use crate::allocate::{Request as WinRequest, win};
+    use crate::allocate::{Mint, mint};
     use journal::{FactCause, Journal, JournalWrite};
     use wire::{
-        Actor, CanonicalUuid, Instant, LaneResidency, Origin, Phase, Producer, ResidencyHead,
-        ResidentState, TaskHandle, TaskHead, WorkflowHead, body, intent,
+        Actor, CanonicalUuid, Command, CommandKind, Instant, LaneResidency, Origin, Phase,
+        Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead, WireVersion, Witness,
+        WorkflowHead, body, intent,
     };
 
     fn uuid(last: u8) -> CanonicalUuid {
@@ -502,6 +503,90 @@ mod tests {
                 lease_seconds: 15,
             },
         }
+    }
+
+    /// Seed one active claim the way the claim command writes it.
+    ///
+    /// The shared minter writes the fact and both heads, and the transaction
+    /// carries the command receipt beside them, so `command` is spent here
+    /// exactly as a real claim would spend it.
+    fn claim(journal: &mut Journal, command: u8) {
+        let heads = journal
+            .read_with(|read| read.task_heads())
+            .expect("heads before the claim");
+        let selected = heads
+            .iter()
+            .find(|heads| heads.statement().body().handle == task())
+            .expect("the fixture task is on the board");
+        let workflow = selected.workflow().body().clone();
+        let expected = vec![
+            Witness::Task {
+                task: task(),
+                head: selected.statement().position(),
+            },
+            Witness::Workflow {
+                task: task(),
+                head: selected.workflow().position(),
+                phase: workflow.phase.clone(),
+            },
+            Witness::Claim {
+                task: task(),
+                head: selected.claim().map(journal::JournalHead::position),
+            },
+            Witness::Eligibility {
+                rule: "next".parse().expect("rule"),
+            },
+            Witness::Residency {
+                lane: uuid(20),
+                occupant: uuid(21),
+                epoch: uuid(22),
+            },
+        ];
+        let actor = Actor::Lane(uuid(20));
+        let mut write = JournalWrite::new(
+            actor.clone(),
+            "task:BOARD-a1".parse().expect("claim origin"),
+            instant(5),
+            Producer::CommandDoor,
+        );
+        mint(
+            &mut write,
+            Mint {
+                task: &task(),
+                actor: &actor,
+                workflow: &workflow,
+                lane: uuid(20),
+                occupant: uuid(21),
+                epoch: uuid(22),
+                at: instant(5),
+                expiry: instant(20),
+                maximum: instant(35),
+                git: None,
+            },
+        )
+        .expect("the claim mints");
+        write
+            .command_result(
+                Command {
+                    v: WireVersion::CURRENT,
+                    id: uuid(command),
+                    epoch: uuid(22),
+                    kind: CommandKind::ClaimWin,
+                    expected,
+                    body: intent::ClaimWin {
+                        rule: "next".parse().expect("rule"),
+                    },
+                },
+                uuid(22),
+                intent::ClaimAnswer {
+                    task: task(),
+                    holder: actor,
+                    warnings: Vec::new(),
+                    next: None,
+                },
+            )
+            .expect("the claim receipt builds");
+        journal.apply(write).expect("the claim commits");
     }
 
     fn claimed() -> Journal {
@@ -577,23 +662,7 @@ mod tests {
             }],
         });
         journal.apply(write).expect("seed");
-        win(
-            &mut journal,
-            WinRequest {
-                band: 2,
-                projects: projects(),
-                command: uuid(31),
-                actor: Actor::Lane(uuid(20)),
-                lane: uuid(20),
-                occupant: uuid(21),
-                epoch: uuid(22),
-                at: instant(5),
-                expiry: instant(20),
-                maximum: instant(35),
-                rule: "next".parse().expect("rule"),
-            },
-        )
-        .expect("win");
+        claim(&mut journal, 31);
         journal
     }
 
