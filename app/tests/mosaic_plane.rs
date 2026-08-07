@@ -81,6 +81,56 @@ fn persistent_noop_and_append_never_repack_committed_cards() {
     assert_eq!(appended.transition(), Transition::Append);
 }
 
+/// The plane renders arrival order, not the order `activity_cards` chains.
+///
+/// `activity_cards` builds its vector as every agent message and then every
+/// pending directive, so a message arriving while a directive is pending sits
+/// *between* committed cards in that source order. The plane appends it to the
+/// tail instead. That is the decided behavior, not a defect to refile: the
+/// source order is only how unseen keys reach the plane, while
+/// `render_activity_cards` renders by `cards()`, so what the operator sees is
+/// arrival order and the DOM order still matches the creation order.
+///
+/// Honoring the source order instead would repack on the ordinary path — an
+/// operator steers, the agent answers — which is what a persistent plane exists
+/// to avoid, and there is no durable key to interleave the two kinds by: a
+/// directive carries the commit instant of the fact that authored it, while a
+/// message carries only a tape position.
+///
+/// The cost, accepted here rather than hidden: until the directive clears, the
+/// later message renders below it, and the removal's full replay then moves it
+/// back above.
+#[test]
+fn a_message_measured_between_committed_cards_takes_the_tail_by_decision() {
+    let initial = [
+        measured("message-a", candidates(6, 3)),
+        measured("directive-x", candidates(6, 4)),
+    ];
+    let plane = PersistentLanePlane::new(900, &initial);
+    let committed = plane.cards().to_vec();
+
+    let inserted = plane.reconcile(
+        900,
+        &[
+            initial[0].clone(),
+            measured("message-b", candidates(12, 2)),
+            initial[1].clone(),
+        ],
+    );
+
+    assert_eq!(
+        inserted
+            .cards()
+            .iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>(),
+        vec!["message-a", "directive-x", "message-b"],
+        "the later message takes the lattice tail, not the measured middle"
+    );
+    assert_eq!(&inserted.cards()[..2], committed);
+    assert_eq!(inserted.transition(), Transition::Append);
+}
+
 #[test]
 fn content_resize_latches_horizontal_placement_and_uses_fresh_rows() {
     let plane = PersistentLanePlane::new(

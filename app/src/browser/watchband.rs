@@ -528,6 +528,16 @@ fn render_compose(
     }
 }
 
+/// Every activity the lineage can render, messages first and pending
+/// directives after.
+///
+/// That order reaches the plane only as the order *unseen* keys are offered:
+/// the plane keeps its own creation order and `render_activity_cards` renders
+/// from that, so this chain is not the order an operator sees. A message
+/// arriving while a directive is pending therefore appends to the lattice tail
+/// rather than displacing the directive, which is decided behavior — see the
+/// tail-by-decision case in `app/tests/mosaic_plane.rs` for why honoring this
+/// order instead would repack the plane on its ordinary path.
 fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
     runtime
         .messages()
