@@ -70,6 +70,9 @@ impl<'a> Surface<'a> {
             (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => lane_surface::seat(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
             ),
+            (CommandKind::LaneArrange, Intent::LaneArrange(arrange)) => {
+                lane_surface::arrange(self.bus, self.epoch, seats, command, arrange)
+            }
             (CommandKind::LaneState, Intent::LaneState(state)) if state.worktree.is_some() => {
                 lane_recovery::import(
                     self.bus,
@@ -85,7 +88,7 @@ impl<'a> Surface<'a> {
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
             ),
             (CommandKind::LineageArrange, Intent::LineageArrange(arrange)) => {
-                lane_surface::arrange(self.bus, self.epoch, seats, command, arrange)
+                lane_surface::arrange_lineages(self.bus, self.epoch, seats, command, arrange)
             }
             (CommandKind::LineageConfigure, Intent::LineageConfigure(configure)) => {
                 lane_surface::configure(

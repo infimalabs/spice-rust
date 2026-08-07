@@ -108,9 +108,17 @@ try {
     if (label.startsWith("dangling at ")) {
       const observedAt = performance.now();
       const authority = await reply(fixture, ["thread", String(extent.cursor)]);
-      await waitForPageFunction(page, "packed lineage reaches root", rootSettleMs, () => {
-        return document.querySelector('[data-pane="lineage"] .section-count')?.textContent === "root";
-      });
+      await waitForPageFunction(
+        page,
+        "packed lineage reaches root",
+        rootSettleMs,
+        () => {
+          const found = document.querySelector('[data-pane="lineage"] .section-count');
+          return found?.textContent === "root";
+        },
+        undefined,
+        { observed: () => count.innerText() },
+      );
       dangling.push({
         cycle,
         label,

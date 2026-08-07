@@ -165,7 +165,8 @@ fn current_opaque_failure_and_statusless_tool_payloads_are_preserved() {
         [Event::Tool(tool)]
             if tool.call_id == "item-4"
                 && tool.moment == ToolMoment::Call {
-                    name: "web_search".to_owned()
+                    name: "web_search".to_owned(),
+                    arguments: r#"{"query":""}"#.to_owned(),
                 }
     ));
 }

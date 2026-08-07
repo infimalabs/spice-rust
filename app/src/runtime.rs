@@ -11,8 +11,9 @@ use wire::intent::{
     LaneAnswer, LaneChangeAnswer, LaneLiveness,
 };
 use wire::{
-    Accepted, Actor, AgentMessage, CanonicalUuid, CommandKind, FactKind, Origin, Outcome, Packed,
-    Response, Seq, StreamCursor, StreamFrame, TrustView, ViewSubject,
+    Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
+    MessageLocus, Origin, Outcome, Packed, Response, Seq, StreamCursor, StreamFrame, TrustView,
+    ViewSubject,
 };
 
 use crate::pane::{GrantPane, Principal, ReadPane, SteerPane};
@@ -326,6 +327,52 @@ pub struct RuntimeEvent {
     detail: String,
 }
 
+/// One agent-authored activity retained for a lineage status strip.
+///
+/// Command outcomes deliberately remain [`RuntimeEvent`]s: they have their own
+/// chronology pane, while this type is restricted to work performed by a
+/// seated lane. Keeping the two chronologies distinct prevents a board, lane,
+/// or inbox snapshot receipt from displacing the work the operator is watching.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaneActivity {
+    lane: CanonicalUuid,
+    class: &'static str,
+    title: String,
+    detail: String,
+    source: ActivitySource,
+}
+
+impl LaneActivity {
+    /// Independently steerable member that produced this activity.
+    #[must_use]
+    pub const fn lane(&self) -> CanonicalUuid {
+        self.lane
+    }
+
+    #[must_use]
+    pub const fn class(&self) -> &'static str {
+        self.class
+    }
+
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    #[must_use]
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+/// Durable identity used to ignore a repeated live activity without moving it
+/// back to the front of the status chronology.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ActivitySource {
+    lane: CanonicalUuid,
+    locus: MessageLocus,
+}
+
 impl RuntimeEvent {
     #[must_use]
     pub const fn class(&self) -> &'static str {
@@ -391,6 +438,7 @@ pub struct CanvasRuntime {
     resume: Option<StreamCursor>,
     terminal: Option<StreamTerminal>,
     events: Vec<RuntimeEvent>,
+    activities: Vec<LaneActivity>,
 }
 
 impl CanvasRuntime {
@@ -417,6 +465,7 @@ impl CanvasRuntime {
             resume: None,
             terminal: None,
             events: Vec::new(),
+            activities: Vec::new(),
         }
     }
 
@@ -522,10 +571,28 @@ impl CanvasRuntime {
         &self.events
     }
 
-    /// Newest retained command outcome, which drives the Canvas ticker.
+    /// Newest retained command outcome for the chronology pane.
     #[must_use]
     pub fn newest_event(&self) -> Option<&RuntimeEvent> {
         self.events.first()
+    }
+
+    /// Newest retained activity produced by any member of `lineage`.
+    ///
+    /// Activity is retained in arrival order across the resident's captured
+    /// transcript feed. Filtering that one chronology by membership is
+    /// what makes a fused team show whichever of its agents acted last.
+    #[must_use]
+    pub fn newest_lineage_activity(&self, lineage: &LaneRow) -> Option<&LaneActivity> {
+        self.activities
+            .iter()
+            .find(|activity| lineage.member(activity.lane).is_some())
+    }
+
+    /// Retained lane activity, newest first.
+    #[must_use]
+    pub fn activities(&self) -> &[LaneActivity] {
+        &self.activities
     }
 
     #[must_use]
@@ -579,10 +646,10 @@ impl CanvasRuntime {
                 limit, messages, ..
             } => {
                 self.message_limit = *limit as usize;
-                self.messages = messages.clone();
-                if self.messages.len() > self.message_limit {
-                    let excess = self.messages.len() - self.message_limit;
-                    self.messages.drain(..excess);
+                self.messages.clear();
+                self.activities.clear();
+                for message in messages {
+                    self.observe_message(message);
                 }
                 Vec::new()
             }
@@ -854,6 +921,23 @@ impl CanvasRuntime {
     }
 
     fn observe_message(&mut self, message: &AgentMessage) {
+        let (class, title) = match message.activity {
+            AgentActivityKind::Prose => ("prose", "assistant"),
+            AgentActivityKind::Tool => ("tool", "tool"),
+        };
+        self.push_activity(LaneActivity {
+            lane: message.lane,
+            class,
+            title: title.to_owned(),
+            detail: message.text.clone(),
+            source: ActivitySource {
+                lane: message.lane,
+                locus: message.locus,
+            },
+        });
+        if !message.activity.is_prose() {
+            return;
+        }
         let duplicate = self
             .messages
             .iter()
@@ -888,6 +972,23 @@ impl CanvasRuntime {
             },
         );
         self.events.truncate(EVENT_LIMIT);
+    }
+
+    fn push_activity(&mut self, activity: LaneActivity) {
+        if self
+            .activities
+            .iter()
+            .any(|existing| existing.source == activity.source)
+        {
+            return;
+        }
+        // Keep the bounded arrival history, not only one row per lane. The
+        // renderer takes the first matching row, while this history lets a
+        // reconnect recognize an older identity replayed after newer work.
+        self.activities.insert(0, activity);
+        if self.message_limit > 0 {
+            self.activities.truncate(self.message_limit);
+        }
     }
 }
 

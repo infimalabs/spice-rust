@@ -11,8 +11,9 @@ use lane::occupant::{Occupant, OccupantWait, Seats};
 use sill::WaitOutcome;
 use spice::repository::Repository;
 use wire::intent::{
-    CommandAnswer, LaneAction, LaneAnswer, LaneChangeAnswer, LaneRecall, LaneSeat, LaneState,
-    LineageArrange, LineageConfigure, LineageLife, RecallAnswer, RecallEntry, RecallProvenance,
+    CommandAnswer, LaneAction, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRecall, LaneSeat,
+    LaneState, LineageArrange, LineageConfigure, LineageLife, RecallAnswer, RecallEntry,
+    RecallProvenance,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
@@ -20,11 +21,13 @@ use wire::{
 };
 
 mod launch;
+mod lineage;
 mod propose;
 mod reply;
 mod session;
 
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
+pub(super) use lineage::{arrange as arrange_lineages, configure};
 use propose::{commit_restored, propose_drain, propose_seat, propose_wake};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
@@ -248,279 +251,74 @@ pub(super) fn seat(
     }
 }
 
-/// Commit one task-subscription policy for a Canvas lineage.
+/// Place one existing member immediately before another existing member.
 ///
-/// `drain` here is a policy spelling. Occupant teardown remains exclusively
-/// owned by `lane::state { action: drain }`, so this transaction changes no
-/// seat, capability, session, occupant, or disposition field.
-pub(super) fn configure(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seats: &Seats,
-    projects: &board::ProjectPolicy,
-    command: &wire::AdmittedCommand,
-    request: &LineageConfigure,
-) -> Outcome<CommandAnswer> {
-    let observed = match current_residency(bus, epoch) {
-        Ok(head) => head,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let members = observed
-        .body()
-        .lanes
-        .iter()
-        .filter(|row| row.lineage_id == request.lineage_id)
-        .collect::<Vec<_>>();
-    if members.is_empty() {
-        return lane_refusal(
-            "lineage::missing",
-            Some("one current Canvas lineage".to_owned()),
-            Some(request.lineage_id.to_string()),
-            "read lane state and retry with a current lineage identity",
-        );
-    }
-    let previous = match subscription_row(observed.body(), request.lineage_id) {
-        Ok(Some(subscription)) => subscription.clone(),
-        Ok(None) => {
-            return typed_store_fault(
-                "lineage::subscription-missing",
-                "a current lineage has no task-subscription policy",
-            );
-        }
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let manual_projects = match admit_manual_projects(projects, request.manual_projects.as_deref())
-    {
-        Ok(projects) => projects,
-        Err(outcome) => return outcome,
-    };
-    let mut next = observed.body().clone();
-    let Some(subscription) = next
-        .subscriptions
-        .iter_mut()
-        .find(|subscription| subscription.lineage_id == request.lineage_id)
-    else {
-        return typed_store_fault(
-            "lineage::subscription-missing",
-            "a current lineage lost its task-subscription policy during configuration",
-        );
-    };
-    subscription.policy = request.life;
-    subscription.auto_projects.clear();
-    if let Some(manual_projects) = manual_projects {
-        subscription.manual_projects = manual_projects;
-    }
-    let configured_manual_projects = subscription.manual_projects.clone();
-    let lane_answer = match answer(&next, None, seats) {
-        Ok(answer) => answer,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let mut write = match write(
-        command.actor().clone(),
-        epoch,
-        Producer::ResidentRecognition,
-    ) {
-        Ok(write) => write,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    guard_residency(&mut write, &observed);
-    let fact = match write.fact(
-        wire::body::LineageConfigured {
-            lineage_id: request.lineage_id,
-            from: previous.policy,
-            life: request.life,
-            from_manual_projects: previous.manual_projects,
-            manual_projects: configured_manual_projects,
-        },
-        FactCause::Existing(observed.position()),
-    ) {
-        Ok(fact) => fact,
-        Err(error) => {
-            return typed_store_fault("lineage::fact-invalid", &error.to_string());
-        }
-    };
-    write.residency_head(fact, move |_| next);
-    if let Err(error) = write.command_result(
-        Command {
-            v: wire::WireVersion::CURRENT,
-            id: command.id(),
-            epoch: command.epoch(),
-            kind: command.kind(),
-            expected: command.expected().to_vec(),
-            body: request.clone(),
-        },
-        epoch,
-        lane_answer.clone(),
-    ) {
-        return typed_store_fault("lineage::receipt-invalid", &error.to_string());
-    }
-    match commit(bus, write) {
-        Ok(committed) => Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(SeqRange {
-                first: seq(committed.first()),
-                last: seq(committed.last()),
-            }),
-            body: CommandAnswer::Lane(Box::new(lane_answer)),
-        }),
-        Err(outcome) => typed_outcome(outcome),
-    }
-}
-
-/// Group the head's lanes into lineage standings in first-appearance order.
-///
-/// First appearance is not an arbitrary choice: it is exactly how the Canvas
-/// groups the lane answer into team surfaces, so the head's lane order *is* the
-/// durable team order. Rewriting that order below is what makes a drag durable
-/// without teaching the canvas a second ordering to disagree with.
-fn standings(lanes: &[wire::LaneResidency]) -> Vec<wire::body::LineageStanding> {
-    let mut standings = Vec::<wire::body::LineageStanding>::new();
-    for row in lanes {
-        if let Some(standing) = standings
-            .iter_mut()
-            .find(|standing| standing.lineage_id == row.lineage_id)
-        {
-            standing.lanes.push(row.lane);
-        } else {
-            standings.push(wire::body::LineageStanding {
-                lineage_id: row.lineage_id,
-                lanes: vec![row.lane],
-            });
-        }
-    }
-    standings
-}
-
-/// Refuse an arrangement that is not a faithful restatement of the lane table.
-///
-/// Every rule here is stated over the arrangement as a whole. A partial
-/// arrangement is never repaired by inference: a lane the operator forgot would
-/// otherwise be silently dropped from every team, which is a lane that exists
-/// in the resident and appears nowhere on the canvas.
-fn admit_arrangement(
-    head: &wire::ResidencyHead,
-    request: &LineageArrange,
-) -> Result<(), Outcome<CommandAnswer>> {
-    let current = standings(&head.lanes);
-    if request.lineages.is_empty() {
-        return Err(lane_refusal(
-            "lineage::arrangement-empty",
-            Some("at least one lineage".to_owned()),
-            Some("0".to_owned()),
-            "state every surviving lineage; an arrangement never removes a lane",
-        ));
-    }
-    let mut seen_lineages = Vec::<CanonicalUuid>::new();
-    let mut seen_lanes = Vec::<CanonicalUuid>::new();
-    for lineage in &request.lineages {
-        if !current
-            .iter()
-            .any(|standing| standing.lineage_id == lineage.lineage_id)
-        {
-            return Err(lane_refusal(
-                "lineage::arrangement-unknown-lineage",
-                Some("one current Canvas lineage".to_owned()),
-                Some(lineage.lineage_id.to_string()),
-                "join teams by naming the surviving lineage; a new lineage is created by seating",
-            ));
-        }
-        if seen_lineages.contains(&lineage.lineage_id) {
-            return Err(lane_refusal(
-                "lineage::arrangement-duplicate-lineage",
-                Some("each lineage stated once".to_owned()),
-                Some(lineage.lineage_id.to_string()),
-                "state one arrangement per lineage",
-            ));
-        }
-        seen_lineages.push(lineage.lineage_id);
-        if lineage.lanes.is_empty() {
-            return Err(lane_refusal(
-                "lineage::arrangement-vacant-lineage",
-                Some("at least one lane".to_owned()),
-                Some(lineage.lineage_id.to_string()),
-                "omit an emptied lineage entirely rather than arranging it with no lanes",
-            ));
-        }
-        for lane in &lineage.lanes {
-            if !head.lanes.iter().any(|row| row.lane == *lane) {
-                return Err(lane_refusal(
-                    "lineage::arrangement-unknown-lane",
-                    Some("one current lane".to_owned()),
-                    Some(lane.to_string()),
-                    "read lane state and retry with the current lane table",
-                ));
-            }
-            if seen_lanes.contains(lane) {
-                return Err(lane_refusal(
-                    "lineage::arrangement-duplicate-lane",
-                    Some("each lane held once".to_owned()),
-                    Some(lane.to_string()),
-                    "hold every lane in exactly one lineage",
-                ));
-            }
-            seen_lanes.push(*lane);
-        }
-    }
-    if let Some(missing) = head
-        .lanes
-        .iter()
-        .find(|row| !seen_lanes.contains(&row.lane))
-    {
-        return Err(lane_refusal(
-            "lineage::arrangement-incomplete",
-            Some(format!("{} arranged lanes", head.lanes.len())),
-            Some(missing.lane.to_string()),
-            "state every current lane; an arrangement moves lanes, it never drops them",
-        ));
-    }
-    Ok(())
-}
-
-/// Commit one complete Canvas lineage arrangement.
-///
-/// This is the durable end of both drag gestures. Reordering the teams and
-/// joining two of them differ only in the arrangement the operator sends, so
-/// they commit through one law and one fact rather than racing two.
+/// The target row supplies the destination lineage. Moving the row itself keeps
+/// its lane, occupant, session, worktree, and composer identity unchanged. The
+/// residency head's vector is the durable order read back by Canvas.
 pub(super) fn arrange(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &Seats,
     command: &wire::AdmittedCommand,
-    request: &LineageArrange,
+    request: &LaneArrange,
 ) -> Outcome<CommandAnswer> {
+    if request.lane == request.before {
+        return lane_refusal(
+            "lane::arrange-self",
+            Some("a different target lane".to_owned()),
+            Some(request.lane.to_string()),
+            "drop the primary composer on another seated member",
+        );
+    }
     let observed = match current_residency(bus, epoch) {
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
-    if let Err(outcome) = admit_arrangement(observed.body(), request) {
-        return outcome;
-    }
-    let from = standings(&observed.body().lanes);
+    let Some(source_index) = observed
+        .body()
+        .lanes
+        .iter()
+        .position(|row| row.lane == request.lane)
+    else {
+        return lane_refusal(
+            "lane::arrange-source-missing",
+            Some("one current seated member".to_owned()),
+            Some(request.lane.to_string()),
+            "read lane state and retry with a current source member",
+        );
+    };
+    let Some(target) = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == request.before)
+    else {
+        return lane_refusal(
+            "lane::arrange-target-missing",
+            Some("one current seated member".to_owned()),
+            Some(request.before.to_string()),
+            "read lane state and retry with a current target member",
+        );
+    };
+    let target_lineage = target.lineage_id;
+    let from_lineage = observed.body().lanes[source_index].lineage_id;
     let mut next = observed.body().clone();
-    let mut arranged = Vec::with_capacity(next.lanes.len());
-    for lineage in &request.lineages {
-        for lane in &lineage.lanes {
-            let Some(row) = next.lanes.iter().find(|row| row.lane == *lane) else {
-                return typed_store_fault(
-                    "lineage::arrangement-lane-lost",
-                    "an admitted arrangement named a lane the residency head no longer holds",
-                );
-            };
-            let mut row = row.clone();
-            row.lineage_id = lineage.lineage_id;
-            arranged.push(row);
-        }
+    let mut source = next.lanes.remove(source_index);
+    let Some(target_index) = next.lanes.iter().position(|row| row.lane == request.before) else {
+        return typed_store_fault(
+            "lane::arrange-target-lost",
+            "the target member disappeared while arranging one residency snapshot",
+        );
+    };
+    source.lineage_id = target_lineage;
+    next.lanes.insert(target_index, source);
+    if from_lineage != target_lineage
+        && !next.lanes.iter().any(|row| row.lineage_id == from_lineage)
+    {
+        next.subscriptions
+            .retain(|subscription| subscription.lineage_id != from_lineage);
     }
-    next.lanes = arranged;
-    // A lineage the arrangement emptied keeps no durable subscription: leaving
-    // one behind would silently re-apply that policy to a later lineage seated
-    // under the same identity.
-    next.subscriptions.retain(|subscription| {
-        request
-            .lineages
-            .iter()
-            .any(|lineage| lineage.lineage_id == subscription.lineage_id)
-    });
-    let lineages = standings(&next.lanes);
     let lane_answer = match answer(&next, None, seats) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -535,13 +333,16 @@ pub(super) fn arrange(
     };
     guard_residency(&mut write, &observed);
     let fact = match write.fact(
-        wire::body::LineageArranged { from, lineages },
+        wire::body::LaneArranged {
+            lane: request.lane,
+            from_lineage_id: from_lineage,
+            lineage_id: target_lineage,
+            before: request.before,
+        },
         FactCause::Existing(observed.position()),
     ) {
         Ok(fact) => fact,
-        Err(error) => {
-            return typed_store_fault("lineage::fact-invalid", &error.to_string());
-        }
+        Err(error) => return typed_store_fault("lane::arrange-fact-invalid", &error.to_string()),
     };
     write.residency_head(fact, move |_| next);
     if let Err(error) = write.command_result(
@@ -551,12 +352,12 @@ pub(super) fn arrange(
             epoch: command.epoch(),
             kind: command.kind(),
             expected: command.expected().to_vec(),
-            body: request.clone(),
+            body: *request,
         },
         epoch,
         lane_answer.clone(),
     ) {
-        return typed_store_fault("lineage::receipt-invalid", &error.to_string());
+        return typed_store_fault("lane::arrange-receipt-invalid", &error.to_string());
     }
     match commit(bus, write) {
         Ok(committed) => Outcome::Reply(Reply {

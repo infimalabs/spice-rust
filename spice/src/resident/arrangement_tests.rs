@@ -69,7 +69,7 @@ impl Arranged {
     ) -> Outcome<CommandAnswer> {
         let request = wire::intent::LineageArrange { lineages };
         let command = arrange_command(self.epoch, test_uuid(id), &request);
-        lane_surface::arrange(&self.bus, self.epoch, &self.seats, &command, &request)
+        lane_surface::arrange_lineages(&self.bus, self.epoch, &self.seats, &command, &request)
     }
 
     /// The authoritative lane table a committed arrangement replies with.

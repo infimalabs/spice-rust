@@ -37,7 +37,7 @@ mod timers;
 
 #[cfg(test)]
 use message_surface::AgentMessagePublisher;
-use message_surface::accept_capture_record;
+use message_surface::{CallPreviews, accept_capture_record};
 use shutdown::{current_residency, drive_shutdown};
 
 include!("resident/runtime.rs");

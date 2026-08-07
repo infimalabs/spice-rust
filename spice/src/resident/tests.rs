@@ -57,8 +57,7 @@ fn access_refusal_for(argv: &[&str]) -> String {
     access_refusal(argv).reason
 }
 
-/// The surface listens on exactly what the operator named, or on one fixed
-/// default it can be told about in advance.
+/// The surface listens exactly where the operator requested or at one stable default.
 ///
 /// Both halves are load-bearing. An operator reaching this surface from another
 /// machine has to be able to say which address it answers on, and an operator
@@ -681,6 +680,7 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
 
     let request = wire::intent::LineageConfigure {
         lineage_id: lineage,
+        member: None,
         life: wire::intent::LineageLife::Drain,
         manual_projects: Some(vec!["task.manual".to_owned()]),
     };
@@ -752,6 +752,179 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
 /// fixture, so its cases are proven in a module of their own.
 #[path = "arrangement_tests.rs"]
 mod arrangement;
+
+fn arrange_lane_for_test(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    id: CanonicalUuid,
+    lane: CanonicalUuid,
+    before: CanonicalUuid,
+) -> wire::intent::LaneAnswer {
+    let request = wire::intent::LaneArrange { lane, before };
+    let command = Command {
+        v: wire::WireVersion::CURRENT,
+        id,
+        epoch,
+        kind: CommandKind::LaneArrange,
+        expected: Vec::new(),
+        body: serde_json::to_value(request).expect("lane arrangement encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("operator lane arrangement admits");
+    let Outcome::Reply(reply) = super::lane_surface::arrange(bus, epoch, seats, &command, &request)
+    else {
+        panic!("lane arrangement replies");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
+    let CommandAnswer::Lane(answer) = reply.body else {
+        panic!("lane arrangement returns the authoritative lane table");
+    };
+    *answer
+}
+
+fn lane_order(answer: &wire::intent::LaneAnswer) -> Vec<CanonicalUuid> {
+    answer.lanes.iter().map(|row| row.lane).collect()
+}
+
+fn assert_transferred_arrangement(
+    transferred: &wire::intent::LaneAnswer,
+    destination: CanonicalUuid,
+) {
+    assert_eq!(
+        lane_order(transferred),
+        vec![test_uuid(7), test_uuid(9), test_uuid(3), test_uuid(5)],
+        "the transferred member is inserted immediately before its destination target",
+    );
+    let transferred_row = &transferred.lanes[1];
+    assert_eq!(transferred_row.lane, test_uuid(9));
+    assert_eq!(transferred_row.occupant, Some(test_uuid(10)));
+    assert_eq!(transferred_row.lineage_id, destination);
+    assert_eq!(
+        transferred
+            .subscriptions
+            .iter()
+            .map(|subscription| subscription.lineage_id)
+            .collect::<Vec<_>>(),
+        vec![destination],
+        "moving the last member removes the empty source lineage subscription",
+    );
+}
+
+fn assert_durable_arrangement(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    transferred: &wire::intent::LaneAnswer,
+    source_lineage: CanonicalUuid,
+    destination_lineage: CanonicalUuid,
+) {
+    let durable = current_residency(bus, epoch)
+        .expect("arranged residency reads")
+        .into_body();
+    let identities = |lanes: &[wire::intent::LaneAnswerRow]| {
+        lanes
+            .iter()
+            .map(|row| (row.lane, row.lineage_id, row.occupant))
+            .collect::<Vec<_>>()
+    };
+    let durable_identities = durable
+        .lanes
+        .iter()
+        .map(|row| (row.lane, row.lineage_id, row.occupant))
+        .collect::<Vec<_>>();
+    assert_eq!(durable_identities, identities(&transferred.lanes));
+    let arranged = bus
+        .fact_snapshot()
+        .expect("lane arrangement facts read")
+        .facts()
+        .iter()
+        .filter(|fact| fact.fact.kind() == wire::FactKind::LaneArranged)
+        .map(|fact| fact.fact.body().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(arranged.len(), 2);
+    assert_eq!(arranged[1]["lane"], serde_json::json!(test_uuid(9)));
+    assert_eq!(
+        arranged[1]["from_lineage_id"],
+        serde_json::json!(source_lineage)
+    );
+    assert_eq!(
+        arranged[1]["lineage_id"],
+        serde_json::json!(destination_lineage)
+    );
+    assert_eq!(arranged[1]["before"], serde_json::json!(test_uuid(3)));
+}
+
+#[test]
+fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
+    let (root, paths) = resident_fixture("lane-arrangement");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface =
+        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(1);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let first_lineage = test_uuid(2);
+    let second_lineage = test_uuid(12);
+    let members = [
+        (test_uuid(3), test_uuid(4), first_lineage),
+        (test_uuid(5), test_uuid(6), first_lineage),
+        (test_uuid(7), test_uuid(8), first_lineage),
+        (test_uuid(9), test_uuid(10), second_lineage),
+    ];
+    let mut seats = Seats::new();
+    for (lane, occupant, lineage) in members {
+        seats
+            .seat(
+                lane,
+                occupant,
+                process_spec("sleep 0.05", Duration::from_secs(5)),
+            )
+            .expect("supervised member starts");
+        seed_lane_in_lineage(&bus, epoch, lane, lineage, occupant);
+    }
+
+    let same_team = arrange_lane_for_test(
+        &bus,
+        epoch,
+        &seats,
+        test_uuid(20),
+        test_uuid(7),
+        test_uuid(3),
+    );
+    assert_eq!(
+        lane_order(&same_team),
+        vec![test_uuid(7), test_uuid(3), test_uuid(5), test_uuid(9)],
+        "the moved member is inserted immediately before its same-team target",
+    );
+    assert_eq!(same_team.lanes[0].lineage_id, first_lineage);
+
+    let transferred = arrange_lane_for_test(
+        &bus,
+        epoch,
+        &seats,
+        test_uuid(21),
+        test_uuid(9),
+        test_uuid(3),
+    );
+    assert_transferred_arrangement(&transferred, first_lineage);
+    assert_durable_arrangement(&bus, epoch, &transferred, second_lineage, first_lineage);
+
+    for (lane, _, _) in members {
+        seats
+            .vacate(lane)
+            .expect("arranged member remains supervised")
+            .wait()
+            .expect("fixture occupant exits");
+    }
+    bus.verify().expect("arranged authority verifies");
+    bus.shutdown().expect("arrangement fixture bus stops");
+    fs::remove_dir_all(root).expect("arrangement fixture cleanup");
+}
 
 fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
     let root = fixture(name);
@@ -1052,7 +1225,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 }
 
 #[test]
-fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
+fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity() {
     let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
         .expect("message bus starts");
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
@@ -1069,6 +1242,15 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
         decoded: listen::Decoded::Events(vec![
             listen::Event::Reasoning(listen::Reasoning {
                 content: listen::ReasoningContent::Opaque,
+                locus,
+            }),
+            listen::Event::Tool(listen::Tool {
+                call_id: "tool-1".to_owned(),
+                moment: listen::ToolMoment::Call {
+                    name: "Bash".to_owned(),
+                    arguments: r#"{"command":"git status --short","description":"read the tree"}"#
+                        .to_owned(),
+                },
                 locus,
             }),
             listen::Event::Prose(listen::Prose {
@@ -1090,6 +1272,7 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
         )
         .expect("capture fixture occupant starts");
     let mut diagnostics = Vec::new();
+    let mut previews = CallPreviews::default();
 
     accept_capture_record(
         &bus,
@@ -1097,16 +1280,40 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
         &mut seats,
         &publisher,
         &record,
+        &mut previews,
         &mut diagnostics,
     )
     .expect("current capture projects");
+    assert_tool_and_prose_activity(&mut updates, &record);
+    assert_stale_capture_ignored(
+        &bus,
+        &mut seats,
+        &publisher,
+        &mut updates,
+        &record,
+        &mut previews,
+        &mut diagnostics,
+    );
+    seats
+        .vacate(record.lane)
+        .expect("replacement occupant remains supervised")
+        .wait()
+        .expect("replacement occupant stops");
+    drop(source);
+    bus.shutdown().expect("message bus stops");
+}
 
-    let message = updates.try_recv().expect("prose publishes once");
-    assert_eq!(message.lane, record.lane);
-    assert_eq!(message.author, record.occupant);
-    assert_eq!(message.text, "agent-authored answer");
+fn assert_tool_and_prose_activity(
+    updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
+    record: &lane::capture::CaptureRecord,
+) {
+    let tool = updates.try_recv().expect("tool activity publishes once");
+    assert_eq!(tool.lane, record.lane);
+    assert_eq!(tool.author, record.occupant);
+    assert_eq!(tool.activity, wire::AgentActivityKind::Tool);
+    assert_eq!(tool.text, "Bash: git status --short");
     assert_eq!(
-        message.locus,
+        tool.locus,
         wire::MessageLocus {
             member: 4,
             offset: 120,
@@ -1114,11 +1321,36 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
             event: 1,
         }
     );
+
+    let prose = updates.try_recv().expect("prose publishes once");
+    assert_eq!(prose.lane, record.lane);
+    assert_eq!(prose.author, record.occupant);
+    assert_eq!(prose.activity, wire::AgentActivityKind::Prose);
+    assert_eq!(prose.text, "agent-authored answer");
+    assert_eq!(
+        prose.locus,
+        wire::MessageLocus {
+            member: 4,
+            offset: 120,
+            length: 48,
+            event: 2,
+        }
+    );
     assert!(matches!(
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
+}
 
+fn assert_stale_capture_ignored(
+    bus: &bus::Bus,
+    seats: &mut Seats,
+    publisher: &impl AgentMessagePublisher,
+    updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
+    record: &lane::capture::CaptureRecord,
+    previews: &mut CallPreviews,
+    diagnostics: &mut Vec<u8>,
+) {
     seats
         .vacate(record.lane)
         .expect("original occupant remains supervised")
@@ -1134,27 +1366,28 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
             ),
         )
         .expect("replacement occupant starts");
-    let stale_locus = listen::Locus::new(4, 180, 48);
-    let stale_record = lane::capture::CaptureRecord {
+    let locus = listen::Locus::new(4, 180, 48);
+    let stale = lane::capture::CaptureRecord {
         lane: record.lane,
         occupant: record.occupant,
         stream: vendor::RecordStream::Stdout,
         boundary: sill::RecordBoundary::Complete,
-        locus: stale_locus,
+        locus,
         declaration: None,
         decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
             text: "stale prior-occupant answer".to_owned(),
             phase: None,
-            locus: stale_locus,
+            locus,
         })]),
     };
     accept_capture_record(
-        &bus,
+        bus,
         test_uuid(4),
-        &mut seats,
-        &publisher,
-        &stale_record,
-        &mut diagnostics,
+        seats,
+        publisher,
+        &stale,
+        previews,
+        diagnostics,
     )
     .expect("stale capture is ignored");
     assert!(matches!(
@@ -1162,13 +1395,6 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
     assert!(diagnostics.is_empty());
-    seats
-        .vacate(record.lane)
-        .expect("replacement occupant remains supervised")
-        .wait()
-        .expect("replacement occupant stops");
-    drop(source);
-    bus.shutdown().expect("message bus stops");
 }
 
 struct UnavailableMessagePublisher;
@@ -1198,6 +1424,7 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
         )
         .expect("capture fixture group starts");
     let mut diagnostics = Vec::new();
+    let mut previews = CallPreviews::default();
 
     for (offset, text) in [(120, "first answer"), (180, "later answer")] {
         let locus = listen::Locus::new(4, offset, 48);
@@ -1221,6 +1448,7 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
             &mut seats,
             &UnavailableMessagePublisher,
             &record,
+            &mut previews,
             &mut diagnostics,
         )
         .expect("a failed Canvas view leaves the capture handler live");

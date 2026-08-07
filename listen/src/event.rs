@@ -137,12 +137,28 @@ pub struct Reasoning {
 }
 
 /// Whether a tool record starts or completes a call.
+///
+/// A call carries its arguments as the vendor's own JSON payload rather than a
+/// parsed shape: every dialect names its argument fields differently, and a
+/// reader that wants the command line is reading vendor vocabulary either way.
+/// A result carries neither name nor arguments, because no dialect repeats them
+/// on the record that answers a call.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolMoment {
-    /// A call names its tool.
-    Call { name: String },
+    /// A call names its tool and the arguments it was given.
+    Call {
+        /// Tool name.
+        name: String,
+        /// Vendor call payload, serialized as JSON.
+        arguments: String,
+    },
     /// A running call published updated state.
-    Update { name: String },
+    Update {
+        /// Tool name.
+        name: String,
+        /// Vendor call payload, serialized as JSON.
+        arguments: String,
+    },
     /// A result reports its outcome when available.
     Result(ToolResult),
 }

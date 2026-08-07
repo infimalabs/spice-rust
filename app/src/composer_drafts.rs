@@ -281,6 +281,7 @@ mod tests {
                 length: 8,
                 event: 0,
             },
+            activity: wire::AgentActivityKind::Prose,
             text: "quoted prose".to_owned(),
         }
     }

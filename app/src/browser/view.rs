@@ -3,6 +3,7 @@
 use super::*;
 
 pub(super) mod chrome;
+mod lineage_menu;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
@@ -66,6 +67,7 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
                 active_axis,
                 render.surface,
                 &cursor,
+                render.sender,
             )}
             {render_workspace(&render, active_axis)}
         </div>

@@ -427,6 +427,17 @@ pub enum TaskSubscriptionScope {
 pub struct LineageConfigure {
     /// Stable Canvas lineage identifying the group.
     pub lineage_id: CanonicalUuid,
+    /// One seated member to move into this lineage, or absent to preserve membership.
+    ///
+    /// Moving a member to a fresh lineage creates a team. Moving it to its own
+    /// lane identity removes it from a team. The resident keeps every other
+    /// member and subscription authoritative in the same transaction.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub member: Option<CanonicalUuid>,
     /// Authoritative task-subscription policy to commit for the lineage.
     pub life: LineageLife,
     /// Replacement operator-pinned project set, or absent to preserve it.
@@ -462,6 +473,20 @@ pub struct LineageArrangement {
 pub struct LineageArrange {
     /// Every surviving lineage, in the order the operator arranged them.
     pub lineages: Vec<LineageArrangement>,
+}
+
+/// Place one seated lane immediately before another seated lane.
+///
+/// The target lane supplies both the durable insertion point and the target
+/// lineage. Naming one target instead of a client-computed index keeps the
+/// command meaningful when UUID order and visual order differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneArrange {
+    /// Existing member whose primary composer moves.
+    pub lane: CanonicalUuid,
+    /// Existing member the moved lane is placed immediately before.
+    pub before: CanonicalUuid,
 }
 
 /// Change a seated lane's state.
