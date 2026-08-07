@@ -491,10 +491,10 @@ fn tool_postures_follow_the_closed_command_order() {
         vec![
             ("doctor".to_owned(), vec!["rtk"]),
             ("lock run".to_owned(), vec!["CMD"]),
-            ("dev pre-commit".to_owned(), vec!["gate policy executable"],),
             ("gate".to_owned(), vec!["gate policy executable"]),
             ("gate camp".to_owned(), vec!["gate policy executable"]),
             ("gate kill".to_owned(), vec!["gate mutation executable"]),
+            ("gate pre-commit".to_owned(), vec!["gate policy executable"],),
             ("gate receipt".to_owned(), vec!["gate policy executable"],),
             (
                 "proof".to_owned(),

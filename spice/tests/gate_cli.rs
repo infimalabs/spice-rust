@@ -67,7 +67,7 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     let gate = invoke_with_path(&["gate"], repository.path(), Some(tripwires.path()));
     let report = report_body(&gate);
     let pre_commit = invoke_with_path(
-        &["--json", "dev", "pre-commit"],
+        &["--json", "gate", "pre-commit"],
         repository.path(),
         Some(tripwires.path()),
     );
