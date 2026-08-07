@@ -11,7 +11,8 @@ use std::error::Error;
 use std::fmt;
 
 use journal::crossing::{
-    Actor, CanonicalUuid, Instant, Origin, Producer, TranscriptSourceHead, body,
+    Actor, CanonicalUuid, Instant, Origin, Producer, TranscriptSourceHead, TranscriptStreamKey,
+    body,
 };
 use journal::{
     Applied, BuildError, CommitError, FactCause, GuardError, Journal, JournalGuard, JournalHead,
@@ -114,7 +115,7 @@ fn advanced_head(batch: &body::JournalIngested) -> TranscriptSourceHead {
 
 /// Exactly what the stored head is judged against.
 struct Continuation {
-    key: String,
+    key: TranscriptStreamKey,
     source: CanonicalUuid,
     supersedes: Option<CanonicalUuid>,
     from: body::TranscriptPosition,
@@ -122,7 +123,7 @@ struct Continuation {
 }
 
 impl Continuation {
-    fn of(batch: &body::JournalIngested, key: String) -> Self {
+    fn of(batch: &body::JournalIngested, key: TranscriptStreamKey) -> Self {
         Self {
             key,
             source: batch.source,
@@ -205,7 +206,9 @@ fn generation(source: Option<CanonicalUuid>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use journal::crossing::{Actor, CanonicalUuid, FactKind, Origin, Producer, body};
+    use journal::crossing::{
+        Actor, CanonicalUuid, FactKind, Origin, Producer, TranscriptStreamKey, body,
+    };
     use journal::{FactCause, Journal, JournalWrite};
 
     use super::{AccountError, Accounting, account};
@@ -418,7 +421,13 @@ mod tests {
 
     /// Position the stored head stands at, absent until a batch is accounted.
     fn checkpoint(journal: &Journal) -> Option<body::TranscriptPosition> {
-        let key = format!("{LANE}/claude/session");
+        let key = TranscriptStreamKey::new(
+            &LANE
+                .parse::<CanonicalUuid>()
+                .expect("fixture lane identity"),
+            &"claude".parse().expect("fixture vendor"),
+            "session",
+        );
         journal
             .read(|read| read.transcript_source_head(&key))
             .expect("read the stored checkpoint")
