@@ -24,6 +24,7 @@ import {
   assertEndpointProbeStates,
 } from "./canvas-endpoint-probes.mjs";
 import { assertLineageLifeIsolation } from "./canvas-lineage-life.mjs";
+import { assertLineageDrainFailureTeardown } from "./canvas-lineage-teardown.mjs";
 import { ownFixture } from "./canvas-lifecycle.mjs";
 import { assertSignalExitedChildSkipsTeardown } from "./canvas-signal-teardown.mjs";
 import { assertFixtureTeardownReaps } from "./canvas-teardown.mjs";
@@ -1332,6 +1333,7 @@ await assertHeadlessLaunchSites();
 await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
 await assertSignalExitedChildSkipsTeardown();
+await assertLineageDrainFailureTeardown();
 await buildResident();
 await assertFixtureTeardownReaps();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));

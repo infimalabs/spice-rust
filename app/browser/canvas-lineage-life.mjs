@@ -20,6 +20,22 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const artifacts = join(root, "artifacts/canvas");
 
+/// Drain every live lineage seat, report a failed graceful attempt, and always
+/// continue through the fixture owner's non-throwing cleanup boundary.
+export async function cleanupLineageFixture({ fixture, resident, owner, request = reply }) {
+  try {
+    if (resident && !childExited(resident.child)) {
+      const liveTeam = await request(fixture, ["lane"]);
+      for (const agent of liveTeam.body.lanes) {
+        await request(fixture, ["lane", "drain", agent.lane]);
+      }
+    }
+  } catch (error) {
+    process.stderr.write(`canvas lineage teardown could not drain lanes: ${error}\n`);
+  }
+  await owner.cleanup();
+}
+
 export async function assertLineageLifeIsolation(browser) {
   const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lineage-life-")));
   const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-life-lanes-")));
@@ -166,17 +182,6 @@ export async function assertLineageLifeIsolation(browser) {
     // did, every step after it was skipped, so a scenario that failed early
     // left the resident, its stand-ins, and both directories behind. The owner
     // below runs whatever this could not.
-    try {
-      if (resident && !childExited(resident.child)) {
-        const liveTeam = await reply(fixture, ["lane"]);
-        for (const agent of liveTeam.body.lanes) {
-          await reply(fixture, ["lane", "drain", agent.lane]);
-        }
-      }
-    } catch {
-      // The resident is unreachable; the owner escalates rather than reporting
-      // a teardown error over whatever the scenario itself was failing with.
-    }
-    await owner.cleanup();
+    await cleanupLineageFixture({ fixture, resident, owner });
   }
 }
