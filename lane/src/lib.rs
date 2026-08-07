@@ -26,9 +26,9 @@ pub mod capture;
 pub mod config;
 pub mod drain;
 pub mod hold;
-// Ingestion drives `account`, so it inherits that module's native-only gate for
-// the same reason: the journal writer vocabulary it reaches does not exist in
-// the browser build.
+// This module drives `account`, so it carries the same native-only gate for the
+// same reason: the journal writer vocabulary behind it does not exist in the
+// browser build.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ingest;
 pub mod life;
