@@ -18,7 +18,7 @@ run.
 | 2 | Durable state | `$COMMON/.spice/data/spicejournal.sqlite3` | `spiceacks`, `spicemaxims`, `spiceprojections`, `spiceteams`, `taskchampion` in the same directory | shared-by-design |
 | 3 | Discovery | writes `$COMMON/.spice/canvas` | writes no such file | **conflicting** |
 | 4 | Hooks | `.spice-install/git-hooks` via `core.hooksPath` | `.spice/hooks` via `core.hooksPath` | **conflicting** |
-| 5 | Configuration | owns root `spice.toml` | reads that same file as its `repository` layer, and refuses unknown keys | **conflicting** |
+| 5 | Configuration | authors root `spice.toml`, predecessor roots only | reads that same file as its `repository` layer, and refuses unknown keys | **decided** |
 | 6 | Processes | transient CLI invocations, plus listeners on non-default ports | long-lived serve residents, PIDs 10865 and 25690 | disjoint |
 | 7 | Ports | `127.0.0.1:8765` (`resident/runtime.rs:195`) | `serve.port = 8765` | **conflicting** |
 | 8 | Browser assets | `dist/stage-app/`, per worktree | embedded in `spice-z/spice/serve/web.py` | disjoint |
@@ -196,9 +196,15 @@ So the honest answer is *shared repository yes, shared worktree no, shared
 resident never*. Three of those four are already failing quietly: a stale
 `canvas` record points this port's clients at a foreign server, one strict
 config validator reads a file the other system owns, and the fixed default
-port is unbindable in every lane. None of the three raises an error today,
-which is exactly why they are written down here.
+port is unbindable in every lane. Only the config one is answered by a check
+today; the other two raise nothing, which is why they are written down here.
 
-The follow-ups this implies — invalidate `canvas` on exit, refuse in
-`activate-hooks` rather than clear, and decide who owns the root `spice.toml`
-schema — are separate work, not done here.
+Schema ownership is decided: the predecessor owns root `spice.toml`, because
+its validator runs on every agent tool call fleet-wide while this port's
+refuses one command locally. Ten roots this registry admits are barred from
+that file and belong in `.spice/config.toml`.
+`spice/tests/config_coexistence.rs` carries the decision and fails on a
+violation.
+
+The remaining follow-ups — invalidate `canvas` on exit, and refuse in
+`activate-hooks` rather than clear — are separate work, not done here.
