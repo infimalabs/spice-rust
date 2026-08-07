@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 
 import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+import { TOOL_ACTIVITY_TEXT } from "./canvas-transcript-records.mjs";
 
 const newerProse = "assistant: newest lane prose witness";
-const olderTool = "Bash: git status --short";
 
 function decodeServerFrame(message) {
   return JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
@@ -23,7 +23,7 @@ export async function installActivityReplay(context) {
       if (
         frame.stream === "message" &&
         frame.message?.activity === "tool" &&
-        frame.message.text === olderTool
+        frame.message.text === TOOL_ACTIVITY_TEXT
       ) {
         captured = { frame, message, socket };
       }

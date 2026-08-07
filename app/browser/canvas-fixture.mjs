@@ -23,7 +23,7 @@ import { promisify } from "node:util";
 
 import { HANDSHAKE_TIMEOUT_MS, RECONNECT_DELAY_MS } from "./client-deadlines.mjs";
 import {
-  activityRecord, sessionRecord, toolActivityRecord, toolCallId, toolResultRecord, triggeredActivityRecord,
+  activityRecord, sessionRecord, TOOL_ACTIVITY_TEXT, toolActivityRecord, toolCallId, toolResultRecord, triggeredActivityRecord,
 } from "./canvas-transcript-records.mjs";
 import { assertTiledWorkspace } from "./tiled-workspace.mjs";
 
@@ -239,7 +239,7 @@ export async function assertHeldTaskCount(team, fixture, lane) {
   // by the production capture path, not prose styled to resemble a tool.
   const ticker = team.locator(".ticker");
   await writeFile(join(fixture, ".spice-tool-trigger"), "emit\n");
-  const toolLine = "tool: Bash: git status --short";
+  const toolLine = `tool: ${TOOL_ACTIVITY_TEXT}`;
   await ticker.filter({ hasText: toolLine }).waitFor({ timeout: 15_000 });
   assertNewestLaneActivity(await ticker.innerText(), toolLine);
 

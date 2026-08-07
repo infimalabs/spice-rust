@@ -33,6 +33,11 @@ export const triggeredActivityRecord = assistantRecord([
 // string an operator must never be shown, so the fixture spells a realistic
 // one rather than a friendly placeholder.
 export const toolCallId = "toolu_01LaneStatusStripWitness";
+/// The one strip text both the Canvas fixture and activity replay must match.
+///
+/// Keeping it beside the source record makes a preview-rule change red one
+/// constant instead of leaving a hand-copied replay matcher capturing nothing.
+export const TOOL_ACTIVITY_TEXT = "Bash: git status --short";
 export const toolActivityRecord = assistantRecord([
   {
     type: "tool_use",
