@@ -138,8 +138,12 @@ pub fn ingest(journal: &mut Journal, ingestion: Ingestion) -> Result<Ingested, I
         .map(JournalHead::into_body);
     let observed = observe(&ingestion.root)?;
     let resume = Resume::decide(stored.as_ref(), &observed)?;
-    let scan = listen::scan(&ingestion.root, ingestion.dialect, resume.checkpoint.as_ref())
-        .map_err(IngestError::Scan)?;
+    let scan = listen::scan(
+        &ingestion.root,
+        ingestion.dialect,
+        resume.checkpoint.as_ref(),
+    )
+    .map_err(IngestError::Scan)?;
     if scan.records.is_empty() {
         return Ok(Ingested::Unchanged);
     }
@@ -305,7 +309,7 @@ mod tests {
     use listen::{Dialect, ScanError};
     use tape::Tape;
 
-    use super::{Ingested, IngestError, Ingestion, Journal, TranscriptStreamKey, ingest};
+    use super::{IngestError, Ingested, Ingestion, Journal, TranscriptStreamKey, ingest};
 
     const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116305";
     const PROSE: &[u8] =
@@ -335,7 +339,10 @@ mod tests {
         assert_eq!((first.non_usage_records, first.residue_records), (1, 1));
 
         assert!(
-            matches!(ingest(journal, ingestion(scratch.path())), Ok(Ingested::Unchanged)),
+            matches!(
+                ingest(journal, ingestion(scratch.path())),
+                Ok(Ingested::Unchanged)
+            ),
             "a pass with no new complete record still wrote a batch",
         );
         assert_eq!(batches(journal).len(), 1, "the empty pass appended a fact");
@@ -390,7 +397,9 @@ mod tests {
 
         fs::remove_dir_all(&root).expect("the first generation is removed");
         let replacement = Tape::open(&root).expect("the replacement opens");
-        replacement.tee(&line(PROSE)).expect("the replacement grows");
+        replacement
+            .tee(&line(PROSE))
+            .expect("the replacement grows");
 
         let restarted = accounted(journal, &root);
         assert_eq!(
@@ -400,7 +409,10 @@ mod tests {
         );
         assert_eq!(restarted.from, position(1, 0), "it resumed a dead position");
         assert_ne!(restarted.source, opening.source);
-        assert_eq!(head(journal).expect("a head stands").source, restarted.source);
+        assert_eq!(
+            head(journal).expect("a head stands").source,
+            restarted.source
+        );
         scratch.remove();
     }
 
@@ -455,6 +467,31 @@ mod tests {
         scratch.remove();
     }
 
+    /// A head standing past every member the tape offers is not a resume.
+    ///
+    /// The stored position names a member the tape no longer supplies at all,
+    /// so no boundary exists to continue from. Reading the absence as a fresh
+    /// tape would account the whole generation from the origin a second time,
+    /// so the pass refuses and leaves the head where the last real batch put it.
+    #[test]
+    fn a_head_past_every_member_the_tape_supplies_refuses_without_moving_it() {
+        let scratch = Scratch::new("gap");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
+        tape.tee(&line(USAGE)).expect("the record is durable");
+        let journal = &mut authority();
+        let opening = accounted(journal, scratch.path());
+
+        fs::remove_file(member(scratch.path())).expect("every member is withdrawn");
+
+        match ingest(journal, ingestion(scratch.path())) {
+            Err(IngestError::Scan(ScanError::CheckpointGap { .. })) => {}
+            other => panic!("a head past every member was not refused: {other:?}"),
+        }
+        assert_eq!(head(journal).expect("a head stands").next, opening.to);
+        assert_eq!(batches(journal).len(), 1, "the refusal appended a fact");
+        scratch.remove();
+    }
+
     fn authority() -> Journal {
         Journal::in_memory().expect("in-memory authority")
     }
@@ -484,7 +521,9 @@ mod tests {
         let vendor = "codex".parse().expect("fixture vendor");
         let lane: CanonicalUuid = LANE.parse().expect("fixture lane");
         journal
-            .read(|read| read.transcript_source_head(&TranscriptStreamKey::new(&lane, &vendor, "session")))
+            .read(|read| {
+                read.transcript_source_head(&TranscriptStreamKey::new(&lane, &vendor, "session"))
+            })
             .expect("read the stored head")
             .map(journal::JournalHead::into_body)
     }
@@ -515,7 +554,10 @@ mod tests {
         fs::read_dir(root)
             .expect("the tape root lists")
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .find(|path| path.extension().is_some_and(|extension| extension == "plain"))
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "plain")
+            })
             .expect("a growing tape has one plaintext member")
     }
 
