@@ -17,6 +17,10 @@
 //! [`renew`] is told whether an occupant is alive; neither consults a clock, so
 //! the same facts read in the same order always reduce to the same seat.
 
+// Accounting is a guarded journal write, and journal gates its whole writer
+// vocabulary out of the browser build. The module follows that same gate
+// instead of asking the wasm target to carry a path it can never take.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod account;
 pub mod capture;
 pub mod config;
