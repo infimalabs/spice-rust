@@ -387,6 +387,29 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
+        /// Read one lane's accounted transcript boundary through the writer queue.
+        ///
+        /// Going through the queue is what makes the boundary journal-authoritative
+        /// rather than merely recent: it settles behind every earlier submission,
+        /// so a lifecycle fact records a position no already-committed ingestion
+        /// has moved past.
+        pub fn source_boundary(
+            &self,
+            lane: &journal::crossing::CanonicalUuid,
+        ) -> Result<journal::crossing::body::SourceBoundary, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::SourceBoundary {
+                    lane: *lane,
+                    answer,
+                })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Verify authority through the writer queue, after all earlier
         /// submissions have settled.
         pub fn verify(&self) -> Result<Verification, BusVerifyError> {
@@ -457,6 +480,10 @@ mod runtime {
             digest: journal::crossing::Digest,
             answer:
                 SyncSender<Result<Option<JournalHead<journal::crossing::TrustHead>>, GuardError>>,
+        },
+        SourceBoundary {
+            lane: journal::crossing::CanonicalUuid,
+            answer: SyncSender<Result<journal::crossing::body::SourceBoundary, GuardError>>,
         },
         Verify {
             answer: SyncSender<Result<Verification, VerifyError>>,
@@ -545,6 +572,9 @@ mod runtime {
                 }
                 Request::Trust { digest, answer } => {
                     let _ = answer.send(journal.read(|read| read.trust_head(&digest)));
+                }
+                Request::SourceBoundary { lane, answer } => {
+                    let _ = answer.send(journal.read(|read| read.source_boundary(&lane)));
                 }
                 Request::Verify { answer } => {
                     let _ = answer.send(journal.verify());

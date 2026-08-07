@@ -54,6 +54,27 @@ fn request(command: u8) -> Request {
         expiry: instant(20),
         maximum: instant(35),
         rule: "next".parse().expect("current allocation rule"),
+        source: source_boundary(lane),
+    }
+}
+
+/// A proven boundary carrying one accounted head.
+///
+/// Deliberately not an empty `Proven`: an empty one is byte-identical for every
+/// lane, so a claim fact that dropped the request's boundary entirely would
+/// still compare equal to this fixture and the loss would not show.
+fn source_boundary(lane: CanonicalUuid) -> body::SourceBoundary {
+    body::SourceBoundary::Proven {
+        heads: vec![wire::TranscriptSourceHead {
+            lane,
+            vendor: "claude".parse().expect("fixture vendor"),
+            stream: "session".to_owned(),
+            source: uuid(23),
+            next: body::TranscriptPosition {
+                member: 4,
+                offset: 512,
+            },
+        }],
     }
 }
 
@@ -379,6 +400,7 @@ fn a_claim_without_a_lease_is_a_zero_write_snapshot_fault() {
                 epoch: claim_request.epoch,
                 until: claim_request.expiry,
                 git: None,
+                source: claim_request.source.clone(),
             },
             FactCause::Root,
         )
@@ -426,6 +448,7 @@ fn a_disordered_lease_is_a_zero_write_snapshot_fault() {
                 epoch: claim_request.epoch,
                 until: claim_request.expiry,
                 git: None,
+                source: claim_request.source.clone(),
             },
             FactCause::Root,
         )

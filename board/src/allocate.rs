@@ -42,6 +42,11 @@ pub struct Request {
     pub maximum: Instant,
     /// Handle-free eligibility rule; release one admits only `next`.
     pub rule: Name,
+    /// Accounted transcript the won phase opens at.
+    ///
+    /// Read by the caller rather than here, because this transition builds its
+    /// write from an observation and never holds a journal read of its own.
+    pub source: body::SourceBoundary,
 }
 
 /// The task and journal range won by an allocation.
@@ -298,6 +303,7 @@ fn build_write(
                 epoch: request.epoch,
                 until: request.expiry,
                 git: None,
+                source: request.source.clone(),
             },
             claim_cause,
         )
@@ -630,6 +636,7 @@ mod tests {
             expiry: instant(20),
             maximum: instant(35),
             rule: "next".parse().expect("rule"),
+            source: body::SourceBoundary::Proven { heads: Vec::new() },
         }
     }
 

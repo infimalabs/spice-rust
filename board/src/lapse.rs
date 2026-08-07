@@ -610,6 +610,7 @@ mod tests {
                 expiry: instant(20),
                 maximum: instant(35),
                 rule: "next".parse().expect("rule"),
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
         )
         .expect("win");

@@ -260,12 +260,21 @@ fn task_done(
         Ok(entry) => entry,
         Err(outcome) => return outcome,
     };
-    let (at, transition) = match done_transition(
+    let (at, lane, transition) = match done_transition(
         entry,
         command,
     ) {
         Ok(value) => value,
         Err(outcome) => return outcome,
+    };
+    let source = match bus.source_boundary(&lane) {
+        Ok(source) => source,
+        Err(error) => {
+            return store_fault(
+                "task::boundary-unreadable",
+                &error.to_string(),
+            );
+        }
     };
     let origin = match task_origin(&done.task) {
         Ok(origin) => origin,
@@ -294,6 +303,7 @@ fn task_done(
         entry,
         &transition,
         git,
+        source,
         next,
     ) {
         Ok(answer) => answer,
@@ -335,7 +345,7 @@ fn done_entry<'a>(
 fn done_transition(
     entry: &Entry,
     command: &wire::AdmittedCommand,
-) -> Result<(Instant, board::Transition), Outcome<CommandAnswer>> {
+) -> Result<(Instant, wire::CanonicalUuid, board::Transition), Outcome<CommandAnswer>> {
     let at = current_instant()?;
     let active = board::Active::admit(
         entry,
@@ -381,7 +391,7 @@ fn done_transition(
             "complete only the currently held workflow phase",
         )
     })?;
-    Ok((at, transition))
+    Ok((at, active.lane(), transition))
 }
 
 fn append_done(
@@ -390,6 +400,7 @@ fn append_done(
     entry: &Entry,
     transition: &board::Transition,
     git: Option<GitBoundary>,
+    source: body::SourceBoundary,
     next: Option<Box<str>>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
     let completed = write
@@ -398,6 +409,7 @@ fn append_done(
                 task: done.task.clone(),
                 validation: done.validation.clone(),
                 git,
+                source,
             },
             FactCause::Root,
         )
@@ -475,7 +487,7 @@ fn admit_review<'a>(
     snapshot: &'a ValidatedSnapshot,
     command: &'a wire::AdmittedCommand,
     review: &TaskReview,
-) -> Result<(&'a Entry, board::Transition, Instant), Outcome<CommandAnswer>> {
+) -> Result<(&'a Entry, board::Transition, Instant, wire::CanonicalUuid), Outcome<CommandAnswer>> {
     let Some(entry) = snapshot
         .entries
         .iter()
@@ -511,7 +523,7 @@ fn admit_review<'a>(
             "review only the final assigned workflow phase",
         )
     })?;
-    Ok((entry, transition, at))
+    Ok((entry, transition, at, active.lane()))
 }
 
 /// Decide the verdict a review records and the finding text it carries.
@@ -552,9 +564,13 @@ fn task_review(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let (entry, transition, at) = match admit_review(&snapshot, command, review) {
+    let (entry, transition, at, lane) = match admit_review(&snapshot, command, review) {
         Ok(admitted) => admitted,
         Err(outcome) => return outcome,
+    };
+    let source = match bus.source_boundary(&lane) {
+        Ok(source) => source,
+        Err(error) => return store_fault("review::boundary-unreadable", &error.to_string()),
     };
     let (verdict, finding) = match review_verdict(review) {
         Ok(decided) => decided,
@@ -577,6 +593,7 @@ fn task_review(
             verdict,
             finding,
             git,
+            source,
         },
         FactCause::Root,
     ) {

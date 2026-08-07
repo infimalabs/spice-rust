@@ -50,6 +50,7 @@ fn win_request(command: u8) -> WinRequest {
         expiry: instant(20),
         maximum: instant(35),
         rule: "next".parse().expect("rule"),
+        source: body::SourceBoundary::Proven { heads: Vec::new() },
     }
 }
 
@@ -303,6 +304,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
                 epoch: request.epoch,
                 until: request.expiry,
                 git: None,
+                source: request.source.clone(),
             },
             FactCause::Root,
         )

@@ -254,6 +254,7 @@ fn body(validation: &str) -> body::TaskDone {
         task: handle("SPICE-aBcD"),
         validation: validation.to_owned(),
         git: None,
+        source: body::SourceBoundary::Proven { heads: Vec::new() },
     }
 }
 

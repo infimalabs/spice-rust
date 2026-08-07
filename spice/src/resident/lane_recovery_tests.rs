@@ -171,6 +171,7 @@ fn seed_claim(fixture: &Fixture, seed: &mut JournalWrite, added: PendingFact) {
                 epoch: fixture.old_epoch,
                 until: fixture.expiry,
                 git: None,
+                source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Pending(added),
         )
