@@ -8,7 +8,7 @@ import {
   describeConnection,
   monitorPage,
 } from "./canvas-fixture.mjs";
-import { HANDSHAKE_TIMEOUT_MS, RECONNECT_DELAY_MS } from "./client-deadlines.mjs";
+import { HANDSHAKE_TIMEOUT_MS, RECONNECT_BASE_MS } from "./client-deadlines.mjs";
 
 // The rendered reason quotes the client's deadline back, so this pattern is the
 // one assertion here that fails if the app and its own constant disagree.
@@ -92,9 +92,25 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
     await page.getByLabel("Open Spice Canvas menu").waitFor();
     await chooseCanvasView(page, "Chronology");
     const status = page.locator(".status.offline");
+    // Two handshakes wide, not one. `Offline` is not a resting state the page
+    // settles into here -- `run_surface` sets it, sleeps the backoff, and clears
+    // it to `Connecting` -- so this waits on a window exactly as wide as the
+    // client's first delay. Everywhere else that window is effectively open,
+    // because a retry against a stopped resident is refused instantly and the
+    // next `Offline` follows it within a millisecond. Only here does the retry
+    // *stall*, holding `Connecting` for a whole handshake deadline and leaving
+    // that delay as a narrow island in a much longer cycle.
+    //
+    // One handshake plus slack covered that island when the delay was flat and
+    // wide. Against a ladder starting at `RECONNECT_BASE_MS` it is the shortest
+    // window the client will ever render, and a bound this size reaches the next
+    // one only if the setup above happened to be slow -- so a fast machine got a
+    // single chance at it and a loaded one missed it. Spanning the second island
+    // makes the wait independent of how long the setup took.
     const statusOutcome = status
       .waitFor({
-        timeout: HANDSHAKE_TIMEOUT_MS + renderedToleranceMilliseconds,
+        timeout:
+          2 * HANDSHAKE_TIMEOUT_MS + RECONNECT_BASE_MS + renderedToleranceMilliseconds,
       })
       .then(() => null, (error) => error);
     const [closed, second] = await Promise.all([firstClosed, secondRequest]);
@@ -105,10 +121,14 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
         HANDSHAKE_TIMEOUT_MS - dispatchToleranceMilliseconds,
       "the abort was not an inverted or prematurely short handshake deadline",
     );
+    // The base and not the ceiling: this is the first attempt to end, so the
+    // client's ladder is still on its bottom rung. A later retry in the same
+    // outage would owe more than this, which is why the bound names the rung it
+    // means rather than the delay in general.
     assert.ok(
       second.opened - first.opened >=
         HANDSHAKE_TIMEOUT_MS +
-          RECONNECT_DELAY_MS -
+          RECONNECT_BASE_MS -
           dispatchToleranceMilliseconds,
       "the retry includes the production reconnect interval after the deadline",
     );

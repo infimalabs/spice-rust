@@ -155,6 +155,26 @@ pub enum StreamRequest {
         /// First causal position for this page.
         cursor: StreamCursor,
     },
+    /// Ask the resident to prove it is still reading this socket.
+    ///
+    /// A half-open socket stays open and simply stops delivering, so silence on
+    /// its own is not evidence of a fault: a quiet board is silent too. This is
+    /// what separates the two. It carries no cursor and asks for no state, so
+    /// the answer means one thing only -- the resident read this frame and
+    /// wrote back on the same socket.
+    ///
+    /// The transport's own ping cannot serve here. Browsers expose no way to
+    /// send a WebSocket ping frame, so the probe a browser can send has to live
+    /// above the transport, which is why this is a stream request rather than a
+    /// control frame.
+    Ping {
+        /// Current wire version.
+        v: WireVersion,
+        /// Correlation identity for this probe.
+        id: CanonicalUuid,
+        /// Resident generation being addressed.
+        epoch: CanonicalUuid,
+    },
 }
 
 impl StreamRequest {
@@ -162,7 +182,10 @@ impl StreamRequest {
     #[must_use]
     pub const fn id(&self) -> CanonicalUuid {
         match self {
-            Self::Subscribe { id, .. } | Self::Continue { id, .. } | Self::Thread { id, .. } => *id,
+            Self::Subscribe { id, .. }
+            | Self::Continue { id, .. }
+            | Self::Thread { id, .. }
+            | Self::Ping { id, .. } => *id,
         }
     }
 
@@ -181,6 +204,7 @@ impl StreamRequest {
             | Self::Thread {
                 v, epoch, cursor, ..
             } => (*v, *epoch, Some(*cursor)),
+            Self::Ping { v, epoch, .. } => (*v, *epoch, None),
         };
         if !wire.is_current() {
             return Err(StreamAdmissionError::Wire(Refusal {
@@ -476,6 +500,17 @@ pub enum StreamFrame {
         id: CanonicalUuid,
         epoch: CanonicalUuid,
         message: AgentMessage,
+    },
+    /// The resident read a [`StreamRequest::Ping`] and answered on that socket.
+    ///
+    /// This frame deliberately carries no state. Its whole content is that it
+    /// arrived, so a client that applies it must change nothing: a probe that
+    /// redrew the surface every time it proved the socket healthy would make
+    /// an idle board move for no reason anyone could point at.
+    Pong {
+        v: WireVersion,
+        id: CanonicalUuid,
+        epoch: CanonicalUuid,
     },
     /// The authenticated principal cannot admit the request as written.
     Refusal {

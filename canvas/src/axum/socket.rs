@@ -464,6 +464,18 @@ async fn route_stream(
             })),
         },
         wire::StreamRequest::Thread { .. } => source.thread(accepted, &request),
+        // Admitted like every other request, so a probe from a replaced
+        // generation is told so rather than being reassured by a Pong. The
+        // client only needs *an* answer to prove the socket still carries
+        // traffic, so a refusal serves that purpose as well as a Pong does.
+        wire::StreamRequest::Ping { id, .. } => request
+            .admit(state.epoch)
+            .map(|()| wire::StreamFrame::Pong {
+                v: wire::WireVersion::CURRENT,
+                id: *id,
+                epoch: state.epoch,
+            })
+            .map_err(crate::stream::Failure::admission),
     };
     if !state.capabilities.matches(capability, &accepted.actor) {
         send_replaced(socket, state.epoch, Some(request.id())).await;

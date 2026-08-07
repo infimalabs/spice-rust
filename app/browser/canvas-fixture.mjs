@@ -17,7 +17,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { HANDSHAKE_TIMEOUT_MS, RECONNECT_DELAY_MS } from "./client-deadlines.mjs";
+import {
+  HANDSHAKE_TIMEOUT_MS,
+  LIVENESS_PROBE_MS,
+  RECONNECT_BASE_MS,
+} from "./client-deadlines.mjs";
 import {
   TOOL_ACTIVITY_TEXT,
   activityRecord,
@@ -502,10 +506,17 @@ export function monitorPage(page) {
 // bound. The connection flip itself is not the slow part and is not polled:
 // `app/src/browser.rs` `run_surface` sets `Connection::Offline` the instant
 // `run_connection` returns, and `run_connection` returns as soon as the socket
-// reader yields nothing, mapped to "resident closed the socket". No heartbeat
-// or interval sits anywhere on that path, and `stopResident` below awaits the
+// reader yields nothing, mapped to "resident closed the socket". No interval
+// sits between the close and the flip, and `stopResident` below awaits the
 // resident process exit, so the close has already happened before any such
 // wait is armed.
+//
+// The client has since gained a liveness exchange, which does not change that.
+// It is what *produces* an end for a socket that would otherwise never yield --
+// it cannot delay one that already yielded. So a wait that follows a real close
+// is still bounded by `TRANSITION_MS`, and only a wait on a socket that stopped
+// delivering without closing owes the two probe intervals `HALF_OPEN_DETECT_MS`
+// spends.
 //
 // What is not settled before the wait is armed is *this* function. The status
 // element is not part of a permanently rendered chrome: `app/src/browser.rs`
@@ -565,15 +576,60 @@ export const CONNECT_MS = HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
 
 /// Bound for a wait on the page reconnecting after its socket closed.
 ///
-/// This one has a floor written into the client, which sleeps `RECONNECT_DELAY_MS`
-/// before every retry with no backoff, so no reconnect can be observed sooner and
-/// any bound near the offline flip's 2ms would fail every single time. The
-/// measurement lands exactly where that predicts and barely varies: 1283ms
-/// minimum, 1287ms median and 1290ms maximum over 25 cycles, the flat 1200ms
-/// delay plus 83ms to 90ms of real handshake. The sum is the longest a single
-/// successful retry can take: the delay, one whole handshake attempt at its own
-/// deadline, and the render.
-export const RECONNECT_MS = RECONNECT_DELAY_MS + HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
+/// This one has a floor written into the client, which sleeps at least
+/// `RECONNECT_BASE_MS` before retrying, so no reconnect can be observed sooner
+/// and any bound near the offline flip's 2ms would fail every single time. The
+/// base rather than the ceiling is the right floor here only because every
+/// caller reaches this after an *admitted* connection ended, which is exactly
+/// where the client resets its ladder; a wait placed after a failed attempt
+/// would be entitled to the ladder's ceiling and would have to say so. The sum
+/// is the longest a single successful retry can take: the delay, one whole
+/// handshake attempt at its own deadline, and the render.
+///
+/// The measurement below predates the ladder, when the delay was a flat 1200ms:
+/// 1283ms minimum, 1287ms median, 1290ms maximum over 25 cycles, that delay plus
+/// 83ms to 90ms of real handshake. Only the delay term changed, so the handshake
+/// and render those runs measured still stand and the observation is now
+/// expected 700ms sooner rather than invalidated.
+export const RECONNECT_MS = RECONNECT_BASE_MS + HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
+
+/// Allowance for drift on a deadline the client waits out rather than beats.
+///
+/// Every other bound here adds `RENDER_SLACK_MS` to a client deadline that the
+/// client comes in far under: a handshake budgeted `HANDSHAKE_TIMEOUT_MS`
+/// completes in 83ms to 90ms, so those sums carry seconds of unspent reserve and
+/// a slow render is absorbed long before it reaches the bound. A liveness
+/// interval is not that kind of deadline. It is a timer, and the client waits out
+/// every millisecond of both of them by design, so the sum below is already spent
+/// down to a render before this wait can succeed at all and the slack is the only
+/// margin it has.
+///
+/// What that margin absorbs is different in kind too. A render is work the
+/// machine either does promptly or does not; timer drift accrues in proportion to
+/// how long the timers run, and these run for thirty seconds on the host this
+/// file already documents at load average 124. So the allowance is a fraction of
+/// the timers rather than a constant, which is also what keeps it correct if the
+/// client's interval moves -- a flat number chosen against today's thirty seconds
+/// would quietly become strict against sixty.
+///
+/// Two observations, 30023ms and 29988ms, against the 30000ms the timers
+/// themselves account for: both land within 23ms of it, and they fall on either
+/// side because the wait arms a little after the client's timer starts rather
+/// than with it, so an elapsed time under the timers is expected and is not
+/// evidence of a short deadline. Ten percent is roughly a hundred and thirty
+/// times that deviation, which is the margin `TRANSITION_MS` above is defended by
+/// rather than a new standard invented here.
+const TIMER_DRIFT_FRACTION = 0.1;
+
+/// Bound for a wait on the client noticing a socket that stopped delivering.
+///
+/// A half-open socket never fires close on its own, so this is not a network
+/// timeout but the client's own two-interval liveness exchange: one interval to
+/// earn the right to ask, a probe, and a second interval in which no answer is
+/// the answer. The intervals are the client's own bound, twice, and are not
+/// picked; only the drift allowance and the render on top of them are.
+export const HALF_OPEN_DETECT_MS =
+  Math.round(2 * LIVENESS_PROBE_MS * (1 + TIMER_DRIFT_FRACTION)) + RENDER_SLACK_MS;
 
 export async function chooseCanvasView(page, name) {
   const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
@@ -817,7 +873,7 @@ export async function assertResidentRestart(fixture, page, previous) {
   await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(page, "Chronology");
   // This is a cold connect, not a reconnect: the line above navigates afresh and
-  // waits for `networkidle`, so the client is not sitting out `RECONNECT_DELAY`
+  // waits for `networkidle`, so the client is not sitting out a retry delay
   // and the page has a live socket before this wait arms. Bounding it as a
   // reconnect would hide a genuinely stalled restart behind the retry delay.
   await assertGenerationOnline(
