@@ -95,6 +95,7 @@ fn claim(journal: &mut Journal, command: u8) {
             expiry: instant(20),
             maximum: instant(35),
             git: None,
+            source: body::SourceBoundary::Proven { heads: Vec::new() },
         },
     )
     .expect("the claim mints");
@@ -367,6 +368,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
                 epoch: uuid(22),
                 until: instant(20),
                 git: None,
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
         )

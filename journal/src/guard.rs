@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 use serde::Serialize;
 
 use crate::Journal;
+use wire::body::SourceBoundary;
 
 /// A fact added earlier in the same guarded transaction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -368,6 +369,196 @@ impl JournalRead<'_> {
         stream: &wire::TranscriptStreamKey,
     ) -> Result<Option<JournalHead<wire::TranscriptSourceHead>>, GuardError> {
         self.text_head("transcript_source_heads", "stream", stream.as_str())
+    }
+
+    /// Every accounted transcript head for one lane, in ascending stream order.
+    ///
+    /// The singular [`Self::transcript_source_head`] addresses one stream and
+    /// needs a vendor and stream name to compose its key. A lane alone cannot
+    /// supply them and nothing here maps a lane to the vendors that have
+    /// occupied it, so this answers the question a lane *can* ask: everything
+    /// accounted beneath it. One lane hosts several vendors over its life, which
+    /// makes the whole set the honest answer rather than a convenience.
+    ///
+    /// The lane is matched against each decoded body rather than against a
+    /// pattern over the stored key, because the body is the durable spelling and
+    /// a stored key disagreeing with it is a head violation. That violation is
+    /// reported instead of being silently included or dropped, and it is checked
+    /// for every row rather than only the matching ones: the journal is one
+    /// authority, so a corrupt row is corrupt no matter whose lane asked.
+    pub fn transcript_source_heads(
+        &self,
+        lane: &wire::CanonicalUuid,
+    ) -> Result<Vec<JournalHead<wire::TranscriptSourceHead>>, GuardError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT stream, head_seq, body FROM transcript_source_heads ORDER BY stream")
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(GuardError::Store)?;
+        let mut heads = Vec::new();
+        for row in rows {
+            let (stream, position, bytes) = row.map_err(GuardError::Store)?;
+            heads.push(self.decoded_source_head(&stream, position, &bytes)?);
+        }
+        heads.retain(|head: &JournalHead<wire::TranscriptSourceHead>| &head.body.lane == lane);
+        Ok(heads)
+    }
+
+    /// The accounted transcript boundary a lane's phase interval opens or closes at.
+    ///
+    /// This is the only way a lifecycle fact obtains a boundary, so every such
+    /// fact names the same authority. It answers [`SourceBoundary::Proven`] or
+    /// it fails: a lane with nothing accounted yet is proven at zero heads, and
+    /// a journal that cannot be read is a violated assumption rather than an
+    /// unprovable boundary. Degrading a read failure into
+    /// [`SourceBoundary::Incomplete`] would record *unknown* where the truth is
+    /// *broken*.
+    ///
+    /// No live producer writes `Incomplete`: every one of them admits a claim
+    /// before it writes, and a claim carries a lane, so a producer that has
+    /// nothing to ask about here does not exist. The variant is reached only by
+    /// the forward migration of facts stored before boundaries were recorded,
+    /// whose boundary genuinely cannot be proven because nothing recorded it.
+    pub fn source_boundary(
+        &self,
+        lane: &wire::CanonicalUuid,
+    ) -> Result<SourceBoundary, GuardError> {
+        Ok(SourceBoundary::Proven {
+            heads: self
+                .transcript_source_heads(lane)?
+                .into_iter()
+                .map(|head| head.body)
+                .collect(),
+        })
+    }
+
+    /// Every lane a live claim is currently bound to.
+    ///
+    /// A membership transition records boundaries only for these, because a
+    /// lane nobody is working spends nothing across the move and a boundary for
+    /// it would be attribution noise the reducer has to filter back out. The
+    /// disposition is read from the decoded head rather than from a query
+    /// predicate so an ended claim can never be counted as live.
+    pub fn actively_claimed_lanes(&self) -> Result<Vec<wire::CanonicalUuid>, GuardError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT handle, head_seq, body FROM claim_heads ORDER BY handle")
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(GuardError::Store)?;
+        let mut lanes = Vec::new();
+        for row in rows {
+            let (handle, position, bytes) = row.map_err(GuardError::Store)?;
+            let head = self.decoded_claim_head(&handle, position, &bytes)?;
+            if head.body.disposition == wire::ClaimDisposition::Active {
+                lanes.push(head.body.lane);
+            }
+        }
+        Ok(lanes)
+    }
+
+    /// Boundaries for each named lane that is actively claimed, in the given order.
+    ///
+    /// The filter is applied here rather than by each caller so every membership
+    /// transition scopes attribution the same way, and the answer stays empty
+    /// rather than becoming a second spelling of *unknown* when no named lane is
+    /// claimed: an empty list says no claimed lane moved, which is exactly what
+    /// the reducer needs to attribute nothing across the transition.
+    pub fn lane_source_boundaries(
+        &self,
+        lanes: &[wire::CanonicalUuid],
+    ) -> Result<Vec<wire::body::LaneSourceBoundary>, GuardError> {
+        let claimed = self.actively_claimed_lanes()?;
+        lanes
+            .iter()
+            .filter(|lane| claimed.contains(lane))
+            .map(|lane| {
+                Ok(wire::body::LaneSourceBoundary {
+                    lane: *lane,
+                    source: self.source_boundary(lane)?,
+                })
+            })
+            .collect()
+    }
+
+    /// Decode one claim head and prove it against its stored position.
+    ///
+    /// The same two checks [`Self::claim_head`] makes when it is asked for one
+    /// handle, so a scan cannot admit a row the keyed read would have refused.
+    fn decoded_claim_head(
+        &self,
+        handle: &str,
+        position: i64,
+        bytes: &[u8],
+    ) -> Result<JournalHead<wire::ClaimHead>, GuardError> {
+        let head: JournalHead<wire::ClaimHead> = decode_head(position, bytes).map_err(|error| {
+            let detail = match error {
+                GuardError::Invalid(detail) => detail,
+                other => other.to_string(),
+            };
+            GuardError::Invalid(format!("claim head {handle:?} is invalid: {detail}"))
+        })?;
+        if head.body.fact != head.position {
+            return Err(GuardError::Invalid(format!(
+                "task {handle} claim head fact disagrees with head_seq"
+            )));
+        }
+        if self.cursor.is_none_or(|cursor| head.position > cursor) {
+            return Err(GuardError::Invalid(format!(
+                "claim head {handle:?} position {} is beyond cursor {:?}",
+                head.position,
+                self.cursor.map(wire::Seq::get)
+            )));
+        }
+        Ok(head)
+    }
+
+    /// Decode one transcript source head and prove it against its stored key.
+    fn decoded_source_head(
+        &self,
+        stream: &str,
+        position: i64,
+        bytes: &[u8],
+    ) -> Result<JournalHead<wire::TranscriptSourceHead>, GuardError> {
+        let head: JournalHead<wire::TranscriptSourceHead> =
+            decode_head(position, bytes).map_err(|error| {
+                let detail = match error {
+                    GuardError::Invalid(detail) => detail,
+                    other => other.to_string(),
+                };
+                GuardError::Invalid(format!(
+                    "transcript source head {stream:?} is invalid: {detail}"
+                ))
+            })?;
+        if head.body.key().as_str() != stream {
+            return Err(GuardError::Invalid(format!(
+                "transcript source head stored as {stream:?} names {:?}",
+                head.body.key().as_str()
+            )));
+        }
+        if self.cursor.is_none_or(|cursor| head.position > cursor) {
+            return Err(GuardError::Invalid(format!(
+                "transcript source head {stream:?} position {} is beyond cursor {:?}",
+                head.position,
+                self.cursor.map(wire::Seq::get)
+            )));
+        }
+        Ok(head)
     }
 
     /// Current resident head, when an epoch has been seated.

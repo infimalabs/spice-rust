@@ -387,6 +387,52 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
+        /// Read boundaries for the actively claimed lanes among `lanes`.
+        ///
+        /// One submission rather than a boundary read per lane, so every lane in
+        /// a membership transition is measured at the same barrier. Reading them
+        /// separately would let live capture advance between two lanes of the
+        /// same move and record a split that never existed at any instant.
+        pub fn lane_source_boundaries(
+            &self,
+            lanes: &[journal::crossing::CanonicalUuid],
+        ) -> Result<Vec<journal::crossing::body::LaneSourceBoundary>, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::LaneSourceBoundaries {
+                    lanes: lanes.to_vec(),
+                    answer,
+                })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
+        /// Read one lane's accounted transcript boundary through the writer queue.
+        ///
+        /// Going through the queue is what makes the boundary journal-authoritative
+        /// rather than merely recent: it settles behind every earlier submission,
+        /// so a lifecycle fact records a position no already-committed ingestion
+        /// has moved past.
+        pub fn source_boundary(
+            &self,
+            lane: &journal::crossing::CanonicalUuid,
+        ) -> Result<journal::crossing::body::SourceBoundary, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::SourceBoundary {
+                    lane: *lane,
+                    answer,
+                })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Verify authority through the writer queue, after all earlier
         /// submissions have settled.
         pub fn verify(&self) -> Result<Verification, BusVerifyError> {
@@ -457,6 +503,15 @@ mod runtime {
             digest: journal::crossing::Digest,
             answer:
                 SyncSender<Result<Option<JournalHead<journal::crossing::TrustHead>>, GuardError>>,
+        },
+        SourceBoundary {
+            lane: journal::crossing::CanonicalUuid,
+            answer: SyncSender<Result<journal::crossing::body::SourceBoundary, GuardError>>,
+        },
+        LaneSourceBoundaries {
+            lanes: Vec<journal::crossing::CanonicalUuid>,
+            answer:
+                SyncSender<Result<Vec<journal::crossing::body::LaneSourceBoundary>, GuardError>>,
         },
         Verify {
             answer: SyncSender<Result<Verification, VerifyError>>,
@@ -545,6 +600,12 @@ mod runtime {
                 }
                 Request::Trust { digest, answer } => {
                     let _ = answer.send(journal.read(|read| read.trust_head(&digest)));
+                }
+                Request::SourceBoundary { lane, answer } => {
+                    let _ = answer.send(journal.read(|read| read.source_boundary(&lane)));
+                }
+                Request::LaneSourceBoundaries { lanes, answer } => {
+                    let _ = answer.send(journal.read(|read| read.lane_source_boundaries(&lanes)));
                 }
                 Request::Verify { answer } => {
                     let _ = answer.send(journal.verify());

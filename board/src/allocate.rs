@@ -45,6 +45,11 @@ pub struct Mint<'a> {
     pub maximum: Instant,
     /// Worktree boundary recorded with the claim, for callers that have one.
     pub git: Option<body::GitBoundary>,
+    /// Accounted transcript the won phase opens at.
+    ///
+    /// Read by the caller rather than here, because this writer is handed an
+    /// already-open transaction and never holds a journal read of its own.
+    pub source: body::SourceBoundary,
 }
 
 /// Which of a claim's facts failed to build.
@@ -129,6 +134,7 @@ pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, 
         expiry,
         maximum,
         git,
+        source,
         ..
     } = request;
     let won = write
@@ -141,6 +147,7 @@ pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, 
                 epoch,
                 until: expiry,
                 git,
+                source,
             },
             cause,
         )

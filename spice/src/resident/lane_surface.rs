@@ -277,65 +277,30 @@ pub(super) fn arrange(
     command: &wire::AdmittedCommand,
     request: &LaneArrange,
 ) -> Outcome<CommandAnswer> {
-    if request.lane == request.before {
-        return lane_refusal(
-            "lane::arrange-self",
-            Some("a different target lane".to_owned()),
-            Some(request.lane.to_string()),
-            "drop the primary composer on another seated member",
-        );
-    }
     let observed = match current_residency(bus, epoch) {
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let Some(source_index) = observed
-        .body()
-        .lanes
-        .iter()
-        .position(|row| row.lane == request.lane)
-    else {
-        return lane_refusal(
-            "lane::arrange-source-missing",
-            Some("one current seated member".to_owned()),
-            Some(request.lane.to_string()),
-            "read lane state and retry with a current source member",
-        );
+    let Arrangement {
+        next,
+        from_lineage,
+        lineage,
+    } = match rearrange(observed.body(), request) {
+        Ok(arrangement) => arrangement,
+        Err(outcome) => return outcome,
     };
-    let Some(target) = observed
-        .body()
-        .lanes
-        .iter()
-        .find(|row| row.lane == request.before)
-    else {
-        return lane_refusal(
-            "lane::arrange-target-missing",
-            Some("one current seated member".to_owned()),
-            Some(request.before.to_string()),
-            "read lane state and retry with a current target member",
-        );
-    };
-    let target_lineage = target.lineage_id;
-    let from_lineage = observed.body().lanes[source_index].lineage_id;
-    let mut next = observed.body().clone();
-    let mut source = next.lanes.remove(source_index);
-    let Some(target_index) = next.lanes.iter().position(|row| row.lane == request.before) else {
-        return typed_store_fault(
-            "lane::arrange-target-lost",
-            "the target member disappeared while arranging one residency snapshot",
-        );
-    };
-    source.lineage_id = target_lineage;
-    next.lanes.insert(target_index, source);
-    if from_lineage != target_lineage
-        && !next.lanes.iter().any(|row| row.lineage_id == from_lineage)
-    {
-        next.subscriptions
-            .retain(|subscription| subscription.lineage_id != from_lineage);
-    }
     let lane_answer = match answer(&next, None, seats) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
+    };
+    // Read before the write is opened, so an unreadable boundary refuses the
+    // whole arrangement instead of committing a move whose attribution split
+    // nothing can reconstruct.
+    let sources = match bus.lane_source_boundaries(&[request.lane]) {
+        Ok(sources) => sources,
+        Err(error) => {
+            return typed_store_fault("lane::arrange-boundary-unreadable", &error.to_string());
+        }
     };
     let mut write = match write(
         command.actor().clone(),
@@ -350,8 +315,9 @@ pub(super) fn arrange(
         wire::body::LaneArranged {
             lane: request.lane,
             from_lineage_id: from_lineage,
-            lineage_id: target_lineage,
+            lineage_id: lineage,
             before: request.before,
+            sources,
         },
         FactCause::Existing(observed.position()),
     ) {
@@ -383,6 +349,72 @@ pub(super) fn arrange(
         }),
         Err(outcome) => typed_outcome(outcome),
     }
+}
+
+/// One arrangement resolved against the observed head.
+struct Arrangement {
+    next: wire::ResidencyHead,
+    from_lineage: CanonicalUuid,
+    lineage: CanonicalUuid,
+}
+
+/// Resolve one arrangement against the observed order, or refuse it.
+///
+/// Every way the request can fail to name a move is decided here, against one
+/// snapshot and before any write is opened, so a refusal costs no journal bytes.
+fn rearrange(
+    observed: &wire::ResidencyHead,
+    request: &LaneArrange,
+) -> Result<Arrangement, Outcome<CommandAnswer>> {
+    if request.lane == request.before {
+        return Err(lane_refusal(
+            "lane::arrange-self",
+            Some("a different target lane".to_owned()),
+            Some(request.lane.to_string()),
+            "drop the primary composer on another seated member",
+        ));
+    }
+    let Some(source_index) = observed
+        .lanes
+        .iter()
+        .position(|row| row.lane == request.lane)
+    else {
+        return Err(lane_refusal(
+            "lane::arrange-source-missing",
+            Some("one current seated member".to_owned()),
+            Some(request.lane.to_string()),
+            "read lane state and retry with a current source member",
+        ));
+    };
+    let Some(target) = observed.lanes.iter().find(|row| row.lane == request.before) else {
+        return Err(lane_refusal(
+            "lane::arrange-target-missing",
+            Some("one current seated member".to_owned()),
+            Some(request.before.to_string()),
+            "read lane state and retry with a current target member",
+        ));
+    };
+    let lineage = target.lineage_id;
+    let from_lineage = observed.lanes[source_index].lineage_id;
+    let mut next = observed.clone();
+    let mut source = next.lanes.remove(source_index);
+    let Some(target_index) = next.lanes.iter().position(|row| row.lane == request.before) else {
+        return Err(typed_store_fault(
+            "lane::arrange-target-lost",
+            "the target member disappeared while arranging one residency snapshot",
+        ));
+    };
+    source.lineage_id = lineage;
+    next.lanes.insert(target_index, source);
+    if from_lineage != lineage && !next.lanes.iter().any(|row| row.lineage_id == from_lineage) {
+        next.subscriptions
+            .retain(|subscription| subscription.lineage_id != from_lineage);
+    }
+    Ok(Arrangement {
+        next,
+        from_lineage,
+        lineage,
+    })
 }
 
 fn admit_seat(
