@@ -216,6 +216,7 @@ mod tests {
     const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116305";
     const FIRST: &str = "018f82d4-6f59-7d06-92e3-bce913116306";
     const SECOND: &str = "018f82d4-6f59-7d06-92e3-bce913116307";
+    const THIRD: &str = "018f82d4-6f59-7d06-92e3-bce913116308";
     /// Bytes the fixture's first batch accounts, starting at the origin.
     const OPENING: u64 = 4096;
 
@@ -307,6 +308,36 @@ mod tests {
             batches(journal),
             vec![(1, opening), (2, successor)],
             "seating a new generation disturbed the batches the old one wrote",
+        );
+    }
+
+    /// A supersession has to name the generation the head actually holds.
+    ///
+    /// Making the claim is not the same as making it truthfully. A batch naming
+    /// some third generation describes a head this authority never carried, and
+    /// seating it would abandon the position the stored generation really is
+    /// accounted to: every byte FIRST already spent would be re-accounted from
+    /// the origin under SECOND. The sibling above only ever offers the claim
+    /// absent or exactly right, so it cannot tell identity from presence.
+    #[test]
+    fn a_supersession_naming_a_generation_the_head_never_held_is_refused() {
+        let journal = &mut authority();
+        let opening = batch(FIRST, 0, OPENING);
+        account(journal, accounting(opening.clone())).expect("the opening batch accounts");
+
+        let mut successor = batch(SECOND, 0, 256);
+        successor.supersedes = Some(uuid(THIRD));
+        let detail = refusal(journal, successor);
+        assert!(
+            detail.contains(THIRD) && detail.contains(FIRST),
+            "the refusal named neither the claimed generation nor the stored one: {detail}",
+        );
+
+        assert_eq!(checkpoint(journal), Some(opening.to));
+        assert_eq!(
+            batches(journal),
+            vec![(1, opening)],
+            "a refused supersession still appended its batch",
         );
     }
 
@@ -421,13 +452,8 @@ mod tests {
 
     /// Position the stored head stands at, absent until a batch is accounted.
     fn checkpoint(journal: &Journal) -> Option<body::TranscriptPosition> {
-        let key = TranscriptStreamKey::new(
-            &LANE
-                .parse::<CanonicalUuid>()
-                .expect("fixture lane identity"),
-            &"claude".parse().expect("fixture vendor"),
-            "session",
-        );
+        let vendor = "claude".parse().expect("fixture vendor");
+        let key = TranscriptStreamKey::new(&uuid(LANE), &vendor, "session");
         journal
             .read(|read| read.transcript_source_head(&key))
             .expect("read the stored checkpoint")

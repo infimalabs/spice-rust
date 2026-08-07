@@ -29,8 +29,8 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
         );
     }
 
-    // The process under test is the real verifier binary. Its six Cargo build
-    // and test actions and browser receipt are satisfied by logged fixtures so
+    // The process under test is the real verifier binary. Its seven Cargo build,
+    // test, and documentation actions and browser receipt are logged fixtures so
     // this integration test does not recursively launch either toolchain from
     // inside Cargo. The following battery action is not replaceable and
     // executes through SystemRunner.
@@ -89,7 +89,7 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
         fs::read_to_string(&cargo_log)
             .expect("read verifier Cargo actions")
             .lines()
-            .take(6)
+            .take(7)
             .collect::<Vec<_>>(),
         [
             "fmt --all -- --check",
@@ -97,6 +97,7 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
             "test --locked --workspace --all-targets",
+            "doc --locked --workspace --lib --bins --no-deps",
             "test --locked --workspace --doc",
         ]
     );

@@ -111,12 +111,19 @@ const VERIFY_ACTIONS: [Action; 11] = [
         &["test", "--locked", "--workspace", "--all-targets"],
     )),
     Action::Command(Step::cargo(
-        "cargo test --locked --workspace --doc",
-        &["test", "--locked", "--workspace", "--doc"],
+        DOCUMENTATION_LABEL,
+        &[
+            "doc",
+            "--locked",
+            "--workspace",
+            "--lib",
+            "--bins",
+            "--no-deps",
+        ],
     )),
     Action::Command(Step::cargo(
-        DOC_LABEL,
-        &["doc", "--locked", "--workspace", "--no-deps"],
+        "cargo test --locked --workspace --doc",
+        &["test", "--locked", "--workspace", "--doc"],
     )),
     Action::Battery,
     Action::Landing,
@@ -130,23 +137,26 @@ const SCOPED_COMMANDS: [ScopedCommand; 4] = [
 ];
 
 const BATTERY_LABEL: &str = "canonical Rust gate battery";
-/// Rustdoc link resolution, which no other action evaluates.
+/// Documentation is swept with the targets named, not with cargo's default set.
 ///
+/// This is also the only action that resolves intra-doc links at all.
 /// `cargo test --locked --workspace --doc` compiles and runs the code *inside*
-/// doc comments; it never resolves an intra-doc link, so a link naming an item
-/// that does not exist passes it. That gap is measured rather than assumed:
-/// CLI-1kKlPrCW repaired one broken link, CLI-1kKlQfSH then found seven more
-/// across app, proof, wire and gate, and every one had landed through a fully
-/// green verify.
+/// doc comments and never resolves a link, so a link naming an item that does
+/// not exist passes it. That gap is measured rather than assumed: CLI-1kKlPrCW
+/// repaired one broken link, CLI-1kKlQfSH then found seven more across app,
+/// proof, wire and gate, and every one had landed through a fully green verify.
 ///
-/// No `RUSTDOCFLAGS` is needed. `[workspace.lints.rust] warnings = "deny"`
-/// implies `-D rustdoc::broken-intra-doc-links`, so one bad link fails its
-/// whole crate with `could not document` rather than warning.
-///
-/// This reaches libraries only: cargo silently drops a bin whose name collides
-/// with its lib, hiding `spice/src/main.rs` and `xtask/src/main.rs`. Widening
-/// the target set to those two is CLI-1kKlgHHB.
-const DOC_LABEL: &str = "cargo doc --locked --workspace --no-deps";
+/// `spice` and `xtask` each auto-discover a `src/lib.rs` and a same-named
+/// `src/main.rs`, and both targets would write `target/doc/<name>/index.html`.
+/// Left to choose, cargo settles that collision by documenting the library and
+/// dropping the binary silently: no warning, exit 0. `--lib --bins` asks for
+/// both, so cargo documents each binary too, prints its own
+/// `rust-lang/cargo#6313` collision note, and runs rustdoc over
+/// `spice/src/main.rs` and `xtask/src/main.rs` -- including the twenty-three
+/// modules `spice/src/main.rs` declares that its library does not. Under
+/// `-D warnings` a broken intra-doc link in either file is a hard error, and
+/// under the default target set nothing in this tree ever raised it.
+const DOCUMENTATION_LABEL: &str = "cargo doc --locked --workspace --lib --bins --no-deps";
 /// Precondition rather than a check of this tree, which is why it runs first.
 ///
 /// Every other action asks whether the tree is correct. This one asks whether
@@ -971,18 +981,48 @@ mod tests {
                 &["test", "--locked", "--workspace", "--all-targets"],
             )),
             Action::Command(Step::cargo(
-                "cargo test --locked --workspace --doc",
-                &["test", "--locked", "--workspace", "--doc"],
+                "cargo doc --locked --workspace --lib --bins --no-deps",
+                &[
+                    "doc",
+                    "--locked",
+                    "--workspace",
+                    "--lib",
+                    "--bins",
+                    "--no-deps",
+                ],
             )),
             Action::Command(Step::cargo(
-                "cargo doc --locked --workspace --no-deps",
-                &["doc", "--locked", "--workspace", "--no-deps"],
+                "cargo test --locked --workspace --doc",
+                &["test", "--locked", "--workspace", "--doc"],
             )),
             Action::Battery,
             Action::Landing,
         ];
 
         assert_eq!(VERIFY_ACTIONS.as_slice(), GUARDED_ACTIONS.as_slice());
+    }
+
+    /// Cargo's default target set documents `spice` and `xtask` as libraries
+    /// only: each has a binary whose name collides with its library
+    /// (`rust-lang/cargo#6313`) and cargo drops it without a word. Both
+    /// `main.rs` files carry doc comments, so the sweep has to name its targets
+    /// or those two files are never rustdoc-linted at all.
+    #[test]
+    fn documentation_names_its_targets_so_the_colliding_binaries_are_linted() {
+        let sweep = VERIFY_ACTIONS
+            .iter()
+            .find_map(|action| match action {
+                Action::Command(step) if step.label == DOCUMENTATION_LABEL => Some(step.arguments),
+                _ => None,
+            })
+            .expect("the verifier has a documentation step");
+
+        assert!(sweep.contains(&"--bins"), "{sweep:?} selects no binaries");
+        assert!(sweep.contains(&"--lib"), "{sweep:?} selects no libraries");
+        assert!(
+            sweep.contains(&"--workspace"),
+            "{sweep:?} leaves packages out of the sweep"
+        );
     }
 
     #[test]
@@ -999,44 +1039,8 @@ mod tests {
             .expect("the verifier has a doctest step");
 
         assert_eq!(step.arguments, ["test", "--locked", "--workspace", "--doc"]);
-        assert_eq!(VERIFY_ACTIONS[index + 2], Action::Battery);
-        assert_eq!(VERIFY_ACTIONS[index + 3], Action::Landing);
-    }
-
-    /// Running the doctests is not running rustdoc: `--doc` compiles the code
-    /// inside doc comments and never resolves an intra-doc link, which is how
-    /// the eight links CLI-1kKlPrCW and CLI-1kKlQfSH found reached trunk
-    /// through a green verify. The two are separate actions for that reason,
-    /// so this pins the doc action's presence and its own argument vector
-    /// rather than trusting the doctest step to stand in for it.
-    #[test]
-    fn verifier_resolves_intra_doc_links_separately_from_the_doctest_run() {
-        let (index, step) = VERIFY_ACTIONS
-            .iter()
-            .enumerate()
-            .find_map(|(index, action)| match action {
-                Action::Command(step) if step.label == DOC_LABEL => Some((index, step)),
-                _ => None,
-            })
-            .expect("the verifier has a rustdoc step");
-
-        assert_eq!(
-            step.arguments,
-            ["doc", "--locked", "--workspace", "--no-deps"]
-        );
-
-        let doctests = VERIFY_ACTIONS
-            .iter()
-            .position(|action| match action {
-                Action::Command(step) => step.arguments.contains(&"--doc"),
-                _ => false,
-            })
-            .expect("the verifier has a doctest step");
-        assert!(
-            doctests < index,
-            "rustdoc ran before the doctests it does not subsume",
-        );
         assert_eq!(VERIFY_ACTIONS[index + 1], Action::Battery);
+        assert_eq!(VERIFY_ACTIONS[index + 2], Action::Landing);
     }
 
     #[test]
