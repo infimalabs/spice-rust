@@ -6,11 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
-use serde::de::DeserializeOwned;
 use wire::body::{ProofSealed, PublishedTarget, ReleasePublished};
 use wire::{
-    Digest, Domain, FactKind, Fault, FaultClass, Outcome, Refusal, ReleaseNotes, ReleasePlan,
-    Reply, ReplyPosition, Seq,
+    Digest, Domain, Fault, FaultClass, Outcome, Refusal, ReleaseNotes, ReleasePlan, Reply,
+    ReplyPosition, Seq,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -291,25 +290,20 @@ pub(crate) fn observe(
     let mut published = None;
     let expected = release.fact();
     for envelope in snapshot.facts() {
-        match envelope.fact.kind() {
-            FactKind::ProofSealed => {
-                let body: ProofSealed = fact_body(&envelope.fact)?;
-                if body.manifest == *release.manifest() {
-                    proof = Some(envelope.seq);
-                }
+        if let Some(body) = envelope.fact.read::<ProofSealed>() {
+            if body.manifest == *release.manifest() {
+                proof = Some(envelope.seq);
             }
-            FactKind::ReleasePublished => {
-                let body: ReleasePublished = fact_body(&envelope.fact)?;
-                if body.manifest == *release.manifest() {
-                    if body != expected {
-                        return Err(ObservationError::PublishedMismatch(envelope.seq));
-                    }
-                    if published.replace(envelope.seq).is_some() {
-                        return Err(ObservationError::DuplicatePublication);
-                    }
-                }
+        } else if let Some(body) = envelope.fact.read::<ReleasePublished>() {
+            if body.manifest != *release.manifest() {
+                continue;
             }
-            _ => {}
+            if body != expected {
+                return Err(ObservationError::PublishedMismatch(envelope.seq));
+            }
+            if published.replace(envelope.seq).is_some() {
+                return Err(ObservationError::DuplicatePublication);
+            }
         }
     }
     if let Some(fact) = published {
@@ -319,11 +313,6 @@ pub(crate) fn observe(
             .map(|proof| PublicationState::Fresh { proof })
             .ok_or(ObservationError::MissingProof)
     }
-}
-
-fn fact_body<T: DeserializeOwned>(fact: &wire::AnyFact) -> Result<T, ObservationError> {
-    serde_json::from_value(serde_json::Value::Object(fact.body().clone()))
-        .map_err(|source| ObservationError::InvalidFact(source.to_string()))
 }
 
 #[derive(Debug)]
@@ -372,7 +361,6 @@ pub(crate) enum ObservationError {
     MissingProof,
     PublishedMismatch(Seq),
     DuplicatePublication,
-    InvalidFact(String),
 }
 
 impl fmt::Display for ObservationError {
@@ -387,12 +375,6 @@ impl fmt::Display for ObservationError {
             ),
             Self::DuplicatePublication => {
                 formatter.write_str("the sealed manifest was published more than once")
-            }
-            Self::InvalidFact(source) => {
-                write!(
-                    formatter,
-                    "release authority contains an invalid fact: {source}"
-                )
             }
         }
     }

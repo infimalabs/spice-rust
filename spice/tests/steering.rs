@@ -772,28 +772,22 @@ fn verify_authority(
     }));
     let mut observed = Vec::new();
     for envelope in snapshot.facts() {
-        match envelope.fact.kind() {
-            FactKind::SteerAcked => {
-                let body: wire::body::SteerAcked = fact_body(envelope);
-                observed.push(ExpectedRecognition {
-                    directive: body.directive,
-                    key: body.key,
-                    epoch: body.epoch,
-                    disposition: wire::Disposition::Acked,
-                    locus: body.locus,
-                });
-            }
-            FactKind::SteerDeclined => {
-                let body: wire::body::SteerDeclined = fact_body(envelope);
-                observed.push(ExpectedRecognition {
-                    directive: body.directive,
-                    key: body.key,
-                    epoch: body.epoch,
-                    disposition: wire::Disposition::Declined,
-                    locus: body.locus,
-                });
-            }
-            _ => {}
+        if let Some(body) = envelope.fact.read::<wire::body::SteerAcked>() {
+            observed.push(ExpectedRecognition {
+                directive: body.directive,
+                key: body.key,
+                epoch: body.epoch,
+                disposition: wire::Disposition::Acked,
+                locus: body.locus,
+            });
+        } else if let Some(body) = envelope.fact.read::<wire::body::SteerDeclined>() {
+            observed.push(ExpectedRecognition {
+                directive: body.directive,
+                key: body.key,
+                epoch: body.epoch,
+                disposition: wire::Disposition::Declined,
+                locus: body.locus,
+            });
         }
     }
     assert_eq!(observed.len(), expected.len());
@@ -810,8 +804,7 @@ fn verify_authority(
     let missed = snapshot
         .facts()
         .iter()
-        .filter(|fact| fact.fact.kind() == FactKind::SteerMissed)
-        .map(fact_body::<wire::body::SteerMissed>)
+        .filter_map(|fact| fact.fact.read::<wire::body::SteerMissed>())
         .collect::<Vec<_>>();
     assert!(
         missed.len() >= 2,
@@ -837,27 +830,24 @@ fn verify_authority(
     }
 }
 
-fn fact_body<T: serde::de::DeserializeOwned>(envelope: &wire::Envelope<wire::AnyFact>) -> T {
-    let bytes = wire::encode(envelope.fact.body()).expect("fact body encodes");
-    wire::decode(&bytes).expect("registered fact body decodes")
-}
-
 fn directive_authored(fixture: &Fixture, directive: wire::CanonicalUuid) -> Instant {
     let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
     let snapshot = journal.fact_snapshot().expect("steering facts read");
     snapshot
         .facts()
         .iter()
-        .find_map(|envelope| match envelope.fact.kind() {
-            FactKind::SteerSent => {
-                let body: wire::body::SteerSent = fact_body(envelope);
-                (body.directive == directive).then_some(envelope.at)
-            }
-            FactKind::SteerResent => {
-                let body: wire::body::SteerResent = fact_body(envelope);
-                (body.directive == directive).then_some(envelope.at)
-            }
-            _ => None,
+        .find_map(|envelope| {
+            let authored = envelope
+                .fact
+                .read::<wire::body::SteerSent>()
+                .map(|body| body.directive)
+                .or_else(|| {
+                    envelope
+                        .fact
+                        .read::<wire::body::SteerResent>()
+                        .map(|body| body.directive)
+                })?;
+            (authored == directive).then_some(envelope.at)
         })
         .expect("pending directive has an authoring fact")
 }
