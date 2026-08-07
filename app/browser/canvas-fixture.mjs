@@ -1,5 +1,5 @@
-// Shared resident, fixture, speech, and lineage scenarios for the sole Canvas
-// browser entrypoint. Keeping them here makes file shape explicit, not optional.
+// Shared resident, browser wait, speech, and lineage scenarios for the sole
+// Canvas entrypoint. Protocol record fixtures live in their own module.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -22,6 +22,14 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { HANDSHAKE_TIMEOUT_MS, RECONNECT_DELAY_MS } from "./client-deadlines.mjs";
+import {
+  activityRecord,
+  sessionRecord,
+  toolActivityRecord,
+  toolCallId,
+  toolResultRecord,
+  triggeredActivityRecord,
+} from "./canvas-activity-records.mjs";
 import { assertTiledWorkspace } from "./tiled-workspace.mjs";
 
 const execute = promisify(execFile);
@@ -29,73 +37,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const binary = join(root, "target/debug/spice");
 const artifacts = join(root, "artifacts/canvas");
-const sessionRecord = JSON.stringify({
-  type: "system",
-  subtype: "init",
-  session_id: "018f7777-7777-7444-8888-999999999999",
-});
-const activityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text: "periodic live witness" }],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
-    },
-  },
-});
-const triggeredActivityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text: "newest lane prose witness" }],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
-    },
-  },
-});
-// The vendor correlation id joins the call to its result and is the exact
-// string an operator must never be shown, so the fixture spells a realistic
-// one rather than a friendly placeholder.
-const toolCallId = "toolu_01LaneStatusStripWitness";
-const toolActivityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [
-      {
-        type: "tool_use",
-        id: toolCallId,
-        name: "Bash",
-        input: { command: "git status --short", description: "read the tree" },
-      },
-    ],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
-    },
-  },
-});
-const toolResultRecord = JSON.stringify({
-  type: "user",
-  message: {
-    role: "user",
-    content: [
-      { type: "tool_result", tool_use_id: toolCallId, is_error: false, content: "M app/src/lib.rs" },
-    ],
-  },
-});
 
 export async function buildResident() {
   try {
