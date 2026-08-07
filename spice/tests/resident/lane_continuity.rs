@@ -949,7 +949,3 @@ fn assert_recall(
         )));
     }
 }
-
-fn shell_word(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}

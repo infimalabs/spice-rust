@@ -1137,8 +1137,10 @@ fn wait_for_effect_change(
 /// so the fixture witnesses two things the panic reads back: the trap records
 /// its own entry first, and the vendor reports the traps it actually installed.
 /// The handler lost the race, the machine never ran it, or TERM could never
-/// reach it at all -- and the panic names exactly one of them. See
-/// [`entered_marker`] and [`trap_installed`].
+/// reach it at all -- and the panic names exactly one of them. A fixture built
+/// without [`vendor_prologue`] witnesses neither, and is told so rather than
+/// being read as the vendor's fault. See [`entered_marker`] and
+/// [`trap_report`].
 ///
 /// The operator command returns only after the resident has terminated and
 /// reaped the vendor, so in that case the first observation already sees a
@@ -1171,16 +1173,25 @@ fn wait_for_vendor_stop(watch: &Path, pid_file: &Path, stopped: &Path) -> String
              termination grace",
             stopped.display()
         ),
-        Err(pid) if trap_installed(stopped) => panic!(
-            "vendor {pid} ended without entering its TERM trap, which it had \
-             installed and reported back; the machine never scheduled the \
-             handler inside the termination grace"
-        ),
-        Err(pid) => panic!(
-            "vendor {pid} ended without entering its TERM trap and never had \
-             one: TERM was already ignored when the fixture started, so its \
-             trap builtin could not take effect and the signal could not move it"
-        ),
+        Err(pid) => match trap_report(stopped) {
+            TrapReport::Installed => panic!(
+                "vendor {pid} ended without entering its TERM trap, which it \
+                 had installed and reported back; the machine never scheduled \
+                 the handler inside the termination grace"
+            ),
+            TrapReport::Declined => panic!(
+                "vendor {pid} ended without entering its TERM trap and never \
+                 had one: TERM was already ignored when the fixture started, \
+                 so its trap builtin could not take effect and the signal \
+                 could not move it"
+            ),
+            TrapReport::Unreported => panic!(
+                "vendor {pid} never reported its traps, so this fixture was \
+                 not built from vendor_prologue and nothing here can say what \
+                 the vendor did with TERM; instrument the fixture rather than \
+                 reading this as a vendor fault"
+            ),
+        },
     }
 }
 
@@ -1197,7 +1208,19 @@ fn entered_marker(stopped: &Path) -> PathBuf {
     PathBuf::from(marker)
 }
 
-/// Whether the fixture vendor's TERM trap ever took effect.
+/// What a fixture vendor reported about its own TERM trap.
+enum TrapReport {
+    /// The vendor reported a TERM trap running its own entry marker.
+    Installed,
+    /// The vendor reported its traps and TERM was not among them, which a
+    /// shell says exactly when TERM was already ignored as it started.
+    Declined,
+    /// The vendor reported nothing, so it was not built from
+    /// [`vendor_prologue`] and its behaviour cannot be read at all.
+    Unreported,
+}
+
+/// Read back whether the fixture vendor's TERM trap ever took effect.
 ///
 /// A non-interactive shell cannot trap a signal that was already ignored when
 /// it started: the trap builtin accepts the request and silently declines it.
@@ -1206,16 +1229,25 @@ fn entered_marker(stopped: &Path) -> PathBuf {
 /// fixture reports its own installed traps and this reads the answer back.
 ///
 /// Written before the pid file, so a recorded pid always implies a readable
-/// readout and the split below is a decision rather than a guess. The line must
-/// name TERM as well as the handler, because the same trap command also covers
-/// INT, and a shell that declined only TERM would still print the handler.
-fn trap_installed(stopped: &Path) -> bool {
+/// readout. A readout that is missing anyway cannot mean the vendor declined
+/// the trap; it means the fixture never had the prologue, which is why that is
+/// a third answer here rather than folded into [`TrapReport::Declined`]. The
+/// line must name TERM as well as the handler, because the same trap command
+/// also covers INT, and a shell that declined only TERM would still print the
+/// handler on the surviving INT line.
+fn trap_report(stopped: &Path) -> TrapReport {
     let handler = entered_marker(stopped).display().to_string();
-    fs::read_to_string(trap_record(stopped)).is_ok_and(|traps| {
-        traps
-            .lines()
-            .any(|trap| trap.contains("TERM") && trap.contains(&handler))
-    })
+    let Ok(traps) = fs::read_to_string(trap_record(stopped)) else {
+        return TrapReport::Unreported;
+    };
+    if traps
+        .lines()
+        .any(|trap| trap.contains("TERM") && trap.contains(&handler))
+    {
+        TrapReport::Installed
+    } else {
+        TrapReport::Declined
+    }
 }
 
 /// The readout of its own traps that a fixture vendor writes at startup.
@@ -1226,6 +1258,38 @@ fn trap_record(stopped: &Path) -> PathBuf {
     let mut record = stopped.as_os_str().to_owned();
     record.push("-traps");
     PathBuf::from(record)
+}
+
+/// The opening lines every fixture vendor shares.
+///
+/// A TERM trap that records its own entry before recording the stop, the
+/// vendor's readout of the traps it actually installed, and the pid the
+/// resident is asked to terminate. That order is load-bearing:
+/// [`wait_for_vendor_stop`] only diagnoses after reading a pid, so a recorded
+/// pid implies a readout already on disk and the diagnosis never has to guess.
+///
+/// Built here rather than spelled out per fixture because every fixture that
+/// hand-copied these lines had to be found and edited again each time the
+/// diagnosis learned something new, and the one that gets missed is not a
+/// visible gap but a confident wrong answer.
+fn vendor_prologue(stopped: &Path, vendor_pid: &Path) -> String {
+    format!(
+        concat!(
+            "#!/bin/sh\n",
+            "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
+            "trap > {}\n",
+            "printf '%s\\n' \"$$\" > {}\n",
+        ),
+        shell_word(&entered_marker(stopped).display().to_string()),
+        shell_word(&stopped.display().to_string()),
+        shell_word(&trap_record(stopped).display().to_string()),
+        shell_word(&vendor_pid.display().to_string()),
+    )
+}
+
+/// A path or word quoted for the fixture shell scripts written above.
+fn shell_word(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// The stop a fixture vendor finished recording, if it recorded one.
