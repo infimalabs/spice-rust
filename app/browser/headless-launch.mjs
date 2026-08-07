@@ -6,7 +6,7 @@
 // stated over launch sites rather than over their arguments.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -14,6 +14,7 @@ import { chromium } from "playwright";
 
 const execute = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const spiceBinary = join(root, "target/debug/spice");
 
 /// This module's own repository path: the sole tracked file allowed to spell a
 /// browser launch, which means the scan below has to recognise itself.
@@ -47,6 +48,28 @@ const HEADLESS_OPTION = "headless: true";
 /// only proves it was written.
 const HEADLESS_USER_AGENT = "HeadlessChrome/";
 
+/// A source scan cannot see the executable an agent actually runs. In
+/// particular, source can carry the opt-in `--open` gate while an older
+/// target/debug/spice still opens the operator's browser on every `demo` run.
+/// Ask that exact executable for its generated parser surface before any
+/// browser fixture is allowed to use it.
+export async function assertDemoOpenGate(binary = spiceBinary) {
+  let help;
+  try {
+    ({ stdout: help } = await execute(binary, ["demo", "--help"], {
+      cwd: root,
+      timeout: 10_000,
+    }));
+  } catch (failure) {
+    assert.fail(`${binary} demo --help exposes the browser gate: ${failure.message}`);
+  }
+  assert.match(
+    help,
+    /(^|\s)--open(?=\s|$)/m,
+    `${binary} demo --help carries the opt-in --open gate before that binary can reach system_browser`,
+  );
+}
+
 /// Open the browser every fixture and diagnostic script shares.
 export async function launchBrowser() {
   const browser = await chromium.launch({ headless: true });
@@ -66,10 +89,11 @@ export async function launchBrowser() {
   return browser;
 }
 
-/// Fail when a tracked file other than this one opens a browser, when a launch
-/// inside this one omits the option, or when a tracked Playwright MCP
-/// configuration omits the flag.
-export async function assertHeadlessLaunchSites() {
+/// Fail when the built demo lacks its opt-in gate, when a tracked file other
+/// than this one opens a browser, when a launch inside this one omits the
+/// option, or when a tracked Playwright MCP configuration omits the flag.
+export async function assertHeadlessLaunchSites(binary = spiceBinary) {
+  await assertDemoOpenGate(binary);
   const hits = await trackedLaunchSites();
   assert.ok(
     hits.some(({ path }) => path === OWNER),
