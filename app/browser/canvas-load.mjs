@@ -117,6 +117,15 @@ function assertSuiteRoutesThroughBoundary() {
 /// above, so `assertSuiteRoutesThroughBoundary` covers that half and is called
 /// from here -- one entry point the spec already reaches, two halves of one
 /// claim, neither of which can be deleted while the other still passes.
+///
+/// This is also the suite's first reader of `describeLoad`: the spec calls it
+/// before it launches a browser, while `assertWaitReporting` cannot assert the
+/// reading that survives a real wait until the fixture is up. A field dropped
+/// from `describeLoad` therefore fails here, and the failure names the reading
+/// rather than the missing field. Measured on this tree: with `factor` removed
+/// the suite exits 1 inside this function and the word factor appears nowhere
+/// in the run, so a proof that means to attribute such a failure to
+/// canvas-fixture.mjs must neutralise this call for the duration of the run.
 export function assertBoundaryLoadReading() {
   const bare = withLoadReading(new Error("canvas wait failed: bare locator timeout"));
   assert.match(bare.message, /load: \{"loadAverage":\d/, "a bare timeout gains the reading");
