@@ -15,6 +15,10 @@ const CLAUDE_SESSION_RECORD: &str =
     r#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
 const CODEX_SESSION_RECORD: &str =
     r#"{"type":"thread.started","thread_id":"019fbc32-beb1-7ee0-b814-a7513f8f8ea5"}"#;
+/// A record the Codex decoder types, carrying everything but its session.
+const CODEX_SESSIONLESS_RECORD: &str = r#"{"type":"thread.started"}"#;
+/// Bytes no decoder types at all, so no record is even read to lack a session.
+const CODEX_UNTYPED_RECORD: &str = "thread.started";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Dialect {
@@ -990,48 +994,150 @@ fn nonzero_vendor_exits_are_reaped_and_recorded_for_both_dialects() {
     }
 }
 
+/// A vendor the resident had to kill is recorded as killed, not as an exit.
+///
+/// This is the one ending the resident causes itself, and it used to be the one
+/// it could not name. A signalled process reports no status, so the resident
+/// substituted `-1` and published `lane::exited` — the same document a vendor
+/// that returned `-1` on its own produces. The grace overrun was gone from the
+/// record the moment it was written.
+///
+/// The vendor here ignores TERM outright rather than trapping it slowly, so the
+/// escalation is the fixture's subject instead of a race it might win. Both
+/// halves of the assertion carry weight: `lane::killed` must be present, and
+/// `lane::exited` must be absent for the same lane, because a resident that
+/// wrote both would still leave a reader unable to say which ending happened.
 #[test]
-fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
-    let fixture = Fixture::linked("vendor-malformed-codex-session");
+fn a_vendor_that_ignores_termination_is_recorded_as_killed_rather_than_exited() {
+    let fixture = Fixture::linked("vendor-killed");
     let rig = configure(&fixture);
-    let stopped = fixture.cleanup.join("malformed-codex-stopped");
-    let vendor_pid = fixture.cleanup.join("malformed-codex-pid");
+    let pid_file = fixture.cleanup.join("ignoring-vendor-pid");
     fs::write(
-        &rig.codex_binary,
+        &rig.claude_binary,
         format!(
             concat!(
                 "#!/bin/sh\n",
-                "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
-                "trap > {}\n",
+                "trap '' TERM INT\n",
                 "printf '%s\\n' \"$$\" > {}\n",
-                "printf '%s\\n' '{{\"type\":\"thread.started\"}}'\n",
+                "printf '%s\\n' {}\n",
                 "while :; do sleep 1; done\n",
             ),
-            shell_word(&entered_marker(&stopped).display().to_string()),
-            shell_word(&stopped.display().to_string()),
-            shell_word(&trap_record(&stopped).display().to_string()),
-            shell_word(&vendor_pid.display().to_string()),
+            shell_word(&pid_file.display().to_string()),
+            shell_word(Dialect::Claude.session_record()),
         ),
     )
-    .expect("malformed Codex vendor installs");
+    .expect("ignoring vendor installs");
     let mut resident = RunningResident::spawn(&fixture);
     resident.assert_ready(&fixture);
 
-    let output = operator(&fixture, &["lane", "add", "--vendor", "codex"], true);
-    assert_eq!(output.status.code(), Some(REFUSAL_EXIT));
-    let Outcome::Refusal(refusal) = value_outcome(&output) else {
-        panic!("malformed session must refuse")
+    let lane = add_lane(&fixture, None, Dialect::Claude);
+    drain(&fixture, lane);
+
+    let pid = fs::read_to_string(&pid_file)
+        .expect("vendor pid reads")
+        .trim()
+        .parse::<u32>()
+        .expect("vendor pid parses");
+    assert!(!process_alive(pid), "killed vendor was not reaped");
+    let facts = journal::JournalReader::open(fixture.journal())
+        .expect("kill journal reads")
+        .fact_snapshot()
+        .expect("kill facts read");
+    let named = |kind| {
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| {
+                fact.fact.kind() == kind
+                    && fact.fact.body().get("lane")
+                        == Some(&serde_json::Value::String(lane.to_string()))
+            })
+            .count()
     };
-    assert_eq!(refusal.reason, "lane::session-missing");
-    // The refusal returns to the operator without waiting for the vendor's TERM
-    // trap, so the stop is observed rather than read at the return.
-    let stop = wait_for_vendor_stop(&fixture.cleanup, &vendor_pid, &stopped);
-    assert_eq!(stop, "stopped");
-    assert!(durable_head(&fixture).lanes.is_empty());
+    assert_eq!(named(FactKind::LaneKilled), 1, "the kill is recorded once");
+    assert_eq!(
+        named(FactKind::LaneExited),
+        0,
+        "a kill is not also published as an exit the occupant chose"
+    );
 
     let down = operator(&fixture, &["down"], true);
     assert!(down.status.success(), "down failed: {:?}", down.stderr);
     assert!(resident.wait().status.success(), "resident failed");
+}
+
+#[test]
+fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
+    for (name, announced) in [
+        ("sessionless", CODEX_SESSIONLESS_RECORD),
+        ("untyped", CODEX_UNTYPED_RECORD),
+    ] {
+        assert_codex_residue(announced);
+        let fixture = Fixture::linked(&format!("vendor-malformed-codex-{name}"));
+        let rig = configure(&fixture);
+        let stopped = fixture.cleanup.join("malformed-codex-stopped");
+        let vendor_pid = fixture.cleanup.join("malformed-codex-pid");
+        fs::write(
+            &rig.codex_binary,
+            vendor_prologue(&stopped, &vendor_pid)
+                + &format!(
+                    concat!("printf '%s\\n' {}\n", "while :; do sleep 1; done\n"),
+                    shell_word(announced),
+                ),
+        )
+        .expect("malformed Codex vendor installs");
+        let mut resident = RunningResident::spawn(&fixture);
+        resident.assert_ready(&fixture);
+
+        let output = operator(&fixture, &["lane", "add", "--vendor", "codex"], true);
+        assert_eq!(output.status.code(), Some(REFUSAL_EXIT));
+        let Outcome::Refusal(refusal) = value_outcome(&output) else {
+            panic!("{name} session must refuse")
+        };
+        assert_eq!(refusal.reason, "lane::session-missing");
+        // The refusal returns to the operator without waiting for the vendor's
+        // TERM trap, so the stop is observed rather than read at the return.
+        let stop = wait_for_vendor_stop(&fixture.cleanup, &vendor_pid, &stopped);
+        assert_eq!(stop, "stopped");
+        assert!(durable_head(&fixture).lanes.is_empty());
+
+        let down = operator(&fixture, &["down"], true);
+        assert!(down.status.success(), "down failed: {:?}", down.stderr);
+        assert!(resident.wait().status.success(), "resident failed");
+    }
+}
+
+/// Pin what the Codex decoder makes of one fixture's announce line.
+///
+/// Both vendors above refuse under one reason, because that refusal is the
+/// proof deadline elapsing and it reports only that no declaration arrived --
+/// never which vendor it waited on. Nothing downstream can tell a record the
+/// decoder typed and found sessionless from bytes it could not read as a
+/// record at all, so the difference is held here, at the only place both are
+/// still distinguishable. Without it either announce line could drift into the
+/// other's shape and both cases would still pass.
+fn assert_codex_residue(announced: &str) {
+    let length = u64::try_from(announced.len()).expect("announce length fits u64");
+    let expected = match announced {
+        CODEX_SESSIONLESS_RECORD => listen::ResidueKind::Absent { field: "thread_id" },
+        CODEX_UNTYPED_RECORD => listen::ResidueKind::Malformed {
+            field: "$",
+            expected: "JSON record",
+        },
+        other => panic!("no residue is pinned for {other}"),
+    };
+    assert_eq!(
+        listen::decode(
+            listen::Dialect::Codex,
+            announced.as_bytes(),
+            tape::Locus::new(0, 0, length),
+        )
+        .expect("locus covers the announced record")
+        .residue()
+        .map(|residue| residue.kind.clone()),
+        Some(expected),
+        "{announced} no longer means what its fixture claims",
+    );
 }
 
 include!("vendor_process/support.rs");

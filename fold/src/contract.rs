@@ -79,6 +79,7 @@ const fn is_task(kind: wire::FactKind) -> bool {
         kind,
         wire::FactKind::TaskAdded
             | wire::FactKind::TaskPhased
+            | wire::FactKind::TaskDeleted
             | wire::FactKind::TaskDone
             | wire::FactKind::TaskReviewed
             | wire::FactKind::TaskAssigned
@@ -130,11 +131,14 @@ const fn is_lane(kind: wire::FactKind) -> bool {
     matches!(
         kind,
         wire::FactKind::LaneSeated
+            | wire::FactKind::LaneArranged
+            | wire::FactKind::LaneImported
             | wire::FactKind::LineageConfigured
             | wire::FactKind::LineageArranged
             | wire::FactKind::LaneSessionDeclared
             | wire::FactKind::LaneStarted
             | wire::FactKind::LaneExited
+            | wire::FactKind::LaneKilled
             | wire::FactKind::LaneCompacted
             | wire::FactKind::LaneRenewed
             | wire::FactKind::LaneDrained

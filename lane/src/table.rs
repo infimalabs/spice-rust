@@ -19,8 +19,8 @@ use std::error::Error;
 use std::fmt;
 
 use journal::crossing::body::{
-    LaneDrained, LaneExited, LaneImported, LaneRenewed, LaneSeated, LaneSessionDeclared,
-    LaneStarted,
+    LaneDrained, LaneExited, LaneImported, LaneKilled, LaneRenewed, LaneSeated,
+    LaneSessionDeclared, LaneStarted,
 };
 use journal::crossing::{
     CanonicalUuid, LaneResidency, LaneSession, ResidencyHead, ResidentState, TapeLocus,
@@ -150,6 +150,8 @@ pub enum Seating<'a> {
     Renewed(&'a LaneRenewed),
     /// A graceful occupant end completed.
     Drained(&'a LaneDrained),
+    /// The resident ended an occupant that outlived its termination grace.
+    Killed(&'a LaneKilled),
 }
 
 /// Why a fact did not reduce into the table.
@@ -394,6 +396,7 @@ impl Table {
             Seating::Renewed(fact) => self.renew(fact),
             Seating::Exited(fact) => self.end(fact.lane, fact.occupant),
             Seating::Drained(fact) => self.end(fact.lane, fact.occupant),
+            Seating::Killed(fact) => self.end(fact.lane, fact.occupant),
         }
     }
 
@@ -655,8 +658,8 @@ impl Table {
 mod tests {
     use super::{Refusal, Seating, Table};
     use journal::crossing::body::{
-        LaneDrained, LaneExited, LaneImported, LaneLaunchIdentity, LaneRenewed, LaneSeated,
-        LaneSessionDeclared, LaneStarted,
+        LaneDrained, LaneExited, LaneImported, LaneKilled, LaneLaunchIdentity, LaneRenewed,
+        LaneSeated, LaneSessionDeclared, LaneStarted,
     };
     use journal::crossing::{CanonicalUuid, ResidentState};
 
@@ -1040,6 +1043,39 @@ mod tests {
         assert_eq!(
             table.seat(uuid(1)).expect("seated").occupant(),
             Some(uuid(3))
+        );
+    }
+
+    /// A kill ends the occupancy the same way the other two endings do.
+    ///
+    /// The table reduces three endings, and a kill has to be one of them rather
+    /// than a fact the seat ignores: an occupant the resident had to kill is
+    /// exactly the one least likely to have tidied up after itself, so a seat
+    /// left occupied here would strand the lane that most needs re-seating.
+    ///
+    /// The second absorb is what proves it. A seat that merely looked vacant
+    /// would still accept a second ending; refusing it shows the first one went
+    /// through `end` rather than being dropped on the way in.
+    #[test]
+    fn a_killed_occupant_vacates_its_seat() {
+        let mut table = table();
+        start(&mut table, uuid(3));
+        let killed = LaneKilled {
+            lane: uuid(1),
+            occupant: uuid(3),
+        };
+
+        table
+            .absorb(Seating::Killed(&killed))
+            .expect("the resident's kill ends the sitting occupant");
+
+        let seat = table.seat(uuid(1)).expect("the lane was seated");
+        assert_eq!(seat.occupant(), None);
+        assert!(!seat.occupied());
+        assert_eq!(seat.lineage(), [uuid(3)]);
+        assert_eq!(
+            table.absorb(Seating::Killed(&killed)),
+            Err(Refusal::Vacant { lane: uuid(1) })
         );
     }
 

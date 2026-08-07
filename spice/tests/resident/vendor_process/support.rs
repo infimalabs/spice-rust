@@ -582,10 +582,6 @@ fn json_string(value: &str) -> String {
     serde_json::to_string(value).expect("fixture string encodes")
 }
 
-fn shell_word(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
 fn fixture_git(root: &Path, arguments: &[&str]) {
     let output = native_git_command(root, arguments)
         .output()

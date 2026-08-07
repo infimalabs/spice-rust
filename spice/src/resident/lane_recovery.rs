@@ -435,6 +435,18 @@ fn append_claim_carry(
     Ok(fact)
 }
 
+/// End a recovering lane's occupant without publishing how it ended.
+///
+/// Dropping the ending is deliberate here for the same reason it is in the lane
+/// surface's namesake: every caller is a compensation path — `propose_import`,
+/// the commit, or `await_session` failed — so the seating being unwound was
+/// never committed, and an ending fact would name a residency the journal never
+/// recorded beginning.
+///
+/// This one does not even classify the ending, because it has no reader to
+/// classify it for. Where a kill is durable it is published as
+/// [`wire::body::LaneKilled`] rather than folded into an exit status the
+/// occupant never chose.
 fn stop_lane(seats: &mut Seats, lane: CanonicalUuid) {
     let Some(occupant) = seats.vacate(lane) else {
         return;

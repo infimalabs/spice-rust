@@ -465,36 +465,7 @@ fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
     assert!(seats.is_empty());
     bus.verify().expect("Dark authority verifies");
     let snapshot = bus.fact_snapshot().expect("facts read through bus");
-    assert_eq!(
-        fact_u64(&snapshot, wire::FactKind::UpDraining, "occupants"),
-        2
-    );
-    assert_eq!(
-        fact_u64(&snapshot, wire::FactKind::UpTerminating, "occupants"),
-        1
-    );
-    assert_eq!(
-        fact_u64(&snapshot, wire::FactKind::UpKilling, "occupants"),
-        1
-    );
-    assert!(
-        snapshot
-            .facts()
-            .iter()
-            .any(|fact| fact.fact.kind() == wire::FactKind::LaneDrained)
-    );
-    assert!(
-        snapshot
-            .facts()
-            .iter()
-            .any(|fact| fact.fact.kind() == wire::FactKind::LaneExited)
-    );
-    let degraded = snapshot
-        .facts()
-        .iter()
-        .filter(|fact| fact.fact.kind() == wire::FactKind::LaneDegraded)
-        .count();
-    assert_eq!(degraded, 2, "disk residue was not named once per lane");
+    assert_shutdown_ladder_and_endings(&snapshot);
     let head = bus
         .residency_head()
         .expect("head read")
@@ -514,6 +485,43 @@ fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
     ));
     bus.shutdown().expect("fixture bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+/// Every fact one two-group shutdown is required to leave behind.
+///
+/// Held apart from the drive so the ladder counts and the endings can be read
+/// as one statement of what the shutdown recorded, rather than as a tail on the
+/// fixture that produced it.
+fn assert_shutdown_ladder_and_endings(snapshot: &journal::FactSnapshot) {
+    assert_eq!(
+        fact_u64(snapshot, wire::FactKind::UpDraining, "occupants"),
+        2
+    );
+    assert_eq!(
+        fact_u64(snapshot, wire::FactKind::UpTerminating, "occupants"),
+        1
+    );
+    assert_eq!(
+        fact_u64(snapshot, wire::FactKind::UpKilling, "occupants"),
+        1
+    );
+    let holds = |kind| snapshot.facts().iter().any(|fact| fact.fact.kind() == kind);
+    assert!(holds(wire::FactKind::LaneDrained));
+    // The forced group is the one that outlived TERM and reached the kill
+    // stage, so it is recorded as killed. Requiring the absence of an exit
+    // keeps the two groups distinguishable in the ledger: publishing both
+    // would leave a reader unable to say which group ended which way.
+    assert!(holds(wire::FactKind::LaneKilled));
+    assert!(
+        !holds(wire::FactKind::LaneExited),
+        "a group this resident killed is not also recorded as an exit it chose"
+    );
+    let degraded = snapshot
+        .facts()
+        .iter()
+        .filter(|fact| fact.fact.kind() == wire::FactKind::LaneDegraded)
+        .count();
+    assert_eq!(degraded, 2, "disk residue was not named once per lane");
 }
 
 #[test]

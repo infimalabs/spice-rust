@@ -704,37 +704,38 @@ fn every_declared_fact_plane_claims_at_least_one_fact_kind() {
     }
 }
 
-/// Only the kinds named here belong to no plane.
+/// No fact kind belongs to zero planes.
 ///
-/// Build admission decides a kind is consumed by matching its wire spelling
-/// against a plane's glob, while membership here is a hand-written enumeration.
-/// The two disagree in exactly one direction: a kind named into an existing
-/// plane's spelling passes the build as consumed and is then claimed by no arm.
-/// That is invisible to the plane-first law above, since every plane still
-/// claims its older kinds, and it is what makes the gap worth a law — the
-/// consumers of this predicate are coverage laws in other crates that decide
-/// what a reduction must handle by filtering `FactKind::ALL` through it, so an
-/// unclaimed kind is silently dropped from coverage rather than reported.
+/// The two membership laws either side of this one both pass while a kind has
+/// no owner at all: the plane-first law above only needs each plane to claim
+/// *something*, and the kind-first law below only counts kinds claimed more
+/// than once. A newly declared kind that nobody added to a predicate falls
+/// straight between them.
 ///
-/// The three below predate this law and are routed by EFFORT-1kKl9vJ1. Naming
-/// them rather than allowing any orphan keeps the law exact in both directions:
-/// a fourth orphan reds here, and so does routing one of these three without
-/// striking it from the list.
+/// The build cannot catch it either: admission decides a kind is consumed by
+/// matching its wire spelling against a plane's glob, so a kind named into an
+/// existing family's spelling is admitted as consumed while the predicate that
+/// actually reads it claims nothing.
+///
+/// What it costs is not theoretical. `AuthorityReducer::rebuild` selects the
+/// facts of an `AnswerContent::Facts(plane)` answer with exactly this
+/// predicate, so an unowned kind is dropped from the reduction — silently, and
+/// while the registry declares the family it belongs to. `lane::killed` was
+/// admitted that way: written durably by the resident, matched by the
+/// `lane::*` the canvas folds declare, and absent from every answer built out
+/// of them.
 #[test]
-fn only_the_named_pending_kinds_belong_to_no_fact_plane() {
-    let orphans: Vec<wire::FactKind> = wire::FactKind::ALL
+fn every_fact_kind_belongs_to_at_least_one_plane() {
+    let unowned: Vec<wire::FactKind> = wire::FactKind::ALL
         .iter()
         .copied()
         .filter(|kind| !FactPlane::ALL.iter().any(|plane| plane.contains(*kind)))
         .collect();
 
     assert_eq!(
-        orphans,
-        vec![
-            wire::FactKind::TaskDeleted,
-            wire::FactKind::LaneArranged,
-            wire::FactKind::LaneImported,
-        ],
+        unowned,
+        vec![],
+        "these kinds are readable from no fact plane, so no fold answer can carry them",
     );
 }
 

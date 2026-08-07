@@ -233,6 +233,8 @@ vocabulary! {
     LaneRenewed = "lane::renewed" by ResidentRecognition;
     /// A graceful occupant end completed.
     LaneDrained = "lane::drained" by ResidentRecognition;
+    /// The resident ended an occupant that outlived its termination grace.
+    LaneKilled = "lane::killed" by ResidentRecognition;
     /// Work run without the resident left a marker recognized once.
     LaneDegraded = "lane::degraded" by ResidentRecognition;
     /// Repeated young occupant deaths paused automatic re-seating.
