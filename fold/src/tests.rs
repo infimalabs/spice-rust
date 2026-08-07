@@ -704,6 +704,36 @@ fn every_declared_fact_plane_claims_at_least_one_fact_kind() {
     }
 }
 
+/// No fact kind belongs to zero planes.
+///
+/// The two membership laws either side of this one both pass while a kind has
+/// no owner at all: the plane-first law above only needs each plane to claim
+/// *something*, and the kind-first law below only counts kinds claimed more
+/// than once. A newly declared kind that nobody added to a predicate falls
+/// straight between them.
+///
+/// What it costs is not theoretical. `AuthorityReducer::rebuild` selects the
+/// facts of an `AnswerContent::Facts(plane)` answer with exactly this
+/// predicate, so an unowned kind is dropped from the reduction — silently, and
+/// while the registry declares the family it belongs to. `lane::killed` was
+/// admitted that way: written durably by the resident, matched by the
+/// `lane::*` the canvas folds declare, and absent from every answer built out
+/// of them.
+#[test]
+fn every_fact_kind_belongs_to_at_least_one_plane() {
+    let unowned: Vec<wire::FactKind> = wire::FactKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| !FactPlane::ALL.iter().any(|plane| plane.contains(*kind)))
+        .collect();
+
+    assert_eq!(
+        unowned,
+        vec![],
+        "these kinds are readable from no fact plane, so no fold answer can carry them",
+    );
+}
+
 /// Exactly one fact kind belongs to two planes, and it is named here.
 ///
 /// `taste::reminded` is a live directive and the taste evidence that justified
