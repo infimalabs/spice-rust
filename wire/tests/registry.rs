@@ -68,7 +68,10 @@ fn every_command_names_the_witnesses_it_requires() {
         let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
         let lane_lifecycle = matches!(
             kind,
-            CommandKind::LaneSeat | CommandKind::LaneState | CommandKind::LineageConfigure
+            CommandKind::LaneSeat
+                | CommandKind::LaneState
+                | CommandKind::LineageConfigure
+                | CommandKind::LineageArrange
         );
         assert_eq!(
             law.required.is_empty(),

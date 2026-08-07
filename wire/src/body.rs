@@ -573,6 +573,29 @@ pub struct LineageConfigured {
     pub manual_projects: Vec<String>,
 }
 
+/// One Canvas lineage and the lanes it holds after an arrangement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageStanding {
+    /// Stable Canvas lineage identifying the group.
+    pub lineage_id: CanonicalUuid,
+    /// Every lane this lineage holds, in the order the operator arranged them.
+    pub lanes: Vec<CanonicalUuid>,
+}
+
+/// The operator rearranged the Canvas lineages.
+///
+/// Both sides are recorded because the gesture is not recoverable from the
+/// result alone: a reorder and a join leave different `from` standings behind,
+/// and a reader that only saw the outcome could not tell which one the
+/// operator performed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageArranged {
+    /// Lineage standings before this transaction, in their prior order.
+    pub from: Vec<LineageStanding>,
+    /// Lineage standings after this transaction, in the arranged order.
+    pub lineages: Vec<LineageStanding>,
+}
+
 /// Exact model and effort supplied to one vendor launch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

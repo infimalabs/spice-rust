@@ -28,6 +28,35 @@ const MAX_ATTACHMENTS: usize = 8;
 const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
 const RENEWAL_REQUEST: &str = "Renew your current task lease now.";
 
+/// The media type a dragged team carries, and the only one a team accepts.
+///
+/// Message cards are draggable too, and they carry their prose as `text/plain`
+/// so it can be quoted into a composer. A team surface that accepted plain
+/// text would rearrange the fleet because the operator dragged a message onto
+/// it, so the gesture is told apart by what it carries rather than by where it
+/// lands.
+const LINEAGE_DRAG_MEDIA: &str = "application/x-spice-team";
+
+/// The box a drop is measured against: one team's whole surface.
+const LINEAGE_SURFACE: &str = ".team-surface";
+
+/// The team a drop carries, if it carries one at all.
+fn dragged_lineage(transfer: &web_sys::DataTransfer) -> Option<CanonicalUuid> {
+    transfer.get_data(LINEAGE_DRAG_MEDIA).ok()?.parse().ok()
+}
+
+/// Whether a drag in flight carries a team.
+///
+/// Only the media types are readable while a drag is moving; the identity
+/// itself stays sealed until the drop. That is enough to decide whether this
+/// surface is a drop target, which is all `dragover` has to answer.
+fn carries_lineage(transfer: &web_sys::DataTransfer) -> bool {
+    transfer
+        .types()
+        .iter()
+        .any(|media| media.as_string().as_deref() == Some(LINEAGE_DRAG_MEDIA))
+}
+
 /// The four one-click views of one live team.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LineageMode {
@@ -80,6 +109,8 @@ pub(super) fn render_lineage(
     let standings = watchband::standings(&lanes.lanes, waiting, tasks, js_sys::Date::now() as i64);
     let can_send = runtime.offers(CommandKind::SteerSend);
     let can_configure = runtime.offers(CommandKind::LineageConfigure);
+    let can_arrange = runtime.offers(CommandKind::LineageArrange);
+    let topology = watchband::topology(&lanes.lanes);
     if lanes.lanes.is_empty() {
         let empty_lineage = crate::runtime::LaneRow {
             lane: lanes.epoch,
@@ -89,7 +120,7 @@ pub(super) fn render_lineage(
         return html! {
             <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic">
                 <section class="team-surface" data-lineage-weight="1">
-                    {render_lineage_toolbar(mode, &empty_lineage, &[])}
+                    {render_lineage_toolbar(mode, &empty_lineage, &[], false)}
                     <div class="team-pane" data-team-mode={(**mode).label()}>
                         {match **mode {
                             LineageMode::Compose => empty("No agents are assigned. Open Info to add one."),
@@ -115,8 +146,10 @@ pub(super) fn render_lineage(
                         class="team-surface"
                         data-lineage-id={lineage.lane.to_string()}
                         data-lineage-weight={lineage_standings.len().max(1).to_string()}
+                        ondragover={lineage_dragover(can_arrange)}
+                        ondrop={lineage_drop(can_arrange, &topology, lineage.lane, sender)}
                     >
-                        {render_lineage_toolbar(mode, lineage, &lineage_standings)}
+                        {render_lineage_toolbar(mode, lineage, &lineage_standings, can_arrange)}
                         <div class="team-pane" data-team-mode={(**mode).label()}>
                             {match **mode {
                                 LineageMode::Compose => render_compose(
@@ -153,13 +186,118 @@ pub(super) fn render_lineage(
     }
 }
 
+/// Let a team be picked up, but only where an arrangement can be committed.
+///
+/// The handle is the predecessor's: a team is dragged by its own grip rather
+/// than by its whole surface, so selecting prose in a composer and lifting a
+/// message card out of the activity plane both keep working underneath it.
+fn lineage_drag_handle(lineage: CanonicalUuid, can_arrange: bool) -> Html {
+    if !can_arrange {
+        return Html::default();
+    }
+    let carried = lineage.to_string();
+    html! {
+        <span
+            class="team-drag-handle"
+            data-lane-drag-handle=""
+            data-lineage-drag-id={carried.clone()}
+            draggable="true"
+            role="img"
+            aria-label={format!("Drag team {}", watchband::short(lineage))}
+            title="Drag onto a team to take its place, or onto a team's edge to join it"
+            ondragstart={Callback::from(move |event: DragEvent| {
+                let Some(transfer) = event.data_transfer() else {
+                    return;
+                };
+                let _ = transfer.set_data(LINEAGE_DRAG_MEDIA, &carried);
+                transfer.set_effect_allowed("move");
+            })}
+        ><span aria-hidden="true">{"⠿"}</span></span>
+    }
+}
+
+/// Accept a team in flight, and nothing else.
+fn lineage_dragover(can_arrange: bool) -> Callback<DragEvent> {
+    Callback::from(move |event: DragEvent| {
+        if !can_arrange {
+            return;
+        }
+        let Some(transfer) = event.data_transfer() else {
+            return;
+        };
+        if !carries_lineage(&transfer) {
+            return;
+        }
+        transfer.set_drop_effect("move");
+        // Only a prevented dragover makes a surface droppable; leaving it
+        // alone is how every other drag keeps passing through untouched.
+        event.prevent_default();
+    })
+}
+
+/// Commit the arrangement a drop on this team states.
+///
+/// The topology is the one this render drew, captured rather than re-read: the
+/// operator arranged the teams they were looking at, and an arrangement built
+/// from a table that changed underneath them would move a team they never
+/// dragged.
+fn lineage_drop(
+    can_arrange: bool,
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    target: CanonicalUuid,
+    sender: &SenderHandle,
+) -> Callback<DragEvent> {
+    let topology = topology.to_vec();
+    let sender = sender.clone();
+    Callback::from(move |event: DragEvent| {
+        if !can_arrange {
+            return;
+        }
+        let Some(dragged) = event.data_transfer().as_ref().and_then(dragged_lineage) else {
+            return;
+        };
+        // The listener is delegated, so the element the drop landed on is the
+        // only handle on this team's box; `current_target` is the delegation
+        // root and would measure the whole workspace as one team.
+        let Some(surface) = event
+            .target()
+            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+            .and_then(|node| node.closest(LINEAGE_SURFACE).ok().flatten())
+        else {
+            return;
+        };
+        if surface.get_attribute("data-lineage-id") != Some(target.to_string()) {
+            return;
+        }
+        let rect = surface.get_bounding_client_rect();
+        let drop =
+            watchband::LineageDrop::at(f64::from(event.client_x()) - rect.left(), rect.width());
+        let Some(arranged) = watchband::arrangement(&topology, dragged, target, drop) else {
+            return;
+        };
+        event.prevent_default();
+        event.stop_propagation();
+        send_action(
+            &sender,
+            ClientAction::ArrangeLineages {
+                lineages: arranged
+                    .into_iter()
+                    .map(|(lineage_id, lanes)| LineageArrangement { lineage_id, lanes })
+                    .collect(),
+            },
+        );
+    })
+}
+
 fn render_lineage_toolbar(
     mode: &UseStateHandle<LineageMode>,
     lineage: &crate::runtime::LaneRow,
     standings: &[Standing],
+    can_arrange: bool,
 ) -> Html {
     html! {
         <header class="team-toolbar">
+            {lineage_drag_handle(lineage.lane, can_arrange)}
             <span
                 class="team-lights"
                 role="group"
@@ -579,10 +717,15 @@ fn render_agent_composer(
         drafts.clone(),
     );
     let ondragover = Callback::from(move |event: DragEvent| {
-        event.prevent_default();
         if let Some(transfer) = event.data_transfer() {
+            // A team in flight is passing over on its way to this member's own
+            // team surface; claiming it here would copy a lane onto a composer.
+            if carries_lineage(&transfer) {
+                return;
+            }
             transfer.set_drop_effect("copy");
         }
+        event.prevent_default();
     });
     let ondrop = drop_on_lane(
         lane_id,

@@ -9,6 +9,7 @@ import { assertComposerShards, assertNoDraftPreview } from "./composer-shards.mj
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
+import { assertTeamArrangement } from "./team-arrangement.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs";
 import {
@@ -1362,6 +1363,7 @@ try {
     beforeReconnect,
   );
   const configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
+  await assertTeamArrangement(lightPage, fixture, artifacts);
   lightMonitor.assertClean();
   await dark.close();
 

@@ -291,6 +291,22 @@
   background: var(--page);
 }
 
+/* The grip only earns a column when a team can actually be arranged. */
+.team-toolbar:has(.team-drag-handle) { grid-template-columns: 13px 24px minmax(0, 1fr) 30px; }
+
+.team-drag-handle {
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+.team-drag-handle:active { cursor: grabbing; }
+.team-drag-handle:hover { color: var(--ink); }
+
 .team-lights {
   display: grid;
   grid-template-columns: repeat(2, 9px);
