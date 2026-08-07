@@ -18,10 +18,6 @@ pub mod next;
 pub mod oops;
 pub mod overlap;
 pub mod phase;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod possession;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod renew;
 pub mod task;
 pub mod urgency;
 

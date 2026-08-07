@@ -546,6 +546,37 @@ fn active_claim_is_only_admitted_from_matching_coherent_live_heads() {
         Active::admit(&freed, &Actor::Spice, instant("2026-08-01T06:05:00.000Z")),
         Err(ClaimRefusal::Inactive(ClaimDisposition::Freed))
     ));
+
+    // Possession is two heads, and admission names which one is absent rather
+    // than reporting the pair as merely incoherent. Both arms are reachable
+    // from the resident, which admits through this predicate before it renews
+    // or frees, so a half-written pair has to refuse by name here.
+    let unclaimed =
+        admitted(statement("BOARD-a1"), workflow("todo"), None, None).expect("valid heads");
+    assert!(matches!(
+        Active::admit(
+            &unclaimed,
+            &Actor::Spice,
+            instant("2026-08-01T06:05:00.000Z")
+        ),
+        Err(ClaimRefusal::MissingClaim)
+    ));
+
+    let leaseless = admitted(
+        statement("BOARD-a1"),
+        workflow("todo"),
+        Some(claim(ClaimDisposition::Active)),
+        None,
+    )
+    .expect("valid heads");
+    assert!(matches!(
+        Active::admit(
+            &leaseless,
+            &Actor::Spice,
+            instant("2026-08-01T06:05:00.000Z")
+        ),
+        Err(ClaimRefusal::MissingLease)
+    ));
 }
 
 #[test]
