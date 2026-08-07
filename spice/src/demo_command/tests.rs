@@ -386,7 +386,14 @@ fn launch_failure_preserves_one_reusable_or_removable_recovery_root() {
     let Outcome::Fault(fault) = outcome else {
         panic!("launcher failure is typed: {outcome:?}");
     };
-    assert_eq!(fault.reason, "canvas::launch-failed");
+    // Printing the whole fault, not just the reason, is what makes a failure
+    // here diagnosable. Every step before the launcher can refuse too, and
+    // under load one of them has; a bare left/right on the reason threw away
+    // the detail naming which one.
+    assert_eq!(
+        fault.reason, "canvas::launch-failed",
+        "a step before the launcher refused instead, and this is the whole fault: {fault:?}",
+    );
     assert!(fault.detail.contains("fixture browser launcher failed"));
     assert!(fault.detail.contains("retry with"));
     assert!(fault.detail.contains("remove with"));
@@ -436,6 +443,56 @@ fn clean_automatic_service_removes_only_its_demo_root() {
     assert_eq!(answer.body.lifecycle, "removed");
     assert!(!root.exists());
     assert!(scratch.0.exists(), "cleanup stays scoped to the demo root");
+}
+
+/// A readiness scan that fails refuses under its own name.
+///
+/// Three unrelated failures used to share `demo::readiness-unavailable`:
+/// creating the watcher, registering the watch, and a scan error raised while
+/// waiting. One string for three causes is why a real failure under load could
+/// only be reported as "not the reason I wanted" -- the panic could not say
+/// which of the three had happened.
+///
+/// This forces the third, which is also the one that actually fires: a
+/// `PollWatcher` does *not* reject a missing directory at registration, it
+/// accepts the watch and then reports the failure from inside the scan. So an
+/// unwatchable root arrives as `demo::readiness-scan-failed`, and the two
+/// pre-resident reasons stay reserved for genuine watcher-construction and
+/// registration faults rather than absorbing this one.
+///
+/// The scan is raised while waiting for discovery, which is before the browser
+/// is reached, so this also pins that a readiness refusal never launches.
+#[test]
+fn an_unwatchable_root_refuses_by_its_own_reason_before_the_browser_is_reached() {
+    let scratch = Scratch::new("unwatchable");
+    let root = scratch.child("missing-root");
+    let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
+        .expect("unwatchable demo seed succeeds");
+    // Removed only after seeding, so the environment is well formed and the
+    // single thing wrong is that the directory to watch is gone.
+    fs::remove_dir_all(&root).expect("the watched root is removed before the watch");
+
+    let mut launched = false;
+    let outcome = canvas_environment_with(environment, false, false, true, false, |_endpoint| {
+        launched = true;
+        Ok(())
+    });
+    let Outcome::Fault(fault) = outcome else {
+        panic!("an unwatchable root is typed: {outcome:?}");
+    };
+    assert_eq!(
+        fault.reason, "demo::readiness-scan-failed",
+        "a failed scan is named apart from watcher creation and watch registration: {fault:?}",
+    );
+    assert!(
+        fault.detail.contains(&root.display().to_string()),
+        "the detail names the path that could not be watched: {}",
+        fault.detail,
+    );
+    assert!(
+        !launched,
+        "a watch refused before the resident starts never reaches the browser",
+    );
 }
 
 fn read_discovery(path: &Path) -> canvas::Discovery {
