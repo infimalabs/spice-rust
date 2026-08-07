@@ -836,6 +836,131 @@ fn the_baseline_under_a_poisoned_effective_remote_is_the_one_local_scope_names()
     );
 }
 
+/// `_declared_upstream_ref` from the predecessor's `spice/hooks/refguard.py`,
+/// transcribed.
+///
+/// Transcribed rather than executed, because the predecessor is a separate
+/// checkout that may be absent: a differential that skipped itself when the
+/// other side went missing would stop checking at exactly the moment the two
+/// guards were free to drift. What it costs is that this transcription can go
+/// stale against a predecessor that moves, which is the trade the same decision
+/// already makes in `spice/tests/config_coexistence.rs`.
+///
+/// Written as its own resolution rather than by calling the guard's, so the two
+/// answers compared below are genuinely two answers. It spells its own literals
+/// for the same reason: sharing `SELF_REMOTE` or `LOCAL_PREFIX` would let a
+/// redefinition of either move both sides at once, and two sides that move
+/// together agree about everything. These are the strings the predecessor's own
+/// constants hold.
+fn predecessor_upstream_reference(fixture: &Fixture, current_ref: &str) -> Option<String> {
+    let branch = current_ref
+        .strip_prefix("refs/heads/")
+        .unwrap_or(current_ref);
+    let read = |key: String| {
+        let output =
+            git(fixture.path(), &["config", "--local", "--get", &key]).expect("git launches");
+        let value = String::from_utf8(output.stdout)
+            .expect("git output is UTF-8")
+            .trim()
+            .to_owned();
+        (output.status.success() && !value.is_empty()).then_some(value)
+    };
+
+    let remote = read(format!("branch.{branch}.remote"))?;
+    let merge = read(format!("branch.{branch}.merge"))?;
+    if remote == "." {
+        return None;
+    }
+    let name = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
+    Some(format!("refs/remotes/{remote}/{name}"))
+}
+
+/// The two guards resolve one baseline, row for row.
+///
+/// The test above pins that this guard stays live under the shadow; this one
+/// pins that the predecessor stays live there too, and on the same reference.
+/// Those are separate claims: a port could hold its own behaviour still while
+/// drifting away from the system it has to agree with, and nothing that asserts
+/// only this side's answer would notice. Each row compares the declared
+/// reference and then the resolved commit, so a side that changed either --
+/// or changed whether it answered at all -- parts from the other here.
+///
+/// The reference is compared and not just the commit because one row is only
+/// visible there. A `.` remote composes `refs/remotes/./<branch>`, which git
+/// never resolves -- measured, not assumed -- so dropping the `.` refusal
+/// outright would still reach no commit and agree on the commit alone.
+///
+/// The rows resolve as well as decline, and the closing assertion refuses a run
+/// in which none resolved, because two resolutions that both answer nothing
+/// agree about everything.
+#[test]
+fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
+    /// One row: the scratch repository's label, and the pairing it carries.
+    type Row = (&'static str, fn(&Fixture));
+
+    let rows: [Row; 4] = [
+        // The configuration a lane actually runs under, where both sides must
+        // read past the shadow to the same live reference.
+        ("agree-shadow", |fixture| {
+            fixture.publish_current_tip();
+            fixture.poison_effective_remote();
+        }),
+        // A pairing that names `.` in local scope, which is the one the shadow
+        // cannot produce and both sides refuse outright.
+        ("agree-self-paired", |fixture| {
+            fixture.publish_current_tip();
+            fixture.track(SELF_REMOTE, "refs/heads/main");
+        }),
+        // Neither `origin` nor the branch's own name, so agreement here cannot
+        // come from either side assuming one.
+        ("agree-named-remote", |fixture| {
+            let tip = fixture.head();
+            fixture.expect(&["update-ref", "refs/remotes/upstream/trunk", &tip]);
+            fixture.track("upstream", "refs/heads/trunk");
+        }),
+        ("agree-merge-alone", |fixture| {
+            fixture.expect(&["config", "--local", "branch.main.merge", "refs/heads/main"]);
+        }),
+    ];
+
+    let mut resolved = 0;
+    for (label, configure) in rows {
+        let fixture = Fixture::history(label);
+        configure(&fixture);
+        let current_ref = fixture.expect(&["symbolic-ref", "--quiet", "HEAD"]);
+
+        let ours = declared_upstream_reference(fixture.path(), &current_ref)
+            .expect("the pairing reaches an answer");
+        let theirs = predecessor_upstream_reference(&fixture, &current_ref);
+        assert_eq!(
+            ours, theirs,
+            "on {label} this guard and the predecessor declared different \
+             upstreams, so the two systems no longer read the same pairing"
+        );
+
+        let our_baseline = publication_baseline(fixture.path(), &current_ref)
+            .expect("the baseline resolution reaches an answer")
+            .map(|baseline| (baseline.reference, baseline.commit));
+        let their_baseline = theirs.and_then(|reference| {
+            commit_oid(fixture.path(), &reference)
+                .expect("the transcribed reference resolves or does not")
+                .map(|commit| (reference, commit))
+        });
+        assert_eq!(
+            our_baseline, their_baseline,
+            "on {label} this guard and the predecessor resolved different \
+             baselines, so the two systems no longer refuse the same rewinds"
+        );
+        resolved += usize::from(our_baseline.is_some());
+    }
+
+    assert!(
+        resolved > 0,
+        "no row resolved a baseline, so the agreement above is agreement \
+         between two resolutions that answered nothing"
+    );
+}
+
 /// Carrying the reference out of the resolution must not give the guard a
 /// baseline it never resolved. Each arm leaves it inert, and the rewind that
 /// the two tests above refuse is permitted here instead.
