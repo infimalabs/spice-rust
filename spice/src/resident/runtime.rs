@@ -1034,12 +1034,6 @@ async fn drive_surface(
                     &mut tool_previews,
                     diagnostic,
                 )?;
-                ingest_transcripts(
-                    bus,
-                    command_surface.paths,
-                    Some(record.lane),
-                    diagnostic,
-                )?;
             }
             failure = failures.recv() => {
                 let failure = failure.ok_or_else(|| environment_fault(
