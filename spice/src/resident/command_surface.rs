@@ -16,11 +16,11 @@ use super::{
 pub(super) struct Surface<'a> {
     bus: &'a Bus,
     repository: &'a Repository,
-    paths: &'a RuntimePaths,
+    pub(super) paths: &'a RuntimePaths,
     epoch: CanonicalUuid,
     lane: lane_surface::Runtime<'a>,
     recovery: lane_recovery::Runtime,
-    config: &'a SurfaceConfig,
+    pub(super) config: &'a SurfaceConfig,
 }
 
 impl<'a> Surface<'a> {

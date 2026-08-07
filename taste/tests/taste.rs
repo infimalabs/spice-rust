@@ -1,5 +1,8 @@
 use listen::{Event, Locus, Prose, Usage};
-use taste::{Bag, Decision, JudgmentFact, Taste, Trigger, TriggerError, judge};
+use taste::{
+    Bag, Decision, JudgmentFact, REMINDER_MARKER, Taste, Trigger, TriggerError, is_reminder_echo,
+    judge, normalize_prose, reminder_identity, reminder_text,
+};
 use wire::FactKind;
 
 const BEHAVIOR: &str = include_str!("fixtures/behavior.txt");
@@ -53,6 +56,48 @@ fn exact_words_suffix_globs_and_phrases_follow_one_matching_rule() {
 }
 
 #[test]
+fn a_hit_names_the_exact_line_and_byte_column_of_its_first_token() {
+    let bag = Bag::new(vec![fallback_taste()]).expect("bag");
+    let hits = bag.hits(&prose("prefix\n  Polling now"));
+
+    assert_eq!(hits.len(), 1);
+    assert_eq!((hits[0].line(), hits[0].column()), (2, 3));
+
+    let unicode = bag.hits(&prose("é: polling"));
+    assert_eq!(unicode.len(), 1);
+    assert_eq!(unicode[0].column(), 5, "the column counts UTF-8 bytes");
+}
+
+#[test]
+fn reminder_identity_frames_taste_and_whole_normalized_prose() {
+    let fallback: wire::Name = "fallbacks".parse().expect("taste name");
+    let polling: wire::Name = "polling".parse().expect("taste name");
+    let first = reminder_identity(&fallback, "  Keep\nONE path. ");
+
+    assert_eq!(normalize_prose("  Keep\nONE path. "), "keep one path.");
+    assert_eq!(first, reminder_identity(&fallback, "keep one   PATH."));
+    assert_ne!(first, reminder_identity(&fallback, "keep one path!"));
+    assert_ne!(first, reminder_identity(&polling, "keep one path."));
+}
+
+#[test]
+fn the_reserved_marker_classifies_echo_before_matching_and_leads_rendering() {
+    let taste: wire::Name = "fallbacks".parse().expect("taste name");
+    let message = "Keep one deterministic path.";
+    let rendered = reminder_text(&taste, message);
+
+    assert!(rendered.starts_with(REMINDER_MARKER));
+    assert!(rendered.contains(taste.as_str()));
+    assert!(
+        rendered.ends_with(message),
+        "configured content is unchanged"
+    );
+    assert!(is_reminder_echo(&rendered));
+    assert!(is_reminder_echo(&format!("> quoted {rendered}")));
+    assert!(!is_reminder_echo("ordinary prose about taste"));
+}
+
+#[test]
 fn invalid_glob_positions_and_non_words_are_refused() {
     assert!(matches!(
         Trigger::parse("fall* back"),
@@ -85,7 +130,7 @@ fn only_typed_assistant_prose_is_a_candidate_surface() {
 }
 
 #[test]
-fn judgment_is_the_only_door_from_a_hit_to_a_fact() {
+fn judgment_is_the_only_door_from_a_hit_to_a_historical_curation_fact() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let hit = bag
         .hits(&prose(BEHAVIOR))
@@ -128,7 +173,7 @@ fn a_harmless_mention_reaches_the_clearance_fact_path() {
 }
 
 #[test]
-fn every_taste_plane_kind_has_a_judgment_producer() {
+fn historical_judgments_are_exactly_the_two_kinds_the_judge_produces() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let hit = bag
         .hits(&prose(BEHAVIOR))
@@ -141,12 +186,15 @@ fn every_taste_plane_kind_has_a_judgment_producer() {
     ];
     produced.sort_unstable();
 
-    let mut taste_plane = FactKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| fold::FactPlane::Taste.contains(*kind))
-        .collect::<Vec<_>>();
-    taste_plane.sort_unstable();
-
-    assert_eq!(produced.as_slice(), taste_plane);
+    assert_eq!(
+        produced,
+        [FactKind::TasteConfirmed, FactKind::TasteCleared],
+        "the judge owns historical curation evidence only"
+    );
+    assert!(fold::FactPlane::Taste.contains(FactKind::TasteReminded));
+    assert_eq!(
+        FactKind::TasteReminded.producer(),
+        wire::Producer::ResidentRecognition,
+        "the live judge-free path belongs to resident recognition"
+    );
 }

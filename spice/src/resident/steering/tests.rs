@@ -57,7 +57,7 @@ fn reminded_bytes(seq: u64, key: &str) -> String {
             r#""fact":{{"kind":"taste::reminded","#,
             r#""directive":"a0ae31a7-eb68-463a-b3c0-272bfeaaa5d{}","#,
             r#""key":"{}","lane":"{}","taste":"polling","content":"{}","#,
-            r#""occupant":"{}","compaction":0,"#,
+            r#""occupant":"{}","compaction":2,"#,
             r#""locus":{{"member":1,"offset":40,"length":80,"event":0,"line":3,"column":1}},"#,
             r#""text":"polling is not a completion event","expires":"{}"}}}}"#
         ),

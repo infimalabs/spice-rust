@@ -5,7 +5,14 @@ use std::error::Error;
 use std::fmt;
 
 use listen::{Event, Locus};
-use wire::Name;
+use wire::{Digest, Domain, Name};
+
+/// Reserved prefix carried by every resident-authored taste reminder.
+///
+/// Runtime recognition checks for this exact marker before consulting the
+/// configured bag. That makes quoted or repeated reminder prose inert without
+/// teaching any individual taste about the messages other tastes emit.
+pub const REMINDER_MARKER: &str = "[TASTE]";
 
 /// One admitted candidate selector.
 ///
@@ -103,11 +110,74 @@ fn lowercase(text: &str) -> String {
     text.chars().flat_map(char::to_lowercase).collect()
 }
 
-fn prose_tokens(text: &str) -> Vec<String> {
-    text.split(|character: char| !character.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .map(lowercase)
-        .collect()
+/// Canonical authored prose used by durable reminder identity.
+///
+/// Matching is case-insensitive and whitespace-insensitive, so identity uses
+/// the same two equivalences while retaining every non-whitespace character.
+/// Punctuation remains significant: this is an identity for the whole prose,
+/// not for the smaller token stream selectors happen to inspect.
+#[must_use]
+pub fn normalize_prose(text: &str) -> String {
+    lowercase(&text.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+/// Domain-separated identity of one taste firing on one authored prose body.
+///
+/// The two components are length framed rather than delimiter joined because
+/// prose may contain any delimiter. The compaction epoch deliberately is not
+/// part of this value: it is carried beside the identity on the reminder fact,
+/// allowing the same content to become eligible once in each later epoch.
+#[must_use]
+pub fn reminder_identity(taste: &Name, prose: &str) -> Digest {
+    let normalized = normalize_prose(prose);
+    let mut framed = Vec::with_capacity(16 + taste.as_str().len() + normalized.len());
+    framed.extend_from_slice(&(taste.as_str().len() as u64).to_be_bytes());
+    framed.extend_from_slice(taste.as_str().as_bytes());
+    framed.extend_from_slice(&(normalized.len() as u64).to_be_bytes());
+    framed.extend_from_slice(normalized.as_bytes());
+    Digest::compute(Domain::TasteProse, &framed)
+}
+
+/// Whether authored prose is a reminder echo rather than a fresh candidate.
+#[must_use]
+pub fn is_reminder_echo(prose: &str) -> bool {
+    prose.contains(REMINDER_MARKER)
+}
+
+/// Render one actionable reminder without rewriting configured content.
+#[must_use]
+pub fn reminder_text(taste: &Name, message: &str) -> String {
+    format!("{REMINDER_MARKER} {}: {message}", taste.as_str())
+}
+
+fn prose_tokens(text: &str) -> (Vec<String>, Vec<(usize, usize)>) {
+    let mut tokens = Vec::new();
+    let mut loci = Vec::new();
+    let mut current = String::new();
+    let mut line = 1;
+    let mut line_start = 0;
+
+    for (offset, character) in text.char_indices() {
+        if character.is_alphanumeric() {
+            if current.is_empty() {
+                loci.push((line, offset - line_start + 1));
+            }
+            current.extend(character.to_lowercase());
+        } else {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            if character == '\n' {
+                line += 1;
+                line_start = offset + 1;
+            }
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    (tokens, loci)
 }
 
 /// Why a trigger spelling was refused.
@@ -182,7 +252,7 @@ impl Taste {
         &self.triggers
     }
 
-    /// Imperative presented when a candidate is confirmed.
+    /// Imperative presented when a candidate becomes a live reminder.
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
@@ -217,7 +287,7 @@ impl Bag {
         &self.tastes
     }
 
-    /// Select judgment candidates from one typed listening event.
+    /// Select configured candidates from one typed listening event.
     ///
     /// Only [`Event::Prose`] is readable here. Reasoning, tools, usage,
     /// compaction, and failure events produce no candidates, and this API has
@@ -227,18 +297,23 @@ impl Bag {
         let Event::Prose(prose) = event else {
             return Vec::new();
         };
-        let tokens = prose_tokens(&prose.text);
+        let (tokens, loci) = prose_tokens(&prose.text);
         self.tastes
             .iter()
             .flat_map(|taste| {
                 taste.triggers.iter().flat_map(|trigger| {
-                    trigger.spans(&tokens).into_iter().map(|span| Hit {
-                        taste: taste.name.clone(),
-                        trigger: trigger.source.clone(),
-                        message: taste.message.clone(),
-                        span,
-                        context: prose.text.clone(),
-                        locus: prose.locus,
+                    trigger.spans(&tokens).into_iter().map(|span| {
+                        let (line, column) = loci[span.first];
+                        Hit {
+                            taste: taste.name.clone(),
+                            trigger: trigger.source.clone(),
+                            message: taste.message.clone(),
+                            span,
+                            context: prose.text.clone(),
+                            locus: prose.locus,
+                            line,
+                            column,
+                        }
                     })
                 })
             })
@@ -288,9 +363,11 @@ pub struct Span {
     pub end: usize,
 }
 
-/// One prose candidate requiring judgment.
+/// One selected prose candidate.
 ///
-/// A hit cannot mint either taste fact before an explicit judgment:
+/// A hit cannot mint a fact itself. Historical curation passes it to the
+/// judge, while resident recognition combines its evidence with current lane,
+/// epoch, steering, and transaction authority before minting a reminder:
 ///
 /// ```compile_fail
 /// # fn hit() -> taste::Hit { panic!() }
@@ -304,6 +381,8 @@ pub struct Hit {
     span: Span,
     context: String,
     locus: Locus,
+    line: usize,
+    column: usize,
 }
 
 impl Hit {
@@ -335,5 +414,17 @@ impl Hit {
     #[must_use]
     pub const fn locus(&self) -> Locus {
         self.locus
+    }
+
+    /// One-based prose line at which the selected trigger begins.
+    #[must_use]
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+
+    /// One-based byte column at which the selected trigger begins.
+    #[must_use]
+    pub const fn column(&self) -> usize {
+        self.column
     }
 }
