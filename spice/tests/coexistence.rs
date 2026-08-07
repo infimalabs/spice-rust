@@ -14,7 +14,7 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
-use spice::repository::Repository;
+use spice::repository::{Repository, StatePaths};
 
 /// Durable state the predecessor owns inside the shared root.
 ///
@@ -91,6 +91,28 @@ fn ownership_splits_inside_the_one_shared_data_directory() {
     );
 }
 
+/// Inside an exclusive directory, ownership needs no enumerated name.
+///
+/// A lock is named after whatever asked for it, so no declaration could list
+/// one ahead of time. The subtree rule is what covers it, and this is the only
+/// case that exercises that rule: without it the rule could be deleted and every
+/// other test here would stay green, because none of them run a command that
+/// writes inside one of this port's exclusive directories.
+#[test]
+fn ownership_covers_unnameable_files_inside_an_exclusive_directory() {
+    let fixture = Fixture::seeded("exclusive");
+    let lock = fixture.paths().locks().join("journal.lock");
+    fs::create_dir_all(lock.parent().expect("lock has a parent")).expect("create lock directory");
+    fs::write(&lock, b"this port's own lock").expect("seed this port's lock");
+
+    let foreign = fixture.foreign_identity();
+
+    assert!(
+        !foreign.contains_key(&lock),
+        "a file this port wrote inside its own lock directory was counted as the predecessor's"
+    );
+}
+
 /// Running this port leaves every predecessor file byte-for-byte as found.
 ///
 /// The run is first proved to have resolved this exact state root. That is the
@@ -118,6 +140,50 @@ fn running_this_port_leaves_predecessor_state_byte_identical() {
         fixture.foreign_identity(),
         before,
         "running this port changed state the predecessor owns"
+    );
+}
+
+/// Installing and uninstalling leaves every predecessor file as found.
+///
+/// Install is the one verb that writes into the shared root on purpose, so it
+/// is the only real test of the subtraction: the receipt it creates must come
+/// out of the foreign set by being owned, not by being missed. Requiring the
+/// receipt to land on [`spice::repository::StatePaths::install_record`] is what
+/// keeps that honest -- the installer spells the same name independently, and
+/// if the two ever diverge this reds here instead of silently reclassifying
+/// this port's own receipt as the predecessor's property.
+#[test]
+fn installing_this_port_leaves_predecessor_state_byte_identical() {
+    let fixture = Fixture::seeded("install");
+    let before = fixture.foreign_identity();
+
+    let preview = fixture.invoke(&["--json", "install"]);
+    assert!(preview.status.success(), "install preview: {preview:?}");
+    let preview: Value = serde_json::from_slice(&preview.stdout).expect("preview is JSON");
+    let digest = preview["body"]["digest"]
+        .as_str()
+        .expect("preview names the plan digest an operator must echo back");
+
+    let applied = fixture.invoke(&["install", &format!("--apply={digest}")]);
+    assert!(applied.status.success(), "install apply: {applied:?}");
+
+    let receipt = fixture.paths().install_record().to_path_buf();
+    assert!(
+        receipt.is_file(),
+        "install wrote no receipt at the path this runtime claims"
+    );
+    assert_eq!(
+        fixture.foreign_identity(),
+        before,
+        "installing this port changed state the predecessor owns"
+    );
+
+    let removed = fixture.invoke(&["install", "--unapply"]);
+    assert!(removed.status.success(), "install unapply: {removed:?}");
+    assert_eq!(
+        fixture.foreign_identity(),
+        before,
+        "uninstalling this port changed state the predecessor owns"
     );
 }
 
@@ -244,10 +310,15 @@ impl Fixture {
             .expect("run the spice binary")
     }
 
+    /// The runtime's own declaration of where its state lives.
+    fn paths(&self) -> StatePaths {
+        let repository = Repository::discover(&self.root).expect("fixture is a repository");
+        repository.admit_state().expect("fixture state admits")
+    }
+
     /// Every path under the shared root this runtime declares as its own.
     fn owned(&self) -> Vec<PathBuf> {
-        let repository = Repository::discover(&self.root).expect("fixture is a repository");
-        let paths = repository.admit_state().expect("fixture state admits");
+        let paths = self.paths();
         paths
             .owned_directories()
             .into_iter()
@@ -261,11 +332,26 @@ impl Fixture {
     /// The owned set is subtracted from the runtime's own declaration rather
     /// than from a list repeated here, so claiming one more name moves it out of
     /// this set automatically instead of leaving a stale copy to update by hand.
+    ///
+    /// Subtracting exact names is not enough on its own. A lock or a receipt
+    /// written inside one of this port's exclusive directories has a name no
+    /// declaration could enumerate ahead of time, so those subtrees are removed
+    /// wholesale. The shared directories are deliberately not treated that way:
+    /// dropping everything under `data` would drop the predecessor's databases,
+    /// which are the very files these tests exist to watch.
     fn foreign_identity(&self) -> BTreeMap<PathBuf, Entry> {
+        let paths = self.paths();
+        let exclusive: Vec<PathBuf> = paths
+            .exclusive_directories()
+            .into_iter()
+            .map(Path::to_path_buf)
+            .collect();
         let owned = self.owned();
         let mut found = BTreeMap::new();
         walk(&self.state_root(), &mut found);
-        found.retain(|path, _| !owned.contains(path));
+        found.retain(|path, _| {
+            !owned.contains(path) && !exclusive.iter().any(|root| path.starts_with(root))
+        });
         found
     }
 }
