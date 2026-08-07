@@ -71,10 +71,28 @@ impl Fixture {
     /// Publish the current tip through the same configuration `apply` reads.
     fn publish_current_tip(&self) {
         let tip = self.head();
-        let origin = self.path().to_str().expect("scratch path is UTF-8");
-        self.expect(&["remote", "add", "origin", origin]);
+        self.add_origin_remote();
         self.expect(&["config", "branch.main.merge", "refs/heads/main"]);
         self.expect(&["update-ref", "refs/remotes/origin/main", &tip]);
+    }
+
+    /// The origin remote alone, with nothing published through it yet.
+    fn add_origin_remote(&self) {
+        let origin = self.path().to_str().expect("scratch path is UTF-8");
+        self.expect(&["remote", "add", "origin", origin]);
+    }
+
+    /// Publish the tip under a second remote-tracking name reachable only
+    /// through `origin/HEAD`.
+    ///
+    /// The name differs from the integration branch's on purpose: a refusal
+    /// that names this one cannot have arrived through `branch.<lane>.merge`,
+    /// and a refusal that names the other cannot have arrived through here.
+    fn point_origin_head_at(&self, branch: &str) {
+        let tip = self.head();
+        let reference = format!("refs/remotes/origin/{branch}");
+        self.expect(&["update-ref", &reference, &tip]);
+        self.expect(&["symbolic-ref", "refs/remotes/origin/HEAD", &reference]);
     }
 
     /// Refuse the branch update the way the real guard refuses it, recording
@@ -374,6 +392,8 @@ fn refusal(damage: WorktreeDamage) -> String {
     ReferenceTransactionError::ProtectedHistory {
         reference: "refs/heads/main".to_owned(),
         commits: "deadbee".to_owned(),
+        baseline: "refs/remotes/origin/main".to_owned(),
+        baseline_commit: "0ddba11".to_owned(),
         damage,
     }
     .to_string()
@@ -621,6 +641,109 @@ fn a_queue_abandoning_published_history_is_still_refused() {
         matches!(error, ReferenceTransactionError::ProtectedHistory { .. }),
         "the guard answered something other than a refusal: {error:?}"
     );
+}
+
+/// Drive a genuine refusal and answer with what its message said.
+fn refusal_message(fixture: &Fixture) -> String {
+    let tip = fixture.head();
+    let base = fixture.expect(&["rev-parse", "HEAD~2"]);
+    apply(
+        fixture.path(),
+        OsStr::new(PREPARED),
+        &format!("{tip} {base} refs/heads/main\n"),
+    )
+    .expect_err("an update abandoning published commits is refused")
+    .to_string()
+}
+
+/// A refusal that names no baseline cannot be told apart from a misresolved
+/// one, so each resolution has to say which reference it reached.
+///
+/// Both resolutions are configured here and they name different references, so
+/// this assertion fails if the guard reaches the backstop instead.
+#[test]
+fn a_refusal_names_the_integration_reference_it_resolved() {
+    let fixture = Fixture::history("names-integration");
+    fixture.publish_current_tip();
+    fixture.point_origin_head_at("trunk");
+    let published = fixture.expect(&["rev-parse", "--short", "refs/remotes/origin/main"]);
+
+    let message = refusal_message(&fixture);
+
+    assert!(
+        message.contains("refs/remotes/origin/main"),
+        "the refusal never named the integration reference it resolved: {message}"
+    );
+    assert!(
+        !message.contains("refs/remotes/origin/trunk"),
+        "the refusal named the backstop instead of the integration branch: {message}"
+    );
+    assert!(
+        message.contains(&published),
+        "the refusal named a reference without the commit it stood at: {message}"
+    );
+}
+
+/// The same requirement on the other resolution. `branch.main.merge` is left
+/// unset so the guard can only arrive through `origin/HEAD`, and the reference
+/// it finds there is deliberately not the one the other test expects.
+#[test]
+fn a_refusal_names_the_origin_head_reference_when_no_integration_branch_is_configured() {
+    let fixture = Fixture::history("names-backstop");
+    fixture.add_origin_remote();
+    fixture.point_origin_head_at("trunk");
+    let published = fixture.expect(&["rev-parse", "--short", "refs/remotes/origin/trunk"]);
+
+    let message = refusal_message(&fixture);
+
+    assert!(
+        message.contains("refs/remotes/origin/trunk"),
+        "the refusal never named the reference origin/HEAD resolved to: {message}"
+    );
+    assert!(
+        !message.contains("refs/remotes/origin/main"),
+        "the refusal named an integration branch that was never configured: {message}"
+    );
+    assert!(
+        message.contains(&published),
+        "the refusal named a reference without the commit it stood at: {message}"
+    );
+}
+
+/// Carrying the reference out of the resolution must not give the guard a
+/// baseline it never resolved. Each arm leaves it inert, and the rewind that
+/// the two tests above refuse is permitted here instead.
+#[test]
+fn a_lane_with_no_resolvable_baseline_permits_the_rewind_it_would_otherwise_refuse() {
+    let unpublished = |label: &str| {
+        let fixture = Fixture::history(label);
+        let tip = fixture.head();
+        let base = fixture.expect(&["rev-parse", "HEAD~2"]);
+        (fixture, format!("{tip} {base} refs/heads/main\n"))
+    };
+
+    let (fixture, queue) = unpublished("inert-no-remote");
+    apply(fixture.path(), OsStr::new(PREPARED), &queue)
+        .expect("a lane with no origin remote has no published history to protect");
+
+    let (fixture, queue) = unpublished("inert-no-integration");
+    fixture.add_origin_remote();
+    apply(fixture.path(), OsStr::new(PREPARED), &queue)
+        .expect("a lane with no resolvable integration branch is inert");
+
+    let (fixture, queue) = unpublished("inert-never-published");
+    fixture.add_origin_remote();
+    fixture.expect(&["config", "branch.main.merge", "refs/heads/main"]);
+    apply(fixture.path(), OsStr::new(PREPARED), &queue)
+        .expect("an integration branch never published is inert");
+
+    // Without this the three passes above are indistinguishable from a guard
+    // that stopped refusing anything: the same queue, in the same fixture
+    // shape, must still be refused once a baseline exists.
+    let (fixture, queue) = unpublished("inert-control");
+    fixture.publish_current_tip();
+    apply(fixture.path(), OsStr::new(PREPARED), &queue)
+        .expect_err("the control must still be refused once the tip is published");
 }
 
 /// Read from a real commit rather than from githooks(5): the transaction this
