@@ -114,7 +114,9 @@ pub use message::{
     CommitMessageError, CommitMessagePolicy, OriginTrailer, OriginTrailerError, TrailerRejection,
     validate_commit_message,
 };
-pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
+pub use names::{
+    RETIRED_NAMES, RetiredMatch, RetiredName, retired_command_matches, retired_matches,
+};
 pub use policy::{
     BoundLimits, BoundName, CompileError as PolicyCompileError, FileClasses, FileShapePolicy,
     GlobalRatchet, LanguagesPolicy, MagicRule, MigrationError as PolicyMigrationError,
