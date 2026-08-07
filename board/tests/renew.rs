@@ -357,12 +357,16 @@ fn renewing_an_occupant_leaves_the_opening_boundary_open() {
 
 /// A task command whose transaction appends no fact is refused, not receipted.
 ///
-/// A journal write can carry a command receipt without carrying a fact, and
-/// that shape is exactly a partial application: the caller is told its command
-/// succeeded while the canonical stream records nothing it could have succeeded
-/// at, so a later reader sees a receipt with no cause. The refusal has to come
-/// from the transaction itself, because every producer assembles its receipt
-/// before it can know whether its facts survived the guards.
+/// A journal write can carry a command receipt without carrying a fact, because
+/// the receipt is assembled without one. That shape is unrepresentable: a
+/// receipt records the span of facts it caused, and a write with no fact has no
+/// span to name, so the commit path reaches for a first and last position that
+/// are not there. Removing this refusal does not make such a write succeed
+/// quietly -- it aborts the process inside position assignment. What the
+/// refusal buys is a typed refusal a producer can report at the door instead of
+/// a panic underneath it, and it has to come from the transaction itself,
+/// because every producer assembles its receipt before it can know whether its
+/// facts survived the guards.
 ///
 /// The witness positions are fixture values. Command law admits a witness list
 /// by kind rather than by position, and this transaction is refused before any
