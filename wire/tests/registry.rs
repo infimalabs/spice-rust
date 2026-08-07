@@ -72,6 +72,7 @@ fn every_command_names_the_witnesses_it_requires() {
                 | CommandKind::LaneState
                 | CommandKind::LaneArrange
                 | CommandKind::LineageConfigure
+                | CommandKind::LineageArrange
         );
         assert_eq!(
             law.required.is_empty(),

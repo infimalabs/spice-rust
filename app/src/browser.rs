@@ -14,8 +14,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, LaneArrange, LaneRead, LaneSeat, LineageConfigure,
-    LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, LaneArrange, LaneRead, LaneSeat, LineageArrange,
+    LineageArrangement, LineageConfigure, LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
@@ -142,6 +142,14 @@ enum ClientAction {
         member: Option<CanonicalUuid>,
         life: LineageLife,
     },
+    /// Where every team and every agent stands after one team drag.
+    ///
+    /// The whole topology travels because that is the only thing the resident
+    /// admits: a drop states an arrangement, not a move, so the surface that
+    /// drew the teams is the one that says where they all now stand.
+    ArrangeLineages {
+        lineages: Vec<LineageArrangement>,
+    },
     Note {
         task: TaskHandle,
         note: String,
@@ -177,6 +185,12 @@ enum PendingKind {
     Policy,
     LaneSeat,
     LineageConfigure(CanonicalUuid),
+    /// A team arrangement in flight.
+    ///
+    /// No lineage travels with it: an arrangement names every team, so there is
+    /// no one team a refusal belongs to. The answer replaces the whole lane
+    /// table, which is exactly what a refused arrangement leaves unchanged.
+    LineageArrange,
     /// Direction in flight, carrying the lane it was aimed at.
     ///
     /// The receipt names that lane, and the only moment it is known for certain
@@ -751,6 +765,18 @@ async fn dispatch_action(
             )
             .await
         }
+        ClientAction::ArrangeLineages { lineages } => {
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::LineageArrange,
+                CommandKind::LineageArrange,
+                vec![],
+                LineageArrange { lineages },
+            )
+            .await
+        }
         ClientAction::ConfigureLineage {
             lineage,
             member,
@@ -1153,7 +1179,12 @@ fn handle_incoming(
             runtime.apply_board(&admit_response(session, bytes)?);
             false
         }
-        PendingKind::Lanes => {
+        // A read of the lane table and an arrangement of it answer with the
+        // same authoritative table, so they are applied the same way. Teams
+        // move when that answer lands, never before it: the surface holds the
+        // order the resident last stated, so a refused arrangement has nothing
+        // local to take back and needs no re-read either.
+        PendingKind::Lanes | PendingKind::LineageArrange => {
             let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
                 admit_response(session, bytes)?;
             if let wire::Outcome::Reply(reply) = &admitted.get().outcome {

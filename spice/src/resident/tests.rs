@@ -759,6 +759,11 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
+/// Arrangement is the one command a drag commits, and it carries its own
+/// fixture, so its cases are proven in a module of their own.
+#[path = "arrangement_tests.rs"]
+mod arrangement;
+
 fn arrange_lane_for_test(
     bus: &Bus,
     epoch: CanonicalUuid,

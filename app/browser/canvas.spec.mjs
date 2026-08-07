@@ -16,6 +16,7 @@ import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
+import { assertTeamArrangement } from "./team-arrangement.mjs";
 import { assertTeamMenu } from "./team-menu.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs";
@@ -1435,6 +1436,7 @@ try {
     beforeReconnect,
   );
   const configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
+  await assertTeamArrangement(lightPage, fixture, artifacts);
   lightMonitor.assertClean();
   await dark.close();
 

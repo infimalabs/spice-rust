@@ -12,7 +12,8 @@ use sill::WaitOutcome;
 use spice::repository::Repository;
 use wire::intent::{
     CommandAnswer, LaneAction, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRecall, LaneSeat,
-    LaneState, LineageConfigure, LineageLife, RecallAnswer, RecallEntry, RecallProvenance,
+    LaneState, LineageArrange, LineageConfigure, LineageLife, RecallAnswer, RecallEntry,
+    RecallProvenance,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
@@ -26,7 +27,7 @@ mod reply;
 mod session;
 
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
-pub(super) use lineage::configure;
+pub(super) use lineage::{arrange as arrange_lineages, configure};
 use propose::{commit_restored, propose_drain, propose_seat, propose_wake};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,

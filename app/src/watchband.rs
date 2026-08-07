@@ -115,6 +115,106 @@ pub fn standing_title(standing: &Standing) -> String {
     parts.join("; ")
 }
 
+/// The fraction of a team's width, at either edge, that joins rather than
+/// reorders.
+///
+/// The predecessor's lane drag reads the same gutter: the outer fifth of the
+/// team under the pointer fuses the two teams, and the middle three fifths
+/// moves the dragged team into that position. Keeping the fraction identical
+/// keeps the muscle memory identical, which is the whole reason a number this
+/// arbitrary is stated once rather than chosen twice.
+pub const LINEAGE_JOIN_GUTTER: f64 = 0.2;
+
+/// What a drop on a team states, decided by where in that team it landed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineageDrop {
+    /// Move the dragged team into the target team's position.
+    Reorder,
+    /// Give the dragged team's agents to the target team.
+    Join,
+}
+
+impl LineageDrop {
+    /// Read the gesture out of a drop's position across the target team.
+    ///
+    /// `offset` is the pointer's distance from the target's left edge and
+    /// `width` the target's width, both in the same units; a target with no
+    /// width has no gutter to divide, so it can only reorder.
+    #[must_use]
+    pub fn at(offset: f64, width: f64) -> Self {
+        if width <= 0.0 {
+            return Self::Reorder;
+        }
+        let fraction = offset / width;
+        if fraction <= LINEAGE_JOIN_GUTTER || fraction >= 1.0 - LINEAGE_JOIN_GUTTER {
+            Self::Join
+        } else {
+            Self::Reorder
+        }
+    }
+}
+
+/// Every team and the agents it holds, in the order the surface drew them.
+///
+/// This is the same grouping the canvas renders from, read back out as bare
+/// identities: a drag has to answer with the arrangement it *saw*, so the
+/// order here is the one the operator was looking at rather than a fresh one.
+#[must_use]
+pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
+    lanes
+        .iter()
+        .map(|lineage| {
+            (
+                lineage.lane,
+                lineage
+                    .members
+                    .iter()
+                    .map(|member| member.lane)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect()
+}
+
+/// State the whole team arrangement one drop produces.
+///
+/// The resident admits an arrangement only as a complete restatement of the
+/// lane table, so this returns every team and every agent rather than the
+/// delta: the operator dragged one team, but what the canvas knows and the
+/// resident must agree on is where all of them now stand.
+///
+/// A join appends the dragged team's agents *after* the target's, never
+/// before. The target's first agent is its primary composer, so prepending
+/// would silently hand the composer to whichever team was dragged in. A drop
+/// of a team onto itself, or of a team that is no longer on the surface,
+/// states nothing and returns `None` rather than a no-op command.
+#[must_use]
+pub fn arrangement(
+    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    dragged: CanonicalUuid,
+    target: CanonicalUuid,
+    drop: LineageDrop,
+) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
+    if dragged == target {
+        return None;
+    }
+    let mut teams = teams.to_vec();
+    let dragged_at = teams.iter().position(|(team, _)| *team == dragged)?;
+    if !teams.iter().any(|(team, _)| *team == target) {
+        return None;
+    }
+    let (_, moved) = teams.remove(dragged_at);
+    let target_at = teams
+        .iter()
+        .position(|(team, _)| *team == target)
+        .expect("the target survives removing a different team");
+    match drop {
+        LineageDrop::Reorder => teams.insert(target_at, (dragged, moved)),
+        LineageDrop::Join => teams[target_at].1.extend(moved),
+    }
+    Some(teams)
+}
+
 /// Join the lane table, the inbox and the board into one row per lane.
 ///
 /// Lane order is the resident's; this never sorts. `now` is milliseconds since

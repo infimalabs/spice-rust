@@ -166,6 +166,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::LaneRead
         | CommandKind::LaneArrange
         | CommandKind::LineageConfigure
+        | CommandKind::LineageArrange
         | CommandKind::LaneRecall
         | CommandKind::TasteRecord
         | CommandKind::CanaryRecognize
