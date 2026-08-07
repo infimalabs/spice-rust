@@ -47,10 +47,13 @@ export function describeLoad() {
 
 /// The field that both writes the reading and recognises one already written.
 ///
-/// One constant decides both sides. A change to the report's shape therefore
-/// cannot leave the boundary appending a second copy under a name the
-/// already-carries check no longer matches.
-const LOAD_FIELD = "  load: ";
+/// One constant decides every writer and the single reader, canvas-fixture.mjs
+/// included: it builds the line a failed wait carries, and for a while it spelled
+/// the prefix out itself instead of importing this. Renaming the field then left
+/// that line unrecognised and the boundary appended a second copy beside it --
+/// measured at 2 readings where this doc promised 1. So the claim is now held up
+/// by `assertPrefixIsNotDuplicated` rather than by this paragraph.
+export const LOAD_FIELD = "  load: ";
 
 /// Carry the reading on a failure that reached the top of the suite without one.
 ///
@@ -111,6 +114,32 @@ function assertSuiteRoutesThroughBoundary() {
   );
 }
 
+/// The fixture that builds the report line a failed wait carries.
+const FIXTURE = new URL("./canvas-fixture.mjs", import.meta.url);
+
+/// A prefix spelled out by hand rather than taken from `LOAD_FIELD`.
+///
+/// Anchored on a quote or backtick opening straight onto the field, which is how
+/// the duplicate was written. The fixture names the prefix in its assertions too,
+/// inside regex literals with no opening quote, so those do not match.
+const SPELLED_PREFIX = /["'`]  load: /g;
+
+/// Prove the report's other writer takes the prefix from the constant.
+///
+/// While the constant keeps its current value a hand-spelled prefix produces
+/// bytes identical to it, so nothing at run time can separate the two and
+/// reading the source is what observes the difference. The cost only appears
+/// when someone renames the field: the fixture's line stops being recognised as
+/// carrying a reading, and the boundary appends a second one beside it.
+function assertPrefixIsNotDuplicated() {
+  const source = readFileSync(FIXTURE, "utf8");
+  assert.equal(
+    (source.match(SPELLED_PREFIX) ?? []).length,
+    0,
+    "canvas-fixture.mjs takes the load prefix from LOAD_FIELD rather than spelling it out",
+  );
+}
+
 /// Prove the boundary reads the load, reads all of it, and reads it once.
 ///
 /// These cover the append. They cannot cover the wiring, for the reason given
@@ -139,4 +168,5 @@ export function assertBoundaryLoadReading() {
   assert.equal(bare.message.match(/load: /g).length, 1, "the reading is written once");
   assert.equal(withLoadReading(bare), bare, "a failure already carrying a reading is left alone");
   assertSuiteRoutesThroughBoundary();
+  assertPrefixIsNotDuplicated();
 }
