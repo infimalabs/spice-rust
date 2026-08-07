@@ -112,6 +112,25 @@ processes report completion, repeat the capture into
 its settled status may be `idle`, `stopped`, or `unstarted`. An idle row with a
 PID is not drained.
 
+Lane process groups are not the only writers. Test fixtures launch vendor
+stand-ins under temporary directories, and an interrupted battery leaves them
+running outside every lane's process group, so the capture above can report
+`pid=-` for every lane while loose fixtures keep loading the machine. Sweep for
+them by name and record what survives the drain:
+
+```sh
+ps -eo pid= -o etime= -o command= |
+  grep -E 'fake-claude|spice-resident-process|spice-canvas-browser' |
+  grep -v grep |
+  tee "$CUTOVER_EVIDENCE/loose-fixtures.txt"
+```
+
+Confirm no lane is mid-battery, then kill each surviving PID individually. Do
+not sweep the pattern with `pkill -f`: it matches a peer worktree's live run as
+readily as a loose one. The population is worth measuring rather than assuming
+-- one reading taken while preparing this cutover found 589 loose fixtures, the
+oldest 23 hours elapsed, at load average 15.98.
+
 ## Back up, stage, and disable the predecessor
 
 No predecessor writer may remain when these archives are taken:
