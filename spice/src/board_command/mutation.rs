@@ -340,7 +340,11 @@ fn change_deferral<B: serde::Serialize + Clone>(
             "read board and name one current task handle",
         );
     };
-    if entry.workflow().status == "completed" {
+    // Settled is the question, not completed. A withdrawn task carries the same
+    // completion instant and never becomes workable again, so deferring one is
+    // meaningless and waking one would promise a return the allocator cannot
+    // make: `workable` admits pending rows only.
+    if entry.workflow().completion.is_some() {
         return refusal(
             "task::settled",
             Some(task.to_string()),
@@ -651,7 +655,10 @@ fn task_edit(
             "read board and name one current task handle",
         );
     };
-    if entry.workflow().status == "completed" {
+    // A withdrawn task is settled exactly as a completed one is, and both stamp
+    // the same instant. Correcting a row that has already left the board would
+    // publish a revision nobody reaches through the working board.
+    if entry.workflow().completion.is_some() {
         return refusal(
             "task::settled",
             Some(edit.task.to_string()),

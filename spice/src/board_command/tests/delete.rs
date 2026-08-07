@@ -150,8 +150,11 @@
         );
         let withdrawn = listed(&after, Some(TaskListStatus::Deleted));
         assert!(
-            withdrawn.contains(task.as_str()),
-            "the recorded withdrawal stays reachable by name: {withdrawn}"
+            withdrawn.lines().any(|line| line.starts_with(&format!(
+                "{task} [deleted] board.test An agent-technique lesson"
+            ))),
+            "a withdrawn row is reachable and shows how it ended, not the phase \
+             it stopped in, which is what the predecessor prints: {withdrawn}"
         );
         clean(&root, bus);
     }
@@ -386,6 +389,149 @@
         assert_eq!(
             won.task, dependent,
             "the only allocatable task is the one the withdrawal released"
+        );
+        clean(&root, bus);
+    }
+
+    /// What a withdrawal releases, the operator's own status report agrees it released.
+    ///
+    /// The allocator and the status report each decide which prerequisites are
+    /// satisfied, and a withdrawn one has to count for both. When only the
+    /// allocator learns it, the same task is reported ready and blocked at once
+    /// on one screen, and the row `task next` will hand over is the row the
+    /// operator was just told is waiting on something.
+    #[test]
+    fn a_released_dependent_is_not_still_reported_blocked() {
+        let (root, bus, epoch, seats) = fixture("delete-status", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        let blocker = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CLI-drop00008",
+            "A prerequisite filed by mistake",
+            Some("todo"),
+        );
+        let dependent = "CLI-drop00009"
+            .parse::<TaskHandle>()
+            .expect("fixture task handle");
+        assert_committed(issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskAdd,
+            vec![Witness::Absence {
+                task: dependent.clone(),
+            }],
+            &TaskAdd {
+                title: "Work waiting on the mistake".to_owned(),
+                project: Some("board.test".to_owned()),
+                description: None,
+                acceptance: Vec::new(),
+                origin: None,
+                flow: Some("todo".to_owned()),
+                depends: vec![blocker.clone()],
+            },
+        ));
+
+        let before = task_status(&board(&bus, epoch, lane.clone())).expect("status reads");
+        assert!(
+            before.lines().any(|line| line == "blocked 1"),
+            "the dependent is blocked while its prerequisite stands: {before}"
+        );
+
+        assert_committed(withdraw(
+            &bus,
+            epoch,
+            Actor::Operator,
+            &withdrawal(&blocker, "the prerequisite was never real work", false),
+        ));
+
+        let after = task_status(&board(&bus, epoch, lane)).expect("status reads");
+        assert!(
+            after.lines().any(|line| line == "blocked 0"),
+            "a withdrawn prerequisite blocks nothing, so nothing is reported blocked: {after}"
+        );
+        assert!(
+            after.lines().any(|line| line == "ready 1"),
+            "the released dependent is the one row ready to work: {after}"
+        );
+        clean(&root, bus);
+    }
+
+    /// A withdrawn task refuses everything a completed one refuses.
+    ///
+    /// Withdrawal added a second terminal status, and every guard that asked
+    /// "is this completed" was really asking "is this settled". Correcting a row
+    /// that has left the board publishes a revision the working board never
+    /// shows, and deferring or waking one promises a return the allocator cannot
+    /// make: it admits pending rows only, so the wake would report success and
+    /// change nothing.
+    #[test]
+    fn a_withdrawn_task_refuses_the_moves_a_completed_task_refuses() {
+        let (root, bus, epoch, _) = fixture("delete-settled", 1);
+        let task = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CLI-drop00010",
+            "Work withdrawn before anyone started it",
+            Some("todo"),
+        );
+        assert_committed(withdraw(
+            &bus,
+            epoch,
+            Actor::Operator,
+            &withdrawal(&task, "the surface it names was never built", false),
+        ));
+
+        let corrected = correct(
+            &bus,
+            epoch,
+            Actor::Operator,
+            &TaskEdit {
+                task: task.clone(),
+                title: None,
+                description: Some("a meaning the withdrawn row will never carry".to_owned()),
+                acceptance: Vec::new(),
+            },
+        );
+        assert_eq!(
+            refused_as(&corrected).0,
+            "task::settled",
+            "a withdrawn statement is as settled as a completed one"
+        );
+
+        let visible = board(&bus, epoch, Actor::Operator);
+        let heads = at(&visible, &task);
+        for (kind, intent) in [
+            (
+                CommandKind::TaskDefer,
+                serde_json::json!({ "task": task, "wait": "2026-09-01T00:00:00.000Z" }),
+            ),
+            (CommandKind::TaskWake, serde_json::json!({ "task": task })),
+        ] {
+            let outcome = issue(
+                &bus,
+                epoch,
+                Actor::Operator,
+                kind,
+                vec![workflow_witness(heads), deferral_witness(heads)],
+                &intent,
+            );
+            assert_eq!(
+                refused_as(&outcome).0,
+                "task::settled",
+                "{kind:?} moved a row the allocator can never hand out again"
+            );
+        }
+        assert_eq!(
+            at(&board(&bus, epoch, Actor::Operator), &task)
+                .workflow
+                .body
+                .status,
+            "deleted",
+            "every refusal left the withdrawal exactly as it found it"
         );
         clean(&root, bus);
     }

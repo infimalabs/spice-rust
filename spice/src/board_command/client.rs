@@ -314,10 +314,13 @@ fn task_newest_position(task: &BoardTask) -> Seq {
 }
 
 fn render_task_list_row(task: &BoardTask) -> String {
-    let state = if task.workflow.body.status == "completed" {
-        "done"
-    } else {
-        task.workflow.body.phase.as_str()
+    // A terminal row shows how it ended, not the phase it stopped in. Falling
+    // through to the phase would print a withdrawn task as `[todo]`, which is
+    // the one thing it is not, and the predecessor prints `[deleted]` here.
+    let state = match task.workflow.body.status.as_str() {
+        "completed" => "done",
+        "deleted" => "deleted",
+        _ => task.workflow.body.phase.as_str(),
     };
     let priority = task
         .statement
@@ -364,11 +367,10 @@ fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
         .filter(|task| actor_route_matches(board, task))
         .map(|task| task.statement.body.handle.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let completed = entries
-        .iter()
-        .filter(|entry| entry.workflow().status == "completed")
-        .map(|entry| entry.statement().handle.clone())
-        .collect::<std::collections::BTreeSet<_>>();
+    // The board owns which prerequisites are satisfied. Deciding it again here
+    // is how the same row gets counted ready and blocked at once: `ready` asks
+    // the board through `eligible_entry`, so `blocked` has to ask the board too.
+    let satisfied = board::satisfied_handles(&entries);
     let pending_actor = |entry: &&Entry| {
         routed.contains(&entry.statement().handle)
             && entry.workflow().status == "pending"
@@ -407,7 +409,7 @@ fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
                 .statement()
                 .dependencies
                 .iter()
-                .any(|dependency| !completed.contains(dependency))
+                .any(|dependency| !satisfied.contains(dependency))
         })
         .count();
     let ready = rows
