@@ -1350,7 +1350,7 @@ pub(crate) fn dispatch_with_repository(
         }
         wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects),
         wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add, projects),
-        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
+        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects),
         wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, projects),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::TaskWake => {
             task_wake(bus, command, task, projects)
