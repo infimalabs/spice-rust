@@ -52,6 +52,76 @@ fn install_exercises_spice_hooks_before_explicit_activation() {
     );
 }
 
+#[test]
+fn activation_refuses_predecessor_hooks_before_any_publication_or_config_change() {
+    let scratch = Scratch::new();
+    repository_history(&scratch);
+    let installation = install_spice_hooks(&scratch);
+    git(&scratch, &["config", "extensions.worktreeConfig", "true"]);
+    git(
+        &scratch,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "predecessor",
+            "predecessor",
+            "HEAD",
+        ],
+    );
+    let predecessor = scratch.join("predecessor");
+    for hook in ACTIVE_HOOKS {
+        let path = predecessor.join(".spice/hooks").join(hook);
+        fs::create_dir_all(path.parent().unwrap()).expect("create predecessor hook directory");
+        fs::write(&path, format!("#!/bin/sh\nexec spice dev {hook} \"$@\"\n"))
+            .expect("write predecessor hook");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("make predecessor hook executable");
+    }
+    let configured = Command::new("git")
+        .args(["config", "--worktree", "core.hooksPath", ".spice/hooks"])
+        .current_dir(&predecessor)
+        .output()
+        .expect("configure predecessor hook path");
+    assert_success(&configured, "configure predecessor hook path");
+
+    let repository_config = image(&scratch.join(".git/config"));
+    let worktree_config = image(&scratch.join(".git/worktrees/predecessor/config.worktree"));
+    let published = published_entry_point(scratch.path());
+    let published_before = image(&published);
+    let replacement = scratch.executable("replacement-xtask", b"#!/bin/sh\nexit 0\n");
+    let mut output = Vec::new();
+
+    let error = xtask::activate_hooks(scratch.path(), &replacement, &mut output)
+        .expect_err("foreign predecessor hooks must refuse activation");
+
+    assert!(
+        matches!(error, xtask::HookActivationError::ForeignHookPath { .. }),
+        "{error}"
+    );
+    assert!(error.to_string().contains(".spice/hooks"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains(&predecessor.display().to_string()),
+        "{error}"
+    );
+    assert!(output.is_empty(), "refusal published output: {output:?}");
+    assert_eq!(image(&scratch.join(".git/config")), repository_config);
+    assert_eq!(
+        image(&scratch.join(".git/worktrees/predecessor/config.worktree")),
+        worktree_config
+    );
+    assert_eq!(image(&published), published_before);
+    assert_eq!(configured_hooks(&scratch), ".githooks");
+    assert_eq!(configured_hooks_at(&predecessor), ".spice/hooks");
+    assert_eq!(
+        ACTIVE_HOOKS.map(|hook| image(&installation.operator.join(hook))),
+        installation.operator_hooks
+    );
+}
+
 /// A lane running under the git shadow environment sees its own branch as its
 /// upstream, deliberately, so `git status` never moves when origin advances.
 /// The reference guard must read the integration branch the shadow keeps
@@ -312,7 +382,7 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
         scratch,
         &["worktree", "add", "--quiet", "--detach", "linked", "HEAD"],
     );
-    // Before the cutover nothing execs the published copy, so a stale one
+    // Before activation nothing execs the published copy, so a stale one
     // enforces nothing and the audit owes no refusal. It has to say that rather
     // than pass quietly, or an inert repository and a current one look alike.
     let mut inert = Vec::new();
@@ -330,7 +400,7 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
     // would leave the hook running something with no guard in it at all.
     let entry_point = Path::new(env!("CARGO_BIN_EXE_xtask"));
     xtask::activate_hooks(scratch.path(), entry_point, &mut activated)
-        .expect("run explicit hook cutover");
+        .expect("run explicit hook activation");
     assert_entry_point_answers_the_guard(scratch, entry_point, &prepared_input);
     // One executable serves every worktree, so publishing to a path they share
     // is the answer rather than a compromise. The linked worktree resolves the
