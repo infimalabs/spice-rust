@@ -11,7 +11,7 @@ use super::*;
 pub(in crate::resident) struct OccupantLaunch {
     pub(in crate::resident) spec: Spec,
     pub(in crate::resident) observation: Observation,
-    pub(in crate::resident) session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
+    pub(in crate::resident) session: SessionProof,
 }
 
 pub(in crate::resident) struct OccupantLaunchRequest<'a> {
@@ -52,6 +52,11 @@ pub(in crate::resident) fn occupant_launch(
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join(name.as_str()))
         .map_err(|error| store_fault("lane::capture-tape-unavailable", &error.to_string()))?;
     let (session_reply, session) = mpsc::sync_channel(4);
+    let state = Arc::new(Mutex::new(DeclarationState {
+        reply: session_reply,
+        seen: None,
+        witness: DeclarationWitness::default(),
+    }));
     let declaration_reporter: Arc<dyn CaptureReporter> = Arc::new(DeclarationReporter {
         inner: reporter,
         lane,
@@ -63,10 +68,7 @@ pub(in crate::resident) fn occupant_launch(
         epoch,
         stream,
         expected,
-        state: Mutex::new(DeclarationState {
-            reply: session_reply,
-            seen: None,
-        }),
+        state: Arc::clone(&state),
     });
     let observation = lane::capture::observation(
         lane,
@@ -81,7 +83,7 @@ pub(in crate::resident) fn occupant_launch(
     Ok(OccupantLaunch {
         spec,
         observation,
-        session,
+        session: SessionProof { session, state },
     })
 }
 

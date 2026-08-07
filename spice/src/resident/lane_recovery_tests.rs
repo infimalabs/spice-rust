@@ -4,7 +4,9 @@ use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError};
 use sill::{Cancellation, Deadlines, Environment, RestartDisposition, Spec, WaitPolicy};
 
 use super::*;
-use crate::resident::lane_surface::{DeclarationReporter, DeclarationState, SessionProofError};
+use crate::resident::lane_surface::{
+    DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof,
+};
 
 static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -716,11 +718,16 @@ impl CaptureReporter for SilentReporter {
 
 struct Proof {
     reporter: DeclarationReporter,
-    session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
+    session: SessionProof,
 }
 
 fn proof(expected: Option<&str>) -> Proof {
     let (reply, session) = mpsc::sync_channel(4);
+    let state = Arc::new(Mutex::new(DeclarationState {
+        reply,
+        seen: None,
+        witness: DeclarationWitness::default(),
+    }));
     Proof {
         reporter: DeclarationReporter {
             inner: Arc::new(SilentReporter),
@@ -733,9 +740,9 @@ fn proof(expected: Option<&str>) -> Proof {
             epoch: uuid(2),
             stream: vendor::RecordStream::Stdout,
             expected: expected.map(str::to_owned),
-            state: Mutex::new(DeclarationState { reply, seen: None }),
+            state: Arc::clone(&state),
         },
-        session,
+        session: SessionProof { session, state },
     }
 }
 
@@ -764,9 +771,7 @@ fn declared(identity: &str) -> CaptureRecord {
 /// seating shared these seven reasons through separate enums until
 /// RECOVER-1kK7X4f2, and the two disagreed on what each one witnessed, so the
 /// reason is the part a collapse cannot get wrong.
-fn session_refusal(
-    session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
-) -> Refusal {
+fn session_refusal(session: SessionProof) -> Refusal {
     match await_session(session) {
         Ok(admitted) => panic!("session proof admitted {}", admitted.identity),
         Err(error) => {
@@ -949,8 +954,34 @@ fn session_proof_refuses_a_launch_that_never_declared() {
         (
             "lane::session-missing",
             Some("one current selected-stream session declaration"),
-            None,
+            Some("no record on the selected stream"),
         )
+    );
+}
+
+#[test]
+fn session_proof_separates_a_silent_launch_from_a_talkative_one() {
+    let typed = proof(None);
+    typed
+        .reporter
+        .record(CaptureRecord {
+            declaration: None,
+            ..declared("successor-session")
+        })
+        .expect("a record declaring nothing is still captured");
+    drop(typed.reporter);
+    let talkative = session_refusal(typed.session);
+
+    let silent = proof(None);
+    drop(silent.reporter);
+
+    // Both refuse for the same reason, so only the observation separates an
+    // occupant that wrote nothing from one that wrote records it never
+    // declared in.
+    assert_eq!(talkative.reason, session_refusal(silent.session).reason);
+    assert_eq!(
+        talkative.observed.as_deref(),
+        Some("records on the selected stream, none declaring a session"),
     );
 }
 

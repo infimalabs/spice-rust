@@ -222,12 +222,12 @@ fn launch_import(
         },
         Arc::clone(&runtime.capture),
     )?;
-    let receiver = launch.session;
+    let proof = launch.session;
     let group = seats
         .seat_observed(context.row.lane, occupant, launch.spec, launch.observation)
         .map_err(|error| store_fault("lane::import-launch-failed", &error.to_string()))?
         .group();
-    let session = match await_session(receiver) {
+    let session = match await_session(proof) {
         Ok(session) => session,
         Err(error) => {
             stop_lane(seats, context.row.lane);

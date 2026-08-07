@@ -34,8 +34,8 @@ use reply::{
     missing_lane, recall_provenance, relevant, typed_environment_fault,
 };
 pub(super) use session::{
-    DeclarationReporter, DeclarationState, SessionProofError, await_session, record_stream,
-    resume_session, session_fact,
+    DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, await_session,
+    record_stream, resume_session, session_fact,
 };
 
 use super::shutdown::{current_residency, guard_residency};
@@ -178,12 +178,12 @@ pub(super) fn restore_seats(
             },
             Arc::clone(capture),
         )?;
-        let session_receiver = launch.session;
+        let session_proof = launch.session;
         let group = seats
             .seat_observed(row.lane, occupant, launch.spec, launch.observation)
             .map_err(|error| store_fault("lane::restart-launch-failed", &error.to_string()))?
             .group();
-        let session = match await_session(session_receiver) {
+        let session = match await_session(session_proof) {
             Ok(session) => session,
             Err(error) => {
                 stop_lane(seats, row.lane);
@@ -499,7 +499,7 @@ fn prepare_seat(
         remove_seat_surface(paths, runtime, request.lane, capability);
         typed_outcome(outcome)
     })?;
-    let session_receiver = launch.session;
+    let session_proof = launch.session;
     let group = seats
         .seat_observed(request.lane, occupant, launch.spec, launch.observation)
         .map(lane::occupant::Occupant::group)
@@ -507,7 +507,7 @@ fn prepare_seat(
             remove_seat_surface(paths, runtime, request.lane, capability);
             typed_environment_fault("lane::launch-failed", &error.to_string())
         })?;
-    let session = await_session(session_receiver).map_err(|error| {
+    let session = await_session(session_proof).map_err(|error| {
         stop_lane(seats, request.lane);
         remove_seat_surface(paths, runtime, request.lane, capability);
         error.outcome()
@@ -934,12 +934,12 @@ fn wake(
         Ok(launch) => launch,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let session_receiver = launch.session;
+    let session_proof = launch.session;
     let group = match seats.seat_observed(request.lane, occupant, launch.spec, launch.observation) {
         Ok(occupant) => occupant.group(),
         Err(error) => return typed_environment_fault("lane::wake-failed", &error.to_string()),
     };
-    let session = match await_session(session_receiver) {
+    let session = match await_session(session_proof) {
         Ok(session) => session,
         Err(error) => {
             stop_lane(seats, request.lane);

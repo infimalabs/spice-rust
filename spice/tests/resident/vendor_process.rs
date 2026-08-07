@@ -1068,11 +1068,18 @@ fn a_vendor_that_ignores_termination_is_recorded_as_killed_rather_than_exited() 
 
 #[test]
 fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
-    for (name, announced) in [
-        ("sessionless", CODEX_SESSIONLESS_RECORD),
-        ("untyped", CODEX_UNTYPED_RECORD),
+    for (name, announced, observed) in [
+        (
+            "sessionless",
+            CODEX_SESSIONLESS_RECORD,
+            "one record carrying no thread_id",
+        ),
+        (
+            "untyped",
+            CODEX_UNTYPED_RECORD,
+            "one record whose $ is not JSON record",
+        ),
     ] {
-        assert_codex_residue(announced);
         let fixture = Fixture::linked(&format!("vendor-malformed-codex-{name}"));
         let rig = configure(&fixture);
         let stopped = fixture.cleanup.join("malformed-codex-stopped");
@@ -1095,6 +1102,12 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
             panic!("{name} session must refuse")
         };
         assert_eq!(refusal.reason, "lane::session-missing");
+        // Both cases refuse under the one reason the proof deadline raises, so
+        // only the observation separates a record the decoder typed and found
+        // sessionless from bytes it could not read as a record at all. It also
+        // holds the two announce lines apart: either drifting into the other's
+        // shape earns the other's observation and reds this case.
+        assert_eq!(refusal.observed.as_deref(), Some(observed));
         // The refusal returns to the operator without waiting for the vendor's
         // TERM trap, so the stop is observed rather than read at the return.
         let stop = wait_for_vendor_stop(&fixture.cleanup, &vendor_pid, &stopped);
@@ -1105,39 +1118,6 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
         assert!(down.status.success(), "down failed: {:?}", down.stderr);
         assert!(resident.wait().status.success(), "resident failed");
     }
-}
-
-/// Pin what the Codex decoder makes of one fixture's announce line.
-///
-/// Both vendors above refuse under one reason, because that refusal is the
-/// proof deadline elapsing and it reports only that no declaration arrived --
-/// never which vendor it waited on. Nothing downstream can tell a record the
-/// decoder typed and found sessionless from bytes it could not read as a
-/// record at all, so the difference is held here, at the only place both are
-/// still distinguishable. Without it either announce line could drift into the
-/// other's shape and both cases would still pass.
-fn assert_codex_residue(announced: &str) {
-    let length = u64::try_from(announced.len()).expect("announce length fits u64");
-    let expected = match announced {
-        CODEX_SESSIONLESS_RECORD => listen::ResidueKind::Absent { field: "thread_id" },
-        CODEX_UNTYPED_RECORD => listen::ResidueKind::Malformed {
-            field: "$",
-            expected: "JSON record",
-        },
-        other => panic!("no residue is pinned for {other}"),
-    };
-    assert_eq!(
-        listen::decode(
-            listen::Dialect::Codex,
-            announced.as_bytes(),
-            tape::Locus::new(0, 0, length),
-        )
-        .expect("locus covers the announced record")
-        .residue()
-        .map(|residue| residue.kind.clone()),
-        Some(expected),
-        "{announced} no longer means what its fixture claims",
-    );
 }
 
 include!("vendor_process/support.rs");
