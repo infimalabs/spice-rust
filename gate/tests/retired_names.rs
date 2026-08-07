@@ -1,11 +1,10 @@
 //! The retirement ledger's jurisdiction.
 //!
-//! NAMES.md scopes this deny-list in the sentence directly beneath its own
-//! Retired table: the table is the source of the gate deny-list over public
-//! symbols, config keys, and clap names. Jurisdiction is therefore the names
-//! this port *coins* — item, field, and variant declarations, and the spellings
-//! serde and clap publish for them. Those are chosen deliberately, so a retired
-//! word standing in one is a retired word shipped.
+//! [`RETIRED_NAMES`](gate::RETIRED_NAMES) is the whole deny-list, and it runs
+//! over public symbols, config keys, and clap names. Jurisdiction is therefore
+//! the names this port *coins* — item, field, and variant declarations, and the
+//! spellings serde and clap publish for them. Those are chosen deliberately, so
+//! a retired word standing in one is a retired word shipped.
 //!
 //! Everything else is incidental text that shares an alphabet with the ledger
 //! and nothing else. A doc comment says "the lifetime of the borrow" because
@@ -14,9 +13,10 @@
 //! own block. Judging those refuses correct code and answers with advice that
 //! means nothing where it landed — "use ratchet" for a stylesheet class.
 //!
-//! Foreign skin is exempt for the reason NAMES.md gives directly: an external
-//! crate name is its owner's convention, carried verbatim and coined never. So
-//! `use` and `extern crate` paths are not judged.
+//! Foreign skin is exempt for a reason of its own: an external crate name is
+//! its owner's convention, carried verbatim and coined never. Renaming it is
+//! not something this port can do, so refusing it would be advice no one can
+//! take. `use` and `extern crate` paths are therefore not judged.
 
 use std::collections::BTreeSet;
 use std::fs;

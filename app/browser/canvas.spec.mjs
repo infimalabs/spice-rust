@@ -651,11 +651,38 @@ async function assertMosaicComposer(page, fixture, seeded) {
   );
 }
 
+/// How those same admitted facts were split into pages, under the same bracket.
+///
+/// Every assertion here reads packed-page metadata rather than a rendered fact
+/// row, which is why it cannot be folded into the sequence proofs: a horizon is
+/// not a row, so nothing about the rows can bound one.
+function assertPackedPaging(provenance, horizonValues, extent, settled) {
+  assert.ok(provenance.length > 1, "two-row packing produces multiple fact pages");
+  assert.match(provenance[0], /omitted \/ continue/, "first page exposes overflow continuation");
+  assert.doesNotMatch(provenance.at(-1), /omitted \/ continue/, "final page closes continuation");
+  // A floor for the same reason the fact count is one: the cursor the caller
+  // sampled has already been passed if the resident admitted anything since.
+  // Reaching it is the claim; standing exactly on it was never the claim. The
+  // ceiling is that same bracket, and it is the only one this metadata has.
+  assert.ok(
+    horizonValues.at(-1) >= extent.cursor && horizonValues.at(-1) <= settled.cursor,
+    `latest page reaches the current horizon (${horizonValues.at(-1)} outside ${extent.cursor}..${settled.cursor})`,
+  );
+  assert.ok(
+    horizonValues.every((value, index) => index === 0 || value >= horizonValues[index - 1]),
+    "continued and later live pages retain monotone packed horizons",
+  );
+}
+
 async function assertPackedHistory(page, fixture, extent, linked = false) {
   await chooseCanvasView(page, "Chronology");
   const journal = page.locator('[data-pane="commands"]');
   const facts = journal.locator(".event strong");
   await facts.nth(extent.facts - 1).waitFor();
+  // One snapshot, and every count below is derived from it. Counting the rows
+  // and reading their sequences as two separate calls would let the resident
+  // admit a fact between them, and the assertions would then describe a page
+  // state that never existed at any instant.
   const sequences = await facts.evaluateAll((nodes) => nodes.map((node) => {
     const value = Number(node.textContent?.split("/")[0].trim());
     if (!Number.isInteger(value)) throw new Error(`invalid rendered sequence: ${node.textContent}`);
@@ -665,40 +692,48 @@ async function assertPackedHistory(page, fixture, extent, linked = false) {
   const horizons = await journal
     .locator('[data-subject="facts"] span')
     .evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim()).filter((text) => text?.startsWith("horizon ")));
-  // Read order is the whole bracket. `extent` was sampled before every page read
-  // above and this is sampled after all of them, and an authority only gains
-  // facts, so the page must sit at or past what the journal held then and at or
-  // behind what it holds now. One sampled count cannot be an equality any more:
-  // the resident accounts a lane's transcript whenever a capture record lands,
-  // so the journal keeps growing while the page renders and the sample is a
-  // lower bound the page legitimately overtakes. Duplicate application is
-  // refused twice over regardless -- by the upper bound, since a page cannot
-  // hold more facts than the authority ever wrote, and by the rendered
-  // sequences below, which must be each fact exactly once.
-  const current = await journalExtent(fixture);
+  // Sampled after every page read above rather than right after the snapshot,
+  // so one read closes the other side of the sandwich for all of them. The
+  // journal only grows, so a fact the page rendered legitimately was admitted
+  // before the snapshot and is counted here too. An earlier sample would bound
+  // the counts a few facts more tightly and leave the horizon with no ceiling
+  // at all, because nothing read after a sample can be bracketed by it.
+  const settled = await journalExtent(fixture);
   const horizonValues = horizons.map((text) => Number(text.split(" ")[1]));
+  // A floor, not an equality. `extent` was sampled before this read, and the
+  // resident admits facts of its own while the suite runs -- accounting a lane's
+  // transcript is one of them -- so a page that is correctly caught up can hold
+  // strictly more than the sample counted. What it can never do is hold fewer.
   assert.ok(
     sequences.length >= extent.facts,
     `all ${extent.facts} admitted facts render (rendered ${sequences.length})`,
   );
+  // And a ceiling, which is the half a floor alone gives up. A page inventing a
+  // fact past the horizon renders a sequence no one admitted, and that tail
+  // stays distinct and stays contiguous, so neither proof below would see it.
+  // Only a count the journal itself bounds can.
   assert.ok(
-    sequences.length <= current.facts,
-    `no fact renders that the authority never held (rendered ${sequences.length}, held ${current.facts})`,
+    sequences.length <= settled.facts,
+    `no fact renders that the journal never admitted (rendered ${sequences.length} > ${settled.facts})`,
   );
 
-  assert.ok(provenance.length > 1, "two-row packing produces multiple fact pages");
-  assert.match(provenance[0], /omitted \/ continue/, "first page exposes overflow continuation");
-  assert.doesNotMatch(provenance.at(-1), /omitted \/ continue/, "final page closes continuation");
-  assert.ok(
-    horizonValues.at(-1) >= extent.cursor && horizonValues.at(-1) <= current.cursor,
-    "latest page reaches the current horizon",
-  );
-  assert.ok(
-    horizonValues.every((value, index) => index === 0 || value >= horizonValues[index - 1]),
-    "continued and later live pages retain monotone packed horizons",
-  );
+  assertPackedPaging(provenance, horizonValues, extent, settled);
 
-  assert.equal(new Set(sequences).size, sequences.length, "continuation fabricates no duplicate fact");
+  // This is the duplicate-application proof, and it needs no extent at all:
+  // applying one fact twice renders its sequence twice, so distinct-equals-total
+  // catches it whether or not the caller's sample is still current. The previous
+  // form compared the distinct count against `extent.facts`, which only held
+  // while the journal happened to be quiescent and was never the thing that made
+  // a repeat detectable.
+  assert.equal(
+    new Set(sequences).size,
+    sequences.length,
+    "continuation fabricates no duplicate fact",
+  );
+  // Contiguous from one, so nothing between the origin and the rendered horizon
+  // is missing either. A dropped fact fails here, a repeated one fails above,
+  // and an invented one fails against the ceiling -- it is contiguous and
+  // distinct, so those two are the wrong instrument for it.
   assert.deepEqual(
     [...sequences].sort((left, right) => left - right),
     Array.from({ length: sequences.length }, (_, index) => index + 1),
@@ -812,10 +847,12 @@ async function assertHalfOpenSocket(browser, endpoint, epoch, fixture, seeded) {
     await reply(fixture, ["task", "note", seeded.task, "written while the socket was half open"]);
     advanced = await journalExtent(fixture);
   });
-  // Taken during the outage, so it counts a fact the page could not have had.
-  // `assertPackedHistory` reads the authority again afterwards and requires the
-  // page to sit inside that bracket, which is what makes this a proof against
-  // duplicate application and not only against a missing one.
+  // Taken during the outage, so it counts a fact the page could not have had
+  // and the resume cannot pass vacuously. It is a floor and not a total: the
+  // resident keeps admitting facts of its own while this runs, so an extent
+  // sampled here is already behind by the time the page is read.
+  // `assertPackedHistory` proves duplicate application from the rendered
+  // sequences themselves rather than from that count.
   await assertPackedHistory(page, fixture, advanced);
   monitor.assertClean();
   await context.close();

@@ -1,8 +1,9 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use board::Snapshot;
-use board::allocate::{Refusal, Request, WinError, win};
+use board::allocate::{Mint, Refusal, Request, WinError, mint, win};
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, FactKind, Instant, LaneResidency, LeaseHead,
@@ -538,4 +539,146 @@ impl Drop for Store {
             }
         }
     }
+}
+
+/// Everything a claim carries reaches the journal through the one minter.
+///
+/// This replaced two independent minting sites, and the cost of that split was
+/// that a field added to the claim had to be copied into both by hand. So the
+/// guard is not that the minter works, which the tests above already show, but
+/// that nothing a claim carries can be added without landing here: the fact
+/// body is named field by field, and both heads are destructured whole, so a
+/// field added to either one stops compiling until someone says where the
+/// minter gets it from.
+#[test]
+fn the_one_claim_minter_writes_every_lifecycle_field() {
+    let mut journal = fixture(None, true);
+    let won = win(&mut journal, request(60)).expect("the first eligible task is won");
+
+    let facts = journal.fact_snapshot().expect("claim fact stream");
+    let claim = facts
+        .facts()
+        .iter()
+        .find(|envelope| envelope.fact.kind() == FactKind::ClaimWon)
+        .expect("winning writes a claim fact");
+    // Named one by one rather than counted, because a count admits a rename.
+    // `git` is absent here and only here: this transition has no worktree to
+    // record, and the field is skipped when it is empty.
+    let written: BTreeSet<&str> = claim.fact.body().keys().map(String::as_str).collect();
+    assert_eq!(
+        written,
+        BTreeSet::from(["task", "actor", "lane", "occupant", "epoch", "until"]),
+        "the claim fact carries exactly the fields the minter writes"
+    );
+
+    let snapshot = Snapshot::read(&journal, &projects()).expect("claimed board");
+    let entry = snapshot
+        .entries()
+        .iter()
+        .find(|entry| &entry.statement().handle == won.task())
+        .expect("the won task is on the board");
+    let ClaimHead {
+        actor,
+        fact,
+        lane,
+        occupant,
+        epoch,
+        disposition,
+    } = entry.claim().expect("winning mints a claim head");
+    assert_eq!(actor, &Actor::Lane(uuid(20)));
+    assert_eq!(*fact, claim.seq);
+    assert_eq!(*lane, uuid(20));
+    assert_eq!(*occupant, uuid(21));
+    assert_eq!(*epoch, uuid(22));
+    assert_eq!(*disposition, ClaimDisposition::Active);
+
+    let LeaseHead {
+        start,
+        renewal,
+        expiry,
+        maximum,
+        epoch,
+    } = entry.lease().expect("winning mints a lease head");
+    assert_eq!(*start, instant(5));
+    assert_eq!(*renewal, instant(5));
+    assert_eq!(*expiry, instant(20));
+    assert_eq!(*maximum, instant(35));
+    assert_eq!(*epoch, uuid(22));
+}
+
+/// A boundary the caller supplies survives the minter it is handed to.
+///
+/// `git` is the field the two minting sites actually disagreed about: the
+/// allocator hardcoded it empty while the resident threaded a real worktree
+/// through, which is why it is the one worth proving reaches the journal from a
+/// caller rather than from the writer's own defaults.
+#[test]
+fn a_caller_supplied_boundary_reaches_the_claim() {
+    let mut journal = fixture(None, true);
+    let task = handle("BOARD-a1");
+    let actor = Actor::Lane(uuid(20));
+    let mut write = JournalWrite::new(
+        actor.clone(),
+        "task:BOARD-a1".parse().expect("claim origin"),
+        instant(5),
+        Producer::CommandDoor,
+    );
+    let boundary = body::GitBoundary {
+        head: "a-recorded-commit".to_owned(),
+        integrated: "an-integrated-commit".to_owned(),
+        upstream: Some("origin/main".to_owned()),
+        upstream_head: Some("a-baseline-commit".to_owned()),
+        local_commits: 2,
+    };
+    mint(
+        &mut write,
+        Mint {
+            task: &task,
+            actor: &actor,
+            workflow: &workflow(),
+            lane: uuid(20),
+            occupant: uuid(21),
+            epoch: uuid(22),
+            at: instant(5),
+            expiry: instant(20),
+            maximum: instant(35),
+            git: Some(boundary.clone()),
+        },
+    )
+    .expect("a claim carrying a boundary mints");
+    journal.apply(write).expect("the minted claim commits");
+
+    let facts = journal.fact_snapshot().expect("claim fact stream");
+    let claim = facts
+        .facts()
+        .iter()
+        .find(|envelope| envelope.fact.kind() == FactKind::ClaimWon)
+        .expect("minting writes a claim fact");
+    let git = claim
+        .fact
+        .body()
+        .get("git")
+        .expect("the claim carries the boundary it was minted with");
+    // Read field by field off the wire rather than compared to the struct that
+    // produced it, so the assertion cannot pass by echoing its own input.
+    assert_eq!(
+        git.get("head").and_then(|value| value.as_str()),
+        Some(boundary.head.as_str())
+    );
+    assert_eq!(
+        git.get("integrated").and_then(|value| value.as_str()),
+        Some(boundary.integrated.as_str())
+    );
+    assert_eq!(
+        git.get("upstream").and_then(|value| value.as_str()),
+        Some("origin/main")
+    );
+    assert_eq!(
+        git.get("upstream_head").and_then(|value| value.as_str()),
+        Some("a-baseline-commit")
+    );
+    assert_eq!(
+        git.get("local_commits").and_then(|value| value.as_u64()),
+        Some(2)
+    );
 }
