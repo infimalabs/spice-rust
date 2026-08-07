@@ -143,10 +143,10 @@ impl MetricStateBinding {
     /// which owns a [`StateDecision`] because it rewrote the ledger. An arm that
     /// only measures holds the [`BoundDecision`] [`Self::decide`] handed back
     /// and has no state decision to present, so it converts from that instead.
-    /// Both arrive at [`Self::measurement`] and attach the same rule and latch
-    /// bindings to the same measured value, so the row an arm reports and the
-    /// row the state transaction would report cannot disagree about the limit
-    /// that value was judged against.
+    /// Both arrive at the one private `measurement` step and attach the same
+    /// rule and latch bindings to the same measured value, so the row an arm
+    /// reports and the row the state transaction would report cannot disagree
+    /// about the limit that value was judged against.
     ///
     /// # Errors
     ///
