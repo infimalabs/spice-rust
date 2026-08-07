@@ -18,17 +18,18 @@
 //! the same facts read in the same order always reduce to the same seat.
 
 // Accounting is a guarded journal write, and journal gates its whole writer
-// vocabulary out of the browser build. The module follows that same gate
-// instead of asking the wasm target to carry a path it can never take.
+// vocabulary out of the browser build. Every module reaching that vocabulary
+// carries the same gate instead of asking the wasm target to compile a path it
+// can never take; reaching only [`journal::crossing`] needs no gate, because
+// the crossing types cross every plane by construction.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod account;
 pub mod capture;
 pub mod config;
 pub mod drain;
 pub mod hold;
-// This module drives `account`, so it carries the same native-only gate for the
-// same reason: the journal writer vocabulary behind it does not exist in the
-// browser build.
+// Ingestion folds a tape into one accounted batch through [`account`], so it
+// holds the writer vocabulary too and follows it behind the same gate.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ingest;
 pub mod life;
