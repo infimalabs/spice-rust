@@ -22,6 +22,8 @@ import { createInterface } from "node:readline";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { childExited } from "./canvas-child-state.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const harness = join(here, "canvas-teardown-harness.mjs");
@@ -152,6 +154,24 @@ function arrives(event, bound) {
   });
 }
 
+/// Wait for a harness child to exit, tolerating one that already has.
+///
+/// `once` only hears events emitted after it is attached, so attaching it to a
+/// child that has already gone waits forever. Every wait below is reached after
+/// an await -- the readiness handshake -- and that await is exactly the window
+/// in which the child can exit, which is why the guard is not decoration here.
+/// Where a wait can be attached before the thing that ends the child, that is
+/// the better shape and is what `launchHarness` does with `closed`.
+///
+/// The resolved pair is the one the `exit` event carries, in the same order, so
+/// a caller reads a signal exit as [null, "SIGINT"] whether it observed the
+/// event or arrived after it.
+function exits(child) {
+  return childExited(child)
+    ? Promise.resolve([child.exitCode, child.signalCode])
+    : once(child, "exit");
+}
+
 /// Signal one target, ignoring one that has already gone.
 function signal(target, name) {
   try {
@@ -207,7 +227,7 @@ async function present(path) {
 async function assertInterruptedRunReaps() {
   const { child, ready, diagnostics } = await launchHarness("idle");
   child.kill("SIGINT");
-  const [code, ended] = await once(child, "exit");
+  const [code, ended] = await exits(child);
   try {
     const living = await survivors(ready.vendors, REAP_MS);
     assert.deepEqual(
@@ -241,7 +261,7 @@ async function assertInterruptedRunReaps() {
 /// failing tests than by interrupted ones.
 async function assertFailedRunReaps() {
   const { child, ready, diagnostics } = await launchHarness("fail");
-  const [code, ended] = await once(child, "exit");
+  const [code, ended] = await exits(child);
   try {
     const living = await survivors(ready.vendors, REAP_MS);
     assert.deepEqual(
@@ -293,7 +313,7 @@ async function assertFailedLaunchReaps() {
     // Unreachable unless `mute` announced on stdout after all, and a live child
     // is not something to hand back to the assertion below.
     launched.child.kill("SIGTERM");
-    await once(launched.child, "exit");
+    await exits(launched.child);
   }
   assert.ok(failure, "a harness that stops announcing does not produce a ready launch");
   assert.match(
