@@ -2,9 +2,17 @@
 //!
 //! [`RETIRED_NAMES`](gate::RETIRED_NAMES) is the whole deny-list, and it runs
 //! over public symbols, config keys, and clap names. Jurisdiction is therefore
-//! the names this port *coins* — item, field, and variant declarations, and the
-//! spellings serde and clap publish for them. Those are chosen deliberately, so
-//! a retired word standing in one is a retired word shipped.
+//! the names this port *coins* — item, field, and variant declarations, the
+//! spellings serde and clap publish for them, and the command paths the CLI
+//! contract table publishes. Those are chosen deliberately, so a retired word
+//! standing in one is a retired word shipped.
+//!
+//! A command path is judged differently from the rest, and the difference is
+//! the position and not the ledger. An identifier is one name the port assembled
+//! out of whatever words it liked, so a retired word anywhere inside it is that
+//! word coined. A command path is a leaf filed under a stem, so passing through
+//! a word is not naming it; what a path can do is *be* the retired name. See
+//! [`retired_command_matches`](gate::retired_command_matches).
 //!
 //! Everything else is incidental text that shares an alphabet with the ledger
 //! and nothing else. A doc comment says "the lifetime of the borrow" because
@@ -22,7 +30,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gate::retired_matches;
+use gate::{retired_command_matches, retired_matches};
 use syn::punctuated::Punctuated;
 use syn::{Meta, Token};
 
@@ -254,6 +262,46 @@ fn a_concept_named_repeatedly_is_reported_once() {
     assert_eq!(violations.len(), 1, "{violations:?}");
 }
 
+/// The verb is refused where it is published and admitted where it is declared.
+///
+/// The refusal exemplar is a contract row, not a function-style or type-style
+/// spelling, because the row is what a port of `spice task ingest` would
+/// actually write and the earlier exemplars could not fail for it. Both halves
+/// are load-bearing and both were shown so: matching a command path by
+/// contained word instead of whole reds the third fixture, and widening the
+/// row's spellings back to the bare verb reds the second.
+#[test]
+fn a_published_command_path_is_refused_where_the_same_verb_declared_is_not() {
+    let published = concat!(
+        "const CONTRACTS: &[Contract] = &[\n",
+        "    row!([\"task\", \"ingest\"], \"task ingest PATH\", OperatorOrLane,\n",
+        "        Command, [], [], Reply, \"board::task_ingest\"),\n",
+        "];\n",
+    );
+    let violations = scan_source("fixture.rs", published);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("task ingest"), "{violations:?}");
+    assert!(violations[0].contains("doc"), "{violations:?}");
+
+    let declared = concat!(
+        "pub mod ingest;\n",
+        "pub fn ingest_transcripts() {}\n",
+        "pub enum IngestError {\n    Empty,\n}\n",
+    );
+    assert!(scan_source("fixture.rs", declared).is_empty());
+
+    let routed = concat!(
+        "const CONTRACTS: &[Contract] = &[\n",
+        "    row!([\"session\", \"briefing\"], \"session briefing\", Local,\n",
+        "        None, [], [], Reply, \"spice::session\"),\n",
+        "];\n",
+    );
+    assert!(
+        scan_source("fixture.rs", routed).is_empty(),
+        "a path routed under a retired word does not publish it"
+    );
+}
+
 #[test]
 fn retired_vocabulary_is_refused_while_its_successor_is_admitted() {
     let matches = retired_matches("team");
@@ -288,6 +336,16 @@ impl Scan {
 
     fn name(&mut self, identifier: &syn::Ident) {
         self.coined(&identifier.to_string());
+    }
+
+    /// One command path the port publishes, judged as the whole name it is.
+    fn published(&mut self, path: &[String]) {
+        for found in retired_command_matches(&path.join(" ")) {
+            self.violations.insert(format!(
+                "{}: command {:?} is retired; use {:?}",
+                self.location, found.retired, found.successor
+            ));
+        }
     }
 }
 
@@ -354,6 +412,7 @@ fn scan_item(scan: &mut Scan, item: &syn::Item) {
         syn::Item::Const(node) => {
             scan.name(&node.ident);
             scan_attributes(scan, &node.attrs);
+            scan_published_paths(scan, &node.expr);
         }
         syn::Item::Static(node) => {
             scan.name(&node.ident);
@@ -405,6 +464,59 @@ fn scan_field(scan: &mut Scan, field: &syn::Field) {
 
 /// Published spellings carried in attributes, such as a serde rename or a clap
 /// flag, which name a surface without ever appearing as an identifier.
+/// Command paths published by a const table of rows, such as `CONTRACTS`.
+///
+/// Nothing above reaches these. The table is an `Item::Const`, which is scanned
+/// for its own ident and never its initializer, and each row is a macro call
+/// inside that initializer, which `Item::Macro` never reaches either because it
+/// reads a `macro_rules` name and not a token stream. A row's leading string
+/// array is the path the parser and help are generated from, so it is the
+/// spelling the port publishes and the one a porting mistake would spell.
+fn scan_published_paths(scan: &mut Scan, initializer: &syn::Expr) {
+    let syn::Expr::Reference(reference) = initializer else {
+        return;
+    };
+    let syn::Expr::Array(rows) = reference.expr.as_ref() else {
+        return;
+    };
+    for row in &rows.elems {
+        let syn::Expr::Macro(invocation) = row else {
+            continue;
+        };
+        if let Ok(path) = invocation.mac.parse_body_with(leading_path) {
+            scan.published(&path);
+        }
+    }
+}
+
+/// The leading string array of a row, with the arms after it left unread.
+///
+/// Only the path is parsed because the rest is not uniformly expressions: one
+/// `row!` arm spells its journal access as `Journal => Position`, which no
+/// expression parser accepts. Draining the remainder is what lets this stay a
+/// parse of the part that matters rather than of the whole invocation.
+fn leading_path(input: syn::parse::ParseStream) -> syn::Result<Vec<String>> {
+    let array: syn::ExprArray = input.parse()?;
+    input.step(|cursor| {
+        let mut rest = *cursor;
+        while let Some((_, next)) = rest.token_tree() {
+            rest = next;
+        }
+        Ok(((), rest))
+    })?;
+    Ok(array
+        .elems
+        .iter()
+        .filter_map(|element| match element {
+            syn::Expr::Lit(literal) => match &literal.lit {
+                syn::Lit::Str(text) => Some(text.value()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect())
+}
+
 fn scan_attributes(scan: &mut Scan, attributes: &[syn::Attribute]) {
     for attribute in attributes {
         if !NAMING_ATTRIBUTES
