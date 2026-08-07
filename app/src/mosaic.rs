@@ -15,6 +15,8 @@ pub const FREEZE_DEPTH: usize = 2;
 pub const NEAR_TOP_THRESHOLD_PX: f64 = 80.0;
 /// Base-width height that admits one distinct wider measurement.
 pub const TALL_THRESHOLD_PX: f64 = 230.0;
+/// Smallest readable card height in vertical lattice modules.
+pub const MIN_CARD_ROWS: i32 = 3;
 
 const LEGAL_BASE_SPANS: [usize; 5] = [2, 3, 4, 6, 12];
 const GAP_REM: f64 = 0.75;
@@ -183,7 +185,7 @@ struct Placement {
 #[must_use]
 pub fn rows_for(px: f64, gap: i32, module: i32) -> i32 {
     let module = module.max(1);
-    2.max(((px + f64::from(gap)) / f64::from(module)).ceil() as i32)
+    MIN_CARD_ROWS.max(((px + f64::from(gap)) / f64::from(module)).ceil() as i32)
 }
 
 /// Build the base candidate and, only for a tall base measurement, one wide candidate.

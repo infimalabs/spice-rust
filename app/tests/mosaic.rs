@@ -1,10 +1,10 @@
 use std::cell::Cell;
 
 use app::mosaic::{
-    Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, Reservation, TALL_THRESHOLD_PX,
-    TRACK_COUNT, burial_depth, content_box_width, css_row_start, extent, full_replay, pack,
-    pane_is_scrolled, replay_liquid, resolve_frozen_resize, ripple_rows, scroll_compensation,
-    span_candidates,
+    Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, MIN_CARD_ROWS, Reservation,
+    TALL_THRESHOLD_PX, TRACK_COUNT, burial_depth, content_box_width, css_row_start, extent,
+    full_replay, pack, pane_is_scrolled, replay_liquid, resolve_frozen_resize, ripple_rows,
+    rows_for, scroll_compensation, span_candidates,
 };
 
 fn candidates(span: usize, rows: i32) -> Vec<Candidate> {
@@ -49,6 +49,15 @@ fn geometry_uses_content_width_instead_of_the_padded_client_box() {
 
     assert_eq!(geometry_key(&unpadded), (6, 2, 40));
     assert_eq!(geometry_key(&padded), geometry_key(&unpadded));
+}
+
+#[test]
+fn short_cards_keep_three_vertical_modules_without_rounding_down_long_cards() {
+    let geometry = Geometry::new(16.0, 1440.0);
+
+    assert_eq!(MIN_CARD_ROWS, 3);
+    assert_eq!(rows_for(1.0, geometry.gap, geometry.module), 3);
+    assert_eq!(rows_for(240.0, geometry.gap, geometry.module), 5);
 }
 
 #[test]
