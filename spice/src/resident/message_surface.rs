@@ -1,4 +1,4 @@
-//! Fallible Canvas activity views over authoritative lane capture.
+//! Durable taste recognition and fallible Canvas views over admitted lane capture.
 
 use std::io;
 
@@ -7,10 +7,36 @@ use lane::occupant::Seats;
 use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 
 use super::{CommandResult, lane_surface, store_fault};
+use super::{RuntimePaths, taste_surface};
 
 mod tool_preview;
 
 pub(super) use tool_preview::CallPreviews;
+
+/// Captured-generation policy and disposable publishers used after one record
+/// passes occupant admission.
+pub(super) struct CaptureSurfaces<'a, P> {
+    paths: &'a RuntimePaths,
+    tastes: &'a taste::Bag,
+    steering: &'a steer::Config,
+    publisher: &'a P,
+}
+
+impl<'a, P> CaptureSurfaces<'a, P> {
+    pub(super) const fn new(
+        paths: &'a RuntimePaths,
+        tastes: &'a taste::Bag,
+        steering: &'a steer::Config,
+        publisher: &'a P,
+    ) -> Self {
+        Self {
+            paths,
+            tastes,
+            steering,
+            publisher,
+        }
+    }
+}
 
 pub(super) trait AgentMessagePublisher {
     fn publish(
@@ -28,11 +54,11 @@ impl AgentMessagePublisher for canvas::stream::MessagePublisher {
     }
 }
 
-pub(super) fn accept_capture_record(
+pub(super) fn accept_capture_record<P: AgentMessagePublisher>(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &mut Seats,
-    publisher: &impl AgentMessagePublisher,
+    surfaces: &CaptureSurfaces<'_, P>,
     record: &lane::capture::CaptureRecord,
     previews: &mut CallPreviews,
     diagnostic: &mut dyn io::Write,
@@ -40,7 +66,15 @@ pub(super) fn accept_capture_record(
     if !lane_surface::capture_record(bus, epoch, seats, record)? {
         return Ok(());
     }
-    match publish_agent_messages(publisher, record, previews) {
+    taste_surface::recognize(
+        bus,
+        surfaces.paths,
+        epoch,
+        surfaces.tastes,
+        surfaces.steering,
+        record,
+    )?;
+    match publish_agent_messages(surfaces.publisher, record, previews) {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(

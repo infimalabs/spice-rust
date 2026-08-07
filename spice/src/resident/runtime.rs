@@ -17,6 +17,7 @@ struct RuntimePaths {
 struct SurfaceConfig {
     canvas: canvas::Config,
     steering: steer::Config,
+    taste: taste::Bag,
     consent: consent::Policy,
     speech: canvas::SpeechConfig,
     allocation: board::NextConfig,
@@ -60,6 +61,7 @@ where
         config: SurfaceConfig {
             canvas: *loaded.resolved().root().canvas(),
             steering: loaded.resolved().root().steer().clone(),
+            taste: loaded.resolved().root().taste().bag().clone(),
             consent: loaded.resolved().root().consent().policy().clone(),
             speech: loaded.resolved().root().say().clone(),
             allocation: *loaded.resolved().root().board().next(),
@@ -985,7 +987,12 @@ async fn drive_surface(
                     bus,
                     epoch,
                     seats,
-                    &message_publisher,
+                    &CaptureSurfaces::new(
+                        command_surface.paths,
+                        &command_surface.config.taste,
+                        &command_surface.config.steering,
+                        &message_publisher,
+                    ),
                     &record,
                     &mut tool_previews,
                     diagnostic,
