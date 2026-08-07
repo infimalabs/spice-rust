@@ -380,7 +380,7 @@ const AGE_LABEL_MAX_DAYS: i64 = 99;
 /// to reach one is a lease instant fractionally ahead of the browser's clock,
 /// and "-0s" would read as a defect rather than as the rounding it is.
 ///
-/// The day arm saturates at [`AGE_LABEL_MAX_DAYS`] because it is the one arm
+/// The day arm saturates at `AGE_LABEL_MAX_DAYS` because it is the one arm
 /// with no natural ceiling: minutes roll into hours and hours into days, but
 /// days count up unbounded, and a single absurd input — an unset instant reads
 /// as tens of thousands of days from the browser's epoch — is enough to widen

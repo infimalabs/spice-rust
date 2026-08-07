@@ -100,7 +100,12 @@ const EXPECTED_ROWS: &[(&str, &str)] = &[
     ("BusRefusals", "bus::refusals"),
 ];
 
-const FACT_PLANES: &[(&str, &str)] = &[
+/// Each declared plane and the wire spelling it admits facts under.
+///
+/// Public so the plane-membership law in `fold/tests/admission.rs` can hold
+/// this table against `FactPlane::contains`, which is the same membership
+/// written a second time by hand.
+pub const FACT_PLANES: &[(&str, &str)] = &[
     ("Task", "task::*"),
     ("Claim", "claim::*"),
     ("Document", "doc::*"),
@@ -409,7 +414,8 @@ fn patterns_overlap(left: &str, right: &str) -> bool {
     left.strip_suffix('*') == right.strip_suffix('*')
 }
 
-fn pattern_matches(pattern: &str, kind: &str) -> bool {
+/// True when a wire spelling falls under a declared family glob.
+pub fn pattern_matches(pattern: &str, kind: &str) -> bool {
     pattern
         .strip_suffix('*')
         .is_some_and(|prefix| kind.starts_with(prefix))

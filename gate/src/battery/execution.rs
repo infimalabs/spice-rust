@@ -186,12 +186,13 @@ impl BatteryArmResult {
 /// Complete canonical battery report.
 ///
 /// This type deliberately does not implement [`Deserialize`]. A derived one
-/// would let any caller lift retained bytes straight into a report without
-/// passing through [`Self::validate`], and because
-/// [`BatteryReceipt::mint`](super::BatteryReceipt::mint) takes a report by
-/// value, that report could then be bound into a published receipt. Its
-/// completeness is a precondition of minting, so the only way to hold one is
-/// to have run the battery or to have decoded through the private shape below.
+/// would let any caller lift retained bytes straight into a report without the
+/// completeness check that [`Self::decode`] and every receipt decode both run,
+/// and because [`BatteryReceipt::mint`](super::BatteryReceipt::mint) takes a
+/// report by value, that report could then be bound into a published receipt.
+/// Its completeness is a precondition of minting, so the only way to hold one
+/// is to have run the battery or to have decoded through the private shape
+/// below.
 ///
 /// ```compile_fail,E0277
 /// let report: gate::BatteryReport = serde_json::from_slice(b"{}").expect("no way in");

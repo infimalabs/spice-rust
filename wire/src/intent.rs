@@ -11,8 +11,16 @@
 //! assigns all of those; a body that named one would let a caller forge it.
 //!
 //! Several kinds share one shape on purpose. Freeing and lapsing a claim both
-//! name a task and nothing else, so they share [`TaskRef`]; renewal has its
-//! own shape because it also names the requested lease duration.
+//! name a task and nothing else, so they share
+//! [`TaskRef`](crate::intent::TaskRef); renewal has its own shape because it
+//! also names the requested lease duration.
+
+// That link is crate-rooted, not bare, and has to stay that way. This module is
+// documented from two places: `pub mod intent;` in `lib.rs` carries an outer
+// comment as well, and rustdoc resolves the merged text in the scope that
+// declaration sits in — the crate root, where a bare `TaskRef` is not in scope
+// precisely because that outer comment's subject is that this module is
+// deliberately not re-exported flat.
 
 use serde::{Deserialize, Serialize};
 
