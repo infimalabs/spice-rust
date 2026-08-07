@@ -23,7 +23,6 @@ use crate::manifest::OriginLayer;
 use crate::policy::Policy as RulePolicy;
 use crate::state::{
     ActorInputs, ActorResolution, BoundDecision, CurrentState, StateLedger, current_state_path,
-    predecessor_state_sources,
 };
 use crate::toolchain::RimCapture;
 use crate::tree::{Selector, git_directories};
@@ -353,11 +352,10 @@ fn selected_scope(selector: &Selector, repository: &Path) -> Result<BatteryScope
 /// not tracked: it lives below Git's common directory so every linked worktree
 /// sees one authority, and a selection would never contain it.
 fn live_ledger(repository: &Path) -> Result<StateLedger, BatteryError> {
-    let (worktree_git, common_git) = git_directories(repository).map_err(|error| {
+    let (_, common_git) = git_directories(repository).map_err(|error| {
         BatteryError::new(format!("cannot locate battery state authority: {error}"))
     })?;
-    let sources = predecessor_state_sources(&worktree_git, &common_git);
-    let state = CurrentState::load(current_state_path(&common_git), &sources)
+    let state = CurrentState::load(current_state_path(&common_git))
         .map_err(|error| BatteryError::new(format!("cannot load battery state: {error}")))?;
     Ok(state.before().clone())
 }

@@ -242,53 +242,6 @@ impl StateLedger {
     }
 }
 
-/// Exact locations of the predecessor-owned ledgers.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PredecessorSources {
-    file_loc: PathBuf,
-    file_bytes: PathBuf,
-    complexity_ccn: PathBuf,
-    complexity_length: PathBuf,
-    repo_doc_chars: PathBuf,
-    claims: PathBuf,
-}
-
-impl PredecessorSources {
-    /// Resolve all predecessor filenames below their worktree and shared
-    /// `.spice` state roots.
-    #[must_use]
-    pub fn new(worktree_state_root: &Path, shared_state_root: &Path) -> Self {
-        Self {
-            file_loc: worktree_state_root.join("file-loc-sticky.json"),
-            file_bytes: worktree_state_root.join("file-byte-sticky.json"),
-            complexity_ccn: worktree_state_root.join("complexity-ccn-sticky.json"),
-            complexity_length: worktree_state_root.join("complexity-length-sticky.json"),
-            repo_doc_chars: worktree_state_root.join("repo-doc-chars-sticky.json"),
-            claims: shared_state_root.join(PREDECESSOR_CLAIMS_FILE),
-        }
-    }
-
-    /// Construct explicit locations, primarily for controlled migrations.
-    #[must_use]
-    pub fn explicit(
-        file_loc: PathBuf,
-        file_bytes: PathBuf,
-        complexity_ccn: PathBuf,
-        complexity_length: PathBuf,
-        repo_doc_chars: PathBuf,
-        claims: PathBuf,
-    ) -> Self {
-        Self {
-            file_loc,
-            file_bytes,
-            complexity_ccn,
-            complexity_length,
-            repo_doc_chars,
-            claims,
-        }
-    }
-}
-
 /// Canonical staged old-to-new paths.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RenameMap {

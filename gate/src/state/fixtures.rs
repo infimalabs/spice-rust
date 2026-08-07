@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
@@ -228,131 +228,12 @@ fn current_policy_variation_domain_reaches_canonical_state_evidence() {
 }
 
 #[test]
-fn one_shot_import_translates_all_ledgers_and_both_key_shapes() {
+fn malformed_current_state_is_loud() {
     let fixture = StateFixture::new();
-    fixture.write_complete_predecessor();
-
-    let state = CurrentState::load(&fixture.current, &fixture.sources).expect("strict import");
-    assert!(!fixture.current.exists());
-    assert_eq!(state.before().version(), STATE_LEDGER_VERSION);
-    assert_eq!(state.before().latches().len(), 5);
-    assert_eq!(state.before().claims().len(), 1);
-    assert_eq!(state.before().claims()[0].path(), "src/old.rs");
-    assert_eq!(state.before().claims()[0].actor(), "peer");
-    assert!(state.before().latches().iter().any(|entry| {
-        entry.kind() == LatchKind::ComplexityCcn
-            && entry.key().repo_path() == "src/old.rs"
-            && entry.key().function_name() == Some("parse")
-    }));
-    assert!(state.before().latches().iter().any(|entry| {
-        entry.kind() == LatchKind::FileLoc
-            && entry.key().repo_path() == "src/old.rs"
-            && entry.key().function_name().is_none()
-    }));
-    // Every remaining ledger is named rather than left to the count above,
-    // because importing one under another kind of the same key shape keeps the
-    // count at five and leaves the assertions above keyed on their own paths.
-    assert!(state.before().latches().iter().any(|entry| {
-        entry.kind() == LatchKind::RepoDocChars
-            && entry.key().repo_path() == "README.md"
-            && entry.key().function_name().is_none()
-    }));
-    assert!(state.before().latches().iter().any(|entry| {
-        entry.kind() == LatchKind::FileBytes
-            && entry.key().repo_path() == "src/bytes.rs"
-            && entry.key().function_name().is_none()
-    }));
-    assert!(state.before().latches().iter().any(|entry| {
-        entry.kind() == LatchKind::ComplexityLength
-            && entry.key().repo_path() == "src/long.rs"
-            && entry.key().function_name() == Some("render")
-    }));
-
-    let error = import_error(
-        &fixture,
-        &fixture.sources.file_loc,
-        br#"{"version":2,"paths":[]}"#,
-    );
-    assert_eq!(error.kind(), StateErrorKind::UnsupportedVersion);
-    assert_eq!(error.source_path(), fixture.sources.file_loc);
-    assert_eq!(error.release(), PREDECESSOR_STATE_RELEASE);
-    assert!(!error.recovery().is_empty());
-}
-
-#[test]
-fn malformed_colliding_unreadable_and_inexact_predecessor_state_is_loud() {
-    let malformed = StateFixture::new();
-    malformed.write_complete_predecessor();
-    let error = import_error(
-        &malformed,
-        &malformed.sources.complexity_ccn,
-        br#"{"version":1,"functions":[["src/lib.rs"]]}"#,
-    );
-    assert_eq!(error.kind(), StateErrorKind::Decode);
-    assert_eq!(error.release(), PREDECESSOR_STATE_RELEASE);
-
-    let unknown = StateFixture::new();
-    unknown.write_complete_predecessor();
-    let error = import_error(
-        &unknown,
-        &unknown.sources.file_loc,
-        br#"{"version":1,"paths":[],"unknown":true}"#,
-    );
-    assert_eq!(error.kind(), StateErrorKind::Decode);
-    assert_eq!(error.source_path(), unknown.sources.file_loc);
-
-    let collision = StateFixture::new();
-    collision.write_complete_predecessor();
-    let error = import_error(
-        &collision,
-        &collision.sources.file_loc,
-        br#"{"version":1,"paths":["src/lib.rs","./src/lib.rs"]}"#,
-    );
-    assert_eq!(error.kind(), StateErrorKind::Collision);
-
-    let unreadable = StateFixture::new();
-    unreadable.write_complete_predecessor();
-    fs::remove_file(&unreadable.sources.file_bytes).expect("remove source file");
-    fs::create_dir(&unreadable.sources.file_bytes).expect("replace source with directory");
-    let error = CurrentState::load(&unreadable.current, &unreadable.sources)
-        .expect_err("directory source must not be swallowed");
-    assert_eq!(error.kind(), StateErrorKind::Read);
-    assert_eq!(error.source_path(), unreadable.sources.file_bytes);
-
-    let claim_collision = StateFixture::new();
-    claim_collision.write_complete_predecessor();
-    let error = import_error(
-        &claim_collision,
-        &claim_collision.sources.claims,
-        concat!(
-            r#"{"version":1,"ttl_seconds":21600,"claims":["#,
-            r#"{"path":"src/a.rs","actor":"peer","created_at":1.0,"expires_at":2.0},"#,
-            r#"{"path":"./src\\a.rs","actor":" peer ","created_at":1.0,"expires_at":2.0}"#,
-            "]}"
-        )
-        .as_bytes(),
-    );
-    assert_eq!(error.kind(), StateErrorKind::Collision);
-
-    let inexact = StateFixture::new();
-    inexact.write_complete_predecessor();
-    let error = import_error(
-        &inexact,
-        &inexact.sources.claims,
-        br#"{"version":1,"ttl_seconds":1,"claims":[]}"#,
-    );
-    assert_eq!(error.kind(), StateErrorKind::Malformed);
-    assert!(error.to_string().contains("no exact current meaning"));
-}
-
-#[test]
-fn malformed_current_state_never_falls_back_to_predecessor_state() {
-    let fixture = StateFixture::new();
-    fixture.write_complete_predecessor();
     fs::write(&fixture.current, br#"{"version":99}"#).expect("write current state");
 
-    let error = CurrentState::load(&fixture.current, &fixture.sources)
-        .expect_err("current state must own the failure");
+    let error =
+        CurrentState::load(&fixture.current).expect_err("current state must own the failure");
     assert_eq!(error.kind(), StateErrorKind::UnsupportedVersion);
     assert_eq!(error.source_path(), fixture.current);
     // The rendered line, spelled out, rather than a comparison against
@@ -371,7 +252,7 @@ fn malformed_current_state_never_falls_back_to_predecessor_state() {
 #[test]
 fn a_complete_observation_inventory_is_required_exactly_once() {
     let fixture = StateFixture::new();
-    let mut state = CurrentState::load(&fixture.current, &fixture.sources).expect("empty import");
+    let mut state = CurrentState::load(&fixture.current).expect("empty current state");
     state
         .begin_run(&RenameMap::default(), std::iter::empty::<&str>(), 100.0)
         .expect("begin run");
@@ -392,8 +273,9 @@ fn a_complete_observation_inventory_is_required_exactly_once() {
 #[test]
 fn rename_pruning_latching_healing_and_acceptance_are_one_transaction() {
     let fixture = StateFixture::new();
-    fixture.write_complete_predecessor();
-    let mut state = CurrentState::load(&fixture.current, &fixture.sources).expect("import");
+    fixture.write_complete_current();
+    let initial_bytes = fs::read(&fixture.current).expect("seeded current state");
+    let mut state = CurrentState::load(&fixture.current).expect("load current state");
     let before = state.before().digest();
     let renames = RenameMap::new([("src/old.rs", "src/new.rs")]).expect("rename map");
     state
@@ -423,23 +305,22 @@ fn rename_pruning_latching_healing_and_acceptance_are_one_transaction() {
 
     let rejected = pending.clone().reject();
     assert!(!rejected.accepted());
-    assert!(!fixture.current.exists());
+    assert_eq!(
+        fs::read(&fixture.current).expect("state after rejection"),
+        initial_bytes
+    );
     let accepted = pending.accept().expect("accepted atomic publication");
     assert!(accepted.accepted());
     assert_eq!(accepted.before(), &before);
     assert_eq!(
         accepted.after(),
-        &CurrentState::load(&fixture.current, &fixture.sources)
+        &CurrentState::load(&fixture.current)
             .expect("load current only")
             .before()
             .digest()
     );
-    fs::write(&fixture.sources.file_loc, b"not JSON")
-        .expect("corrupt predecessor after accepted import");
-    CurrentState::load(&fixture.current, &fixture.sources)
-        .expect("current ledger permanently supersedes predecessor state");
 
-    let mut heal = CurrentState::load(&fixture.current, &fixture.sources).expect("reload");
+    let mut heal = CurrentState::load(&fixture.current).expect("reload");
     let bytes_before_heal = fs::read(&fixture.current).expect("accepted bytes before heal");
     heal.begin_run(&RenameMap::default(), ["src/new.rs"], 1_001.0)
         .expect("begin heal");
@@ -465,7 +346,7 @@ fn rename_pruning_latching_healing_and_acceptance_are_one_transaction() {
     let receipt = pending_heal.accept().expect("accept heal");
     assert_ne!(receipt.before(), receipt.after());
     assert!(
-        CurrentState::load(&fixture.current, &fixture.sources)
+        CurrentState::load(&fixture.current)
             .expect("load healed")
             .before()
             .latches()
@@ -476,8 +357,8 @@ fn rename_pruning_latching_healing_and_acceptance_are_one_transaction() {
 #[test]
 fn stale_linked_worktree_update_refuses_instead_of_losing_a_claim() {
     let fixture = StateFixture::new();
-    let mut first = CurrentState::load(&fixture.current, &fixture.sources).expect("first load");
-    let mut second = CurrentState::load(&fixture.current, &fixture.sources).expect("second load");
+    let mut first = CurrentState::load(&fixture.current).expect("first load");
+    let mut second = CurrentState::load(&fixture.current).expect("second load");
     for state in [&mut first, &mut second] {
         state
             .begin_run(&RenameMap::default(), ["src/live.rs"], 100.0)
@@ -510,9 +391,9 @@ fn stale_linked_worktree_update_refuses_instead_of_losing_a_claim() {
         .finish()
         .expect("finish stale second")
         .accept()
-        .expect_err("stale imported transaction must refuse");
+        .expect_err("stale initial transaction must refuse");
     assert_eq!(error.kind(), StateErrorKind::Stale);
-    let current = CurrentState::load(&fixture.current, &fixture.sources).expect("current state");
+    let current = CurrentState::load(&fixture.current).expect("current state");
     assert_eq!(current.before().claims().len(), 1);
     assert_eq!(current.before().claims()[0].actor(), "actor-a");
 }
@@ -520,7 +401,7 @@ fn stale_linked_worktree_update_refuses_instead_of_losing_a_claim() {
 #[test]
 fn accepted_persist_failures_are_loud_and_path_owned() {
     let fixture = StateFixture::new();
-    let mut state = CurrentState::load(&fixture.current, &fixture.sources).expect("empty import");
+    let mut state = CurrentState::load(&fixture.current).expect("empty current state");
     state
         .begin_run(&RenameMap::default(), std::iter::empty::<&str>(), 100.0)
         .expect("begin empty run");
@@ -553,7 +434,7 @@ fn claims_refresh_redirect_expire_and_share_one_git_common_ledger() {
     assert_eq!(refreshed.claim().created_at(), 100.0);
     assert_eq!(refreshed.claim().expires_at(), 21_800.0);
 
-    let mut peer = CurrentState::load(&common_path, &fixture.sources).expect("shared load");
+    let mut peer = CurrentState::load(&common_path).expect("shared load");
     peer.begin_run(&RenameMap::default(), ["src/live.rs"], 300.0)
         .expect("peer run");
     peer.reconcile([]).expect("complete empty latch inventory");
@@ -581,8 +462,8 @@ fn claims_refresh_redirect_expire_and_share_one_git_common_ledger() {
 fn receipts_are_canonical_immutable_evidence_and_replay_is_deterministic() {
     let left = StateFixture::new();
     let right = StateFixture::new();
-    left.write_complete_predecessor();
-    right.write_complete_predecessor();
+    left.write_complete_current();
+    right.write_complete_current();
 
     let left_receipt = deterministic_run(&left);
     let right_receipt = deterministic_run(&right);
@@ -606,7 +487,7 @@ fn receipts_are_canonical_immutable_evidence_and_replay_is_deterministic() {
     assert_eq!(
         fs::read(&receipt_path).expect("receipt remains"),
         immutable,
-        "state migration and later acceptance must not rewrite prior receipts"
+        "later state acceptance must not rewrite prior receipts"
     );
 }
 
@@ -626,7 +507,7 @@ fn observation(kind: LatchKind, key: StateKey, measured: u64, actor: &str) -> La
 }
 
 fn claim_and_accept(fixture: &StateFixture, now: f64, actor: &str) -> ClaimDecision {
-    let mut state = CurrentState::load(&fixture.current, &fixture.sources).expect("load state");
+    let mut state = CurrentState::load(&fixture.current).expect("load state");
     state
         .begin_run(&RenameMap::default(), ["src/live.rs"], now)
         .expect("begin claim run");
@@ -649,7 +530,7 @@ fn claim_and_accept(fixture: &StateFixture, now: f64, actor: &str) -> ClaimDecis
 }
 
 fn deterministic_run(fixture: &StateFixture) -> StateReceipt {
-    let mut state = CurrentState::load(&fixture.current, &fixture.sources).expect("import");
+    let mut state = CurrentState::load(&fixture.current).expect("load current state");
     state
         .begin_run(
             &RenameMap::new([("src/old.rs", "src/new.rs")]).expect("renames"),
@@ -672,16 +553,10 @@ fn deterministic_run(fixture: &StateFixture) -> StateReceipt {
         .expect("accept deterministic run")
 }
 
-fn import_error(fixture: &StateFixture, path: &Path, bytes: &[u8]) -> StateError {
-    fs::write(path, bytes).expect("replace predecessor source");
-    CurrentState::load(&fixture.current, &fixture.sources).expect_err("import must fail")
-}
-
 struct StateFixture {
     root: PathBuf,
     common_git: PathBuf,
     current: PathBuf,
-    sources: PredecessorSources,
 }
 
 impl StateFixture {
@@ -692,59 +567,58 @@ impl StateFixture {
             NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
         ));
         let common_git = root.join("common.git");
-        let worktree_git = root.join("worktree.git");
-        let sources = predecessor_state_sources(&worktree_git, &common_git);
         let current = current_state_path(&common_git);
-        fs::create_dir_all(worktree_git.join(PREDECESSOR_STATE_DIRECTORY))
-            .expect("create worktree predecessor state");
-        fs::create_dir_all(common_git.join(PREDECESSOR_STATE_DIRECTORY))
-            .expect("create shared predecessor state");
         fs::create_dir_all(current.parent().expect("current state parent"))
             .expect("create current state parent");
         Self {
             root,
             common_git,
             current,
-            sources,
         }
     }
 
-    fn write_complete_predecessor(&self) {
+    fn write_complete_current(&self) {
+        let ledger = StateLedger {
+            version: STATE_LEDGER_VERSION,
+            latches: vec![
+                LatchEntry::new(
+                    LatchKind::FileLoc,
+                    StateKey::path("src/old.rs").expect("file-loc key"),
+                )
+                .expect("file-loc latch"),
+                LatchEntry::new(
+                    LatchKind::FileBytes,
+                    StateKey::path("src/bytes.rs").expect("file-bytes key"),
+                )
+                .expect("file-bytes latch"),
+                LatchEntry::new(
+                    LatchKind::ComplexityCcn,
+                    StateKey::function("src/old.rs", "parse").expect("complexity key"),
+                )
+                .expect("complexity latch"),
+                LatchEntry::new(
+                    LatchKind::ComplexityLength,
+                    StateKey::function("src/long.rs", "render").expect("length key"),
+                )
+                .expect("length latch"),
+                LatchEntry::new(
+                    LatchKind::RepoDocChars,
+                    StateKey::path("README.md").expect("repo-doc key"),
+                )
+                .expect("repo-doc latch"),
+            ],
+            claims: vec![PeerClaim {
+                path: "src/old.rs".to_owned(),
+                actor: "peer".to_owned(),
+                created_at: 10.0,
+                expires_at: 3_000.0,
+            }],
+        };
         fs::write(
-            &self.sources.file_loc,
-            br#"{"version":1,"paths":["src/old.rs"]}"#,
+            &self.current,
+            ledger.encode().expect("encode current fixture ledger"),
         )
-        .expect("file-loc predecessor");
-        fs::write(
-            &self.sources.file_bytes,
-            br#"{"version":1,"paths":["src/bytes.rs"]}"#,
-        )
-        .expect("file-byte predecessor");
-        fs::write(
-            &self.sources.complexity_ccn,
-            br#"{"version":1,"functions":[["src/old.rs","parse"]]}"#,
-        )
-        .expect("ccn predecessor");
-        fs::write(
-            &self.sources.complexity_length,
-            br#"{"version":1,"functions":[["src/long.rs","render"]]}"#,
-        )
-        .expect("length predecessor");
-        fs::write(
-            &self.sources.repo_doc_chars,
-            br#"{"version":1,"paths":["README.md"]}"#,
-        )
-        .expect("repo-doc predecessor");
-        fs::write(
-            &self.sources.claims,
-            [
-                br#"{"version":1,"ttl_seconds":21600,"claims":["#.as_slice(),
-                br#"{"path":" ./src\\old.rs ","actor":" peer ","created_at":10.0,"#.as_slice(),
-                br#""expires_at":3000.0}]}"#.as_slice(),
-            ]
-            .concat(),
-        )
-        .expect("claim predecessor");
+        .expect("write current fixture ledger");
     }
 }
 

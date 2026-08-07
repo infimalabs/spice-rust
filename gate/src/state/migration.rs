@@ -20,32 +20,7 @@ struct RawStateLedger {
     claims: Vec<PeerClaim>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawPathLedger {
-    #[serde(rename = "version")]
-    _version: u64,
-    paths: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawFunctionLedger {
-    #[serde(rename = "version")]
-    _version: u64,
-    functions: Vec<(String, String)>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawClaimLedger {
-    #[serde(rename = "version")]
-    _version: u64,
-    ttl_seconds: u64,
-    claims: Vec<PeerClaim>,
-}
-
-/// Stable state load/import/persist refusal category.
+/// Stable state load/persist refusal category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StateErrorKind {
     Read,
@@ -95,21 +70,6 @@ impl StateError {
         recovery: impl Into<String>,
     ) -> Self {
         Self::new(kind, source_path, CURRENT_STATE_RELEASE, message, recovery)
-    }
-
-    fn predecessor(
-        kind: StateErrorKind,
-        source_path: &Path,
-        message: impl Into<String>,
-        recovery: impl Into<String>,
-    ) -> Self {
-        Self::new(
-            kind,
-            source_path,
-            PREDECESSOR_STATE_RELEASE,
-            message,
-            recovery,
-        )
     }
 
     fn new(
@@ -222,15 +182,15 @@ fn decode_current(path: &Path, bytes: &[u8]) -> Result<StateLedger, StateError> 
 fn verify_destination_unchanged(
     path: &Path,
     before: &StateLedger,
-    imported: bool,
+    initially_absent: bool,
 ) -> Result<(), StateError> {
     let observed = read_optional(path, CURRENT_STATE_RELEASE)?;
-    match (imported, observed) {
+    match (initially_absent, observed) {
         (true, None) => Ok(()),
         (true, Some(_)) => Err(StateError::current(
             StateErrorKind::Stale,
             path,
-            "current state appeared after predecessor import began",
+            "current state appeared after this run started from an absent ledger",
             "reload current state and replay the run against its accepted ledger",
         )),
         (false, None) => Err(StateError::current(
@@ -253,194 +213,6 @@ fn verify_destination_unchanged(
             }
         }
     }
-}
-
-fn import_predecessor(sources: &PredecessorSources) -> Result<StateLedger, StateError> {
-    let mut latches = BTreeSet::new();
-    import_path_ledger(&sources.file_loc, LatchKind::FileLoc, &mut latches)?;
-    import_path_ledger(&sources.file_bytes, LatchKind::FileBytes, &mut latches)?;
-    import_function_ledger(
-        &sources.complexity_ccn,
-        LatchKind::ComplexityCcn,
-        &mut latches,
-    )?;
-    import_function_ledger(
-        &sources.complexity_length,
-        LatchKind::ComplexityLength,
-        &mut latches,
-    )?;
-    import_path_ledger(
-        &sources.repo_doc_chars,
-        LatchKind::RepoDocChars,
-        &mut latches,
-    )?;
-    let claims = import_claim_ledger(&sources.claims)?;
-    Ok(StateLedger {
-        version: STATE_LEDGER_VERSION,
-        latches: latches.into_iter().collect(),
-        claims,
-    })
-}
-
-fn import_path_ledger(
-    path: &Path,
-    kind: LatchKind,
-    target: &mut BTreeSet<LatchEntry>,
-) -> Result<(), StateError> {
-    let Some(bytes) = read_optional(path, PREDECESSOR_STATE_RELEASE)? else {
-        return Ok(());
-    };
-    ensure_predecessor_version(path, &bytes)?;
-    let raw: RawPathLedger = wire::decode(&bytes).map_err(|error| {
-        StateError::predecessor(
-            StateErrorKind::Decode,
-            path,
-            format!("malformed predecessor path ledger: {error}"),
-            "repair or remove this predecessor ledger before retrying import",
-        )
-    })?;
-    let mut local = BTreeSet::new();
-    for raw_path in raw.paths {
-        let key = StateKey::path(&raw_path).map_err(|error| {
-            StateError::predecessor(
-                StateErrorKind::Malformed,
-                path,
-                error.to_string(),
-                "repair the malformed path key in this predecessor ledger",
-            )
-        })?;
-        let entry = LatchEntry::new(kind, key).expect("path ledgers admit path keys");
-        if !local.insert(entry.clone()) {
-            return Err(StateError::predecessor(
-                StateErrorKind::Collision,
-                path,
-                format!("path keys collide after normalization at {raw_path:?}"),
-                "deduplicate the predecessor ledger without changing its live latch meaning",
-            ));
-        }
-        if !target.insert(entry) {
-            return Err(StateError::predecessor(
-                StateErrorKind::Collision,
-                path,
-                format!("duplicate imported {kind:?} latch at {raw_path:?}"),
-                "retain exactly one source entry for this sticky key",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn import_function_ledger(
-    path: &Path,
-    kind: LatchKind,
-    target: &mut BTreeSet<LatchEntry>,
-) -> Result<(), StateError> {
-    let Some(bytes) = read_optional(path, PREDECESSOR_STATE_RELEASE)? else {
-        return Ok(());
-    };
-    ensure_predecessor_version(path, &bytes)?;
-    let raw: RawFunctionLedger = wire::decode(&bytes).map_err(|error| {
-        StateError::predecessor(
-            StateErrorKind::Decode,
-            path,
-            format!("malformed predecessor function ledger: {error}"),
-            "repair or remove this predecessor ledger before retrying import",
-        )
-    })?;
-    let mut local = BTreeSet::new();
-    for (raw_path, function) in raw.functions {
-        let key = StateKey::function(&raw_path, function.clone()).map_err(|error| {
-            StateError::predecessor(
-                StateErrorKind::Malformed,
-                path,
-                error.to_string(),
-                "repair the malformed path/function key in this predecessor ledger",
-            )
-        })?;
-        let entry = LatchEntry::new(kind, key).expect("function ledgers admit function keys");
-        if !local.insert(entry.clone()) {
-            return Err(StateError::predecessor(
-                StateErrorKind::Collision,
-                path,
-                format!(
-                    "path/function keys collide after normalization at {raw_path:?}, {function:?}"
-                ),
-                "deduplicate the predecessor ledger without changing its live latch meaning",
-            ));
-        }
-        if !target.insert(entry) {
-            return Err(StateError::predecessor(
-                StateErrorKind::Collision,
-                path,
-                format!("duplicate imported {kind:?} function latch"),
-                "retain exactly one source entry for this sticky key",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn import_claim_ledger(path: &Path) -> Result<Vec<PeerClaim>, StateError> {
-    let Some(bytes) = read_optional(path, PREDECESSOR_STATE_RELEASE)? else {
-        return Ok(Vec::new());
-    };
-    ensure_predecessor_version(path, &bytes)?;
-    let raw: RawClaimLedger = wire::decode(&bytes).map_err(|error| {
-        StateError::predecessor(
-            StateErrorKind::Decode,
-            path,
-            format!("malformed predecessor claim ledger: {error}"),
-            "repair or remove this predecessor claim ledger before retrying import",
-        )
-    })?;
-    if raw.ttl_seconds != PEER_CLAIM_TTL_SECONDS {
-        return Err(StateError::predecessor(
-            StateErrorKind::Malformed,
-            path,
-            format!(
-                "claim TTL {} has no exact current meaning; expected {}",
-                raw.ttl_seconds, PEER_CLAIM_TTL_SECONDS
-            ),
-            "expire the incompatible claims or restore the release-owned TTL",
-        ));
-    }
-    let mut claims = Vec::with_capacity(raw.claims.len());
-    for mut claim in raw.claims {
-        let raw_path = claim.path.clone();
-        claim.path = normalize_repo_path(&raw_path).map_err(|reason| {
-            StateError::predecessor(
-                StateErrorKind::Malformed,
-                path,
-                format!("invalid predecessor claim path {raw_path:?}: {reason}"),
-                "repair the malformed path in this predecessor claim ledger",
-            )
-        })?;
-        claim.actor = claim.actor.trim().to_owned();
-        claims.push(claim);
-    }
-    validate_claims(&claims, path, PREDECESSOR_STATE_RELEASE, false)?;
-    sort_claims(&mut claims);
-    Ok(claims)
-}
-
-fn ensure_predecessor_version(path: &Path, bytes: &[u8]) -> Result<(), StateError> {
-    let version: VersionEvidence = wire::decode(bytes).map_err(|error| {
-        StateError::predecessor(
-            StateErrorKind::Decode,
-            path,
-            format!("malformed predecessor ledger JSON: {error}"),
-            "repair the release-owned JSON before retrying import",
-        )
-    })?;
-    if version.version != 1 {
-        return Err(StateError::predecessor(
-            StateErrorKind::UnsupportedVersion,
-            path,
-            format!("unsupported predecessor ledger version {}", version.version),
-            "use a release-specific migrator or restore a version 1 predecessor ledger",
-        ));
-    }
-    Ok(())
 }
 
 fn read_optional(path: &Path, release: &str) -> Result<Option<Vec<u8>>, StateError> {

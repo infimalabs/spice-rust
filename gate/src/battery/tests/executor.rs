@@ -326,10 +326,9 @@ fn acting(actor: &str) -> crate::ActorCapture {
 
 /// The durable ledger one repository shares across its worktrees.
 fn live_ledger(repository: &Path) -> crate::StateLedger {
-    let (worktree_git, common_git) = crate::tree::git_directories(repository)
+    let (_, common_git) = crate::tree::git_directories(repository)
         .expect("the repository names both Git directories");
-    let sources = crate::predecessor_state_sources(&worktree_git, &common_git);
-    CurrentState::load(crate::current_state_path(&common_git), &sources)
+    CurrentState::load(crate::current_state_path(&common_git))
         .expect("load the shared ledger")
         .before()
         .clone()
@@ -341,11 +340,10 @@ fn live_ledger(repository: &Path) -> crate::StateLedger {
 /// cannot tell a capture that read the repository from one that read nothing.
 /// This gives the ledger something to say first.
 fn seed_one_claim(repository: &Path, actor: &str) {
-    let (worktree_git, common_git) = crate::tree::git_directories(repository)
+    let (_, common_git) = crate::tree::git_directories(repository)
         .expect("the repository names both Git directories");
-    let sources = crate::predecessor_state_sources(&worktree_git, &common_git);
-    let mut state = CurrentState::load(crate::current_state_path(&common_git), &sources)
-        .expect("load the shared ledger");
+    let mut state =
+        CurrentState::load(crate::current_state_path(&common_git)).expect("load the shared ledger");
     state
         .begin_run(&crate::RenameMap::default(), ["app/main.py"], 100.0)
         .expect("begin one seeding run");

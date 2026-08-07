@@ -134,9 +134,8 @@ pub use report::{
 pub use state::{
     ActorInputs, ActorResolution, ActorSource, BoundDecision, BoundError, BoundRule, ClaimDecision,
     ClaimStatus, CurrentState, KeyError, LatchEntry, LatchKind, LatchObservation, LatchTransition,
-    PeerClaim, PendingState, PredecessorSources, RenameMap, StateDecision, StateError,
-    StateErrorKind, StateKey, StateLedger, StateReceipt, current_state_path,
-    predecessor_state_sources, varied_elastic_limit,
+    PeerClaim, PendingState, RenameMap, StateDecision, StateError, StateErrorKind, StateKey,
+    StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use structural::{

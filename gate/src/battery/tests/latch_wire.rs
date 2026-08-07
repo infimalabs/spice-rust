@@ -32,7 +32,6 @@ use crate::metrics::{
 };
 use crate::state::{
     LatchEntry, LatchKind, LatchObservation, RenameMap, StateKey, current_state_path,
-    predecessor_state_sources,
 };
 
 /// The document a prior run already latched.
@@ -207,11 +206,10 @@ fn function_entry(kind: LatchKind, path: &str, function: &str) -> LatchEntry {
 /// bounds they were decided under, so all this observation has to do is breach.
 fn seed_latch(repository: &Path, entry: &LatchEntry) {
     let path = entry.key().repo_path();
-    let (worktree_git, common_git) = crate::tree::git_directories(repository)
+    let (_, common_git) = crate::tree::git_directories(repository)
         .expect("the fixture repository has a Git directory");
-    let sources = predecessor_state_sources(&worktree_git, &common_git);
     let destination = current_state_path(&common_git);
-    let mut state = CurrentState::load(&destination, &sources).expect("load the fixture ledger");
+    let mut state = CurrentState::load(&destination).expect("load the fixture ledger");
     state
         .begin_run(&RenameMap::default(), [path], SEED_CLOCK)
         .expect("begin the seeding run");
@@ -237,7 +235,7 @@ fn seed_latch(repository: &Path, entry: &LatchEntry) {
     // Read the ledger back through the loader the battery uses. A seed that
     // silently landed nowhere would leave every assertion below measuring two
     // unlatched keys and agreeing with itself about it.
-    let reloaded = CurrentState::load(&destination, &sources).expect("reload the seeded ledger");
+    let reloaded = CurrentState::load(&destination).expect("reload the seeded ledger");
     assert!(
         reloaded.before().latches().contains(entry),
         "the seeding run left {entry:?} unlatched, so the fixture would prove nothing"

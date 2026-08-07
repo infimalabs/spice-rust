@@ -13,7 +13,7 @@ use gate::metrics::{
     measure_file_shape, measure_repository_document, resolve_magic_metric, resolve_metric_rule,
     scan_magic_regressions, scan_markdown_link_case, scan_rust_doc_markdown_citations,
 };
-use gate::state::{ActorInputs, CurrentState, LatchKind, PredecessorSources, RenameMap};
+use gate::state::{ActorInputs, CurrentState, LatchKind, RenameMap};
 use gate::{
     GateId, PREDECESSOR_GATE_RELEASE, PolicyContext, RulePolicy, migrate_predecessor_policy,
 };
@@ -905,8 +905,7 @@ fn state_binding_preserves_the_current_u64_variation_domain() {
         .expect("large variation observation");
 
     let fixture = MetricStateFixture::new();
-    let mut state = CurrentState::load(&fixture.destination, &fixture.sources)
-        .expect("load current metric state");
+    let mut state = CurrentState::load(&fixture.destination).expect("load current metric state");
     state
         .begin_run(&RenameMap::default(), ["src/lib.rs"], STATE_TEST_CLOCK)
         .expect("begin metric-state run");
@@ -969,8 +968,7 @@ fn state_binding_refuses_a_decision_from_another_variation_policy() {
         .expect("small variation observation");
 
     let fixture = MetricStateFixture::new();
-    let mut state = CurrentState::load(&fixture.destination, &fixture.sources)
-        .expect("load current metric state");
+    let mut state = CurrentState::load(&fixture.destination).expect("load current metric state");
     state
         .begin_run(&RenameMap::default(), ["src/lib.rs"], STATE_TEST_CLOCK)
         .expect("begin metric-state run");
@@ -1277,7 +1275,6 @@ fn measured_evidence(metric: MetricId) -> MetricEvidence {
 struct MetricStateFixture {
     root: PathBuf,
     destination: PathBuf,
-    sources: PredecessorSources,
 }
 
 impl MetricStateFixture {
@@ -1286,16 +1283,8 @@ impl MetricStateFixture {
         let root =
             std::env::temp_dir().join(format!("gate-metric-state-{}-{serial}", std::process::id()));
         fs::create_dir_all(&root).expect("create metric-state fixture root");
-        let sources = PredecessorSources::new(
-            &root.join("predecessor-worktree"),
-            &root.join("predecessor-shared"),
-        );
         let destination = root.join("current/gate-state.json");
-        Self {
-            root,
-            destination,
-            sources,
-        }
+        Self { root, destination }
     }
 }
 
@@ -1340,8 +1329,7 @@ fn reconcile_binding(
         .expect("actor inputs")
         .with_active_actor("actor-a");
     let observation = binding.observation(actors).expect("state observation");
-    let mut state = CurrentState::load(&fixture.destination, &fixture.sources)
-        .expect("load current metric state");
+    let mut state = CurrentState::load(&fixture.destination).expect("load current metric state");
     state
         .begin_run(&RenameMap::default(), [path], now)
         .expect("begin metric-state run");

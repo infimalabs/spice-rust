@@ -5,33 +5,37 @@ struct RunContext {
     reconciled: bool,
 }
 
-/// One loaded current/imported ledger with an in-memory run in progress.
+/// One loaded current ledger with an in-memory run in progress.
 #[derive(Clone, Debug)]
 pub struct CurrentState {
     destination: PathBuf,
     before: StateLedger,
     working: StateLedger,
-    imported: bool,
+    initially_absent: bool,
     run: Option<RunContext>,
 }
 
 impl CurrentState {
-    /// Load current state, or strictly import predecessor state in memory when
-    /// the current destination does not exist.
-    pub fn load(
-        destination: impl Into<PathBuf>,
-        predecessor: &PredecessorSources,
-    ) -> Result<Self, StateError> {
+    /// Load current state, starting from an empty current ledger when the
+    /// destination does not exist.
+    pub fn load(destination: impl Into<PathBuf>) -> Result<Self, StateError> {
         let destination = destination.into();
-        let (ledger, imported) = match read_optional(&destination, CURRENT_STATE_RELEASE)? {
+        let (ledger, initially_absent) = match read_optional(&destination, CURRENT_STATE_RELEASE)? {
             Some(bytes) => (decode_current(&destination, &bytes)?, false),
-            None => (import_predecessor(predecessor)?, true),
+            None => (
+                StateLedger {
+                    version: STATE_LEDGER_VERSION,
+                    latches: Vec::new(),
+                    claims: Vec::new(),
+                },
+                true,
+            ),
         };
         Ok(Self {
             destination,
             before: ledger.clone(),
             working: ledger,
-            imported,
+            initially_absent,
             run: None,
         })
     }
@@ -340,7 +344,7 @@ impl CurrentState {
             destination: self.destination,
             before: self.before,
             after: self.working,
-            imported: self.imported,
+            initially_absent: self.initially_absent,
         })
     }
 }
@@ -394,7 +398,7 @@ pub struct PendingState {
     destination: PathBuf,
     before: StateLedger,
     after: StateLedger,
-    imported: bool,
+    initially_absent: bool,
 }
 
 impl PendingState {
@@ -418,10 +422,10 @@ impl PendingState {
 
     /// Atomically publish the after-ledger at the sole accepted-run boundary.
     ///
-    /// The first accepted run always writes an imported ledger, even when
-    /// reconciliation did not otherwise move it, making import one-shot.
+    /// The first accepted run always writes its current ledger, even when
+    /// reconciliation did not otherwise move it.
     pub fn accept(self) -> Result<StateReceipt, StateError> {
-        let changed = self.imported || self.before != self.after;
+        let changed = self.initially_absent || self.before != self.after;
         let bytes = changed
             .then(|| self.after.encode())
             .transpose()
@@ -460,7 +464,11 @@ impl PendingState {
                 "repair the Git-common state directory and retry the accepted run",
             )
         })?;
-        verify_destination_unchanged(&self.destination, &self.before, self.imported)?;
+        verify_destination_unchanged(
+            &self.destination,
+            &self.before,
+            self.initially_absent,
+        )?;
         if let Some(bytes) = bytes {
             atomic::Destination::new(&self.destination)
                 .map_err(|error| {

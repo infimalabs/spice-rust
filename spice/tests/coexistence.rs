@@ -18,8 +18,8 @@ use spice::repository::{Repository, StatePaths};
 
 /// Durable state the predecessor owns inside the shared root.
 ///
-/// `data/` is this port's own directory, but only `spicejournal.sqlite3` and
-/// `spicefolds.sqlite3` inside it belong to this port; every other file there is
+/// `data/` is this port's own directory, but only the files explicitly named by
+/// [`StatePaths::owned_files`] belong to this port; every other file there is
 /// the predecessor's. Ownership is decided per path, never per parent, which is
 /// why seeding foreign files inside an owned directory is the interesting case
 /// rather than an unfair one.
@@ -35,6 +35,24 @@ const PREDECESSOR_STATE: &[(&str, &[u8])] = &[
     ),
     ("taskrc", b"data.location=/dev/null\n"),
     ("hooks/pre-commit", b"#!/bin/sh\nexit 0\n"),
+];
+
+/// Gate ledgers the predecessor owns and ordinary native commands must ignore.
+///
+/// These are deliberately not valid JSON. A native gate that tries to decode
+/// even one of them refuses, so a successful real gate run proves that the
+/// unchanged identity check below is observing an unreachable foreign surface,
+/// not merely a compatible import that happened to preserve its inputs.
+const PREDECESSOR_GATE_STATE: &[(&str, &[u8])] = &[
+    ("file-loc-sticky.json", b"python file-loc state"),
+    ("file-byte-sticky.json", b"python file-byte state"),
+    ("complexity-ccn-sticky.json", b"python complexity-ccn state"),
+    (
+        "complexity-length-sticky.json",
+        b"python complexity-length state",
+    ),
+    ("repo-doc-chars-sticky.json", b"python repo-doc state"),
+    ("flex-slice-claims.json", b"python flex claims"),
 ];
 
 /// One accepted release-0.31.0 export, the only input the bridge admits.
@@ -56,13 +74,62 @@ fn this_runtime_claims_no_path_the_predecessor_owns() {
     let fixture = Fixture::seeded("claims");
     let owned = fixture.owned();
 
-    for (relative, _) in PREDECESSOR_STATE {
+    for (relative, _) in PREDECESSOR_STATE.iter().chain(PREDECESSOR_GATE_STATE) {
         let seeded = fixture.state_root().join(relative);
         assert!(
             !owned.contains(&seeded),
             "{relative} is seeded as the predecessor's, yet this runtime claims it"
         );
     }
+}
+
+/// Ordinary native gate capture has no implicit predecessor-state bridge.
+///
+/// The fixture seeds every predecessor gate ledger with bytes that the removed
+/// importer would reject, records their exact identities, and invokes the real
+/// `spice gate` command. The run must succeed without creating current gate
+/// state, and every predecessor file must remain present and byte-identical.
+#[test]
+fn ordinary_gate_ignores_predecessor_gate_state() {
+    let fixture = Fixture::seeded("gate-state");
+    fixture.prepare_gate_repository();
+    let before = fixture.predecessor_gate_identity();
+    assert_eq!(before.len(), PREDECESSOR_GATE_STATE.len());
+
+    let paths = fixture.paths();
+    let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
+    assert_eq!(
+        gate::current_state_path(repository.common_dir()),
+        paths.gate_state(),
+        "the gate writer and StatePaths registry must name one ledger"
+    );
+    let owned = fixture.owned();
+    assert!(owned.contains(&paths.gate_state().to_path_buf()));
+    assert!(owned.contains(&paths.gate_state_lock().to_path_buf()));
+    assert!(
+        !paths.gate_state().exists(),
+        "current gate state starts absent"
+    );
+    assert!(
+        !paths.gate_state_lock().exists(),
+        "current gate-state lock starts absent"
+    );
+
+    let output = fixture.invoke(&["gate"]);
+    assert!(output.status.success(), "native gate must run: {output:?}");
+    assert_eq!(
+        fixture.predecessor_gate_identity(),
+        before,
+        "ordinary native gate changed predecessor gate state"
+    );
+    assert!(
+        !paths.gate_state().exists(),
+        "gate capture created current state from predecessor ledgers"
+    );
+    assert!(
+        !paths.gate_state_lock().exists(),
+        "gate capture created a publication lock while only reading state"
+    );
 }
 
 /// Two files in one directory, one on each side of the ownership boundary.
@@ -260,7 +327,7 @@ impl Fixture {
     /// A repository whose state root already holds the predecessor's files.
     fn seeded(label: &str) -> Self {
         let fixture = Self::bare(label);
-        for (relative, bytes) in PREDECESSOR_STATE {
+        for (relative, bytes) in PREDECESSOR_STATE.iter().chain(PREDECESSOR_GATE_STATE) {
             let path = fixture.state_root().join(relative);
             fs::create_dir_all(path.parent().expect("seeded path has a parent"))
                 .expect("create predecessor directory");
@@ -278,13 +345,62 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("create coexistence fixture root");
-        fs::create_dir_all(root.join(".git/info")).expect("create fixture git directory");
-        fs::write(root.join(".git/info/exclude"), b"").expect("write fixture exclude");
+        git(&root, &["init", "-q"]);
+        git(
+            &root,
+            &["config", "user.email", "coexistence@example.invalid"],
+        );
+        git(&root, &["config", "user.name", "Coexistence Fixture"]);
         // Canonical from here on: the runtime canonicalizes while discovering,
         // and on macOS the temporary directory is reached through a symlink, so
         // an uncanonicalized root would never equal the paths it reports.
         let root = fs::canonicalize(&root).expect("canonicalize fixture root");
         Self { root }
+    }
+
+    /// Add the smallest tracked repository admitted by the full native gate.
+    fn prepare_gate_repository(&self) {
+        fs::create_dir_all(self.root.join("src")).expect("create gate source directory");
+        fs::create_dir_all(self.root.join("gate/src")).expect("create camp loci");
+        fs::write(
+            self.root.join("spice.toml"),
+            format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
+        )
+        .expect("write gate policy");
+        fs::write(
+            self.root.join("baseline.toml"),
+            "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
+        )
+        .expect("write gate baseline");
+        fs::write(
+            self.root.join("Cargo.toml"),
+            "[package]\nname = \"coexistence-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write fixture manifest");
+        fs::write(
+            self.root.join("Cargo.lock"),
+            concat!(
+                "# This file is automatically @generated by Cargo.\n",
+                "# It is not intended for manual editing.\n",
+                "version = 4\n\n",
+                "[[package]]\n",
+                "name = \"coexistence-fixture\"\n",
+                "version = \"0.0.0\"\n",
+            ),
+        )
+        .expect("write fixture lockfile");
+        fs::write(self.root.join("src/lib.rs"), "pub fn fixture() {}\n")
+            .expect("write gate source");
+        for path in [
+            "gate/src/camp.rs",
+            "gate/src/input.rs",
+            "gate/src/kill.rs",
+            "gate/src/verdict.rs",
+        ] {
+            fs::write(self.root.join(path), "// coexistence fixture\n").expect("write camp locus");
+        }
+        git(&self.root, &["add", "."]);
+        git(&self.root, &["commit", "-qm", "fixture"]);
     }
 
     fn state_root(&self) -> PathBuf {
@@ -327,6 +443,18 @@ impl Fixture {
             .collect()
     }
 
+    /// Exact identities of the six predecessor gate-state files.
+    fn predecessor_gate_identity(&self) -> BTreeMap<PathBuf, Entry> {
+        PREDECESSOR_GATE_STATE
+            .iter()
+            .map(|(relative, _)| {
+                let path = self.state_root().join(relative);
+                let bytes = fs::read(&path).expect("read predecessor gate state");
+                (path, Entry::File(bytes))
+            })
+            .collect()
+    }
+
     /// Identity of everything under the shared root this port does not own.
     ///
     /// The owned set is subtracted from the runtime's own declaration rather
@@ -354,6 +482,19 @@ impl Fixture {
         });
         found
     }
+}
+
+fn git(root: &Path, arguments: &[&str]) {
+    let output = Command::new("/usr/bin/git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .expect("coexistence fixture Git launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 impl Drop for Fixture {

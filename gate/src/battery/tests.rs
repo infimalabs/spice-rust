@@ -13,7 +13,8 @@ use crate::RulePolicy;
 use crate::core::{CoreEvidence, CoreObservation, MergeIntegrityEvidence, StagingEvidence};
 use crate::manifest::{GateId, OriginLayer, PREDECESSOR_GATE_RELEASE};
 use crate::state::{
-    ActorInputs, ActorResolution, BoundDecision, BoundRule, CurrentState, PredecessorSources,
+    ActorInputs, ActorResolution, BoundDecision, BoundRule, CurrentState, LatchEntry, LatchKind,
+    LatchObservation, RenameMap, StateKey,
 };
 use crate::toolchain::{ArmFinding, ArmOutcome, FindingDetail, LOCAL_PATH_MARKER};
 
@@ -262,20 +263,35 @@ impl Fixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        let worktree = root.join("worktree");
-        let shared = root.join("shared");
-        fs::create_dir_all(&worktree).expect("worktree state root");
-        fs::create_dir_all(&shared).expect("shared state root");
-        fs::write(
-            worktree.join("file-loc-sticky.json"),
-            br#"{"version":1,"paths":["src/lib.rs"]}"#,
-        )
-        .expect("predecessor latch");
-        let sources = PredecessorSources::new(&worktree, &shared);
-        let state = CurrentState::load(root.join("current.json"), &sources).expect("current state");
         let actor_inputs = ActorInputs::new("src/lib.rs")
             .expect("actor inputs")
             .with_active_actor("fixture-actor");
+        let state_path = root.join("current.json");
+        let mut state = CurrentState::load(&state_path).expect("empty current state");
+        state
+            .begin_run(&RenameMap::default(), ["src/lib.rs"], 100.0)
+            .expect("begin state seed");
+        state
+            .reconcile([LatchObservation::new(
+                LatchEntry::new(
+                    LatchKind::FileLoc,
+                    StateKey::path("src/lib.rs").expect("fixture path key"),
+                )
+                .expect("fixture latch key"),
+                BoundRule::new("file-shape", "file-loc", 100, 150, false, true)
+                    .expect("fixture latch bound"),
+                1_000,
+                actor_inputs.clone(),
+                5,
+            )
+            .expect("fixture latch observation")])
+            .expect("seed fixture latch");
+        state
+            .finish()
+            .expect("finish state seed")
+            .accept()
+            .expect("persist state seed");
+        let state = CurrentState::load(state_path).expect("current state");
         let actor = actor_inputs.require_actor().expect("explicit actor");
         let bounds = vec![
             BoundRule::new("file-shape", "file-loc", 100, 150, false, true)
