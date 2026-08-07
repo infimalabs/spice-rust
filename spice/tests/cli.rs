@@ -351,7 +351,7 @@ fn version_refuses_unfinalized_and_incompatible_schema_without_mutation() {
         ),
         (
             "forward",
-            2,
+            journal::SCHEMA_VERSION + 1,
             "finalized",
             None,
             None,
