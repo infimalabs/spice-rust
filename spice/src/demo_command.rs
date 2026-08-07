@@ -177,19 +177,18 @@ impl Drop for SignalRelay {
 
 /// Seed or run one isolated native canvas environment.
 pub(crate) fn run(matches: &ArgMatches) -> Outcome<DemoAnswer> {
-    run_with(matches, true, |path| {
-        crate::command_client::open_canvas(path)
-    })
+    run_with(matches, true, crate::command_client::system_browser)
 }
 
-fn run_with<F>(matches: &ArgMatches, signals: bool, launch: F) -> Outcome<DemoAnswer>
+fn run_with<F>(matches: &ArgMatches, signals: bool, browser: F) -> Outcome<DemoAnswer>
 where
-    F: FnOnce(&Path) -> Outcome<wire::CanvasOpen>,
+    F: FnOnce(&str) -> Result<(), String>,
 {
     let root = matches.get_one::<String>("root").map(PathBuf::from);
     let reuse = matches.get_one::<String>("reuse").map(PathBuf::from);
     let seed_only = matches.get_flag("seed-only");
     let preserve = matches.get_flag("preserve");
+    let open = matches.get_flag("open");
     if root.is_some() && reuse.is_some() {
         return refusal(
             "demo::root-selection-refused",
@@ -223,7 +222,7 @@ where
         return reply(&environment, "seeded", "preserved", None);
     }
     let cleanup = environment.automatic && !preserve;
-    canvas_environment(environment, cleanup, signals, launch)
+    canvas_environment(environment, cleanup, signals, open, browser)
 }
 
 fn seed_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Environment> {
@@ -876,23 +875,25 @@ fn canvas_environment<F>(
     environment: Environment,
     cleanup: bool,
     signals: bool,
-    launch: F,
+    open: bool,
+    browser: F,
 ) -> Outcome<DemoAnswer>
 where
-    F: FnOnce(&Path) -> Outcome<wire::CanvasOpen>,
+    F: FnOnce(&str) -> Result<(), String>,
 {
-    canvas_environment_with(environment, cleanup, signals, false, launch)
+    canvas_environment_with(environment, cleanup, signals, open, false, browser)
 }
 
 fn canvas_environment_with<F>(
     environment: Environment,
     cleanup: bool,
     signals: bool,
+    open: bool,
     interrupt_after_launch: bool,
-    launch: F,
+    browser: F,
 ) -> Outcome<DemoAnswer>
 where
-    F: FnOnce(&Path) -> Outcome<wire::CanvasOpen>,
+    F: FnOnce(&str) -> Result<(), String>,
 {
     let (events, receiver) = mpsc::channel();
     let _watcher = match watch_environment(&environment, events.clone()) {
@@ -930,7 +931,15 @@ where
         };
     }
 
-    let opened = launch(environment.state.canvas());
+    // The endpoint is admitted on every path; only the browser is optional.
+    // Resolving it here rather than inside the launcher is what lets a plain
+    // run still print an endpoint an operator or agent can open deliberately,
+    // and it keeps demo on the one admission path `up` already uses.
+    let opened = crate::command_client::open_canvas_with(
+        environment.state.canvas(),
+        || {},
+        |endpoint| if open { browser(endpoint) } else { Ok(()) },
+    );
     let endpoint = match opened {
         Outcome::Reply(answer) => answer.body.endpoint,
         Outcome::Refusal(refusal) => {

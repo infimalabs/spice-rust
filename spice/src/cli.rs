@@ -260,7 +260,7 @@ macro_rules! row {
 const CONTRACTS: &[Contract] = &[
     row!(
         ["demo"],
-        "demo [--root DIR] [--reuse DIR] [--seed-only] [--preserve]",
+        "demo [--root DIR] [--reuse DIR] [--seed-only] [--preserve] [--open]",
         Local,
         None,
         [],

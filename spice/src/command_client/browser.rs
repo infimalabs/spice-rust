@@ -2,10 +2,11 @@
 
 use super::*;
 
-/// Admit the discovered surface and hand its endpoint to the platform browser.
-pub(crate) fn open_canvas(discovery_path: &Path) -> Outcome<wire::CanvasOpen> {
-    open_canvas_with(discovery_path, || {}, system_browser)
-}
+// There is deliberately no `open_canvas(path)` convenience that admits and
+// launches in one step. Both commands that can open Canvas gate the launch on
+// an explicit flag, and a helper that hard-wires `system_browser` is exactly
+// the shape that made `spice demo` seize the operator's browser on every run in
+// an agent's hot loop. Callers pass their own already-gated launcher.
 
 /// Admit the browser surface named by the current owner-only discovery file,
 /// and hand its endpoint to `launch`.
