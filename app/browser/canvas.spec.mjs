@@ -19,21 +19,25 @@ import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs"
 import {
   assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
+} from "./canvas-endpoint-probes.mjs";
+import { assertLineageLifeIsolation } from "./canvas-lineage-life.mjs";
+import {
+  assertSpeechVariants,
+  assertSystemSpeech,
+  installBrowserSpeech,
+  installSocketControl,
+} from "./canvas-speech.mjs";
+import {
   assertGenerationOnline,
   assertHeldTaskCount,
   assertOfflineObserved,
-  assertLineageLifeIsolation,
   assertResidentLossObserved,
   assertResidentRestart,
-  assertSpeechVariants,
-  assertSystemSpeech,
   assertWaitReportDistinguishesLayout,
   assertWaitReporting,
   buildResident,
   chooseCanvasView,
   configureFixture,
-  installBrowserSpeech,
-  installSocketControl,
   journalExtent,
   monitorPage,
   reply,
@@ -476,15 +480,26 @@ async function assertAgentConversation(page, fixture, worktrees, activityReplay)
   return {
     lane: seated[0].lane,
     quoteLane: seated[3].lane,
+    agentName: agentNames[0],
+    quoteProse: agentProse(teamWorktrees[3]),
     primaryHeadings: seated.map((lane, index) => ({
       lane: lane.lane,
       prose: index === 0
         ? "newest lane prose witness"
         : index === 1
           ? "periodic live witness"
-          : `Canvas message reports CONTROL-1kKbC3j4 from ${basename(teamWorktrees[index])}`,
+          : agentProse(teamWorktrees[index]),
     })),
   };
+}
+
+// The newest thing an agent itself said, which is what a composer heading
+// shows. Each fake agent emits one assistant record naming its own worktree
+// (`name=${PWD##*/}` in canvas-fixture.mjs), so this is a different string per
+// lane and the seeded operator messages above are directives rather than agent
+// prose -- a heading that showed those would be showing the wrong side.
+function agentProse(worktree) {
+  return `Canvas message reports CONTROL-1kKbC3j4 from ${basename(worktree)}`;
 }
 
 function elapsedLabel(millis) {
@@ -1059,7 +1074,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     nestedQuotePreview,
     nestedQuoteMessage,
     entirelyQuotedMessage,
-    latestPrimaryProse: "Canvas message reports CONTROL-1kKbC3j4 from lane-4",
+    latestPrimaryProse: seeded.quoteProse,
   });
 
   await activity
