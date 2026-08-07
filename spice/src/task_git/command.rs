@@ -47,6 +47,24 @@ fn run_bounded(
     args: &[&str],
     input: Option<&[u8]>,
 ) -> Result<GitOutput, Error> {
+    run_bounded_observed(root, args, input, None)
+}
+
+#[cfg(test)]
+fn run_observing_descendant_grace(
+    root: &Path,
+    args: &[&str],
+    descendant_grace_started: &mut dyn FnMut(),
+) -> Result<GitOutput, Error> {
+    run_bounded_observed(root, args, None, Some(descendant_grace_started))
+}
+
+fn run_bounded_observed(
+    root: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    descendant_grace_started: Option<&mut dyn FnMut()>,
+) -> Result<GitOutput, Error> {
     let limit = command_limit(args);
     let mut process = spawn_git(root, args, input.is_some())?;
     let workers = match CommandWorkers::start(&mut process, input) {
@@ -56,7 +74,13 @@ fn run_bounded(
             return Err(error);
         }
     };
-    let (status, stdout, stderr) = supervise_git(&mut process, workers, args, limit)?;
+    let (status, stdout, stderr) = supervise_git(
+        &mut process,
+        workers,
+        args,
+        limit,
+        descendant_grace_started,
+    )?;
     Ok(GitOutput {
         status: status.code().unwrap_or(-1),
         stdout: decode_output(stdout, "stdout")?,
@@ -110,48 +134,25 @@ fn supervise_git(
     mut workers: CommandWorkers,
     args: &[&str],
     limit: Duration,
+    mut descendant_grace_started: Option<&mut dyn FnMut()>,
 ) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), Error> {
     let runtime_started = Instant::now();
     let mut output_drain_started = None;
     let mut status = None;
     loop {
         if status.is_none() {
-            status = match process.poll_exit() {
-                Ok(status) => status,
+            match poll_supervised_exit(
+                process,
+                args,
+                &mut descendant_grace_started,
+            ) {
+                Ok(Some((exit, drain_started))) => {
+                    status = Some(exit);
+                    output_drain_started = Some(drain_started);
+                }
+                Ok(None) => {}
                 Err(error) => {
                     return fail_supervision(process, workers, error);
-                }
-            };
-            if status.is_some() {
-                output_drain_started = Some(Instant::now());
-                // A descendant merely on its way out is not a survivor. The
-                // group is observed the instant Git exits, which is exactly when
-                // a short-lived hook child is most likely still being torn down,
-                // so it is given a bound to empty before the command faults --
-                // the same shape the termination path uses before it escalates.
-                // Git has exited, so an unreadable kernel answer is not
-                // evidence of a survivor. Only an observed group keeps this
-                // post-exit grace open.
-                match process.settle(
-                    DESCENDANT_EXIT_GRACE,
-                    GroupProbeSite::GitExited,
-                ) {
-                    Ok(false) => {
-                        let error = Error::fault(
-                            "git::descendant-survived",
-                            format!(
-                                "git {} exited and its process group still had live \
-                                 descendants {} milliseconds later",
-                                args.join(" "),
-                                DESCENDANT_EXIT_GRACE.as_millis(),
-                            ),
-                        );
-                        return fail_supervision(process, workers, error);
-                    }
-                    Ok(true) => {}
-                    Err(error) => {
-                        return fail_supervision(process, workers, error);
-                    }
                 }
             }
         }
@@ -172,28 +173,13 @@ fn supervise_git(
             ));
         }
 
-        if status.is_none() && runtime_started.elapsed() >= limit {
-            let error = Error::fault(
-                "git::command-timeout",
-                format!(
-                    "git {} exceeded {} seconds",
-                    args.join(" "),
-                    limit.as_secs(),
-                ),
-            );
-            return fail_supervision(process, workers, error);
-        }
-        if output_drain_started
-            .is_some_and(|started| started.elapsed() >= OUTPUT_DRAIN_LIMIT)
-        {
-            let error = Error::fault(
-                "git::output-drain-timeout",
-                format!(
-                    "git {} output did not close within {} milliseconds",
-                    args.join(" "),
-                    OUTPUT_DRAIN_LIMIT.as_millis(),
-                ),
-            );
+        if let Some(error) = supervision_deadline_error(
+            args,
+            status.is_none(),
+            runtime_started,
+            output_drain_started,
+            limit,
+        ) {
             return fail_supervision(process, workers, error);
         }
 
@@ -223,6 +209,68 @@ fn supervise_git(
             }
         }
     }
+}
+
+fn supervision_deadline_error(
+    args: &[&str],
+    running: bool,
+    runtime_started: Instant,
+    output_drain_started: Option<Instant>,
+    limit: Duration,
+) -> Option<Error> {
+    if running && runtime_started.elapsed() >= limit {
+        return Some(Error::fault(
+            "git::command-timeout",
+            format!(
+                "git {} exceeded {} seconds",
+                args.join(" "),
+                limit.as_secs(),
+            ),
+        ));
+    }
+    output_drain_started
+        .is_some_and(|started| started.elapsed() >= OUTPUT_DRAIN_LIMIT)
+        .then(|| {
+            Error::fault(
+                "git::output-drain-timeout",
+                format!(
+                    "git {} output did not close within {} milliseconds",
+                    args.join(" "),
+                    OUTPUT_DRAIN_LIMIT.as_millis(),
+                ),
+            )
+        })
+}
+
+fn poll_supervised_exit(
+    process: &mut GitProcess,
+    args: &[&str],
+    descendant_grace_started: &mut Option<&mut dyn FnMut()>,
+) -> Result<Option<(std::process::ExitStatus, Instant)>, Error> {
+    let Some(status) = process.poll_exit()? else {
+        return Ok(None);
+    };
+    let output_drain_started = Instant::now();
+    // A descendant merely on its way out is not a survivor. Git has exited,
+    // so nothing can join its group and only an observed group keeps this
+    // post-exit grace open.
+    if let Some(observer) = descendant_grace_started.as_mut() {
+        observer();
+    }
+    if process.settle(
+        DESCENDANT_EXIT_GRACE,
+        GroupProbeSite::GitExited,
+    )? {
+        return Ok(Some((status, output_drain_started)));
+    }
+    Err(Error::fault(
+        "git::descendant-survived",
+        format!(
+            "git {} exited and its process group still had live descendants {} milliseconds later",
+            args.join(" "),
+            DESCENDANT_EXIT_GRACE.as_millis(),
+        ),
+    ))
 }
 
 fn fail_supervision<T>(
