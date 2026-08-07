@@ -1,5 +1,7 @@
 //! Session-declaration proof, durable resume, and its refusals.
 
+use listen::{Decoded, ResidueKind};
+
 use super::*;
 
 /// Why one occupant's session declaration was not admitted.
@@ -10,7 +12,7 @@ use super::*;
 /// path and left standing on the other.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::resident) enum SessionProofError {
-    Missing,
+    Missing(DeclarationWitness),
     Capture(String),
     CrossLane {
         expected: CanonicalUuid,
@@ -33,10 +35,10 @@ pub(in crate::resident) enum SessionProofError {
 impl SessionProofError {
     pub(in crate::resident) fn refusal(&self) -> Refusal {
         let (reason, expected, observed, remedy) = match self {
-            Self::Missing => (
+            Self::Missing(witness) => (
                 "lane::session-missing",
                 Some("one current selected-stream session declaration".to_owned()),
-                None,
+                Some(witness.observation()),
                 "retry with a vendor that emits its current initialization record",
             ),
             Self::Capture(detail) => (
@@ -93,6 +95,63 @@ impl SessionProofError {
 pub(in crate::resident) struct DeclarationState {
     pub(in crate::resident) reply: mpsc::SyncSender<Result<wire::LaneSession, SessionProofError>>,
     pub(in crate::resident) seen: Option<String>,
+    pub(in crate::resident) witness: DeclarationWitness,
+}
+
+/// What the proof observer saw on the selected stream, when it saw no
+/// declaration.
+///
+/// The refusal this feeds is a deadline elapsing, so it has nothing of its own
+/// to report: without this it named only the record it wanted and never the
+/// records it got, alone among the seven arms. A vendor whose bytes cannot be
+/// read as records at all and a vendor whose records are read and never declare
+/// are the same silence to the deadline and different faults to the operator.
+///
+/// The newest observation wins. An occupant that emitted a typed record and
+/// then residue is reported by the residue, because the last thing it did is
+/// the thing an operator is still looking at.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(in crate::resident) enum DeclarationWitness {
+    /// No record reached the observer before the deadline.
+    #[default]
+    Silent,
+    /// Records reached it, every one typed, none declaring a session.
+    Typed,
+    /// The newest record reached it as accounted residue, described here.
+    Residue(String),
+}
+
+impl DeclarationWitness {
+    /// Read one captured record as the observation a refusal would report.
+    fn of(decoded: &Decoded) -> Self {
+        let Some(residue) = decoded.residue() else {
+            return Self::Typed;
+        };
+        // Named exhaustively so a decoder that learns a new residue kind has to
+        // decide how an operator hears it rather than inheriting a stale phrase.
+        Self::Residue(match &residue.kind {
+            ResidueKind::Absent { field } => format!("one record carrying no {field}"),
+            ResidueKind::Unknown { discriminator } => {
+                format!("one record of unknown type {discriminator}")
+            }
+            ResidueKind::Malformed { field, expected } => {
+                format!("one record whose {field} is not {expected}")
+            }
+            ResidueKind::Truncated => "one incomplete record".to_owned(),
+            ResidueKind::VersionDrift { discriminator } => {
+                format!("one record of type {discriminator} this decoder does not own")
+            }
+        })
+    }
+
+    /// The operator-facing observation this witness stands for.
+    fn observation(&self) -> String {
+        match self {
+            Self::Silent => "no record on the selected stream".to_owned(),
+            Self::Typed => "records on the selected stream, none declaring a session".to_owned(),
+            Self::Residue(detail) => detail.clone(),
+        }
+    }
 }
 
 /// The one observer that admits a session declaration.
@@ -113,7 +172,19 @@ pub(in crate::resident) struct DeclarationReporter {
     pub(in crate::resident) epoch: CanonicalUuid,
     pub(in crate::resident) stream: vendor::RecordStream,
     pub(in crate::resident) expected: Option<String>,
-    pub(in crate::resident) state: Mutex<DeclarationState>,
+    pub(in crate::resident) state: Arc<Mutex<DeclarationState>>,
+}
+
+/// The one proof a launch hands its awaiter.
+///
+/// The receiver and the observer state travel together because the deadline
+/// arm of [`await_session`] needs both: nothing was sent, so what the occupant
+/// emitted can only be read back from the state the reporter wrote it into.
+/// Bundled rather than passed as a second argument so no caller can await one
+/// launch's declarations against another's observations.
+pub(in crate::resident) struct SessionProof {
+    pub(in crate::resident) session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
+    pub(in crate::resident) state: Arc<Mutex<DeclarationState>>,
 }
 
 impl DeclarationReporter {
@@ -126,6 +197,10 @@ impl DeclarationReporter {
 impl CaptureReporter for DeclarationReporter {
     fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
         let Some(declaration) = record.declaration.as_ref() else {
+            self.state
+                .lock()
+                .map_err(|_| CaptureReportError::new("session proof lock is poisoned"))?
+                .witness = DeclarationWitness::of(&record.decoded);
             return self.inner.record(record);
         };
         let mut state = self
@@ -236,8 +311,9 @@ pub(in crate::resident) fn record_stream(stream: vendor::RecordStream) -> &'stat
 }
 
 pub(in crate::resident) fn await_session(
-    session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
+    proof: SessionProof,
 ) -> Result<wire::LaneSession, SessionProofError> {
+    let SessionProof { session, state } = proof;
     match session.recv_timeout(SESSION_PROOF) {
         Ok(Ok(declared)) => match session.recv_timeout(SESSION_SETTLE) {
             Ok(Err(error)) => Err(error),
@@ -249,7 +325,15 @@ pub(in crate::resident) fn await_session(
         },
         Ok(Err(error)) => Err(error),
         Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
-            Err(SessionProofError::Missing)
+            // A poisoned lock is itself a silence about the occupant: the
+            // observer that would have written the witness is the thread that
+            // panicked holding it.
+            Err(SessionProofError::Missing(
+                state
+                    .lock()
+                    .map(|state| state.witness.clone())
+                    .unwrap_or_default(),
+            ))
         }
     }
 }
