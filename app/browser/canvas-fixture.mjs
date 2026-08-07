@@ -29,7 +29,7 @@ import {
 } from "./canvas-activity-records.mjs";
 import { childExited } from "./canvas-child-state.mjs";
 import { describeConnection, describeResident } from "./canvas-endpoint-probes.mjs";
-import { describeLoad } from "./canvas-load.mjs";
+import { describeLoad, LOAD_FIELD } from "./canvas-load.mjs";
 
 export { describeConnection, describeResident, TOOL_ACTIVITY_TEXT };
 
@@ -652,7 +652,7 @@ export async function observedWait(page, label, run, context = {}) {
       `  site: ${callSite(marker)}`,
       `  connection: ${JSON.stringify(connection)}`,
       `  resident: ${JSON.stringify(resident)}`,
-      `  load: ${JSON.stringify(describeLoad())}`,
+      `${LOAD_FIELD}${JSON.stringify(describeLoad())}`,
     ];
     if (context.observed) {
       report.push(`  observed: ${JSON.stringify(await readObservation(context.observed))}`);
