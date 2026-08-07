@@ -72,7 +72,7 @@ const toolCallId = "toolu_01LaneStatusStripWitness";
 /// and the activity replay route captures the same frame off the socket to
 /// redeliver it. It is spelled here alone so that a change to the preview rule
 /// reds one constant instead of leaving a hand-copied duplicate matching
-/// nothing, which is how BROWSER-1kKd6zyV and this task were both filed.
+/// nothing, which is how BROWSER-1kKd6zyV and BROWSER-1kKdBhzf were both filed.
 export const TOOL_ACTIVITY_TEXT = "Bash: git status --short";
 const toolActivityRecord = JSON.stringify({
   type: "assistant",
