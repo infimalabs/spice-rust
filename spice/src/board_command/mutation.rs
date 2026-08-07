@@ -464,6 +464,111 @@ fn task_depends(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
+/// Replace an unsettled task statement in place, at a fresh revision.
+///
+/// A correction is the same statement-head publication `task depends` performs,
+/// so the durable record is a new revision rather than an overwrite: the prior
+/// text stays readable in the journal and the edit carries the actor that made
+/// it. Only fields the caller named move; the rest ride through untouched.
+fn task_edit(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    edit: &TaskEdit,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let Some(entry) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.statement().handle == edit.task)
+    else {
+        return refusal(
+            "task::unknown",
+            Some(edit.task.to_string()),
+            "read board and name one current task handle",
+        );
+    };
+    if entry.workflow().status == "completed" {
+        return refusal(
+            "task::settled",
+            Some(edit.task.to_string()),
+            "correct a statement only while the task is pending",
+        );
+    }
+    if edit.title.is_none() && edit.description.is_none() && edit.acceptance.is_empty() {
+        return refusal(
+            "task::edit-empty",
+            Some(edit.task.to_string()),
+            "name at least one of title, description, or acceptance",
+        );
+    }
+    let mut statement = entry.statement().clone();
+    if let Some(title) = &edit.title {
+        statement.title = title.clone();
+    }
+    if let Some(description) = &edit.description {
+        statement.description = Some(description.clone());
+    }
+    if !edit.acceptance.is_empty() {
+        statement.acceptance = edit.acceptance.clone();
+    }
+    if let Err(error) = Entry::new(
+        statement.clone(),
+        entry.workflow().clone(),
+        entry.claim().cloned(),
+        entry.lease().cloned(),
+        projects,
+    ) {
+        return refusal(
+            "task::edit-refused",
+            Some(error.to_string()),
+            "submit a statement the board admits",
+        );
+    }
+    let at = match current_instant() {
+        Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    let origin = match task_origin(&edit.task) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
+    guard(&mut write, command.expected().to_vec());
+    let revision = u32::try_from(entry.statement().revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
+    let edited = match write.fact(
+        body::TaskEdited {
+            task: edit.task.clone(),
+            revision,
+        },
+        FactCause::Root,
+    ) {
+        Ok(fact) => fact,
+        Err(error) => return store_fault("task::edit-build", &error.to_string()),
+    };
+    write.task_head(edited, move |position| TaskHead {
+        revision: position,
+        ..statement
+    });
+    let answer = wire::intent::TaskAnswer {
+        task: edit.task.clone(),
+        status: "edited".to_owned(),
+    };
+    if let Err(error) = write.command_result(
+        request(command, edit.clone()),
+        command.epoch(),
+        answer.clone(),
+    ) {
+        return store_fault("task::edit-receipt", &error.to_string());
+    }
+    committed(bus, write, CommandAnswer::Task(answer))
+}
+
 fn claim_win(
     bus: &Bus,
     command: &wire::AdmittedCommand,

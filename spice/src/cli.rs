@@ -793,6 +793,17 @@ const CONTRACTS: &[Contract] = &[
         "board::task_depends"
     ),
     row!(
+        ["task", "modify"],
+        "task modify HANDLE [--title TITLE] [--description DESCRIPTION] \
+         [--acceptance ACCEPTANCE...]",
+        OperatorOrLane,
+        Command,
+        [TaskEdited],
+        [Resident],
+        Reply,
+        "board::task_modify"
+    ),
+    row!(
         ["task", "artifact", "add"],
         "task artifact add HANDLE PATH [--name NAME] [--type TYPE] [--retention RETENTION]",
         OperatorOrLane,
@@ -1281,6 +1292,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["task", "free"]
         | ["task", "oops"]
         | ["task", "depends"]
+        | ["task", "modify"]
         | ["task", "artifact", "add"]
         | ["task", "artifact", "list"]
         | ["task", "artifact", "show"]

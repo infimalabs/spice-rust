@@ -68,6 +68,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["task", "wake"] => CommandKind::TaskWake,
         ["task", "free"] => CommandKind::ClaimFree,
         ["task", "depends"] => CommandKind::TaskDepends,
+        ["task", "modify"] => CommandKind::TaskEdit,
         ["doc"] => CommandKind::DocApply,
         ["doc", "ledger"] => CommandKind::DocLedger,
         _ => return None,

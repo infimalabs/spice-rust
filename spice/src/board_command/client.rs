@@ -36,6 +36,7 @@ fn dispatch_client(
         ["task", "wake"] => client_wake(repository, contract, matches),
         ["task", "free"] => client_free(repository, contract, matches),
         ["task", "depends"] => client_depends(repository, contract, matches),
+        ["task", "modify"] => client_modify(repository, contract, matches),
         ["task", "done"] => client_done(repository, contract, matches),
         ["task", "review"] => client_review(repository, contract, matches),
         _ => refusal(
@@ -872,6 +873,43 @@ fn client_depends(
     })
 }
 
+fn client_modify(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    mutate_task_from_board(repository, contract, matches, |_board, task, heads| {
+        let title = matches.get_one::<String>("title").cloned();
+        let description = matches.get_one::<String>("description").cloned();
+        let acceptance = matches
+            .get_many::<String>("acceptance")
+            .map(|values| values.cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        if title.is_none() && description.is_none() && acceptance.is_empty() {
+            return Err(refusal(
+                "task::edit-empty",
+                None,
+                "name at least one of --title, --description, or --acceptance",
+            ));
+        }
+        // Law::EDIT names the statement head alone. A workflow witness here is
+        // not extra care, it is a refusal: the admission door demands exactly
+        // the predicates the law states, and a correction replaces statement
+        // text without reading the phase.
+        Ok((
+            CommandKind::TaskEdit,
+            vec![statement_witness(heads)],
+            serde_json::to_value(TaskEdit {
+                task,
+                title,
+                description,
+                acceptance,
+            })
+            .expect("typed intent encodes"),
+        ))
+    })
+}
+
 fn client_done(
     repository: &Repository,
     contract: &Contract,
@@ -1351,6 +1389,7 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects),
         wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add, projects),
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
+        wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, projects),
         wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, projects),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::TaskWake => {
             task_wake(bus, command, task, projects)

@@ -297,6 +297,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["task", "free"]
         | ["task", "oops"]
         | ["task", "depends"]
+        | ["task", "modify"]
         | ["doc"]
         | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
         ["steer"] | ["steer", "cancel"] | ["steer", "recover"] | ["inbox"] | ["ack"] => deliver(
