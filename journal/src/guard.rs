@@ -418,10 +418,15 @@ impl JournalRead<'_> {
     /// fact names the same authority. It answers [`SourceBoundary::Proven`] or
     /// it fails: a lane with nothing accounted yet is proven at zero heads, and
     /// a journal that cannot be read is a violated assumption rather than an
-    /// unprovable boundary. [`SourceBoundary::Incomplete`] is reserved for a
-    /// caller that has no lane to ask about at all, and is deliberately not
-    /// reachable from here -- degrading a read failure into it would record
-    /// *unknown* where the truth is *broken*.
+    /// unprovable boundary. Degrading a read failure into
+    /// [`SourceBoundary::Incomplete`] would record *unknown* where the truth is
+    /// *broken*.
+    ///
+    /// No live producer writes `Incomplete`: every one of them admits a claim
+    /// before it writes, and a claim carries a lane, so a producer that has
+    /// nothing to ask about here does not exist. The variant is reached only by
+    /// the forward migration of facts stored before boundaries were recorded,
+    /// whose boundary genuinely cannot be proven because nothing recorded it.
     pub fn source_boundary(
         &self,
         lane: &wire::CanonicalUuid,

@@ -136,8 +136,8 @@ pub struct GitBoundary {
 /// is not cosmetic: [`crate::AnyFact`] admits a body only when re-encoding it
 /// reproduces the supplied fields exactly, so writing the migrated value out
 /// instead would make every fact already in the journal undecodable. Absence
-/// therefore spells exactly one value, and every boundary a producer can prove
-/// or fail to prove is written explicitly.
+/// therefore spells exactly one value, and every boundary a live producer
+/// proves is written explicitly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceBoundary {
     /// Every stream accounted for the lane when the boundary was fixed.
@@ -163,11 +163,14 @@ impl SourceBoundary {
     ///
     /// The journal is append-only, so a fact already written can never grow the
     /// field; decode is the only place this migration can happen. It is a
-    /// migration rather than a fallback because it is total, it produces a
-    /// value that states in [`Self::UNRECORDED`] what it was migrated from, and
-    /// it leaves no second spelling of *not proven* behind: a stored fact and a
-    /// producer that could not name a boundary both arrive at
-    /// [`Self::Incomplete`], differing only in the reason they carry.
+    /// migration rather than a fallback because it is total and because it
+    /// produces a value that states in [`Self::UNRECORDED`] what it was
+    /// migrated from.
+    ///
+    /// It is also the only producer of [`Self::Incomplete`] anywhere. Every
+    /// live producer admits a claim before it writes and a claim carries a
+    /// lane, so none of them has nothing to ask about; one that cannot read the
+    /// boundary it asked for fails loudly rather than recording *unknown*.
     #[must_use]
     pub fn unrecorded() -> Self {
         Self::Incomplete {
@@ -177,10 +180,11 @@ impl SourceBoundary {
 
     /// Whether this is the migrated stand-in for a fact stored without the field.
     ///
-    /// Only the migration produces this value: a live producer either proves a
-    /// boundary or names its own reason for failing to, so omitting the key on
-    /// encode restores the exact bytes a stored fact arrived as and never
-    /// discards an answer a producer actually gave.
+    /// Omitting the key on encode restores the exact bytes a stored fact
+    /// arrived as. The match is on the reason rather than on the variant so
+    /// that it can only ever be true of the migration's own value: an
+    /// incomplete boundary carrying any other reason encodes explicitly, and no
+    /// answer a producer actually gave can be dropped on the way back out.
     #[must_use]
     pub fn is_unrecorded(&self) -> bool {
         matches!(self, Self::Incomplete { reason } if reason == Self::UNRECORDED)
