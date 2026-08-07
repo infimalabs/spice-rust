@@ -222,8 +222,11 @@ dependency graph, policy checks, and copied artifact can be proved together.
 
 ## The tastes as repo truth
 
-The standing preferences that judge work live in [`TASTES.md`](TASTES.md).
+The standing preferences that shape work live in [`TASTES.md`](TASTES.md).
 That file owns their blunt wording, near-universal word-glob bags, seed set,
-evidence aging, and commit-governed curation. Runtime facts record confirmed
-and cleared findings; they do not redefine membership or create a second
-policy register.
+evidence aging, and commit-governed curation. One law is executable: a
+configured bag hit in authored prose emits one ordinary directive, suppressed
+per content and compaction epoch and inert on its own echo. Nothing adjudicates
+the candidate first. Runtime facts record those fires, and the earlier
+confirmed and cleared findings remain readable as history; neither redefines
+membership or creates a second policy register.

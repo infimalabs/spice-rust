@@ -365,14 +365,9 @@ pub struct Span {
 
 /// One selected prose candidate.
 ///
-/// A hit cannot mint a fact itself. Historical curation passes it to the
-/// judge, while resident recognition combines its evidence with current lane,
-/// epoch, steering, and transaction authority before minting a reminder:
-///
-/// ```compile_fail
-/// # fn hit() -> taste::Hit { panic!() }
-/// let _ = hit().into_fact();
-/// ```
+/// A hit is inert evidence and cannot mint a fact itself. Resident recognition
+/// combines it with current lane, epoch, steering, and transaction authority
+/// before minting the one reminder the runtime law admits.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Hit {
     taste: Name,

@@ -1,21 +1,28 @@
 //! Tracked taste reporting and reviewed curation proposals.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use clap::ArgMatches;
 use serde::Serialize;
 use spice::config::LoadError;
 use spice::repository::Repository;
-use wire::body::{TasteCleared, TasteConfirmed};
+use wire::body::{LaneSeated, TasteCleared, TasteConfirmed, TasteReminded};
 use wire::intent::{CommandAnswer, TaskAdd, TaskAnswer};
 use wire::{
-    ConfigSource, Digest, Domain, Fact, FactKind, Fault, FaultClass, Instant, Name, Outcome,
-    Refusal, Reply, ReplyPosition, Seq,
+    CanonicalUuid, ConfigSource, Digest, Disposition, Domain, Fact, FactKind, Fault, FaultClass,
+    Instant, Name, Outcome, Refusal, Reply, ReplyPosition, Seq,
 };
 
 use crate::cli::Contract;
 
 const PROJECT: &str = "taste.policy";
+
+/// Recent fires carried per taste.
+///
+/// The curation view shows fires and their ages rather than an all-time count,
+/// so each row is bounded and newest first. Nothing is persisted: the whole
+/// view is derived from one journal snapshot on every call.
+const RECENT_FIRES: usize = 12;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Surface {
@@ -95,7 +102,59 @@ struct TasteRow {
     name: Name,
     words: Vec<String>,
     message: String,
+    fires: Vec<TasteFire>,
+    drivers: Vec<DriverTally>,
+    recurrence: Vec<Recurrence>,
     judgments: Vec<TasteJudgment>,
+}
+
+/// One reminder this taste opened, with the answer its lineage received.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct TasteFire {
+    position: Seq,
+    at: Instant,
+    lane: CanonicalUuid,
+    driver: Name,
+    occupant: CanonicalUuid,
+    compaction: u64,
+    content: Digest,
+    key: String,
+    standing: Disposition,
+    locus: String,
+}
+
+/// Fires and answers for one driver, over the fires this report carries.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct DriverTally {
+    driver: Name,
+    fires: usize,
+    acked: usize,
+    declined: usize,
+}
+
+/// One unchanged identity that fired again in a later compaction epoch.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct Recurrence {
+    content: Digest,
+    epochs: usize,
+    latest: Seq,
+}
+
+/// A join this report refuses to guess at.
+enum EvidenceError {
+    /// A registered body in the snapshot did not decode.
+    Invalid(String),
+    /// A reminder names a lane the durable stream never seated.
+    ///
+    /// Nothing in the stream requires a reminded lane to have been seated
+    /// first, so this is the one join a real journal can actually be missing.
+    LaneUnseated(CanonicalUuid),
+    /// A reminder names a directive its own steering standing does not carry.
+    ///
+    /// The standing is replayed from the same snapshot the reminder came from,
+    /// and the replay opens a directive for every reminder it absorbs, so this
+    /// join can only fail if the store contradicts itself.
+    DirectiveMissing(CanonicalUuid),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -209,22 +268,25 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
             "read the current tracked taste set and name one active taste",
         );
     };
-    let clearances = row
-        .judgments
-        .iter()
-        .filter(|judgment| judgment.verdict == Verdict::Cleared)
-        .map(|judgment| {
+    let declines = cited(row.fires.iter().filter_map(|fire| {
+        (fire.standing == Disposition::Declined).then(|| {
             format!(
-                "- {} at {} (journal {})",
-                judgment.locus, judgment.at, judgment.position
+                "- {} on {} at {} (journal {})",
+                fire.locus, fire.driver, fire.at, fire.position
             )
         })
-        .collect::<Vec<_>>();
-    let clearances = if clearances.is_empty() {
-        "- none".to_owned()
-    } else {
-        clearances.join("\n")
-    };
+    }));
+    let clearances = cited(
+        row.judgments
+            .iter()
+            .filter(|judgment| judgment.verdict == Verdict::Cleared)
+            .map(|judgment| {
+                format!(
+                    "- {} at {} (journal {})",
+                    judgment.locus, judgment.at, judgment.position
+                )
+            }),
+    );
     let words = serde_json::to_string(&row.words).expect("taste words encode as JSON");
     let message = serde_json::to_string(&row.message).expect("taste message encodes as JSON");
     let description = format!(
@@ -232,13 +294,15 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
             "Current tracked row:\n",
             "[taste.{name}]\nwords = {words}\nmessage = {message}\n\n",
             "Tracked source: {location}\nTracked generation: {digest}\n\n",
-            "Current cleared loci:\n{clearances}"
+            "Recent declined loci:\n{declines}\n\n",
+            "Historical cleared loci:\n{clearances}"
         ),
         name = row.name,
         words = words,
         message = message,
         location = reply.body.provenance.location,
         digest = reply.body.digest,
+        declines = declines,
         clearances = clearances,
     );
     submit_plan(
@@ -319,6 +383,18 @@ fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), 
     };
     let judgments = collect_judgments(&facts)
         .map_err(|detail| fault(FaultClass::Store, "taste::judgment-invalid", detail))?;
+    // One snapshot answers the whole view: steering standing, lane seating, and
+    // reminders are all read from these same facts, so no two parts of the row
+    // can describe different moments.
+    let ledger = steer::Ledger::from_snapshot(&facts).map_err(|error| {
+        fault(
+            FaultClass::Store,
+            "taste::steering-invalid",
+            error.to_string(),
+        )
+    })?;
+    let seating = lane_seating(&facts).map_err(evidence_failure)?;
+    let fires = collect_fires(&facts, &ledger, &seating).map_err(evidence_failure)?;
     let current = Surface::load(&repository).map_err(|error| load_failure(&error))?;
     if current != surface {
         return Err(refusal(
@@ -331,14 +407,20 @@ fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), 
     let tastes = surface
         .tastes
         .iter()
-        .map(|taste| TasteRow {
-            name: taste.name.clone(),
-            words: taste.words.clone(),
-            message: taste.message.clone(),
-            judgments: judgments
-                .get(taste.name.as_str())
-                .cloned()
-                .unwrap_or_default(),
+        .map(|taste| {
+            let fires = fires.get(taste.name.as_str()).cloned().unwrap_or_default();
+            TasteRow {
+                name: taste.name.clone(),
+                words: taste.words.clone(),
+                message: taste.message.clone(),
+                drivers: tally(&fires),
+                recurrence: recurrence(&fires),
+                fires,
+                judgments: judgments
+                    .get(taste.name.as_str())
+                    .cloned()
+                    .unwrap_or_default(),
+            }
         })
         .collect();
     let report = TasteReport {
@@ -381,6 +463,129 @@ fn collect_judgments(
     Ok(judgments)
 }
 
+/// Every reminder in the snapshot, grouped by taste and newest first.
+fn collect_fires(
+    snapshot: &journal::FactSnapshot,
+    ledger: &steer::Ledger,
+    seating: &BTreeMap<CanonicalUuid, Name>,
+) -> Result<BTreeMap<String, Vec<TasteFire>>, EvidenceError> {
+    let mut fires = BTreeMap::<String, Vec<TasteFire>>::new();
+    for envelope in snapshot.facts() {
+        if envelope.fact.kind() != FactKind::TasteReminded {
+            continue;
+        }
+        let body = decode_fact::<TasteReminded>(&envelope.fact)
+            .map_err(EvidenceError::Invalid)?
+            .body;
+        let driver = seating
+            .get(&body.lane)
+            .ok_or(EvidenceError::LaneUnseated(body.lane))?
+            .clone();
+        // A disposition retires every rung of its lineage, so the reminder's
+        // own directive already carries the answer a later resend received.
+        // Reading it here is what counts one lineage exactly once.
+        let standing = ledger
+            .directive(body.directive)
+            .ok_or(EvidenceError::DirectiveMissing(body.directive))?
+            .disposition();
+        fires
+            .entry(body.taste.clone())
+            .or_default()
+            .push(TasteFire {
+                position: envelope.seq,
+                at: envelope.at,
+                lane: body.lane,
+                driver,
+                occupant: body.occupant,
+                compaction: body.compaction,
+                content: body.content,
+                key: body.key,
+                standing,
+                locus: locus_text(&body.locus),
+            });
+    }
+    for rows in fires.values_mut() {
+        rows.sort_by(|left, right| right.position.cmp(&left.position));
+        rows.truncate(RECENT_FIRES);
+    }
+    Ok(fires)
+}
+
+/// The driver each lane was seated with.
+///
+/// Attribution reads seating rather than the occupant a fire happened to name,
+/// because the durable lane laws make the seat the stable answer: a lane is
+/// seated exactly once, and a worktree transfer must retain the same vendor.
+/// Every renewal therefore attributes to the driver the lane has always had,
+/// instead of splitting one driver into a bucket per occupant generation. A
+/// lane the stream never seated has no driver at all, and the report refuses
+/// rather than inventing a bucket that sums with a real one.
+fn lane_seating(
+    snapshot: &journal::FactSnapshot,
+) -> Result<BTreeMap<CanonicalUuid, Name>, EvidenceError> {
+    let mut seating = BTreeMap::<CanonicalUuid, Name>::new();
+    for envelope in snapshot.facts() {
+        if envelope.fact.kind() != FactKind::LaneSeated {
+            continue;
+        }
+        let body = decode_fact::<LaneSeated>(&envelope.fact)
+            .map_err(EvidenceError::Invalid)?
+            .body;
+        seating.insert(body.lane, body.vendor);
+    }
+    Ok(seating)
+}
+
+/// Fires and answers per driver, over the fires the row carries.
+fn tally(fires: &[TasteFire]) -> Vec<DriverTally> {
+    let mut tallies = BTreeMap::<Name, DriverTally>::new();
+    for fire in fires {
+        let tally = tallies
+            .entry(fire.driver.clone())
+            .or_insert_with(|| DriverTally {
+                driver: fire.driver.clone(),
+                fires: 0,
+                acked: 0,
+                declined: 0,
+            });
+        tally.fires += 1;
+        match fire.standing {
+            Disposition::Acked => tally.acked += 1,
+            Disposition::Declined => tally.declined += 1,
+            _ => {}
+        }
+    }
+    tallies.into_values().collect()
+}
+
+/// Identities that fired again after a compaction epoch moved.
+fn recurrence(fires: &[TasteFire]) -> Vec<Recurrence> {
+    let mut spans = BTreeMap::<Digest, (BTreeSet<u64>, Seq)>::new();
+    for fire in fires {
+        let span = spans
+            .entry(fire.content.clone())
+            .or_insert_with(|| (BTreeSet::new(), fire.position));
+        span.0.insert(fire.compaction);
+        span.1 = span.1.max(fire.position);
+    }
+    spans
+        .into_iter()
+        .filter(|(_, (epochs, _))| epochs.len() > 1)
+        .map(|(content, (epochs, latest))| Recurrence {
+            content,
+            epochs: epochs.len(),
+            latest,
+        })
+        .collect()
+}
+
+fn locus_text(locus: &wire::body::TranscriptLocus) -> String {
+    format!(
+        "tape {}+{} event {} line {} column {}",
+        locus.member, locus.offset, locus.event, locus.line, locus.column
+    )
+}
+
 fn decode_fact<T>(fact: &wire::AnyFact) -> Result<Fact<T>, String>
 where
     T: wire::Body,
@@ -404,6 +609,16 @@ fn submit_plan(repository: &Repository, contract: &Contract, plan: TaskAdd) -> O
         },
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
+/// Render cited evidence, spelling an empty citation rather than dropping it.
+fn cited(lines: impl Iterator<Item = String>) -> String {
+    let lines = lines.collect::<Vec<_>>();
+    if lines.is_empty() {
+        "- none".to_owned()
+    } else {
+        lines.join("\n")
     }
 }
 
@@ -449,6 +664,33 @@ fn current_repository<B>() -> Result<Repository, Outcome<B>> {
             error.to_string(),
         )
     })
+}
+
+/// Report a join the durable stream cannot answer, by name.
+///
+/// A missing seating or directive is evidence the report would otherwise have
+/// to guess at, and a guess here reads as curation truth. It refuses instead,
+/// naming the exact identity that did not join.
+fn evidence_failure<B>(error: EvidenceError) -> Outcome<B> {
+    match error {
+        EvidenceError::Invalid(detail) => {
+            fault(FaultClass::Store, "taste::reminder-invalid", detail)
+        }
+        EvidenceError::LaneUnseated(lane) => refusal(
+            "taste::lane-unseated",
+            Some("one durable lane seating at or before the reminder".to_owned()),
+            Some(lane.to_string()),
+            "replay or repair the lane history that seats the reminded lane",
+        ),
+        // A refusal would offer the operator a remedy for something no request
+        // of theirs caused. Replayed standing that lost a reminder it just
+        // absorbed is a broken invariant, so it faults by name instead.
+        EvidenceError::DirectiveMissing(directive) => fault(
+            FaultClass::Store,
+            "taste::directive-missing",
+            format!("replayed steering standing does not carry directive {directive}"),
+        ),
+    }
 }
 
 fn load_failure<B>(error: &LoadError) -> Outcome<B> {
