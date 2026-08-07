@@ -25,6 +25,7 @@ pub struct Controller {
     audio_url: Option<String>,
     on_end: Option<Closure<dyn FnMut(Event)>>,
     on_error: Option<Closure<dyn FnMut(Event)>>,
+    on_pause: Option<Closure<dyn FnMut(Event)>>,
 }
 
 impl Controller {
@@ -58,6 +59,7 @@ impl Controller {
         if let Some(audio) = &self.audio {
             audio.set_onended(None);
             audio.set_onerror(None);
+            audio.set_onpause(None);
             let _ = audio.pause();
             audio.set_current_time(0.0);
         }
@@ -69,6 +71,7 @@ impl Controller {
         self.audio = None;
         self.on_end = None;
         self.on_error = None;
+        self.on_pause = None;
     }
 
     /// Start exact-voice system synthesis for the current generation.
@@ -122,6 +125,7 @@ impl Controller {
         content_type: &str,
         on_end: impl Fn() + 'static,
         on_error: impl Fn() + 'static,
+        on_pause: impl Fn() + 'static,
     ) -> Result<js_sys::Promise, String> {
         if !self.is_current(generation) {
             return Err("speech request was superseded".to_owned());
@@ -138,8 +142,15 @@ impl Controller {
             .map_err(|_| "browser audio backend is unavailable".to_owned())?;
         let ended = Closure::wrap(Box::new(move |_event: Event| on_end()) as Box<dyn FnMut(_)>);
         let failed = Closure::wrap(Box::new(move |_event: Event| on_error()) as Box<dyn FnMut(_)>);
+        let paused_audio = audio.clone();
+        let paused = Closure::wrap(Box::new(move |_event: Event| {
+            if !paused_audio.ended() {
+                on_pause();
+            }
+        }) as Box<dyn FnMut(_)>);
         audio.set_onended(Some(ended.as_ref().unchecked_ref()));
         audio.set_onerror(Some(failed.as_ref().unchecked_ref()));
+        audio.set_onpause(Some(paused.as_ref().unchecked_ref()));
         let playing = audio
             .play()
             .map_err(|_| "browser refused rendered speech playback".to_owned())?;
@@ -147,6 +158,7 @@ impl Controller {
         self.audio_url = Some(url);
         self.on_end = Some(ended);
         self.on_error = Some(failed);
+        self.on_pause = Some(paused);
         Ok(playing)
     }
 }

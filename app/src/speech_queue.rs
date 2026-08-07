@@ -82,6 +82,19 @@ pub enum Advance {
     Start(SpeechEntry),
 }
 
+/// Queue action caused by an unmarked pause from the external media element.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExternalPause {
+    /// The media callback belonged to an entry that no longer owns playback.
+    Ignored,
+    /// Manual playback stopped the whole speech pipeline.
+    Stopped,
+    /// Automatic narration settled and had no surviving successor.
+    Idle,
+    /// Automatic narration settled and this queued successor became current.
+    Start(SpeechEntry),
+}
+
 /// The one queue deciding which browser speech request owns playback.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SpeechQueue {
@@ -122,6 +135,30 @@ impl SpeechQueue {
         }
         self.active = self.pending.pop_front();
         self.active.clone().map_or(Advance::Idle, Advance::Start)
+    }
+
+    /// Apply an unmarked pause from OS media controls or a lock screen.
+    ///
+    /// A paused narration clip is a recoverable interruption, so its queued
+    /// successor may continue. A paused manual clip is an external stop and
+    /// clears the global queue. Deliberate controller pauses never call this
+    /// method.
+    pub fn external_pause(&mut self, id: u64) -> ExternalPause {
+        let Some(active) = self.active.as_ref() else {
+            return ExternalPause::Ignored;
+        };
+        if active.id() != id {
+            return ExternalPause::Ignored;
+        }
+        if !active.request.automatic {
+            self.stop();
+            return ExternalPause::Stopped;
+        }
+        match self.finish(id) {
+            Advance::Ignored => unreachable!("the current speech identity was checked above"),
+            Advance::Idle => ExternalPause::Idle,
+            Advance::Start(entry) => ExternalPause::Start(entry),
+        }
     }
 
     /// Abandon all speech immediately. Repetition changes nothing.
@@ -214,6 +251,7 @@ impl NarrationCursors {
         }
         messages
             .iter()
+            .rev()
             .filter(|message| unseen.contains(&(message.lane.clone(), message.key.clone())))
             .map(|message| NarrationLine {
                 lane: message.lane.clone(),

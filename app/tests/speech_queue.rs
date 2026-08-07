@@ -1,6 +1,6 @@
 use app::speech_queue::{
-    Advance, Enqueue, MAX_NARRATION_CURSORS, NarrationCursors, NarrationMessage, SpeechQueue,
-    SpeechRequest,
+    Advance, Enqueue, ExternalPause, MAX_NARRATION_CURSORS, NarrationCursors, NarrationMessage,
+    SpeechQueue, SpeechRequest,
 };
 
 fn narration(lane: &str, text: &str) -> SpeechRequest {
@@ -76,6 +76,31 @@ fn stop_and_lane_abandonment_cannot_revive_superseded_playback() {
 }
 
 #[test]
+fn an_external_pause_stops_manual_speech_but_advances_automatic_narration() {
+    let mut manual = SpeechQueue::default();
+    let head = started(manual.enqueue(SpeechRequest::manual(None, "surface".to_owned())));
+    assert_eq!(
+        manual.enqueue(narration("lineage", "queued")),
+        Enqueue::Queued
+    );
+    assert_eq!(manual.external_pause(head.id()), ExternalPause::Stopped);
+    assert_eq!(manual.pending(), 0);
+    assert_eq!(manual.finish(head.id()), Advance::Ignored);
+
+    let mut automatic = SpeechQueue::default();
+    let head = started(automatic.enqueue(narration("lineage-a", "head")));
+    assert_eq!(
+        automatic.enqueue(narration("lineage-b", "successor")),
+        Enqueue::Queued
+    );
+    let successor = match automatic.external_pause(head.id()) {
+        ExternalPause::Start(entry) => entry,
+        other => panic!("paused narration did not advance its queue: {other:?}"),
+    };
+    assert_eq!(successor.text(), "successor");
+}
+
+#[test]
 fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes() {
     let mut cursors = NarrationCursors::default();
     let history = vec![
@@ -94,12 +119,12 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
         cursors.observe(false, &live),
         [
             app::speech_queue::NarrationLine {
-                lane: "agent-a".to_owned(),
-                text: "live a".to_owned(),
-            },
-            app::speech_queue::NarrationLine {
                 lane: "agent-b".to_owned(),
                 text: "live b".to_owned(),
+            },
+            app::speech_queue::NarrationLine {
+                lane: "agent-a".to_owned(),
+                text: "live a".to_owned(),
             },
         ]
     );
@@ -112,6 +137,45 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
     ];
     let mut restored = restored;
     assert!(restored.observe(true, &old_reconnect).is_empty());
+}
+
+#[test]
+fn a_two_message_narration_batch_commits_its_newest_message_first() {
+    let mut cursors = NarrationCursors::default();
+    let history = message("agent-a", "a1", "history");
+    assert!(
+        cursors
+            .observe(true, std::slice::from_ref(&history))
+            .is_empty()
+    );
+
+    let lines = cursors.observe(
+        false,
+        &[
+            history,
+            message("agent-a", "a2", "older unseen"),
+            message("agent-a", "a3", "newest unseen"),
+        ],
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>(),
+        ["newest unseen", "older unseen"]
+    );
+
+    let mut queue = SpeechQueue::default();
+    let first = lines
+        .into_iter()
+        .find_map(
+            |line| match queue.enqueue(narration(&line.lane, &line.text)) {
+                Enqueue::Start(entry) => Some(entry),
+                Enqueue::Queued => None,
+            },
+        )
+        .expect("an idle queue commits the first narration line");
+    assert_eq!(first.text(), "newest unseen");
 }
 
 #[test]
