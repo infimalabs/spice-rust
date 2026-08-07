@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use syn::punctuated::Punctuated;
 use syn::{Meta, Token};
 use wire::intent::PendingDirective;
-use wire::{CursorHead, LaneResidency, Packed, Refusal, WorkflowHead};
+use wire::{AnyFact, CursorHead, LaneResidency, Packed, Refusal, WorkflowHead, body};
 
 const WORKFLOW: &str = r#"{
   "flow": ["todo", "review"],
@@ -37,6 +37,30 @@ const LANE: &str = r#"{
 }"#;
 
 const CURSOR: &str = r#"{}"#;
+
+/// One accounted batch, whose only absent field is the optional counter.
+const INGESTED: &str = r#"{
+  "kind": "journal::ingested",
+  "lane": "018f82d4-6f59-7d06-92e3-bce913116305",
+  "vendor": "claude",
+  "stream": "session",
+  "source": "018f82d4-6f59-7d06-92e3-bce913116306",
+  "from": { "member": 1, "offset": 0 },
+  "to": { "member": 1, "offset": 4096 },
+  "usage": [
+    {
+      "turns": 1,
+      "input_tokens": 22005,
+      "cached_input_tokens": 4213,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 311,
+      "spans": [{ "member": 1, "offset": 0, "length": 4096 }],
+      "ordinal": 0
+    }
+  ],
+  "non_usage_records": 3,
+  "residue_records": 1
+}"#;
 
 const PACKED: &str = r#"{
   "rows": [],
@@ -68,6 +92,90 @@ fn absent_non_head_fields_are_omitted_and_null_is_refused() {
     assert_canonical_absence::<Packed<serde_json::Value>>(PACKED, &["overflow"]);
     assert_canonical_absence::<Refusal>(REFUSAL, &["witness", "expected", "observed"]);
     assert_canonical_absence::<PendingDirective>(DIRECTIVE, &["preview", "control"]);
+}
+
+/// An accounted counter is required, and the one optional counter is not zero.
+///
+/// Every counter in an ingestion batch is spend, so a body that omits one has
+/// to refuse rather than default it: a counter that arrives as a missing key
+/// and is accounted as zero is spend that crosses as free, and nothing
+/// downstream can tell it apart from a batch that truly spent nothing. The
+/// reasoning counter is the single exception the shape documents, because a
+/// dialect that reports no such counter and a dialect reporting none spent are
+/// different claims; both directions are asserted here.
+#[test]
+fn an_accounted_batch_refuses_a_missing_counter_and_keeps_absence_apart_from_zero() {
+    let document: serde_json::Value = serde_json::from_str(INGESTED).expect("fixture is JSON");
+    let batch: body::JournalIngested = wire::decode::<AnyFact>(INGESTED.as_bytes())
+        .expect("the whole batch decodes")
+        .read()
+        .expect("the batch reads back through its registered body");
+    assert_eq!(batch.usage[0].reasoning_output_tokens, None);
+
+    for field in [
+        "turns",
+        "input_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+        "output_tokens",
+        "spans",
+        "ordinal",
+    ] {
+        let mut pruned = document.clone();
+        pruned["usage"][0]
+            .as_object_mut()
+            .expect("the usage sample is an object")
+            .remove(field)
+            .expect("the fixture carries the counter being removed");
+        let bytes = serde_json::to_vec(&pruned).expect("the pruned batch encodes");
+        assert!(
+            wire::decode::<AnyFact>(&bytes).is_err(),
+            "{field}: a missing counter was accounted rather than refused",
+        );
+    }
+
+    for field in [
+        "lane",
+        "vendor",
+        "stream",
+        "source",
+        "from",
+        "to",
+        "usage",
+        "non_usage_records",
+        "residue_records",
+    ] {
+        let mut pruned = document.clone();
+        pruned
+            .as_object_mut()
+            .expect("the batch is an object")
+            .remove(field)
+            .expect("the fixture carries the field being removed");
+        let bytes = serde_json::to_vec(&pruned).expect("the pruned batch encodes");
+        assert!(
+            wire::decode::<AnyFact>(&bytes).is_err(),
+            "{field}: a missing batch field decoded as an empty default",
+        );
+    }
+
+    let mut reported = document.clone();
+    reported["usage"][0]
+        .as_object_mut()
+        .expect("the usage sample is an object")
+        .insert(
+            "reasoning_output_tokens".to_owned(),
+            serde_json::Value::from(0),
+        );
+    let bytes = serde_json::to_vec(&reported).expect("the reporting batch encodes");
+    let reported: body::JournalIngested = wire::decode::<AnyFact>(&bytes)
+        .expect("a reported zero decodes")
+        .read()
+        .expect("the batch reads back through its registered body");
+    assert_eq!(reported.usage[0].reasoning_output_tokens, Some(0));
+    assert_ne!(
+        reported.usage[0].reasoning_output_tokens,
+        batch.usage[0].reasoning_output_tokens,
+    );
 }
 
 /// Every crossing optional field carries the whole spelling, including the ones

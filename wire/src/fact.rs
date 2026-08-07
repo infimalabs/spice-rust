@@ -276,6 +276,8 @@ vocabulary! {
     JournalBacked = "journal::backed" by ResidentRecognition;
     /// A restore completed and the new epoch recognized the exchanged authority.
     JournalRestored = "journal::restored" by ResidentRecognition;
+    /// One accounted batch of transcript records advanced a transcript source head.
+    JournalIngested = "journal::ingested" by ResidentRecognition;
 
     /// The resident acquired the kernel writer lock and minted its epoch.
     UpSeated = "up::seated" by CommandDoor;

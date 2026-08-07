@@ -5,7 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::body::LaneLaunchIdentity;
+use crate::Name;
+use crate::body::{LaneLaunchIdentity, TranscriptPosition};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Phase, TaskHandle};
@@ -211,6 +212,34 @@ pub struct FindingHead {
     pub receipt: Digest,
     /// Whether the finding remains open.
     pub state: FindingState,
+}
+
+/// How far one logical transcript stream has been accounted.
+///
+/// The row key is [`Self::key`], recomposed from the three logical fields, so a
+/// stored key that disagrees with its body is a head violation rather than a
+/// second spelling of the same stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptSourceHead {
+    /// Logical lane whose transcript this head accounts.
+    pub lane: CanonicalUuid,
+    /// Vendor that produced the transcript.
+    pub vendor: Name,
+    /// Logical stream within that lane and vendor.
+    pub stream: String,
+    /// Opaque durable source generation currently accounted.
+    pub source: CanonicalUuid,
+    /// Position the next batch must continue from.
+    pub next: TranscriptPosition,
+}
+
+impl TranscriptSourceHead {
+    /// Canonical row key for this logical stream.
+    #[must_use]
+    pub fn key(&self) -> String {
+        format!("{}/{}/{}", self.lane, self.vendor, self.stream)
+    }
 }
 
 /// Resident lifecycle shared by durable heads, transition witnesses, intents, and answers.

@@ -188,6 +188,7 @@ const fn is_journal(kind: wire::FactKind) -> bool {
         wire::FactKind::JournalMigrated
             | wire::FactKind::JournalBacked
             | wire::FactKind::JournalRestored
+            | wire::FactKind::JournalIngested
     )
 }
 

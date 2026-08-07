@@ -704,6 +704,40 @@ fn every_declared_fact_plane_claims_at_least_one_fact_kind() {
     }
 }
 
+/// Only the kinds named here belong to no plane.
+///
+/// Build admission decides a kind is consumed by matching its wire spelling
+/// against a plane's glob, while membership here is a hand-written enumeration.
+/// The two disagree in exactly one direction: a kind named into an existing
+/// plane's spelling passes the build as consumed and is then claimed by no arm.
+/// That is invisible to the plane-first law above, since every plane still
+/// claims its older kinds, and it is what makes the gap worth a law — the
+/// consumers of this predicate are coverage laws in other crates that decide
+/// what a reduction must handle by filtering `FactKind::ALL` through it, so an
+/// unclaimed kind is silently dropped from coverage rather than reported.
+///
+/// The three below predate this law and are routed by EFFORT-1kKl9vJ1. Naming
+/// them rather than allowing any orphan keeps the law exact in both directions:
+/// a fourth orphan reds here, and so does routing one of these three without
+/// striking it from the list.
+#[test]
+fn only_the_named_pending_kinds_belong_to_no_fact_plane() {
+    let orphans: Vec<wire::FactKind> = wire::FactKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| !FactPlane::ALL.iter().any(|plane| plane.contains(*kind)))
+        .collect();
+
+    assert_eq!(
+        orphans,
+        vec![
+            wire::FactKind::TaskDeleted,
+            wire::FactKind::LaneArranged,
+            wire::FactKind::LaneImported,
+        ],
+    );
+}
+
 /// Exactly one fact kind belongs to two planes, and it is named here.
 ///
 /// `taste::reminded` is a live directive and the taste evidence that justified

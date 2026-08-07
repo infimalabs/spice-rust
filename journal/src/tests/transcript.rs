@@ -1,0 +1,181 @@
+//! The transcript ingestion fact and its keyed source head.
+//!
+//! One accounted batch and the checkpoint it advances are written, verified,
+//! and read back together, because they are only correct together: a batch
+//! whose checkpoint did not move would be re-accounted, and a checkpoint that
+//! moved without its batch would skip spend.
+
+use super::*;
+
+/// An accounted batch survives the write path it is actually written through.
+///
+/// The fixtures elsewhere in this file plant rows with SQL, which proves replay
+/// reads what is stored but never that the guarded writer can store it. This
+/// goes the other way: the batch and the checkpoint it advances cross together
+/// through `apply`, replay accepts the result, and the sample reads back with
+/// its spans, its ordinal, and its absent reasoning counter intact.
+#[test]
+fn an_accounted_batch_and_its_checkpoint_round_trip_through_the_write_path() {
+    let journal = &mut Journal::in_memory().expect("create write-path fixture");
+    let head = transcript_source_head();
+    let batch = ingested_batch();
+
+    let mut write = crate::JournalWrite::new(
+        Actor::Spice,
+        "lane:018f82d4-6f59-7d06-92e3-bce913116305"
+            .parse::<Origin>()
+            .expect("resident origin"),
+        instant(),
+        wire::Producer::ResidentRecognition,
+    );
+    let pending = write
+        .fact(batch.clone(), crate::FactCause::Root)
+        .expect("an ingestion batch crosses the writer");
+    write.transcript_source_head(pending, {
+        let head = head.clone();
+        move |_seq| head
+    });
+    journal.apply(write).expect("the batch applies");
+
+    let verified = journal.verify().expect("the written authority verifies");
+    assert_eq!(verified.facts, 1);
+    assert_eq!(verified.heads, 1);
+
+    let stored = journal
+        .read(|read| read.transcript_source_head(&head.key()))
+        .expect("read the written checkpoint")
+        .expect("the write path stored the checkpoint");
+    assert_eq!(stored.body(), &head);
+
+    let snapshot = journal.fact_snapshot().expect("fact snapshot");
+    let decoded: wire::body::JournalIngested = snapshot.facts()[0]
+        .fact
+        .read()
+        .expect("the stored fact reads back as its registered body");
+    assert_eq!(decoded, batch);
+    assert_eq!(decoded.usage[0].reasoning_output_tokens, None);
+    assert_eq!(decoded.usage[0].spans.len(), 2);
+}
+
+/// A transcript head is stored under the stream its own body names.
+///
+/// The row key is recomposed from lane, vendor and stream rather than stored
+/// beside them, so a body that disagrees with its key is not a second spelling
+/// of the same stream: it is either a head written under the wrong key or a
+/// stream silently renamed under a key some reader still resolves. Either way
+/// the next batch would advance a checkpoint belonging to another source.
+#[test]
+fn a_transcript_head_whose_stream_disagrees_with_its_row_is_refused() {
+    let journal = authority_fixture();
+    let mut renamed = transcript_source_head();
+    renamed.stream = "sidecar".to_owned();
+    journal
+        .connection
+        .execute(
+            "UPDATE transcript_source_heads SET body = ?1",
+            params![wire::encode(&renamed).expect("encode renamed transcript head")],
+        )
+        .expect("corrupt transcript head fixture");
+
+    let details = refused_violations(&journal)
+        .into_iter()
+        .filter(|violation| violation.class == ViolationClass::Head)
+        .map(|violation| violation.detail)
+        .collect::<Vec<_>>();
+    assert!(
+        details
+            .iter()
+            .any(|detail| detail.contains("transcript stream disagrees with the row")),
+        "no head violation named the disagreeing transcript stream, found {details:?}",
+    );
+}
+
+/// The transcript head survives the bundle path an operator actually restores.
+///
+/// Replay over a live handle and replay over a captured generation are separate
+/// readers of the same plane, and only this one crosses a file. A head table the
+/// backup path did not know about would verify in memory and then be absent, or
+/// silently uncounted, in the bundle every restore is judged against.
+#[test]
+fn a_captured_bundle_verifies_the_transcript_head_it_carries() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
+
+    let scratch = Scratch::new();
+    let authority = scratch.path().join("spicejournal.sqlite3");
+    drop(authority_file_fixture(&authority));
+
+    let bytes = fs::read(&authority).expect("captured authority reads");
+    let manifest = JournalBackupManifest {
+        version: JOURNAL_BACKUP_VERSION,
+        wire: WireVersion::CURRENT,
+        journal_schema: SCHEMA_VERSION,
+        authority: "spicejournal.sqlite3".to_owned(),
+        members: vec![JournalBackupMember {
+            path: "spicejournal.sqlite3".to_owned(),
+            mode: fs::metadata(&authority)
+                .expect("captured authority metadata reads")
+                .permissions()
+                .mode()
+                & 0o7777,
+            bytes: u64::try_from(bytes.len()).expect("authority length crosses"),
+            digest: Digest::compute(wire::Domain::JournalBackupMember, &bytes),
+        }],
+    };
+    fs::write(
+        scratch.path().join("manifest.json"),
+        wire::encode(&manifest).expect("manifest encodes"),
+    )
+    .expect("manifest writes");
+
+    let verified = crate::verify_restore_bundle(scratch.path()).expect("populated bundle verifies");
+    assert_eq!(verified.journal_schema, SCHEMA_VERSION);
+    assert_eq!(verified.heads, 9);
+
+    let restored = Journal::open(&authority).expect("restored authority opens");
+    let stored = restored
+        .read(|read| read.transcript_source_head(&transcript_source_head().key()))
+        .expect("read restored transcript head")
+        .expect("restored bundle carries the transcript head");
+    assert_eq!(stored.body(), &transcript_source_head());
+}
+
+/// One batch that advanced the fixture checkpoint to where it now stands.
+fn ingested_batch() -> wire::body::JournalIngested {
+    let head = transcript_source_head();
+    wire::body::JournalIngested {
+        lane: head.lane,
+        vendor: head.vendor.clone(),
+        stream: head.stream.clone(),
+        source: head.source,
+        from: TranscriptPosition {
+            member: 1,
+            offset: 0,
+        },
+        to: head.next,
+        usage: vec![wire::body::TranscriptUsage {
+            turns: 1,
+            input_tokens: 22005,
+            cached_input_tokens: 4213,
+            cache_write_input_tokens: 0,
+            output_tokens: 311,
+            reasoning_output_tokens: None,
+            spans: vec![
+                wire::body::TranscriptSpan {
+                    member: 1,
+                    offset: 0,
+                    length: 2048,
+                },
+                wire::body::TranscriptSpan {
+                    member: 1,
+                    offset: 2048,
+                    length: 2048,
+                },
+            ],
+            ordinal: 0,
+        }],
+        non_usage_records: 3,
+        residue_records: 1,
+    }
+}
