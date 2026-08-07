@@ -555,6 +555,7 @@ fn every_surface_event_has_one_closed_canonical_wire_shape() {
             },
         },
         SurfaceEvent::Usage {
+            turns: 1,
             input_tokens: 1,
             cached_input_tokens: 2,
             cache_write_input_tokens: 3,
@@ -654,6 +655,7 @@ fn stream_identity_refuses_missing_extra_and_unknown_nested_shapes() {
     assert!(wire::decode::<StreamOutcome>(&serde_json::to_vec(&value).unwrap()).is_err());
 
     let usage = SurfaceEvent::Usage {
+        turns: 1,
         input_tokens: 1,
         cached_input_tokens: 2,
         cache_write_input_tokens: 3,

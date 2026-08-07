@@ -13,6 +13,7 @@ mod codex;
 pub mod config;
 mod event;
 mod residue;
+mod stream;
 mod surface;
 
 pub use canary::{Alarm, Canary};
@@ -22,11 +23,15 @@ pub use event::{
     Tool, ToolMoment, ToolResult, Usage,
 };
 pub use residue::{Decoded, LocusLengthError, Residue, ResidueKind};
-pub use surface::{
-    Mode, Observation, RetroSelector, Span, StreamOutcome, SurfaceError, SurfaceEvent,
-    SurfaceReasoning, SurfaceResidue, SurfaceToolMoment, SurfaceToolResult, Watch, retro,
+pub use stream::{
+    Checkpoint, Position, Record, RecordPayload, Scan, ScanError, SourcedEvent, SourcedResidue,
+    Span, scan,
 };
-pub use tape::Locus;
+pub use surface::{
+    Mode, Observation, RetroSelector, StreamOutcome, SurfaceError, SurfaceEvent, SurfaceReasoning,
+    SurfaceResidue, SurfaceToolMoment, SurfaceToolResult, Watch, retro,
+};
+pub use tape::{Locus, SourceId};
 
 use serde_json::{Map, Value};
 
@@ -160,6 +165,18 @@ fn unsigned(object: &Object, key: &'static str) -> Result<u64, ResidueKind> {
             field: key,
             expected: "unsigned integer",
         })
+}
+
+fn optional_unsigned(object: &Object, key: &'static str) -> Result<Option<u64>, ResidueKind> {
+    object
+        .get(key)
+        .map(|value| {
+            value.as_u64().ok_or(ResidueKind::Malformed {
+                field: key,
+                expected: "unsigned integer",
+            })
+        })
+        .transpose()
 }
 
 fn optional_boolean(object: &Object, key: &'static str) -> Result<Option<bool>, ResidueKind> {

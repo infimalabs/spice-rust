@@ -1,15 +1,15 @@
 use tape::Locus;
 
-use crate::event::Usage;
 use crate::{
     Compaction, Event, Events, Failure, Object, Prose, Reasoning, ReasoningContent, ResidueKind,
-    SessionDeclaration, Tool, ToolMoment, ToolResult, array, object, optional_boolean, required,
-    string, unsigned,
+    SessionDeclaration, Tool, ToolMoment, ToolResult, Usage, array, object, optional_boolean,
+    optional_unsigned, required, string,
 };
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
     match string(record, "type")? {
         "assistant" => assistant(record, locus),
+        "stream_event" => stream_event(record, locus),
         "user" => user(record, locus),
         "system" => system(record, locus),
         "result" => result(record, locus),
@@ -60,17 +60,35 @@ fn assistant(record: &Object, locus: Locus) -> Events {
         }
     }
 
-    let usage = object(message, "usage")?;
-    events.push(Event::Usage(Usage {
-        input_tokens: unsigned(usage, "input_tokens")?,
-        cached_input_tokens: unsigned(usage, "cache_read_input_tokens")?,
-        cache_write_input_tokens: unsigned(usage, "cache_creation_input_tokens")?,
-        output_tokens: unsigned(usage, "output_tokens")?,
-        reasoning_output_tokens: None,
-        locus,
-    }));
-
     Ok(events)
+}
+
+fn stream_event(record: &Object, locus: Locus) -> Events {
+    let event = object(record, "event")?;
+    match string(event, "type")? {
+        "message_delta" => message_delta(event, locus),
+        other => Err(ResidueKind::Unknown {
+            discriminator: format!("stream_event:{other}"),
+        }),
+    }
+}
+
+fn message_delta(event: &Object, locus: Locus) -> Events {
+    let usage = object(event, "usage")?;
+    let reasoning_output_tokens = match usage.get("output_tokens_details") {
+        Some(_) => optional_unsigned(object(usage, "output_tokens_details")?, "thinking_tokens")?,
+        None => None,
+    };
+    Ok(vec![Event::Usage(Usage {
+        turns: 1,
+        input_tokens: optional_unsigned(usage, "input_tokens")?.unwrap_or(0),
+        cached_input_tokens: optional_unsigned(usage, "cache_read_input_tokens")?.unwrap_or(0),
+        cache_write_input_tokens: optional_unsigned(usage, "cache_creation_input_tokens")?
+            .unwrap_or(0),
+        output_tokens: optional_unsigned(usage, "output_tokens")?.unwrap_or(0),
+        reasoning_output_tokens,
+        locus,
+    })])
 }
 
 fn user(record: &Object, locus: Locus) -> Events {

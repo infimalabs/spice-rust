@@ -118,6 +118,7 @@ fn invalid_glob_positions_and_non_words_are_refused() {
 fn only_typed_assistant_prose_is_a_candidate_surface() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let event = Event::Usage(Usage {
+        turns: 1,
         input_tokens: 3,
         cached_input_tokens: 0,
         cache_write_input_tokens: 0,

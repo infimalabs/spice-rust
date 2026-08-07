@@ -356,6 +356,7 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
                 locus,
             }),
             listen::Event::Usage(listen::Usage {
+                turns: 1,
                 input_tokens: 1,
                 cached_input_tokens: 0,
                 cache_write_input_tokens: 0,

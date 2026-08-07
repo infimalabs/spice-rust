@@ -20,6 +20,76 @@ use tape::{Index, Locus, Refusal, Seal, Tape};
 const VERBATIM: &[u8] = b"prose\x00\xff\xfe line\ntool call\r\n{\"partial\": ";
 
 #[test]
+fn one_source_identity_survives_reopen_and_member_sealing() {
+    let scratch = Scratch::new("source-stable");
+    let path = scratch.path().join("owned");
+    let tape = Tape::open(&path).expect("tape opens and publishes its source");
+    let source = tape.source_id().expect("source identity reads");
+    let locus = tape.tee(VERBATIM).expect("bytes are captured");
+
+    tape.seal().expect("the member seals");
+    let reopened = Tape::open_existing(&path).expect("observer reopens the tape");
+
+    assert_eq!(reopened.source_id().expect("source reopens"), source);
+    assert_eq!(
+        reopened.read(locus).expect("locus survives sealing"),
+        VERBATIM
+    );
+    assert_private(&path.join("source"));
+    scratch.remove();
+}
+
+#[test]
+fn replacing_a_tape_at_the_same_path_mints_another_source_identity() {
+    let scratch = Scratch::new("source-replaced");
+    let path = scratch.path().join("selected");
+    let first = Tape::open(&path)
+        .expect("first tape opens")
+        .source_id()
+        .expect("first source reads");
+
+    fs::remove_dir_all(&path).expect("first generation is removed");
+    let second = Tape::open(&path)
+        .expect("replacement tape opens")
+        .source_id()
+        .expect("replacement source reads");
+
+    assert_ne!(second, first, "a path is not a source-generation identity");
+    scratch.remove();
+}
+
+#[test]
+fn the_writer_door_is_the_only_identity_less_tape_migration() {
+    let scratch = Scratch::new("source-migration");
+    let path = scratch.path().join("legacy");
+    let tape = Tape::open(&path).expect("fixture tape opens");
+    let locus = tape.tee(VERBATIM).expect("legacy bytes are captured");
+    fs::remove_file(path.join("source")).expect("fixture removes the new-format identity");
+
+    let observer = Tape::open_existing(&path).expect("read-only door opens the directory");
+    assert!(
+        observer.source_id().is_err(),
+        "the observer door must not silently adopt an identity-less tape"
+    );
+    assert!(
+        !path.join("source").exists(),
+        "observing identity-less state performed no migration"
+    );
+
+    let adopted = Tape::open(&path).expect("the owning writer performs the forward migration");
+    assert!(
+        path.join("source").is_file(),
+        "migration publishes identity"
+    );
+    assert_eq!(
+        adopted.read(locus).expect("legacy locus remains readable"),
+        VERBATIM,
+        "adoption changes neither members nor logical loci"
+    );
+    scratch.remove();
+}
+
+#[test]
 fn the_observer_door_never_creates_or_follows_a_tape() {
     let scratch = Scratch::new("observer-door");
     let missing = scratch.path().join("missing");

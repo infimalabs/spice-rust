@@ -38,6 +38,12 @@ use sill::{Acquisition, LockFile, LockName, Possession};
 /// Name of the index within a tape directory.
 const INDEX: &str = "index";
 
+/// Name of the durable source-generation identity.
+const SOURCE: &str = "source";
+
+/// Header of the one source identity form tape writes.
+const SOURCE_FORMAT: &str = "tape-source 1";
+
 /// Name of the writer lock within a tape directory.
 const LOCK: &str = "tape.lock";
 
@@ -61,6 +67,68 @@ pub struct Tape {
     root: PathBuf,
 }
 
+/// Opaque identity of one durable tape generation.
+///
+/// The value changes when a tape directory is replaced, but not when members
+/// within one tape are sealed. Its spelling is deliberately opaque to callers;
+/// equality and serialization are the complete public contract.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[serde(transparent)]
+pub struct SourceId(String);
+
+impl SourceId {
+    fn fresh() -> Self {
+        Self(uuid::Uuid::new_v4().hyphenated().to_string())
+    }
+
+    /// Canonical opaque spelling used in durable checkpoints.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for SourceId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::str::FromStr for SourceId {
+    type Err = SourceIdError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let parsed = uuid::Uuid::parse_str(text).map_err(|_| SourceIdError)?;
+        let canonical = parsed.hyphenated().to_string();
+        if canonical != text {
+            return Err(SourceIdError);
+        }
+        Ok(Self(canonical))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SourceId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let text = <String as serde::Deserialize>::deserialize(deserializer)?;
+        text.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// A source identity was not in tape's one current spelling.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SourceIdError;
+
+impl fmt::Display for SourceIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("source identity is not a canonical UUID")
+    }
+}
+
+impl std::error::Error for SourceIdError {}
+
 impl Tape {
     /// Open a tape, creating the directory when it does not yet exist.
     ///
@@ -74,7 +142,9 @@ impl Tape {
         let root = fs::canonicalize(requested)
             .map_err(|error| Error::io(Operation::OpenTape, requested, error))?;
 
-        Ok(Self { root })
+        let tape = Self { root };
+        tape.adopt_source()?;
+        Ok(tape)
     }
 
     /// Open an existing tape without creating or recovering anything.
@@ -110,6 +180,24 @@ impl Tape {
         &self.root
     }
 
+    /// Durable identity of this exact tape generation.
+    ///
+    /// This read never creates or repairs an identity. Producers migrate an
+    /// identity-less owned tape through [`Tape::open`]; observers using
+    /// [`Tape::open_existing`] receive the missing, unreadable, or malformed
+    /// identity as a failure instead of guessing from paths or metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O failure when the identity cannot be read, or a refusal
+    /// when its bytes are not the one form tape publishes.
+    pub fn source_id(&self) -> Result<SourceId, Error> {
+        let path = self.source_path();
+        let text = fs::read_to_string(&path)
+            .map_err(|error| Error::io(Operation::ReadSource, &path, error))?;
+        parse_source(&text)
+    }
+
     /// Plaintext path for one member.
     fn plain_path(&self, member: u64) -> PathBuf {
         self.root
@@ -125,6 +213,40 @@ impl Tape {
     /// Path of the index.
     fn index_path(&self) -> PathBuf {
         self.root.join(INDEX)
+    }
+
+    /// Path of the durable source identity.
+    fn source_path(&self) -> PathBuf {
+        self.root.join(SOURCE)
+    }
+
+    /// Give one owned legacy tape its only forward source-identity migration.
+    fn adopt_source(&self) -> Result<SourceId, Error> {
+        match self.source_id() {
+            Ok(source) => {
+                // A prior publication may have written and renamed the source
+                // before its directory synchronization failed. Retrying the
+                // owning door commits that already-current name before it
+                // reports the generation durable.
+                self.sync_directory()?;
+                return Ok(source);
+            }
+            Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        let _possession = self.possess()?;
+        match self.source_id() {
+            Ok(source) => Ok(source),
+            Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+                let source = SourceId::fresh();
+                let bytes = format!("{SOURCE_FORMAT}\n{source}\n");
+                self.publish(&self.source_path(), bytes.as_bytes())?;
+                self.sync_directory()?;
+                Ok(source)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Take the writer lock, refusing rather than blocking when it is held.
@@ -301,6 +423,36 @@ fn temporary_name() -> String {
     format!(".tape-staged-{}-{sequence}.tmp", std::process::id())
 }
 
+/// Parse the one framed source identity spelling tape publishes.
+fn parse_source(text: &str) -> Result<SourceId, Error> {
+    let Some(body) = text.strip_suffix('\n') else {
+        return Err(Error::Refused(Refusal::MalformedSource {
+            line: text.lines().next_back().unwrap_or("").to_owned(),
+        }));
+    };
+    let mut lines = body.split('\n');
+    if lines.next() != Some(SOURCE_FORMAT) {
+        return Err(Error::Refused(Refusal::MalformedSource {
+            line: body.lines().next().unwrap_or("").to_owned(),
+        }));
+    }
+    let identity = lines.next().ok_or_else(|| {
+        Error::Refused(Refusal::MalformedSource {
+            line: String::new(),
+        })
+    })?;
+    if let Some(extra) = lines.next() {
+        return Err(Error::Refused(Refusal::MalformedSource {
+            line: extra.to_owned(),
+        }));
+    }
+    identity.parse().map_err(|_| {
+        Error::Refused(Refusal::MalformedSource {
+            line: identity.to_owned(),
+        })
+    })
+}
+
 /// The tape operation an I/O failure was attempting.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {
@@ -324,6 +476,8 @@ pub enum Operation {
     ReadIndex,
     /// Inspecting the current member extents.
     InspectExtents,
+    /// Reading the durable source-generation identity.
+    ReadSource,
     /// Synchronizing the tape directory.
     SyncDirectory,
 }
@@ -341,6 +495,7 @@ impl fmt::Display for Operation {
             Self::StagePublication => "stage publication",
             Self::ReadIndex => "read index",
             Self::InspectExtents => "inspect tape member extents",
+            Self::ReadSource => "read tape source identity",
             Self::SyncDirectory => "synchronize the tape directory",
         })
     }
@@ -368,6 +523,11 @@ pub enum Refusal {
     /// The index does not parse as the current format.
     MalformedIndex {
         /// The line that did not parse.
+        line: String,
+    },
+    /// The source-generation identity is not the one form tape writes.
+    MalformedSource {
+        /// First non-current line, or the final line when framing is truncated.
         line: String,
     },
     /// A member was neither plaintext nor sealed across a full retry.
@@ -398,6 +558,10 @@ impl fmt::Display for Refusal {
                     "the index line {line:?} is not the current format"
                 )
             }
+            Self::MalformedSource { line } => write!(
+                formatter,
+                "the source identity line {line:?} is not the current format"
+            ),
             Self::MemberVanished { member } => write!(
                 formatter,
                 "member {member} was neither plaintext nor sealed after a full retry"
@@ -555,6 +719,12 @@ mod tests {
         let tape = Tape::open(scratch.path()).expect("tape opens");
 
         let held = tape.possess().expect("the first writer takes the lock");
+
+        assert_eq!(
+            Tape::open(tape.root()).expect("a current tape reopens while its writer is active"),
+            tape,
+            "reopening a current generation does not compete with capture"
+        );
 
         for refused in [
             tape.tee(b"blocked"),
