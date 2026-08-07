@@ -129,6 +129,23 @@ pub fn select<'a>(
     selected
 }
 
+/// Whether this lane may be *handed* the entry.
+///
+/// Allocation is subscription scoped: a lane is offered only work its
+/// subscription admits, because the subscription is what declares that lane
+/// responsible for a project.
+///
+/// Reading is deliberately wider, and stem scoped rather than subscription
+/// scoped -- see `actor_route_matches`, which decides what `spice task list`
+/// renders. The two scopes must not be unified. A task can be filed, or
+/// corrected, into a project outside every subscription that could act on it,
+/// and only a lane that can *see* a row can move it back; if reading followed
+/// allocation, such a row would be unreachable by construction and the board
+/// would gain an absorbing state, wrong once and wrong forever.
+///
+/// The invariant is therefore directional rather than an equality. Widening
+/// reading or narrowing allocation both preserve it; narrowing reading to the
+/// subscription, or widening allocation to the public stems, breaks it.
 fn selectable(
     entry: &Entry,
     actor: &Actor,

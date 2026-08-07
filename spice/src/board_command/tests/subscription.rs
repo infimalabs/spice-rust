@@ -247,3 +247,66 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
     );
     clean(&root, reopened);
 }
+
+/// Reading stays wider than allocation, and the gap is the invariant.
+///
+/// A row filed outside every project this lane's subscription admits is still
+/// readable by it, because allocation matches the subscription exactly while
+/// reading matches a public stem by prefix. The gap is what keeps a misfiled
+/// task fixable: the lane that can no longer be handed the row can still see
+/// it, and so can still move it back. Without the gap the board would have an
+/// absorbing state.
+///
+/// No correction runs here. The edit suite observes this same pair, but only
+/// as the cost of one `task modify` call, so it would stop guarding the rule
+/// the moment that command changed shape. This drives both surfaces for a
+/// task that was simply filed elsewhere to begin with, so that
+/// narrowing reading to the subscription, or widening allocation to the stems,
+/// reds the invariant on its own terms.
+#[test]
+fn reading_stays_wider_than_allocation_for_a_row_outside_the_subscription() {
+    let (_root, bus, epoch, seats) = fixture("subscription-read-gap", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    configure_subscription(
+        &bus,
+        epoch,
+        seat,
+        wire::intent::LineageLife::Steer,
+        &["task.manual"],
+    );
+    let elsewhere = add_project(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "SCOPE-gap0001",
+        "Filed outside this lane's subscription",
+        "rim.elsewhere",
+        Some("todo"),
+    );
+
+    let answer = board(&bus, epoch, lane.clone());
+    assert!(
+        selectable_handles(&answer, &lane).is_empty(),
+        "allocation is subscription scoped: rim.elsewhere is not task.manual",
+    );
+    assert_eq!(
+        allocated(&bus, epoch, &lane),
+        None,
+        "so the allocator has nothing to hand this lane",
+    );
+
+    let listed = task_list(
+        &answer,
+        &TaskListOptions {
+            all: false,
+            project: None,
+            limit: None,
+            status: None,
+        },
+    );
+    assert!(
+        listed.contains(&format!("{elsewhere} [todo] rim.elsewhere")),
+        "reading is stem scoped and stays wider, so the row this lane cannot be handed is still visible to fix: {listed}",
+    );
+}
