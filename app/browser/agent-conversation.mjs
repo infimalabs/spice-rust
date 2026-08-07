@@ -413,6 +413,14 @@ async function armPlacementProbe(plane, excluded = []) {
     const cards = [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')]
       .filter((card) => !excludedKeys.includes(card.dataset.mosaicCardKey));
     const keys = cards.map((card) => card.dataset.mosaicCardKey);
+    // Every assertion this probe feeds is a negative one: no placement writes,
+    // and `retained` folded over these keys. An empty key set answers both with
+    // a pass it did not earn, so arming on nothing is the one outcome that must
+    // be loud. It also fails the way a broken selector deserves — at the arm,
+    // naming the selector, not later as a green nobody questions.
+    if (keys.length === 0) {
+      throw new Error("the Mosaic placement probe armed on no committed card");
+    }
     for (const card of cards) card.__mosaicPlacementProbe = token;
     const writes = [];
     const record = (mutation) => {
@@ -489,6 +497,35 @@ async function assertPersistentMosaic(page, fixture, console, plane, member) {
   assert.equal(presentation.commits, presentationProbe.commits, "chrome never commits the lattice");
   await life.fill("0");
   await console.getByRole("button", { name: "Steer", exact: true }).waitFor();
+
+  // Clause 2's no-op refresh. A task is neither an agent message nor a pending
+  // directive, so the server republishes the whole surface and every card
+  // re-renders from freshly cloned props while nothing a card measures moved.
+  // The command-bar cursor is the positive control: without it a refresh that
+  // never arrived would answer this probe with exactly the silence a correct
+  // one does, and the assertions below would pass having tested nothing.
+  //
+  // The missing `--acceptance` is load-bearing, not an omission: a task added
+  // without one starts in `plan`, which `workable` never selects, so this task
+  // can never be held and cannot disturb `assertHeldTaskCount`. Give it
+  // acceptance criteria and a distant assertion about badges goes red.
+  const cursor = page.locator(".bar-meta").first();
+  const cursorBefore = await cursor.textContent();
+  const refreshProbe = await armPlacementProbe(plane);
+  await reply(fixture, [
+    "task",
+    "add",
+    `mosaic no-op refresh ${crypto.randomUUID()}`,
+    "--project",
+    "spice.browser",
+  ]);
+  await waitForPage(page, "a no-op refresh reaches the surface", TRANSITION_MS, (before) => (
+    document.querySelector(".bar-meta")?.textContent !== before
+  ), cursorBefore);
+  const refreshed = await finishPlacementProbe(plane, refreshProbe);
+  assert.ok(refreshed.retained, "a no-op refresh retains every committed card node");
+  assert.deepEqual(refreshed.writes, [], "a no-op refresh writes no card placement");
+  assert.equal(refreshed.commits, refreshProbe.commits, "a no-op refresh commits no plane");
 
   const originalWidth = Number(await plane.getAttribute("data-committed-width"));
   const widthRules = await plane.evaluate((element) => {
