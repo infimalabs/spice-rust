@@ -63,7 +63,7 @@
 //! transaction that holds it can never contain anything this guard may refuse.
 //!
 //! That is why [`apply`] reads its own input before it reads Git. Resolving
-//! `HEAD` and the publication baseline costs up to five subprocesses, and for a
+//! `HEAD` and the publication baseline costs up to four subprocesses, and for a
 //! queue naming no branch every one of them was spent inside the shared lock to
 //! reach a conclusion the queue already determined. A queue that names no
 //! `refs/heads/` reference is answered from the queue alone, launching nothing.
@@ -97,7 +97,7 @@ const PROTECTED_COMMIT_LIMIT: usize = 5;
 const ASCII_ZERO: u8 = 0x30;
 const REMOTE_PREFIX: &str = "refs/remotes/";
 const LOCAL_PREFIX: &str = "refs/heads/";
-const ORIGIN_HEAD: &str = "refs/remotes/origin/HEAD";
+const SELF_REMOTE: &str = ".";
 const OPERATIONAL_RECOVERY: &str = concat!(
     ". This error aborts the reference transaction, so HEAD is not moved, but ",
     "this hook runs after the command's tree operations: the index and worktree ",
@@ -136,7 +136,7 @@ pub fn apply(
     let Some(current_ref) = git_read(repository, &["symbolic-ref", "--quiet", "HEAD"])? else {
         return Ok(());
     };
-    let Some(baseline) = publication_baseline(repository)? else {
+    let Some(baseline) = publication_baseline(repository, &current_ref)? else {
         return Ok(());
     };
 
@@ -176,37 +176,22 @@ struct Baseline {
 
 /// Resolve the commit standing for history this lane has published.
 ///
-/// `@{upstream}` cannot answer this question inside a spice agent. The agent runs
-/// under the git shadow environment, which points `branch.<lane>.merge` at
-/// `refs/heads/<lane>` in *system* scope precisely so the lane's upstream resolves
-/// to itself and `git status` stops moving whenever origin advances. Asking for
-/// `@{upstream}` there compares the branch against itself: every merge base is the
-/// branch tip, so every commit an update removes looks upstream-merged and the
-/// guard refuses the ordinary local rewinds it exists to allow.
+/// This mirrors the predecessor's `_declared_upstream_ref` in
+/// `spice/hooks/refguard.py`: the branch's own pairing names the reference, and
+/// a pairing that names none leaves the guard inert. Nothing else is consulted,
+/// and no second resolution stands behind the first. Two guards enforcing the
+/// same policy have to answer the same reference, and a backstop reached only
+/// here would be a policy this side invented.
 ///
-/// The shadow documents the readable path, and this mirrors it: the lane's
-/// integration branch is `git config --get branch.<lane>.merge`, whose
-/// command-scope pair the shadow appends last and which therefore reports the true
-/// merge, with `origin/HEAD` as the backstop named for lanes that configure no
-/// tracking. `branch.<lane>.remote` is never consulted; the shadow poisons it to
-/// `.` and it cannot be trusted. A lane with no origin remote, no resolvable
-/// integration branch, or an integration branch never published has no upstream
-/// history for this guard to protect, and leaves it inert.
-///
-/// The reference is carried out alongside the commit rather than discarded once
-/// it resolves, because a refusal that cannot say what it compared against reads
-/// the same whether the baseline was right or wrong. That is not hypothetical:
-/// the predecessor resolves this with `@{upstream}`, refuses every unpushed local
-/// rewind under the shadow environment, and words its refusal identically to this
-/// one. See `EFFORT-1kKnx9RV` for the parity question itself.
-fn publication_baseline(repository: &Path) -> Result<Option<Baseline>, ReferenceTransactionError> {
-    if !git(repository, &["remote", "get-url", "origin"])?
-        .status
-        .success()
-    {
-        return Ok(None);
-    }
-    let Some(reference) = integration_reference(repository)? else {
+/// A reference the pairing names but that resolves to no commit also leaves the
+/// guard inert. The predecessor is stricter and refuses a rewind it cannot
+/// judge; porting that refusal is `EFFORT-1kKpJKBf`, and it is a separate
+/// behaviour from which reference gets resolved.
+fn publication_baseline(
+    repository: &Path,
+    current_ref: &str,
+) -> Result<Option<Baseline>, ReferenceTransactionError> {
+    let Some(reference) = declared_upstream_reference(repository, current_ref)? else {
         return Ok(None);
     };
     let Some(commit) = commit_oid(repository, &reference)? else {
@@ -215,21 +200,62 @@ fn publication_baseline(repository: &Path) -> Result<Option<Baseline>, Reference
     Ok(Some(Baseline { reference, commit }))
 }
 
-/// The remote-tracking reference the lane's integration branch publishes to.
-fn integration_reference(repository: &Path) -> Result<Option<String>, ReferenceTransactionError> {
-    if let Some(branch) = git_read(repository, &["symbolic-ref", "--quiet", "--short", "HEAD"])?
-        && let Some(merge) = git_read(
-            repository,
-            &["config", "--get", &format!("branch.{branch}.merge")],
-        )?
-        && let Some(name) = merge.strip_prefix(LOCAL_PREFIX)
-    {
-        return Ok(Some(format!("{REMOTE_PREFIX}origin/{name}")));
-    }
-    let Some(head) = git_read(repository, &["symbolic-ref", ORIGIN_HEAD])? else {
+/// The remote-tracking reference this branch's own pairing names, if it names one.
+///
+/// Read from local scope and from nowhere else, which is the whole of the rule
+/// rather than a precaution. A lane runs under a per-process git shadow that
+/// redefines the current branch's upstream across two scopes at once: a
+/// *system*-scope `branch.<lane>.merge` pointing at `refs/heads/<lane>`, and a
+/// *command*-scope `branch.<lane>.remote` of `.`. Together those aim
+/// `@{upstream}` back at this very branch, so every local commit reads as
+/// already published and every ordinary amend is refused. Asking for the
+/// effective value walks into the same trap by a different door: measured in a
+/// lane worktree, `git config --get branch.<lane>.remote` answers `.` while
+/// `git config --local --get branch.<lane>.remote` answers `origin`. So
+/// `@{upstream}` is never consulted here, and neither is any effective-scope
+/// read -- not even as a fallback, because a fallback is exactly where that
+/// shadow comes back in.
+///
+/// Which remote and which branch are whatever the pairing names; `origin` and
+/// `main` are not assumed. Only the naming is answered here. Whether the named
+/// reference exists is a separate question, and conflating the two would let a
+/// pairing nobody can resolve read exactly like a branch that tracks nothing.
+fn declared_upstream_reference(
+    repository: &Path,
+    current_ref: &str,
+) -> Result<Option<String>, ReferenceTransactionError> {
+    let branch = current_ref
+        .strip_prefix(LOCAL_PREFIX)
+        .unwrap_or(current_ref);
+    let Some(remote) = git_read(
+        repository,
+        &[
+            "config",
+            "--local",
+            "--get",
+            &format!("branch.{branch}.remote"),
+        ],
+    )?
+    else {
         return Ok(None);
     };
-    Ok(head.starts_with(REMOTE_PREFIX).then_some(head))
+    let Some(merge) = git_read(
+        repository,
+        &[
+            "config",
+            "--local",
+            "--get",
+            &format!("branch.{branch}.merge"),
+        ],
+    )?
+    else {
+        return Ok(None);
+    };
+    if remote == SELF_REMOTE {
+        return Ok(None);
+    }
+    let name = merge.strip_prefix(LOCAL_PREFIX).unwrap_or(merge.as_str());
+    Ok(Some(format!("{REMOTE_PREFIX}{remote}/{name}")))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
