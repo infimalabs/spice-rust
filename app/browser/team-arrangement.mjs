@@ -7,10 +7,11 @@
 /// rather than the DOM, because the predecessor reordered teams with a bare
 /// `insertBefore` that no reload survived.
 ///
-/// The third assertion is the one that keeps the gesture honest. Message
-/// cards are draggable already and carry their prose as `text/plain`, so the
-/// same drop that steers a composer must leave the arrangement alone. It is
-/// dragged here through the card's own handler, never a fabricated transfer.
+/// The third assertion is the one that keeps the gesture honest. A member is
+/// dragged by its primary composer too, and that gesture commits `lane::arrange`
+/// against the very same lane table. Moving a member inside its own team must
+/// therefore leave the teams exactly where this fixture just put them: the two
+/// arrangement laws share a table, and neither may stand in for the other.
 
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -20,9 +21,20 @@ import { reply, waitForPageFunction, TRANSITION_MS } from "./canvas-fixture.mjs"
 /// The private media a dragged team carries, and the only one a team accepts.
 const TEAM_MEDIA = "application/x-spice-team";
 
-/// The steering cards one member has been given.
-function directiveCards(lane) {
-  return `[data-card-kind="directive"][data-agent-lane="${lane}"]`;
+/// The one draggable composer a member exposes, by the lane it belongs to.
+function primaryComposer(agents, lane) {
+  return agents.locator(`.composer-shard--primary[data-shard-target-id="${lane}"]`);
+}
+
+/// The members the canvas drew inside one team, in the order it drew them.
+async function waitForMemberOrder(page, label, lineage, order) {
+  await waitForPageFunction(page, label, TRANSITION_MS, ({ lineage, expected }) => {
+    const drawn = [...document.querySelectorAll(
+      `.team-surface[data-lineage-id="${lineage}"] .team-agent`,
+    )].map((member) => member.dataset.agentLane);
+    return drawn.length === expected.length
+      && drawn.every((lane, at) => lane === expected[at]);
+  }, { lineage, expected: order });
 }
 
 /// The teams the resident calls durable, in the order it states them.
@@ -103,41 +115,6 @@ function dragTeam(page, gesture) {
   }, gesture);
 }
 
-/// Drag one message card onto one member composer, the way quoting works.
-function dragCard(page, lane) {
-  return page.evaluate((target) => {
-    const card = document.querySelector(".mosaic-message-card[draggable=\"true\"]");
-    const member = document.querySelector(`.team-agent[data-agent-lane="${target}"]`);
-    if (!card || !member) throw new Error("quoting a card needs a card and a member");
-    const transfer = new DataTransfer();
-    card.dispatchEvent(new DragEvent("dragstart", {
-      bubbles: true,
-      cancelable: true,
-      dataTransfer: transfer,
-    }));
-    const rect = member.getBoundingClientRect();
-    const at = { clientX: Math.round(rect.left + 1), clientY: Math.round(rect.top + 1) };
-    const over = new DragEvent("dragover", {
-      bubbles: true,
-      cancelable: true,
-      dataTransfer: transfer,
-      ...at,
-    });
-    member.dispatchEvent(over);
-    member.dispatchEvent(new DragEvent("drop", {
-      bubbles: true,
-      cancelable: true,
-      dataTransfer: transfer,
-      ...at,
-    }));
-    return {
-      types: [...transfer.types],
-      text: transfer.getData("text/plain"),
-      offered: over.defaultPrevented,
-    };
-  }, lane);
-}
-
 /// Dragging a team reorders teams; dropping on an edge joins them.
 export async function assertTeamArrangement(page, fixture, artifacts) {
   const agents = page.locator('[data-pane="agent-console"]');
@@ -173,26 +150,33 @@ export async function assertTeamArrangement(page, fixture, artifacts) {
     "the drag changes the durable order and moves no agent between teams",
   );
 
-  const host = primary.lanes[0];
-  const before = await agents.locator(directiveCards(host)).count();
-  const quoted = await dragCard(page, host);
-  assert.equal(quoted.types.includes(TEAM_MEDIA), false, "a message card carries no team");
-  assert.equal(quoted.offered, true, "a member still offers itself to a dragged card");
-  const [firstLine] = quoted.text.split("\n");
-  assert.ok(firstLine, "the dragged card carries its own prose");
-  await waitForPageFunction(page, "the quoted card reaches the member", TRANSITION_MS,
-    ({ selector, seen }) => document.querySelectorAll(selector).length > seen,
-    { selector: directiveCards(host), seen: before });
-  const steered = await reply(fixture, ["inbox", host]);
-  assert.ok(
-    steered.body.lanes[0].pending.some((directive) => directive.text.includes(`> ${firstLine}`)),
-    "dropping a card on a member still steers it while the teams stay put",
+  const crowded = reordered.find((team) => team.lanes.length >= 2);
+  assert.ok(crowded, "proving the two laws apart needs one team holding two members");
+  const [leading, following] = crowded.lanes;
+  const moved = [following, leading, ...crowded.lanes.slice(2)];
+  await primaryComposer(agents, following).dragTo(primaryComposer(agents, leading), {
+    sourcePosition: { x: 10, y: 10 },
+    targetPosition: { x: 10, y: 10 },
+  });
+  await waitForMemberOrder(page, "the dragged member takes its target's place",
+    crowded.lineage, moved);
+  const afterMember = durableTeams((await reply(fixture, ["lane"])).body.lanes);
+  assert.deepEqual(
+    afterMember.map((team) => team.lineage),
+    reordered.map((team) => team.lineage),
+    "arranging a member never rearranges the teams",
   );
   assert.deepEqual(
-    durableTeams((await reply(fixture, ["lane"])).body.lanes),
-    reordered,
-    "composer dragging never rearranges teams",
+    afterMember.map((team) => [...team.lanes].sort()),
+    reordered.map((team) => [...team.lanes].sort()),
+    "a member dragged inside its own team joins no other team",
   );
+  assert.deepEqual(
+    afterMember.find((team) => team.lineage === crowded.lineage).lanes,
+    moved,
+    "the member drag is durable, so the two laws wrote the one lane table in turn",
+  );
+  crowded.lanes = moved;
 
   const gathered = await dragTeam(page, {
     dragged: secondary.lineage,
