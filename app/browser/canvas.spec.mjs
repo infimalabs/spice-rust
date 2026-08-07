@@ -651,39 +651,71 @@ async function assertMosaicComposer(page, fixture, seeded) {
   );
 }
 
-async function assertPackedHistory(page, extent, linked = false) {
+async function assertPackedHistory(page, fixture, extent, linked = false) {
   await chooseCanvasView(page, "Chronology");
   const journal = page.locator('[data-pane="commands"]');
   const facts = journal.locator(".event strong");
   await facts.nth(extent.facts - 1).waitFor();
-  assert.equal(await facts.count(), extent.facts, `all ${extent.facts} admitted facts render`);
-
+  const sequences = await facts.evaluateAll((nodes) => nodes.map((node) => {
+    const value = Number(node.textContent?.split("/")[0].trim());
+    if (!Number.isInteger(value)) throw new Error(`invalid rendered sequence: ${node.textContent}`);
+    return value;
+  }));
   const provenance = await journal.locator('[data-subject="facts"]').allTextContents();
-  assert.ok(provenance.length > 1, "two-row packing produces multiple fact pages");
-  assert.match(provenance[0], /omitted \/ continue/, "first page exposes overflow continuation");
-  assert.doesNotMatch(provenance.at(-1), /omitted \/ continue/, "final page closes continuation");
   const horizons = await journal
     .locator('[data-subject="facts"] span')
     .evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim()).filter((text) => text?.startsWith("horizon ")));
+  // Read order is the whole bracket. `extent` was sampled before every page read
+  // above and this is sampled after all of them, and an authority only gains
+  // facts, so the page must sit at or past what the journal held then and at or
+  // behind what it holds now. One sampled count cannot be an equality any more:
+  // the resident accounts a lane's transcript whenever a capture record lands,
+  // so the journal keeps growing while the page renders and the sample is a
+  // lower bound the page legitimately overtakes. Duplicate application is
+  // refused twice over regardless -- by the upper bound, since a page cannot
+  // hold more facts than the authority ever wrote, and by the rendered
+  // sequences below, which must be each fact exactly once.
+  const current = await journalExtent(fixture);
   const horizonValues = horizons.map((text) => Number(text.split(" ")[1]));
-  assert.equal(horizonValues.at(-1), extent.cursor, "latest page reaches the current horizon");
+  assert.ok(
+    sequences.length >= extent.facts,
+    `all ${extent.facts} admitted facts render (rendered ${sequences.length})`,
+  );
+  assert.ok(
+    sequences.length <= current.facts,
+    `no fact renders that the authority never held (rendered ${sequences.length}, held ${current.facts})`,
+  );
+
+  assert.ok(provenance.length > 1, "two-row packing produces multiple fact pages");
+  assert.match(provenance[0], /omitted \/ continue/, "first page exposes overflow continuation");
+  assert.doesNotMatch(provenance.at(-1), /omitted \/ continue/, "final page closes continuation");
+  assert.ok(
+    horizonValues.at(-1) >= extent.cursor && horizonValues.at(-1) <= current.cursor,
+    "latest page reaches the current horizon",
+  );
   assert.ok(
     horizonValues.every((value, index) => index === 0 || value >= horizonValues[index - 1]),
     "continued and later live pages retain monotone packed horizons",
   );
 
-  const sequences = await journal.locator(".event strong").evaluateAll((nodes) => nodes.map((node) => {
-    const value = Number(node.textContent?.split("/")[0].trim());
-    if (!Number.isInteger(value)) throw new Error(`invalid rendered sequence: ${node.textContent}`);
-    return value;
-  }));
-  assert.equal(new Set(sequences).size, extent.facts, "continuation fabricates no duplicate fact");
+  assert.equal(new Set(sequences).size, sequences.length, "continuation fabricates no duplicate fact");
   assert.deepEqual(
     [...sequences].sort((left, right) => left - right),
-    Array.from({ length: extent.facts }, (_, index) => index + 1),
+    Array.from({ length: sequences.length }, (_, index) => index + 1),
     "continuation loses no fact before the packed horizon",
   );
 
+  await assertCausalThread(page, linked);
+
+  await chooseCanvasView(page, "Chronology");
+  await page.screenshot({ path: join(artifacts, "canvas-chronology.png"), fullPage: true });
+}
+
+/// The Topology walk behind the same admitted history, asserted on its own.
+///
+/// It reads a different pane against a different terminal condition than the
+/// packed fact pages above, and shares only the page they are both views of.
+async function assertCausalThread(page, linked) {
   await chooseCanvasView(page, "Topology");
   const thread = page.locator('[data-pane="lineage"]');
   const minimumRows = linked ? 2 : 1;
@@ -724,9 +756,6 @@ async function assertPackedHistory(page, extent, linked = false) {
   if (linked) {
     assert.ok(threadRows.some((row) => !row.endsWith("root")), "causal walk includes a linked cause");
   }
-
-  await chooseCanvasView(page, "Chronology");
-  await page.screenshot({ path: join(artifacts, "canvas-chronology.png"), fullPage: true });
 }
 
 async function assertNoCredentialOrLandingGap(page, capabilities) {
@@ -784,10 +813,10 @@ async function assertHalfOpenSocket(browser, endpoint, epoch, fixture, seeded) {
     advanced = await journalExtent(fixture);
   });
   // Taken during the outage, so it counts a fact the page could not have had.
-  // `assertPackedHistory` asserts the rendered count *equals* the extent, which
-  // is what makes this a proof against duplicate application and not only
-  // against a missing one.
-  await assertPackedHistory(page, advanced);
+  // `assertPackedHistory` reads the authority again afterwards and requires the
+  // page to sit inside that bracket, which is what makes this a proof against
+  // duplicate application and not only against a missing one.
+  await assertPackedHistory(page, fixture, advanced);
   monitor.assertClean();
   await context.close();
 }
@@ -819,7 +848,7 @@ async function assertSameGenerationResume(
 
   await assertGenerationOnline(page, epoch, "the socket is reopened", RECONNECT_MS);
   monitor.expectNetworkInterruption(false);
-  await assertPackedHistory(page, advanced);
+  await assertPackedHistory(page, fixture, advanced);
   const after = await page.locator('[data-pane="commands"] .event strong').allTextContents();
   assert.ok(after.length > before.length, "same-generation resume appends missed facts");
 }
@@ -892,7 +921,7 @@ try {
   await assertAuthoritySurface(lightPage, seeded);
   await assertMosaicComposer(lightPage, fixture, seeded);
   await assertComposerRecovery(lightPage, fixture, seeded, lightMonitor);
-  await assertPackedHistory(lightPage, await journalExtent(fixture), true);
+  await assertPackedHistory(lightPage, fixture, await journalExtent(fixture), true);
   await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
   await assertSystemSpeech(lightPage);
   await chooseCanvasView(lightPage, "Flow");
@@ -925,7 +954,7 @@ try {
   await chooseCanvasView(lightPage, "Chronology");
   await lightPage.locator(".event.refusal").waitFor({ timeout: 10_000 });
   const beforeReconnect = await journalExtent(fixture);
-  await assertPackedHistory(lightPage, beforeReconnect);
+  await assertPackedHistory(lightPage, fixture, beforeReconnect);
 
   const dark = await browser.newContext({
     colorScheme: "dark",
@@ -995,7 +1024,7 @@ try {
     "new generation clears prior command reply state",
   );
   const restartedExtent = await journalExtent(fixture);
-  await assertPackedHistory(lightPage, restartedExtent);
+  await assertPackedHistory(lightPage, fixture, restartedExtent);
   await assertAuthoritySurface(lightPage, seeded);
   await assertNoCredentialOrLandingGap(lightPage, [firstCapability, resident.discovery.capability]);
   lightMonitor.assertClean();
