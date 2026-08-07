@@ -139,13 +139,20 @@ const SCOPED_COMMANDS: [ScopedCommand; 4] = [
 const BATTERY_LABEL: &str = "canonical Rust gate battery";
 /// Documentation is swept with the targets named, not with cargo's default set.
 ///
+/// This is also the only action that resolves intra-doc links at all.
+/// `cargo test --locked --workspace --doc` compiles and runs the code *inside*
+/// doc comments and never resolves a link, so a link naming an item that does
+/// not exist passes it. That gap is measured rather than assumed: CLI-1kKlPrCW
+/// repaired one broken link, CLI-1kKlQfSH then found seven more across app,
+/// proof, wire and gate, and every one had landed through a fully green verify.
+///
 /// `spice` and `xtask` each auto-discover a `src/lib.rs` and a same-named
 /// `src/main.rs`, and both targets would write `target/doc/<name>/index.html`.
 /// Left to choose, cargo settles that collision by documenting the library and
 /// dropping the binary silently: no warning, exit 0. `--lib --bins` asks for
 /// both, so cargo documents each binary too, prints its own
 /// `rust-lang/cargo#6313` collision note, and runs rustdoc over
-/// `spice/src/main.rs` and `xtask/src/main.rs` — including the twenty-three
+/// `spice/src/main.rs` and `xtask/src/main.rs` -- including the twenty-three
 /// modules `spice/src/main.rs` declares that its library does not. Under
 /// `-D warnings` a broken intra-doc link in either file is a hard error, and
 /// under the default target set nothing in this tree ever raised it.
