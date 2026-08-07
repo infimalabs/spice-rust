@@ -578,6 +578,13 @@ pub struct TaskAnswer {
     pub task: TaskHandle,
     /// Its status after the transaction.
     pub status: String,
+    /// Exact CLI command admitted as the next action, when one is available.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub next: Option<Box<str>>,
 }
 
 /// The answer a claim command returns.
@@ -591,6 +598,13 @@ pub struct ClaimAnswer {
     /// Non-blocking overlap warnings discovered from the claim-time board.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<ClaimWarning>,
+    /// Exact CLI command admitted as the next action, when one is available.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub next: Option<Box<str>>,
 }
 
 /// One active claim whose acceptance names the same implementation surface.

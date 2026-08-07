@@ -320,6 +320,7 @@ fn build_write(
                 task: winner.clone(),
                 holder: request.actor,
                 warnings: Vec::new(),
+                next: None,
             },
         )
         .map_err(WinError::Build)?;

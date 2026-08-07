@@ -46,6 +46,15 @@ fn reply_body<T: serde::de::DeserializeOwned>(output: &Output) -> T {
     wire::decode(&bytes).expect("reply body decodes as its selected DTO")
 }
 
+fn invoke_printed_next(fixture: &Fixture, next: &str, lane: wire::CanonicalUuid) -> Output {
+    let words = next.split_whitespace().collect::<Vec<_>>();
+    let Some((binary, arguments)) = words.split_first() else {
+        panic!("printed next action is empty");
+    };
+    assert_eq!(*binary, "spice", "printed next action names the CLI");
+    invoke_args(fixture, arguments, true, Some(lane))
+}
+
 pub(super) fn configure_fake_vendor(fixture: &Fixture) {
     let launches = fixture.root.join("vendor-launches");
     configure_vendor(
@@ -869,6 +878,147 @@ fn manual_hidden_task_creation_refuses_for_operator_and_lane_processes() {
     assert!(resident.wait().status.success(), "resident failed");
 }
 
+fn add_next_action_task(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+    title: &str,
+) -> wire::intent::TaskAnswer {
+    reply_body(&invoke_args(
+        fixture,
+        &["task", "add", title, "--project", "spice.client"],
+        true,
+        Some(lane),
+    ))
+}
+
+fn finish_noted_task(fixture: &Fixture, lane: wire::CanonicalUuid) -> wire::intent::TaskAnswer {
+    let added_task = add_next_action_task(fixture, lane, "Preserve typed command lane principal");
+    let implementation = reply_body::<wire::intent::ClaimAnswer>(&invoke_printed_next(
+        fixture,
+        added_task
+            .next
+            .as_deref()
+            .expect("new eligible task prints its allocator action"),
+        lane,
+    ));
+    assert_eq!(
+        (implementation.task, implementation.holder),
+        (added_task.task.clone(), Actor::Lane(lane))
+    );
+    let noted = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
+        fixture,
+        &[
+            "task",
+            "note",
+            &added_task.task.to_string(),
+            "next-action lifecycle note",
+        ],
+        true,
+        Some(lane),
+    ));
+    assert_eq!(
+        noted.next, implementation.next,
+        "a note preserves the held task's admitted transition"
+    );
+    let completed = reply_body::<wire::intent::TaskAnswer>(&invoke_printed_next(
+        fixture,
+        noted
+            .next
+            .as_deref()
+            .expect("note on a held implementation prints its admitted completion"),
+        lane,
+    ));
+    assert_eq!(&completed.task, &added_task.task);
+    finish_review(fixture, lane, &completed, &added_task.task)
+}
+
+fn finish_review(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+    completed: &wire::intent::TaskAnswer,
+    task: &wire::TaskHandle,
+) -> wire::intent::TaskAnswer {
+    let review = reply_body::<wire::intent::ClaimAnswer>(&invoke_printed_next(
+        fixture,
+        completed
+            .next
+            .as_deref()
+            .expect("advanced task prints its review allocator action"),
+        lane,
+    ));
+    assert_eq!(
+        (review.task, review.holder),
+        (task.clone(), Actor::Lane(lane))
+    );
+    let reviewed = reply_body::<wire::intent::TaskAnswer>(&invoke_printed_next(
+        fixture,
+        review
+            .next
+            .as_deref()
+            .expect("review claim prints its admitted verdict command"),
+        lane,
+    ));
+    assert_eq!(
+        (&reviewed.task, reviewed.status.as_str()),
+        (task, "completed")
+    );
+    assert!(
+        reviewed.next.is_none(),
+        "a completed task must not advertise another transition"
+    );
+    reviewed
+}
+
+fn assert_oops_has_no_next(fixture: &Fixture, lane: wire::CanonicalUuid) {
+    let oops = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
+        fixture,
+        &["task", "oops", "next-action fixture observation"],
+        true,
+        Some(lane),
+    ));
+    assert!(
+        oops.next.is_none(),
+        "hidden oops work has no runnable transition"
+    );
+}
+
+fn finish_dependent_task(fixture: &Fixture, lane: wire::CanonicalUuid, after: &wire::TaskHandle) {
+    let dependent = add_next_action_task(fixture, lane, "Execute dependency edit next action");
+    let dependent_claim = reply_body::<wire::intent::ClaimAnswer>(&invoke_printed_next(
+        fixture,
+        dependent
+            .next
+            .as_deref()
+            .expect("second eligible task prints its allocator action"),
+        lane,
+    ));
+    let edited = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
+        fixture,
+        &[
+            "task",
+            "depends",
+            &dependent.task.to_string(),
+            &after.to_string(),
+        ],
+        true,
+        Some(lane),
+    ));
+    assert_eq!(
+        edited.next, dependent_claim.next,
+        "editing a held task preserves its admitted completion"
+    );
+    let dependent_done = reply_body::<wire::intent::TaskAnswer>(&invoke_printed_next(
+        fixture,
+        edited
+            .next
+            .as_deref()
+            .expect("dependency edit prints the held task's admitted completion"),
+        lane,
+    ));
+    let reviewed = finish_review(fixture, lane, &dependent_done, &dependent.task);
+    assert!(reviewed.next.is_none());
+}
+
 #[test]
 fn typed_task_commands_retain_the_ambient_lane_principal() {
     let fixture = Fixture::new("lane-task-principal");
@@ -887,63 +1037,9 @@ fn typed_task_commands_retain_the_ambient_lane_principal() {
         true,
         None,
     ));
-
-    let added_task = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
-        &fixture,
-        &[
-            "task",
-            "add",
-            "Preserve the typed command lane principal",
-            "--project",
-            "spice.client",
-        ],
-        true,
-        Some(added_lane.lane),
-    ));
-
-    let implementation = reply_body::<wire::intent::ClaimAnswer>(&invoke_args(
-        &fixture,
-        &["task", "next"],
-        true,
-        Some(added_lane.lane),
-    ));
-    assert_eq!(
-        (implementation.task, implementation.holder),
-        (added_task.task.clone(), Actor::Lane(added_lane.lane))
-    );
-    let completed = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
-        &fixture,
-        &[
-            "task",
-            "done",
-            "--validation",
-            "lane principal survived typed completion",
-        ],
-        true,
-        Some(added_lane.lane),
-    ));
-    assert_eq!(completed.task, added_task.task);
-
-    let review = reply_body::<wire::intent::ClaimAnswer>(&invoke_args(
-        &fixture,
-        &["task", "next"],
-        true,
-        Some(added_lane.lane),
-    ));
-    assert_eq!(
-        (review.task, review.holder),
-        (added_task.task.clone(), Actor::Lane(added_lane.lane))
-    );
-    let reviewed = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
-        &fixture,
-        &["task", "review", &added_task.task.to_string()],
-        true,
-        Some(added_lane.lane),
-    ));
-    assert_eq!(
-        (reviewed.task, reviewed.status.as_str()),
-        (added_task.task, "completed")
-    );
+    let reviewed = finish_noted_task(&fixture, added_lane.lane);
+    assert_oops_has_no_next(&fixture, added_lane.lane);
+    finish_dependent_task(&fixture, added_lane.lane, &reviewed.task);
 
     let drained = invoke_args(
         &fixture,
