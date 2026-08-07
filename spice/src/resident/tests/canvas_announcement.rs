@@ -644,3 +644,133 @@ fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
     assert_eq!(dialled, None, "a missing generation must not be dialled");
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
 }
+
+/// One codex usage record, the spend a live capture record leaves behind it.
+const CODEX_USAGE: &[u8] = br#"{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":7,"cache_write_input_tokens":3,"output_tokens":5,"reasoning_output_tokens":2}}
+"#;
+
+/// A live capture record accounts the tape its lane has been writing.
+///
+/// The record carries decoded events, but the spend lives in the tape behind
+/// it, and the head only moves when something reads that tape. Asserting on the
+/// head rather than on the call is what makes this the live arm's proof: a
+/// resident that merely compiled the ingestion call beside its capture handling
+/// leaves the head absent, and the tape's bytes are then accounted only if some
+/// later start happens to sweep them.
+#[test]
+fn a_live_capture_record_accounts_the_tape_behind_its_lane() {
+    let (root, paths) = resident_fixture("capture-ingestion");
+    let bus = Bus::start(journal::Journal::in_memory().expect("ingestion authority opens"))
+        .expect("ingestion bus starts");
+    let lane = test_uuid(5);
+    let occupant = test_uuid(6);
+    let epoch = test_uuid(4);
+    seat_ingestion_residency(&bus, lane, epoch);
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+        .expect("the lane tape opens");
+    tape.tee(CODEX_USAGE).expect("the usage record is durable");
+
+    let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
+    let publisher = source.message_publisher();
+    let locus = listen::Locus::new(1, 0, CODEX_USAGE.len() as u64);
+    let record = lane::capture::CaptureRecord {
+        lane,
+        occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
+            text: "agent-authored answer".to_owned(),
+            phase: None,
+            locus,
+        })]),
+    };
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            lane,
+            occupant,
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("ingestion fixture occupant starts");
+    let mut diagnostics = Vec::new();
+    let mut previews = CallPreviews::default();
+    let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
+    let steering = steer::Config::default();
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
+
+    assert_eq!(
+        ingested_head(&bus, lane),
+        None,
+        "the head stood before any record was accepted",
+    );
+    accept_capture_record(
+        &bus,
+        epoch,
+        &mut seats,
+        &surfaces,
+        &record,
+        &mut previews,
+        &mut diagnostics,
+    )
+    .expect("the live capture record is accepted");
+
+    assert_eq!(
+        ingested_head(&bus, lane).map(|head| head.next),
+        Some(wire::body::TranscriptPosition {
+            member: 1,
+            offset: CODEX_USAGE.len() as u64,
+        }),
+        "accepting a live capture record left its tape unaccounted: {}",
+        String::from_utf8_lossy(&diagnostics),
+    );
+    fs::remove_dir_all(&root).expect("ingestion fixture cleanup");
+}
+
+/// Seat one codex lane so the ingestion sweep can find it and its tape.
+fn seat_ingestion_residency(bus: &Bus, lane: CanonicalUuid, epoch: CanonicalUuid) {
+    let at = wire::Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+    let origin = format!("resident:{epoch}")
+        .parse::<wire::Origin>()
+        .expect("fixture origin");
+    let mut write = JournalWrite::new(Actor::Spice, origin, at, Producer::CommandDoor);
+    let seated = write
+        .fact(wire::body::UpSeated { epoch }, FactCause::Root)
+        .expect("resident fact");
+    write.residency_head(seated, move |_| wire::ResidencyHead {
+        epoch,
+        state: wire::ResidentState::Seated,
+        lanes: vec![wire::LaneResidency {
+            lane,
+            lineage_id: lane,
+            name: None,
+            worktree: "/ingestion/worktree".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "codex".parse().expect("fixture vendor"),
+            occupant: None,
+            lineage: Vec::new(),
+            capabilities: Vec::new(),
+            session: None,
+            disposition: "occupied".to_owned(),
+        }],
+        subscriptions: Vec::new(),
+    });
+    bus.commit(write).expect("residency seeds");
+}
+
+/// The stored transcript head for one lane's codex session stream.
+fn ingested_head(bus: &Bus, lane: CanonicalUuid) -> Option<wire::TranscriptSourceHead> {
+    bus.transact(move |authority| {
+        let vendor = "codex".parse().expect("fixture vendor");
+        let key = wire::TranscriptStreamKey::new(&lane, &vendor, "session");
+        let head = authority
+            .read(|read| read.transcript_source_head(&key))
+            .expect("the stored head reads");
+        bus::JournalTransaction::settled(head.map(|head| head.into_body()))
+    })
+    .expect("head transaction")
+}

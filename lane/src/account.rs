@@ -451,6 +451,11 @@ mod tests {
     }
 
     /// Position the stored head stands at, absent until a batch is accounted.
+    ///
+    /// The key is composed through the same constructor the writer composes
+    /// with, from the same three fields, so this reader cannot address a row
+    /// the writer never wrote and report an accounted stream as never
+    /// accounted.
     fn checkpoint(journal: &Journal) -> Option<body::TranscriptPosition> {
         let vendor = "claude".parse().expect("fixture vendor");
         let key = TranscriptStreamKey::new(&uuid(LANE), &vendor, "session");
