@@ -287,9 +287,37 @@ fn a_lane_keeps_its_accent_when_the_table_reorders() {
     // lanes onto one slot; the pair of claims admits neither.
     assert_eq!(first[0].accent, second[1].accent);
     assert_eq!(first[1].accent, second[0].accent);
-    assert_ne!(first[0].accent, first[1].accent);
+    assert_ne!(
+        first[0].accent, first[1].accent,
+        "one slot fixed for every lane would survive the reorder as well, and \
+         this pair is what rules that out; it is not a promise that two lanes \
+         differ, which they often do not"
+    );
     assert!(first.iter().all(|row| row.accent < ACCENTS));
     assert!(accent(uuid(LANE_A)) < ACCENTS);
+}
+
+#[test]
+fn two_lanes_sharing_one_accent_slot_are_still_told_apart_by_name() {
+    // Nothing contrived picks this pair. LANE_A and LANE_D are two of the four
+    // lanes this file already declares, and all four sit on two of the six
+    // slots, because every identity spelled from one repeated digit lands on
+    // slot 0 or slot 3. Six members wear six distinct colours 720 times in
+    // 46656, so sharing is the ordinary case and the colour never names a lane.
+    let lanes = [lane(LANE_A, "main-c"), lane(LANE_D, "main-h")];
+
+    let rows = standings(&lanes, &[], &[], at(0));
+
+    assert_eq!(
+        rows[0].accent, rows[1].accent,
+        "the decided contract deals slots per identity, so this pair collides; \
+         dealing them per lineage instead would break here first"
+    );
+    assert_ne!(rows[0].lane, rows[1].lane);
+    assert_ne!(
+        rows[0].name, rows[1].name,
+        "the name is what stays distinct when the colour does not"
+    );
 }
 
 #[test]

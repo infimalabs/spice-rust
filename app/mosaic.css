@@ -292,7 +292,7 @@
   gap: 9px;
   min-height: 62px;
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--identity) 58%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--accent-slot) 58%, var(--line));
   border-radius: 8px;
   background: var(--page);
   cursor: grab;
@@ -301,9 +301,9 @@
 .canvas-member-presence {
   width: 18px;
   height: 18px;
-  border: 5px solid color-mix(in srgb, var(--identity) 25%, var(--panel));
+  border: 5px solid color-mix(in srgb, var(--accent-slot) 25%, var(--panel));
   border-radius: 50%;
-  background: var(--identity);
+  background: var(--accent-slot);
   box-sizing: content-box;
 }
 .canvas-member-presence.running-stale { filter: saturate(.58); }
@@ -312,7 +312,7 @@
 .canvas-member-copy { display: grid; min-width: 0; gap: 4px; }
 .canvas-member-copy strong {
   overflow: hidden;
-  color: var(--identity, var(--ink));
+  color: var(--accent-slot, var(--ink));
   font-size: .82rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -567,7 +567,7 @@
   align-items: center;
   gap: 4px;
   padding-bottom: 4px;
-  border-bottom: 1px solid var(--identity, var(--line));
+  border-bottom: 1px solid var(--accent-slot, var(--line));
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .56rem;
@@ -577,7 +577,7 @@
 }
 .composer-shard-heading strong {
   overflow: hidden;
-  color: var(--identity, var(--ink));
+  color: var(--accent-slot, var(--ink));
   font-size: .58rem;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -589,7 +589,7 @@
   text-underline-offset: 2px;
 }
 .composer-shard-age {
-  color: var(--identity, var(--accent));
+  color: var(--accent-slot, var(--accent));
 }
 
 /* A third of the message-card thumbnail, keeping its border, radius, and crop
@@ -656,7 +656,7 @@
   min-width: 132px;
   gap: 4px;
   padding: 5px;
-  border: 1px solid color-mix(in srgb, var(--identity, var(--accent)) 58%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
   border-radius: 7px;
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -684,9 +684,9 @@
   gap: 2px;
   min-height: 34px;
   padding: 5px 7px;
-  border-color: color-mix(in srgb, var(--identity, var(--accent)) 58%, var(--line));
+  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
   border-radius: 7px;
-  background: color-mix(in srgb, var(--identity, var(--accent)) 8%, var(--panel));
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 8%, var(--panel));
   color: var(--ink);
   text-align: left;
 }
@@ -869,7 +869,7 @@
   margin: 0;
   padding: 8px;
   border-left-width: 1px;
-  border-right: 3px solid var(--identity, var(--accent));
+  border-right: 3px solid var(--accent-slot, var(--accent));
   border-radius: 7px;
   font-size: .7rem;
   box-shadow: none;
@@ -922,7 +922,7 @@
 }
 .team-surface .message-author {
   overflow: hidden;
-  color: var(--identity, var(--accent)) !important;
+  color: var(--accent-slot, var(--accent)) !important;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -948,7 +948,7 @@
   min-width: 0;
   padding: 9px;
   border: 1px solid var(--line);
-  border-top: 2px solid var(--identity, var(--accent));
+  border-top: 2px solid var(--accent-slot, var(--accent));
   border-radius: 7px;
   background: var(--panel);
 }

@@ -24,7 +24,9 @@ use crate::runtime::LaneRow;
 ///
 /// Keyed to lane identity rather than to row position, so a lane keeps its
 /// colour when the table reorders under it and the operator can follow one
-/// agent across a redraw by colour alone.
+/// agent across a redraw. Following is all the colour is for: six slots dealt
+/// per identity repeat inside one lineage, so [`accent`] carries no claim that
+/// two agents wear different ones.
 pub const ACCENTS: usize = 6;
 
 /// Characters of a lane identity the band shows.
@@ -313,6 +315,28 @@ fn since(
 /// spelling instead would fold on the structure lane identities share: the
 /// fixed version and variant nibbles sit at fixed offsets, and a digest
 /// narrowed to six slots clusters the self-similar spellings a test writes.
+/// The modulo clusters those same spellings harder than that reads: every
+/// identity spelled from one repeated digit lands on slot 0 or slot 3, so a
+/// fixture wanting two colours picks identities that differ mod 6 rather than
+/// identities that merely look unalike.
+///
+/// # The slot decorates an attribution rather than carrying one
+///
+/// Six slots dealt per identity, with nothing arbitrating between members,
+/// repeat inside a single lineage: two members share a slot once in six, four
+/// members roughly seven times in ten, six members roughly ninety-eight times
+/// in a hundred. A lineage of six wearing six distinct colours is the
+/// 720-in-46656 case rather than the rule, and capping membership at six moves
+/// none of those numbers, because the repetition is in the dealing and not in
+/// the size.
+///
+/// So the colour is not what tells two agents apart and no surface may read it
+/// that way. A card names its lane in `data-agent-lane`, and shows the worktree
+/// leaf beside the short author when it carries an agent's message or the short
+/// lane alone when it carries a directive; those are the attribution, and they
+/// stay distinct when the colours do not. What the colour buys is continuity across
+/// a redraw, a reorder, and a reseat — which a slot dealt per lineage could not
+/// buy without recolouring a seated member because a different member arrived.
 #[must_use]
 pub fn accent(id: CanonicalUuid) -> usize {
     usize::try_from(id.get().as_u128() % ACCENTS as u128).unwrap_or(0)
