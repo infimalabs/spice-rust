@@ -253,7 +253,7 @@ fn native_canvas_stream_renders_seeded_lane_task_and_canned_turns() {
         .expect("browser demo seed succeeds");
     let root_for_down = environment.root.clone();
     let discovery_path = environment.state.canvas().to_path_buf();
-    let outcome = canvas_environment(environment, false, false, true, |endpoint| {
+    let outcome = canvas_environment_with(environment, false, false, true, false, |endpoint| {
         let discovery = read_discovery(&discovery_path);
         assert_eq!(endpoint, discovery.endpoint);
         assert_browser_seed(&discovery);
@@ -298,16 +298,24 @@ fn gate_environment(name: &str) -> (Scratch, Environment) {
     (scratch, environment)
 }
 
-/// A plain `spice demo` must not seize the operator's browser: the mirror of
-/// `announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it`, and
-/// what a run in an agent's hot loop actually does. Deleting the `open` check in
-/// `canvas_environment_with` reddens this. The launcher panics rather than
-/// returning `Err`, so a call cannot be absorbed by the `canvas::launch-failed`
-/// path and reported as some other failure.
+/// Drive the generated parser all the way through `run_with`, pinning the
+/// adjacent `signals` and `open` arguments to their intended meanings. The
+/// test-only interruption ends each resident after the launch gate, independent
+/// of whether the launcher runs; swapping those arguments therefore makes the
+/// `--open` assertion fail promptly instead of leaving the plain case resident.
 #[test]
-fn a_plain_demo_run_never_calls_the_browser_launcher() {
-    let (_scratch, environment) = gate_environment("plain-no-open");
-    let outcome = canvas_environment_with(environment, false, false, false, true, |endpoint| {
+fn parsed_demo_open_flag_reaches_the_canvas_gate() {
+    let control = RunControl {
+        signals: false,
+        interrupt_after_launch: true,
+    };
+
+    let (_plain_scratch, plain_environment) = gate_environment("plain-no-open");
+    let plain_root = plain_environment.root.to_str().unwrap();
+    let plain = crate::cli::command()
+        .try_get_matches_from(["spice", "demo", "--reuse", plain_root])
+        .expect("the plain demo invocation parses");
+    let outcome = run_with(crate::cli::selected_matches(&plain), control, |endpoint| {
         panic!("a plain demo run must not open a browser: {endpoint}")
     });
     let Outcome::Reply(answer) = outcome else {
@@ -323,16 +331,14 @@ fn a_plain_demo_run_never_calls_the_browser_launcher() {
         "the endpoint is reported even though nothing was opened: {:?}",
         answer.body.endpoint
     );
-}
 
-/// `--open` hands the launcher the admitted endpoint and no other, mirroring
-/// `opening_at_start_dials_exactly_the_endpoint_that_was_announced`. The
-/// capability stays; only its default moved.
-#[test]
-fn demo_open_dials_exactly_the_endpoint_it_reports() {
-    let (_scratch, environment) = gate_environment("explicit-open");
+    let (_open_scratch, open_environment) = gate_environment("explicit-open");
+    let open_root = open_environment.root.to_str().unwrap();
+    let open = crate::cli::command()
+        .try_get_matches_from(["spice", "demo", "--reuse", open_root, "--open"])
+        .expect("the opening demo invocation parses");
     let mut dialled = None;
-    let outcome = canvas_environment_with(environment, false, false, true, true, |endpoint| {
+    let outcome = run_with(crate::cli::selected_matches(&open), control, |endpoint| {
         dialled = Some(endpoint.to_owned());
         Ok(())
     });
@@ -374,7 +380,7 @@ fn launch_failure_preserves_one_reusable_or_removable_recovery_root() {
     let root = scratch.child("failed-root");
     let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
         .expect("failure demo seed succeeds");
-    let outcome = canvas_environment(environment, true, false, true, |_endpoint| {
+    let outcome = canvas_environment_with(environment, true, false, true, false, |_endpoint| {
         Err("fixture browser launcher failed".to_owned())
     });
     let Outcome::Fault(fault) = outcome else {
@@ -414,7 +420,7 @@ fn clean_automatic_service_removes_only_its_demo_root() {
     let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
         .expect("automatic cleanup seed succeeds");
     let root_for_down = fs::canonicalize(&root).unwrap();
-    let outcome = canvas_environment(environment, true, false, true, |_endpoint| {
+    let outcome = canvas_environment_with(environment, true, false, true, false, |_endpoint| {
         assert!(matches!(
             crate::resident::down_from(
                 &root_for_down,
