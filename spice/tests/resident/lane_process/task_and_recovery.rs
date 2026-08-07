@@ -251,39 +251,18 @@ fn missing_and_duplicate_declarations_refuse_and_fully_unwind_lane_add() {
         let fixture = Fixture::new(&format!("lane-session-{name}"));
         let stopped = fixture.root.join("vendor-stopped");
         let vendor_pid = fixture.root.join("vendor-pid");
-        let script = if !duplicate {
+        let announced = if duplicate {
             format!(
-                concat!(
-                    "#!/bin/sh\n",
-                    "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
-                    "trap > {}\n",
-                    "printf '%s\\n' \"$$\" > {}\n",
-                    "while :; do sleep 1; done\n",
-                ),
-                shell_word(&entered_marker(&stopped).display().to_string()),
-                shell_word(&stopped.display().to_string()),
-                shell_word(&trap_record(&stopped).display().to_string()),
-                shell_word(&vendor_pid.display().to_string()),
+                concat!("printf '%s\\n' {}\n", "printf '%s\\n' {}\n"),
+                shell_word(SESSION_RECORD),
+                shell_word(SESSION_RECORD),
             )
         } else {
-            format!(
-                concat!(
-                    "#!/bin/sh\n",
-                    "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
-                    "trap > {}\n",
-                    "printf '%s\\n' \"$$\" > {}\n",
-                    "printf '%s\\n' {}\n",
-                    "printf '%s\\n' {}\n",
-                    "while :; do sleep 1; done\n",
-                ),
-                shell_word(&entered_marker(&stopped).display().to_string()),
-                shell_word(&stopped.display().to_string()),
-                shell_word(&trap_record(&stopped).display().to_string()),
-                shell_word(&vendor_pid.display().to_string()),
-                shell_word(SESSION_RECORD),
-                shell_word(SESSION_RECORD),
-            )
+            String::new()
         };
+        let script = vendor_prologue(&stopped, &vendor_pid)
+            + &announced
+            + "while :; do sleep 1; done\n";
         configure_vendor(&fixture, &script);
         let mut resident = RunningResident::spawn(&fixture);
         resident.assert_ready(&fixture);
@@ -337,21 +316,11 @@ fn mismatched_resume_and_moved_tape_refuse_without_advancing_the_vacant_lane() {
     let vendor_pid = fixture.root.join("mismatched-vendor-pid");
     configure_vendor(
         &fixture,
-        &format!(
-            concat!(
-                "#!/bin/sh\n",
-                "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
-                "trap > {}\n",
-                "printf '%s\\n' \"$$\" > {}\n",
-                "printf '%s\\n' {}\n",
-                "while :; do sleep 1; done\n",
-            ),
-            shell_word(&entered_marker(&stopped).display().to_string()),
-            shell_word(&stopped.display().to_string()),
-            shell_word(&trap_record(&stopped).display().to_string()),
-            shell_word(&vendor_pid.display().to_string()),
-            shell_word(MISMATCHED_SESSION_RECORD),
-        ),
+        &(vendor_prologue(&stopped, &vendor_pid)
+            + &format!(
+                concat!("printf '%s\\n' {}\n", "while :; do sleep 1; done\n"),
+                shell_word(MISMATCHED_SESSION_RECORD),
+            )),
     );
     let mismatch = invoke_args(
         &fixture,

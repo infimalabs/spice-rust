@@ -234,10 +234,6 @@ fn recording_vendor(
     })
 }
 
-fn shell_word(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
 fn assert_latest_launch_resumed(fixture: &Fixture) {
     let launches = fs::read_to_string(fixture.root.join("vendor-launches"))
         .expect("fake vendor launch modes read");

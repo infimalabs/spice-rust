@@ -998,20 +998,11 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
     let vendor_pid = fixture.cleanup.join("malformed-codex-pid");
     fs::write(
         &rig.codex_binary,
-        format!(
-            concat!(
-                "#!/bin/sh\n",
-                "trap 'printf entered > {}; printf stopped > {}; exit 0' TERM INT\n",
-                "trap > {}\n",
-                "printf '%s\\n' \"$$\" > {}\n",
-                "printf '%s\\n' '{{\"type\":\"thread.started\"}}'\n",
+        vendor_prologue(&stopped, &vendor_pid)
+            + concat!(
+                "printf '%s\\n' '{\"type\":\"thread.started\"}'\n",
                 "while :; do sleep 1; done\n",
             ),
-            shell_word(&entered_marker(&stopped).display().to_string()),
-            shell_word(&stopped.display().to_string()),
-            shell_word(&trap_record(&stopped).display().to_string()),
-            shell_word(&vendor_pid.display().to_string()),
-        ),
     )
     .expect("malformed Codex vendor installs");
     let mut resident = RunningResident::spawn(&fixture);
