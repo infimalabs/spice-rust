@@ -123,6 +123,10 @@ const CASES: &[Case] = &[
             "a clause a reviewer can check",
             "--acceptance",
             "and a second the first one missed",
+            "--priority",
+            "high",
+            "--project",
+            "board.test",
         ],
     ),
     case(

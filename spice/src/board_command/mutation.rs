@@ -665,23 +665,10 @@ fn task_edit(
             "correct a statement only while the task is pending",
         );
     }
-    if edit.title.is_none() && edit.description.is_none() && edit.acceptance.is_empty() {
-        return refusal(
-            "task::edit-empty",
-            Some(edit.task.to_string()),
-            "name at least one of title, description, or acceptance",
-        );
-    }
-    let mut statement = entry.statement().clone();
-    if let Some(title) = &edit.title {
-        statement.title = title.clone();
-    }
-    if let Some(description) = &edit.description {
-        statement.description = Some(description.clone());
-    }
-    if !edit.acceptance.is_empty() {
-        statement.acceptance = edit.acceptance.clone();
-    }
+    let statement = match corrected_statement(entry, edit, projects) {
+        Ok(statement) => statement,
+        Err(outcome) => return outcome,
+    };
     let post = match Entry::new(
         statement.clone(),
         entry.workflow().clone(),
@@ -702,6 +689,101 @@ fn task_edit(
     // was, so the next action is whatever it already was, derived from the
     // corrected statement rather than restated here.
     let next = next_action(&snapshot, &post, false);
+    let revision = u32::try_from(entry.statement().revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
+    publish_correction(bus, command, edit, statement, revision, next)
+}
+
+/// Build the statement a correction publishes, or the refusal it earns.
+///
+/// Only fields the caller named move; the rest ride through from the filed
+/// statement untouched. A field this refuses is refused before anything is
+/// written, so a correction that names two fields and gets one wrong publishes
+/// neither.
+fn corrected_statement(
+    entry: &Entry,
+    edit: &TaskEdit,
+    projects: &ProjectPolicy,
+) -> Result<TaskHead, Outcome<CommandAnswer>> {
+    if edit.title.is_none()
+        && edit.description.is_none()
+        && edit.acceptance.is_empty()
+        && edit.priority.is_none()
+        && edit.project.is_none()
+    {
+        return Err(refusal(
+            "task::edit-empty",
+            Some(edit.task.to_string()),
+            "name at least one of title, description, acceptance, priority, or project",
+        ));
+    }
+    let mut statement = entry.statement().clone();
+    if let Some(title) = &edit.title {
+        statement.title = title.clone();
+    }
+    if let Some(description) = &edit.description {
+        statement.description = Some(description.clone());
+    }
+    if !edit.acceptance.is_empty() {
+        statement.acceptance = edit.acceptance.clone();
+    }
+    if let Some(priority) = &edit.priority {
+        // A priority the allocator does not score is refused rather than
+        // stored. Storing it would rank the task as if it declared nothing,
+        // which is the silent version of the failure this correction exists to
+        // repair.
+        let Some(declared) = board::priority_from_authored(priority) else {
+            return Err(refusal(
+                "task::edit-priority-unknown",
+                Some(priority.clone()),
+                "name one of critical, high, medium, low, or none, or the letter the board prints",
+            ));
+        };
+        // Every prior declaration goes, including a spelling nothing scores, so
+        // a corrected task carries exactly one priority tag afterwards.
+        statement
+            .tags
+            .retain(|tag| !tag.starts_with(board::PRIORITY_TAG_PREFIX));
+        statement.tags.push(board::priority_tag(declared));
+    }
+    if let Some(requested) = &edit.project {
+        // The destination goes through the same door `task add` uses. A
+        // correction that reached further than creation would make this the way
+        // to put a manually filed row on a resident-owned route.
+        let project = match projects.admit_manual_creation(requested) {
+            Ok(project) => project,
+            Err(error) => {
+                let reason = if matches!(error, ProjectError::SystemReserved(_)) {
+                    "task::project-system-reserved"
+                } else {
+                    "task::edit-project-refused"
+                };
+                return Err(refusal(
+                    reason,
+                    Some(error.to_string()),
+                    "name a public project this board admits for manual filing",
+                ));
+            }
+        };
+        // A move out of the editor's own subscription is a correction, not a
+        // refusal: a task filed under the wrong project is visible only to the
+        // lanes that project admits, so the lane that can see it has to be able
+        // to send it where it belongs even though it loses the row by doing so.
+        statement.project = project.as_str().to_owned();
+    }
+    Ok(statement)
+}
+
+/// Write one corrected statement as a fresh revision attributed to its editor.
+fn publish_correction(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    edit: &TaskEdit,
+    statement: TaskHead,
+    revision: u32,
+    next: Option<Box<str>>,
+) -> Outcome<CommandAnswer> {
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
@@ -712,9 +794,6 @@ fn task_edit(
     };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
-    let revision = u32::try_from(entry.statement().revision.get())
-        .unwrap_or(u32::MAX)
-        .saturating_add(1);
     let edited = match write.fact(
         body::TaskEdited {
             task: edit.task.clone(),
