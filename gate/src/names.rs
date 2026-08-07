@@ -34,7 +34,14 @@ pub const RETIRED_NAMES: &[RetiredName] = &[
         "ratchet",
         &["flex", "sticky", "jitter"],
     ),
-    RetiredName::new("ingest", "doc", &["ingest"]),
+    // Scoped to the concept actually retired, which is the creation surface
+    // this row's own successor names: `task ingest` in the predecessor, beside
+    // the row below retiring the same subsystem. The bare verb is not refused,
+    // because the port already coins the transcript-tape sense in durable
+    // vocabulary the gate admits -- `JournalIngested`, persisted as the fact
+    // kind `journal::ingested` -- so refusing only its verb form split one
+    // concept across two spellings and advised "use doc" where no doc exists.
+    RetiredName::new("task ingest", "doc", &["task ingest", "ingest doc"]),
     RetiredName::new("taskdoc", "doc, dialect", &["taskdoc", "task doc"]),
     RetiredName::new("incepted", "born", &["incepted"]),
     RetiredName::new("inbox item", "directive", &["inbox item"]),
@@ -168,6 +175,31 @@ mod tests {
                     "duplicate retired spelling {spelling}"
                 );
             }
+        }
+    }
+
+    /// The row refuses the retired creation surface and not the bare word.
+    ///
+    /// Both halves are load-bearing, and both were shown so: widening the
+    /// spellings back to the bare verb reds the second loop, narrowing them
+    /// past the creation surface reds the first. That is what keeps this an
+    /// amendment to the row's scope rather than a deletion of the retirement.
+    /// The name avoids spelling the row it tests, because this declaration is
+    /// itself in the gate's jurisdiction.
+    #[test]
+    fn the_retired_creation_surface_is_refused_and_the_transcript_sense_admitted() {
+        for coined in ["task_ingest", "TaskIngest", "ingest_doc"] {
+            assert!(
+                retired_matches(coined).iter().any(|m| m.successor == "doc"),
+                "{coined} names the retired creation surface"
+            );
+        }
+
+        for coined in ["ingest", "ingest_transcripts", "IngestError"] {
+            assert!(
+                retired_matches(coined).is_empty(),
+                "{coined} names the transcript sense the port coins as journal::ingested"
+            );
         }
     }
 
