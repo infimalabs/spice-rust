@@ -17,6 +17,10 @@
 //! [`renew`] is told whether an occupant is alive; neither consults a clock, so
 //! the same facts read in the same order always reduce to the same seat.
 
+/// Accounting reads and writes the SQLite authority, whose handle types
+/// `journal` gates off `wasm32`, so this module is native-only for the same
+/// reason its dependency is.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod account;
 pub mod capture;
 pub mod config;
