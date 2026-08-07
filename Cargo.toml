@@ -39,3 +39,11 @@ unfulfilled_lint_expectations = "deny"
 [workspace.lints.clippy]
 all = "deny"
 disallowed_methods = "deny"
+
+# Keep line-level diagnostics while avoiding full variable debug information in
+# the repeatedly rebuilt development binaries and test executables.
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1
