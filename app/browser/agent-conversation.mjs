@@ -1,0 +1,663 @@
+import assert from "node:assert/strict";
+import { basename, join } from "node:path";
+
+import { assertReferenceControlStack } from "./control-stack.mjs";
+import {
+  assertHeldTaskCount,
+  chooseCanvasView,
+  reply,
+  CONNECT_MS,
+  TRANSITION_MS,
+  waitForLocator as waitForElement,
+  waitForPageFunction as waitForPage,
+} from "./canvas-fixture.mjs";
+
+const AGENT_SEAT_MS = 15_000;
+
+export const agentNames = ["Ava", "Bex", "Cy", "Dee"];
+const teamLaneIds = [
+  "00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000001",
+  "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003",
+];
+export const nestedQuoteMessage = [
+  "> > The final review found no alternate execution path.", "> >",
+  "> > `cargo xtask verify` is green.",
+  ">",
+  "> Why it matters: nested context remains visible.",
+  "",
+  "The author words belong in the composer band.",
+].join("\n");
+export const entirelyQuotedMessage = [
+  "> > Borrowed context has no authored preview.",
+  "> > A second borrowed line stays reachable.",
+].join("\n");
+const tallMosaicMessage = [
+  "## Measured lattice witness",
+  "",
+  "This directive is intentionally tall at the base span.",
+  "",
+  "- measurement comes from the rendered DOM",
+  "- placement comes from the Rust lattice",
+  "- the wide tier remains content-class agnostic",
+  "- track bounds stay inside twelve columns",
+  "- row spans cover the natural card height",
+  "- creation order stays deterministic",
+  "- independent lineage controls remain mounted",
+  "- attachment presence cannot choose a span",
+  "- agent identity cannot choose a span",
+  "- CSS class cannot choose a span",
+  "- one base-height read is mandatory",
+  "- only a tall base measurement admits one more read",
+  "- no third candidate is measured",
+  "- no card overlaps another card",
+  "- exact viewport geometry stays observable",
+  "- the browser test reads the instrumentation",
+  "- the short path remains one read",
+  "- the tall path remains two reads",
+].join("\n");
+
+async function assignTeamLaneIds(page) {
+  await page.evaluate((laneIds) => {
+    const socket = window.__canvasSockets.at(-1);
+    if (!socket) throw new Error("canvas WebSocket was not captured");
+    const send = socket.send.bind(socket);
+    let assignment = 0;
+    const rewrite = (bytes) => {
+      const command = JSON.parse(new TextDecoder().decode(bytes));
+      if (command.kind !== "lane::seat") return bytes;
+      const lane = laneIds[assignment];
+      if (!lane) throw new Error("fixture received an unexpected fifth lane::seat command");
+      assignment += 1;
+      command.body.lane = lane;
+      command.body.lineage_id = laneIds[0];
+      return new TextEncoder().encode(JSON.stringify(command));
+    };
+    socket.send = (data) => {
+      if (typeof data === "string") {
+        const rewritten = rewrite(new TextEncoder().encode(data));
+        send(new TextDecoder().decode(rewritten));
+      } else if (data instanceof Blob) {
+        void data.arrayBuffer().then((buffer) => send(rewrite(new Uint8Array(buffer))));
+      } else {
+        send(rewrite(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
+      }
+    };
+  }, teamLaneIds);
+}
+
+export async function assertAgentConversation(
+  page,
+  fixture,
+  worktrees,
+  activityReplay,
+  artifacts,
+) {
+  const teamWorktrees = worktrees.slice(0, 4);
+  const console = page.locator('[data-pane="agent-console"]');
+  await chooseCanvasView(page, "Agents");
+  await console.waitFor();
+  await console.getByRole("tab", { name: /^Info/ }).click();
+  await console.getByLabel("Name").fill(agentNames[0]);
+  await console.getByLabel("Worktree").fill(teamWorktrees[0]);
+  await console.getByLabel("Life").fill("steer");
+
+  // A refused submission has to say why. The vendor field is free text with no
+  // datalist, so a proper name typed the way it is written everywhere else is
+  // the trip an operator actually takes, and it used to send no request and
+  // print nothing: the button read as dead. This is the only refusal reachable
+  // by clicking, because the compose button disables itself while the message
+  // is empty or no agent is seated.
+  const refusal = console.locator(".form-refusal");
+  await console.getByLabel("Vendor").fill("My Agent");
+  await console.getByRole("button", { name: "Seat agent" }).click();
+  await refusal.waitFor({ timeout: 10_000 });
+  assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
+
+  await assignTeamLaneIds(page);
+  await console.getByLabel("Vendor").fill("Claude");
+  await console.getByRole("button", { name: "Seat agent" }).click();
+  await refusal.waitFor({ state: "detached", timeout: 10_000 });
+  await waitForElement(page, "first external agent seat renders", AGENT_SEAT_MS,
+    console.locator(".team-detail-card").nth(0));
+  const firstSeatedAt = Date.now();
+
+  const firstSnapshot = await reply(fixture, ["lane"]);
+  const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === teamWorktrees[0]);
+  assert.ok(host, "the Canvas seat control creates the lineage host");
+  assert.equal(host.lane, teamLaneIds[0], "the fixture fixes the lineage host accent slot");
+  for (const [index, worktree] of teamWorktrees.slice(1).entries()) {
+    await console.getByLabel("Name").fill(agentNames[index + 1]);
+    await console.getByLabel("Worktree").fill(worktree);
+    await console.getByLabel("Life").fill("steer");
+    await console.getByLabel("Vendor").fill("Claude");
+    await console.getByRole("button", { name: "Seat agent" }).click();
+    await waitForElement(page, "next external agent seat renders", AGENT_SEAT_MS,
+      console.locator(".team-detail-card").nth(index + 1));
+  }
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  await console.getByRole("tab", { name: /^Info/ }).click();
+  await waitForElement(page, "seated agents render after reload", CONNECT_MS,
+    console.locator(".team-detail-card").nth(3));
+
+  const lanes = await reply(fixture, ["lane"]);
+  const seated = teamWorktrees.map(
+    (worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree),
+  );
+  assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
+  assert.deepEqual(seated.map((lane) => lane.lane), teamLaneIds, "four fixed lane identities render");
+  assert.ok(seated.every((lane) => lane.lineage_id === host.lineage_id), "one lineage renders");
+  assert.deepEqual(seated.map((lane) => lane.name), agentNames);
+  assert.ok(seated.every((lane) => lane.vendor === "claude"));
+  assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
+  assert.equal(
+    await console.locator(".team-detail-card").first().getAttribute("title"),
+    `Claude driver; model: sonnet; effort: high; thread: ${seated[0].occupant}; `
+      + "session: 018f7777-7777-7444-8888-999999999999",
+    "the agent card tooltip carries the admitted launch and session identity",
+  );
+
+  await console.getByRole("tab", { name: /^Compose/ }).click();
+  await console.locator(".team-agent").nth(3).waitFor();
+  assert.equal(await console.locator(".team-surface").count(), 1, "one lineage renders one surface");
+  assert.equal(
+    await console.locator(".team-activity-grid").count(),
+    1,
+    "all lineage members share exactly one packed activity plane",
+  );
+  const authored = console.locator('[data-card-kind="agent-message"]');
+  await authored.nth(3).waitFor({ timeout: 10_000 });
+  const producerIds = new Set(await authored.evaluateAll((cards) =>
+    cards.map((card) => card.getAttribute("data-producer-target-id")),
+  ));
+  const producerNames = new Set(await authored.locator(".message-author").allTextContents());
+  assert.ok(producerIds.size > 1, "the packed plane contains more than one producing agent");
+  assert.ok(producerNames.size > 1, "each authored card footer names its producing agent");
+  await assertRosterPips(page, console, seated);
+  const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
+  for (const name of producerNames) {
+    assert.match(accessibility, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.equal(await console.getByRole("button", { name: "Steer", exact: true }).count(), 1);
+  const lifetime = console.locator('.team-lifetime input[type="range"]');
+  await lifetime.fill("2");
+  await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
+  await lifetime.fill("0");
+  await console.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  await assertReferenceControlStack(page, console, artifacts);
+  const messages = [
+    "browser direction survives streaming",
+    "## Gate contract\n\n- green on the integrated tip\n- exact checks retained",
+    "> The reference viewport keeps **all agent status** visible.\n>\n> Density remains readable.\n\n`1000×568` stays bounded.",
+    nestedQuoteMessage,
+  ];
+  const messageLabels = [
+    messages[0],
+    "Gate contract",
+    "reference viewport keeps",
+    "final review found",
+  ];
+  for (const [index, lane] of seated.entries()) {
+    const column = console.locator(`.team-agent[data-agent-lane="${lane.lane}"]`);
+    await column.getByRole("textbox").fill(messages[index]);
+    await console.getByRole("button", { name: "Steer", exact: true }).click();
+    await console
+      .locator(`.mosaic-message-card[data-agent-lane="${lane.lane}"]`)
+      .filter({ hasText: messageLabels[index] })
+      .waitFor({ timeout: 10_000 });
+  }
+  const quoteLane = console.locator(`.team-agent[data-agent-lane="${seated[3].lane}"]`);
+  await quoteLane.getByRole("textbox").fill(entirelyQuotedMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[3].lane}"]`)
+    .filter({ hasText: "Borrowed context has no authored preview." })
+    .waitFor({ timeout: 10_000 });
+  const tallLane = console.locator(`.team-agent[data-agent-lane="${seated[1].lane}"]`);
+  await tallLane.getByRole("textbox").fill(tallMosaicMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[1].lane}"]`)
+    .filter({ hasText: "Measured lattice witness" })
+    .waitFor({ timeout: 10_000 });
+  const orderedInbox = await reply(fixture, ["inbox", seated[1].lane]);
+  assert.deepEqual(
+    await console
+      .locator(`[data-card-kind="directive"][data-agent-lane="${seated[1].lane}"]`)
+      .evaluateAll((cards) => cards.map((card) => card.dataset.directive)),
+    orderedInbox.body.lanes[0].pending.map((directive) => directive.directive),
+    "pending directives reach the lattice in durable journal order",
+  );
+  assert.ok(await console.locator(".mosaic-message-card h2").count(), "cards render headings");
+  assert.ok(await console.locator(".mosaic-message-card ul li").count(), "cards render lists");
+  assert.ok(
+    await console.locator(".mosaic-message-card blockquote blockquote").count(),
+    "cards preserve nested quote depth",
+  );
+  const cardHeights = await console.locator(".mosaic-message-card").evaluateAll((cards) =>
+    cards.map((card) => Math.round(card.getBoundingClientRect().height)),
+  );
+  assert.ok(new Set(cardHeights).size >= 3, "Markdown produces nonuniform Mosaic card heights");
+  const planes = console.locator(".lane-mosaic-plane");
+  assert.equal(await planes.count(), 1, "one seated lineage owns one Mosaic plane");
+  const plane = console.locator(
+    `.lane-mosaic-plane[data-agent-plane="${host.lineage_id}"]`,
+  );
+  await plane.waitFor();
+  const placements = await assertMosaicLattice(page, true);
+  assert.ok(placements.length > seated.length, "the lane packs agent and directive cards");
+  assert.ok(placements.every((card) => card.span >= 1 && card.track + card.span <= 12));
+  assert.ok(placements.every((card) => card.rows >= 3));
+  assert.ok(placements.every((card) => card.columnStart === card.track + 1));
+  assert.ok(placements.every((card) => card.rowStart === card.row));
+  assert.equal(Math.min(...placements.map((card) => card.base)), 0, "the lane owns its row floor");
+  const packedMembers = new Set(placements.map((card) => card.lane));
+  for (const member of seated) {
+    assert.ok(packedMembers.has(member.lane), "every worktree member reaches the lane plane");
+  }
+
+  const directiveChrome = await console.locator('[data-card-kind="directive"]').evaluateAll(
+    (cards) => cards.map((card) => ({
+      lane: card.dataset.agentLane,
+      accent: card.dataset.accent,
+      edge: getComputedStyle(card).borderRightColor,
+    })),
+  );
+  const repeatedLane = seated[1].lane;
+  const repeatedChrome = directiveChrome.filter((card) => card.lane === repeatedLane);
+  assert.ok(repeatedChrome.length >= 2, "the accent probe has two cards from one lane");
+  assert.ok(repeatedChrome.every((card) => card.accent === repeatedChrome[0].accent));
+  assert.ok(repeatedChrome.every((card) => card.edge === repeatedChrome[0].edge));
+  const distinctChrome = directiveChrome.find(
+    (card) => card.lane !== repeatedLane && card.accent !== repeatedChrome[0].accent,
+  );
+  assert.ok(distinctChrome, "the fixture exposes a different lane accent slot");
+  assert.notEqual(distinctChrome.edge, repeatedChrome[0].edge);
+  const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
+  for (const kind of ["agent-message", "directive"]) {
+    const card = console.locator(`[data-card-kind="${kind}"]`).first();
+    assert.ok((await card.locator(".message-author").innerText()).trim());
+    assert.deepEqual(
+      await card.locator(".message-actions button").evaluateAll(
+        (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
+      ),
+      expectedActions,
+      `${kind} exposes the reference speak, quote, and copy controls`,
+    );
+  }
+
+  const scroller = plane;
+  const compensationViewport = page.viewportSize();
+  await page.setViewportSize({ width: compensationViewport.width, height: 360 });
+  await scroller.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  const beforeCompensation = await scroller.evaluate((element) => {
+    return {
+      scrollTop: element.scrollTop,
+      maxRow: Number(element.dataset.maxRow),
+    };
+  });
+  assert.ok(beforeCompensation.scrollTop > 80, "the compensation probe begins in a scrolled pane");
+  const compensationMessage = [
+    "mosaic scroll compensation probe",
+    ...Array.from({ length: 72 }, (_, index) => `- exact row delta ${index + 1}`),
+  ].join("\n");
+  const compensationLane = console.locator(
+    `.team-agent[data-agent-lane="${seated[0].lane}"]`,
+  );
+  await compensationLane.getByRole("textbox").fill(compensationMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  const compensationCard = console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
+    .filter({ hasText: "mosaic scroll compensation probe" });
+  await compensationCard.waitFor({ timeout: 10_000 });
+  await waitForPage(page, "mosaic rows extend for the streamed card", TRANSITION_MS, (before) => {
+    const element = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+    const maxRow = Number(element?.dataset.maxRow);
+    return maxRow > before.maxRow;
+  }, beforeCompensation);
+  const afterCompensation = await scroller.evaluate((element) => {
+    return {
+      scrollTop: element.scrollTop,
+      maxRow: Number(element.dataset.maxRow),
+      module: Number(element.dataset.module),
+    };
+  });
+  assert.ok(afterCompensation.maxRow > beforeCompensation.maxRow);
+  assert.equal(
+    afterCompensation.scrollTop,
+    beforeCompensation.scrollTop
+      + (afterCompensation.maxRow - beforeCompensation.maxRow) * afterCompensation.module,
+    `incremental placement compensates by exactly the added lattice rows: ${JSON.stringify({
+      beforeCompensation,
+      afterCompensation,
+    })}`,
+  );
+  await page.setViewportSize(compensationViewport);
+  const compensationInbox = await reply(fixture, ["inbox", seated[0].lane]);
+  const compensationDirective = compensationInbox.body.lanes[0].pending.find(
+    (directive) => directive.text === compensationMessage,
+  );
+  assert.ok(compensationDirective, "the compensation probe reached the real inbox");
+  await reply(fixture, ["steer", "cancel", compensationDirective.directive]);
+  await compensationCard.waitFor({ state: "detached", timeout: 10_000 });
+  await page.locator('.task-pill[data-task-stem="app"]').waitFor();
+  await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
+  assert.match(await page.locator('.task-pill[data-task-stem="app"]').innerText(), /\d+·\d+·\d+/);
+
+  const outgoing = console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
+    .filter({ hasText: messages[0] });
+  const inbox = await reply(fixture, ["inbox", seated[0].lane]);
+  assert.equal(inbox.body.lanes.length, 1);
+  assert.equal(inbox.body.lanes[0].pending.length, 1);
+  assert.equal(inbox.body.lanes[0].pending[0].text, messages[0]);
+  assert.equal(
+    await outgoing.locator(".message-key").innerText(),
+    inbox.body.lanes[0].pending[0].key,
+  );
+  await assertQueuedRosterPip(page, console, seated[0]);
+  const age = outgoing.locator(".message-age");
+  const authoredAt = Date.parse(inbox.body.lanes[0].pending[0].authored);
+  const expectedBeforeRead = elapsedLabel(Date.now() - authoredAt);
+  const renderedAge = await age.innerText();
+  const expectedAfterRead = elapsedLabel(Date.now() - authoredAt);
+  assert.ok(
+    [expectedBeforeRead, expectedAfterRead].includes(renderedAge),
+    `the card shows authored age: ${JSON.stringify({ renderedAge, expectedBeforeRead, expectedAfterRead })}`,
+  );
+  assert.equal(
+    await age.getAttribute("title"),
+    `authored ${inbox.body.lanes[0].pending[0].authored}; expires ${inbox.body.lanes[0].pending[0].expires}`,
+  );
+  assert.equal(await outgoing.locator(".message-actions button").count(), 3);
+
+  for (const mode of ["Filters", "Metrics", "Info"]) {
+    await console.getByRole("tab", { name: new RegExp(`^${mode}`) }).click();
+    await console.locator(".team-detail-card").nth(3).waitFor();
+    assert.equal(await console.locator(".team-detail-card").count(), 4, `${mode} reaches all agents`);
+  }
+  await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
+  await console.getByRole("tab", { name: /^Compose/ }).click();
+  await assertFourAgentDensity(console);
+  await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
+  await assertHeldTaskCount(console, fixture, seated[0].lane);
+  await activityReplay.assertOlderToolIgnored(page, console);
+  const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
+  for (const pending of clearedInbox.body.lanes[0].pending) {
+    await reply(fixture, ["steer", "cancel", pending.directive]);
+  }
+  const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
+  await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
+  return {
+    lane: seated[0].lane,
+    quoteLane: seated[3].lane,
+    agentName: agentNames[0],
+    quoteProse: agentProse(teamWorktrees[3]),
+    primaryHeadings: seated.map((lane, index) => ({
+      lane: lane.lane,
+      prose: index === 0
+        ? "newest lane prose witness"
+        : index === 1
+          ? "periodic live witness"
+          : agentProse(teamWorktrees[index]),
+    })),
+  };
+}
+
+// The newest thing an agent itself said, which is what a composer heading
+// shows. Each fake agent emits one assistant record naming its own worktree,
+// so this is a different string per lane and seeded operator messages cannot
+// masquerade as the producer's own prose.
+function agentProse(worktree) {
+  return `Canvas message reports CONTROL-1kKbC3j4 from ${basename(worktree)}`;
+}
+
+function elapsedLabel(millis) {
+  const seconds = Math.trunc(millis / 1_000);
+  if (seconds <= 0) return "now";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3_600) return `${Math.trunc(seconds / 60)}m`;
+  if (seconds < 86_400) return `${Math.trunc(seconds / 3_600)}h`;
+  return `${Math.trunc(seconds / 86_400)}d`;
+}
+
+export async function assertFourAgentDensity(console) {
+  const geometry = await console.evaluate((surface) => ({
+    surfaceWidth: surface.getBoundingClientRect().width,
+    contentWidth: surface.parentElement?.getBoundingClientRect().width ?? 0,
+    surfaceOverflow: surface.scrollWidth - surface.clientWidth,
+    headers: [...surface.querySelectorAll(".composer-shard-heading")].map((node) => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    }),
+    columns: [...surface.querySelectorAll(".team-agent")].map((node) => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    }),
+  }));
+  assert.equal(geometry.headers.length, 4, "four intelligent draft headers are simultaneous");
+  assert.equal(geometry.columns.length, 4, "four live composer columns are simultaneous");
+  assert.ok(
+    geometry.surfaceWidth >= geometry.contentWidth - 16 &&
+      geometry.surfaceWidth <= geometry.contentWidth + 1,
+    "one live lineage consumes the available reference viewport",
+  );
+  assert.ok(geometry.surfaceOverflow <= 1, "the team surface does not hide horizontal content");
+  for (const row of [geometry.headers, geometry.columns]) {
+    for (let index = 1; index < row.length; index += 1) {
+      assert.ok(row[index - 1].right <= row[index].left + 1, "agent columns never overlap");
+      assert.ok(Math.abs(row[index - 1].top - row[index].top) <= 1, "agent columns share one row");
+    }
+  }
+}
+
+export async function assertMosaicLattice(page, requireBothReadPaths) {
+  await waitForMosaicReady(page);
+  const snapshot = await page.locator('[data-pane="agent-console"]').evaluate((console) => ({
+    activities: [...console.querySelectorAll(".team-activity-grid")].map((activity) => ({
+      columnCount: getComputedStyle(activity).columnCount,
+      columnWidth: getComputedStyle(activity).columnWidth,
+    })),
+    planes: [...console.querySelectorAll(".lane-mosaic-plane")].map((plane) => {
+      const planeStyle = getComputedStyle(plane);
+      return {
+        trackCount: Number(plane.dataset.trackCount),
+        baseSpan: Number(plane.dataset.baseSpan),
+        minLane: Number(plane.dataset.minLane),
+        minCardRows: Number(plane.dataset.minCardRows),
+        columnGap: Number.parseFloat(planeStyle.columnGap),
+        rowGap: Number.parseFloat(planeStyle.rowGap),
+        width: plane.clientWidth,
+        tallThreshold: Number(plane.dataset.tallThreshold),
+        cards: [...plane.querySelectorAll(".mosaic-message-card")].map((card) => {
+          const box = card.getBoundingClientRect();
+          const style = getComputedStyle(card);
+          return {
+            kind: card.dataset.cardKind,
+            lane: card.dataset.agentLane,
+            creationIndex: Number(card.dataset.creationIndex),
+            track: Number(card.dataset.track),
+            span: Number(card.dataset.span),
+            base: Number(card.dataset.base),
+            row: Number(card.dataset.row),
+            rows: Number(card.dataset.rows),
+            reads: Number(card.dataset.measurementReads),
+            heights: card.dataset.measuredHeights.split(",").filter(Boolean).map(Number),
+            candidateSpans: card.dataset.candidateSpans.split(",").filter(Boolean).map(Number),
+            columnStart: Number(style.gridColumnStart),
+            columnEnd: style.gridColumnEnd,
+            rowStart: Number(style.gridRowStart),
+            rowEnd: style.gridRowEnd,
+            box: {
+              left: box.left,
+              right: box.right,
+              top: box.top,
+              bottom: box.bottom,
+            },
+            clientHeight: card.clientHeight,
+            scrollHeight: card.scrollHeight,
+          };
+        }),
+      };
+    }),
+  }));
+
+  assert.ok(snapshot.activities.length > 0, "the live activity region is mounted");
+  assert.ok(
+    snapshot.activities.every(
+      (activity) => activity.columnCount === "auto" && activity.columnWidth === "auto",
+    ),
+    "the live activity region uses no CSS multi-column flow",
+  );
+  const readPaths = new Set();
+  const kinds = new Set();
+  const placements = [];
+  for (const plane of snapshot.planes) {
+    assert.equal(plane.trackCount, 12, "the browser renders the twelve-track lattice");
+    assert.equal(plane.columnGap, 12, "the horizontal lattice keeps the predecessor gap");
+    assert.equal(plane.rowGap, plane.columnGap, "the vertical lattice shares that grid rhythm");
+    assert.equal(plane.minLane, 272, "the browser exposes the predecessor minimum lane width");
+    assert.equal(plane.minCardRows, 3, "compact cards reserve three vertical modules");
+    assert.deepEqual(
+      plane.cards.map((card) => card.creationIndex),
+      plane.cards.map((_, index) => index),
+      "DOM order is the stable creation order submitted to Rust",
+    );
+    for (const card of plane.cards) {
+      const wideSpan = Math.min(plane.trackCount, plane.baseSpan * 2);
+      const wideEligible = wideSpan > plane.baseSpan && card.heights[0] >= plane.tallThreshold;
+      const expectedSpans = wideEligible ? [plane.baseSpan, wideSpan] : [plane.baseSpan];
+      assert.equal(card.reads, wideEligible ? 2 : 1, "height reads follow the bounded policy");
+      assert.equal(card.heights.length, card.reads, "every instrumented read records one height");
+      assert.deepEqual(card.candidateSpans, expectedSpans, "height alone admits the wide tier");
+      assert.ok(card.track >= 0 && card.track + card.span <= plane.trackCount);
+      assert.ok(card.rows >= plane.minCardRows);
+      assert.ok(
+        card.box.right - card.box.left + 0.5 >= Math.min(plane.minLane, plane.width),
+        `Mosaic card keeps the responsive minimum lane width: ${JSON.stringify(card)}`,
+      );
+      assert.equal(card.columnStart, card.track + 1);
+      assert.equal(card.columnEnd, `span ${card.span}`);
+      assert.equal(card.rowStart, card.row);
+      assert.equal(card.rowEnd, `span ${card.rows}`);
+      assert.ok(
+        card.clientHeight + 1 >= card.scrollHeight,
+        `Mosaic card contains its own content: ${JSON.stringify(card)}`,
+      );
+      readPaths.add(card.reads);
+      kinds.add(card.kind);
+      placements.push(card);
+    }
+    for (let left = 0; left < plane.cards.length; left += 1) {
+      for (let right = left + 1; right < plane.cards.length; right += 1) {
+        const one = plane.cards[left].box;
+        const two = plane.cards[right].box;
+        const separated = one.right <= two.left + 0.5 || two.right <= one.left + 0.5
+          || one.bottom <= two.top + 0.5 || two.bottom <= one.top + 0.5;
+        assert.ok(separated, `Mosaic cards ${left} and ${right} do not overlap`);
+      }
+    }
+  }
+  assert.ok(kinds.has("agent-message"), "agent-authored cards use the measured policy");
+  assert.ok(readPaths.has(1), "a short card takes exactly one DOM height read");
+  if (requireBothReadPaths) {
+    assert.ok(kinds.has("directive"), "pending directives use the measured policy");
+    assert.ok(readPaths.has(2), "a tall card takes exactly two DOM height reads");
+  }
+  return placements;
+}
+
+async function waitForMosaicReady(page) {
+  await waitForPage(page, "mosaic measurements settle", TRANSITION_MS, () => {
+    const planes = [...document.querySelectorAll(
+      '[data-pane="agent-console"] .lane-mosaic-plane',
+    )];
+    return planes.length > 0 && planes.every(
+      (plane) => plane.dataset.measurementPhase === "ready",
+    );
+  });
+}
+
+async function assertRosterPips(page, console, seated) {
+  const teamPips = console.locator(".team-light");
+  await teamPips.nth(seated.length - 1).waitFor();
+  const teamRoster = await teamPips.evaluateAll((pips) => pips.map((pip) => ({
+    lane: pip.dataset.laneLightTargetId,
+    status: pip.dataset.laneStatus,
+  })).sort((left, right) => left.lane.localeCompare(right.lane)));
+  assert.deepEqual(
+    teamRoster.map((entry) => entry.lane),
+    seated.map((member) => member.lane).sort(),
+    "the team pips are keyed by every admitted member and no decorative slot",
+  );
+  assert.ok(
+    teamRoster.every((entry) => ["running", "running-stale"].includes(entry.status)),
+    "every supervised member has a lit liveness pip",
+  );
+
+  await chooseCanvasView(page, "Flow");
+  const brandPips = page.locator(".brand-dot");
+  await brandPips.nth(seated.length - 1).waitFor();
+  const chromeRoster = await brandPips.evaluateAll((pips) => pips.map((pip) => ({
+    lane: pip.dataset.agentLane,
+    status: pip.dataset.agentStatus,
+  })).sort((left, right) => left.lane.localeCompare(right.lane)));
+  assert.deepEqual(
+    chromeRoster,
+    teamRoster,
+    "the compact chrome roster preserves the live team identities and liveness states",
+  );
+  assert.equal(
+    await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
+    0,
+    "analytic chrome keeps the layout implementation name private",
+  );
+  await chooseCanvasView(page, "Agents");
+  await console.waitFor();
+  await waitForMosaicReady(page);
+}
+
+async function assertQueuedRosterPip(page, console, member) {
+  const teamPip = console.locator(
+    `.team-light[data-lane-light-target-id="${member.lane}"]`,
+  );
+  await waitForPage(page, "team roster shows queued", TRANSITION_MS, (lane) => (
+    document.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`)
+      ?.getAttribute("data-lane-status") === "queued"
+  ), member.lane);
+  const teamStyle = await teamPip.evaluate((pip) => {
+    const style = getComputedStyle(pip);
+    return {
+      backgroundColor: style.backgroundColor,
+      boxShadow: style.boxShadow,
+      opacity: style.opacity,
+    };
+  });
+
+  await chooseCanvasView(page, "Flow");
+  const brandPip = page.locator(`.brand-dot[data-agent-lane="${member.lane}"]`);
+  assert.equal(await brandPip.count(), 1, "the queued member retains exactly one brand pip");
+  await waitForPage(page, "brand roster shows queued", TRANSITION_MS, (lane) => (
+    document.querySelector(`.brand-dot[data-agent-lane="${lane}"]`)
+      ?.getAttribute("data-agent-status") === "queued"
+  ), member.lane);
+  assert.equal(await brandPip.getAttribute("data-agent-status"), "queued");
+  const brandStyle = await brandPip.evaluate((pip) => {
+    const style = getComputedStyle(pip);
+    return {
+      backgroundColor: style.backgroundColor,
+      boxShadow: style.boxShadow,
+      opacity: style.opacity,
+    };
+  });
+  assert.deepEqual(
+    brandStyle,
+    teamStyle,
+    "a queued live member keeps the team roster's visible warning state in the brand roster",
+  );
+  assert.equal(brandStyle.opacity, "1", "queued direction never mutes an occupied agent");
+  assert.notEqual(brandStyle.boxShadow, "none", "the queued agent remains visibly lit");
+  await chooseCanvasView(page, "Agents");
+  await console.waitFor();
+  await waitForMosaicReady(page);
+}
