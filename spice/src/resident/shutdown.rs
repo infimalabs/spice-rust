@@ -19,10 +19,16 @@ const VACANT: &str = "vacant";
 const DEGRADED: &str = "degraded";
 const SIGNAL_EXIT: i32 = -1;
 
+/// Which ending the stage that observed an occupant is entitled to report.
+///
+/// The stage decides this, not the exit status, because only the stage knows
+/// whether this resident is the reason the occupant ended.
 #[derive(Clone, Copy)]
 enum ExitClass {
     Drained,
     Exited,
+    /// Observed after this resident sent the kill.
+    Killed,
 }
 
 #[derive(Debug)]
@@ -36,6 +42,10 @@ enum ProcessEvidence {
         occupant: CanonicalUuid,
         code: i32,
     },
+    Killed {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    },
     Degraded {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
@@ -48,6 +58,7 @@ impl ProcessEvidence {
         match self {
             Self::Drained { lane, .. }
             | Self::Exited { lane, .. }
+            | Self::Killed { lane, .. }
             | Self::Degraded { lane, .. } => *lane,
         }
     }
@@ -56,6 +67,7 @@ impl ProcessEvidence {
         match self {
             Self::Drained { occupant, .. }
             | Self::Exited { occupant, .. }
+            | Self::Killed { occupant, .. }
             | Self::Degraded { occupant, .. } => *occupant,
         }
     }
@@ -171,6 +183,9 @@ fn exited_evidence(
             occupant,
             code: exit_code(outcome.completion()),
         },
+        // The outcome is not read for a code: this resident sent the kill, so
+        // the status describes that signal rather than the occupant's decision.
+        ExitClass::Killed => ProcessEvidence::Killed { lane, occupant },
     }
 }
 
@@ -292,7 +307,7 @@ fn kill_occupants(
     occupants: &mut ShutdownOccupants,
 ) -> CommandResult<()> {
     occupants.signal_kill();
-    let mut evidence = occupants.observe(Occupant::reap_bound, ExitClass::Exited);
+    let mut evidence = occupants.observe(Occupant::reap_bound, ExitClass::Killed);
     evidence.extend(occupants.finish_residue());
     evidence.extend(unowned_evidence(bus, epoch, occupants, &evidence)?);
     progress.evidence(bus, epoch, evidence)?;
@@ -387,6 +402,9 @@ fn commit_process_evidence(
                 },
                 cause,
             ),
+            ProcessEvidence::Killed { lane, occupant } => {
+                write.fact(wire::body::LaneKilled { lane, occupant }, cause)
+            }
             ProcessEvidence::Degraded { lane, marker, .. } => {
                 write.fact(wire::body::LaneDegraded { lane, marker }, cause)
             }
@@ -427,7 +445,9 @@ fn vacate_observed_lane(head: &mut ResidencyHead, evidence: &ProcessEvidence) ->
     lane.occupant = None;
     lane.disposition = match evidence {
         ProcessEvidence::Degraded { .. } => DEGRADED,
-        ProcessEvidence::Drained { .. } | ProcessEvidence::Exited { .. } => VACANT,
+        ProcessEvidence::Drained { .. }
+        | ProcessEvidence::Exited { .. }
+        | ProcessEvidence::Killed { .. } => VACANT,
     }
     .to_owned();
     Ok(())

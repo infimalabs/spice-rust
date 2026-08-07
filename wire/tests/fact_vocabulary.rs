@@ -20,7 +20,7 @@
 //! expanded from it. Reading the expansion instead would read this crate's own
 //! output back to itself, which is why the parser below looks for the table and
 //! not for `pub enum FactKind` — that enum is now generated, so a parser aimed
-//! at it would find no variants and prove nothing about all 62 of them.
+//! at it would find no variants and prove nothing about all 68 of them.
 //!
 //! [`PINNED`] holds the third side, and the one neither of the others can
 //! supply. Both of those read the crate under test: the match covers its enum
@@ -95,6 +95,7 @@ const PINNED: &[(&str, &str)] = &[
     ("LaneCompacted", "lane::compacted"),
     ("LaneRenewed", "lane::renewed"),
     ("LaneDrained", "lane::drained"),
+    ("LaneKilled", "lane::killed"),
     ("LaneDegraded", "lane::degraded"),
     ("LaneHeld", "lane::held"),
     ("LaneResumed", "lane::resumed"),
@@ -170,6 +171,7 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::LaneCompacted
         | FactKind::LaneRenewed
         | FactKind::LaneDrained
+        | FactKind::LaneKilled
         | FactKind::LaneDegraded
         | FactKind::LaneHeld
         | FactKind::LaneResumed => "lane",
