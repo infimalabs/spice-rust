@@ -13,7 +13,7 @@ const BASE_MILLIS: u32 = 500;
 ///
 /// Bounded so a resident that comes back after a long outage is found within a
 /// known time rather than after a backoff that grew without limit.
-const CEILING_MILLIS: u32 = 10_000;
+const MAX_MILLIS: u32 = 10_000;
 
 /// How long to wait before the attempt numbered `attempt`, counting from zero.
 ///
@@ -23,10 +23,10 @@ const CEILING_MILLIS: u32 = 10_000;
 const fn delay_for(attempt: u32) -> u32 {
     match 2_u32.checked_pow(attempt) {
         Some(factor) => match BASE_MILLIS.checked_mul(factor) {
-            Some(delay) if delay < CEILING_MILLIS => delay,
-            _ => CEILING_MILLIS,
+            Some(delay) if delay < MAX_MILLIS => delay,
+            _ => MAX_MILLIS,
         },
-        None => CEILING_MILLIS,
+        None => MAX_MILLIS,
     }
 }
 
@@ -63,7 +63,7 @@ impl Backoff {
 
 #[cfg(test)]
 mod tests {
-    use super::{BASE_MILLIS, Backoff, CEILING_MILLIS};
+    use super::{BASE_MILLIS, Backoff, MAX_MILLIS};
 
     /// Delays reported for `count` consecutive unadmitted connections.
     fn failing(count: usize) -> Vec<u32> {
@@ -72,7 +72,7 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_failures_double_the_delay_up_to_the_ceiling() {
+    fn consecutive_failures_double_the_delay_up_to_the_maximum() {
         assert_eq!(
             failing(8),
             vec![500, 1_000, 2_000, 4_000, 8_000, 10_000, 10_000, 10_000]
@@ -85,15 +85,15 @@ mod tests {
         for _ in 0..64 {
             let delay = backoff.settle(false);
             assert!(
-                (BASE_MILLIS..=CEILING_MILLIS).contains(&delay),
-                "delay {delay} outside {BASE_MILLIS}..={CEILING_MILLIS}"
+                (BASE_MILLIS..=MAX_MILLIS).contains(&delay),
+                "delay {delay} outside {BASE_MILLIS}..={MAX_MILLIS}"
             );
         }
-        // Past `2^32` the doubling can no longer be represented. The ceiling is
+        // Past `2^32` the doubling can no longer be represented. The maximum is
         // the answer there too, so the count that overflows is not the count
         // that reconnects fastest.
         for _ in 0..u32::BITS + 2 {
-            assert_eq!(backoff.settle(false), CEILING_MILLIS);
+            assert_eq!(backoff.settle(false), MAX_MILLIS);
         }
     }
 
