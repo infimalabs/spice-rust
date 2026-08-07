@@ -30,6 +30,7 @@ export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) 
     window.__speechMaxActive = 0;
     window.__holdSpeechPlay = false;
     window.__speechPlayPending = [];
+    window.__speechAudios = [];
     class FakeVoice {
       constructor(name) { this.name = name; }
     }
@@ -48,6 +49,9 @@ export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) 
         this.currentTime = 0;
         this.onended = null;
         this.onerror = null;
+        this.onpause = null;
+        this.ended = false;
+        window.__speechAudios.push(this);
         window.__speechLog.push({ action: "audio", src });
       }
       play() {
@@ -59,7 +63,10 @@ export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) 
         }
         return Promise.resolve();
       }
-      pause() { window.__speechLog.push({ action: "pause" }); }
+      pause() {
+        window.__speechLog.push({ action: "pause" });
+        this.onpause?.(new Event("pause"));
+      }
     }
     window.SpeechSynthesisVoice = FakeVoice;
     window.SpeechSynthesisUtterance = FakeUtterance;
@@ -237,6 +244,31 @@ export async function assertSpeechVariants(browser, endpoint) {
   const externalActions = await external.evaluate(() => window.__speechLog.map((row) => row.action));
   assert.ok(externalActions.includes("play"));
   assert.ok(externalActions.includes("pause"));
+
+  await external.evaluate(() => { window.__holdSpeechPlay = false; });
+  await externalButton.click();
+  await external.locator('.speech-button[data-state="playing"]').waitFor();
+  await chooseCanvasView(external, "Agents");
+  const team = external.locator(".team-surface").first();
+  await team.locator('.team-speech input[type="range"]').fill("1");
+  const messageSpeech = team.getByLabel("Speak this message").first();
+  await messageSpeech.waitFor();
+  await messageSpeech.click();
+  const requestsAtPause = speechRequest;
+  await external.evaluate(() => {
+    const audio = window.__speechAudios.at(-1);
+    if (!audio?.onpause) throw new Error("external audio has no pause observer");
+    audio.pause();
+  });
+  await chooseCanvasView(external, "Flow");
+  await external.locator('.speech-button[data-state="idle"]').waitFor();
+  await external.evaluate(() => new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(
+    speechRequest,
+    requestsAtPause,
+    "an unmarked media pause clears the queued manual successor",
+  );
   externalMonitor.assertClean();
   await external.close();
 

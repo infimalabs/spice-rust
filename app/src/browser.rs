@@ -25,7 +25,8 @@ use yew::prelude::*;
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
 use crate::speech_queue::{
-    Advance, Enqueue, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue, SpeechRequest,
+    Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
+    SpeechRequest,
 };
 use crate::{
     Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective, stale_reads,
@@ -205,6 +206,7 @@ impl SpeechRuntime {
             };
             let ended = runtime.clone();
             let failed = runtime.clone();
+            let paused = runtime.clone();
             let id = entry.id();
             let playing = runtime.controller.borrow_mut().start_external(
                 generation,
@@ -214,6 +216,7 @@ impl SpeechRuntime {
                 move || {
                     failed.defer_finish(id, Some("rendered speech playback failed".to_owned()));
                 },
+                move || paused.external_pause(id),
             );
             let playing = match playing {
                 Ok(playing) => playing,
@@ -254,6 +257,18 @@ impl SpeechRuntime {
 
     fn is_current(&self, id: u64, generation: u64) -> bool {
         self.queue.borrow().is_active(id) && self.controller.borrow().is_current(generation)
+    }
+
+    fn external_pause(&self, id: u64) {
+        let pause = self.queue.borrow_mut().external_pause(id);
+        match pause {
+            ExternalPause::Ignored => {}
+            ExternalPause::Stopped | ExternalPause::Idle => {
+                self.controller.borrow_mut().stop();
+                self.status.set(SpeechStatus::Idle);
+            }
+            ExternalPause::Start(entry) => self.start(entry),
+        }
     }
 
     fn active(&self) -> bool {
