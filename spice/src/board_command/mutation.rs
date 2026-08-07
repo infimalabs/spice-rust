@@ -850,6 +850,23 @@ fn publish_correction(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
+/// One decided claim and the board snapshot it was decided against.
+///
+/// The allocator's re-read guard exists precisely because deciding a claim and
+/// writing it down are separated in time. Naming that separation is what makes
+/// the hazard expressible: everything `commit_claim` writes, the guard's
+/// observation included, is derived from the one snapshot `claim_plan` read,
+/// never from a second read taken later. This is the shape `DocPlan` already
+/// runs, where the plan carries the snapshot its decision was made against and
+/// the later steps consume it.
+struct ClaimPlan {
+    snapshot: ValidatedSnapshot,
+    selected: Entry,
+    grant: ClaimGrant,
+    next: Option<Box<str>>,
+    possession: Possession,
+}
+
 fn claim_win(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -858,36 +875,37 @@ fn claim_win(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let possession = match possession_rule(win) {
-        Ok(possession) => possession,
+    let plan = match claim_plan(bus, command, win, repository, projects, allocation) {
+        Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
-    let snapshot = match validated_snapshot(
+    commit_claim(bus, command, win, projects, plan)
+}
+
+/// Decide one claim against a single board read.
+///
+/// Every refusal a caller could have avoided is raised here, in order, and the
+/// caller sees the first one only.
+fn claim_plan(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    win: &ClaimWin,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Result<ClaimPlan, Outcome<CommandAnswer>> {
+    let possession = possession_rule(win)?;
+    let snapshot = validated_snapshot(
         bus,
         command.actor().clone(),
         projects,
         allocation,
-    ) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
-    let selected = match claim_selection(&snapshot, command, possession) {
-        Ok(selected) => selected,
-        Err(outcome) => return outcome,
-    };
-    let grant = match claim_grant(
-        bus,
-        command,
-        repository,
-        &snapshot,
-        possession,
-    ) {
-        Ok(grant) => grant,
-        Err(outcome) => return outcome,
-    };
+    )?;
+    let selected = claim_selection(&snapshot, command, possession)?.clone();
+    let grant = claim_grant(bus, command, repository, &snapshot, possession)?;
     let next = projected_claim_next_action(
         &snapshot,
-        selected,
+        &selected,
         command,
         grant.lane,
         grant.occupant,
@@ -896,10 +914,13 @@ fn claim_win(
         grant.maximum,
         projects,
     );
-    record_claim(
-        bus, command, win, &snapshot, selected, grant, next, possession,
-        projects,
-    )
+    Ok(ClaimPlan {
+        snapshot,
+        selected,
+        grant,
+        next,
+        possession,
+    })
 }
 
 /// What a claim settles before the journal opens.
@@ -946,28 +967,31 @@ fn claim_grant(
     })
 }
 
-/// Write the claim: one origin, the guards it owes, its two heads, its receipt.
+/// Write the decided claim: one origin, the guards it owes, its two heads, its
+/// receipt.
 ///
 /// Nothing here refuses on what the caller asked for; by this point the command
-/// is already admitted and the grant already resolved, so every failure below is
+/// is already admitted and the plan already decided, so every failure below is
 /// a fault rather than a refusal the caller could have avoided: a validated
 /// handle that will not form an origin is a protocol fault, and the mint and the
 /// receipt are store faults.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one claim fact and its two heads share one origin"
-)]
-fn record_claim(
+///
+/// The plan arrives whole rather than as loose arguments so the guard's
+/// observation can only come from the snapshot the decision was made against.
+fn commit_claim(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     win: &ClaimWin,
-    snapshot: &ValidatedSnapshot,
-    selected: &Entry,
-    grant: ClaimGrant,
-    next: Option<Box<str>>,
-    possession: Possession,
     projects: &ProjectPolicy,
+    plan: ClaimPlan,
 ) -> Outcome<CommandAnswer> {
+    let ClaimPlan {
+        snapshot,
+        selected,
+        grant,
+        next,
+        possession,
+    } = plan;
     let task = selected.statement().handle.clone();
     let origin = match task_origin(&task) {
         Ok(origin) => origin,
@@ -981,7 +1005,7 @@ fn record_claim(
     );
     guard_claim(
         &mut write,
-        snapshot,
+        &snapshot,
         command,
         possession.captures(),
         &task,
@@ -990,7 +1014,7 @@ fn record_claim(
     if let Err(outcome) = append_claim_heads(
         &mut write,
         command,
-        selected,
+        &selected,
         &task,
         grant.lane,
         grant.occupant,
@@ -1005,7 +1029,7 @@ fn record_claim(
     let answer = wire::intent::ClaimAnswer {
         task,
         holder: command.actor().clone(),
-        warnings: board::claim_overlaps(selected, &snapshot.entries)
+        warnings: board::claim_overlaps(&selected, &snapshot.entries)
             .into_iter()
             .map(|overlap| wire::intent::ClaimWarning {
                 task: overlap.task,
