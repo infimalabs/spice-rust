@@ -173,28 +173,49 @@ fn a_harmless_mention_reaches_the_clearance_fact_path() {
 }
 
 #[test]
-fn historical_judgments_are_exactly_the_two_kinds_the_judge_produces() {
+fn judgment_and_reminder_origins_cover_the_taste_plane_without_overlap() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let hit = bag
         .hits(&prose(BEHAVIOR))
         .into_iter()
         .next()
         .expect("behavior fixture hits");
-    let mut produced = [
+    let mut judgment_produced = [
         judge(hit.clone(), Decision::Confirm).into_fact().kind(),
         judge(hit, Decision::Clear).into_fact().kind(),
     ];
-    produced.sort_unstable();
+    judgment_produced.sort_unstable();
 
     assert_eq!(
-        produced,
+        judgment_produced,
         [FactKind::TasteConfirmed, FactKind::TasteCleared],
         "the judge owns historical curation evidence only"
     );
-    assert!(fold::FactPlane::Taste.contains(FactKind::TasteReminded));
+
+    let reminder_originated = [FactKind::TasteReminded];
     assert_eq!(
         FactKind::TasteReminded.producer(),
         wire::Producer::ResidentRecognition,
         "the live judge-free path belongs to resident recognition"
     );
+    assert!(
+        reminder_originated
+            .iter()
+            .all(|kind| !judgment_produced.contains(kind))
+    );
+
+    let mut produced = judgment_produced
+        .into_iter()
+        .chain(reminder_originated)
+        .collect::<Vec<_>>();
+    produced.sort_unstable();
+
+    let mut taste_plane = FactKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| fold::FactPlane::Taste.contains(*kind))
+        .collect::<Vec<_>>();
+    taste_plane.sort_unstable();
+
+    assert_eq!(produced, taste_plane);
 }
