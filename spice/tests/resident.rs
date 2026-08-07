@@ -397,10 +397,11 @@ enum FakeBehavior {
 ///
 /// A fake resident that only binds a port is not yet a publisher a client may
 /// dial: possession of this lock is what separates a record whose author is
-/// still running from one it left behind, so a fixture that serves the socket
-/// has to hold it too. The caller keeps the possession for as long as the fake
-/// is meant to be alive.
-fn fake_publisher(fixture: &Fixture) -> sill::Possession {
+/// still running from one it left behind, and the generation written into it
+/// is what separates the author from whoever merely holds the lock now. A
+/// fixture that serves the socket has to do both. The caller keeps the
+/// possession for as long as the fake is meant to be alive.
+fn fake_publisher(fixture: &Fixture, epoch: wire::CanonicalUuid) -> sill::Possession {
     let lock = sill::LockFile::new(
         sill::LockName::new("resident").expect("resident is a non-empty lock name"),
         fixture.resident(),
@@ -410,11 +411,15 @@ fn fake_publisher(fixture: &Fixture) -> sill::Possession {
         panic!("a fixture runtime with no resident cannot be contended");
     };
     publisher
+        .rewrite_record(
+            spice::resident_lock::holder_record(std::process::id(), Some(epoch)).as_bytes(),
+        )
+        .expect("fixture holder record writes");
+    publisher
 }
 
 fn fake_down(fixture: &Fixture, behavior: FakeBehavior, json: bool) -> (Output, Duration) {
     fs::create_dir_all(&fixture.runtime).expect("fixture runtime directory");
-    let publisher = fake_publisher(fixture);
     let listener = TcpListener::bind("127.0.0.1:0").expect("fake resident binds");
     let discovery = canvas::Discovery {
         endpoint: format!(
@@ -424,6 +429,7 @@ fn fake_down(fixture: &Fixture, behavior: FakeBehavior, json: bool) -> (Output, 
         capability: uuid("00000000-0000-4000-8000-000000000031"),
         epoch: uuid("00000000-0000-4000-8000-000000000032"),
     };
+    let publisher = fake_publisher(fixture, discovery.epoch);
     discovery
         .publish(fixture.canvas())
         .expect("fake discovery publishes");

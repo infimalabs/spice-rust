@@ -646,10 +646,13 @@ fn command_client_process_refuses_untrusted_discovery_before_connecting() {
 
     fs::create_dir_all(&fixture.runtime).expect("fixture runtime directory");
     // Every refusal below is about the discovery being untrustworthy, so a
-    // publisher holds the runtime lock throughout: without one the client
-    // would refuse for the unrelated reason that nobody is serving, and this
-    // case would stop testing what it names.
-    let publisher = fake_publisher(&fixture);
+    // publisher holds the runtime lock throughout and claims the generation
+    // published below: without a holder the client would refuse because nobody
+    // is serving, and without the claim it would refuse because the resident
+    // serving is not the one that published. Either way this case would stop
+    // testing what it names.
+    let epoch = uuid("00000000-0000-4000-8000-000000000042");
+    let publisher = fake_publisher(&fixture, epoch);
     fs::write(fixture.canvas(), b"not current discovery").expect("malformed discovery writes");
     #[cfg(unix)]
     fs::set_permissions(fixture.canvas(), fs::Permissions::from_mode(0o600))
@@ -665,7 +668,7 @@ fn command_client_process_refuses_untrusted_discovery_before_connecting() {
     let mut discovery = canvas::Discovery {
         endpoint: "http://canvas.example:48123".to_owned(),
         capability,
-        epoch: uuid("00000000-0000-4000-8000-000000000042"),
+        epoch,
     };
     discovery
         .publish(fixture.canvas())
@@ -1060,6 +1063,14 @@ fn authenticated_down_rejects_a_stale_epoch_then_reaches_verified_dark() {
         "holder names its generation: {observed}"
     );
 
+    // A generation the holder does not claim is refused where it is read, not
+    // where it is presented. The live resident would reject this Hello as
+    // `hello::epoch-mismatch` and still does — `canvas/src/axum/tests/
+    // lifecycle.rs` proves that against the server itself — but the client no
+    // longer travels far enough to be told, because reaching that answer means
+    // handing a capability to whoever is listening first. The holder line
+    // asserted above is what makes the earlier answer possible: it names the
+    // generation this record fails to match.
     let mut stale = discovery.clone();
     stale.epoch = "00000000-0000-4000-8000-000000000001"
         .parse()
@@ -1072,7 +1083,13 @@ fn authenticated_down_rejects_a_stale_epoch_then_reaches_verified_dark() {
     let Outcome::Fault(fault) = outcome(&rejected) else {
         panic!("stale epoch must fault");
     };
-    assert_eq!(fault.reason, "hello::epoch-mismatch");
+    assert_eq!(fault.reason, "canvas::publisher-replaced");
+    assert!(
+        !rejected
+            .stderr
+            .windows(discovery.capability.to_string().len())
+            .any(|window| window == discovery.capability.to_string().as_bytes())
+    );
 
     discovery
         .publish(fixture.canvas())

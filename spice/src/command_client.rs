@@ -323,6 +323,9 @@ impl DiscoveryRead {
     /// Naming it after the discovery file would send a reader to inspect bytes
     /// that are not the problem, so it keeps the lock's own reason. Either way
     /// the endpoint is refused — "unknown" is not permission to dial.
+    ///
+    /// Possession is necessary and not sufficient, so a held lock is handed to
+    /// [`Self::require_publishing_holder`] rather than admitted here.
     fn require_live_publisher(&self) -> Result<(), Fault> {
         let name = LockName::new("resident").expect("resident is a non-empty lock name");
         let availability = LockFile::new(name, &self.resident_lock)
@@ -331,12 +334,46 @@ impl DiscoveryRead {
                 environment_fault_value("canvas::publisher-unknown", &error.to_string())
             })?;
         match availability {
-            Availability::Held => Ok(()),
+            Availability::Held => self.require_publishing_holder(),
             Availability::Available => Err(environment_fault_value(
                 "canvas::publisher-gone",
                 "canvas discovery outlived the resident that published it",
             )),
         }
+    }
+
+    /// Refuse a record the resident now holding the lock did not publish.
+    ///
+    /// A resident takes the lock on its first instant and only afterwards
+    /// clears the records its predecessor left behind, so across that interval
+    /// the kernel reports a live holder over a record it did not write and
+    /// will never serve. Possession answers "is a resident running"; this
+    /// answers the question the record actually poses, which is whether the
+    /// resident running is the one that put this endpoint and capability on
+    /// disk. The holder names its own generation inside the lock, and that is
+    /// what makes the two comparable at all.
+    ///
+    /// This is a separate reason from a publisher that is gone. "Gone" sends a
+    /// reader looking for a resident that died and left a record behind; here
+    /// a resident is alive, starting, and about to publish its own. Reporting
+    /// the second as the first would describe a healthy start as a corpse, and
+    /// the remedies differ: nothing needs cleaning up, the caller needs to ask
+    /// again once the record it will serve has landed.
+    ///
+    /// The lock is read after the kernel has answered rather than before, so a
+    /// lock that cannot be read at all keeps the one reason that already
+    /// covers it instead of earning a second.
+    fn require_publishing_holder(&self) -> Result<(), Fault> {
+        let holder = fs::read(&self.resident_lock).map_err(|error| {
+            environment_fault_value("canvas::publisher-unknown", &error.to_string())
+        })?;
+        if spice::resident_lock::holder_epoch(&holder) == Some(self.value.epoch) {
+            return Ok(());
+        }
+        Err(environment_fault_value(
+            "canvas::publisher-replaced",
+            "the resident holding the lock did not publish this canvas discovery",
+        ))
     }
 
     fn verify_current(&self) -> ClientResult<()> {

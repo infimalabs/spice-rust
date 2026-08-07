@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use sill::{Acquisition, Possession};
+use spice::resident_lock::holder_record;
 
 use wire::intent::{StateAnswer, UpChange};
 use wire::{ResidentState, Seq, SeqRange};
@@ -79,7 +80,23 @@ impl Fixture {
         discovery
             .publish(&self.canvas)
             .expect("fixture discovery publishes");
+        self.hold(discovery.epoch);
         discovery
+    }
+
+    /// Record the generation this fixture's resident published.
+    ///
+    /// A real resident writes this line the instant it takes the lock and
+    /// rewrites it with its own generation before publishing anything, so a
+    /// fixture holding the lock without one is a state no resident produces —
+    /// and every case here that expects an admission would be asserting
+    /// against a record the client is right to refuse.
+    fn hold(&self, epoch: CanonicalUuid) {
+        self.publisher
+            .as_ref()
+            .expect("fixture resident still holds its lock")
+            .rewrite_record(holder_record(std::process::id(), Some(epoch)).as_bytes())
+            .expect("fixture holder record writes");
     }
 }
 
@@ -452,6 +469,7 @@ fn canvas_opens_a_discovery_naming_an_address_the_operator_bound() {
     }
     .publish(&fixture.canvas)
     .expect("routable fixture publishes");
+    fixture.hold(uuid(4));
 
     let outcome = open_canvas_with(
         &fixture.canvas,
@@ -704,6 +722,7 @@ fn open_against_peer(fixture: &mut Fixture, lose_publisher: bool) -> (ClientResu
     discovery
         .publish(&fixture.canvas)
         .expect("fixture discovery publishes");
+    fixture.hold(discovery.epoch);
 
     let seen = Arc::new(Mutex::new(Vec::new()));
     let (accepted, connected) = mpsc::channel();
