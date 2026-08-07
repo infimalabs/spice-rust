@@ -872,6 +872,10 @@ async fn run_surface(
         failures,
     } = capture::channels();
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
+    // Tapes kept growing while this resident was down. Accounting what they
+    // gained before the surface is driven means the first live record continues
+    // a head that already stands past everything the outage missed.
+    ingest_transcripts(bus, paths, None, progress)?;
     let command_surface = command_surface::Surface::new(
         bus,
         repository,
