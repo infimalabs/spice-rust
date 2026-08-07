@@ -862,17 +862,9 @@ fn publish_correction(
 struct ClaimPlan {
     snapshot: ValidatedSnapshot,
     selected: Entry,
-    task: TaskHandle,
-    possession: Possession,
-    lane: wire::CanonicalUuid,
-    occupant: wire::CanonicalUuid,
-    at: Instant,
-    expiry: Instant,
-    maximum: Instant,
-    git: Option<GitBoundary>,
-    source: body::SourceBoundary,
-    origin: wire::Origin,
+    grant: ClaimGrant,
     next: Option<Box<str>>,
+    possession: Possession,
 }
 
 fn claim_win(
@@ -890,7 +882,10 @@ fn claim_win(
     commit_claim(bus, command, win, projects, plan)
 }
 
-/// Decide the claim against one board read.
+/// Decide one claim against a single board read.
+///
+/// Every refusal a caller could have avoided is raised here, in order, and the
+/// caller sees the first one only.
 fn claim_plan(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -907,33 +902,61 @@ fn claim_plan(
         allocation,
     )?;
     let selected = claim_selection(&snapshot, command, possession)?.clone();
-    let task = selected.statement().handle.clone();
-    let (lane, occupant) = claim_residency(command)?;
-    let (at, expiry, maximum) = claim_deadlines()?;
-    let git = claim_git_boundary(
-        repository,
-        &snapshot,
-        command,
-        possession.captures(),
-    )?;
-    let source = claim_source_boundary(bus, &lane)?;
+    let grant = claim_grant(bus, command, repository, &snapshot, possession)?;
     let next = projected_claim_next_action(
         &snapshot,
         &selected,
         command,
-        lane,
-        occupant,
-        at,
-        expiry,
-        maximum,
+        grant.lane,
+        grant.occupant,
+        grant.at,
+        grant.expiry,
+        grant.maximum,
         projects,
     );
-    let origin = task_origin(&task)?;
     Ok(ClaimPlan {
         snapshot,
         selected,
-        task,
+        grant,
+        next,
         possession,
+    })
+}
+
+/// What a claim settles before the journal opens.
+///
+/// These resolve together because they refuse together, and the order is the
+/// contract rather than an accident of writing: each step here can refuse, and
+/// the caller sees the first refusal only, so a seat that cannot be read is
+/// reported before a boundary that cannot be captured.
+struct ClaimGrant {
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+    at: Instant,
+    expiry: Instant,
+    maximum: Instant,
+    git: Option<GitBoundary>,
+    source: body::SourceBoundary,
+}
+
+/// Resolve the seat, the deadlines and the two boundaries one claim records.
+fn claim_grant(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    possession: Possession,
+) -> Result<ClaimGrant, Outcome<CommandAnswer>> {
+    let (lane, occupant) = claim_residency(command)?;
+    let (at, expiry, maximum) = claim_deadlines()?;
+    let git = claim_git_boundary(
+        repository,
+        snapshot,
+        command,
+        possession.captures(),
+    )?;
+    let source = claim_source_boundary(bus, &lane)?;
+    Ok(ClaimGrant {
         lane,
         occupant,
         at,
@@ -941,12 +964,20 @@ fn claim_plan(
         maximum,
         git,
         source,
-        origin,
-        next,
     })
 }
 
-/// Write the decided claim down under the guard that re-reads its snapshot.
+/// Write the decided claim: one origin, the guards it owes, its two heads, its
+/// receipt.
+///
+/// Nothing here refuses on what the caller asked for; by this point the command
+/// is already admitted and the plan already decided, so every failure below is
+/// a fault rather than a refusal the caller could have avoided: a validated
+/// handle that will not form an origin is a protocol fault, and the mint and the
+/// receipt are store faults.
+///
+/// The plan arrives whole rather than as loose arguments so the guard's
+/// observation can only come from the snapshot the decision was made against.
 fn commit_claim(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -957,22 +988,19 @@ fn commit_claim(
     let ClaimPlan {
         snapshot,
         selected,
-        task,
-        possession,
-        lane,
-        occupant,
-        at,
-        expiry,
-        maximum,
-        git,
-        source,
-        origin,
+        grant,
         next,
+        possession,
     } = plan;
+    let task = selected.statement().handle.clone();
+    let origin = match task_origin(&task) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
     let mut write = JournalWrite::new(
         command.actor().clone(),
         origin,
-        at,
+        grant.at,
         Producer::CommandDoor,
     );
     guard_claim(
@@ -988,18 +1016,18 @@ fn commit_claim(
         command,
         &selected,
         &task,
-        lane,
-        occupant,
-        at,
-        expiry,
-        maximum,
-        git,
-        source,
+        grant.lane,
+        grant.occupant,
+        grant.at,
+        grant.expiry,
+        grant.maximum,
+        grant.git,
+        grant.source,
     ) {
         return outcome;
     }
     let answer = wire::intent::ClaimAnswer {
-        task: task.clone(),
+        task,
         holder: command.actor().clone(),
         warnings: board::claim_overlaps(&selected, &snapshot.entries)
             .into_iter()

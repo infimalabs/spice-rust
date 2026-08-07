@@ -344,6 +344,30 @@ impl LatchBinding {
     }
 }
 
+/// The most findings one measurement carries into the report.
+///
+/// A count alone tells a reader which file to search; a finding tells them
+/// where to look inside it. Carrying every one would let a single pathological
+/// source set the size of the whole report, so a measurement carries a bounded
+/// sample and [`MetricMeasurement::value`] keeps the true total. The two are
+/// therefore not interchangeable, and a reader comparing them can tell that a
+/// listing was shortened without being told separately.
+pub const MEASUREMENT_FINDING_LIMIT: usize = 16;
+
+/// One source-located reason a measurement reads the way it does.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct MetricFinding {
+    /// Selected-tree-relative path of the source that carries the finding.
+    pub path: String,
+    /// One-based line within that source.
+    pub line: u64,
+    /// The target as written, which is the string a reader must go find.
+    pub target: String,
+    /// The spelling the target should have used, where one is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+}
+
 /// One trusted number with every declaration/state input that produced it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MetricMeasurement {
@@ -352,6 +376,8 @@ pub struct MetricMeasurement {
     rule: Option<RuleBinding>,
     latch: Option<LatchBinding>,
     threshold: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    findings: Vec<MetricFinding>,
 }
 
 impl MetricMeasurement {
@@ -363,7 +389,22 @@ impl MetricMeasurement {
             rule: None,
             latch: None,
             threshold: None,
+            findings: Vec::new(),
         }
+    }
+
+    /// Attach the located findings behind this value, bounded as they are taken.
+    ///
+    /// The bound is [`MEASUREMENT_FINDING_LIMIT`] and it is applied here, at the
+    /// only door into the field, so no caller can widen it by constructing the
+    /// vector differently. Truncation keeps the leading entries, which are the
+    /// scanners' canonical order, so a shortened listing still begins where a
+    /// reader would begin reading the file.
+    #[must_use]
+    pub fn with_findings(mut self, mut findings: Vec<MetricFinding>) -> Self {
+        findings.truncate(MEASUREMENT_FINDING_LIMIT);
+        self.findings = findings;
+        self
     }
 
     #[must_use]
@@ -407,6 +448,11 @@ impl MetricMeasurement {
     #[must_use]
     pub const fn threshold(&self) -> Option<u64> {
         self.threshold
+    }
+
+    #[must_use]
+    pub fn findings(&self) -> &[MetricFinding] {
+        &self.findings
     }
 }
 
@@ -747,6 +793,7 @@ fn validate_measurement(
             "parser evidence does not match declaration",
         );
     }
+    validate_findings(declaration, measurement)?;
     match declaration.id() {
         MetricId::FileLines
         | MetricId::FileBytes
@@ -758,6 +805,45 @@ fn validate_measurement(
             validate_zero_tolerance(declaration, measurement)
         }
     }
+}
+
+/// Findings are a bounded sample of the value, never a second count of it.
+///
+/// The bound is re-checked here rather than trusted from
+/// [`MetricMeasurement::with_findings`], because a decoded report reaches this
+/// field through `Deserialize` and never passes that builder at all.
+fn validate_findings(
+    declaration: MetricDeclaration,
+    measurement: &MetricMeasurement,
+) -> Result<(), EvidenceError> {
+    let findings = &measurement.findings;
+    if findings.len() > MEASUREMENT_FINDING_LIMIT {
+        return invalid_state(
+            declaration.id(),
+            "measurement carries more findings than the admitted bound",
+        );
+    }
+    if u64::try_from(findings.len()).unwrap_or(u64::MAX) > measurement.value {
+        return invalid_state(
+            declaration.id(),
+            "measurement carries more findings than the value they explain",
+        );
+    }
+    if findings.iter().any(|finding| {
+        finding.line == 0
+            || !valid_text(&finding.path)
+            || !valid_text(&finding.target)
+            || finding
+                .expected
+                .as_deref()
+                .is_some_and(|value| !valid_text(value))
+    }) {
+        return invalid_state(
+            declaration.id(),
+            "a finding must name a one-based line with single-line path and target text",
+        );
+    }
+    Ok(())
 }
 
 fn validate_bounded(
@@ -830,6 +916,16 @@ fn validate_zero_tolerance(
         return invalid_state(
             declaration.id(),
             "zero-tolerance measurement carries unrelated rule, latch, or threshold evidence",
+        );
+    }
+    // A zero-tolerance value is a count of breaches and nothing else, so any
+    // nonzero value is a refusal. Requiring a finding here is what makes the
+    // report's naming structural: a breach that named nothing cannot be encoded
+    // in the first place, rather than being encoded and merely unhelpful.
+    if measurement.value > 0 && measurement.findings.is_empty() {
+        return invalid_state(
+            declaration.id(),
+            "a zero-tolerance breach must name at least one finding",
         );
     }
     Ok(())

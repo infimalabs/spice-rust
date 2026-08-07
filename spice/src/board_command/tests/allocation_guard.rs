@@ -377,7 +377,8 @@ fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
     let command = claim_next_command(epoch, &actor, &answer, &winner, &seats[0]);
     let plan = plan_claim(&bus, &command);
     assert_eq!(
-        plan.task, winner,
+        plan.selected.statement().handle,
+        winner,
         "the production plan decided the winner this command witnessed"
     );
 
