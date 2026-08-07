@@ -30,15 +30,14 @@ result, and wake cursor. No command, fold, canvas, hook, or offline path owns a
 second writer. An epoch rejects stale clients; only loss of the kernel lock
 ends ownership.
 
-**Break.** Release one starts clean. Cutover drains the old fleet, exports only
-wanted work as a task document, takes a verified backup, and opens empty
-authorities under the new binary. It is executed from an operator shell
-outside the fleet being drained, and its rollback boundary is explicit:
-restoring the predecessor is legal only until the new journal admits its
-first intent, after which the exchange is forward-only. Old handles, schema,
-and executable state do not cross. Historical material remains evidence
-outside the new authority; it never becomes an import path or a
-compatibility arm.
+**Break.** Release one starts clean. This authority opened empty and inherits
+nothing: no predecessor task, claim, session, handle, schema, or executable
+state crosses into it, and none ever will. The break is in the data, not in the
+fleet — the predecessor keeps running beside this appliance for as long as it
+is wanted, neither system is a stage of the other, and installing or starting
+one is never a step that stops the other. Historical material remains evidence
+outside this authority; it never becomes an import path or a compatibility arm.
+Retiring either system is a separate operator act with its own evidence.
 
 **Refusal.** A withdrawn or inadmissible act refuses loudly with the attempted
 surface, the release that withdrew or constrained it, and the available
@@ -89,12 +88,12 @@ commit in one SQLite transaction under the resident's guard. The board reads
 the authoritative head tables directly; folds are disposable canvas
 materializations and never stand between a command and its truth.
 
-This resolution follows the clean break. Release one retains no external task
-writer, synchronization protocol, recurrence engine, imported state, working
-set numbering, or undo facility whose value could repay a second durable
-store. The old split therefore imposed failure modes without preserving a
-needed capability: commands could cross stores, reads needed composite
-cursors, and recovery had to infer which half of an act had landed.
+This resolution follows from inheriting nothing. Release one retains no
+external task writer, synchronization protocol, recurrence engine, imported
+state, working set numbering, or undo facility whose value could repay a
+second durable store. The old split therefore imposed failure modes without
+preserving a needed capability: commands could cross stores, reads needed
+composite cursors, and recovery had to infer which half of an act had landed.
 
 The resolution deletes the second task database, cross-store plans,
 before-and-after fingerprints, divergence classifications, serialized board
