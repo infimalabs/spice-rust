@@ -679,6 +679,16 @@ fn verify_heads(
                 .ok_or_else(|| "finding identity disagrees with the row".to_owned())
         },
     )?;
+    count += verify_keyed_heads::<wire::TranscriptSourceHead>(
+        connection,
+        "transcript_source_heads",
+        violations,
+        |key, _seq, head| {
+            (head.key() == key)
+                .then_some(())
+                .ok_or_else(|| "transcript stream disagrees with the row".to_owned())
+        },
+    )?;
     count += verify_residency(connection, violations)?;
     Ok(count)
 }
@@ -760,6 +770,7 @@ fn head_key(table: &str) -> &'static str {
         "witness_heads" => "name",
         "trust_heads" => "digest",
         "finding_heads" => "identity",
+        "transcript_source_heads" => "stream",
         _ => unreachable!("head table inventory is closed"),
     }
 }

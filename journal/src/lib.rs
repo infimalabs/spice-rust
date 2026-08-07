@@ -1,7 +1,11 @@
 //! The sole SQLite authority store.
 
 /// The one journal schema this build reads and writes.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// A journal written at any other version is refused by name rather than
+/// stepped forward: the baseline is the single current schema, so there is no
+/// per-release migration arm to accumulate.
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod guard;

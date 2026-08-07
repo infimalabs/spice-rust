@@ -366,6 +366,11 @@ CREATE TABLE finding_heads (
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
+CREATE TABLE transcript_source_heads (
+    stream TEXT PRIMARY KEY,
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
 CREATE TABLE residency_head (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -386,7 +391,7 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 1, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 2, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 "#;

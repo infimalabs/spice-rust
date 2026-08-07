@@ -350,6 +350,14 @@ impl JournalRead<'_> {
         self.text_head("finding_heads", "identity", identity)
     }
 
+    /// Current transcript source head, when the stream has been accounted.
+    pub fn transcript_source_head(
+        &self,
+        stream: &str,
+    ) -> Result<Option<JournalHead<wire::TranscriptSourceHead>>, GuardError> {
+        self.text_head("transcript_source_heads", "stream", stream)
+    }
+
     /// Current resident head, when an epoch has been seated.
     pub fn residency_head(&self) -> Result<Option<JournalHead<wire::ResidencyHead>>, GuardError> {
         let row = self
@@ -711,6 +719,18 @@ impl JournalWrite {
             let head = build(seq);
             let key = head.identity.clone();
             HeadRow::text("finding_heads", "identity", key, seq, &head)
+        }));
+    }
+
+    /// Replace one transcript source head at the assigned fact position.
+    pub fn transcript_source_head<F>(&mut self, fact: PendingFact, build: F)
+    where
+        F: FnOnce(wire::Seq) -> wire::TranscriptSourceHead + Send + 'static,
+    {
+        self.heads.push(HeadUpdate::new(fact, move |seq| {
+            let head = build(seq);
+            let key = head.key();
+            HeadRow::text("transcript_source_heads", "stream", key, seq, &head)
         }));
     }
 

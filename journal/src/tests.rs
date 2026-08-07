@@ -13,334 +13,16 @@ use wire::{
     WorkflowHead,
 };
 
+use wire::body::TranscriptPosition;
+use wire::head::TranscriptSourceHead;
+
 use crate::{Journal, JournalReader, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
 
+mod read;
+mod schema;
+mod transcript;
+
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
-
-#[test]
-fn empty_database_reaches_the_same_finalized_baseline_once() {
-    let mut journal = Journal::in_memory().expect("empty journal migrates");
-    let migration = journal.migration().expect("empty journal migrated");
-    assert_eq!((migration.from(), migration.to()), (0, SCHEMA_VERSION));
-    assert_eq!(
-        journal.schema_version().expect("schema version"),
-        SCHEMA_VERSION
-    );
-
-    assert_eq!(
-        crate::migrate::baseline(&mut journal.connection).expect("baseline is idempotent"),
-        None
-    );
-    assert_eq!(
-        journal.schema_version().expect("schema version"),
-        SCHEMA_VERSION
-    );
-    assert_eq!(authority_tables(&journal), expected_tables());
-
-    let verified = journal.verify().expect("empty baseline verifies");
-    assert_eq!(verified.facts, 0);
-    assert_eq!(verified.receipts, 0);
-    assert_eq!(verified.heads, 0);
-    assert_eq!(verified.threads, 0);
-}
-
-#[test]
-fn prepared_and_forward_schema_states_are_refused_by_name() {
-    let prepared = schema_fixture(1, "prepared", Some(0), Some(1), Some("plan:baseline"));
-    let error = Journal::from_connection(prepared).expect_err("prepared migration refuses open");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::Unfinalized {
-            from: Some(0),
-            to: Some(1)
-        })
-    ));
-    assert!(error.to_string().contains("prepared and unfinalized"));
-
-    let forward = schema_fixture(2, "finalized", None, None, None);
-    let error = Journal::from_connection(forward).expect_err("forward schema refuses open");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::ForwardSchema {
-            found: 2,
-            current: 1
-        })
-    ));
-    assert!(error.to_string().contains("schema 2"));
-}
-
-#[test]
-fn unknown_states_and_occupied_databases_are_refused_by_name() {
-    // These two refusals exist for databases this build did not write, so the
-    // baseline table's own CHECK constraints cannot stand in for them: a
-    // foreign file reaches `finalized_version` carrying whatever it likes.
-    let unknown = schema_fixture(1, "migrating", None, None, None);
-    let error = Journal::from_connection(unknown).expect_err("unknown state refuses open");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::UnknownState { .. })
-    ));
-    assert!(error.to_string().contains("\"migrating\" is unknown"));
-
-    let occupied = Connection::open_in_memory().expect("open occupied fixture");
-    occupied
-        .execute_batch("CREATE TABLE somebody_elses_table(id INTEGER PRIMARY KEY) STRICT;")
-        .expect("occupy the fixture database");
-    let error =
-        Journal::from_connection(occupied).expect_err("an occupied database refuses baselining");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::UnversionedAuthority { object_count: 1 })
-    ));
-    assert!(error.to_string().contains("empty authority"));
-}
-
-#[test]
-fn malformed_schema_identity_is_refused_by_name() {
-    let duplicate = schema_fixture(1, "finalized", None, None, None);
-    duplicate
-        .execute(
-            "INSERT INTO journal_schema(singleton, version, state) VALUES (2, 1, 'finalized')",
-            [],
-        )
-        .expect("insert duplicate schema row");
-    let error = Journal::from_connection(duplicate).expect_err("two schema rows refuse open");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::SchemaRowCount { count: 2 })
-    ));
-    assert!(error.to_string().contains("exactly one row, found 2"));
-
-    let missing = schema_fixture(1, "finalized", None, None, None);
-    missing
-        .execute("UPDATE journal_schema SET singleton = 2", [])
-        .expect("move schema row away from singleton one");
-    let error = Journal::from_connection(missing).expect_err("missing singleton refuses open");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::MissingSingleton)
-    ));
-    assert!(error.to_string().contains("singleton row 1 is missing"));
-
-    let unknown = schema_fixture(0, "finalized", None, None, None);
-    let error = Journal::from_connection(unknown).expect_err("unknown version refuses open");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::UnknownVersion { found: 0 })
-    ));
-    assert!(error.to_string().contains("schema 0 has no migration path"));
-
-    let disagreement = schema_fixture(1, "finalized", None, None, None);
-    disagreement
-        .pragma_update(None, "user_version", 0)
-        .expect("make pragma disagree with schema row");
-    let error =
-        Journal::from_connection(disagreement).expect_err("version disagreement refuses open");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::VersionDisagreement { row: 1, pragma: 0 })
-    ));
-    assert!(
-        error
-            .to_string()
-            .contains("row names version 1, but SQLite user_version names 0")
-    );
-}
-
-#[test]
-fn read_only_handle_reports_schema_and_cursor_without_mutation() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("journal.sqlite3");
-    drop(authority_file_fixture(&path));
-    let before = FileState::read(&path);
-
-    let reader = JournalReader::open(&path).expect("finalized authority opens read-only");
-
-    assert_eq!(
-        reader.schema_version().expect("read schema version"),
-        SCHEMA_VERSION
-    );
-    assert_eq!(reader.cursor().expect("read cursor"), Seq::new(2));
-    let query_only: bool = reader
-        .connection
-        .query_row("PRAGMA query_only", [], |row| row.get(0))
-        .expect("query-only posture");
-    assert!(query_only);
-    let write = reader
-        .connection
-        .execute("UPDATE cursor_head SET wake = seq WHERE singleton = 1", [])
-        .expect_err("SQLite rejects a write through the reader");
-    assert_eq!(
-        write.sqlite_error_code(),
-        Some(rusqlite::ErrorCode::ReadOnly)
-    );
-    drop(reader);
-
-    assert_eq!(FileState::read(&path), before);
-
-    let empty = scratch.path().join("empty.sqlite3");
-    drop(Journal::open(&empty).expect("create empty finalized authority"));
-    let before = FileState::read(&empty);
-
-    let reader = JournalReader::open(&empty).expect("empty finalized authority opens read-only");
-
-    assert_eq!(reader.cursor().expect("read empty cursor"), None);
-    drop(reader);
-    assert_eq!(FileState::read(&empty), before);
-}
-
-#[test]
-fn read_only_admission_refuses_schema_states_without_mutation() {
-    let scratch = Scratch::new();
-    let cases = [
-        (
-            "prepared.sqlite3",
-            1,
-            "prepared",
-            Some(0),
-            Some(1),
-            Some("plan:baseline"),
-            "prepared and unfinalized",
-        ),
-        (
-            "newer.sqlite3",
-            2,
-            "finalized",
-            None,
-            None,
-            None,
-            "newer than this build",
-        ),
-        (
-            "older.sqlite3",
-            0,
-            "finalized",
-            None,
-            None,
-            None,
-            "has no migration path",
-        ),
-    ];
-
-    for (name, version, state, from, to, digest, expected) in cases {
-        let path = scratch.path().join(name);
-        drop(schema_file_fixture(&path, version, state, from, to, digest));
-        let before = FileState::read(&path);
-
-        let error = JournalReader::open(&path).expect_err("schema state refuses read-only open");
-
-        assert!(
-            error.to_string().contains(expected),
-            "{name} did not name {expected:?}: {error}",
-        );
-        assert_eq!(FileState::read(&path), before, "{name} changed on refusal");
-    }
-}
-
-#[test]
-fn read_only_admission_never_creates_or_repairs_an_authority() {
-    let scratch = Scratch::new();
-    let absent = scratch.path().join("absent.sqlite3");
-    let entries_before = directory_entries(scratch.path());
-
-    let error = JournalReader::open(&absent).expect_err("absent authority refuses open");
-
-    assert!(matches!(error, OpenError::Open { ref path, .. } if path == &absent));
-    assert!(!absent.exists());
-    assert_eq!(directory_entries(scratch.path()), entries_before);
-
-    let malformed = scratch.path().join("malformed.sqlite3");
-    fs::write(&malformed, b"not a SQLite authority").expect("write malformed fixture");
-    let before = FileState::read(&malformed);
-
-    let error = JournalReader::open(&malformed).expect_err("malformed authority refuses open");
-
-    assert!(matches!(error, OpenError::Sqlite(_)));
-    assert_eq!(FileState::read(&malformed), before);
-}
-
-#[test]
-fn schema_probe_reads_finalized_identity_without_changing_the_store() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("authority.db");
-    drop(Journal::open(&path).expect("create finalized authority"));
-    let before = directory_bytes(scratch.path());
-
-    assert_eq!(
-        Journal::inspect_schema(&path).expect("inspect finalized authority"),
-        SCHEMA_VERSION
-    );
-    assert_eq!(directory_bytes(scratch.path()), before);
-}
-
-#[test]
-fn schema_probe_refuses_unfinalized_and_forward_state_without_changing_the_store() {
-    for (name, version, state, from, to, digest, expected) in [
-        (
-            "prepared",
-            1,
-            "prepared",
-            Some(0),
-            Some(1),
-            Some("plan:baseline"),
-            MigrationError::Unfinalized {
-                from: Some(0),
-                to: Some(1),
-            },
-        ),
-        (
-            "forward",
-            2,
-            "finalized",
-            None,
-            None,
-            None,
-            MigrationError::ForwardSchema {
-                found: 2,
-                current: SCHEMA_VERSION,
-            },
-        ),
-    ] {
-        let scratch = Scratch::new();
-        let path = scratch.path().join(format!("{name}.db"));
-        drop(schema_file_fixture(&path, version, state, from, to, digest));
-        let before = directory_bytes(scratch.path());
-
-        let error = Journal::inspect_schema(&path).expect_err("schema state refuses");
-        assert!(
-            matches!(error, OpenError::Migration(ref found) if *found == expected),
-            "unexpected schema refusal: {error}"
-        );
-        assert_eq!(directory_bytes(scratch.path()), before);
-    }
-}
-
-#[test]
-fn schema_probe_distinguishes_absence_from_sqlite_corruption_and_creates_nothing() {
-    let scratch = Scratch::new();
-    let missing = scratch.path().join("missing.db");
-
-    let error = Journal::inspect_schema(&missing).expect_err("missing authority refuses");
-    assert!(matches!(error, OpenError::Open { ref path, .. } if path == &missing));
-    assert!(directory_bytes(scratch.path()).is_empty());
-
-    let empty = scratch.path().join("empty.db");
-    drop(Connection::open(&empty).expect("create empty SQLite fixture"));
-    let before = directory_bytes(scratch.path());
-    let error = Journal::inspect_schema(&empty).expect_err("missing schema identity refuses");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::MissingSchema)
-    ));
-    assert_eq!(directory_bytes(scratch.path()), before);
-
-    let malformed = scratch.path().join("malformed.db");
-    fs::write(&malformed, b"not a SQLite authority").expect("write malformed fixture");
-    let before = directory_bytes(scratch.path());
-    let error = Journal::inspect_schema(&malformed).expect_err("malformed SQLite refuses");
-    assert!(matches!(error, OpenError::Sqlite(_)));
-    assert_eq!(directory_bytes(scratch.path()), before);
-}
 
 #[test]
 fn coherent_authority_verifies_every_required_plane() {
@@ -350,7 +32,7 @@ fn coherent_authority_verifies_every_required_plane() {
     assert_eq!(verified.facts, 2);
     assert_eq!(verified.threads, 2);
     assert_eq!(verified.receipts, 1);
-    assert_eq!(verified.heads, 8);
+    assert_eq!(verified.heads, 9);
 }
 
 #[test]
@@ -479,163 +161,6 @@ fn thread_index_bytes(connection: &Connection) -> Vec<(i64, String, Option<i64>,
         .expect("query thread snapshot")
         .map(|row| row.expect("read thread row"))
         .collect()
-}
-
-#[test]
-fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
-    let empty = Journal::in_memory().expect("empty journal");
-    let empty_changes = empty.connection.total_changes();
-    let (cursor, heads) = empty
-        .read(|read| Ok((read.cursor()?, read.task_heads()?)))
-        .expect("empty board read");
-    assert_eq!(cursor, None);
-    assert!(heads.is_empty());
-    assert_eq!(empty.connection.total_changes(), empty_changes);
-
-    let journal = authority_fixture();
-    let mut second = task_head();
-    second.handle = "JOURNAL-b2".parse().expect("second handle");
-    second.title = "Second journal task".to_owned();
-    insert_head(
-        &journal.connection,
-        "task_heads",
-        "handle",
-        "JOURNAL-b2",
-        1,
-        &second,
-    );
-    insert_head(
-        &journal.connection,
-        "workflow_heads",
-        "handle",
-        "JOURNAL-b2",
-        2,
-        &workflow_head(),
-    );
-    let changes = journal.connection.total_changes();
-
-    let (cursor, heads) = journal
-        .read(|read| Ok((read.cursor()?, read.task_heads()?)))
-        .expect("coherent board read");
-    let handles = heads
-        .into_iter()
-        .map(|heads| heads.into_bodies().0.handle.to_string())
-        .collect::<Vec<_>>();
-
-    assert_eq!(cursor, Seq::new(2));
-    assert_eq!(handles, ["JOURNAL-a1", "JOURNAL-b2"]);
-    assert_eq!(journal.connection.total_changes(), changes);
-}
-
-#[test]
-fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
-    let missing_workflow = authority_fixture();
-    missing_workflow
-        .connection
-        .execute("DELETE FROM workflow_heads WHERE handle = 'JOURNAL-a1'", [])
-        .expect("remove required workflow head");
-
-    let loose_claim = authority_fixture();
-    loose_claim
-        .connection
-        .pragma_update(None, "foreign_keys", false)
-        .expect("disable foreign keys for corrupt fixture");
-    insert_head(
-        &loose_claim.connection,
-        "claim_heads",
-        "handle",
-        "JOURNAL-b2",
-        2,
-        &claim_head(),
-    );
-    loose_claim
-        .connection
-        .pragma_update(None, "foreign_keys", true)
-        .expect("restore foreign keys");
-
-    let mismatched_key = authority_fixture();
-    let mut wrong_task = task_head();
-    wrong_task.handle = "JOURNAL-b2".parse().expect("alternate task handle");
-    mismatched_key
-        .connection
-        .execute(
-            "UPDATE task_heads SET body = ?1 WHERE handle = 'JOURNAL-a1'",
-            params![wire::encode(&wrong_task).expect("encode wrong task")],
-        )
-        .expect("mismatch indexed key and body");
-
-    let invalid_bytes = authority_fixture();
-    invalid_bytes
-        .connection
-        .execute(
-            "UPDATE workflow_heads SET body = X'00' WHERE handle = 'JOURNAL-a1'",
-            [],
-        )
-        .expect("corrupt canonical body");
-
-    let beyond_cursor = authority_fixture();
-    insert_fact(
-        &beyond_cursor,
-        fact(
-            3,
-            Some(2),
-            FactKind::TaskNoted,
-            json!({"task": "JOURNAL-a1", "note": "future head fixture"}),
-        ),
-    );
-    beyond_cursor
-        .connection
-        .execute(
-            "UPDATE workflow_heads SET head_seq = 3 WHERE handle = 'JOURNAL-a1'",
-            [],
-        )
-        .expect("move head beyond visible cursor");
-
-    for (journal, expected) in [
-        (
-            missing_workflow,
-            "task JOURNAL-a1 has a statement head but no workflow head",
-        ),
-        (loose_claim, "task JOURNAL-b2 has loose claim head(s)"),
-        (
-            mismatched_key,
-            "task head indexed as JOURNAL-a1 carries body handle JOURNAL-b2",
-        ),
-        (
-            invalid_bytes,
-            "workflow_heads handle \"JOURNAL-a1\" is invalid",
-        ),
-        (
-            beyond_cursor,
-            "workflow_heads handle \"JOURNAL-a1\" head position 3 is beyond cursor Some(2)",
-        ),
-    ] {
-        let error = journal
-            .read(|read| read.task_heads().map(drop))
-            .expect_err("malformed task heads refuse");
-        assert!(
-            error.to_string().contains(expected),
-            "expected {expected:?}, found {error}"
-        );
-    }
-}
-
-#[test]
-fn cursor_storage_refuses_backward_movement() {
-    let journal = authority_fixture();
-    let error = journal
-        .connection
-        .execute(
-            "UPDATE cursor_head SET seq = 1, wake = 1 WHERE singleton = 1",
-            [],
-        )
-        .expect_err("cursor cannot move backward");
-
-    assert!(
-        error
-            .to_string()
-            .contains("cursor head cannot move backward")
-    );
 }
 
 #[test]
@@ -1011,6 +536,15 @@ fn insert_heads(journal: &Journal) {
             state: FindingState::Open,
         },
     );
+    let transcript = transcript_source_head();
+    insert_head(
+        &journal.connection,
+        "transcript_source_heads",
+        "stream",
+        &transcript.key(),
+        2,
+        &transcript,
+    );
     journal
         .connection
         .execute(
@@ -1125,6 +659,19 @@ fn witness_head() -> WitnessHead {
         kind: WitnessClass::Review,
         predicate: "workflow is review".to_owned(),
         head: Seq::new(2).expect("witness head"),
+    }
+}
+
+fn transcript_source_head() -> TranscriptSourceHead {
+    TranscriptSourceHead {
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce913116305"),
+        vendor: "claude".parse().expect("canonical fixture vendor"),
+        stream: "session".to_owned(),
+        source: uuid("018f82d4-6f59-7d06-92e3-bce913116306"),
+        next: TranscriptPosition {
+            member: 1,
+            offset: 4096,
+        },
     }
 }
 
@@ -1300,6 +847,7 @@ fn expected_tables() -> BTreeSet<String> {
         "residency_head",
         "task_heads",
         "thread_index",
+        "transcript_source_heads",
         "trust_heads",
         "witness_heads",
         "workflow_heads",

@@ -712,6 +712,11 @@ fn every_declared_fact_plane_claims_at_least_one_fact_kind() {
 /// than once. A newly declared kind that nobody added to a predicate falls
 /// straight between them.
 ///
+/// The build cannot catch it either: admission decides a kind is consumed by
+/// matching its wire spelling against a plane's glob, so a kind named into an
+/// existing family's spelling is admitted as consumed while the predicate that
+/// actually reads it claims nothing.
+///
 /// What it costs is not theoretical. `AuthorityReducer::rebuild` selects the
 /// facts of an `AnswerContent::Facts(plane)` answer with exactly this
 /// predicate, so an unowned kind is dropped from the reduction — silently, and
