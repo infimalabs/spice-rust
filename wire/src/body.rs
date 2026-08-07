@@ -921,6 +921,45 @@ pub struct TasteCleared {
     pub locus: String,
 }
 
+/// A taste fired on authored prose and became one live directive.
+///
+/// This is one fact, not a fire recorded here and a directive raised somewhere
+/// else. It carries the complete initial directive alongside the evidence that
+/// justified it, so the interval in which a fire exists but is not yet
+/// retirable does not exist: whatever reduces the steering plane sees a live
+/// directive the moment the fact lands, and whatever reduces the taste plane
+/// sees the evidence from the same row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TasteReminded {
+    /// Durable directive identity, equal to the command that created it.
+    pub directive: CanonicalUuid,
+    /// Directive key, spelled exactly as an operator-sent key is.
+    pub key: String,
+    /// Lane the reminder addresses.
+    pub lane: CanonicalUuid,
+    /// Taste that fired.
+    pub taste: String,
+    /// Identity of the normalized prose the taste fired on.
+    ///
+    /// Domain tagged, so the same bytes read as a taste trigger and as anything
+    /// else can never collide into one identity.
+    pub content: Digest,
+    /// Occupant whose context the prose was authored in.
+    pub occupant: CanonicalUuid,
+    /// Tape member of the boundary opening that occupant's current context.
+    ///
+    /// Zero before the occupant has compacted. Paired with `content` this is
+    /// what makes one reminder per compaction epoch decidable from the durable
+    /// stream alone, rather than from a separate memory of what has fired.
+    pub compaction: u64,
+    /// Exact transcript locus of the prose that fired the taste.
+    pub locus: TranscriptLocus,
+    /// Reminder text, carried as ordinary directive text.
+    pub text: String,
+    /// Instant the reminder expires without a disposition.
+    pub expires: Instant,
+}
+
 /// An expected listening event remained absent past its armed window.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanaryAlarmed {

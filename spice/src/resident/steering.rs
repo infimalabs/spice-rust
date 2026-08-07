@@ -20,6 +20,8 @@ use super::{
 };
 
 mod preview;
+#[cfg(test)]
+mod tests;
 mod transcript;
 
 use preview::directive_preview;
@@ -1034,6 +1036,13 @@ fn directive_creation(
                 .filter(|body| body.directive == directive)
                 .map(|_| envelope),
             wire::FactKind::SteerResent => steering_body::<wire::body::SteerResent>(envelope)
+                .filter(|body| body.directive == directive)
+                .map(|_| envelope),
+            // A reminder opens a lineage exactly as a send does, so it is a
+            // creating fact here for the same reason. Every kind the ledger
+            // admits as a first rung has to be findable, because the `expect`
+            // below reads a missing one as impossible rather than as absent.
+            wire::FactKind::TasteReminded => steering_body::<wire::body::TasteReminded>(envelope)
                 .filter(|body| body.directive == directive)
                 .map(|_| envelope),
             _ => None,

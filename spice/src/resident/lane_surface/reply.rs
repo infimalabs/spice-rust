@@ -222,6 +222,23 @@ pub(super) fn recall_provenance(
                 None,
             ))
         }
+        // A reminder opens a lineage, so history reads it as the send it is.
+        //
+        // Its transcript locus is deliberately dropped here: this row's locus
+        // means where a lane answered, and a reminder's locus means where the
+        // prose that fired the taste sits. Carrying it across would read as an
+        // acknowledgment nobody made.
+        wire::FactKind::TasteReminded => {
+            let body: wire::body::TasteReminded = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Live,
+                None,
+                None,
+                None,
+            ))
+        }
         wire::FactKind::SteerAcked => {
             let body: wire::body::SteerAcked = recall_body(fact)?;
             Some(steering_provenance(

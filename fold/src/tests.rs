@@ -704,6 +704,36 @@ fn every_declared_fact_plane_claims_at_least_one_fact_kind() {
     }
 }
 
+/// Exactly one fact kind belongs to two planes, and it is named here.
+///
+/// `taste::reminded` is a live directive and the taste evidence that justified
+/// it in the same row, so the reduction that rebuilds steering and the one that
+/// rebuilds taste both have to see it. Running the law kind-first is the half
+/// the plane-first test above cannot reach: dropping either membership leaves
+/// every plane still claiming something, so only this reds.
+///
+/// Naming the exception rather than merely permitting it keeps membership a
+/// reviewed decision. A second kind acquiring two owners fails here instead of
+/// quietly teaching two readers to disagree about what exists.
+#[test]
+fn only_the_taste_reminder_belongs_to_two_fact_planes() {
+    let shared: Vec<wire::FactKind> = wire::FactKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| {
+            FactPlane::ALL
+                .iter()
+                .filter(|plane| plane.contains(*kind))
+                .count()
+                > 1
+        })
+        .collect();
+
+    assert_eq!(shared, vec![wire::FactKind::TasteReminded]);
+    assert!(FactPlane::Steering.contains(wire::FactKind::TasteReminded));
+    assert!(FactPlane::Taste.contains(wire::FactKind::TasteReminded));
+}
+
 /// A fresh store seeds whatever version the caller declares as current.
 ///
 /// This is the falsifier for a version written into the SQL: a literal seeds
