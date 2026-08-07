@@ -237,8 +237,51 @@ pub struct TranscriptSourceHead {
 impl TranscriptSourceHead {
     /// Canonical row key for this logical stream.
     #[must_use]
-    pub fn key(&self) -> String {
-        format!("{}/{}/{}", self.lane, self.vendor, self.stream)
+    pub fn key(&self) -> TranscriptStreamKey {
+        TranscriptStreamKey::new(&self.lane, &self.vendor, &self.stream)
+    }
+}
+
+/// The row key addressing one logical transcript stream.
+///
+/// identity-law: non-crossing - recomposed from a head body on each side, never
+/// encoded. The durable spelling is [`TranscriptSourceHead`] itself, which is
+/// what makes a stored key disagreeing with its body a head violation.
+///
+/// A stream name alone does not identify a stream: the row is keyed by lane,
+/// vendor and stream together, and the same stream name is expected under
+/// several lanes and vendors. This carries the composed key so a reader cannot
+/// supply one component and silently miss the row -- a miss that reads as *this
+/// stream was never accounted*, which is the answer that makes a catch-up
+/// re-ingest from the beginning and spend every sample twice.
+///
+/// The field is private and there is no conversion from a string, so the only
+/// way to obtain one is to hold all three fields. An already-composed spelling
+/// cannot be handed back in:
+///
+/// ```compile_fail
+/// let _ = wire::TranscriptStreamKey("lane/vendor/stream".to_owned());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TranscriptStreamKey(String);
+
+impl TranscriptStreamKey {
+    /// Compose the key from the three fields that together name a stream.
+    #[must_use]
+    pub fn new(lane: &CanonicalUuid, vendor: &Name, stream: &str) -> Self {
+        Self(format!("{lane}/{vendor}/{stream}"))
+    }
+
+    /// The composed key as it is stored.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consume the key for storage.
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
     }
 }
 

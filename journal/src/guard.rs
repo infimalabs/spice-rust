@@ -350,12 +350,24 @@ impl JournalRead<'_> {
         self.text_head("finding_heads", "identity", identity)
     }
 
-    /// Current transcript source head, when the stream has been accounted.
+    /// Current transcript source head, when that stream has been accounted.
+    ///
+    /// Addressed by [`wire::TranscriptStreamKey`] rather than by a stream name,
+    /// because the row is keyed by lane, vendor and stream together. A bare
+    /// stream name matches no row, and this lookup reports no row as `Ok(None)`
+    /// -- the same answer a genuinely unaccounted stream gives. Passing one is
+    /// not merely discouraged, it does not compile:
+    ///
+    /// ```compile_fail
+    /// fn catch_up(read: &journal::JournalRead<'_>) {
+    ///     let _ = read.transcript_source_head("sidecar");
+    /// }
+    /// ```
     pub fn transcript_source_head(
         &self,
-        stream: &str,
+        stream: &wire::TranscriptStreamKey,
     ) -> Result<Option<JournalHead<wire::TranscriptSourceHead>>, GuardError> {
-        self.text_head("transcript_source_heads", "stream", stream)
+        self.text_head("transcript_source_heads", "stream", stream.as_str())
     }
 
     /// Current resident head, when an epoch has been seated.
@@ -729,7 +741,7 @@ impl JournalWrite {
     {
         self.heads.push(HeadUpdate::new(fact, move |seq| {
             let head = build(seq);
-            let key = head.key();
+            let key = head.key().into_string();
             HeadRow::text("transcript_source_heads", "stream", key, seq, &head)
         }));
     }

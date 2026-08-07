@@ -541,7 +541,7 @@ fn insert_heads(journal: &Journal) {
         &journal.connection,
         "transcript_source_heads",
         "stream",
-        &transcript.key(),
+        transcript.key().as_str(),
         2,
         &transcript,
     );

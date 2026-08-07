@@ -73,7 +73,8 @@ pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LaneSession,
     LeaseHead, LineageSubscription, ResidencyHead, ResidentState, TapeLocus, TaskHead,
-    TranscriptSourceHead, TrustHead, TrustState, WitnessClass, WitnessHead, WorkflowHead,
+    TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
+    WorkflowHead,
 };
 pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected, SpeechPlayback, SpeechRequest};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
