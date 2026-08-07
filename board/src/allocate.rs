@@ -1,11 +1,12 @@
 //! The one writer that mints a claim.
 //!
-//! Every claim in the port is written here. The resident's claim command
-//! assembles the transaction around this writer -- selection, residency
-//! admission, the change guard that re-reads the head set inside the write, and
-//! the command receipt all live with the command that needs them -- and calls in
-//! to record the claim itself. Keeping the lifecycle write in one place is what
-//! stops a field added to a claim from reaching one caller and not another.
+//! Every claim the port commits in production is minted here. The resident's
+//! claim command assembles the transaction around this writer -- selection,
+//! residency admission, the change guard that re-reads the head set inside the
+//! write, and the command receipt all live with the command that needs them --
+//! and calls in to record the claim itself. Keeping the lifecycle write in one
+//! place is what stops a field added to a claim from reaching one caller and
+//! not another.
 
 use std::error::Error;
 use std::fmt;
