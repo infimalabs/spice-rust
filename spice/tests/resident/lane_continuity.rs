@@ -712,17 +712,10 @@ fn emit_compaction(
                 .ok()?
                 .facts()
                 .iter()
-                .find(|fact| fact.fact.kind() == FactKind::LaneCompacted)
-                .and_then(fact_body::<wire::body::LaneCompacted>)
+                .find_map(|fact| fact.fact.read::<wire::body::LaneCompacted>())
                 .filter(|body| body.lane == lane)
         },
     )
-}
-
-fn fact_body<T: serde::de::DeserializeOwned>(fact: &wire::Envelope<wire::AnyFact>) -> Option<T> {
-    wire::encode(fact.fact.body())
-        .ok()
-        .and_then(|bytes| wire::decode(&bytes).ok())
 }
 
 fn compacted_locus(body: &wire::body::LaneCompacted) -> wire::TapeLocus {
@@ -771,8 +764,9 @@ fn assert_no_codex_compaction(fixture: &Fixture, lane: wire::CanonicalUuid) {
         .fact_snapshot()
         .expect("continuity facts read");
     assert!(facts.facts().iter().all(|fact| {
-        fact.fact.kind() != FactKind::LaneCompacted
-            || fact_body::<wire::body::LaneCompacted>(fact).is_none_or(|body| body.lane != lane)
+        fact.fact
+            .read::<wire::body::LaneCompacted>()
+            .is_none_or(|body| body.lane != lane)
     }));
     let replay = listen::retro(
         fixture.runtime.join("tape"),
