@@ -875,39 +875,100 @@ fn claim_win(
         Ok(selected) => selected,
         Err(outcome) => return outcome,
     };
-    let task = selected.statement().handle.clone();
-    let (lane, occupant) = match claim_residency(command) {
-        Ok(seat) => seat,
-        Err(outcome) => return outcome,
-    };
-    let (at, expiry, maximum) = match claim_deadlines() {
-        Ok(deadlines) => deadlines,
-        Err(outcome) => return outcome,
-    };
-    let git = match claim_git_boundary(
+    let grant = match claim_grant(
+        bus,
+        command,
         repository,
         &snapshot,
-        command,
-        possession.captures(),
+        possession,
     ) {
-        Ok(git) => git,
-        Err(outcome) => return outcome,
-    };
-    let source = match claim_source_boundary(bus, &lane) {
-        Ok(source) => source,
+        Ok(grant) => grant,
         Err(outcome) => return outcome,
     };
     let next = projected_claim_next_action(
         &snapshot,
         selected,
         command,
+        grant.lane,
+        grant.occupant,
+        grant.at,
+        grant.expiry,
+        grant.maximum,
+        projects,
+    );
+    record_claim(
+        bus, command, win, &snapshot, selected, grant, next, possession,
+        projects,
+    )
+}
+
+/// What a claim settles before the journal opens.
+///
+/// These resolve together because they refuse together, and the order is the
+/// contract rather than an accident of writing: each step here can refuse, and
+/// the caller sees the first refusal only, so a seat that cannot be read is
+/// reported before a boundary that cannot be captured.
+struct ClaimGrant {
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+    at: Instant,
+    expiry: Instant,
+    maximum: Instant,
+    git: Option<GitBoundary>,
+    source: body::SourceBoundary,
+}
+
+/// Resolve the seat, the deadlines and the two boundaries one claim records.
+fn claim_grant(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    possession: Possession,
+) -> Result<ClaimGrant, Outcome<CommandAnswer>> {
+    let (lane, occupant) = claim_residency(command)?;
+    let (at, expiry, maximum) = claim_deadlines()?;
+    let git = claim_git_boundary(
+        repository,
+        snapshot,
+        command,
+        possession.captures(),
+    )?;
+    let source = claim_source_boundary(bus, &lane)?;
+    Ok(ClaimGrant {
         lane,
         occupant,
         at,
         expiry,
         maximum,
-        projects,
-    );
+        git,
+        source,
+    })
+}
+
+/// Write the claim: one origin, the guards it owes, its two heads, its receipt.
+///
+/// Nothing here refuses on what the caller asked for; by this point the command
+/// is already admitted and the grant already resolved, so every failure below is
+/// a fault rather than a refusal the caller could have avoided: a validated
+/// handle that will not form an origin is a protocol fault, and the mint and the
+/// receipt are store faults.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one claim fact and its two heads share one origin"
+)]
+fn record_claim(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    win: &ClaimWin,
+    snapshot: &ValidatedSnapshot,
+    selected: &Entry,
+    grant: ClaimGrant,
+    next: Option<Box<str>>,
+    possession: Possession,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    let task = selected.statement().handle.clone();
     let origin = match task_origin(&task) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
@@ -915,12 +976,12 @@ fn claim_win(
     let mut write = JournalWrite::new(
         command.actor().clone(),
         origin,
-        at,
+        grant.at,
         Producer::CommandDoor,
     );
     guard_claim(
         &mut write,
-        &snapshot,
+        snapshot,
         command,
         possession.captures(),
         &task,
@@ -931,18 +992,18 @@ fn claim_win(
         command,
         selected,
         &task,
-        lane,
-        occupant,
-        at,
-        expiry,
-        maximum,
-        git,
-        source,
+        grant.lane,
+        grant.occupant,
+        grant.at,
+        grant.expiry,
+        grant.maximum,
+        grant.git,
+        grant.source,
     ) {
         return outcome;
     }
     let answer = wire::intent::ClaimAnswer {
-        task: task.clone(),
+        task,
         holder: command.actor().clone(),
         warnings: board::claim_overlaps(selected, &snapshot.entries)
             .into_iter()
