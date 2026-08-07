@@ -1133,6 +1133,10 @@ fn wait_for_effect_change(
 /// Waiting for it would only delay the failure and then report a timeout, which
 /// describes the observation rather than what happened to the vendor.
 ///
+/// A missing stop has two causes that the grace cannot separate on its own, so
+/// the trap records its own entry first and the panic names which one it saw.
+/// See [`entered_marker`].
+///
 /// The operator command returns only after the resident has terminated and
 /// reaped the vendor, so in that case the first observation already sees a
 /// vendor that is gone and reports it.
@@ -1158,12 +1162,31 @@ fn wait_for_vendor_stop(watch: &Path, pid_file: &Path, stopped: &Path) -> String
     );
     match observed {
         Ok(stop) => stop,
-        Err(pid) => panic!(
-            "vendor {pid} ended without recording a stop in {}; \
-             its TERM trap did not complete within the termination grace",
+        Err(pid) if entered_marker(stopped).exists() => panic!(
+            "vendor {pid} entered its TERM trap and ended before recording a \
+             stop in {}; the handler ran but did not finish inside the \
+             termination grace",
             stopped.display()
         ),
+        Err(pid) => panic!(
+            "vendor {pid} ended without entering its TERM trap; the handler \
+             never ran, so the vendor either ignored TERM or was killed before \
+             the trap was scheduled"
+        ),
     }
+}
+
+/// The marker a fixture vendor writes as the first action of its TERM trap.
+///
+/// Derived from the stop path rather than passed alongside it so a fixture
+/// cannot record one without the other. The two files split the single failure
+/// this helper used to report: a handler that ran and lost the race to the
+/// grace writes the marker and not the stop, while a handler that never ran
+/// writes neither.
+fn entered_marker(stopped: &Path) -> PathBuf {
+    let mut marker = stopped.as_os_str().to_owned();
+    marker.push("-entered");
+    PathBuf::from(marker)
 }
 
 /// The stop a fixture vendor finished recording, if it recorded one.

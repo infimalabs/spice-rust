@@ -51,6 +51,20 @@ const RECALL_LIMIT: usize = 16;
 const CAPTURE_LIMIT: usize = 1024 * 1024;
 const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP: Duration = Duration::from_secs(2);
+/// How long an occupant may take to end itself before the resident kills it.
+///
+/// One second is short on purpose, and it is a fixed number on purpose. Nothing
+/// durable is owed to this window: the transcript is taped by the resident as
+/// the vendor emits it, one committed record per newline boundary, so every
+/// byte the occupant already wrote outlives the kill and a record cut mid-line
+/// is closed as [`sill::RecordBoundary::Terminal`] rather than dropped. An
+/// occupant has no flush to finish here, only an exit to perform, so a grace
+/// that could see the machine's load would buy nothing this one does not
+/// already give.
+///
+/// What the window cannot promise is that a loaded machine schedules the
+/// occupant's own signal handler inside it. That is why being killed has to
+/// stay cheap rather than being made rarer by a larger number.
 const TERMINATION_GRACE: Duration = Duration::from_secs(1);
 const RECORD_QUEUE: usize = 64;
 const SESSION_PROOF: Duration = Duration::from_secs(10);
