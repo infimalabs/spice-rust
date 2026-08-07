@@ -15,6 +15,7 @@ impl AgentMessagePublisher for UnavailableMessagePublisher {
 
 #[test]
 fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
+    let (root, paths) = resident_fixture("message-unavailable");
     let bus = Bus::start(journal::Journal::in_memory().expect("capture authority opens"))
         .expect("capture bus starts");
     let epoch = test_uuid(4);
@@ -30,6 +31,10 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
         .expect("capture fixture group starts");
     let mut diagnostics = Vec::new();
     let mut previews = CallPreviews::default();
+    let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
+    let steering = steer::Config::default();
+    let publisher = UnavailableMessagePublisher;
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
 
     for (offset, text) in [(120, "first answer"), (180, "later answer")] {
         let locus = listen::Locus::new(4, offset, 48);
@@ -51,7 +56,7 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
             &bus,
             epoch,
             &mut seats,
-            &UnavailableMessagePublisher,
+            &surfaces,
             &record,
             &mut previews,
             &mut diagnostics,
@@ -74,4 +79,5 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
         .wait()
         .expect("capture fixture stops");
     bus.shutdown().expect("capture bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
 }

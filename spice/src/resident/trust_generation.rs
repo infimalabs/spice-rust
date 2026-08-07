@@ -19,10 +19,12 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
     const FIRST: &str = concat!(
         "[steer]\nexpiry = \"12h\"\nresend = [\"2m\"]\n",
         "[consent]\nposture = \"deny\"\n",
+        "[taste.polling]\nwords = [\"poll*\"]\nmessage = \"Wait for completion.\"\n",
     );
     const SECOND: &str = concat!(
         "[steer]\nexpiry = \"48h\"\nresend = [\"10m\"]\n",
         "[consent]\nposture = \"allow\"\n",
+        "[taste.fallbacks]\nwords = [\"fallback*\"]\nmessage = \"Keep one path.\"\n",
     );
     let (root, paths) = resident_fixture("startup-single-capture");
     let tracked = root.join("spice.toml");
@@ -33,6 +35,17 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
         .expect("captured startup surface remains admitted");
     assert_eq!(first.config.steering.expiry().to_string(), "12h");
     assert_eq!(first.config.consent.posture(), consent::Answer::Deny);
+    assert_eq!(
+        first
+            .config
+            .taste
+            .tastes()
+            .iter()
+            .map(|taste| taste.name().as_str())
+            .collect::<Vec<_>>(),
+        ["polling"],
+        "taste and steering policy come from the first captured generation"
+    );
     let named_current =
         super::load_startup_surface(&repository).expect("replacement startup surface loads");
     assert_ne!(first.trust, named_current.trust);
@@ -55,6 +68,16 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
     let second = super::load_startup_surface(&repository).expect("replacement surface loads");
     assert_eq!(second.config.steering.expiry().to_string(), "48h");
     assert_eq!(second.config.consent.posture(), consent::Answer::Allow);
+    assert_eq!(
+        second
+            .config
+            .taste
+            .tastes()
+            .iter()
+            .map(|taste| taste.name().as_str())
+            .collect::<Vec<_>>(),
+        ["fallbacks"]
+    );
     assert_eq!(second.trust, named_current.trust);
     commit_startup(&bus, &repository, &second.trust, test_uuid(10), None)
         .expect("retry seats replacement capture");
