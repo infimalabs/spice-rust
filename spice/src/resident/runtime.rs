@@ -527,11 +527,7 @@ pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outc
 }
 
 fn wait_for_release(paths: &RuntimePaths) -> CommandResult<()> {
-    let name = LockName::new("resident").expect("resident is a non-empty lock name");
-    let lock = LockFile::new(name, &paths.resident);
-    let possession = lock
-        .acquire()
-        .map_err(|error| environment_fault("resident::release-failed", &error.to_string()))?;
+    let possession = acquire_released_resident(paths)?;
     if paths.canvas.exists() {
         return Err(environment_fault(
             "canvas::release-incomplete",
@@ -540,6 +536,39 @@ fn wait_for_release(paths: &RuntimePaths) -> CommandResult<()> {
     }
     drop(possession);
     Ok(())
+}
+
+/// Wait one client bound for the resident to surrender its runtime lock.
+fn acquire_released_resident(paths: &RuntimePaths) -> CommandResult<Possession> {
+    const RELEASE_BOUND: std::time::Duration = crate::cli::answer_bound(CommandKind::UpChange);
+
+    let name = LockName::new("resident").expect("resident is a non-empty lock name");
+    let lock = LockFile::new(name, &paths.resident);
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("spice-release-wait".to_owned())
+        .spawn(move || {
+            let _ = sender.send(lock.acquire());
+        })
+        .map_err(|error| environment_fault("resident::release-failed", &error.to_string()))?;
+
+    match receiver.recv_timeout(RELEASE_BOUND) {
+        Ok(Ok(possession)) => Ok(possession),
+        Ok(Err(error)) => Err(environment_fault(
+            "resident::release-failed",
+            &error.to_string(),
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(environment_fault(
+            "canvas::deadline-elapsed",
+            &format!(
+                "resident did not release within the {RELEASE_BOUND:?} client bound"
+            ),
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(environment_fault(
+            "resident::release-failed",
+            "resident release waiter ended without reporting lock acquisition",
+        )),
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
