@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { installActivityReplay } from "./activity-replay.mjs";
+import { assertAgesTickWhileTheResidentIsSilent } from "./age-ticker.mjs";
 import {
   agentNames,
   assertAgentConversation,
@@ -957,6 +958,15 @@ try {
     resident.discovery.epoch,
     fixture,
     seeded,
+  );
+  // Its own context for the same reason the half-open case takes one: the route
+  // that makes the resident go quiet has to exist before the socket opens, and
+  // every page above this line connected long ago.
+  await assertAgesTickWhileTheResidentIsSilent(
+    browser,
+    resident.discovery.endpoint,
+    fixture,
+    seeded.lane,
   );
   const configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
   await assertTeamArrangement(lightPage, fixture, artifacts);

@@ -32,10 +32,12 @@ use crate::{
     Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective, stale_reads,
 };
 
+mod clock;
 mod connection;
 mod view;
 mod watchband;
 
+use clock::WallClock;
 use connection::{request_external_speech, run_surface};
 use view::{CanvasRender, render_canvas};
 use watchband::ComposerAction;
@@ -489,7 +491,13 @@ fn canvas_app() -> Html {
     );
     let toggle_speech = speech_toggle(speech_status.clone(), speech_runtime, speak);
 
-    render_canvas(CanvasRender {
+    // The clock wraps the canvas rather than living inside it so that a tick
+    // re-renders `WallClock` and the `Age` leaves that read its context, and
+    // never `CanvasApp` itself. Sampling the time as a hook here instead would
+    // rebuild the whole tree every second, which is how a once-a-second label
+    // turns into a once-a-second Mosaic re-measurement.
+    html! {
+        <WallClock>{render_canvas(CanvasRender {
         connection: &connection,
         surface: &surface,
         axis: &axis,
@@ -509,7 +517,8 @@ fn canvas_app() -> Html {
         speech: &speech,
         speech_status: &speech_status,
         toggle_speech,
-    })
+        })}</WallClock>
+    }
 }
 
 #[hook]

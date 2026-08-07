@@ -395,12 +395,12 @@ export async function assertAgentConversation(
   await assertQueuedRosterPip(page, console, seated[0]);
   const age = outgoing.locator(".message-age");
   const authoredAt = Date.parse(inbox.body.lanes[0].pending[0].authored);
-  const expectedBeforeRead = elapsedLabel(Date.now() - authoredAt);
+  const beforeRead = Date.now();
   const renderedAge = await age.innerText();
-  const expectedAfterRead = elapsedLabel(Date.now() - authoredAt);
+  const accepted = ageLabelsWithinOneTick(authoredAt, beforeRead, Date.now());
   assert.ok(
-    [expectedBeforeRead, expectedAfterRead].includes(renderedAge),
-    `the card shows authored age: ${JSON.stringify({ renderedAge, expectedBeforeRead, expectedAfterRead })}`,
+    accepted.includes(renderedAge),
+    `the card shows authored age: ${JSON.stringify({ renderedAge, accepted })}`,
   );
   assert.equal(
     await age.getAttribute("title"),
@@ -729,13 +729,48 @@ function agentProse(worktree) {
   return `Canvas message reports CONTROL-1kKbC3j4 from ${basename(worktree)}`;
 }
 
+// Mirrors `app::watchband::elapsed_label`, including the saturating day arm
+// that keeps the label inside its fixed slot. Drifting from the Rust bound
+// would make this the more permissive of the two and hide a widened label
+// rather than catch it, so the ceiling is restated here rather than left out
+// as unreachable in the fixtures.
+const AGE_LABEL_MAX_DAYS = 99;
+
 function elapsedLabel(millis) {
   const seconds = Math.trunc(millis / 1_000);
   if (seconds <= 0) return "now";
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3_600) return `${Math.trunc(seconds / 60)}m`;
   if (seconds < 86_400) return `${Math.trunc(seconds / 3_600)}h`;
-  return `${Math.trunc(seconds / 86_400)}d`;
+  const days = Math.trunc(seconds / 86_400);
+  return days <= AGE_LABEL_MAX_DAYS ? `${days}d` : `${AGE_LABEL_MAX_DAYS}d+`;
+}
+
+/// The shared clock's period, mirroring `TICK_MILLIS` in
+/// `app/src/browser/clock.rs`.
+const AGE_TICK_MS = 1_000;
+
+/// Every label the card may legitimately be showing when Node reads it.
+///
+/// The canvas no longer spells an age from the instant its frame rendered; it
+/// spells one from a clock published once a tick, which is what lets a quiet
+/// lane keep ageing. The cost is that the label trails a Node-side reading by
+/// up to one publication, so demanding the label a `Date.now()` taken at the
+/// read implies is demanding sub-tick agreement the design never promised.
+///
+/// The window is one tick and nothing more. It is not a load allowance --
+/// `canvas-load.mjs` argues at length that load belongs in the report rather
+/// than in the bound -- and it stays narrow enough to fail: an age spelled from
+/// the wrong instant misses by minutes, not by a second.
+function ageLabelsWithinOneTick(authoredAt, beforeRead, afterRead) {
+  // Stepping a whole tick at a time cannot skip a label, because two instants
+  // one tick apart land in adjacent seconds; the closing instant is added
+  // separately so a read that took less than a step still contributes its own.
+  const labels = new Set([elapsedLabel(afterRead - authoredAt)]);
+  for (let instant = beforeRead - AGE_TICK_MS; instant < afterRead; instant += AGE_TICK_MS) {
+    labels.add(elapsedLabel(instant - authoredAt));
+  }
+  return [...labels];
 }
 
 export async function assertFourAgentDensity(console) {

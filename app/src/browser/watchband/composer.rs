@@ -213,7 +213,7 @@ pub(super) fn render_directive_card(
             focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
         }),
     };
-    let age = js_sys::Date::now() as i64 - directive.authored.get().as_millisecond();
+    let authored = directive.authored.get().as_millisecond();
     let chronology = format!(
         "authored {}; expires {}",
         directive.authored, directive.expires
@@ -262,7 +262,7 @@ pub(super) fn render_directive_card(
             }
             <footer class="message-meta">
                 <span class="message-key">{directive.key.clone()}</span>
-                <span class="message-age" title={chronology}>{watchband::elapsed_label(age)}</span>
+                <Age {authored} class="message-age" title={chronology} />
                 <span class="message-author">{correspondent.name.clone()}</span>
                 {view::chrome::render_card_actions(&directive.text, &correspondent)}
             </footer>

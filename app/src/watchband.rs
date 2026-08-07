@@ -75,10 +75,15 @@ pub struct Standing {
     pub handle: Option<String>,
     /// Phase that task currently sits in.
     pub phase: Option<String>,
-    /// Milliseconds since the claim's lease began.
-    pub held: Option<i64>,
-    /// Milliseconds since the lease was last renewed.
-    pub renewed: Option<i64>,
+    /// Epoch milliseconds at which the claim's lease began.
+    ///
+    /// An instant rather than an elapsed span, because a span is only true for
+    /// the frame that computed it. These rows survive across renders while the
+    /// resident is quiet, so a stored span would age into a lie; the reader
+    /// subtracts a live clock from this instead.
+    pub held_since: Option<i64>,
+    /// Epoch milliseconds at which the lease was last renewed.
+    pub renewed_at: Option<i64>,
     /// Accent slot this lane keeps across redraws.
     pub accent: usize,
 }
@@ -231,16 +236,13 @@ pub fn arrangement(
 
 /// Join the lane table, the inbox and the board into one row per lane.
 ///
-/// Lane order is the resident's; this never sorts. `now` is milliseconds since
-/// the epoch, passed in rather than read, so the elapsed arithmetic is the same
-/// function in a test as in a browser.
+/// Lane order is the resident's; this never sorts. No clock reaches this
+/// function: the lease instants are copied through untouched, and whoever
+/// renders them subtracts the time then. That is what lets a standing outlive
+/// the frame that built it — the join changes only when the resident speaks,
+/// while the age changes every second.
 #[must_use]
-pub fn standings(
-    lanes: &[LaneRow],
-    inbox: &[LaneInbox],
-    tasks: &[BoardTask],
-    now: i64,
-) -> Vec<Standing> {
+pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) -> Vec<Standing> {
     lanes
         .iter()
         .flat_map(|lineage| lineage.members.iter().map(move |member| (lineage, member)))
@@ -270,8 +272,8 @@ pub fn standings(
                     .and_then(|directive| directive.preview.clone()),
                 handle: held.map(|task| task.statement.body.handle.to_string()),
                 phase: held.map(|task| task.workflow.body.phase.to_string()),
-                held: held.and_then(|task| since(task, now, |lease| lease.start)),
-                renewed: held.and_then(|task| since(task, now, |lease| lease.renewal)),
+                held_since: held.and_then(|task| lease_instant(task, |lease| lease.start)),
+                renewed_at: held.and_then(|task| lease_instant(task, |lease| lease.renewal)),
                 accent: accent(member.lane),
             }
         })
@@ -297,15 +299,14 @@ fn held_task(tasks: &[BoardTask], lane: CanonicalUuid) -> Option<&BoardTask> {
         .max_by_key(|task| task.claim.as_ref().map(|claim| claim.body.fact))
 }
 
-/// Milliseconds between one of a task's lease instants and now.
-fn since(
+/// One of a task's lease instants, in epoch milliseconds.
+fn lease_instant(
     task: &BoardTask,
-    now: i64,
     pick: impl Fn(&wire::LeaseHead) -> wire::Instant,
 ) -> Option<i64> {
     task.lease
         .as_ref()
-        .map(|lease| now - pick(&lease.body).get().as_millisecond())
+        .map(|lease| pick(&lease.body).get().as_millisecond())
 }
 
 /// The accent slot an identity keeps.
@@ -363,11 +364,30 @@ pub fn short(id: CanonicalUuid) -> String {
     id.to_string().chars().take(SHORT_LEN).collect()
 }
 
+/// Widest string [`elapsed_label`] can return, counted in characters.
+///
+/// This is a layout contract, not a hint. A ticking age sits in a slot sized
+/// once from this number, so the slot can only stay still if the label can
+/// never outgrow it — see `age_labels_never_outgrow_the_slot`.
+pub const AGE_LABEL_WIDTH: usize = 4;
+
+/// Days past which the label stops counting and says only that it is more.
+const AGE_LABEL_MAX_DAYS: i64 = 99;
+
 /// A duration in the band's spelling: one unit, no decimals, largest that fits.
 ///
 /// A negative span reads as `now` rather than as a signed number: the only way
 /// to reach one is a lease instant fractionally ahead of the browser's clock,
 /// and "-0s" would read as a defect rather than as the rounding it is.
+///
+/// The day arm saturates at [`AGE_LABEL_MAX_DAYS`] because it is the one arm
+/// with no natural ceiling: minutes roll into hours and hours into days, but
+/// days count up unbounded, and a single absurd input — an unset instant reads
+/// as tens of thousands of days from the browser's epoch — is enough to widen
+/// the label past any fixed slot. Saturating discards nothing an operator
+/// needs: every caller already carries the exact instants in its `title`, and
+/// past three months the distinction being lost is between "long dead" and
+/// "long dead".
 #[must_use]
 pub fn elapsed_label(millis: i64) -> String {
     let seconds = millis / 1_000;
@@ -376,7 +396,10 @@ pub fn elapsed_label(millis: i64) -> String {
         1..=59 => format!("{seconds}s"),
         60..=3_599 => format!("{}m", seconds / 60),
         3_600..=86_399 => format!("{}h", seconds / 3_600),
-        _ => format!("{}d", seconds / 86_400),
+        _ => match seconds / 86_400 {
+            days @ ..=AGE_LABEL_MAX_DAYS => format!("{days}d"),
+            _ => format!("{AGE_LABEL_MAX_DAYS}d+"),
+        },
     }
 }
 

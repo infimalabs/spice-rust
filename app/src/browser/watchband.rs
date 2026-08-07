@@ -4,6 +4,7 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{DragEvent, HtmlInputElement};
 
+use super::clock::Age;
 use super::*;
 use crate::composer_drafts::{ComposerDraft, compose};
 use crate::watchband::{self, Standing};
@@ -107,8 +108,7 @@ pub(super) fn render_lineage(
         .board()
         .map(|board| board.tasks.as_slice())
         .unwrap_or(&[]);
-    let mut standings =
-        watchband::standings(&lanes.lanes, waiting, tasks, js_sys::Date::now() as i64);
+    let mut standings = watchband::standings(&lanes.lanes, waiting, tasks);
     for standing in &mut standings {
         let backend = waiting
             .iter()
@@ -437,7 +437,7 @@ fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
             .count(),
         LineageMode::Metrics => standings
             .iter()
-            .filter(|standing| standing.held.is_some())
+            .filter(|standing| standing.held_since.is_some())
             .count(),
         LineageMode::Info => standings.len(),
     };
@@ -633,6 +633,25 @@ fn render_details(
     }
 }
 
+/// One lease instant as a ticking age, or `vacant` for a lane holding no claim.
+///
+/// The vacant spelling stays a caller's choice because the two sites mean
+/// different things by it: a metrics row is stating that a measurement is
+/// absent, while a composer heading is stating that the agent's activity is
+/// current. Both render into the same fixed slot, so a lane taking or releasing
+/// a claim swaps text in a box that was already the right size.
+fn lease_age(instant: Option<i64>, class: &'static str, vacant: &'static str) -> Html {
+    match instant {
+        Some(authored) => html! { <Age {authored} class={class} /> },
+        None => html! {
+            <span
+                class={class}
+                data-age-slot={watchband::AGE_LABEL_WIDTH.to_string()}
+            >{vacant}</span>
+        },
+    }
+}
+
 fn render_agent_details(
     member: &crate::runtime::LaneMember,
     standing: &Standing,
@@ -650,14 +669,8 @@ fn render_agent_details(
             || "no active claim".to_owned(),
             |(handle, phase)| format!("{handle} / {phase}"),
         );
-    let held = standing
-        .held
-        .map(watchband::elapsed_label)
-        .unwrap_or_else(|| "—".to_owned());
-    let renewed = standing
-        .renewed
-        .map(watchband::elapsed_label)
-        .unwrap_or_else(|| "—".to_owned());
+    let held = lease_age(standing.held_since, "claim-age", "—");
+    let renewed = lease_age(standing.renewed_at, "claim-age", "—");
     let headline = standing
         .headline
         .clone()
@@ -1047,12 +1060,7 @@ fn render_composer_heading(
                 class="composer-shard-link composer-shard-age"
                 href={format!("#{}", stream.target)}
                 aria-label={stream.label}
-            >{
-                standing
-                    .held
-                    .map(watchband::elapsed_label)
-                    .unwrap_or_else(|| "now".to_owned())
-            }</a>
+            >{lease_age(standing.held_since, "composer-shard-age-label", "now")}</a>
             <strong class="composer-shard-prose" title={prose.clone()}>{prose}</strong>
             {indicators}
             <details class="agent-action-menu">
