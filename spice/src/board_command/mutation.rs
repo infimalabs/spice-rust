@@ -893,14 +893,9 @@ fn claim_win(
         Ok(git) => git,
         Err(outcome) => return outcome,
     };
-    let source = match bus.source_boundary(&lane) {
+    let source = match claim_source_boundary(bus, &lane) {
         Ok(source) => source,
-        Err(error) => {
-            return store_fault(
-                "claim::boundary-unreadable",
-                &error.to_string(),
-            );
-        }
+        Err(outcome) => return outcome,
     };
     let next = projected_claim_next_action(
         &snapshot,
@@ -1214,6 +1209,21 @@ fn claim_git_boundary(
         spice::task_git::prepare_claim(&lane)
     };
     result.map(Some).map_err(task_git_outcome)
+}
+
+/// Read the lane's accounted transcript boundary for the claim heads.
+///
+/// The read goes through the writer queue, so it can fail on a closed or
+/// faulted bus rather than merely returning nothing; that failure is a store
+/// fault instead of a refusal because no command the caller could have sent
+/// would have avoided it.
+fn claim_source_boundary(
+    bus: &Bus,
+    lane: &wire::CanonicalUuid,
+) -> Result<body::SourceBoundary, Outcome<CommandAnswer>> {
+    bus.source_boundary(lane).map_err(|error| {
+        store_fault("claim::boundary-unreadable", &error.to_string())
+    })
 }
 
 fn guard_claim(
