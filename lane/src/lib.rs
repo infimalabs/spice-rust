@@ -16,12 +16,20 @@
 //! Time arrives as an argument. [`hold`] compares deadlines it was handed and
 //! [`renew`] is told whether an occupant is alive; neither consults a clock, so
 //! the same facts read in the same order always reduce to the same seat.
+//!
+//! Two modules write journal authority themselves rather than reducing facts for
+//! a caller to write, and the journal's write vocabulary does not exist on the
+//! wasm plane. [`account`] and [`ingest`] are gated to native targets for that
+//! reason alone: a workspace-wide wasm check still sees the seat, instead of the
+//! whole crate failing to name types its other modules never ask for.
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod account;
 pub mod capture;
 pub mod config;
 pub mod drain;
 pub mod hold;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ingest;
 pub mod life;
 pub mod occupant;
