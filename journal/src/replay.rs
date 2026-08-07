@@ -684,7 +684,7 @@ fn verify_heads(
         "transcript_source_heads",
         violations,
         |key, _seq, head| {
-            (head.key() == key)
+            (head.key().as_str() == key)
                 .then_some(())
                 .ok_or_else(|| "transcript stream disagrees with the row".to_owned())
         },

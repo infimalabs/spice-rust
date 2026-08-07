@@ -141,6 +141,43 @@ fn a_captured_bundle_verifies_the_transcript_head_it_carries() {
     assert_eq!(stored.body(), &transcript_source_head());
 }
 
+/// A caller holding the three logical fields reaches the head it wrote.
+///
+/// The round-trip tests above address the row with `head.key()`, which asks the
+/// stored body to address itself and so cannot tell whether the reader agrees
+/// with the writer about what a key is. This addresses it the way a caller
+/// actually would -- from lane, vendor and stream, with no key composed by hand
+/// -- and pins the miss too: the same head read under a key built from a
+/// different lane is `Ok(None)`, so the reader really is discriminating on all
+/// three fields rather than on the stream name it used to take.
+#[test]
+fn a_transcript_head_is_addressed_by_lane_vendor_and_stream_together() {
+    let journal = authority_fixture();
+    let head = transcript_source_head();
+
+    let addressed = wire::TranscriptStreamKey::new(&head.lane, &head.vendor, &head.stream);
+    let stored = journal
+        .read(|read| read.transcript_source_head(&addressed))
+        .expect("read the fixture checkpoint")
+        .expect("the three logical fields address the stored head");
+    assert_eq!(stored.body(), &head);
+
+    let elsewhere = wire::TranscriptStreamKey::new(
+        &"018f82d4-6f59-7d06-92e3-bce913116306"
+            .parse::<CanonicalUuid>()
+            .expect("a second lane identity"),
+        &head.vendor,
+        &head.stream,
+    );
+    assert!(
+        journal
+            .read(|read| read.transcript_source_head(&elsewhere))
+            .expect("read another lane's checkpoint")
+            .is_none(),
+        "the same stream name under another lane resolved to this lane's head",
+    );
+}
+
 /// One batch that advanced the fixture checkpoint to where it now stands.
 fn ingested_batch() -> wire::body::JournalIngested {
     let head = transcript_source_head();
