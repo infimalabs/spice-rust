@@ -71,7 +71,9 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         OsString::from("--verbose"),
         // Partial chunks let a supervisor read assistant text as it is written.
         // Flushed only at turn end, steering injection and ACK archival trail
-        // the agent by tens of seconds.
+        // the agent by tens of seconds. Spend accounting rides this flag too:
+        // per-turn usage reaches the tape only on stream_event.message_delta,
+        // so dropping it leaves unmetered assistant snapshots and zero spend.
         OsString::from("--include-partial-messages"),
         OsString::from("--model"),
         OsString::from(launch.model.as_str()),
