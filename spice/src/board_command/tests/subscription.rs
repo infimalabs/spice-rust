@@ -43,6 +43,7 @@ pub(super) fn configure_subscription(
                 life: policy,
                 from_manual_projects,
                 manual_projects: configured_manual_projects,
+                sources: Vec::new(),
             },
             FactCause::Root,
         )

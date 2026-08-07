@@ -124,6 +124,20 @@ const CLAIM_CARRIED: &str = r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce913116305"
 }"#;
 
+const LANE_ARRANGED: &str = r#"{
+  "kind": "lane::arranged",
+  "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
+  "from_lineage_id": "018f82d4-6f59-7d06-92e3-bce913116307",
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116308",
+  "before": "018f82d4-6f59-7d06-92e3-bce913116304"
+}"#;
+
+const LINEAGE_ARRANGED: &str = r#"{
+  "kind": "lineage::arranged",
+  "from": [],
+  "lineages": []
+}"#;
+
 /// Read a stored body back through the registry the journal decodes with.
 fn registered<F: wire::Body>(document: &str) -> F {
     let fact: wire::AnyFact =
@@ -251,6 +265,58 @@ fn a_migrated_boundary_encodes_back_to_the_bytes_it_arrived_as() {
         serde_json::to_value(&fact).expect("decoded fact re-encodes"),
         supplied,
         "a stored fact did not survive a decode and re-encode unchanged"
+    );
+}
+
+/// A membership transition stored before boundaries still reads, and says so.
+///
+/// These three carry a list rather than one boundary because a rearrangement
+/// names no lane of its own, and the list is the same shape for all three so a
+/// reducer reads one thing. An empty list is the migrated state and also the
+/// live state when no claimed lane moved; both mean the transition splits no
+/// attribution, so the reducer takes the same action either way.
+#[test]
+fn membership_transitions_stored_before_boundaries_read_with_no_lanes() {
+    assert!(
+        registered::<body::LaneArranged>(LANE_ARRANGED)
+            .sources
+            .is_empty()
+    );
+    assert!(
+        registered::<body::LineageArranged>(LINEAGE_ARRANGED)
+            .sources
+            .is_empty()
+    );
+}
+
+/// A recorded membership boundary survives the registry unchanged.
+///
+/// The empty case above passes for a field the registry silently dropped, so a
+/// populated one has to prove the boundary makes the round trip.
+#[test]
+fn a_recorded_membership_boundary_survives_the_registry() {
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce913116302");
+    let arranged = body::LaneArranged {
+        lane,
+        from_lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116307"),
+        lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116308"),
+        before: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
+        sources: vec![body::LaneSourceBoundary {
+            lane,
+            source: proven(),
+        }],
+    };
+    let fact = wire::Fact::new(arranged.clone());
+
+    let decoded: wire::AnyFact =
+        wire::decode(&wire::encode(&fact).expect("fact encodes")).expect("fact is admitted");
+
+    assert_eq!(
+        decoded
+            .read::<body::LaneArranged>()
+            .expect("the registered kind")
+            .sources,
+        arranged.sources
     );
 }
 

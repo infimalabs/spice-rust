@@ -712,6 +712,12 @@ pub struct LineageConfigured {
     /// Authoritative operator-pinned project set after this transaction.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub manual_projects: Vec<String>,
+    /// Boundary for the moved member, when one moved and is actively claimed.
+    ///
+    /// Empty for a policy-only change, which moves no member and so crosses no
+    /// lane's attribution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<LaneSourceBoundary>,
 }
 
 /// One Canvas lineage and the lanes it holds after an arrangement.
@@ -721,6 +727,22 @@ pub struct LineageStanding {
     pub lineage_id: CanonicalUuid,
     /// Every lane this lineage holds, in the order the operator arranged them.
     pub lanes: Vec<CanonicalUuid>,
+}
+
+/// One lane's accounted transcript boundary at a membership transition.
+///
+/// A membership transition names the lanes it moves rather than carrying a
+/// single lane of its own, so the boundary travels beside the lane it belongs
+/// to. This is what lets a reducer split attribution across the move: the spend
+/// before this locus belongs to the lineage the lane left, and the spend after
+/// it to the lineage the lane joined.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneSourceBoundary {
+    /// Lane whose membership the transition changed.
+    pub lane: CanonicalUuid,
+    /// Accounted transcript that lane's membership changed at.
+    pub source: SourceBoundary,
 }
 
 /// The operator rearranged the Canvas lineages.
@@ -735,6 +757,9 @@ pub struct LineageArranged {
     pub from: Vec<LineageStanding>,
     /// Lineage standings after this transaction, in the arranged order.
     pub lineages: Vec<LineageStanding>,
+    /// Boundaries for the actively claimed lanes this arrangement moved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<LaneSourceBoundary>,
 }
 
 /// One seated member moved to a durable position, possibly in another lineage.
@@ -748,6 +773,9 @@ pub struct LaneArranged {
     pub lineage_id: CanonicalUuid,
     /// Stable member identity immediately following the moved member.
     pub before: CanonicalUuid,
+    /// Boundary for the moved lane, when it is actively claimed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<LaneSourceBoundary>,
 }
 
 /// Exact model and effort supplied to one vendor launch.
