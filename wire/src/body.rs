@@ -203,6 +203,28 @@ pub struct TaskEdited {
     pub revision: u32,
 }
 
+/// A task was withdrawn from the board with a recorded reason.
+///
+/// The journal is the authority and a fact is permanent, so a withdrawal is a
+/// terminal workflow status rather than the removal of a row: the statement,
+/// its history, and this reason all stay readable. `claimed` records the
+/// possessing actor when the withdrawal overrode a live claim, so a forced
+/// removal names whose work it took away rather than reporting a bare success.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskDeleted {
+    /// Withdrawn task.
+    pub task: TaskHandle,
+    /// Operator's stated reason for the withdrawal.
+    pub reason: String,
+    /// Actor whose live claim the withdrawal overrode, when it overrode one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub claimed: Option<Actor>,
+}
+
 /// Exclusive possession was minted from the current eligibility and claim heads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimWon {

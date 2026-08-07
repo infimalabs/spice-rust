@@ -109,6 +109,20 @@ pub struct TaskEdit {
     pub acceptance: Vec<String>,
 }
 
+/// Withdraw a task from the board with a recorded reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDelete {
+    /// Task the operator withdraws.
+    pub task: TaskHandle,
+    /// Why the task leaves the board; required, because a withdrawal that
+    /// records no reason is indistinguishable from one made in error.
+    pub reason: String,
+    /// Override a live claim rather than refusing the withdrawal.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force_claimed: bool,
+}
+
 /// Append an observation without replacing the statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -595,8 +595,11 @@ fn admit_workflow(workflow: &WorkflowHead) -> Result<(), TaskError> {
     }
     match workflow.status.as_str() {
         "pending" if workflow.completion.is_none() => Ok(()),
-        "completed" if workflow.completion.is_some() => Ok(()),
-        "pending" | "completed" => Err(TaskError::CompletionMismatch {
+        // A withdrawal is terminal like a completion and carries the same
+        // instant, which is what keeps every reader that asks "is this task
+        // still open" correct without asking about deletion by name.
+        "completed" | "deleted" if workflow.completion.is_some() => Ok(()),
+        "pending" | "completed" | "deleted" => Err(TaskError::CompletionMismatch {
             status: workflow.status.clone(),
         }),
         _ => Err(TaskError::WorkflowStatus(workflow.status.clone())),

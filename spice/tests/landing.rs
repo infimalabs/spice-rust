@@ -103,6 +103,29 @@ const CASES: &[Case] = &[
         &["task", "depends", "READY-12345678", "AFTER-12345678"],
     ),
     case(
+        "task delete",
+        &[
+            "task",
+            "delete",
+            "READY-12345678",
+            "filed against the wrong surface",
+        ],
+    ),
+    case(
+        "task modify",
+        &[
+            "task",
+            "modify",
+            "READY-12345678",
+            "--description",
+            "the meaning the filing missed",
+            "--acceptance",
+            "a clause a reviewer can check",
+            "--acceptance",
+            "and a second the first one missed",
+        ],
+    ),
+    case(
         "task artifact add",
         &["task", "artifact", "add", "READY-12345678", "missing"],
     ),

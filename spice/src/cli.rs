@@ -138,6 +138,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TaskEdit
+        | CommandKind::TaskDelete
         | CommandKind::TaskNote
         | CommandKind::TaskDefer
         | CommandKind::TaskWake
@@ -648,7 +649,7 @@ const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "list"],
         "task list [--all] [--project PROJECT] [--limit N] \
-         [--status pending|waiting|completed]",
+         [--status pending|waiting|completed|deleted]",
         OperatorOrLane,
         Read,
         [],
@@ -791,6 +792,27 @@ const CONTRACTS: &[Contract] = &[
         [Resident],
         Reply,
         "board::task_depends"
+    ),
+    row!(
+        ["task", "modify"],
+        "task modify HANDLE [--title TITLE] [--description DESCRIPTION] \
+         [--acceptance ACCEPTANCE...]",
+        OperatorOrLane,
+        Command,
+        [TaskEdited],
+        [Resident],
+        Reply,
+        "board::task_modify"
+    ),
+    row!(
+        ["task", "delete"],
+        "task delete HANDLE REASON [--force-claimed]",
+        OperatorOrLane,
+        Command,
+        [TaskDeleted],
+        [Resident],
+        Reply,
+        "board::task_delete"
     ),
     row!(
         ["task", "artifact", "add"],
@@ -1281,6 +1303,8 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["task", "free"]
         | ["task", "oops"]
         | ["task", "depends"]
+        | ["task", "modify"]
+        | ["task", "delete"]
         | ["task", "artifact", "add"]
         | ["task", "artifact", "list"]
         | ["task", "artifact", "show"]
