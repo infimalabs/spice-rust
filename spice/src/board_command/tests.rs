@@ -23,6 +23,11 @@ mod tests {
     // what that one comparison reads, so severing them apart is observable.
     include!("tests/allocation_guard.rs");
 
+    // The order in which one claim's preconditions refuse is documented as a
+    // contract on `ClaimGrant`, and a caller sees only the first refusal, so it
+    // is pinned apart from the scenarios that drive a claim that succeeds.
+    include!("tests/claim_grant.rs");
+
     fn at<'a>(answer: &'a BoardAnswer, task: &TaskHandle) -> &'a BoardTask {
         task_heads(answer, task).expect("fixture task is visible")
     }
