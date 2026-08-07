@@ -287,6 +287,27 @@ fn durable_head(fixture: &Fixture) -> wire::ResidencyHead {
         .into_body()
 }
 
+/// How many durable facts of one kind name this lane.
+///
+/// Shared by the ending tests rather than copied into each. Every one of them
+/// has to assert a presence and an absence for the same lane, so a copy that
+/// drifted would not read as a gap; it would quietly weaken whichever side of
+/// whichever test it was copied into.
+fn lane_facts(fixture: &Fixture, lane: wire::CanonicalUuid, kind: FactKind) -> usize {
+    journal::JournalReader::open(fixture.journal())
+        .expect("lane journal reads")
+        .fact_snapshot()
+        .expect("lane facts read")
+        .facts()
+        .iter()
+        .filter(|fact| {
+            fact.fact.kind() == kind
+                && fact.fact.body().get("lane")
+                    == Some(&serde_json::Value::String(lane.to_string()))
+        })
+        .count()
+}
+
 fn captures(index: &Path, dialect: Dialect) -> Vec<PathBuf> {
     fs::read_to_string(index)
         .expect("launch index reads")

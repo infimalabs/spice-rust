@@ -524,6 +524,66 @@ fn assert_shutdown_ladder_and_endings(snapshot: &journal::FactSnapshot) {
     assert_eq!(degraded, 2, "disk residue was not named once per lane");
 }
 
+/// A group that never trapped TERM ends at the terminate stage, and the ledger
+/// says this resident ended it rather than crediting it with an exit.
+///
+/// Held apart from the two-group drive because the ending under test is the one
+/// that drive cannot reach: its forced group traps TERM, so it always survives to
+/// the kill stage. Terminate is the only mixed stage — an occupant that trapped
+/// the signal chose a status, one that did not has none — and so the only stage
+/// where reading the ending off the status can name the wrong ending.
+///
+/// `UpKilling` carrying no occupants is what makes this a statement about the
+/// terminate stage. Without it the kill stage could have produced the same
+/// `LaneKilled`, and the test would claim nothing the sibling does not.
+#[test]
+fn a_group_that_never_trapped_termination_is_not_credited_with_an_exit() {
+    let (root, paths) = resident_fixture("terminated");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface =
+        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(1);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let mut seats = Seats::new();
+
+    let lane = test_uuid(2);
+    let occupant = test_uuid(3);
+    seats
+        .seat(
+            lane,
+            occupant,
+            process_spec("while :; do sleep 1; done", Duration::from_millis(100)),
+        )
+        .expect("untrapped group starts");
+    seed_lane(&bus, epoch, lane, occupant);
+
+    assert!(matches!(
+        drive_shutdown(&bus, &paths, epoch, &mut seats),
+        Outcome::Reply(_)
+    ));
+    let snapshot = bus.fact_snapshot().expect("facts read through bus");
+    assert_eq!(
+        fact_u64(&snapshot, wire::FactKind::UpTerminating, "occupants"),
+        1,
+        "the group outlived the drain bound and reached the terminate stage"
+    );
+    assert_eq!(
+        fact_u64(&snapshot, wire::FactKind::UpKilling, "occupants"),
+        0,
+        "the terminate stage, not the kill stage, is what ended this group"
+    );
+    let holds = |kind| snapshot.facts().iter().any(|fact| fact.fact.kind() == kind);
+    assert!(holds(wire::FactKind::LaneKilled));
+    assert!(
+        !holds(wire::FactKind::LaneExited),
+        "a group that never trapped the signal chose no status to publish"
+    );
+    bus.shutdown().expect("fixture bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
 #[test]
 fn a_post_seated_surface_failure_compensates_to_verified_dark() {
     let (root, paths) = resident_fixture("compensation");

@@ -1039,26 +1039,244 @@ fn a_vendor_that_ignores_termination_is_recorded_as_killed_rather_than_exited() 
         .parse::<u32>()
         .expect("vendor pid parses");
     assert!(!process_alive(pid), "killed vendor was not reaped");
-    let facts = journal::JournalReader::open(fixture.journal())
-        .expect("kill journal reads")
-        .fact_snapshot()
-        .expect("kill facts read");
-    let named = |kind| {
-        facts
-            .facts()
-            .iter()
-            .filter(|fact| {
-                fact.fact.kind() == kind
-                    && fact.fact.body().get("lane")
-                        == Some(&serde_json::Value::String(lane.to_string()))
-            })
-            .count()
-    };
-    assert_eq!(named(FactKind::LaneKilled), 1, "the kill is recorded once");
     assert_eq!(
-        named(FactKind::LaneExited),
+        lane_facts(&fixture, lane, FactKind::LaneKilled),
+        1,
+        "the kill is recorded once"
+    );
+    assert_eq!(
+        lane_facts(&fixture, lane, FactKind::LaneExited),
         0,
         "a kill is not also published as an exit the occupant chose"
+    );
+
+    let down = operator(&fixture, &["down"], true);
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
+/// A vendor that never traps TERM dies one stage earlier, and is still recorded
+/// as ended by this resident rather than as an exit it chose.
+///
+/// The sibling above installs a trap that ignores TERM, so it survives to the
+/// kill. This one installs no trap at all, so the default disposition ends it
+/// inside the termination grace and the terminate stage is what observes it.
+/// That stage is the one this resident used to misreport: a signalled process
+/// carries no status code, so the classifier substituted -1 and published
+/// `lane::exited`, a status no occupant ever returned. The two fixtures differ
+/// only in that trap line, which is what makes the pair read as one comparison.
+///
+/// This drives the lane drain. The resident has a second route to the same
+/// ending, the shutdown ladder, which classifies it in its own code and so was
+/// its own defect; the test below drives that one and asserts the same record.
+///
+/// Both halves are load-bearing for the same reason as the sibling: writing both
+/// endings would leave a reader unable to say which one happened.
+#[test]
+fn a_vendor_that_never_traps_termination_is_not_recorded_as_choosing_its_exit() {
+    let fixture = Fixture::linked("vendor-terminated");
+    let rig = configure(&fixture);
+    let pid_file = fixture.cleanup.join("untrapped-vendor-pid");
+    fs::write(
+        &rig.claude_binary,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$$\" > {}\n",
+                "printf '%s\\n' {}\n",
+                "while :; do sleep 1; done\n",
+            ),
+            shell_word(&pid_file.display().to_string()),
+            shell_word(Dialect::Claude.session_record()),
+        ),
+    )
+    .expect("untrapped vendor installs");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+    let lane = add_lane(&fixture, None, Dialect::Claude);
+    drain(&fixture, lane);
+
+    let pid = fs::read_to_string(&pid_file)
+        .expect("vendor pid reads")
+        .trim()
+        .parse::<u32>()
+        .expect("vendor pid parses");
+    assert!(!process_alive(pid), "terminated vendor was not reaped");
+    assert_eq!(
+        lane_facts(&fixture, lane, FactKind::LaneKilled),
+        1,
+        "the terminate stage records the ending it caused"
+    );
+    assert_eq!(
+        lane_facts(&fixture, lane, FactKind::LaneExited),
+        0,
+        "a signalled occupant is not credited with an exit status it never chose"
+    );
+
+    let down = operator(&fixture, &["down"], true);
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
+/// The shutdown ladder records an untrapped vendor the way the lane drain does.
+///
+/// The same vendor and the same ending as the test above, reached by this
+/// resident's other route to it. The two routes classify in separate code, so
+/// agreement between them is a claim that has to be made rather than assumed;
+/// the ladder was the site the fix was asked for and the drain was the one it
+/// also needed.
+///
+/// Shortening the lease is what puts the ladder inside the operator's bound. The
+/// ladder's drain stage waits out whatever remains of the occupant's lease before
+/// it signals anything, and a vendor that loops forever never shortens that wait
+/// by ending; at the fixture's usual 30s lease the operator gives up first.
+#[test]
+fn the_shutdown_ladder_records_an_untrapped_vendor_the_way_the_drain_does() {
+    let fixture = Fixture::linked("ladder-terminated");
+    let rig = configure(&fixture);
+    let config = fixture.root.join("spice.toml");
+    let document = fs::read_to_string(&config).expect("fixture config reads");
+    let shortened = document.replace("lease = \"30s\"", "lease = \"1s\"");
+    assert_ne!(
+        shortened, document,
+        "the shared fixture no longer spells the lease this test shortens"
+    );
+    fs::write(&config, shortened).expect("shortened lease installs");
+    let pid_file = fixture.cleanup.join("ladder-vendor-pid");
+    fs::write(
+        &rig.claude_binary,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$$\" > {}\n",
+                "printf '%s\\n' {}\n",
+                "while :; do sleep 1; done\n",
+            ),
+            shell_word(&pid_file.display().to_string()),
+            shell_word(Dialect::Claude.session_record()),
+        ),
+    )
+    .expect("untrapped vendor installs");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+    let lane = add_lane(&fixture, None, Dialect::Claude);
+
+    let down = operator(&fixture, &["down"], true);
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+
+    let pid = fs::read_to_string(&pid_file)
+        .expect("vendor pid reads")
+        .trim()
+        .parse::<u32>()
+        .expect("vendor pid parses");
+    assert!(!process_alive(pid), "terminated vendor was not reaped");
+    assert_eq!(
+        lane_facts(&fixture, lane, FactKind::LaneKilled),
+        1,
+        "the ladder's terminate stage records the ending it caused"
+    );
+    assert_eq!(
+        lane_facts(&fixture, lane, FactKind::LaneExited),
+        0,
+        "a signalled occupant is not credited with an exit status it never chose"
+    );
+}
+
+/// A vendor killed by someone other than this resident keeps its own record.
+///
+/// The other half of the pair above. Both vendors die to a signal and neither
+/// reports a status code, so the platform tells this resident the same thing in
+/// both cases; only the resident knows which signal it sent. That is the whole
+/// distinction the two kinds carry, and a test that asserted the killed side
+/// alone would not show it: the ledger became more truthful only if this ending
+/// still reads as an exit while the signalled one no longer does.
+///
+/// `-1` is the code because there is no code, and here that substitute says
+/// something true — a signal this resident did not send. A Unix status code is 0
+/// to 255, so it cannot be confused with a status a vendor chose to return.
+///
+/// The fifo is the synchronisation, not the pid: a killed child stays visible as
+/// a zombie until someone reaps it, so polling for the process to disappear would
+/// wait on the very drain this test has not run yet. Reaching EOF on the write
+/// end proves the vendor is gone regardless of who has reaped it. That the
+/// already-dead vendor is still waiting to be observed at drain time is the same
+/// arrangement `nonzero_vendor_exits_are_reaped_and_recorded_for_both_dialects`
+/// relies on.
+#[test]
+fn a_vendor_killed_by_another_hand_is_still_recorded_as_an_exit() {
+    let fixture = Fixture::linked("vendor-foreign-signal");
+    let rig = configure(&fixture);
+    let exit_pipe = fixture.cleanup.join("foreign-signal-exit");
+    let made = Command::new("mkfifo")
+        .arg(&exit_pipe)
+        .output()
+        .expect("mkfifo launches");
+    assert!(made.status.success(), "mkfifo failed: {:?}", made.stderr);
+    let pid_file = fixture.cleanup.join("foreign-signal-pid");
+    fs::write(
+        &rig.claude_binary,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "exec 3>{}\n",
+                "printf '%s\\n' \"$$\" > {}\n",
+                "printf '%s\\n' {}\n",
+                // Replaces the shell so the pid written above is the process the
+                // kill reaches, with no sleep child outliving it.
+                "exec sleep 1000\n",
+            ),
+            shell_word(&exit_pipe.display().to_string()),
+            shell_word(&pid_file.display().to_string()),
+            shell_word(Dialect::Claude.session_record()),
+        ),
+    )
+    .expect("signalled vendor installs");
+    let observer = std::thread::spawn(move || {
+        let mut pipe = fs::File::open(exit_pipe).expect("exit observer opens");
+        let mut bytes = Vec::new();
+        pipe.read_to_end(&mut bytes)
+            .expect("exit observer reaches EOF");
+    });
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+    let lane = add_lane(&fixture, None, Dialect::Claude);
+
+    let pid = fs::read_to_string(&pid_file)
+        .expect("vendor pid reads")
+        .trim()
+        .parse::<u32>()
+        .expect("vendor pid parses");
+    let killed = Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .output()
+        .expect("kill launches");
+    assert!(killed.status.success(), "kill failed: {:?}", killed.stderr);
+    observer.join().expect("foreign kill reaches the vendor");
+    drain(&fixture, lane);
+
+    let facts = journal::JournalReader::open(fixture.journal())
+        .expect("signal journal reads")
+        .fact_snapshot()
+        .expect("signal facts read");
+    let exited = facts
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.fact.kind() == FactKind::LaneExited
+                && fact.fact.body().get("lane")
+                    == Some(&serde_json::Value::String(lane.to_string()))
+        })
+        .expect("a death this resident did not cause is recorded as an exit");
+    assert_eq!(
+        exited.fact.body()["code"],
+        -1,
+        "the absent status is named, not invented"
+    );
+    assert_eq!(
+        lane_facts(&fixture, lane, FactKind::LaneKilled),
+        0,
+        "this resident sent no signal, so it claims no ending"
     );
 
     let down = operator(&fixture, &["down"], true);
