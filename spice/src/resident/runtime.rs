@@ -959,6 +959,9 @@ async fn drive_surface(
     timer: impl std::future::Future<Output = CommandResult<()>>,
 ) -> CommandResult<()> {
     tokio::pin!(timer);
+    // One resident owns one correlation table: a tool result names its tool only
+    // by the call it answers, and calls outlive the record that announced them.
+    let mut tool_previews = CallPreviews::default();
     loop {
         tokio::select! {
             request = control.recv() => {
@@ -982,6 +985,7 @@ async fn drive_surface(
                     seats,
                     &message_publisher,
                     &record,
+                    &mut tool_previews,
                     diagnostic,
                 )?;
             }

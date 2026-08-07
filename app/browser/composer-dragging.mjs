@@ -36,6 +36,27 @@ export async function assertPrimaryComposerDragging(
     `.composer-shard--primary[data-shard-target-id="${lane}"]`,
   );
   const sourceComposer = primaryComposer(source.lane);
+  await page.evaluate(() => {
+    const socket = window.__canvasSockets.at(-1);
+    if (!socket) throw new Error("canvas WebSocket was not captured");
+    const send = socket.send.bind(socket);
+    window.__laneArrangeCommands = [];
+    const observe = (bytes) => {
+      const command = JSON.parse(new TextDecoder().decode(bytes));
+      if (command.kind === "lane::arrange") window.__laneArrangeCommands.push(command.body);
+      return bytes;
+    };
+    socket.send = (data) => {
+      if (typeof data === "string") {
+        const observed = observe(new TextEncoder().encode(data));
+        send(new TextDecoder().decode(observed));
+      } else if (data instanceof Blob) {
+        void data.arrayBuffer().then((buffer) => send(observe(new Uint8Array(buffer))));
+      } else {
+        send(observe(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
+      }
+    };
+  });
   const composerHandle = {
     sourcePosition: { x: 10, y: 10 },
     targetPosition: { x: 10, y: 10 },
@@ -134,6 +155,58 @@ export async function assertPrimaryComposerDragging(
       .count(),
     0,
     "the source team no longer renders a duplicate primary composer",
+  );
+  assert.deepEqual(
+    await page.evaluate(() => window.__laneArrangeCommands),
+    [
+      { lane: source.lane, before: sameTeamTarget.lane },
+      { lane: source.lane, before: crossTeamTarget.lane },
+    ],
+    "each primary-composer drop sends exactly one lane arrangement command",
+  );
+
+  const transferredComposer = primaryComposer(source.lane);
+  const droppedText = "composer-targeted text survives member dragging";
+  await transferredComposer.evaluate((target, text) => {
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", text);
+    target.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+  }, droppedText);
+  await console
+    .locator(`.mosaic-message-card[data-agent-lane="${source.lane}"]`)
+    .filter({ hasText: droppedText })
+    .waitFor({ timeout: 10_000 });
+  const textDropInbox = await reply(fixture, ["inbox", source.lane]);
+  assert.ok(
+    textDropInbox.body.lanes[0].pending.some(
+      (directive) => directive.text === `> ${droppedText}`,
+    ),
+    "a text drop on the draggable child composer still reaches lane steering",
+  );
+
+  const droppedImage = "composer-targeted-drop.png";
+  await transferredComposer.evaluate((target, name) => {
+    const bytes = Uint8Array.from(
+      atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
+      (character) => character.charCodeAt(0),
+    );
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], name, { type: "image/png" }));
+    target.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+  }, droppedImage);
+  await transferredComposer.locator(`img[alt="${droppedImage}"]`).waitFor();
+  assert.equal(
+    await transferredComposer.locator(`img[alt="${droppedImage}"]`).count(),
+    1,
+    "an image drop on the draggable child composer still reaches the lane draft",
   );
 
   const cards = console.locator(".mosaic-message-card");

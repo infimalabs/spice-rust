@@ -8,6 +8,10 @@ use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 
 use super::{CommandResult, lane_surface, store_fault};
 
+mod tool_preview;
+
+pub(super) use tool_preview::CallPreviews;
+
 pub(super) trait AgentMessagePublisher {
     fn publish(
         &self,
@@ -30,12 +34,13 @@ pub(super) fn accept_capture_record(
     seats: &mut Seats,
     publisher: &impl AgentMessagePublisher,
     record: &lane::capture::CaptureRecord,
+    previews: &mut CallPreviews,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     if !lane_surface::capture_record(bus, epoch, seats, record)? {
         return Ok(());
     }
-    match publish_agent_messages(publisher, record) {
+    match publish_agent_messages(publisher, record, previews) {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(
@@ -52,6 +57,7 @@ pub(super) fn accept_capture_record(
 pub(super) fn publish_agent_messages(
     publisher: &impl AgentMessagePublisher,
     record: &lane::capture::CaptureRecord,
+    previews: &mut CallPreviews,
 ) -> CommandResult<()> {
     for (event, decoded) in record.decoded.events().iter().enumerate() {
         let (activity, locus, text) = match decoded {
@@ -61,7 +67,7 @@ pub(super) fn publish_agent_messages(
             listen::Event::Tool(tool) => (
                 AgentActivityKind::Tool,
                 tool.locus,
-                tool_activity_preview(tool),
+                tool_preview::activity(record.lane, tool, previews),
             ),
             _ => continue,
         };
@@ -83,19 +89,4 @@ pub(super) fn publish_agent_messages(
             .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     }
     Ok(())
-}
-
-fn tool_activity_preview(tool: &listen::Tool) -> String {
-    match &tool.moment {
-        listen::ToolMoment::Call { name } => name.clone(),
-        listen::ToolMoment::Update { name } => format!("{name} update"),
-        listen::ToolMoment::Result(result) => {
-            let outcome = match result {
-                listen::ToolResult::Succeeded => "succeeded",
-                listen::ToolResult::Failed => "failed",
-                listen::ToolResult::Unreported => "completed",
-            };
-            format!("{} {outcome}", tool.call_id)
-        }
-    }
 }

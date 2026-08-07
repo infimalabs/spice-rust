@@ -22,6 +22,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { HANDSHAKE_TIMEOUT_MS, RECONNECT_DELAY_MS } from "./client-deadlines.mjs";
+import {
+  activityRecord, sessionRecord, toolActivityRecord, toolCallId, toolResultRecord, triggeredActivityRecord,
+} from "./canvas-transcript-records.mjs";
 import { assertTiledWorkspace } from "./tiled-workspace.mjs";
 
 const execute = promisify(execFile);
@@ -29,34 +32,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const binary = join(root, "target/debug/spice");
 const artifacts = join(root, "artifacts/canvas");
-const sessionRecord = JSON.stringify({
-  type: "system",
-  subtype: "init",
-  session_id: "018f7777-7777-7444-8888-999999999999",
-});
-function assistantRecord(content) {
-  return JSON.stringify({
-    type: "assistant",
-    message: {
-      type: "message",
-      role: "assistant",
-      content,
-      usage: {
-        input_tokens: 1,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-        output_tokens: 1,
-      },
-    },
-  });
-}
-
-const activityRecord = assistantRecord([{ type: "text", text: "periodic live witness" }]);
-const triggeredActivityRecord = assistantRecord([{ type: "text", text: "newest lane prose witness" }]);
-const toolActivityRecord = assistantRecord([
-  { type: "tool_use", id: "lane-status-tool", name: "Bash", input: {} },
-]);
-
 export async function buildResident() {
   try {
     await execute("cargo", ["xtask", "app"], {
@@ -264,9 +239,27 @@ export async function assertHeldTaskCount(team, fixture, lane) {
   // by the production capture path, not prose styled to resemble a tool.
   const ticker = team.locator(".ticker");
   await writeFile(join(fixture, ".spice-tool-trigger"), "emit\n");
-  const toolLine = "tool: Bash";
+  const toolLine = "tool: Bash: git status --short";
   await ticker.filter({ hasText: toolLine }).waitFor({ timeout: 15_000 });
   assertNewestLaneActivity(await ticker.innerText(), toolLine);
+
+  // The result of that same call arrives on a separate transcript record that
+  // names only the vendor correlation id. The strip has to resolve it back to
+  // the call, because `toolu_01...` is not something an operator can act on.
+  await writeFile(join(fixture, ".spice-tool-result-trigger"), "emit\n");
+  const resultLine = `${toolLine} succeeded`;
+  await ticker.filter({ hasText: resultLine }).waitFor({ timeout: 15_000 });
+  assertNewestLaneActivity(await ticker.innerText(), resultLine);
+
+  // Falsification: the exact opaque line this task exists to remove must be
+  // rejected by the same assertion the resolved line just passed. It is checked
+  // without writing to the page, because overwriting a rendered node here
+  // desynchronizes the client's diff and suppresses the next activity update.
+  assert.throws(
+    () => assertNewestLaneActivity(`tool: ${toolCallId} succeeded`, resultLine),
+    /raw vendor tool identifier/,
+    "the production assertion rejects a raw vendor identifier on the strip",
+  );
 
   // The fake resident agent consumes this one-shot trigger in its real
   // transcript process. Capture then publishes a normal prose stream frame,
@@ -306,6 +299,11 @@ function assertNewestLaneActivity(actual, expected) {
     /(?:Board|Lane) snapshot|Steering inbox/,
     "newest lane activity excludes protocol snapshot receipts",
   );
+  assert.doesNotMatch(
+    actual,
+    /toolu_/,
+    "newest lane activity never shows a raw vendor tool identifier",
+  );
   assert.equal(actual, expected, "newest lane activity wins across tool and prose shapes");
 }
 
@@ -342,6 +340,10 @@ export async function configureFixture(
     "  if [ -f .spice-tool-trigger ]; then",
     "    rm -f .spice-tool-trigger",
     `    printf '%s\\n' '${toolActivityRecord}'`,
+    "  fi",
+    "  if [ -f .spice-tool-result-trigger ]; then",
+    "    rm -f .spice-tool-result-trigger",
+    `    printf '%s\\n' '${toolResultRecord}'`,
     "  fi",
     "  if [ -f .spice-prose-trigger ]; then",
     "    rm -f .spice-prose-trigger",

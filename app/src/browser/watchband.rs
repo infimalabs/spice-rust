@@ -1,7 +1,7 @@
 //! Predecessor-style lane composer rendered inside the Agents surface.
 
-use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
+use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{DragEvent, HtmlInputElement};
 
 use super::*;
@@ -574,6 +574,14 @@ struct PrimaryComposerDragging {
     drop: Callback<DragEvent>,
 }
 
+fn lane_drag_transfer(event: &DragEvent) -> Option<web_sys::DataTransfer> {
+    let transfer = event.data_transfer()?;
+    transfer
+        .types()
+        .includes(&JsValue::from_str(LANE_DRAG_MIME), 0)
+        .then_some(transfer)
+}
+
 fn primary_composer_dragging(
     lane: CanonicalUuid,
     enabled: bool,
@@ -587,19 +595,23 @@ fn primary_composer_dragging(
         }
     });
     let over = Callback::from(move |event: DragEvent| {
+        let Some(transfer) = lane_drag_transfer(&event) else {
+            return;
+        };
         event.prevent_default();
         event.stop_propagation();
-        if let Some(transfer) = event.data_transfer() {
-            transfer.set_drop_effect("move");
-        }
+        transfer.set_drop_effect("move");
     });
     let sender = sender.clone();
     let drop = Callback::from(move |event: DragEvent| {
+        let Some(transfer) = lane_drag_transfer(&event) else {
+            return;
+        };
         event.prevent_default();
         event.stop_propagation();
-        let source = event
-            .data_transfer()
-            .and_then(|transfer| transfer.get_data(LANE_DRAG_MIME).ok())
+        let source = transfer
+            .get_data(LANE_DRAG_MIME)
+            .ok()
             .and_then(|source| source.parse::<CanonicalUuid>().ok());
         let Some(source) = source else {
             return;

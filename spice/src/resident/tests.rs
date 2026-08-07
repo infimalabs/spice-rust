@@ -57,8 +57,7 @@ fn access_refusal_for(argv: &[&str]) -> String {
     access_refusal(argv).reason
 }
 
-/// The surface listens on exactly what the operator named, or on one fixed
-/// default it can be told about in advance.
+/// The surface listens exactly where the operator requested or at one stable default.
 ///
 /// Both halves are load-bearing. An operator reaching this surface from another
 /// machine has to be able to say which address it answers on, and an operator
@@ -1244,6 +1243,8 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
                 call_id: "tool-1".to_owned(),
                 moment: listen::ToolMoment::Call {
                     name: "Bash".to_owned(),
+                    arguments: r#"{"command":"git status --short","description":"read the tree"}"#
+                        .to_owned(),
                 },
                 locus,
             }),
@@ -1266,6 +1267,7 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
         )
         .expect("capture fixture occupant starts");
     let mut diagnostics = Vec::new();
+    let mut previews = CallPreviews::default();
 
     accept_capture_record(
         &bus,
@@ -1273,6 +1275,7 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
         &mut seats,
         &publisher,
         &record,
+        &mut previews,
         &mut diagnostics,
     )
     .expect("current capture projects");
@@ -1283,6 +1286,7 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
         &publisher,
         &mut updates,
         &record,
+        &mut previews,
         &mut diagnostics,
     );
     seats
@@ -1302,7 +1306,7 @@ fn assert_tool_and_prose_activity(
     assert_eq!(tool.lane, record.lane);
     assert_eq!(tool.author, record.occupant);
     assert_eq!(tool.activity, wire::AgentActivityKind::Tool);
-    assert_eq!(tool.text, "Bash");
+    assert_eq!(tool.text, "Bash: git status --short");
     assert_eq!(
         tool.locus,
         wire::MessageLocus {
@@ -1339,6 +1343,7 @@ fn assert_stale_capture_ignored(
     publisher: &impl AgentMessagePublisher,
     updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
     record: &lane::capture::CaptureRecord,
+    previews: &mut CallPreviews,
     diagnostics: &mut Vec<u8>,
 ) {
     seats
@@ -1370,8 +1375,16 @@ fn assert_stale_capture_ignored(
             locus,
         })]),
     };
-    accept_capture_record(bus, test_uuid(4), seats, publisher, &stale, diagnostics)
-        .expect("stale capture is ignored");
+    accept_capture_record(
+        bus,
+        test_uuid(4),
+        seats,
+        publisher,
+        &stale,
+        previews,
+        diagnostics,
+    )
+    .expect("stale capture is ignored");
     assert!(matches!(
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
@@ -1406,6 +1419,7 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
         )
         .expect("capture fixture group starts");
     let mut diagnostics = Vec::new();
+    let mut previews = CallPreviews::default();
 
     for (offset, text) in [(120, "first answer"), (180, "later answer")] {
         let locus = listen::Locus::new(4, offset, 48);
@@ -1429,6 +1443,7 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
             &mut seats,
             &UnavailableMessagePublisher,
             &record,
+            &mut previews,
             &mut diagnostics,
         )
         .expect("a failed Canvas view leaves the capture handler live");
