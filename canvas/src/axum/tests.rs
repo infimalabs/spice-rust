@@ -949,26 +949,63 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
     assert!(task.await.expect_err("aborted server task").is_cancelled());
 }
 
-/// A worktree holding a complete app stage, and that stage's path.
+/// One worktree holding a complete app stage for exactly as long as its owner.
+struct AppWorktree {
+    root: tempfile::TempDir,
+    generation: std::path::PathBuf,
+}
+
+impl AppWorktree {
+    fn root(&self) -> &std::path::Path {
+        self.root.path()
+    }
+
+    fn generation(&self) -> &std::path::Path {
+        &self.generation
+    }
+}
+
+/// Build an owned worktree and return the generation containing its app stage.
 ///
 /// The bytes name their own file so a route served from the wrong one is
 /// visible in the assertion.
-fn app_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
+fn app_worktree() -> AppWorktree {
+    let root = tempfile::Builder::new()
+        .prefix("spice-canvas-app-")
+        .tempdir()
+        .expect("fixture temp directory");
+    let generation = seed_app_generation(root.path(), "locally built");
+    AppWorktree { root, generation }
+}
 
-    let root = std::env::temp_dir().join(format!(
-        "spice-canvas-app-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let generation = seed_app_generation(&root, "locally built");
-    (root, generation)
+#[test]
+fn app_worktree_directory_is_removed_during_assertion_unwind() {
+    let mut root = None;
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let fixture = app_worktree();
+        root = Some(fixture.root().to_path_buf());
+        assert!(
+            fixture
+                .root()
+                .join("injected-missing-assertion-path")
+                .is_file(),
+            "injected fixture assertion failure"
+        );
+    }));
+
+    assert!(failure.is_err(), "the injected fixture assertion fails");
+    let root = root.expect("the failing assertion recorded its fixture root");
+    assert!(
+        !root.exists(),
+        "fixture directory is removed while the assertion unwinds: {}",
+        root.display()
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
-    let (root, stage) = app_worktree();
-    let app = crate::AppSource::resolve(&root).expect("a complete stage resolves");
+    let fixture = app_worktree();
+    let app = crate::AppSource::resolve(fixture.root()).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
@@ -994,7 +1031,8 @@ async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
 
     // A stage that stops answering mid-flight is reported as this endpoint's
     // own failure, not as the app the operator asked to stop serving.
-    std::fs::remove_file(stage.join("canvas-app.html")).expect("fixture removes one staged file");
+    std::fs::remove_file(fixture.generation().join("canvas-app.html"))
+        .expect("fixture removes one staged file");
 
     let refused = request(address, &address.to_string(), "/").await;
     assert!(refused.starts_with(b"HTTP/1.1 503 Service Unavailable\r\n"));
@@ -1005,7 +1043,6 @@ async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
 
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());
-    std::fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 mod lifecycle;
