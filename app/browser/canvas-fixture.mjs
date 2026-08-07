@@ -66,6 +66,14 @@ const triggeredActivityRecord = JSON.stringify({
 // string an operator must never be shown, so the fixture spells a realistic
 // one rather than a friendly placeholder.
 const toolCallId = "toolu_01LaneStatusStripWitness";
+/// The strip text production publishes for the tool call below.
+///
+/// Two files assert on this one line: this fixture waits for it on the strip,
+/// and the activity replay route captures the same frame off the socket to
+/// redeliver it. It is spelled here alone so that a change to the preview rule
+/// reds one constant instead of leaving a hand-copied duplicate matching
+/// nothing, which is how BROWSER-1kKd6zyV and this task were both filed.
+export const TOOL_ACTIVITY_TEXT = "Bash: git status --short";
 const toolActivityRecord = JSON.stringify({
   type: "assistant",
   message: {
@@ -304,7 +312,7 @@ export async function assertHeldTaskCount(team, fixture, lane) {
   // by the production capture path, not prose styled to resemble a tool.
   const ticker = team.locator(".ticker");
   await writeFile(join(fixture, ".spice-tool-trigger"), "emit\n");
-  const toolLine = "tool: Bash: git status --short";
+  const toolLine = `tool: ${TOOL_ACTIVITY_TEXT}`;
   await ticker.filter({ hasText: toolLine }).waitFor({ timeout: 15_000 });
   assertNewestLaneActivity(await ticker.innerText(), toolLine);
 
