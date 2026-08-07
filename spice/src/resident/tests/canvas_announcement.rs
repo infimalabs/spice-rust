@@ -33,7 +33,12 @@ pub(super) fn process_spec(command: &str, runtime: Duration) -> Spec {
     }
 }
 
-fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: CanonicalUuid) {
+pub(super) fn seed_lane(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) {
     seed_lane_in_lineage(bus, epoch, lane, lane, occupant);
 }
 
