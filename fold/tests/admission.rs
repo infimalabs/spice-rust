@@ -355,3 +355,75 @@ fn head_content_without_a_source_is_refused_by_name() {
         "fold steer::inbox answer content task is not supplied by its admitted sources",
     );
 }
+
+/// Memberships a plane keeps although the glob it is admitted under cannot
+/// spell them, each named with the reason it outlives its own spelling.
+///
+/// Named one at a time rather than permitted as a class: each is a decision
+/// someone made, and removing one should cost the same argument that making it
+/// did. A fourth arriving here is the review, not the lint.
+const SPELLING_EXCEPTIONS: &[(&str, &str, &str)] = &[
+    (
+        "Steering",
+        "taste::reminded",
+        "a reminder is a live directive and the taste evidence justifying it in one \
+         row, so the steering reduction has to see a kind spelled under taste",
+    ),
+    (
+        "Lane",
+        "lineage::configured",
+        "lineage spells its own stem and is admitted under no glob at all, and the \
+         lane reduction is what rebuilds occupant lineage",
+    ),
+    (
+        "Lane",
+        "lineage::arranged",
+        "the other half of that lineage pair, claimed for the same reason",
+    ),
+];
+
+/// Plane membership is written twice, and the two copies are one set.
+///
+/// [`FACT_PLANES`](admission::FACT_PLANES) declares each plane as a wire
+/// spelling, so a kind is admitted as consumed the moment it is declared under
+/// an existing stem. `FactPlane::contains` writes that same membership a second
+/// time as hand-edited predicates, and until this law nothing made the two
+/// agree. They had already drifted by four kinds -- `task::deleted`,
+/// `lane::arranged`, `lane::imported` and `lane::killed` -- every one of them
+/// admitted by its glob while no predicate claimed it, which is what left them
+/// unreadable from any plane and so absent from every reduction that
+/// enumerates one.
+///
+/// This is the per-plane half of that guard and is strictly stronger than the
+/// kind-first law in `fold/src/tests.rs`, which sees only the total orphan. A
+/// kind claimed by the wrong plane, or dropped from the right one while some
+/// other plane still claims it, is invisible there and reds here.
+#[test]
+fn each_plane_claims_exactly_the_kinds_its_admitted_glob_spells() {
+    let mut diverged: Vec<(&str, &str)> = Vec::new();
+    for plane in fold::FactPlane::ALL {
+        let declared = format!("{plane:?}");
+        let (name, glob) = admission::FACT_PLANES
+            .iter()
+            .find(|(name, _)| *name == declared)
+            .unwrap_or_else(|| panic!("plane {declared} is admitted under no wire glob"));
+        for kind in FactKind::ALL {
+            if admission::pattern_matches(glob, kind.as_str()) != plane.contains(*kind) {
+                diverged.push((name, kind.as_str()));
+            }
+        }
+    }
+    diverged.sort_unstable();
+
+    let mut permitted: Vec<(&str, &str)> = SPELLING_EXCEPTIONS
+        .iter()
+        .map(|(plane, kind, _)| (*plane, *kind))
+        .collect();
+    permitted.sort_unstable();
+
+    assert_eq!(
+        diverged, permitted,
+        "every plane claims exactly the kinds its glob spells, apart from the \
+         memberships named in SPELLING_EXCEPTIONS",
+    );
+}
