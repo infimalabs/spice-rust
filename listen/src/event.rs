@@ -188,6 +188,8 @@ pub struct Tool {
 /// Common token counters.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Usage {
+    /// Completed vendor turns represented by this final usage event.
+    pub turns: u64,
     /// Uncached input tokens.
     pub input_tokens: u64,
     /// Cached input tokens.

@@ -23,8 +23,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tape::{Locus, Tape};
 
 use crate::{
-    Decoded, Dialect, Event, EventKind, ReasoningContent, Residue, ResidueKind, ToolMoment,
-    ToolResult, decode,
+    Checkpoint, Decoded, Dialect, Event, EventKind, ReasoningContent, RecordPayload, ResidueKind,
+    Scan, ScanError, Span, ToolMoment, ToolResult, decode, scan as scan_records,
 };
 
 /// Which daemonless surface produced a stream outcome.
@@ -35,40 +35,6 @@ pub enum Mode {
     Watch,
     /// Finite replay.
     Retro,
-}
-
-/// Serializable spelling of one durable tape span.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Span {
-    /// Tape member.
-    pub member: u64,
-    /// First byte.
-    pub offset: u64,
-    /// Number of bytes.
-    pub length: u64,
-}
-
-impl From<Locus> for Span {
-    fn from(locus: Locus) -> Self {
-        Self {
-            member: locus.member,
-            offset: locus.offset,
-            length: locus.length,
-        }
-    }
-}
-
-impl From<Span> for Locus {
-    fn from(span: Span) -> Self {
-        Self::new(span.member, span.offset, span.length)
-    }
-}
-
-impl fmt::Display for Span {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}:{}:{}", self.member, self.offset, self.length)
-    }
 }
 
 /// Stable machine payload of one decoded event.
@@ -106,6 +72,8 @@ pub enum SurfaceEvent {
     },
     /// Token usage.
     Usage {
+        /// Completed vendor turns represented by this event.
+        turns: u64,
         /// Uncached input tokens.
         input_tokens: u64,
         /// Cached input tokens.
@@ -173,6 +141,7 @@ impl From<&Event> for SurfaceEvent {
                 moment: (&event.moment).into(),
             },
             Event::Usage(event) => Self::Usage {
+                turns: event.turns,
                 input_tokens: event.input_tokens,
                 cached_input_tokens: event.cached_input_tokens,
                 cache_write_input_tokens: event.cache_write_input_tokens,
@@ -199,6 +168,7 @@ impl fmt::Display for SurfaceEvent {
                 write!(formatter, "tool call_id={call_id:?} {moment}")
             }
             Self::Usage {
+                turns,
                 input_tokens,
                 cached_input_tokens,
                 cache_write_input_tokens,
@@ -207,9 +177,10 @@ impl fmt::Display for SurfaceEvent {
             } => write!(
                 formatter,
                 concat!(
-                    "usage input={} cached={} cache_write={} ",
+                    "usage turns={} input={} cached={} cache_write={} ",
                     "output={} reasoning={:?}"
                 ),
+                turns,
                 input_tokens,
                 cached_input_tokens,
                 cache_write_input_tokens,
@@ -663,26 +634,11 @@ impl Session {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Cursor {
-    member: u64,
-    offset: u64,
-}
-
-impl Default for Cursor {
-    fn default() -> Self {
-        Self {
-            member: 1,
-            offset: 0,
-        }
-    }
-}
-
 /// Cursor-following observation over one selected root.
 #[derive(Debug)]
 pub struct Watch {
     root: PathBuf,
-    cursors: BTreeMap<PathBuf, Cursor>,
+    checkpoints: BTreeMap<PathBuf, Checkpoint>,
     seen: BTreeMap<PathBuf, BTreeSet<EventKind>>,
 }
 
@@ -692,7 +648,7 @@ impl Watch {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
-            cursors: BTreeMap::new(),
+            checkpoints: BTreeMap::new(),
             seen: BTreeMap::new(),
         }
     }
@@ -717,22 +673,27 @@ impl Watch {
         }
 
         for session in sessions {
-            let cursor = self.cursors.entry(session.tape.clone()).or_default();
-            let scan = scan(&session, cursor, false)?;
-            if scan.observations.is_empty() && scan.extents_empty {
+            let scanned = scan_records(
+                &session.tape,
+                session.decoder(),
+                self.checkpoints.get(&session.tape),
+            )
+            .map_err(|source| SurfaceError::Scan {
+                path: session.tape.clone(),
+                source,
+            })?;
+            self.checkpoints
+                .insert(session.tape.clone(), scanned.checkpoint.clone());
+            let surfaced = surface_scan(&session, &scanned, false);
+            if surfaced.observations.is_empty() && scanned.extents_empty {
                 observations.push(Observation::Absent {
                     selector: session.tape.display().to_string(),
                 });
             }
 
-            if !scan.decoded.is_empty() {
+            if surfaced.accounted {
                 let seen = self.seen.entry(session.tape.clone()).or_default();
-                seen.extend(
-                    scan.decoded
-                        .iter()
-                        .flat_map(Decoded::events)
-                        .map(|event| event.kind()),
-                );
+                seen.extend(surfaced.event_kinds);
                 observations.extend(
                     EventKind::ALL
                         .into_iter()
@@ -745,7 +706,7 @@ impl Watch {
                         }),
                 );
             }
-            observations.extend(scan.observations);
+            observations.extend(surfaced.observations);
         }
 
         Ok(StreamOutcome {
@@ -804,14 +765,20 @@ pub fn retro(
         }
     } else {
         for session in sessions {
-            let mut cursor = Cursor::default();
-            let scan = scan(&session, &mut cursor, true)?;
-            if scan.observations.is_empty() && scan.extents_empty {
+            let scanned =
+                scan_records(&session.tape, session.decoder(), None).map_err(|source| {
+                    SurfaceError::Scan {
+                        path: session.tape.clone(),
+                        source,
+                    }
+                })?;
+            let surfaced = surface_scan(&session, &scanned, true);
+            if surfaced.observations.is_empty() && scanned.extents_empty {
                 observations.push(Observation::Absent {
                     selector: session.tape.display().to_string(),
                 });
             }
-            observations.extend(scan.observations);
+            observations.extend(surfaced.observations);
         }
     }
 
@@ -822,199 +789,62 @@ pub fn retro(
     })
 }
 
-struct Scan {
+struct SurfacedScan {
     observations: Vec<Observation>,
-    decoded: Vec<Decoded>,
-    extents_empty: bool,
+    event_kinds: Vec<EventKind>,
+    accounted: bool,
 }
 
-fn scan(
-    session: &Session,
-    cursor: &mut Cursor,
-    finish_partial: bool,
-) -> Result<Scan, SurfaceError> {
-    let tape = Tape::open_existing(&session.tape).map_err(|source| SurfaceError::Tape {
-        path: session.tape.clone(),
-        source,
-    })?;
-    let extents = tape.extents().map_err(|source| SurfaceError::Tape {
-        path: session.tape.clone(),
-        source,
-    })?;
-    let extents_empty = extents.is_empty();
+fn surface_scan(session: &Session, scan: &Scan, finish_partial: bool) -> SurfacedScan {
     let mut observations = Vec::new();
-    let mut decoded = Vec::new();
-    let mut record = Vec::new();
-    let mut record_spans = Vec::new();
-
-    for extent in &extents {
-        scan_extent(
-            session,
-            &tape,
-            cursor,
-            extent,
-            &mut record,
-            &mut record_spans,
-            &mut observations,
-            &mut decoded,
-        )?;
+    let mut event_kinds = Vec::new();
+    for record in &scan.records {
+        match &record.payload {
+            RecordPayload::Events(events) => {
+                for sourced in events {
+                    event_kinds.push(sourced.event.kind());
+                    observations.push(Observation::Event {
+                        lane: session.lane.clone(),
+                        dialect: session.dialect,
+                        tape: session.tape.clone(),
+                        spans: sourced.spans.clone(),
+                        event: (&sourced.event).into(),
+                    });
+                }
+            }
+            RecordPayload::Residue(sourced) => observations.push(Observation::Residue {
+                lane: session.lane.clone(),
+                dialect: session.dialect,
+                tape: session.tape.clone(),
+                spans: sourced.spans.clone(),
+                residue: (&sourced.residue.kind).into(),
+            }),
+        }
     }
 
-    finish_partial_record(
-        session,
-        cursor,
-        &extents,
-        finish_partial,
-        &record,
-        record_spans,
-        &mut observations,
-        &mut decoded,
-    );
+    if !scan.pending.is_empty() {
+        if finish_partial {
+            observations.push(Observation::Residue {
+                lane: session.lane.clone(),
+                dialect: session.dialect,
+                tape: session.tape.clone(),
+                spans: scan.pending.clone(),
+                residue: SurfaceResidue::Truncated {},
+            });
+        } else {
+            observations.push(Observation::Pending {
+                lane: session.lane.clone(),
+                dialect: session.dialect,
+                tape: session.tape.clone(),
+                spans: scan.pending.clone(),
+            });
+        }
+    }
 
-    Ok(Scan {
+    SurfacedScan {
         observations,
-        decoded,
-        extents_empty,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn scan_extent(
-    session: &Session,
-    tape: &Tape,
-    cursor: &mut Cursor,
-    extent: &tape::Extent,
-    record: &mut Vec<u8>,
-    record_spans: &mut Vec<Span>,
-    observations: &mut Vec<Observation>,
-    decoded: &mut Vec<Decoded>,
-) -> Result<(), SurfaceError> {
-    if extent.member < cursor.member {
-        return Ok(());
-    }
-    let start = if extent.member == cursor.member {
-        cursor.offset
-    } else {
-        0
-    };
-    if start > extent.length {
-        return Err(SurfaceError::CursorRetreated {
-            tape: session.tape.clone(),
-            member: extent.member,
-            cursor: start,
-            observed: extent.length,
-        });
-    }
-    if start == extent.length {
-        if extent.sealed {
-            *cursor = Cursor {
-                member: extent.member + 1,
-                offset: 0,
-            };
-        }
-        return Ok(());
-    }
-
-    let locus = Locus::new(extent.member, start, extent.length - start);
-    let bytes = tape.read(locus).map_err(|source| SurfaceError::Tape {
-        path: session.tape.clone(),
-        source,
-    })?;
-    let mut fragment_start = 0_usize;
-    for (position, byte) in bytes.iter().enumerate() {
-        if *byte != b'\n' {
-            continue;
-        }
-        let end = position + 1;
-        append_record_fragment(
-            record,
-            record_spans,
-            extent.member,
-            start + fragment_start as u64,
-            &bytes[fragment_start..end],
-        );
-        let observation = decode_record(
-            session,
-            record,
-            synthetic_locus(record_spans, record.len()),
-            record_spans,
-        )?;
-        decoded.push(observation.0);
-        observations.extend(observation.1);
-        cursor.member = extent.member;
-        cursor.offset = start + end as u64;
-        record.clear();
-        record_spans.clear();
-        fragment_start = end;
-    }
-
-    if fragment_start < bytes.len() {
-        append_record_fragment(
-            record,
-            record_spans,
-            extent.member,
-            start + fragment_start as u64,
-            &bytes[fragment_start..],
-        );
-    }
-
-    if record.is_empty()
-        && extent.sealed
-        && cursor.member == extent.member
-        && cursor.offset == extent.length
-    {
-        *cursor = Cursor {
-            member: extent.member + 1,
-            offset: 0,
-        };
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn finish_partial_record(
-    session: &Session,
-    cursor: &mut Cursor,
-    extents: &[tape::Extent],
-    finish_partial: bool,
-    record: &[u8],
-    record_spans: Vec<Span>,
-    observations: &mut Vec<Observation>,
-    decoded: &mut Vec<Decoded>,
-) {
-    if record.is_empty() {
-        return;
-    }
-    if !finish_partial {
-        observations.push(Observation::Pending {
-            lane: session.lane.clone(),
-            dialect: session.dialect,
-            tape: session.tape.clone(),
-            spans: record_spans,
-        });
-        return;
-    }
-
-    let residue = Decoded::Residue(Residue::new(
-        session.decoder(),
-        synthetic_locus(&record_spans, record.len()),
-        ResidueKind::Truncated,
-    ));
-    observations.extend(observe(session, &residue, &record_spans));
-    decoded.push(residue);
-    if let Some(last) = record_spans.last() {
-        cursor.member = last.member;
-        cursor.offset = last.offset + last.length;
-        if extents
-            .iter()
-            .find(|extent| extent.member == last.member)
-            .is_some_and(|extent| extent.sealed && cursor.offset == extent.length)
-        {
-            *cursor = Cursor {
-                member: last.member + 1,
-                offset: 0,
-            };
-        }
+        event_kinds,
+        accounted: !scan.records.is_empty() || (finish_partial && !scan.pending.is_empty()),
     }
 }
 
@@ -1053,42 +883,6 @@ fn observe(session: &Session, decoded: &Decoded, spans: &[Span]) -> Vec<Observat
             residue: (&residue.kind).into(),
         }],
     }
-}
-
-fn append_record_fragment(
-    record: &mut Vec<u8>,
-    spans: &mut Vec<Span>,
-    member: u64,
-    offset: u64,
-    fragment: &[u8],
-) {
-    if fragment.is_empty() {
-        return;
-    }
-    record.extend_from_slice(fragment);
-    let length = fragment.len() as u64;
-    if let Some(last) = spans.last_mut()
-        && last.member == member
-        && last.offset.checked_add(last.length) == Some(offset)
-    {
-        last.length += length;
-    } else {
-        spans.push(Span {
-            member,
-            offset,
-            length,
-        });
-    }
-}
-
-fn synthetic_locus(spans: &[Span], length: usize) -> Locus {
-    let first = spans
-        .first()
-        .expect("a record with bytes has at least one source span");
-    // Decoders require one locus whose length matches their input. A record
-    // crossing members has no such physical locus, so this value is only the
-    // decoder's length witness; public observations retain the exact spans.
-    Locus::new(first.member, first.offset, length as u64)
 }
 
 fn replay_locus(session: &Session, span: Span) -> Result<Vec<Observation>, SurfaceError> {
@@ -1216,21 +1010,17 @@ pub enum SurfaceError {
         /// Typed tape failure.
         source: tape::Error,
     },
+    /// Generation-authenticated record scanning failed.
+    Scan {
+        /// Tape involved.
+        path: PathBuf,
+        /// Typed resume or tape failure.
+        source: ScanError,
+    },
     /// A lane directory has no stable UTF-8 spelling.
     NonUtf8Lane(PathBuf),
     /// A locus-shaped selector was not the current grammar.
     Selector(String),
-    /// Durable append-only bounds moved behind an emitted cursor.
-    CursorRetreated {
-        /// Tape involved.
-        tape: PathBuf,
-        /// Member involved.
-        member: u64,
-        /// Already emitted boundary.
-        cursor: u64,
-        /// Newly observed boundary.
-        observed: u64,
-    },
     /// The decoder was called with a locus that did not cover its bytes.
     DecodeContract {
         /// Tape involved.
@@ -1259,6 +1049,11 @@ impl fmt::Display for SurfaceError {
                     path.display()
                 )
             }
+            Self::Scan { path, source } => write!(
+                formatter,
+                "failed to scan tape at {}: {source}",
+                path.display()
+            ),
             Self::NonUtf8Lane(path) => write!(
                 formatter,
                 "session lane above {} has no UTF-8 spelling",
@@ -1267,16 +1062,6 @@ impl fmt::Display for SurfaceError {
             Self::Selector(selector) => write!(
                 formatter,
                 "retro selector {selector:?} is neither a lane, path, nor current locus"
-            ),
-            Self::CursorRetreated {
-                tape,
-                member,
-                cursor,
-                observed,
-            } => write!(
-                formatter,
-                "append-only tape {} member {member} retreated from cursor {cursor} to {observed}",
-                tape.display()
             ),
             Self::DecodeContract { tape, detail } => write!(
                 formatter,
@@ -1292,10 +1077,8 @@ impl Error for SurfaceError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Tape { source, .. } => Some(source),
-            Self::NonUtf8Lane(_)
-            | Self::Selector(_)
-            | Self::CursorRetreated { .. }
-            | Self::DecodeContract { .. } => None,
+            Self::Scan { source, .. } => Some(source),
+            Self::NonUtf8Lane(_) | Self::Selector(_) | Self::DecodeContract { .. } => None,
         }
     }
 }

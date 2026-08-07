@@ -3,7 +3,8 @@ use tape::Locus;
 
 use crate::{
     Event, Events, Failure, Object, Prose, Reasoning, ReasoningContent, ResidueKind,
-    SessionDeclaration, Tool, ToolMoment, ToolResult, Usage, array, object, string, unsigned,
+    SessionDeclaration, Tool, ToolMoment, ToolResult, Usage, array, object, optional_unsigned,
+    string, unsigned,
 };
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
@@ -180,11 +181,12 @@ fn usage(record: &Object, locus: Locus) -> Events {
         None => 0,
     };
     Ok(vec![Event::Usage(Usage {
+        turns: 1,
         input_tokens: unsigned(usage, "input_tokens")?,
         cached_input_tokens: unsigned(usage, "cached_input_tokens")?,
         cache_write_input_tokens,
         output_tokens: unsigned(usage, "output_tokens")?,
-        reasoning_output_tokens: Some(unsigned(usage, "reasoning_output_tokens")?),
+        reasoning_output_tokens: optional_unsigned(usage, "reasoning_output_tokens")?,
         locus,
     })])
 }

@@ -3,12 +3,32 @@ use listen::{
     decode,
 };
 
+const CLAUDE_INPUT_TOKENS: u64 = 13;
+const CLAUDE_TOOL_OUTPUT_TOKENS: u64 = 191;
+const CODEX_INPUT_TOKENS: u64 = 11;
+
 const CLAUDE_SESSION: &[u8] =
     br#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
 const CLAUDE_PROSE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#;
 const CLAUDE_REASONING: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"thinking","thinking":"inspect"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#;
 const CLAUDE_OPAQUE_REASONING: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"redacted_thinking","data":"sealed"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#;
 const CLAUDE_TOOL: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"shell"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#;
+const CLAUDE_TOOL_USAGE: &[u8] = concat!(
+    "{\"type\":\"stream_event\",\"event\":{\"type\":\"message_delta\",",
+    "\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{",
+    "\"input_tokens\":2,\"cache_read_input_tokens\":22005,",
+    "\"cache_creation_input_tokens\":4213,\"output_tokens\":191,",
+    "\"output_tokens_details\":{\"thinking_tokens\":32}}}}",
+)
+.as_bytes();
+const CLAUDE_USAGE: &[u8] = concat!(
+    "{\"type\":\"stream_event\",\"event\":{\"type\":\"message_delta\",",
+    "\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{",
+    "\"input_tokens\":13,\"cache_read_input_tokens\":8,",
+    "\"cache_creation_input_tokens\":5,\"output_tokens\":3,",
+    "\"output_tokens_details\":{\"thinking_tokens\":2}}}}",
+)
+.as_bytes();
 const CLAUDE_COMPACTION: &[u8] = br#"{"type":"system","subtype":"compact_boundary"}"#;
 const CLAUDE_FAILURE: &[u8] =
     br#"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["unavailable","retry exhausted"]}"#;
@@ -20,6 +40,11 @@ const CODEX_REASONING: &[u8] =
 const CODEX_TOOL: &[u8] = br#"{"type":"item.started","item":{"id":"item-3","type":"command_execution","command":"cargo test","aggregated_output":"","exit_code":null,"status":"in_progress"}}"#;
 const CODEX_WEB_SEARCH: &[u8] = br#"{"type":"item.started","item":{"id":"item-4","type":"web_search","query":"","action":{"type":"other"}}}"#;
 const CODEX_USAGE: &[u8] = br#"{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":7,"cache_write_input_tokens":3,"output_tokens":5,"reasoning_output_tokens":2}}"#;
+const CODEX_USAGE_NO_REASONING: &[u8] = concat!(
+    "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":11,",
+    "\"cached_input_tokens\":7,\"output_tokens\":5}}",
+)
+.as_bytes();
 const CODEX_FAILURE: &[u8] = br#"{"type":"turn.failed","error":{"message":"interrupted"}}"#;
 const CODEX_SESSION: &[u8] =
     br#"{"type":"thread.started","thread_id":"019fbc32-beb1-7ee0-b814-a7513f8f8ea5"}"#;
@@ -58,7 +83,7 @@ const CURRENT: &[CurrentCase] = &[
     },
     CurrentCase {
         dialect: Dialect::Claude,
-        bytes: CLAUDE_PROSE,
+        bytes: CLAUDE_USAGE,
         expected: EventKind::Usage,
     },
     CurrentCase {
@@ -189,6 +214,81 @@ fn exact_current_initialization_records_declare_only_their_session_identity() {
         [Event::Session(declaration)]
             if declaration.identity == "019fbc32-beb1-7ee0-b814-a7513f8f8ea5"
                 && declaration.locus == locus(CODEX_SESSION)
+    ));
+}
+
+#[test]
+fn final_turn_records_are_the_only_usage_events_for_each_dialect() {
+    let snapshots = [CLAUDE_PROSE, CLAUDE_PROSE, CLAUDE_REASONING, CLAUDE_TOOL];
+    let mut usage_events = 0;
+    for snapshot in snapshots {
+        let decoded = decode(Dialect::Claude, snapshot, locus(snapshot))
+            .expect("matching Claude snapshot locus");
+        usage_events += decoded
+            .events()
+            .iter()
+            .filter(|event| matches!(event, Event::Usage(_)))
+            .count();
+        assert!(
+            decoded
+                .events()
+                .iter()
+                .all(|event| !matches!(event, Event::Usage(_))),
+            "a repeated assistant snapshot emitted spend: {decoded:?}"
+        );
+    }
+    assert_eq!(usage_events, 0, "repeated snapshots never count spend");
+
+    let claude = decode(Dialect::Claude, CLAUDE_USAGE, locus(CLAUDE_USAGE))
+        .expect("matching Claude final usage locus");
+    assert!(matches!(
+        claude.events(),
+        [Event::Usage(usage)]
+            if usage.turns == 1
+                && usage.input_tokens == CLAUDE_INPUT_TOKENS
+                && usage.cached_input_tokens == 8
+                && usage.cache_write_input_tokens == 5
+                && usage.output_tokens == 3
+                && usage.reasoning_output_tokens == Some(2)
+                && usage.locus == locus(CLAUDE_USAGE)
+    ));
+
+    let claude_tool = decode(Dialect::Claude, CLAUDE_TOOL_USAGE, locus(CLAUDE_TOOL_USAGE))
+        .expect("matching Claude tool-turn usage locus");
+    assert!(matches!(
+        claude_tool.events(),
+        [Event::Usage(usage)]
+            if usage.turns == 1
+                && usage.output_tokens == CLAUDE_TOOL_OUTPUT_TOKENS
+                && usage.reasoning_output_tokens == Some(32)
+    ));
+
+    let codex = decode(Dialect::Codex, CODEX_USAGE, locus(CODEX_USAGE))
+        .expect("matching Codex final usage locus");
+    assert!(matches!(
+        codex.events(),
+        [Event::Usage(usage)]
+            if usage.turns == 1
+                && usage.input_tokens == CODEX_INPUT_TOKENS
+                && usage.cached_input_tokens == 7
+                && usage.cache_write_input_tokens == 3
+                && usage.output_tokens == 5
+                && usage.reasoning_output_tokens == Some(2)
+                && usage.locus == locus(CODEX_USAGE)
+    ));
+
+    let codex_without_reasoning = decode(
+        Dialect::Codex,
+        CODEX_USAGE_NO_REASONING,
+        locus(CODEX_USAGE_NO_REASONING),
+    )
+    .expect("optional reasoning usage stays typed");
+    assert!(matches!(
+        codex_without_reasoning.events(),
+        [Event::Usage(usage)]
+            if usage.turns == 1
+                && usage.cache_write_input_tokens == 0
+                && usage.reasoning_output_tokens.is_none()
     ));
 }
 

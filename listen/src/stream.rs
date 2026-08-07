@@ -1,0 +1,538 @@
+//! One resumable, generation-authenticated stream over complete tape records.
+//!
+//! A checkpoint names the next complete-record boundary, never merely the last
+//! byte read. Complete typed records and complete residue both advance it;
+//! bytes after the final delimiter remain pending and leave it unchanged.
+
+use std::error::Error;
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use tape::{Locus, SourceId, Tape};
+
+use crate::{Decoded, Dialect, Event, LocusLengthError, Residue, decode};
+
+/// Serializable spelling of one durable tape span.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Span {
+    /// Tape member.
+    pub member: u64,
+    /// First byte.
+    pub offset: u64,
+    /// Number of bytes.
+    pub length: u64,
+}
+
+impl From<Locus> for Span {
+    fn from(locus: Locus) -> Self {
+        Self {
+            member: locus.member,
+            offset: locus.offset,
+            length: locus.length,
+        }
+    }
+}
+
+impl From<Span> for Locus {
+    fn from(span: Span) -> Self {
+        Self::new(span.member, span.offset, span.length)
+    }
+}
+
+impl fmt::Display for Span {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}:{}:{}", self.member, self.offset, self.length)
+    }
+}
+
+/// Position of the next complete record in one source generation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Position {
+    /// Member containing the next record's first byte.
+    pub member: u64,
+    /// Offset of that byte within the member.
+    pub offset: u64,
+}
+
+impl Position {
+    /// First byte of a tape generation.
+    #[must_use]
+    pub const fn start() -> Self {
+        Self {
+            member: 1,
+            offset: 0,
+        }
+    }
+
+    const fn is_start(self) -> bool {
+        self.member == 1 && self.offset == 0
+    }
+}
+
+/// Durable resume checkpoint for one tape generation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Checkpoint {
+    /// Opaque tape generation.
+    pub source: SourceId,
+    /// Next complete-record boundary.
+    pub next: Position,
+}
+
+impl Checkpoint {
+    /// Beginning of one source generation.
+    #[must_use]
+    pub const fn start(source: SourceId) -> Self {
+        Self {
+            source,
+            next: Position::start(),
+        }
+    }
+}
+
+/// One public typed event with its durable identity coordinates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourcedEvent {
+    /// Zero-based event position within the decoded vendor record.
+    pub ordinal: u64,
+    /// Exact physical tape spans supplying the record.
+    pub spans: Vec<Span>,
+    /// Vendor-neutral event.
+    pub event: Event,
+}
+
+/// One complete record that remained untyped.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourcedResidue {
+    /// Exact physical tape spans supplying the record.
+    pub spans: Vec<Span>,
+    /// Accounted decoder result.
+    pub residue: Residue,
+}
+
+/// Public result of one complete record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RecordPayload {
+    /// One or more typed events in vendor-record order.
+    Events(Vec<SourcedEvent>),
+    /// The complete record remained residue.
+    Residue(SourcedResidue),
+}
+
+/// One complete record and the checkpoint immediately after it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Record {
+    /// Typed or accounted record payload.
+    pub payload: RecordPayload,
+    /// Next complete-record boundary after this record.
+    pub next: Checkpoint,
+}
+
+/// One resumable scan result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Scan {
+    /// Every complete record after the supplied checkpoint.
+    pub records: Vec<Record>,
+    /// Boundary after the last complete record.
+    pub checkpoint: Checkpoint,
+    /// Exact trailing bytes awaiting a delimiter.
+    pub pending: Vec<Span>,
+    /// Whether the tape currently contains no readable member.
+    pub extents_empty: bool,
+}
+
+/// Resume a tape scan from an optional durable checkpoint.
+///
+/// A checkpoint from another generation is admitted only at byte zero. A
+/// same-generation boundary that retreats beyond observed bytes or skips a
+/// member is refused. Missing, unreadable, or malformed source identity is a
+/// tape error rather than an invitation to infer identity from the path.
+///
+/// # Errors
+///
+/// Returns [`ScanError`] when the tape cannot be opened/read, the checkpoint
+/// does not continue the observed generation, or a decoder contract fails.
+pub fn scan(
+    root: impl AsRef<Path>,
+    dialect: Dialect,
+    checkpoint: Option<&Checkpoint>,
+) -> Result<Scan, ScanError> {
+    let root = root.as_ref();
+    let tape = Tape::open_existing(root).map_err(|source| ScanError::Tape {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let source = tape.source_id().map_err(|source| ScanError::Tape {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let mut extents = tape.extents().map_err(|source| ScanError::Tape {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let mut position = resume_position(checkpoint, &source)?;
+    position = match validate_position(position, &extents) {
+        Ok(position) => position,
+        Err(_) => {
+            // A seal publishes its member and index before removing plaintext.
+            // One extent observation can therefore miss the active file while
+            // still holding the predecessor index. A fresh observation either
+            // sees that completed seal or repeats the continuity violation.
+            extents = tape.extents().map_err(|source| ScanError::Tape {
+                path: root.to_path_buf(),
+                source,
+            })?;
+            validate_position(position, &extents)?
+        }
+    };
+    let extents_empty = extents.is_empty();
+    let state = scan_extents(&tape, dialect, &source, &extents, position)?;
+
+    let observed_source = tape.source_id().map_err(|source| ScanError::Tape {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    if observed_source != source {
+        return Err(ScanError::SourceChanged {
+            expected: source,
+            observed: observed_source,
+            next: state.position,
+        });
+    }
+
+    Ok(Scan {
+        records: state.records,
+        checkpoint: Checkpoint {
+            source,
+            next: state.position,
+        },
+        pending: state.spans,
+        extents_empty,
+    })
+}
+
+struct ScanState {
+    position: Position,
+    records: Vec<Record>,
+    bytes: Vec<u8>,
+    spans: Vec<Span>,
+}
+
+fn scan_extents(
+    tape: &Tape,
+    dialect: Dialect,
+    source: &SourceId,
+    extents: &[tape::Extent],
+    position: Position,
+) -> Result<ScanState, ScanError> {
+    let mut state = ScanState {
+        position,
+        records: Vec::new(),
+        bytes: Vec::new(),
+        spans: Vec::new(),
+    };
+    for extent in extents {
+        scan_extent(tape, dialect, source, extent, &mut state)?;
+    }
+    Ok(state)
+}
+
+fn scan_extent(
+    tape: &Tape,
+    dialect: Dialect,
+    source: &SourceId,
+    extent: &tape::Extent,
+    state: &mut ScanState,
+) -> Result<(), ScanError> {
+    if extent.member < state.position.member {
+        return Ok(());
+    }
+    let start = if extent.member == state.position.member {
+        state.position.offset
+    } else {
+        0
+    };
+    if start == extent.length {
+        if extent.sealed && state.bytes.is_empty() {
+            state.position = Position {
+                member: extent.member + 1,
+                offset: 0,
+            };
+        }
+        return Ok(());
+    }
+
+    let locus = Locus::new(extent.member, start, extent.length - start);
+    let fragment = tape.read(locus).map_err(|error| ScanError::Tape {
+        path: tape.root().to_path_buf(),
+        source: error,
+    })?;
+    let mut fragment_start = 0_usize;
+    for (index, byte) in fragment.iter().enumerate() {
+        if *byte != b'\n' {
+            continue;
+        }
+        let end = index + 1;
+        append_fragment(
+            &mut state.bytes,
+            &mut state.spans,
+            extent.member,
+            start + fragment_start as u64,
+            &fragment[fragment_start..end],
+        );
+        state.position = next_position(extent, start + end as u64);
+        state.finish_record(dialect, source)?;
+        fragment_start = end;
+    }
+    if fragment_start < fragment.len() {
+        append_fragment(
+            &mut state.bytes,
+            &mut state.spans,
+            extent.member,
+            start + fragment_start as u64,
+            &fragment[fragment_start..],
+        );
+    }
+    Ok(())
+}
+
+impl ScanState {
+    fn finish_record(&mut self, dialect: Dialect, source: &SourceId) -> Result<(), ScanError> {
+        let locus = synthetic_locus(&self.spans, self.bytes.len());
+        let decoded = decode(dialect, &self.bytes, locus).map_err(ScanError::DecodeContract)?;
+        self.records.push(Record {
+            payload: source_decoded(decoded, &self.spans),
+            next: Checkpoint {
+                source: source.clone(),
+                next: self.position,
+            },
+        });
+        self.bytes.clear();
+        self.spans.clear();
+        Ok(())
+    }
+}
+
+fn next_position(extent: &tape::Extent, offset: u64) -> Position {
+    if extent.sealed && offset == extent.length {
+        Position {
+            member: extent.member + 1,
+            offset: 0,
+        }
+    } else {
+        Position {
+            member: extent.member,
+            offset,
+        }
+    }
+}
+
+fn resume_position(
+    checkpoint: Option<&Checkpoint>,
+    source: &SourceId,
+) -> Result<Position, ScanError> {
+    let Some(checkpoint) = checkpoint else {
+        return Ok(Position::start());
+    };
+    if checkpoint.source == *source {
+        return Ok(checkpoint.next);
+    }
+    if checkpoint.next.is_start() {
+        return Ok(Position::start());
+    }
+    Err(ScanError::SourceChanged {
+        expected: checkpoint.source.clone(),
+        observed: source.clone(),
+        next: checkpoint.next,
+    })
+}
+
+fn validate_position(
+    mut position: Position,
+    extents: &[tape::Extent],
+) -> Result<Position, ScanError> {
+    let Some(last) = extents.last() else {
+        return if position.is_start() {
+            Ok(position)
+        } else {
+            Err(ScanError::CheckpointGap {
+                next: position,
+                observed_next_member: 1,
+            })
+        };
+    };
+
+    if let Some(extent) = extents
+        .iter()
+        .find(|extent| extent.member == position.member)
+    {
+        if position.offset > extent.length {
+            return Err(ScanError::CheckpointRetreated {
+                next: position,
+                observed_length: extent.length,
+            });
+        }
+        if extent.sealed && position.offset == extent.length {
+            position = Position {
+                member: position.member + 1,
+                offset: 0,
+            };
+        }
+        return Ok(position);
+    }
+
+    let observed_next_member = last.member + u64::from(last.sealed);
+    if last.sealed && position.member == observed_next_member && position.offset == 0 {
+        Ok(position)
+    } else {
+        Err(ScanError::CheckpointGap {
+            next: position,
+            observed_next_member,
+        })
+    }
+}
+
+fn source_decoded(decoded: Decoded, spans: &[Span]) -> RecordPayload {
+    match decoded {
+        Decoded::Events(events) => RecordPayload::Events(
+            events
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, event)| SourcedEvent {
+                    ordinal: ordinal as u64,
+                    spans: spans.to_vec(),
+                    event,
+                })
+                .collect(),
+        ),
+        Decoded::Residue(residue) => RecordPayload::Residue(SourcedResidue {
+            spans: spans.to_vec(),
+            residue,
+        }),
+    }
+}
+
+fn append_fragment(
+    record: &mut Vec<u8>,
+    spans: &mut Vec<Span>,
+    member: u64,
+    offset: u64,
+    fragment: &[u8],
+) {
+    if fragment.is_empty() {
+        return;
+    }
+    record.extend_from_slice(fragment);
+    let length = fragment.len() as u64;
+    if let Some(last) = spans.last_mut()
+        && last.member == member
+        && last.offset.checked_add(last.length) == Some(offset)
+    {
+        last.length += length;
+    } else {
+        spans.push(Span {
+            member,
+            offset,
+            length,
+        });
+    }
+}
+
+fn synthetic_locus(spans: &[Span], length: usize) -> Locus {
+    let first = spans
+        .first()
+        .expect("a record with bytes has at least one source span");
+    Locus::new(first.member, first.offset, length as u64)
+}
+
+/// A resumable scan could not continue from its durable contract.
+#[derive(Debug)]
+pub enum ScanError {
+    /// Tape identity, extents, or member bytes could not be read.
+    Tape {
+        /// Tape involved.
+        path: PathBuf,
+        /// Typed tape failure.
+        source: tape::Error,
+    },
+    /// Another source generation was observed after a nonzero checkpoint.
+    SourceChanged {
+        /// Generation named by the checkpoint or observed before scanning.
+        expected: SourceId,
+        /// Generation now published at the path.
+        observed: SourceId,
+        /// Nonzero position that cannot be transferred between generations.
+        next: Position,
+    },
+    /// Same-generation bytes retreated behind the checkpoint.
+    CheckpointRetreated {
+        /// Boundary being resumed.
+        next: Position,
+        /// Bytes now observed in that member.
+        observed_length: u64,
+    },
+    /// The checkpoint skips the next member the tape can supply.
+    CheckpointGap {
+        /// Boundary being resumed.
+        next: Position,
+        /// Next member the observed tape can supply.
+        observed_next_member: u64,
+    },
+    /// Decoder received a synthetic locus of the wrong length.
+    DecodeContract(LocusLengthError),
+}
+
+impl fmt::Display for ScanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tape { path, source } => {
+                write!(
+                    formatter,
+                    "failed to read tape at {}: {source}",
+                    path.display()
+                )
+            }
+            Self::SourceChanged {
+                expected,
+                observed,
+                next,
+            } => write!(
+                formatter,
+                "tape source changed from {expected} to {observed} after checkpoint {}:{}",
+                next.member, next.offset
+            ),
+            Self::CheckpointRetreated {
+                next,
+                observed_length,
+            } => write!(
+                formatter,
+                "tape member {} retreated from checkpoint {} to {observed_length}",
+                next.member, next.offset
+            ),
+            Self::CheckpointGap {
+                next,
+                observed_next_member,
+            } => write!(
+                formatter,
+                "checkpoint {}:{} skips observed next member {observed_next_member}",
+                next.member, next.offset
+            ),
+            Self::DecodeContract(error) => write!(formatter, "decoder contract failed: {error}"),
+        }
+    }
+}
+
+impl Error for ScanError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Tape { source, .. } => Some(source),
+            Self::DecodeContract(error) => Some(error),
+            Self::SourceChanged { .. }
+            | Self::CheckpointRetreated { .. }
+            | Self::CheckpointGap { .. } => None,
+        }
+    }
+}
