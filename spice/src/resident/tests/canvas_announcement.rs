@@ -127,7 +127,15 @@ pub(super) fn test_uuid(last: u8) -> CanonicalUuid {
 }
 
 /// One published discovery, at a path the caller owns for the test.
-fn published_discovery(name: &str, port: u16) -> (PathBuf, PathBuf, canvas::Discovery) {
+///
+/// The returned possession is the publisher. A resident announces its own
+/// discovery while it is running and holding the runtime lock, so a fixture
+/// that published without one would be announcing a record a client is
+/// required to refuse — the caller has to keep it alive for the announcement.
+fn published_discovery(
+    name: &str,
+    port: u16,
+) -> (PathBuf, PathBuf, canvas::Discovery, sill::Possession) {
     let root = fixture(name);
     fs::create_dir_all(&root).expect("announcement fixture root");
     let path = root.join("canvas");
@@ -139,7 +147,15 @@ fn published_discovery(name: &str, port: u16) -> (PathBuf, PathBuf, canvas::Disc
     discovery
         .publish(&path)
         .expect("fixture discovery publishes");
-    (root, path, discovery)
+    let lock = sill::LockFile::new(
+        sill::LockName::new("resident").expect("resident is a non-empty lock name"),
+        root.join("resident"),
+    );
+    let sill::Acquisition::Acquired(publisher) = lock.try_acquire().expect("fixture resident lock")
+    else {
+        panic!("an announcement fixture nothing else has seen cannot be contended");
+    };
+    (root, path, discovery, publisher)
 }
 
 /// The announced endpoint is one that passed admission, and nothing dials it.
@@ -151,7 +167,7 @@ fn published_discovery(name: &str, port: u16) -> (PathBuf, PathBuf, canvas::Disc
 /// untouched until `--open` asks for it.
 #[test]
 fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
-    let (root, path, discovery) = published_discovery("announce-endpoint", 48231);
+    let (root, path, discovery, _publisher) = published_discovery("announce-endpoint", 48231);
     let mut dialled = None;
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
@@ -185,7 +201,7 @@ fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
 /// `--open` hands the launcher the admitted endpoint and no other.
 #[test]
 fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
-    let (root, path, discovery) = published_discovery("announce-open", 48232);
+    let (root, path, discovery, _publisher) = published_discovery("announce-open", 48232);
     let mut dialled = None;
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
@@ -221,7 +237,7 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
 fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
     const TOKEN: &str = "correct-horse-battery-staple";
 
-    let (root, path, discovery) = published_discovery("announce-authenticated", 48234);
+    let (root, path, discovery, _publisher) = published_discovery("announce-authenticated", 48234);
     let mut dialled = None;
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
@@ -267,7 +283,7 @@ fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
 /// and this is the one case that produces something else.
 #[test]
 fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
-    let (root, path, discovery) = published_discovery("announce-stale", 48233);
+    let (root, path, discovery, _publisher) = published_discovery("announce-stale", 48233);
     let replacement = canvas::Discovery {
         capability: test_uuid(3),
         epoch: test_uuid(4),
