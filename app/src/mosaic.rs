@@ -638,6 +638,13 @@ pub fn pane_is_scrolled(scroll_top: f64, threshold: Option<f64>) -> bool {
 }
 
 /// Same-frame scroll compensation for an incremental plane shift.
+///
+/// This takes no motion preference and must not grow one. A reduced-motion
+/// reader has asked for no tween, not for a moving reading position, so motion
+/// preference governs the card transition in `app/mosaic.css` and never this
+/// correction. Keying the correction on it would answer a request for less
+/// motion by silently scrolling the reader away from what they were reading,
+/// which is the louder of the two failures.
 #[must_use]
 pub fn scroll_compensation(
     previous_max_row: i32,
