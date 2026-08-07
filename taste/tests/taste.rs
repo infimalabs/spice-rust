@@ -128,17 +128,35 @@ fn a_harmless_mention_reaches_the_clearance_fact_path() {
 }
 
 #[test]
-fn every_taste_plane_kind_has_a_judgment_producer() {
+fn judgment_and_reminder_origins_cover_the_taste_plane_without_overlap() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let hit = bag
         .hits(&prose(BEHAVIOR))
         .into_iter()
         .next()
         .expect("behavior fixture hits");
-    let mut produced = [
+    let mut judgment_produced = [
         judge(hit.clone(), Decision::Confirm).into_fact().kind(),
         judge(hit, Decision::Clear).into_fact().kind(),
     ];
+    judgment_produced.sort_unstable();
+
+    assert_eq!(
+        judgment_produced,
+        [FactKind::TasteConfirmed, FactKind::TasteCleared]
+    );
+
+    let reminder_originated = [FactKind::TasteReminded];
+    assert!(
+        reminder_originated
+            .iter()
+            .all(|kind| !judgment_produced.contains(kind))
+    );
+
+    let mut produced = judgment_produced
+        .into_iter()
+        .chain(reminder_originated)
+        .collect::<Vec<_>>();
     produced.sort_unstable();
 
     let mut taste_plane = FactKind::ALL
@@ -148,5 +166,5 @@ fn every_taste_plane_kind_has_a_judgment_producer() {
         .collect::<Vec<_>>();
     taste_plane.sort_unstable();
 
-    assert_eq!(produced.as_slice(), taste_plane);
+    assert_eq!(produced, taste_plane);
 }
