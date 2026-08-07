@@ -39,6 +39,8 @@ pub enum CommandKind {
     TaskOopsAdd,
     /// Replace an unsettled task statement.
     TaskEdit,
+    /// Withdraw a task from the board with a recorded reason.
+    TaskDelete,
     /// Append an observation without replacing the statement.
     TaskNote,
     /// Set a wakeable deferral.
@@ -230,6 +232,19 @@ impl Law {
     /// Exact task statement head.
     pub const EDIT: Self = Self {
         required: &[WitnessKind::Task],
+        optional: &[],
+        authority: Authority::Connected,
+    };
+    /// Exact task statement and workflow heads plus the current claim
+    /// disposition.
+    ///
+    /// The claim predicate is what makes the refusal honest rather than
+    /// advisory. Withdrawal decides against possession, so reading the claim
+    /// from a board snapshot and deciding afterwards would let a claim landing
+    /// in between take the decision's basis away; naming the head the decision
+    /// was made against moves that race into the admission door.
+    pub const DELETE: Self = Self {
+        required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
         optional: &[],
         authority: Authority::Connected,
     };
@@ -469,6 +484,7 @@ impl CommandKind {
         Self::TaskAdd,
         Self::TaskOopsAdd,
         Self::TaskEdit,
+        Self::TaskDelete,
         Self::TaskNote,
         Self::TaskDefer,
         Self::TaskWake,
@@ -525,6 +541,7 @@ impl CommandKind {
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TaskEdit
+            | Self::TaskDelete
             | Self::TaskNote
             | Self::TaskDefer
             | Self::TaskWake
@@ -576,6 +593,7 @@ impl CommandKind {
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
             Self::TaskEdit => "task::edit",
+            Self::TaskDelete => "task::delete",
             Self::TaskNote => "task::note",
             Self::TaskDefer => "task::defer",
             Self::TaskWake => "task::wake",
@@ -644,6 +662,7 @@ impl CommandKind {
             Self::BoardHandout => Law::OPERATOR_READ,
             Self::TaskAdd | Self::TaskOopsAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
+            Self::TaskDelete => Law::DELETE,
             Self::TaskNote => Law::NOTE,
             Self::TaskDefer | Self::TaskWake => Law::DEFER,
             Self::TaskDepends => Law::DEPENDS,

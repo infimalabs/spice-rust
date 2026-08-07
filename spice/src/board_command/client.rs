@@ -37,6 +37,7 @@ fn dispatch_client(
         ["task", "free"] => client_free(repository, contract, matches),
         ["task", "depends"] => client_depends(repository, contract, matches),
         ["task", "modify"] => client_modify(repository, contract, matches),
+        ["task", "delete"] => client_delete(repository, contract, matches),
         ["task", "done"] => client_done(repository, contract, matches),
         ["task", "review"] => client_review(repository, contract, matches),
         _ => refusal(
@@ -129,6 +130,7 @@ enum TaskListStatus {
     Pending,
     Waiting,
     Completed,
+    Deleted,
 }
 
 struct TaskListOptions {
@@ -187,6 +189,7 @@ impl TaskListOptions {
                 "pending" => TaskListStatus::Pending,
                 "waiting" => TaskListStatus::Waiting,
                 "completed" => TaskListStatus::Completed,
+                "deleted" => TaskListStatus::Deleted,
                 _ => unreachable!("contract parser owns task list status values"),
             });
         Ok(Self {
@@ -285,6 +288,9 @@ fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
         Some(TaskListStatus::Pending) => pending,
         Some(TaskListStatus::Waiting) => waiting,
         Some(TaskListStatus::Completed) => task.workflow.body.status == "completed",
+        // A withdrawal leaves the row readable but off the working board, so the
+        // only way to reach one is to ask for it by name or to ask for all.
+        Some(TaskListStatus::Deleted) => task.workflow.body.status == "deleted",
         None if options.all => true,
         None => {
             pending
@@ -910,6 +916,34 @@ fn client_modify(
     })
 }
 
+fn client_delete(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    mutate_task_from_board(repository, contract, matches, |_board, task, heads| {
+        // Law::DELETE names the claim head, and claim_witness spells the
+        // absence of a claim as `head: None`. That is the point: an unclaimed
+        // task witnesses that it was unclaimed, so a claim landing between this
+        // board read and the door turns the withdrawal into a refusal instead
+        // of silently taking the new holder's work.
+        Ok((
+            CommandKind::TaskDelete,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+            ],
+            serde_json::to_value(TaskDelete {
+                task,
+                reason: required(matches, "REASON"),
+                force_claimed: matches.get_flag("force-claimed"),
+            })
+            .expect("typed intent encodes"),
+        ))
+    })
+}
+
 fn client_done(
     repository: &Repository,
     contract: &Contract,
@@ -1390,6 +1424,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add, projects),
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
         wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, projects),
+        wire::intent::Intent::TaskDelete(delete) => {
+            task_delete(bus, command, delete, projects)
+        }
         wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, projects),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::TaskWake => {
             task_wake(bus, command, task, projects)

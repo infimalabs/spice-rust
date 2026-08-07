@@ -49,6 +49,10 @@ const BODIES: &[(CommandKind, &str)] = &[
         r#"{ "task": "SPICE-aBcD", "title": "a replacement statement" }"#,
     ),
     (
+        CommandKind::TaskDelete,
+        r#"{ "task": "SPICE-aBcD", "reason": "filed against the wrong surface" }"#,
+    ),
+    (
         CommandKind::TaskNote,
         r#"{ "task": "SPICE-aBcD", "note": "the registry row is exhaustive" }"#,
     ),
@@ -876,6 +880,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::TaskAdd,
     BodyShape::TaskOopsAdd,
     BodyShape::TaskEdit,
+    BodyShape::TaskDelete,
     BodyShape::TaskNote,
     BodyShape::TaskDefer,
     BodyShape::TaskRef,

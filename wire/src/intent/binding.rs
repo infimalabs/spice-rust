@@ -11,8 +11,8 @@ use super::{
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneSeat, LaneState,
     LineageArrange, LineageConfigure, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish,
     StateAnswer, SteerDispose, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer,
-    TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview,
-    TasteAnswer, TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
+    TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
+    TaskReview, TasteAnswer, TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -32,6 +32,8 @@ pub enum BodyShape {
     TaskOopsAdd,
     /// [`TaskEdit`]
     TaskEdit,
+    /// [`TaskDelete`]
+    TaskDelete,
     /// [`TaskNote`]
     TaskNote,
     /// [`TaskDefer`]
@@ -295,6 +297,7 @@ impl CommandKind {
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TaskEdit
+            | Self::TaskDelete
             | Self::TaskNote
             | Self::TaskDefer
             | Self::TaskWake
@@ -349,6 +352,7 @@ impl CommandKind {
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
+            Self::TaskDelete => Binding::of(B::TaskDelete, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
             Self::TaskDefer => Binding::of(B::TaskDefer, A::Task),
             Self::TaskWake => Binding::of(B::TaskRef, A::Task),
@@ -421,6 +425,8 @@ pub enum Intent {
     TaskOopsAdd(TaskOopsAdd),
     /// [`BodyShape::TaskEdit`]
     TaskEdit(TaskEdit),
+    /// [`BodyShape::TaskDelete`]
+    TaskDelete(TaskDelete),
     /// [`BodyShape::TaskNote`]
     TaskNote(TaskNote),
     /// [`BodyShape::TaskDefer`]
@@ -497,6 +503,7 @@ impl Intent {
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
             | Self::TaskEdit(_)
+            | Self::TaskDelete(_)
             | Self::TaskNote(_)
             | Self::TaskDefer(_)
             | Self::TaskRef(_)
@@ -540,6 +547,7 @@ impl Intent {
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
+            Self::TaskDelete(_) => BodyShape::TaskDelete,
             Self::TaskNote(_) => BodyShape::TaskNote,
             Self::TaskDefer(_) => BodyShape::TaskDefer,
             Self::TaskRef(_) => BodyShape::TaskRef,
@@ -608,6 +616,7 @@ impl BodyShape {
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TaskEdit
+                | Self::TaskDelete
                 | Self::TaskNote
                 | Self::TaskDefer
                 | Self::TaskRef
@@ -633,6 +642,7 @@ impl BodyShape {
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TaskEdit
+                | Self::TaskDelete
                 | Self::TaskNote
                 | Self::TaskDefer
                 | Self::TaskRef
@@ -652,6 +662,7 @@ impl BodyShape {
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
+            Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
             Self::TaskDefer => Intent::TaskDefer(crate::decode(bytes)?),
             Self::TaskRef => Intent::TaskRef(crate::decode(bytes)?),

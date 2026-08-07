@@ -106,11 +106,7 @@ pub fn select<'a>(
     actor: &Actor,
     subscription: &LineageSubscription,
 ) -> Option<Selection<'a>> {
-    let completed: BTreeSet<TaskHandle> = entries
-        .iter()
-        .filter(|entry| entry.workflow().status == "completed")
-        .map(|entry| entry.statement().handle.clone())
-        .collect();
+    let completed = completed_handles(entries);
 
     let mut selected: Option<Selection<'a>> = None;
     for entry in entries
@@ -206,10 +202,20 @@ pub fn stealable_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool 
     workable(entry, actor, &completed_handles(entries))
 }
 
+/// Handles that no longer block a dependent, stated once for both callers.
+///
+/// A withdrawn prerequisite belongs here beside a completed one. It will never
+/// complete, so leaving it out would let one deletion block every dependent
+/// permanently, with no move left that could clear the edge: the dependent's
+/// blocker is settled, and the operator who withdrew it is not told that
+/// anything is now stuck.
 fn completed_handles(entries: &[Entry]) -> BTreeSet<TaskHandle> {
     entries
         .iter()
-        .filter(|candidate| candidate.workflow().status == "completed")
+        .filter(|candidate| {
+            let status = candidate.workflow().status.as_str();
+            status == "completed" || status == "deleted"
+        })
         .map(|candidate| candidate.statement().handle.clone())
         .collect()
 }

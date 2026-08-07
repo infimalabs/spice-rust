@@ -165,6 +165,8 @@ vocabulary! {
     TaskWoken = "task::woken" by CommandDoor;
     /// An unsettled task statement changed.
     TaskEdited = "task::edited" by CommandDoor;
+    /// A task was withdrawn from the board with a recorded reason.
+    TaskDeleted = "task::deleted" by CommandDoor;
 
     /// Exclusive possession was minted from current eligibility and claim heads.
     ClaimWon = "claim::won" by CommandDoor;

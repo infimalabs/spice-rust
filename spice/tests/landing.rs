@@ -103,6 +103,15 @@ const CASES: &[Case] = &[
         &["task", "depends", "READY-12345678", "AFTER-12345678"],
     ),
     case(
+        "task delete",
+        &[
+            "task",
+            "delete",
+            "READY-12345678",
+            "filed against the wrong surface",
+        ],
+    ),
+    case(
         "task modify",
         &[
             "task",

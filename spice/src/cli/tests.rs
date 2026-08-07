@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 90);
+    assert_eq!(contracts().len(), 91);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 90);
+    assert_eq!(landed, 91);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
@@ -132,6 +132,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["lane", "import"]), Landing::Landed);
     assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
     assert_eq!(landing(&["task", "modify"]), Landing::Landed);
+    assert_eq!(landing(&["task", "delete"]), Landing::Landed);
     assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
     assert_eq!(landing(&["task", "list"]), Landing::Landed);
     assert_eq!(landing(&["task", "status"]), Landing::Landed);
@@ -411,11 +412,15 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
         leaf.get_one::<String>("status").map(String::as_str),
         Some("waiting")
     );
-    assert!(
-        command()
-            .try_get_matches_from(["spice", "task", "list", "--status", "deleted"])
-            .is_err(),
-        "deleted must not parse until the native board carries deletion truth"
+    let withdrawn = command()
+        .try_get_matches_from(["spice", "task", "list", "--status", "deleted"])
+        .expect("the board carries deletion truth, so the filter that reaches it parses");
+    assert_eq!(
+        selected_matches(&withdrawn)
+            .get_one::<String>("status")
+            .map(String::as_str),
+        Some("deleted"),
+        "a withdrawn row is off the default board, so naming the status is the only way back to it"
     );
 
     let status = command()

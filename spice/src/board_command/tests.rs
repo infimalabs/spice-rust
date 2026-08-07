@@ -923,4 +923,9 @@ mod tests {
     // Statement correction and its refusals are one bounded scenario seam, so
     // this file stays inside the structural review bound as it grows.
     include!("tests/edit.rs");
+
+    // Withdrawal, its refusals, and what a withdrawn row releases are one
+    // bounded scenario seam, kept beside the correction seam for the same
+    // structural reason.
+    include!("tests/delete.rs");
 }

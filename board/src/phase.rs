@@ -57,6 +57,11 @@ impl Transition {
     }
 
     /// Guard completion from the final declared phase.
+    ///
+    /// A withdrawn task is settled by the same clause that settles a completed
+    /// one: withdrawal stamps `completion`, so no separate status check is
+    /// needed here and none is reachable anyway. Withdrawal also frees the
+    /// claim, and possession is admitted before this runs.
     pub fn complete(entry: &Entry, active: &Active<'_>, at: Instant) -> Result<Self, PhaseRefusal> {
         bind_claim(entry, active)?;
         let workflow = entry.workflow();

@@ -173,6 +173,7 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         (&["task", "oops"][..], CommandKind::TaskOopsAdd),
         (&["task", "depends"][..], CommandKind::TaskDepends),
         (&["task", "modify"][..], CommandKind::TaskEdit),
+        (&["task", "delete"][..], CommandKind::TaskDelete),
         (&["doc"][..], CommandKind::DocApply),
         (&["doc", "ledger"][..], CommandKind::DocLedger),
         (&["taste", "add"][..], CommandKind::TaskAdd),
