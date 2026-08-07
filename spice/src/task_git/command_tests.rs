@@ -72,6 +72,7 @@ mod command_tests {
             workers,
             &["--version"],
             LOCAL_COMMAND_LIMIT,
+            None,
         )
         .expect("an unreadable post-exit probe is not a survivor");
         assert!(status.success());
@@ -98,6 +99,7 @@ mod command_tests {
             workers,
             &["--version"],
             LOCAL_COMMAND_LIMIT,
+            None,
         )
         .expect_err("a positively observed post-exit group is a survivor");
         assert_eq!(error.reason(), "git::descendant-survived");
