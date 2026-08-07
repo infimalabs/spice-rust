@@ -1,6 +1,6 @@
 // Lineage-life isolation scenario for the Canvas browser suite.
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,8 +11,8 @@ import {
   monitorPage,
   reply,
   startResident,
-  stopResident,
 } from "./canvas-fixture.mjs";
+import { ownFixture } from "./canvas-lifecycle.mjs";
 import { assertTiledWorkspace } from "./tiled-workspace.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -22,11 +22,16 @@ const artifacts = join(root, "artifacts/canvas");
 export async function assertLineageLifeIsolation(browser) {
   const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lineage-life-")));
   const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-life-lanes-")));
+  // This scenario is nested inside a run that already owns a fixture of its
+  // own. Both owners are registered together and share one set of signal
+  // handlers, so an interruption here tears down the outer fixture too rather
+  // than only whichever happens to be innermost.
+  const owner = ownFixture({ fixture, linkedRoot });
   let resident;
   let context;
   try {
     const worktrees = await configureFixture(fixture, linkedRoot, 8);
-    resident = await startResident(fixture);
+    resident = owner.ownResident(await startResident(fixture));
     const pending = await reply(fixture, ["trust"]);
     await reply(fixture, ["trust", "grant", pending.body.digest]);
 
@@ -155,14 +160,22 @@ export async function assertLineageLifeIsolation(browser) {
     monitor.assertClean();
   } finally {
     if (context) await context.close();
-    if (resident?.child.exitCode === null) {
-      const liveTeam = await reply(fixture, ["lane"]);
-      for (const agent of liveTeam.body.lanes) {
-        await reply(fixture, ["lane", "drain", agent.lane]);
+    // Draining the seats first is the graceful path and stays first, but it
+    // talks to the resident over eight lanes and can itself fail -- and when it
+    // did, every step after it was skipped, so a scenario that failed early
+    // left the resident, its stand-ins, and both directories behind. The owner
+    // below runs whatever this could not.
+    try {
+      if (resident?.child.exitCode === null) {
+        const liveTeam = await reply(fixture, ["lane"]);
+        for (const agent of liveTeam.body.lanes) {
+          await reply(fixture, ["lane", "drain", agent.lane]);
+        }
       }
-      await stopResident(fixture, resident);
+    } catch {
+      // The resident is unreachable; the owner escalates rather than reporting
+      // a teardown error over whatever the scenario itself was failing with.
     }
-    await rm(fixture, { recursive: true, force: true });
-    await rm(linkedRoot, { recursive: true, force: true });
+    await owner.cleanup();
   }
 }

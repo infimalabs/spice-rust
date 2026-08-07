@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +24,8 @@ import {
   assertEndpointProbeStates,
 } from "./canvas-endpoint-probes.mjs";
 import { assertLineageLifeIsolation } from "./canvas-lineage-life.mjs";
+import { ownFixture } from "./canvas-lifecycle.mjs";
+import { assertFixtureTeardownReaps } from "./canvas-teardown.mjs";
 import {
   assertSpeechVariants,
   assertSystemSpeech,
@@ -1330,15 +1331,23 @@ await assertHeadlessLaunchSites();
 await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
 await buildResident();
+await assertFixtureTeardownReaps();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
 const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
+// Ownership is taken before the fixture is configured rather than inside the
+// try below, because configuring it is already enough work to be interrupted
+// during, and an interruption there used to leave both directories behind.
+const owner = ownFixture({ fixture, linkedRoot });
 await mkdir(artifacts, { recursive: true });
-const worktrees = await configureFixture(fixture, linkedRoot, 5, { noCardMember: 5 });
 
 let resident;
 let browser;
 try {
-  resident = await startResident(fixture);
+  // Configuring the fixture is inside the guarded region, not before it.
+  // Outside, a failure here -- a bad stage copy, a git worktree that will not
+  // add -- left both temporary directories behind with nothing to remove them.
+  const worktrees = await configureFixture(fixture, linkedRoot, 5, { noCardMember: 5 });
+  resident = owner.ownResident(await startResident(fixture));
   const seeded = await seedAuthority(fixture);
   browser = await launchBrowser();
   await assertHandshakeTimeout(browser, resident.discovery.endpoint);
@@ -1452,7 +1461,7 @@ try {
   await stopResident(fixture, resident);
   await assertResidentLossObserved(lightPage, resident);
   const restart = { epoch: firstEpoch, capability: firstCapability, policy: configuredPolicy };
-  resident = await assertResidentRestart(fixture, lightPage, restart);
+  resident = owner.ownResident(await assertResidentRestart(fixture, lightPage, restart));
   lightMonitor.expectNetworkInterruption(false);
   await assertCanvas(lightPage, "light-restarted");
   await chooseCanvasView(lightPage, "Chronology");
@@ -1470,12 +1479,6 @@ try {
   await light.close();
 } finally {
   if (browser) await browser.close();
-  if (resident?.child.exitCode === null) {
-    const exited = once(resident.child, "exit");
-    resident.child.kill("SIGKILL");
-    await exited;
-  }
-  await rm(fixture, { recursive: true, force: true });
-  await rm(linkedRoot, { recursive: true, force: true });
+  await owner.cleanup();
 }
 if (coverageReceiptPath) await writeFile(coverageReceiptPath, coverageReceipt);
