@@ -503,25 +503,31 @@ async function assertPersistentMosaic(page, fixture, console, plane, member) {
   // re-renders from freshly cloned props while nothing a card measures moved.
   // The command-bar cursor is the positive control: without it a refresh that
   // never arrived would answer this probe with exactly the silence a correct
-  // one does, and the assertions below would pass having tested nothing.
+  // one does, and the assertions below would pass having tested nothing. Bind
+  // that control to this command's committed range so an unrelated cursor
+  // advance cannot satisfy it.
   //
   // The missing `--acceptance` is load-bearing, not an omission: a task added
   // without one starts in `plan`, which `workable` never selects, so this task
   // can never be held and cannot disturb `assertHeldTaskCount`. Give it
   // acceptance criteria and a distant assertion about badges goes red.
-  const cursor = page.locator(".bar-meta").first();
-  const cursorBefore = await cursor.textContent();
   const refreshProbe = await armPlacementProbe(plane);
-  await reply(fixture, [
+  const refresh = await reply(fixture, [
     "task",
     "add",
     `mosaic no-op refresh ${crypto.randomUUID()}`,
     "--project",
     "spice.browser",
   ]);
-  await waitForPage(page, "a no-op refresh reaches the surface", TRANSITION_MS, (before) => (
-    document.querySelector(".bar-meta")?.textContent !== before
-  ), cursorBefore);
+  assert.ok(
+    Number.isSafeInteger(refresh.seq?.last)
+      && typeof refresh.body?.task === "string"
+      && refresh.body.task.length > 0,
+    "the no-op refresh command commits an exact journal range",
+  );
+  await waitForPage(page, "a no-op refresh reaches the surface", TRANSITION_MS, (expected) => (
+    document.querySelector(".bar-meta")?.textContent === expected
+  ), `cursor ${refresh.seq.last}`);
   const refreshed = await finishPlacementProbe(plane, refreshProbe);
   assert.ok(refreshed.retained, "a no-op refresh retains every committed card node");
   assert.deepEqual(refreshed.writes, [], "a no-op refresh writes no card placement");
