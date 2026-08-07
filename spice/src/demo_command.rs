@@ -982,10 +982,23 @@ fn watch_environment(
         },
         notify::Config::default().with_poll_interval(WATCH_SCAN_INTERVAL),
     )
-    .map_err(|error| environment_fault("demo::readiness-unavailable", error.to_string()))?;
+    .map_err(|error| {
+        environment_fault(
+            "demo::readiness-watcher-unavailable",
+            format!("the canvas readiness watcher could not be created: {error}"),
+        )
+    })?;
     watcher
         .watch(&environment.root, RecursiveMode::Recursive)
-        .map_err(|error| environment_fault("demo::readiness-unavailable", error.to_string()))?;
+        .map_err(|error| {
+            environment_fault(
+                "demo::readiness-watch-refused",
+                format!(
+                    "{} could not be watched for canvas discovery: {error}",
+                    environment.root.display()
+                ),
+            )
+        })?;
     Ok(watcher)
 }
 
@@ -1053,7 +1066,14 @@ fn wait_for_discovery(environment: &Environment, receiver: &Receiver<Event>) -> 
         match receiver.recv_timeout(remaining) {
             Ok(Event::Changed(Ok(()))) => {}
             Ok(Event::Changed(Err(error))) => {
-                return Err(environment_fault("demo::readiness-unavailable", error).into());
+                return Err(environment_fault(
+                    "demo::readiness-scan-failed",
+                    format!(
+                        "{} could not be scanned for canvas discovery: {error}",
+                        environment.root.display()
+                    ),
+                )
+                .into());
             }
             Ok(Event::Resident(outcome)) => return Err(rebody(outcome).into()),
             Ok(Event::Signal(_)) => return Ok(true),
