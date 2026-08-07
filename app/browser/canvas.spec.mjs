@@ -29,6 +29,10 @@ import { ownFixture } from "./canvas-lifecycle.mjs";
 import { assertSignalExitedChildSkipsTeardown } from "./canvas-signal-teardown.mjs";
 import { assertFixtureTeardownReaps } from "./canvas-teardown.mjs";
 import {
+  assertFullyReapedVendorsStaySilent,
+  assertSurvivingVendorsAreReported,
+} from "./canvas-vendor-reap.mjs";
+import {
   assertSpeechVariants,
   assertSystemSpeech,
   installBrowserSpeech,
@@ -1334,6 +1338,8 @@ await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
 await assertSignalExitedChildSkipsTeardown();
 await assertLineageDrainFailureTeardown();
+await assertSurvivingVendorsAreReported();
+await assertFullyReapedVendorsStaySilent();
 await buildResident();
 await assertFixtureTeardownReaps();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));

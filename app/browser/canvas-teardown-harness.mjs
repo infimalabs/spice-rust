@@ -17,9 +17,19 @@ import { join } from "node:path";
 import { configureFixture, reply, startResident } from "./canvas-fixture.mjs";
 import { ownFixture, recordedVendorPids } from "./canvas-lifecycle.mjs";
 
-/// How the run ends, chosen by the parent to cover both teardown paths.
+/// How the run ends, chosen by the parent to cover every teardown path.
+///
+/// `idle` waits to be signalled and `fail` raises after launching a vendor:
+/// both hand a live fixture to the parent first. `mute` reaches the same live
+/// state and then withholds the announcement, which is the one case where the
+/// parent never takes the fixture over and the child is still the parent's to
+/// end. Keeping it a mode of *this* harness rather than a stand-in is what
+/// makes that case run against a real resident and a real stand-in.
 const mode = process.argv[2];
-assert.ok(["idle", "fail"].includes(mode), `harness mode is idle or fail, not ${mode}`);
+assert.ok(
+  ["idle", "fail", "mute"].includes(mode),
+  `harness mode is idle, fail or mute, not ${mode}`,
+);
 
 /// Longest the stand-in is given to launch and enrol itself.
 const LAUNCH_MS = 30_000;
@@ -67,10 +77,24 @@ try {
     await new Promise((wake) => setTimeout(wake, 50));
   }
   assert.ok(vendors.length > 0, "the fixture launched at least one vendor stand-in");
-  process.stdout.write(`${JSON.stringify({ ready: true, fixture, linkedRoot, vendors })}\n`);
+  // The resident is named alongside its occupants because it is the other half
+  // of what leaks. A parent that only knew the stand-in pids could watch every
+  // one of them go and still have left a `spice up` behind.
+  const resident = owner.resident.child.pid;
+  const announcement = JSON.stringify({ ready: true, fixture, linkedRoot, resident, vendors });
+  if (mode === "mute") {
+    // Announce where the parent collects diagnostics rather than where it reads
+    // readiness, then close stdout so the parent's readiness race loses at the
+    // exact moment this fixture is fully alive. That is the state the leak
+    // needs, and the parent still learns what it has to account for.
+    process.stderr.write(`${announcement}\n`);
+    process.stdout.end();
+  } else {
+    process.stdout.write(`${announcement}\n`);
+  }
 
   if (mode === "fail") throw new Error(INJECTED);
-  // idle: the parent signals this process once it has read the line above.
+  // idle and mute: the parent ends this process once it has seen the line above.
   await new Promise(() => {});
 } finally {
   clearInterval(heartbeat);

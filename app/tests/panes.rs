@@ -688,7 +688,7 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
     }
 
     assert_eq!(operator, 16);
-    assert_eq!(connected, 30);
+    assert_eq!(connected, 31);
     assert_eq!(
         CommandKind::TaskOopsAdd.law().authority,
         Authority::Connected,
@@ -696,7 +696,7 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
     );
     assert_eq!(
         CommandKind::ALL.len(),
-        46,
+        47,
         "a command joined or left the registry; the counts above are the claim \
          to re-make, not the number to bump"
     );

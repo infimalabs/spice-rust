@@ -33,8 +33,8 @@ pub use config::{Config, NextConfig};
 pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
-    Selection, eligible_entry, project_subscription_history, select, selectable_entry,
-    stealable_entry,
+    Selection, eligible_entry, project_subscription_history, satisfied_handles, select,
+    selectable_entry, stealable_entry,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
 pub use phase::{PhaseRefusal, Transition, TransitionKind};

@@ -340,7 +340,11 @@ fn change_deferral<B: serde::Serialize + Clone>(
             "read board and name one current task handle",
         );
     };
-    if entry.workflow().status == "completed" {
+    // Settled is the question, not completed. A withdrawn task carries the same
+    // completion instant and never becomes workable again, so deferring one is
+    // meaningless and waking one would promise a return the allocator cannot
+    // make: `workable` admits pending rows only.
+    if entry.workflow().completion.is_some() {
         return refusal(
             "task::settled",
             Some(task.to_string()),
@@ -389,6 +393,128 @@ fn change_deferral<B: serde::Serialize + Clone>(
         write.command_result(request(command, intent), command.epoch(), answer.clone())
     {
         return store_fault("task::deferral-receipt", &error.to_string());
+    }
+    committed(bus, write, CommandAnswer::Task(answer))
+}
+
+/// Withdraw a task from the board with a recorded reason.
+///
+/// The journal keeps the statement, so this is a terminal workflow status
+/// rather than a removal: the row stops being allocatable, stops blocking its
+/// dependents, and keeps its history and its reason readable.
+///
+/// A live claim refuses the withdrawal by default, because taking work away
+/// from a lane mid-flight is a decision an operator makes deliberately, not one
+/// they discover afterwards. `force_claimed` makes it, and then the fact names
+/// the actor whose claim was overridden and the claim is freed in the same
+/// transaction -- a lane left holding a withdrawn task would renew its lease
+/// against a row nothing can ever advance.
+fn task_delete(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    delete: &TaskDelete,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let Some(entry) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.statement().handle == delete.task)
+    else {
+        return refusal(
+            "task::unknown",
+            Some(delete.task.to_string()),
+            "read board and name one current task handle",
+        );
+    };
+    if delete.reason.trim().is_empty() {
+        return refusal(
+            "task::delete-reason-empty",
+            Some(delete.task.to_string()),
+            "state why the task leaves the board",
+        );
+    }
+    match entry.workflow().status.as_str() {
+        "completed" => {
+            return refusal(
+                "task::settled",
+                Some(delete.task.to_string()),
+                "a completed task is history and stays on the board",
+            );
+        }
+        "deleted" => {
+            return refusal(
+                "task::already-deleted",
+                Some(delete.task.to_string()),
+                "the task is already withdrawn; read its recorded reason",
+            );
+        }
+        _ => {}
+    }
+    let held = entry
+        .claim()
+        .filter(|claim| claim.disposition == ClaimDisposition::Active);
+    if let Some(claim) = held
+        && !delete.force_claimed
+    {
+        return refusal(
+            "task::delete-claimed",
+            Some(claim.actor.to_string()),
+            "rerun with --force-claimed to withdraw work a lane is holding",
+        );
+    }
+    let claimed = held.map(|claim| claim.actor.clone());
+    let at = match current_instant() {
+        Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    let origin = match task_origin(&delete.task) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
+    guard(&mut write, command.expected().to_vec());
+    let deleted = match write.fact(
+        body::TaskDeleted {
+            task: delete.task.clone(),
+            reason: delete.reason.clone(),
+            claimed: claimed.clone(),
+        },
+        FactCause::Root,
+    ) {
+        Ok(fact) => fact,
+        Err(error) => return store_fault("task::delete-build", &error.to_string()),
+    };
+    let mut workflow = entry.workflow().clone();
+    workflow.status = "deleted".to_owned();
+    workflow.completion = Some(at);
+    workflow.assignment = None;
+    write.workflow_head(delete.task.clone(), deleted, move |_| workflow);
+    if claimed.is_some() {
+        let mut claim = entry.claim().expect("a held claim was just read").clone();
+        claim.disposition = ClaimDisposition::Freed;
+        write.claim_head(delete.task.clone(), deleted, move |fact| ClaimHead {
+            fact,
+            ..claim
+        });
+    }
+    let answer = wire::intent::TaskAnswer {
+        // A withdrawn task admits no further transition, so it offers no next
+        // action. Naming one would point the caller at a row that can never
+        // advance; the work goes on somewhere else, not here.
+        task: delete.task.clone(),
+        status: "deleted".to_owned(),
+        next: None,
+    };
+    if let Err(error) = write.command_result(
+        request(command, delete.clone()),
+        command.epoch(),
+        answer.clone(),
+    ) {
+        return store_fault("task::delete-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
 }
@@ -498,6 +624,122 @@ fn task_depends(
         answer.clone(),
     ) {
         return store_fault("task::depends-receipt", &error.to_string());
+    }
+    committed(bus, write, CommandAnswer::Task(answer))
+}
+
+/// Replace an unsettled task statement in place, at a fresh revision.
+///
+/// A correction is the same statement-head publication `task depends` performs,
+/// so the durable record is a new revision rather than an overwrite: the prior
+/// text stays readable in the journal and the edit carries the actor that made
+/// it. Only fields the caller named move; the rest ride through untouched.
+fn task_edit(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    edit: &TaskEdit,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let Some(entry) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.statement().handle == edit.task)
+    else {
+        return refusal(
+            "task::unknown",
+            Some(edit.task.to_string()),
+            "read board and name one current task handle",
+        );
+    };
+    // A withdrawn task is settled exactly as a completed one is, and both stamp
+    // the same instant. Correcting a row that has already left the board would
+    // publish a revision nobody reaches through the working board.
+    if entry.workflow().completion.is_some() {
+        return refusal(
+            "task::settled",
+            Some(edit.task.to_string()),
+            "correct a statement only while the task is pending",
+        );
+    }
+    if edit.title.is_none() && edit.description.is_none() && edit.acceptance.is_empty() {
+        return refusal(
+            "task::edit-empty",
+            Some(edit.task.to_string()),
+            "name at least one of title, description, or acceptance",
+        );
+    }
+    let mut statement = entry.statement().clone();
+    if let Some(title) = &edit.title {
+        statement.title = title.clone();
+    }
+    if let Some(description) = &edit.description {
+        statement.description = Some(description.clone());
+    }
+    if !edit.acceptance.is_empty() {
+        statement.acceptance = edit.acceptance.clone();
+    }
+    let post = match Entry::new(
+        statement.clone(),
+        entry.workflow().clone(),
+        entry.claim().cloned(),
+        entry.lease().cloned(),
+        projects,
+    ) {
+        Ok(post) => post,
+        Err(error) => {
+            return refusal(
+                "task::edit-refused",
+                Some(error.to_string()),
+                "submit a statement the board admits",
+            );
+        }
+    };
+    // A correction replaces statement text and leaves the workflow where it
+    // was, so the next action is whatever it already was, derived from the
+    // corrected statement rather than restated here.
+    let next = next_action(&snapshot, &post, false);
+    let at = match current_instant() {
+        Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    let origin = match task_origin(&edit.task) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
+    guard(&mut write, command.expected().to_vec());
+    let revision = u32::try_from(entry.statement().revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
+    let edited = match write.fact(
+        body::TaskEdited {
+            task: edit.task.clone(),
+            revision,
+        },
+        FactCause::Root,
+    ) {
+        Ok(fact) => fact,
+        Err(error) => return store_fault("task::edit-build", &error.to_string()),
+    };
+    write.task_head(edited, move |position| TaskHead {
+        revision: position,
+        ..statement
+    });
+    let answer = wire::intent::TaskAnswer {
+        task: edit.task.clone(),
+        status: "edited".to_owned(),
+        next,
+    };
+    if let Err(error) = write.command_result(
+        request(command, edit.clone()),
+        command.epoch(),
+        answer.clone(),
+    ) {
+        return store_fault("task::edit-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
 }

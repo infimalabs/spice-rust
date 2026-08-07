@@ -58,14 +58,27 @@ const POLL_MS = 25;
 const outstanding = new Set();
 let installed = null;
 
+/// The process world the reap signals through and decides liveness from.
+///
+/// Injected as one object rather than as loose functions because its two halves
+/// have to agree: a check that substitutes liveness but not waiting would spend
+/// the real escalation bound waiting for a process that was never going to
+/// change, and one that substitutes waiting alone would signal real pids. Each
+/// half is a boundary this module cannot reach past in a test -- the kernel's
+/// answer about another process, and the passage of time.
+const REAL_PROCESSES = {
+  kill: (pid, signal) => process.kill(pid, signal),
+  settled: (predicate) => settles(predicate, ESCALATION_MS),
+};
+
 /// Whether a pid still names a live process.
 ///
 /// Signal 0 performs the permission and existence check without delivering
 /// anything, so this asks the kernel rather than inferring liveness from an
 /// exit event that a detached or reparented process would never send us.
-function alive(pid) {
+function alive(pid, processes) {
   try {
-    process.kill(pid, 0);
+    processes.kill(pid, 0);
     return true;
   } catch (error) {
     // EPERM means the process exists and is simply not ours to signal, which is
@@ -93,9 +106,9 @@ async function settles(predicate, bound) {
 /// occupant is its own group leader, so this reaches the shell stand-in *and*
 /// the `sleep` it is currently blocked in, which a signal to the leader alone
 /// would leave running for up to a second after its parent had gone.
-function signalGroup(pid, signal) {
+function signalGroup(pid, signal, processes) {
   try {
-    process.kill(-pid, signal);
+    processes.kill(-pid, signal);
   } catch {
     // ESRCH is the expected and desirable case: the group is already empty.
   }
@@ -128,8 +141,18 @@ export async function recordedVendorPids(fixture) {
 /// using its existing `try`/`finally` shape: the only requirement is that
 /// `cleanup` is reached, and a signal arriving before that reaches it instead.
 /// The resident stop operation is injectable so focused checks can observe this
-/// boundary without replacing the real child whose state it decides from.
-export function ownFixture({ fixture, linkedRoot, stop = stopResident }) {
+/// boundary without replacing the real child whose state it decides from, and
+/// the process world for the same reason: the pids a stand-in records are not
+/// ones a check can conjure into an unkillable state for real. The process world
+/// governs the recorded-pid reap alone. The resident is escalated against
+/// through its own child handle, which `stop` and that handle already stand in
+/// for, so substituting a process world here does not quietly disarm it.
+export function ownFixture({
+  fixture,
+  linkedRoot,
+  stop = stopResident,
+  processes = REAL_PROCESSES,
+}) {
   const owner = {
     fixture,
     linkedRoot,
@@ -162,7 +185,7 @@ export function ownFixture({ fixture, linkedRoot, stop = stopResident }) {
       // fixture directory, and it is the only record of what to reap.
       const vendors = await recordedVendorPids(fixture);
       await attempt(() => stopOwnedResident(owner, stop), "could not stop its resident");
-      await attempt(() => reapRecordedVendors(vendors), "could not reap its stand-ins");
+      await attempt(() => reapRecordedVendors(vendors, processes), "could not reap its stand-ins");
       await attempt(() => rm(fixture, { recursive: true, force: true }), `left ${fixture}`);
       if (linkedRoot) {
         await attempt(() => rm(linkedRoot, { recursive: true, force: true }), `left ${linkedRoot}`);
@@ -219,13 +242,26 @@ async function stopOwnedResident(owner, stop) {
 /// Deleting this step reds the *failure* scenario, whose resident is asked to
 /// stop gracefully and does: a completed `spice down` returns with these
 /// stand-ins still alive, so this is what actually ends them on every path.
-async function reapRecordedVendors(vendors) {
-  const living = () => vendors.filter(alive);
+///
+/// Escalation that runs out is reported, not assumed to have worked. A stand-in
+/// still alive after SIGKILL is one the kernel would not let us end -- a pid
+/// that outlived its fixture and belongs to no one, which is precisely the
+/// residue this teardown exists to prevent. Silence there would leave the next
+/// run to discover it, so the survivors are named and raised, and `attempt`
+/// turns that into a stderr line without ending the rest of cleanup.
+async function reapRecordedVendors(vendors, processes) {
+  const living = () => vendors.filter((pid) => alive(pid, processes));
   if (living().length === 0) return;
   for (const signal of ["SIGTERM", "SIGKILL"]) {
-    for (const pid of living()) signalGroup(pid, signal);
-    if (await settles(() => living().length === 0, ESCALATION_MS)) return;
+    for (const pid of living()) signalGroup(pid, signal, processes);
+    if (await processes.settled(() => living().length === 0)) return;
   }
+  // Recomputed rather than reusing the last round's set: escalation is what the
+  // report is about, and a stand-in that died as SIGKILL landed is reaped, not
+  // surviving. Sorted so a run that leaks two of them reads the same every time.
+  const survivors = living().sort((left, right) => left - right);
+  if (survivors.length === 0) return;
+  throw new Error(`stand-ins survived SIGKILL: ${survivors.join(", ")}`);
 }
 
 /// Bound a promise that has no timeout of its own.

@@ -106,11 +106,7 @@ pub fn select<'a>(
     actor: &Actor,
     subscription: &LineageSubscription,
 ) -> Option<Selection<'a>> {
-    let completed: BTreeSet<TaskHandle> = entries
-        .iter()
-        .filter(|entry| entry.workflow().status == "completed")
-        .map(|entry| entry.statement().handle.clone())
-        .collect();
+    let completed = satisfied_handles(entries);
 
     let mut selected: Option<Selection<'a>> = None;
     for entry in entries
@@ -177,7 +173,7 @@ fn unheld(entry: &Entry) -> bool {
 /// Whether one named entry satisfies the same eligibility law as allocation.
 #[must_use]
 pub fn eligible_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
-    workable(entry, actor, &completed_handles(entries)) && unheld(entry)
+    workable(entry, actor, &satisfied_handles(entries)) && unheld(entry)
 }
 
 /// Whether one named entry is eligible through the lineage's current task scope.
@@ -188,7 +184,7 @@ pub fn selectable_entry(
     actor: &Actor,
     subscription: &LineageSubscription,
 ) -> bool {
-    selectable(entry, actor, subscription, &completed_handles(entries))
+    selectable(entry, actor, subscription, &satisfied_handles(entries))
 }
 
 /// Whether one named entry may be taken from whoever currently holds it.
@@ -203,13 +199,29 @@ pub fn selectable_entry(
 /// completed, deferred or dependency-blocked task than an allocation can.
 #[must_use]
 pub fn stealable_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
-    workable(entry, actor, &completed_handles(entries))
+    workable(entry, actor, &satisfied_handles(entries))
 }
 
-fn completed_handles(entries: &[Entry]) -> BTreeSet<TaskHandle> {
+/// Handles that no longer block a dependent, stated once for every caller.
+///
+/// A withdrawn prerequisite belongs here beside a completed one. It will never
+/// complete, so leaving it out would let one deletion block every dependent
+/// permanently, with no move left that could clear the edge: the dependent's
+/// blocker is settled, and the operator who withdrew it is not told that
+/// anything is now stuck.
+///
+/// This is public because allocation is not the only reader. Whatever reports
+/// to the operator which tasks are blocked has to decide the same question, and
+/// deciding it separately is how one row comes to be counted ready and blocked
+/// at once: the allocator hands over work the report still calls stuck.
+#[must_use]
+pub fn satisfied_handles(entries: &[Entry]) -> BTreeSet<TaskHandle> {
     entries
         .iter()
-        .filter(|candidate| candidate.workflow().status == "completed")
+        .filter(|candidate| {
+            let status = candidate.workflow().status.as_str();
+            status == "completed" || status == "deleted"
+        })
         .map(|candidate| candidate.statement().handle.clone())
         .collect()
 }

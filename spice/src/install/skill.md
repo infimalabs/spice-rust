@@ -30,6 +30,18 @@ Start the shared installed appliance with `$(git rev-parse --path-format=absolut
 - Keep durable work in the task workflow. Use the landed leaves such as
   `spice task add`, `spice task note`, `spice task oops`, `spice task depends`,
   `spice task done`, and `spice task next`; trust their printed next action.
+- Correct a task filed wrong with `spice task modify <handle>`, naming any of
+  `--title`, `--description`, or `--acceptance`. The correction publishes a new
+  statement revision attributed to you rather than overwriting the old text, so
+  file the correction instead of restating it in a note. A settled task refuses
+  the correction; carry the change forward in a new task.
+- Withdraw a task that should never have been filed with `spice task delete
+  <handle> "<reason>"`. The reason is required and recorded: the row leaves the
+  working board but stays readable through `spice task list --status deleted`,
+  so a withdrawal can be explained later. A task another lane is holding is
+  refused and names the holder; `--force-claimed` withdraws it anyway, records
+  whose work it took, and releases that lane. Withdraw what was filed in error
+  and complete what was real work.
 - Stay in the assigned worktree, do not spawn sub-agents, validate before
   completing a phase, and keep going while the allocator has work.
 
