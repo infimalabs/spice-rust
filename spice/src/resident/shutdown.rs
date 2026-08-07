@@ -7,7 +7,7 @@ use std::time::{Duration, Instant as Monotonic};
 use bus::{Bus, JournalCommit};
 use journal::{FactCause, JournalGuard, JournalWrite};
 use lane::occupant::{Occupant, OccupantWait, Seats};
-use sill::{Completion, WaitOutcome};
+use sill::WaitOutcome;
 use wire::{Actor, CanonicalUuid, Outcome, Producer, ResidencyHead, ResidentState};
 
 use super::{
@@ -17,7 +17,6 @@ use super::{
 
 const VACANT: &str = "vacant";
 const DEGRADED: &str = "degraded";
-const SIGNAL_EXIT: i32 = -1;
 
 /// Which ending the stage that observed an occupant is entitled to report.
 ///
@@ -26,7 +25,13 @@ const SIGNAL_EXIT: i32 = -1;
 #[derive(Clone, Copy)]
 enum ExitClass {
     Drained,
-    Exited,
+    /// Observed after this resident sent the termination signal.
+    ///
+    /// The one mixed stage, and so the only class that still consults the
+    /// status. An occupant that trapped the signal chose its own ending and has
+    /// a code to report; one that did not trap it has no status of its own, and
+    /// this resident's signal is why it ended.
+    Terminated,
     /// Observed after this resident sent the kill.
     Killed,
 }
@@ -178,19 +183,23 @@ fn exited_evidence(
 ) -> ProcessEvidence {
     match class {
         ExitClass::Drained => ProcessEvidence::Drained { lane, occupant },
-        ExitClass::Exited => ProcessEvidence::Exited {
-            lane,
-            occupant,
-            code: exit_code(outcome.completion()),
+        // The one stage the status still decides, because it is the only one
+        // both endings can reach. A code means the occupant trapped the
+        // termination signal and chose what to report; its absence means the
+        // signal this resident sent is what ended it, and there is no number of
+        // the occupant's own to publish in place of one.
+        ExitClass::Terminated => match outcome.completion().status().code() {
+            Some(code) => ProcessEvidence::Exited {
+                lane,
+                occupant,
+                code,
+            },
+            None => ProcessEvidence::Killed { lane, occupant },
         },
         // The outcome is not read for a code: this resident sent the kill, so
         // the status describes that signal rather than the occupant's decision.
         ExitClass::Killed => ProcessEvidence::Killed { lane, occupant },
     }
-}
-
-fn exit_code(completion: &Completion) -> i32 {
-    completion.status().code().unwrap_or(SIGNAL_EXIT)
 }
 
 struct ShutdownProgress {
@@ -294,7 +303,7 @@ fn terminate_occupants(
     occupants: &mut ShutdownOccupants,
 ) -> CommandResult<()> {
     occupants.signal_terminate();
-    let mut evidence = occupants.observe(Occupant::termination_grace, ExitClass::Exited);
+    let mut evidence = occupants.observe(Occupant::termination_grace, ExitClass::Terminated);
     evidence.extend(unowned_evidence(bus, epoch, occupants, &evidence)?);
     progress.evidence(bus, epoch, evidence)?;
     progress.transition(bus, epoch, ResidentState::Killing)

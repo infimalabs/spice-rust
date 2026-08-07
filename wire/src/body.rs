@@ -874,13 +874,19 @@ pub struct LaneDrained {
     pub occupant: CanonicalUuid,
 }
 
-/// The resident ended an occupant that outlived its termination grace.
+/// A signal this resident sent ended an occupant.
 ///
-/// Separate from [`LaneExited`] because a kill is a different ending, not an
-/// exit status the occupant chose. A signalled process has no status of its own
-/// to report, so recording one would mean publishing the resident's substitute
-/// for a missing number as though the occupant had returned it. This kind
-/// carries no code for the same reason.
+/// Separate from [`LaneExited`] because being signalled is a different ending,
+/// not an exit status the occupant chose. A signalled process has no status of
+/// its own to report, so recording one would mean publishing the resident's
+/// substitute for a missing number as though the occupant had returned it. This
+/// kind carries no code for the same reason.
+///
+/// Both signalling stages record this, not only the kill. An occupant that never
+/// trapped the termination signal dies from that signal rather than outliving
+/// the grace, and this resident is the reason for the ending either way. What
+/// this kind separates is whose decision the ending was, not which signal
+/// carried it; the stage is already durable in the shutdown ladder facts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneKilled {
     /// Vacated lane.

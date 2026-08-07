@@ -1017,13 +1017,17 @@ fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> 
 
 /// How an occupant's residency ended, as the resident itself observed it.
 ///
-/// The three arms are three different endings, not three values of one. Only
-/// [`Self::Exited`] carries a code, because only an occupant that chose its own
-/// end has one to report.
+/// The three arms are three different endings, not three values of one.
+/// [`Self::Killed`] carries no code because a signal this resident sent left the
+/// occupant no status of its own to report.
 enum StopEvidence {
     Drained,
     Exited(i32),
-    /// The resident ended it after the termination grace elapsed.
+    /// A signal this resident sent ended it, at either signalling stage.
+    ///
+    /// Not only the kill: an occupant that never trapped the termination signal
+    /// dies from that signal instead, and this resident is equally the reason
+    /// for the ending in both cases.
     Killed,
 }
 
@@ -1061,14 +1065,31 @@ fn stop_occupant(occupant: Occupant) -> Result<StopEvidence, String> {
     }
 }
 
+/// Classify an ending this resident's termination signal is responsible for.
+///
+/// The only caller is the wait that follows [`Occupant::terminate`], so every
+/// outcome reaching here was already signalled by this resident. A code means
+/// the occupant trapped the signal and chose what to report; its absence means
+/// the signal is what ended it, which is the same ending the kill stage records.
+/// Reporting that as an exit would publish a status the occupant never chose.
 fn stop_evidence(outcome: &WaitOutcome) -> StopEvidence {
-    if outcome.completion().status().success() {
-        StopEvidence::Drained
-    } else {
-        StopEvidence::Exited(exit_code(outcome))
+    let status = outcome.completion().status();
+    if status.success() {
+        return StopEvidence::Drained;
+    }
+    match status.code() {
+        Some(code) => StopEvidence::Exited(code),
+        None => StopEvidence::Killed,
     }
 }
 
+/// The status of an occupant that was already gone before this resident acted.
+///
+/// This is the one place a missing code still becomes a number, and it is the
+/// one place that number says something true: nothing here had been signalled by
+/// this resident, so a signal death is one it did not cause. Since a Unix status
+/// code is 0 to 255 and never negative, the substitute cannot collide with a
+/// status an occupant chose.
 fn exit_code(outcome: &WaitOutcome) -> i32 {
     outcome.completion().status().code().unwrap_or(-1)
 }
