@@ -26,6 +26,32 @@
 //! `tests/coexistence.rs` enforces 2 and 3 by identity rather than by reading
 //! this comment: it seeds predecessor-owned files under a fixture root, runs the
 //! binary, and compares the bytes back.
+//!
+//! # Why the root is shared rather than split
+//!
+//! Taking a distinct Rust-owned root beside the predecessor's was considered and
+//! rejected. The two systems are already disjoint inside the one root, so a
+//! split would buy a separation that is there, at the cost of moving every path
+//! below and stranding the state written under the old name:
+//!
+//! * The **journal** is separate by filename. This port writes
+//!   `data/spicejournal.sqlite3` and `data/spicefolds.sqlite3`. The predecessor
+//!   writes `spiceacks`, `spicemaxims`, `spiceprojections`, `spiceteams` and
+//!   `taskchampion` beside them. Neither opens a database the other writes, so
+//!   an operator running both at once has no journal to cross-write -- the
+//!   guarantee holds per file, and does not depend on the two never running
+//!   together.
+//! * **Config** is separate by anchor. `config.toml` here hangs off the common
+//!   root, while the predecessor's worktree config hangs off `<git-dir>/.spice`
+//!   and the root `spice.toml` schema stays the predecessor's.
+//! * **Hooks** were separate before the question was asked: the installer owns
+//!   `.spice-install/`, which is not under this root at all.
+//! * **Worktree Git-dir state** does share the `<git-dir>/.spice` anchor, and
+//!   stays disjoint there by name, under point 2 above.
+//!
+//! `artifacts/tasks/<TASK-ID>/` is the one path both write, and that is the
+//! intent: one board, one task identifier, artifacts filed beneath it. The two
+//! contribute entries; neither rewrites the other's.
 
 use std::error::Error;
 use std::fmt;
