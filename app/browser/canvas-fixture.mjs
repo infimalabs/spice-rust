@@ -705,8 +705,8 @@ export async function assertWaitReporting(page, resident) {
     "the report names the self-check that armed the wait rather than an instrument wrapper",
   );
   assert.match(failure.message, /"endpointState":/, "the report probes the resident endpoint");
-  // Pinned by name: deciding busy box against defect needs the number itself.
-  assert.match(failure.message, /load: \{"loadAverage":\d/, "the report reads the machine load");
+  assert.match(failure.message, /load: \{"loadAverage":\d[^}]*"cores":\d/, "the load report names cores");
+  assert.match(failure.message, /load: \{[^}]*"factor":\d/, "the load report names factor");
   assert.ok(failure.cause, "the original timeout survives as the cause");
   assert.ok(elapsed >= WAIT_PROBE_MS, "the page-function probe reaches its named bound");
   assert.ok(
