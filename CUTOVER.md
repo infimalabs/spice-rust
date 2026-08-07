@@ -119,16 +119,19 @@ running outside every lane's process group, so the capture above can report
 them by name and record what survives the drain:
 
 ```sh
-ps -eo pid= -o etime= -o command= |
+ps -eo pid= -o ppid= -o etime= -o command= |
   grep -E 'fake-claude|spice-resident-process|spice-canvas-browser' |
   grep -v grep |
   tee "$CUTOVER_EVIDENCE/loose-fixtures.txt"
 ```
 
-Confirm no lane is mid-battery, then kill each surviving PID individually. Do
-not sweep the pattern with `pkill -f`: it matches a peer worktree's live run as
-readily as a loose one. The population is worth measuring rather than assuming
--- one reading taken while preparing this cutover found 589 loose fixtures, the
+Read the parent column rather than killing the sweep wholesale. A loose fixture
+reports parent PID 1, while a battery still in flight is the parent of its own
+children, so any row with another parent belongs to a live run and must survive.
+Kill the PID 1 rows one PID at a time. Do not sweep the pattern with `pkill -f`:
+it matches a peer worktree's live run as readily as a loose one. The population
+is worth measuring rather than assuming -- one reading taken while preparing
+this cutover found 589 loose fixtures, every one of them parented to PID 1, the
 oldest 23 hours elapsed, at load average 15.98.
 
 ## Back up, stage, and disable the predecessor
