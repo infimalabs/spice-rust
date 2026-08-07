@@ -107,6 +107,33 @@ fn packed_frame(
     .expect("stream fixture serializes")
 }
 
+fn message_frame(
+    lane: &str,
+    author: &str,
+    offset: u64,
+    event: u64,
+    activity: Option<&str>,
+    text: &str,
+) -> Vec<u8> {
+    let mut message = serde_json::json!({
+        "lane": lane,
+        "author": author,
+        "locus": {"member": 1, "offset": offset, "length": 20, "event": event},
+        "text": text,
+    });
+    if let Some(activity) = activity {
+        message["activity"] = serde_json::json!(activity);
+    }
+    serde_json::to_vec(&serde_json::json!({
+        "stream": "message",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "message": message,
+    }))
+    .expect("message frame serializes")
+}
+
 fn admitted_stream(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame> {
     session
         .admit_stream(bytes)
@@ -539,6 +566,45 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
     assert_eq!(
         runtime.newest_event().expect("receipt chronology").title(),
         "Steering inbox"
+    );
+}
+
+#[test]
+fn redelivered_older_activity_does_not_displace_newer_lane_activity() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let lanes = lane_response(&[(LANE, LANE, Some(LANE_CAPABILITY), true)]);
+    let admitted_lanes: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(&lanes)
+        .expect("lane response is admitted");
+    runtime.apply_lanes(&admitted_lanes);
+
+    let older_tool = message_frame(LANE, LANE_CAPABILITY, 60, 0, Some("tool"), "Bash");
+    let newer_prose = message_frame(
+        LANE,
+        LANE_CAPABILITY,
+        90,
+        1,
+        None,
+        "the newest thing this agent did",
+    );
+    for frame in [&older_tool, &newer_prose, &older_tool] {
+        runtime.apply_stream(&admitted_stream(&session, frame));
+    }
+
+    let activity = runtime
+        .newest_lineage_activity(&runtime.lanes().expect("lane snapshot").lanes[0])
+        .expect("lane keeps its newest activity");
+    assert_eq!(
+        activity.detail(),
+        "the newest thing this agent did",
+        "a redelivered older activity must not displace the newer one"
+    );
+    assert_eq!(
+        runtime.activities().len(),
+        2,
+        "both unique identities are retained and the replay adds no third row"
     );
 }
 

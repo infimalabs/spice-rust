@@ -238,18 +238,14 @@ fn split_host_member(
     let rekeyed = source_members
         .iter()
         .copied()
-        .find(|candidate| *candidate != member)
-        .expect("a multi-member source has one remaining member");
-    if head
-        .lanes
-        .iter()
-        .any(|row| row.lineage_id == rekeyed && row.lineage_id != source)
-    {
-        return Err(typed_store_fault(
-            "lineage::rekey-collision",
-            "the remaining team member identity already names another lineage",
-        ));
-    }
+        .filter(|candidate| *candidate != member)
+        .find(|candidate| {
+            !head
+                .lanes
+                .iter()
+                .any(|row| row.lineage_id == *candidate && row.lineage_id != source)
+        })
+        .unwrap_or_else(|| first_free_derived_lineage(head, source));
     let source_subscription = match subscription_row(head, source) {
         Ok(Some(subscription)) => subscription.clone(),
         Ok(None) => {
@@ -275,4 +271,33 @@ fn split_host_member(
         from_lineage: source,
         source_rekeyed_to: Some(rekeyed),
     })
+}
+
+/// Resolve the first free UUID after `source`, preserving UUID v4/variant bits.
+///
+/// Member lane identities win in their resident order above. Only a collision
+/// on every member reaches this deterministic suffix space, where the first
+/// identity absent from lanes, lineages, and subscriptions wins.
+fn first_free_derived_lineage(head: &wire::ResidencyHead, source: CanonicalUuid) -> CanonicalUuid {
+    let mut ordinal = 1_u128;
+    loop {
+        let mut bytes = source.get().as_u128().wrapping_add(ordinal).to_be_bytes();
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        let candidate = CanonicalUuid::new(uuid::Uuid::from_bytes(bytes));
+        let names_lane = head
+            .lanes
+            .iter()
+            .any(|row| row.lane == candidate || row.lineage_id == candidate);
+        let names_subscription = head
+            .subscriptions
+            .iter()
+            .any(|subscription| subscription.lineage_id == candidate);
+        if !names_lane && !names_subscription {
+            return candidate;
+        }
+        ordinal = ordinal
+            .checked_add(1)
+            .expect("the finite residency cannot occupy the complete UUID space");
+    }
 }

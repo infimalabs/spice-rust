@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { chooseCanvasView, reply, TRANSITION_MS } from "./canvas-fixture.mjs";
 
-async function openAgentsMenu(page) {
+async function openSpiceMenu(page) {
   const menu = page.locator(".canvas-menu");
   if ((await menu.getAttribute("open")) === null) {
     await menu.locator(":scope > summary").click();
@@ -10,6 +10,20 @@ async function openAgentsMenu(page) {
   const panel = menu.locator(".canvas-menu-panel");
   await panel.waitFor({ timeout: TRANSITION_MS });
   return panel;
+}
+
+async function assertAxisMenu(page, view, copy) {
+  await chooseCanvasView(page, view);
+  const panel = await openSpiceMenu(page);
+  const menuPage = panel.locator(".canvas-menu-page");
+  assert.equal(
+    await menuPage.getAttribute("data-menu-page"),
+    view.toLowerCase(),
+    `${view} opens its own Spice panel rather than the Agents panel`,
+  );
+  assert.equal(await panel.locator(".canvas-team").count(), 0, `${view} renders no team manager`);
+  await panel.getByRole("heading", { name: view, exact: true }).waitFor();
+  assert.match(await menuPage.innerText(), copy, `${view} describes its own page context`);
 }
 
 async function waitForMemberIn(scope, lane) {
@@ -49,9 +63,11 @@ export async function assertTeamMenu(page, fixture) {
     1,
     "the analytics pages keep the same route back to live Agents",
   );
+  await assertAxisMenu(page, "Topology", /resident teams, seats, capabilities/i);
+  await assertAxisMenu(page, "Chronology", /facts, command outcomes, and their causal thread/i);
   await chooseCanvasView(page, "Agents");
 
-  let panel = await openAgentsMenu(page);
+  let panel = await openSpiceMenu(page);
   assert.equal(await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"), "agents");
   await panel.getByRole("heading", { name: "Global", exact: true }).waitFor();
   assert.match(await panel.locator(".canvas-menu-global").innerText(), /Fast mode\s+off/);
@@ -73,7 +89,7 @@ export async function assertTeamMenu(page, fixture) {
   let member = await waitForMemberIn(originalTeam, moved);
   await member.dragTo(panel.locator('[data-team-drop="unteamed"]'));
 
-  panel = await openAgentsMenu(page);
+  panel = await openSpiceMenu(page);
   member = await waitForMemberIn(panel.locator(".canvas-unteamed"), moved);
   assert.equal(await panel.locator(".canvas-team").count(), 1);
   assert.equal(await panel.locator(".canvas-team").locator(".canvas-team-member").count(), 3);
@@ -81,14 +97,14 @@ export async function assertTeamMenu(page, fixture) {
 
   originalTeam = panel.locator(`.canvas-team[data-team-lineage="${host}"]`);
   await member.dragTo(originalTeam);
-  panel = await openAgentsMenu(page);
+  panel = await openSpiceMenu(page);
   originalTeam = panel.locator(`.canvas-team[data-team-lineage="${host}"]`);
   member = await waitForMemberIn(originalTeam, moved);
   assert.equal(await originalTeam.locator(".canvas-team-member").count(), 4);
   await assertResidentLineage(fixture, moved, host, "returning an agent to its team");
 
   await member.dragTo(panel.locator('[data-team-drop="new"]'));
-  panel = await openAgentsMenu(page);
+  panel = await openSpiceMenu(page);
   const createdTeam = panel.locator(
     `.canvas-team:not([data-team-lineage="${host}"])`
       + `:has(.canvas-team-member[data-team-member="${moved}"])`,
@@ -103,7 +119,7 @@ export async function assertTeamMenu(page, fixture) {
   member = await waitForMemberIn(createdTeam, moved);
   originalTeam = panel.locator(`.canvas-team[data-team-lineage="${host}"]`);
   await member.dragTo(originalTeam);
-  panel = await openAgentsMenu(page);
+  panel = await openSpiceMenu(page);
   originalTeam = panel.locator(`.canvas-team[data-team-lineage="${host}"]`);
   await waitForMemberIn(originalTeam, moved);
   assert.equal(await panel.locator(".canvas-team").count(), 1, "the empty created team disappears");

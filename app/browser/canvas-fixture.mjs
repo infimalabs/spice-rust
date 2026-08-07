@@ -34,48 +34,28 @@ const sessionRecord = JSON.stringify({
   subtype: "init",
   session_id: "018f7777-7777-7444-8888-999999999999",
 });
-const activityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text: "periodic live witness" }],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
+function assistantRecord(content) {
+  return JSON.stringify({
+    type: "assistant",
+    message: {
+      type: "message",
+      role: "assistant",
+      content,
+      usage: {
+        input_tokens: 1,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        output_tokens: 1,
+      },
     },
-  },
-});
-const triggeredActivityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text: "newest lane prose witness" }],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
-    },
-  },
-});
-const toolActivityRecord = JSON.stringify({
-  type: "assistant",
-  message: {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "tool_use", id: "lane-status-tool", name: "Bash", input: {} }],
-    usage: {
-      input_tokens: 1,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-      output_tokens: 1,
-    },
-  },
-});
+  });
+}
+
+const activityRecord = assistantRecord([{ type: "text", text: "periodic live witness" }]);
+const triggeredActivityRecord = assistantRecord([{ type: "text", text: "newest lane prose witness" }]);
+const toolActivityRecord = assistantRecord([
+  { type: "tool_use", id: "lane-status-tool", name: "Bash", input: {} },
+]);
 
 export async function buildResident() {
   try {
@@ -833,6 +813,11 @@ function callSite(marker) {
 /// naming only a selector. Several call sites share a selector, and the raw
 /// timeout says nothing about whether the page or the resident was at fault,
 /// which is exactly the distinction a load-sensitive failure needs.
+///
+/// `context.observed` is how a call site adds the one reading its own wait is
+/// about. An expired bound says only that a predicate stayed false; the value it
+/// stayed false against is usually the diagnosis, and it is gone by the time the
+/// rejection reaches the top level.
 export async function observedWait(page, label, run, context = {}) {
   const marker = new Error(label);
   try {
@@ -840,15 +825,30 @@ export async function observedWait(page, label, run, context = {}) {
   } catch (error) {
     const connection = await describeConnection(page);
     const resident = await describeResident(context.resident);
-    throw new Error(
-      [
-        `canvas wait failed: ${label}`,
-        `  site: ${callSite(marker)}`,
-        `  connection: ${JSON.stringify(connection)}`,
-        `  resident: ${JSON.stringify(resident)}`,
-      ].join("\n"),
-      { cause: error },
-    );
+    const report = [
+      `canvas wait failed: ${label}`,
+      `  site: ${callSite(marker)}`,
+      `  connection: ${JSON.stringify(connection)}`,
+      `  resident: ${JSON.stringify(resident)}`,
+    ];
+    if (context.observed) {
+      report.push(`  observed: ${JSON.stringify(await readObservation(context.observed))}`);
+    }
+    throw new Error(report.join("\n"), { cause: error });
+  }
+}
+
+/// Read what the wait stayed false against, without letting that read take over.
+///
+/// It runs only after the wait has already failed, so it cannot be why the wait
+/// failed. Its own failure is reported in place rather than raised: a page that
+/// closed underneath the wait is itself the answer, and a second error thrown
+/// here would replace the report that found it with one naming only the read.
+async function readObservation(observe) {
+  try {
+    return await observe();
+  } catch (error) {
+    return `unreadable: ${error.message}`;
   }
 }
 
@@ -894,6 +894,46 @@ export async function assertWaitReporting(page, resident) {
       .then(() => null, (error) => error);
     assert.ok(refusal instanceof TypeError, `the ${String(invalid)} bound is refused`);
   }
+
+  // Both halves of the observation are proven here, because each fails on its
+  // own. A readable one has to survive into the report verbatim, or a call site
+  // that names its reading still ships a bare timeout. An unreadable one has to
+  // be noted in place, or the read that cannot run replaces the report that says
+  // what could not be waited for -- and a closed page, the likeliest reason the
+  // read fails, is exactly when that report matters most.
+  const carried = await waitForPageFunction(
+    page,
+    "observation self-check",
+    WAIT_PROBE_MS,
+    () => false,
+    undefined,
+    { resident, observed: () => "dangling at 14" },
+  ).then(() => null, (error) => error);
+  assert.ok(carried, "a wait that cannot be satisfied must fail");
+  assert.equal(
+    reportField(carried.message, "observed"),
+    '"dangling at 14"',
+    "the report carries the reading its call site named, not only that the bound expired",
+  );
+
+  const unreadable = await waitForPageFunction(
+    page,
+    "unreadable-observation self-check",
+    WAIT_PROBE_MS,
+    () => false,
+    undefined,
+    { resident, observed: () => { throw new Error("target page has been closed"); } },
+  ).then(() => null, (error) => error);
+  assert.match(
+    unreadable.message,
+    /canvas wait failed: unreadable-observation self-check/,
+    "an observation that cannot be read leaves the wait's own report intact",
+  );
+  assert.match(
+    reportField(unreadable.message, "observed"),
+    /unreadable: target page has been closed/,
+    "an observation that cannot be read is reported in place rather than raised",
+  );
 
   // The connection state is asserted by shape rather than by one literal, because
   // both shapes are real and each is a different diagnosis. Reading it back out

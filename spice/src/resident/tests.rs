@@ -749,6 +749,179 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
+fn arrange_lane_for_test(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    id: CanonicalUuid,
+    lane: CanonicalUuid,
+    before: CanonicalUuid,
+) -> wire::intent::LaneAnswer {
+    let request = wire::intent::LaneArrange { lane, before };
+    let command = Command {
+        v: wire::WireVersion::CURRENT,
+        id,
+        epoch,
+        kind: CommandKind::LaneArrange,
+        expected: Vec::new(),
+        body: serde_json::to_value(request).expect("lane arrangement encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("operator lane arrangement admits");
+    let Outcome::Reply(reply) = super::lane_surface::arrange(bus, epoch, seats, &command, &request)
+    else {
+        panic!("lane arrangement replies");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
+    let CommandAnswer::Lane(answer) = reply.body else {
+        panic!("lane arrangement returns the authoritative lane table");
+    };
+    *answer
+}
+
+fn lane_order(answer: &wire::intent::LaneAnswer) -> Vec<CanonicalUuid> {
+    answer.lanes.iter().map(|row| row.lane).collect()
+}
+
+fn assert_transferred_arrangement(
+    transferred: &wire::intent::LaneAnswer,
+    destination: CanonicalUuid,
+) {
+    assert_eq!(
+        lane_order(transferred),
+        vec![test_uuid(7), test_uuid(9), test_uuid(3), test_uuid(5)],
+        "the transferred member is inserted immediately before its destination target",
+    );
+    let transferred_row = &transferred.lanes[1];
+    assert_eq!(transferred_row.lane, test_uuid(9));
+    assert_eq!(transferred_row.occupant, Some(test_uuid(10)));
+    assert_eq!(transferred_row.lineage_id, destination);
+    assert_eq!(
+        transferred
+            .subscriptions
+            .iter()
+            .map(|subscription| subscription.lineage_id)
+            .collect::<Vec<_>>(),
+        vec![destination],
+        "moving the last member removes the empty source lineage subscription",
+    );
+}
+
+fn assert_durable_arrangement(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    transferred: &wire::intent::LaneAnswer,
+    source_lineage: CanonicalUuid,
+    destination_lineage: CanonicalUuid,
+) {
+    let durable = current_residency(bus, epoch)
+        .expect("arranged residency reads")
+        .into_body();
+    let identities = |lanes: &[wire::intent::LaneAnswerRow]| {
+        lanes
+            .iter()
+            .map(|row| (row.lane, row.lineage_id, row.occupant))
+            .collect::<Vec<_>>()
+    };
+    let durable_identities = durable
+        .lanes
+        .iter()
+        .map(|row| (row.lane, row.lineage_id, row.occupant))
+        .collect::<Vec<_>>();
+    assert_eq!(durable_identities, identities(&transferred.lanes));
+    let arranged = bus
+        .fact_snapshot()
+        .expect("lane arrangement facts read")
+        .facts()
+        .iter()
+        .filter(|fact| fact.fact.kind() == wire::FactKind::LaneArranged)
+        .map(|fact| fact.fact.body().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(arranged.len(), 2);
+    assert_eq!(arranged[1]["lane"], serde_json::json!(test_uuid(9)));
+    assert_eq!(
+        arranged[1]["from_lineage_id"],
+        serde_json::json!(source_lineage)
+    );
+    assert_eq!(
+        arranged[1]["lineage_id"],
+        serde_json::json!(destination_lineage)
+    );
+    assert_eq!(arranged[1]["before"], serde_json::json!(test_uuid(3)));
+}
+
+#[test]
+fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
+    let (root, paths) = resident_fixture("lane-arrangement");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface =
+        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(1);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let first_lineage = test_uuid(2);
+    let second_lineage = test_uuid(12);
+    let members = [
+        (test_uuid(3), test_uuid(4), first_lineage),
+        (test_uuid(5), test_uuid(6), first_lineage),
+        (test_uuid(7), test_uuid(8), first_lineage),
+        (test_uuid(9), test_uuid(10), second_lineage),
+    ];
+    let mut seats = Seats::new();
+    for (lane, occupant, lineage) in members {
+        seats
+            .seat(
+                lane,
+                occupant,
+                process_spec("sleep 0.05", Duration::from_secs(5)),
+            )
+            .expect("supervised member starts");
+        seed_lane_in_lineage(&bus, epoch, lane, lineage, occupant);
+    }
+
+    let same_team = arrange_lane_for_test(
+        &bus,
+        epoch,
+        &seats,
+        test_uuid(20),
+        test_uuid(7),
+        test_uuid(3),
+    );
+    assert_eq!(
+        lane_order(&same_team),
+        vec![test_uuid(7), test_uuid(3), test_uuid(5), test_uuid(9)],
+        "the moved member is inserted immediately before its same-team target",
+    );
+    assert_eq!(same_team.lanes[0].lineage_id, first_lineage);
+
+    let transferred = arrange_lane_for_test(
+        &bus,
+        epoch,
+        &seats,
+        test_uuid(21),
+        test_uuid(9),
+        test_uuid(3),
+    );
+    assert_transferred_arrangement(&transferred, first_lineage);
+    assert_durable_arrangement(&bus, epoch, &transferred, second_lineage, first_lineage);
+
+    for (lane, _, _) in members {
+        seats
+            .vacate(lane)
+            .expect("arranged member remains supervised")
+            .wait()
+            .expect("fixture occupant exits");
+    }
+    bus.verify().expect("arranged authority verifies");
+    bus.shutdown().expect("arrangement fixture bus stops");
+    fs::remove_dir_all(root).expect("arrangement fixture cleanup");
+}
+
 fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
     let root = fixture(name);
     fs::create_dir_all(root.join(".git")).expect("git directory");

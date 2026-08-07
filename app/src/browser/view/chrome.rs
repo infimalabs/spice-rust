@@ -62,6 +62,7 @@ pub(super) fn render_command_bar(
                 })}
             </nav>
             <span class="bar-meta">{format!("cursor {cursor}")}</span>
+            {render_canvas_menu(axis, mosaic, active_axis, runtime, sender)}
         </header>
     }
 }
@@ -185,7 +186,13 @@ fn render_canvas_menu(
                 <span>{"Spice"}</span>
             </summary>
             <div class="canvas-menu-panel">
-                {super::lineage_menu::render(runtime, sender)}
+                {super::lineage_menu::render(
+                    **mosaic,
+                    active_axis,
+                    axis_count(active_axis, runtime),
+                    runtime,
+                    sender,
+                )}
                 <nav class="canvas-menu-views" aria-label="More Canvas views">
                     {for [Axis::Magnitude, Axis::Flow].map(|candidate| {
                         let axis = axis.clone();

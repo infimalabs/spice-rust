@@ -99,6 +99,8 @@ pub enum CommandKind {
     LaneRead,
     /// Seat a lane in an operator-created worktree.
     LaneSeat,
+    /// Place one seated member before another member.
+    LaneArrange,
     /// Change a seated lane's state.
     LaneState,
     /// Change the shared task-subscription life of one Canvas lineage.
@@ -492,6 +494,7 @@ impl CommandKind {
         Self::TrustRevoke,
         Self::LaneRead,
         Self::LaneSeat,
+        Self::LaneArrange,
         Self::LaneState,
         Self::LineageConfigure,
         Self::LaneRecall,
@@ -546,6 +549,7 @@ impl CommandKind {
             | Self::TrustRevoke
             | Self::LaneRead
             | Self::LaneSeat
+            | Self::LaneArrange
             | Self::LaneState
             | Self::LineageConfigure
             | Self::LaneRecall
@@ -607,6 +611,7 @@ impl CommandKind {
             Self::TrustRevoke => "trust::revoke",
             Self::LaneRead => "lane::read",
             Self::LaneSeat => "lane::seat",
+            Self::LaneArrange => "lane::arrange",
             Self::LaneState => "lane::state",
             Self::LineageConfigure => "lineage::configure",
             Self::LaneRecall => "lane::recall",
@@ -655,7 +660,9 @@ impl CommandKind {
             Self::TrustPend => Law::PEND,
             Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
             Self::LaneRead => Law::LANE_READ,
-            Self::LaneSeat | Self::LaneState | Self::LineageConfigure => Law::LANE,
+            Self::LaneSeat | Self::LaneArrange | Self::LaneState | Self::LineageConfigure => {
+                Law::LANE
+            }
             Self::LaneRecall => Law::LANE_RECALL,
             Self::TasteRecord => Law::TASTE,
             Self::CanaryRecognize
