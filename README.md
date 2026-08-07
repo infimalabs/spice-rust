@@ -82,7 +82,6 @@ This appliance installs beside the Python predecessor rather than replacing it,
 and both are meant to keep running. [INSTALL.md](INSTALL.md) is that runbook: it
 names the port the predecessor already holds, the hook path the two cannot
 share, and what a retirement would destroy if one were ever wanted.
-[COEXISTENCE.md](COEXISTENCE.md) registers every boundary where they touch.
 
 The activation command refuses unless all three hooks are executable. The
 pre-commit hook runs the canonical verifier, which performs
