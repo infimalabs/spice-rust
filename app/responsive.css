@@ -28,7 +28,6 @@
   .team-toolbar:has(.team-drag-handle) { grid-template-columns: 12px 22px minmax(0, 1fr) 30px; }
   .team-mode { padding-inline: 4px; font-size: .6rem; }
   .team-mode-badge { display: none; }
-  .team-surface .team-agents,
   .team-detail-grid { grid-template-columns: 1fr; }
   .seat-panel { padding: 16px; }
   .page-heading { align-items: start; }

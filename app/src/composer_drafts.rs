@@ -416,7 +416,7 @@ mod tests {
         let prepared = store.prepare("agent-a").unwrap();
         assert_eq!(
             prepared.message,
-            "body\n\n> quoted\n> line\n\nreply\n\n![a](data:image/png;base64,a)"
+            "> quoted\n> line\n\nreply\n\nbody\n\n![a](data:image/png;base64,a)"
         );
         assert_eq!(prepared.attachments, [attachment("a")]);
     }
