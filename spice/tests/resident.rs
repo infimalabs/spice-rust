@@ -1133,9 +1133,12 @@ fn wait_for_effect_change(
 /// Waiting for it would only delay the failure and then report a timeout, which
 /// describes the observation rather than what happened to the vendor.
 ///
-/// A missing stop has two causes that the grace cannot separate on its own, so
-/// the trap records its own entry first and the panic names which one it saw.
-/// See [`entered_marker`].
+/// A missing stop has three causes that the grace cannot separate on its own,
+/// so the fixture witnesses two things the panic reads back: the trap records
+/// its own entry first, and the vendor reports the traps it actually installed.
+/// The handler lost the race, the machine never ran it, or TERM could never
+/// reach it at all -- and the panic names exactly one of them. See
+/// [`entered_marker`] and [`trap_installed`].
 ///
 /// The operator command returns only after the resident has terminated and
 /// reaped the vendor, so in that case the first observation already sees a
@@ -1168,10 +1171,15 @@ fn wait_for_vendor_stop(watch: &Path, pid_file: &Path, stopped: &Path) -> String
              termination grace",
             stopped.display()
         ),
+        Err(pid) if trap_installed(stopped) => panic!(
+            "vendor {pid} ended without entering its TERM trap, which it had \
+             installed and reported back; the machine never scheduled the \
+             handler inside the termination grace"
+        ),
         Err(pid) => panic!(
-            "vendor {pid} ended without entering its TERM trap; the handler \
-             never ran, so the vendor either ignored TERM or was killed before \
-             the trap was scheduled"
+            "vendor {pid} ended without entering its TERM trap and never had \
+             one: TERM was already ignored when the fixture started, so its \
+             trap builtin could not take effect and the signal could not move it"
         ),
     }
 }
@@ -1187,6 +1195,37 @@ fn entered_marker(stopped: &Path) -> PathBuf {
     let mut marker = stopped.as_os_str().to_owned();
     marker.push("-entered");
     PathBuf::from(marker)
+}
+
+/// Whether the fixture vendor's TERM trap ever took effect.
+///
+/// A non-interactive shell cannot trap a signal that was already ignored when
+/// it started: the trap builtin accepts the request and silently declines it.
+/// That is the difference between a vendor TERM could not move and one the
+/// machine never scheduled, and it is not observable from timing, so each
+/// fixture reports its own installed traps and this reads the answer back.
+///
+/// Written before the pid file, so a recorded pid always implies a readable
+/// readout and the split below is a decision rather than a guess. The line must
+/// name TERM as well as the handler, because the same trap command also covers
+/// INT, and a shell that declined only TERM would still print the handler.
+fn trap_installed(stopped: &Path) -> bool {
+    let handler = entered_marker(stopped).display().to_string();
+    fs::read_to_string(trap_record(stopped)).is_ok_and(|traps| {
+        traps
+            .lines()
+            .any(|trap| trap.contains("TERM") && trap.contains(&handler))
+    })
+}
+
+/// The readout of its own traps that a fixture vendor writes at startup.
+///
+/// Derived from the stop path for the same reason [`entered_marker`] is: a
+/// fixture cannot report one path while trapping another.
+fn trap_record(stopped: &Path) -> PathBuf {
+    let mut record = stopped.as_os_str().to_owned();
+    record.push("-traps");
+    PathBuf::from(record)
 }
 
 /// The stop a fixture vendor finished recording, if it recorded one.
