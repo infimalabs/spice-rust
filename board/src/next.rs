@@ -1,9 +1,9 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wire::{Actor, ClaimDisposition, LineageSubscription, TaskHandle};
 
 use crate::task::Entry;
-use crate::urgency::Urgency;
+use crate::urgency::{Urgency, declared_priority};
 
 /// Deterministic answer from the board's sole allocation query.
 #[derive(Clone, Copy, Debug)]
@@ -107,15 +107,24 @@ pub fn select<'a>(
     subscription: &LineageSubscription,
 ) -> Option<Selection<'a>> {
     let completed = satisfied_handles(entries);
+    let priorities = effective_priorities(entries);
 
     let mut selected: Option<Selection<'a>> = None;
     for entry in entries
         .iter()
         .filter(|entry| selectable(entry, actor, subscription, &completed))
     {
+        let effective_priority = priorities
+            .get(&entry.statement().handle)
+            .copied()
+            .unwrap_or_else(|| declared_priority(entry));
         let candidate = Selection {
             entry,
-            urgency: Urgency::from_heads(entry, &completed),
+            urgency: Urgency::from_heads_with_effective_priority(
+                entry,
+                &completed,
+                effective_priority,
+            ),
         };
         let replaces = selected.is_none_or(|current| {
             candidate.urgency > current.urgency
@@ -127,6 +136,50 @@ pub fn select<'a>(
         }
     }
     selected
+}
+
+/// Effective priority for every entry after unsettled public dependents flow upstream.
+///
+/// Propagation walks dependency edges from dependent to prerequisite until a
+/// fixed point. Scores only rise through a finite priority set, so even a
+/// malformed cyclic graph terminates. `max` is commutative, which keeps the
+/// result independent of the supplied slice order.
+fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskHandle, i64> {
+    let mut priorities: BTreeMap<TaskHandle, i64> = BTreeMap::new();
+    for entry in entries {
+        let declared = declared_priority(entry);
+        priorities
+            .entry(entry.statement().handle.clone())
+            .and_modify(|current| *current = (*current).max(declared))
+            .or_insert(declared);
+    }
+
+    loop {
+        let mut changed = false;
+        for dependent in entries.iter().filter(|entry| {
+            let workflow = entry.workflow();
+            !entry.project().visibility().is_hidden()
+                && workflow.status == "pending"
+                && workflow.completion.is_none()
+        }) {
+            let inherited = priorities
+                .get(&dependent.statement().handle)
+                .copied()
+                .unwrap_or_else(|| declared_priority(dependent));
+            for prerequisite in &dependent.statement().dependencies {
+                let Some(priority) = priorities.get_mut(prerequisite) else {
+                    continue;
+                };
+                if inherited > *priority {
+                    *priority = inherited;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return priorities;
+        }
+    }
 }
 
 /// Whether this lane may be *handed* the entry.

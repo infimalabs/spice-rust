@@ -698,6 +698,65 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
 }
 
 #[test]
+fn prerequisite_inherits_the_critical_priority_it_directly_unblocks() {
+    let prerequisite = entry("BOARD-z1");
+    let mut critical_head = statement("BOARD-c1");
+    critical_head.tags.push("priority:critical".to_owned());
+    critical_head.dependencies.push(handle("BOARD-z1"));
+    let critical = admitted(critical_head, workflow("todo"), None, None).expect("critical task");
+    let mut medium_head = statement("BOARD-m1");
+    medium_head.tags.push("priority:medium".to_owned());
+    let medium = admitted(medium_head, workflow("todo"), None, None).expect("medium task");
+    let ordered = [prerequisite.clone(), critical.clone(), medium.clone()];
+    let reversed = [medium, critical, prerequisite];
+
+    let selected = select(&ordered, &Actor::Spice, &all_projects()).expect("eligible task");
+    let selected_again = select(&reversed, &Actor::Spice, &all_projects()).expect("eligible task");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(
+        selected_again.entry().statement().handle,
+        selected.entry().statement().handle,
+    );
+    assert_eq!(selected_again.urgency(), selected.urgency());
+}
+
+#[test]
+fn prerequisite_inherits_priority_through_a_two_edge_chain() {
+    let first = entry("BOARD-z1");
+    let mut second_head = statement("BOARD-z2");
+    second_head.dependencies.push(handle("BOARD-z1"));
+    let second = admitted(second_head, workflow("todo"), None, None).expect("second prerequisite");
+    let mut critical_head = statement("BOARD-c1");
+    critical_head.tags.push("priority:critical".to_owned());
+    critical_head.dependencies.push(handle("BOARD-z2"));
+    let critical = admitted(critical_head, workflow("todo"), None, None).expect("critical task");
+    let mut medium_head = statement("BOARD-m1");
+    medium_head.tags.push("priority:medium".to_owned());
+    let medium = admitted(medium_head, workflow("todo"), None, None).expect("medium task");
+    let entries = [first, second, critical, medium];
+
+    let selected = select(&entries, &Actor::Spice, &all_projects()).expect("eligible task");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+}
+
+#[test]
+fn priority_inheritance_terminates_on_a_dependency_cycle() {
+    let mut first_head = statement("BOARD-z1");
+    first_head.tags.push("priority:critical".to_owned());
+    first_head.dependencies.push(handle("BOARD-z2"));
+    let first = admitted(first_head, workflow("todo"), None, None).expect("first cycle entry");
+    let mut second_head = statement("BOARD-z2");
+    second_head.dependencies.push(handle("BOARD-z1"));
+    let second = admitted(second_head, workflow("todo"), None, None).expect("second cycle entry");
+    let medium = entry("BOARD-m1");
+
+    let entries = [first, second, medium];
+    let selected = select(&entries, &Actor::Spice, &all_projects())
+        .expect("cycle leaves the independent task eligible");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-m1"));
+}
+
+#[test]
 fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
     let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
     let other = uuid("019fbbde-5105-75a3-a76a-722afde1e409");
