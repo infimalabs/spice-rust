@@ -136,7 +136,7 @@ pub fn apply(
     let Some(current_ref) = git_read(repository, &["symbolic-ref", "--quiet", "HEAD"])? else {
         return Ok(());
     };
-    let Some(upstream) = publication_baseline(repository)? else {
+    let Some(baseline) = publication_baseline(repository)? else {
         return Ok(());
     };
 
@@ -144,7 +144,7 @@ pub fn apply(
         if update.reference != current_ref {
             continue;
         }
-        let protected = abandoned_upstream_commits(repository, &update, &upstream)?;
+        let protected = abandoned_upstream_commits(repository, &update, &baseline.commit)?;
         if !protected.is_empty() {
             let listed = protected
                 .iter()
@@ -154,11 +154,24 @@ pub fn apply(
             return Err(ReferenceTransactionError::ProtectedHistory {
                 reference: current_ref,
                 commits: listed,
+                baseline: baseline.reference.clone(),
+                baseline_commit: short_oid(repository, &baseline.commit)?,
                 damage: worktree_damage(repository, &update)?,
             });
         }
     }
     Ok(())
+}
+
+/// The reference this guard treats as published, and the commit it stands at.
+///
+/// Both travel together because the refusal has to name them together. A
+/// baseline reduced to its commit is a number the reader cannot check, and a
+/// reference without its commit cannot be compared against what the branch
+/// actually holds.
+struct Baseline {
+    reference: String,
+    commit: String,
 }
 
 /// Resolve the commit standing for history this lane has published.
@@ -179,7 +192,14 @@ pub fn apply(
 /// `.` and it cannot be trusted. A lane with no origin remote, no resolvable
 /// integration branch, or an integration branch never published has no upstream
 /// history for this guard to protect, and leaves it inert.
-fn publication_baseline(repository: &Path) -> Result<Option<String>, ReferenceTransactionError> {
+///
+/// The reference is carried out alongside the commit rather than discarded once
+/// it resolves, because a refusal that cannot say what it compared against reads
+/// the same whether the baseline was right or wrong. That is not hypothetical:
+/// the predecessor resolves this with `@{upstream}`, refuses every unpushed local
+/// rewind under the shadow environment, and words its refusal identically to this
+/// one. See `EFFORT-1kKnx9RV` for the parity question itself.
+fn publication_baseline(repository: &Path) -> Result<Option<Baseline>, ReferenceTransactionError> {
     if !git(repository, &["remote", "get-url", "origin"])?
         .status
         .success()
@@ -189,7 +209,10 @@ fn publication_baseline(repository: &Path) -> Result<Option<String>, ReferenceTr
     let Some(reference) = integration_reference(repository)? else {
         return Ok(None);
     };
-    commit_oid(repository, &reference)
+    let Some(commit) = commit_oid(repository, &reference)? else {
+        return Ok(None);
+    };
+    Ok(Some(Baseline { reference, commit }))
 }
 
 /// The remote-tracking reference the lane's integration branch publishes to.
@@ -442,6 +465,8 @@ pub enum ReferenceTransactionError {
     ProtectedHistory {
         reference: String,
         commits: String,
+        baseline: String,
+        baseline_commit: String,
         damage: WorktreeDamage,
     },
 }
@@ -477,18 +502,23 @@ impl fmt::Display for ReferenceTransactionError {
             Self::ProtectedHistory {
                 reference,
                 commits,
+                baseline,
+                baseline_commit,
                 damage,
             } => {
                 write!(
                     formatter,
                     concat!(
                         "reference-transaction guard refused to abandon upstream-merged ",
-                        "commits on current branch {}: {}. This is expected when a task ",
+                        "commits on current branch {}: {}. Published history was resolved ",
+                        "to {} at {}, and those commits are contained in it; if that is not ",
+                        "the reference this lane publishes to, the refusal is a ",
+                        "misresolution and not a protection. This is expected when a task ",
                         "boundary has advanced origin/upstream; keep those commits and ",
                         "continue with an append-only commit instead of amending or ",
                         "resetting backwards. "
                     ),
-                    reference, commits
+                    reference, commits, baseline, baseline_commit
                 )?;
                 match damage {
                     WorktreeDamage::Rewritten => formatter.write_str(concat!(
