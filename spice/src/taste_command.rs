@@ -103,7 +103,7 @@ struct TasteRow {
     words: Vec<String>,
     message: String,
     fires: Vec<TasteFire>,
-    drivers: Vec<DriverTally>,
+    vendors: Vec<VendorTally>,
     recurrence: Vec<Recurrence>,
     judgments: Vec<TasteJudgment>,
 }
@@ -114,7 +114,7 @@ struct TasteFire {
     position: Seq,
     at: Instant,
     lane: CanonicalUuid,
-    driver: Name,
+    vendor: Name,
     occupant: CanonicalUuid,
     compaction: u64,
     content: Digest,
@@ -123,10 +123,10 @@ struct TasteFire {
     locus: String,
 }
 
-/// Fires and answers for one driver, over the fires this report carries.
+/// Fires and answers for one vendor, over the fires this report carries.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-struct DriverTally {
-    driver: Name,
+struct VendorTally {
+    vendor: Name,
     fires: usize,
     acked: usize,
     declined: usize,
@@ -268,14 +268,17 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
             "read the current tracked taste set and name one active taste",
         );
     };
-    let declines = cited(row.fires.iter().filter_map(|fire| {
-        (fire.standing == Disposition::Declined).then(|| {
-            format!(
-                "- {} on {} at {} (journal {})",
-                fire.locus, fire.driver, fire.at, fire.position
-            )
-        })
-    }));
+    let declines = cited(
+        row.fires
+            .iter()
+            .filter(|fire| fire.standing == Disposition::Declined)
+            .map(|fire| {
+                format!(
+                    "- {} on {} at {} (journal {})",
+                    fire.locus, fire.vendor, fire.at, fire.position
+                )
+            }),
+    );
     let clearances = cited(
         row.judgments
             .iter()
@@ -413,7 +416,7 @@ fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), 
                 name: taste.name.clone(),
                 words: taste.words.clone(),
                 message: taste.message.clone(),
-                drivers: tally(&fires),
+                vendors: tally(&fires),
                 recurrence: recurrence(&fires),
                 fires,
                 judgments: judgments
@@ -477,7 +480,7 @@ fn collect_fires(
         let body = decode_fact::<TasteReminded>(&envelope.fact)
             .map_err(EvidenceError::Invalid)?
             .body;
-        let driver = seating
+        let vendor = seating
             .get(&body.lane)
             .ok_or(EvidenceError::LaneUnseated(body.lane))?
             .clone();
@@ -495,7 +498,7 @@ fn collect_fires(
                 position: envelope.seq,
                 at: envelope.at,
                 lane: body.lane,
-                driver,
+                vendor,
                 occupant: body.occupant,
                 compaction: body.compaction,
                 content: body.content,
@@ -505,20 +508,20 @@ fn collect_fires(
             });
     }
     for rows in fires.values_mut() {
-        rows.sort_by(|left, right| right.position.cmp(&left.position));
+        rows.sort_by_key(|row| std::cmp::Reverse(row.position));
         rows.truncate(RECENT_FIRES);
     }
     Ok(fires)
 }
 
-/// The driver each lane was seated with.
+/// The vendor each lane was seated with.
 ///
 /// Attribution reads seating rather than the occupant a fire happened to name,
 /// because the durable lane laws make the seat the stable answer: a lane is
 /// seated exactly once, and a worktree transfer must retain the same vendor.
-/// Every renewal therefore attributes to the driver the lane has always had,
-/// instead of splitting one driver into a bucket per occupant generation. A
-/// lane the stream never seated has no driver at all, and the report refuses
+/// Every renewal therefore attributes to the vendor the lane has always had,
+/// instead of splitting one vendor into a bucket per occupant generation. A
+/// lane the stream never seated has no vendor at all, and the report refuses
 /// rather than inventing a bucket that sums with a real one.
 fn lane_seating(
     snapshot: &journal::FactSnapshot,
@@ -536,14 +539,14 @@ fn lane_seating(
     Ok(seating)
 }
 
-/// Fires and answers per driver, over the fires the row carries.
-fn tally(fires: &[TasteFire]) -> Vec<DriverTally> {
-    let mut tallies = BTreeMap::<Name, DriverTally>::new();
+/// Fires and answers per vendor, over the fires the row carries.
+fn tally(fires: &[TasteFire]) -> Vec<VendorTally> {
+    let mut tallies = BTreeMap::<Name, VendorTally>::new();
     for fire in fires {
         let tally = tallies
-            .entry(fire.driver.clone())
-            .or_insert_with(|| DriverTally {
-                driver: fire.driver.clone(),
+            .entry(fire.vendor.clone())
+            .or_insert_with(|| VendorTally {
+                vendor: fire.vendor.clone(),
                 fires: 0,
                 acked: 0,
                 declined: 0,
