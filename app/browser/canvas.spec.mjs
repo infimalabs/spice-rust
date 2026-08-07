@@ -1,24 +1,31 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { installActivityReplay } from "./activity-replay.mjs";
-import { assertComposerShards, assertNoDraftPreview } from "./composer-shards.mjs";
+import {
+  agentNames,
+  assertAgentConversation,
+  assertFourAgentDensity,
+  assertMosaicLattice,
+  entirelyQuotedMessage,
+  nestedQuoteMessage,
+} from "./agent-conversation.mjs";
+import {
+  assertComposerShards,
+  assertNoDraftPreview,
+  primaryDestination,
+} from "./composer-shards.mjs";
 import { assertComposerImageIndicators } from "./composer-image-indicators.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
-import { captureReferenceControls } from "./control-reference.mjs";
-import { assertReferenceControlStack } from "./control-stack.mjs";
+import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
+import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertTeamArrangement } from "./team-arrangement.mjs";
 import { assertTeamMenu } from "./team-menu.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs";
-import {
-  assertMosaicLattice,
-  assertPerTeamWatchbands,
-  assertQueuedRosterPip,
-  assertRosterPips,
-} from "./canvas-agent-console.mjs";
 import {
   assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
@@ -40,9 +47,7 @@ import {
   installSocketControl,
 } from "./canvas-speech.mjs";
 import {
-  artifacts,
   assertGenerationOnline,
-  assertHeldTaskCount,
   assertOfflineObserved,
   assertResidentLossObserved,
   assertResidentRestart,
@@ -55,7 +60,6 @@ import {
   monitorPage,
   reply,
   seedAuthority,
-  staleEpoch,
   startResident,
   stopResident,
   CONNECT_MS,
@@ -66,8 +70,9 @@ import {
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 
-// Seating crosses external process creation; page reloads and renders do not.
-const AGENT_SEAT_MS = 15_000;
+const here = dirname(fileURLToPath(import.meta.url));
+const root = resolve(here, "../..");
+const artifacts = join(root, "artifacts/canvas");
 const coverageReceiptFlag = "--spice-coverage-receipt";
 const coverageReceipt = "BROWSER-1kKSWhZk browser coverage complete\n";
 const coverageArguments = process.argv.slice(2);
@@ -83,11 +88,7 @@ if (coverageArguments.length > 0) {
   }
   coverageReceiptPath = coverageArguments[1];
 }
-const agentNames = ["Ava", "Bex", "Cy", "Dee"];
-const teamLaneIds = [
-  "00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000001",
-  "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003",
-];
+const staleEpoch = "018f9999-9999-7444-8888-999999999999";
 
 async function waitAtFirstSpecCaller(page) {
   return waitForPage(page, "first call-site self-check", WAIT_PROBE_MS, () => false)
@@ -123,59 +124,91 @@ async function assertDistinctWaitCallSites(page) {
   assert.notEqual(first, second, "two waits armed at different spec sites remain distinguishable");
 }
 
-const nestedQuoteMessage = [
-  "> > The final review found no alternate execution path.", "> >",
-  "> > `cargo xtask verify` is green.",
-  ">",
-  "> Why it matters: nested context remains visible.",
-  "",
-  "The author words belong in the composer band.",
-].join("\n");
 const nestedQuotePreview = "The author words belong in the composer band.";
-const entirelyQuotedMessage = [
-  "> > Borrowed context has no authored preview.",
-  "> > A second borrowed line stays reachable.",
-].join("\n");
-const tallMosaicMessage = [
-  "## Measured lattice witness",
-  "",
-  "This directive is intentionally tall at the base span.",
-  "",
-  "- measurement comes from the rendered DOM",
-  "- placement comes from the Rust lattice",
-  "- the wide tier remains content-class agnostic",
-  "- track bounds stay inside twelve columns",
-  "- row spans cover the natural card height",
-  "- creation order stays deterministic",
-  "- independent lineage controls remain mounted",
-  "- attachment presence cannot choose a span",
-  "- agent identity cannot choose a span",
-  "- CSS class cannot choose a span",
-  "- one base-height read is mandatory",
-  "- only a tall base measurement admits one more read",
-  "- no third candidate is measured",
-  "- no card overlaps another card",
-  "- exact viewport geometry stays observable",
-  "- the browser test reads the instrumentation",
-  "- the short path remains one read",
-  "- the tall path remains two reads",
-].join("\n");
 
-async function assignTeamLaneIds(page) {
-  await page.evaluate((laneIds) => {
+async function assertPerTeamWatchbands(page, fixture, worktrees) {
+  const before = await reply(fixture, ["lane"]);
+  const primary = before.body.lanes.find((lane) => lane.worktree === worktrees[0]);
+  assert.ok(primary, "the primary team remains seated for watchband proof");
+  await reply(fixture, [
+    "lane", "add", worktrees[4],
+    "--life", "Drive",
+    "--vendor", "claude",
+  ]);
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Agents");
+  const console = page.locator('[data-pane="agent-console"]');
+  await console.getByRole("tab", { name: /^Compose/ }).first().click();
+  await waitForElement(page, "second team renders after reload", CONNECT_MS,
+    console.locator(".team-surface").nth(1));
+
+  const lanes = await reply(fixture, ["lane"]);
+  const secondary = lanes.body.lanes.find((lane) => lane.worktree === worktrees[4]);
+  assert.ok(secondary, "the second team is independently seated");
+  const primarySurface = console.locator(
+    `.team-surface[data-lineage-id="${primary.lineage_id}"]`,
+  );
+  const secondarySurface = console.locator(
+    `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
+  );
+  const noCardDestination = await primaryDestination(secondarySurface, secondary.lane);
+  assert.equal(
+    noCardDestination.rendered.length,
+    0,
+    "the freshly seated secondary agent exercises the primary lineage default before any card",
+  );
+  const firstSecondaryDirection = "the lineage default precedes this first rendered card";
+  await secondarySurface.getByRole("textbox").fill(firstSecondaryDirection);
+  await secondarySurface.getByRole("button", { name: "Drive", exact: true }).click();
+  await secondarySurface
+    .locator(".mosaic-message-card")
+    .filter({ hasText: firstSecondaryDirection })
+    .waitFor({ timeout: 10_000 });
+  assert.equal(await console.locator(".team-surface").count(), 2);
+  assert.equal(await console.locator(".team-speech").count(), 2);
+  assert.equal(await console.locator(".team-lifetime").count(), 2);
+  const weightedWidths = await console.locator(".team-surface").evaluateAll((surfaces) =>
+    surfaces.map((surface) => ({
+      weight: Number(surface.dataset.lineageWeight),
+      width: surface.getBoundingClientRect().width,
+    })),
+  );
+  const widthsByWeight = weightedWidths.toSorted((left, right) => left.weight - right.weight);
+  assert.deepEqual(
+    widthsByWeight.map(({ weight }) => weight),
+    [1, 4],
+    "lineage weights remain the admitted member counts",
+  );
+  assert.ok(
+    widthsByWeight[1].width > widthsByWeight[0].width,
+    "the four-agent lineage remains wider than its one-agent sibling",
+  );
+
+  const primaryLife = primarySurface.locator('.team-lifetime input[type="range"]');
+  const primarySeatLives = new Map(
+    lanes.body.lanes
+      .filter((lane) => lane.lineage_id === primary.lineage_id)
+      .map((lane) => [lane.lane, lane.life]),
+  );
+  const initialPrimaryPolicy = lanes.body.subscriptions.find(
+    (subscription) => subscription.lineage_id === primary.lineage_id,
+  )?.policy;
+  assert.ok(initialPrimaryPolicy, "the primary team has one authoritative task policy");
+  const initialPrimaryLabel = `${initialPrimaryPolicy[0].toUpperCase()}${initialPrimaryPolicy.slice(1)}`;
+  const initialPrimaryIndex = { steer: "0", drive: "1", drain: "2" }[initialPrimaryPolicy];
+  await page.evaluate((missingLineage) => {
     const socket = window.__canvasSockets.at(-1);
     if (!socket) throw new Error("canvas WebSocket was not captured");
     const send = socket.send.bind(socket);
-    let assignment = 0;
+    let intercepted = false;
     const rewrite = (bytes) => {
       const command = JSON.parse(new TextDecoder().decode(bytes));
-      if (command.kind !== "lane::seat") return bytes;
-      const lane = laneIds[assignment];
-      if (!lane) throw new Error("fixture received an unexpected fifth lane::seat command");
-      assignment += 1;
-      command.body.lane = lane;
-      command.body.lineage_id = laneIds[0];
-      return new TextEncoder().encode(JSON.stringify(command));
+      if (!intercepted && command.kind === "lineage::configure") {
+        intercepted = true;
+        command.body.lineage_id = missingLineage;
+        return new TextEncoder().encode(JSON.stringify(command));
+      }
+      return bytes;
     };
     socket.send = (data) => {
       if (typeof data === "string") {
@@ -187,368 +220,170 @@ async function assignTeamLaneIds(page) {
         send(rewrite(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
       }
     };
-  }, teamLaneIds);
-}
-
-async function assertAgentConversation(page, fixture, worktrees, activityReplay) {
-  const teamWorktrees = worktrees.slice(0, 4);
-  const console = page.locator('[data-pane="agent-console"]');
-  await chooseCanvasView(page, "Agents");
-  await console.waitFor();
-  await console.getByRole("tab", { name: /^Info/ }).click();
-  await console.getByLabel("Name").fill(agentNames[0]);
-  await console.getByLabel("Worktree").fill(teamWorktrees[0]);
-  await console.getByLabel("Life").fill("steer");
-
-  // A refused submission has to say why. The vendor field is free text with no
-  // datalist, so a proper name typed the way it is written everywhere else is
-  // the trip an operator actually takes, and it used to send no request and
-  // print nothing: the button read as dead. This is the only refusal reachable
-  // by clicking, because the compose button disables itself while the message
-  // is empty or no agent is seated.
-  const refusal = console.locator(".form-refusal");
-  await console.getByLabel("Vendor").fill("My Agent");
-  await console.getByRole("button", { name: "Seat agent" }).click();
-  await refusal.waitFor({ timeout: 10_000 });
-  assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
-
-  await assignTeamLaneIds(page);
-  await console.getByLabel("Vendor").fill("Claude");
-  await console.getByRole("button", { name: "Seat agent" }).click();
-  await refusal.waitFor({ state: "detached", timeout: 10_000 });
-  await waitForElement(page, "first external agent seat renders", AGENT_SEAT_MS,
-    console.locator(".team-detail-card").nth(0));
-  const firstSeatedAt = Date.now();
-
-  const firstSnapshot = await reply(fixture, ["lane"]);
-  const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === teamWorktrees[0]);
-  assert.ok(host, "the Canvas seat control creates the lineage host");
-  assert.equal(host.lane, teamLaneIds[0], "the fixture fixes the lineage host accent slot");
-  for (const [index, worktree] of teamWorktrees.slice(1).entries()) {
-    await console.getByLabel("Name").fill(agentNames[index + 1]);
-    await console.getByLabel("Worktree").fill(worktree);
-    await console.getByLabel("Life").fill("steer");
-    await console.getByLabel("Vendor").fill("Claude");
-    await console.getByRole("button", { name: "Seat agent" }).click();
-    await waitForElement(page, "next external agent seat renders", AGENT_SEAT_MS,
-      console.locator(".team-detail-card").nth(index + 1));
-  }
-  await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Agents");
-  await console.getByRole("tab", { name: /^Info/ }).click();
-  await waitForElement(page, "seated agents render after reload", CONNECT_MS,
-    console.locator(".team-detail-card").nth(3));
-
-  const lanes = await reply(fixture, ["lane"]);
-  const seated = teamWorktrees.map(
-    (worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree),
+  }, staleEpoch);
+  await primaryLife.fill("2");
+  await waitForPage(
+    page,
+    "rejected lifetime command settles",
+    TRANSITION_MS,
+    (lineage) => document
+      .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
+      ?.dataset.lifetimePending === "false",
+    primary.lineage_id,
   );
-  assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
-  assert.deepEqual(seated.map((lane) => lane.lane), teamLaneIds, "four fixed lane identities render");
-  assert.ok(seated.every((lane) => lane.lineage_id === host.lineage_id), "one lineage renders");
-  assert.deepEqual(seated.map((lane) => lane.name), agentNames);
-  assert.ok(seated.every((lane) => lane.vendor === "claude"));
-  assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
-  assert.equal(
-    await console.locator(".team-detail-card").first().getAttribute("title"),
-    `Claude driver; model: sonnet; effort: high; thread: ${seated[0].occupant}; `
-      + "session: 018f7777-7777-7444-8888-999999999999",
-    "the agent card tooltip carries the admitted launch and session identity",
-  );
+  await primarySurface
+    .getByRole("button", { name: initialPrimaryLabel, exact: true })
+    .waitFor();
+  assert.equal(await primaryLife.inputValue(), initialPrimaryIndex);
+  assert.match(await primarySurface.locator(".team-control-issue").innerText(), /lineage::missing/);
 
-  await console.getByRole("tab", { name: /^Compose/ }).click();
-  await console.locator(".team-agent").nth(3).waitFor();
-  assert.equal(await console.locator(".team-surface").count(), 1, "one lineage renders one surface");
+  await primaryLife.fill("2");
+  await waitForPage(
+    page,
+    "accepted lifetime command settles",
+    TRANSITION_MS,
+    (lineage) => document
+      .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
+      ?.dataset.lifetimePending === "false",
+    primary.lineage_id,
+  );
+  await primarySurface.getByRole("button", { name: "Drain", exact: true }).waitFor();
+  const configured = await reply(fixture, ["lane"]);
+  const primaryRows = configured.body.lanes.filter(
+    (lane) => lane.lineage_id === primary.lineage_id,
+  );
+  const primarySubscription = configured.body.subscriptions.find(
+    (subscription) => subscription.lineage_id === primary.lineage_id,
+  );
+  assert.equal(primaryRows.length, 4, "the first team retains all four worktrees");
+  assert.equal(primarySubscription?.policy, "drain");
+  assert.ok(
+    primaryRows.every((lane) => lane.life === primarySeatLives.get(lane.lane)),
+    "watchband Drain never changes terminal lane life",
+  );
+  assert.ok(
+    primaryRows.every((lane) => lane.occupant && lane.disposition === "occupied"),
+    "watchband Drain changes task policy and never tears down occupants",
+  );
   assert.equal(
-    await console.locator(".team-activity-grid").count(),
+    await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
     1,
-    "all lineage members share exactly one packed activity plane",
+    "the sibling team keeps its own authoritative lifetime",
   );
-  const authored = console.locator('[data-card-kind="agent-message"]');
-  await authored.nth(3).waitFor({ timeout: 10_000 });
-  const producerIds = new Set(await authored.evaluateAll((cards) =>
-    cards.map((card) => card.getAttribute("data-producer-target-id")),
-  ));
-  const producerNames = new Set(await authored.locator(".message-author").allTextContents());
-  assert.ok(producerIds.size > 1, "the packed plane contains more than one producing agent");
-  assert.ok(producerNames.size > 1, "each authored card footer names its producing agent");
-  await assertRosterPips(page, console, seated);
-  const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
-  for (const name of producerNames) {
-    assert.match(accessibility, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-  assert.equal(await console.getByRole("button", { name: "Steer", exact: true }).count(), 1);
-  const lifetime = console.locator('.team-lifetime input[type="range"]');
-  await lifetime.fill("2");
-  await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
-  await lifetime.fill("0");
-  await console.getByRole("button", { name: "Steer", exact: true }).waitFor();
-  await assertReferenceControlStack(page, console, artifacts);
-  const messages = [
-    "browser direction survives streaming",
-    "## Gate contract\n\n- green on the integrated tip\n- exact checks retained",
-    "> The reference viewport keeps **all agent status** visible.\n>\n> Density remains readable.\n\n`1000×568` stays bounded.",
-    nestedQuoteMessage,
-  ];
-  const messageLabels = [
-    messages[0],
-    "Gate contract",
-    "reference viewport keeps",
-    "final review found",
-  ];
-  for (const [index, lane] of seated.entries()) {
-    const column = console.locator(`.team-agent[data-agent-lane="${lane.lane}"]`);
-    await column.getByRole("textbox").fill(messages[index]);
-    await console.getByRole("button", { name: "Steer", exact: true }).click();
-    await console
-      .locator(`.mosaic-message-card[data-agent-lane="${lane.lane}"]`)
-      .filter({ hasText: messageLabels[index] })
-      .waitFor({ timeout: 10_000 });
-  }
-  const quoteLane = console.locator(`.team-agent[data-agent-lane="${seated[3].lane}"]`);
-  await quoteLane.getByRole("textbox").fill(entirelyQuotedMessage);
-  await console.getByRole("button", { name: "Steer", exact: true }).click();
-  await console
-    .locator(`.mosaic-message-card[data-agent-lane="${seated[3].lane}"]`)
-    .filter({ hasText: "Borrowed context has no authored preview." })
-    .waitFor({ timeout: 10_000 });
-  const tallLane = console.locator(`.team-agent[data-agent-lane="${seated[1].lane}"]`);
-  await tallLane.getByRole("textbox").fill(tallMosaicMessage);
-  await console.getByRole("button", { name: "Steer", exact: true }).click();
-  await console
-    .locator(`.mosaic-message-card[data-agent-lane="${seated[1].lane}"]`)
-    .filter({ hasText: "Measured lattice witness" })
-    .waitFor({ timeout: 10_000 });
-  const orderedInbox = await reply(fixture, ["inbox", seated[1].lane]);
+
+  const primarySpeech = primarySurface.locator('.team-speech input[type="range"]');
+  const secondarySpeech = secondarySurface.locator('.team-speech input[type="range"]');
+  await primarySpeech.fill("0");
+  await secondarySpeech.fill("2");
+  assert.equal(await primarySpeech.inputValue(), "0");
+  assert.equal(await secondarySpeech.inputValue(), "2");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
+  await console.getByRole("tab", { name: /^Info/ }).first().click();
+  await console.getByRole("tab", { name: /^Compose/ }).first().click();
+  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a team redraw");
+  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a team redraw");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
+
+  await page.evaluate(() => { window.__speechLog = []; });
+  await primarySurface.getByLabel("Speak this message").first().click();
   assert.deepEqual(
-    await console
-      .locator(`[data-card-kind="directive"][data-agent-lane="${seated[1].lane}"]`)
-      .evaluateAll((cards) => cards.map((card) => card.dataset.directive)),
-    orderedInbox.body.lanes[0].pending.map((directive) => directive.directive),
-    "pending directives reach the lattice in durable journal order",
+    await page.evaluate(() => window.__speechLog),
+    [],
+    "Quiet suppresses manual speech for only its team",
   );
-  assert.ok(await console.locator(".mosaic-message-card h2").count(), "cards render headings");
-  assert.ok(await console.locator(".mosaic-message-card ul li").count(), "cards render lists");
+  await secondarySurface.getByLabel("Speak this message").first().click();
+  await waitForPage(page, "Narrate dispatches speech", TRANSITION_MS,
+    () => window.__speechLog.some((row) => row.action === "speak"));
+
+  await assertAgentRenewalRequest(primarySurface, fixture);
+
+  const policyMessage = "drain lifetime is task policy, not occupant teardown";
+  await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);
+  await primarySurface.getByRole("button", { name: "Drain", exact: true }).click();
+  await primarySurface
+    .locator(".mosaic-message-card")
+    .filter({ hasText: policyMessage })
+    .waitFor({ timeout: 10_000 });
+  const inbox = await reply(fixture, ["inbox", primaryRows[0].lane]);
   assert.ok(
-    await console.locator(".mosaic-message-card blockquote blockquote").count(),
-    "cards preserve nested quote depth",
+    inbox.body.lanes[0].pending.some((directive) => directive.text === policyMessage),
+    "the Drain-labelled submit follows the configured team policy into real steering",
   );
-  const cardHeights = await console.locator(".mosaic-message-card").evaluateAll((cards) =>
-    cards.map((card) => Math.round(card.getBoundingClientRect().height)),
-  );
-  assert.ok(new Set(cardHeights).size >= 3, "Markdown produces nonuniform Mosaic card heights");
-  const planes = console.locator(".lane-mosaic-plane");
-  assert.equal(await planes.count(), 1, "one seated lineage owns one Mosaic plane");
-  const plane = console.locator(
-    `.lane-mosaic-plane[data-agent-plane="${host.lineage_id}"]`,
-  );
-  await plane.waitFor();
-  const placements = await assertMosaicLattice(page, true);
-  assert.ok(placements.length > seated.length, "the lane packs agent and directive cards");
-  assert.ok(placements.every((card) => card.span >= 1 && card.track + card.span <= 12));
-  assert.ok(placements.every((card) => card.rows >= 2));
-  assert.ok(placements.every((card) => card.columnStart === card.track + 1));
-  assert.ok(placements.every((card) => card.rowStart === card.row));
-  assert.equal(Math.min(...placements.map((card) => card.base)), 0, "the lane owns its row floor");
-  const packedMembers = new Set(placements.map((card) => card.lane));
-  for (const member of seated) {
-    assert.ok(packedMembers.has(member.lane), "every worktree member reaches the lane plane");
-  }
+  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a streamed refresh");
+  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a streamed refresh");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
 
-  const directiveChrome = await console.locator('[data-card-kind="directive"]').evaluateAll(
-    (cards) => cards.map((card) => ({
-      lane: card.dataset.agentLane,
-      accent: card.dataset.accent,
-      edge: getComputedStyle(card).borderRightColor,
-    })),
+  const renderedPrimaryMembers = await primarySurface.locator(".team-agent").evaluateAll(
+    (members) => members.map((member) => member.dataset.agentLane),
   );
-  const repeatedLane = seated[1].lane;
-  const repeatedChrome = directiveChrome.filter((card) => card.lane === repeatedLane);
-  assert.ok(repeatedChrome.length >= 2, "the accent probe has two cards from one lane");
-  assert.ok(repeatedChrome.every((card) => card.accent === repeatedChrome[0].accent));
-  assert.ok(repeatedChrome.every((card) => card.edge === repeatedChrome[0].edge));
-  const distinctChrome = directiveChrome.find(
-    (card) => card.lane !== repeatedLane && card.accent !== repeatedChrome[0].accent,
+  assert.equal(renderedPrimaryMembers.length, 4, "the quote fixture has four ordered members");
+  const lifecycleLane = primaryRows.find((lane) => lane.lane === renderedPrimaryMembers[1]);
+  assert.ok(lifecycleLane, "the quote fixture resolves the card's second rendered member");
+  assert.notEqual(
+    lifecycleLane.lane,
+    renderedPrimaryMembers[0],
+    "the departed-author card is not the row-order member",
   );
-  assert.ok(distinctChrome, "the fixture exposes a different lane accent slot");
-  assert.notEqual(distinctChrome.edge, repeatedChrome[0].edge);
-  const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
-  for (const kind of ["agent-message", "directive"]) {
-    const card = console.locator(`[data-card-kind="${kind}"]`).first();
-    assert.ok((await card.locator(".message-author").innerText()).trim());
-    assert.deepEqual(
-      await card.locator(".message-actions button").evaluateAll(
-        (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
-      ),
-      expectedActions,
-      `${kind} exposes the reference speak, quote, and copy controls`,
-    );
-  }
-
-  const scroller = plane;
-  const compensationViewport = page.viewportSize();
-  await page.setViewportSize({ width: compensationViewport.width, height: 360 });
-  await scroller.evaluate((element) => element.scrollTo(0, element.scrollHeight));
-  const beforeCompensation = await scroller.evaluate((element) => {
-    return {
-      scrollTop: element.scrollTop,
-      maxRow: Number(element.dataset.maxRow),
-    };
+  const departedAuthor = lifecycleLane.occupant;
+  const departedCards = primarySurface.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${lifecycleLane.lane}"]`,
+  );
+  await departedCards.first().waitFor({ timeout: 10_000 });
+  await reply(fixture, ["lane", "drain", lifecycleLane.lane]);
+  const vacantSnapshot = await reply(fixture, ["lane"]);
+  const vacant = vacantSnapshot.body.lanes.find((lane) => lane.lane === lifecycleLane.lane);
+  assert.ok(vacant, "the configured member remains durable after leaving");
+  assert.equal(vacant.disposition, "vacant");
+  assert.equal(vacant.occupant, undefined);
+  assert.equal(vacant.life, primarySeatLives.get(vacant.lane));
+  assert.equal(
+    vacantSnapshot.body.lanes.some((lane) => lane.occupant === departedAuthor),
+    false,
+    "the author of the second member's retained cards is seated in no lane",
+  );
+  await waitForPage(page, "departed author cards retain their lane", TRANSITION_MS,
+    ({ lineage, lane }) => {
+    const cards = [...document.querySelectorAll(
+      `.team-surface[data-lineage-id="${lineage}"] `
+        + `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
+    )];
+    return cards.length > 0 && cards.every((card) => card.dataset.producerTargetId === lane);
+  }, { lineage: primary.lineage_id, lane: lifecycleLane.lane });
+  assert.deepEqual(
+    new Set(await departedCards.evaluateAll(
+      (cards) => cards.map((card) => card.dataset.producerTargetId),
+    )),
+    new Set([lifecycleLane.lane]),
+    "an unseated author routes every retained card to its own lane, never the first member",
+  );
+  assert.equal(
+    vacantSnapshot.body.subscriptions.find(
+      (subscription) => subscription.lineage_id === primary.lineage_id,
+    )?.policy,
+    "drain",
+  );
+  await reply(fixture, ["lane", "wake", lifecycleLane.lane]);
+  const wokenSnapshot = await reply(fixture, ["lane"]);
+  const woken = wokenSnapshot.body.lanes.find((lane) => lane.lane === lifecycleLane.lane);
+  assert.ok(woken?.occupant, "watchband Drain leaves the member eligible for a normal wake");
+  assert.equal(woken.disposition, "occupied");
+  assert.equal(woken.life, primarySeatLives.get(woken.lane));
+  await assertPrimaryComposerDragging(
+    page,
+    fixture,
+    console,
+    primary.lineage_id,
+    secondary.lineage_id,
+    join(artifacts, "canvas-primary-composer-dragging.png"),
+  );
+  await page.screenshot({
+    path: join(artifacts, "canvas-light-watchband-teams.png"),
+    fullPage: true,
   });
-  assert.ok(beforeCompensation.scrollTop > 80, "the compensation probe begins in a scrolled pane");
-  const compensationMessage = [
-    "mosaic scroll compensation probe",
-    ...Array.from({ length: 72 }, (_, index) => `- exact row delta ${index + 1}`),
-  ].join("\n");
-  const compensationLane = console.locator(
-    `.team-agent[data-agent-lane="${seated[0].lane}"]`,
-  );
-  await compensationLane.getByRole("textbox").fill(compensationMessage);
-  await console.getByRole("button", { name: "Steer", exact: true }).click();
-  const compensationCard = console
-    .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
-    .filter({ hasText: "mosaic scroll compensation probe" });
-  await compensationCard.waitFor({ timeout: 10_000 });
-  await waitForPage(page, "mosaic rows extend for the streamed card", TRANSITION_MS, (before) => {
-    const element = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
-    const maxRow = Number(element?.dataset.maxRow);
-    return maxRow > before.maxRow;
-  }, beforeCompensation);
-  const afterCompensation = await scroller.evaluate((element) => {
-    return {
-      scrollTop: element.scrollTop,
-      maxRow: Number(element.dataset.maxRow),
-      module: Number(element.dataset.module),
-    };
-  });
-  assert.ok(afterCompensation.maxRow > beforeCompensation.maxRow);
-  assert.equal(
-    afterCompensation.scrollTop,
-    beforeCompensation.scrollTop
-      + (afterCompensation.maxRow - beforeCompensation.maxRow) * afterCompensation.module,
-    `incremental placement compensates by exactly the added lattice rows: ${JSON.stringify({
-      beforeCompensation,
-      afterCompensation,
-    })}`,
-  );
-  await page.setViewportSize(compensationViewport);
-  const compensationInbox = await reply(fixture, ["inbox", seated[0].lane]);
-  const compensationDirective = compensationInbox.body.lanes[0].pending.find(
-    (directive) => directive.text === compensationMessage,
-  );
-  assert.ok(compensationDirective, "the compensation probe reached the real inbox");
-  await reply(fixture, ["steer", "cancel", compensationDirective.directive]);
-  await compensationCard.waitFor({ state: "detached", timeout: 10_000 });
-  await page.locator('.task-pill[data-task-stem="app"]').waitFor();
-  await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
-  assert.match(await page.locator('.task-pill[data-task-stem="app"]').innerText(), /\d+·\d+·\d+/);
-
-  const outgoing = console
-    .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
-    .filter({ hasText: messages[0] });
-  const inbox = await reply(fixture, ["inbox", seated[0].lane]);
-  assert.equal(inbox.body.lanes.length, 1);
-  assert.equal(inbox.body.lanes[0].pending.length, 1);
-  assert.equal(inbox.body.lanes[0].pending[0].text, messages[0]);
-  assert.equal(
-    await outgoing.locator(".message-key").innerText(),
-    inbox.body.lanes[0].pending[0].key,
-  );
-  await assertQueuedRosterPip(page, console, seated[0]);
-  const age = outgoing.locator(".message-age");
-  const authoredAt = Date.parse(inbox.body.lanes[0].pending[0].authored);
-  const expectedBeforeRead = elapsedLabel(Date.now() - authoredAt);
-  const renderedAge = await age.innerText();
-  const expectedAfterRead = elapsedLabel(Date.now() - authoredAt);
-  assert.ok(
-    [expectedBeforeRead, expectedAfterRead].includes(renderedAge),
-    `the card shows authored age: ${JSON.stringify({ renderedAge, expectedBeforeRead, expectedAfterRead })}`,
-  );
-  assert.equal(
-    await age.getAttribute("title"),
-    `authored ${inbox.body.lanes[0].pending[0].authored}; expires ${inbox.body.lanes[0].pending[0].expires}`,
-  );
-  assert.equal(await outgoing.locator(".message-actions button").count(), 3);
-
-  for (const mode of ["Filters", "Metrics", "Info"]) {
-    await console.getByRole("tab", { name: new RegExp(`^${mode}`) }).click();
-    await console.locator(".team-detail-card").nth(3).waitFor();
-    assert.equal(await console.locator(".team-detail-card").count(), 4, `${mode} reaches all agents`);
-  }
-  await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
-  await console.getByRole("tab", { name: /^Compose/ }).click();
-  await assertFourAgentDensity(console);
-  await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
-  await assertHeldTaskCount(console, fixture, seated[0].lane);
-  await activityReplay.assertOlderToolIgnored(page, console);
-  const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
-  for (const pending of clearedInbox.body.lanes[0].pending) {
-    await reply(fixture, ["steer", "cancel", pending.directive]);
-  }
-  const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
-  await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
-  return {
-    lane: seated[0].lane,
-    quoteLane: seated[3].lane,
-    agentName: agentNames[0],
-    quoteProse: agentProse(teamWorktrees[3]),
-    primaryHeadings: seated.map((lane, index) => ({
-      lane: lane.lane,
-      prose: index === 0
-        ? "newest lane prose witness"
-        : index === 1
-          ? "periodic live witness"
-          : agentProse(teamWorktrees[index]),
-    })),
-  };
-}
-
-// The newest thing an agent itself said, which is what a composer heading
-// shows. Each fake agent emits one assistant record naming its own worktree
-// (`name=${PWD##*/}` in canvas-fixture.mjs), so this is a different string per
-// lane and the seeded operator messages above are directives rather than agent
-// prose -- a heading that showed those would be showing the wrong side.
-function agentProse(worktree) {
-  return `Canvas message reports CONTROL-1kKbC3j4 from ${basename(worktree)}`;
-}
-
-function elapsedLabel(millis) {
-  const seconds = Math.trunc(millis / 1_000);
-  if (seconds <= 0) return "now";
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3_600) return `${Math.trunc(seconds / 60)}m`;
-  if (seconds < 86_400) return `${Math.trunc(seconds / 3_600)}h`;
-  return `${Math.trunc(seconds / 86_400)}d`;
-}
-
-async function assertFourAgentDensity(console) {
-  const geometry = await console.evaluate((surface) => ({
-    surfaceWidth: surface.getBoundingClientRect().width,
-    contentWidth: surface.parentElement?.getBoundingClientRect().width ?? 0,
-    surfaceOverflow: surface.scrollWidth - surface.clientWidth,
-    headers: [...surface.querySelectorAll(".composer-shard-heading")].map((node) => {
-      const box = node.getBoundingClientRect();
-      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
-    }),
-    columns: [...surface.querySelectorAll(".team-agent")].map((node) => {
-      const box = node.getBoundingClientRect();
-      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
-    }),
-  }));
-  assert.equal(geometry.headers.length, 4, "four intelligent draft headers are simultaneous");
-  assert.equal(geometry.columns.length, 4, "four live composer columns are simultaneous");
-  assert.ok(
-    geometry.surfaceWidth >= geometry.contentWidth - 16 &&
-      geometry.surfaceWidth <= geometry.contentWidth + 1,
-    "one live lineage consumes the available reference viewport",
-  );
-  assert.ok(geometry.surfaceOverflow <= 1, "the team surface does not hide horizontal content");
-  for (const row of [geometry.headers, geometry.columns]) {
-    for (let index = 1; index < row.length; index += 1) {
-      assert.ok(row[index - 1].right <= row[index].left + 1, "agent columns never overlap");
-      assert.ok(Math.abs(row[index - 1].top - row[index].top) <= 1, "agent columns share one row");
-    }
-  }
+  return { lineage: primary.lineage_id, policy: "drain" };
 }
 
 async function captureReferenceViewport(page) {
@@ -884,6 +719,10 @@ async function assertSameGenerationResume(
 }
 
 assertBoundaryLoadReading();
+// The launch-site guard interrogates this exact executable, so building is a
+// precondition rather than something an agent must remember after source gains
+// a no-pop gate. No fixture process can start before both steps pass.
+await buildResident();
 await assertHeadlessLaunchSites();
 await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
@@ -891,7 +730,6 @@ await assertSignalExitedChildSkipsTeardown();
 await assertLineageDrainFailureTeardown();
 await assertSurvivingVendorsAreReported();
 await assertFullyReapedVendorsStaySilent();
-await buildResident();
 await assertFixtureTeardownReaps();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
 const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
@@ -930,7 +768,7 @@ try {
   const hiddenStatusReport = await assertWaitReporting(lightPage, resident);
   Object.assign(
     seeded,
-    await assertAgentConversation(lightPage, fixture, worktrees, activityReplay),
+    await assertAgentConversation(lightPage, fixture, worktrees, activityReplay, artifacts),
   );
   await assertTeamMenu(lightPage, fixture);
   const reference = await browser.newContext({
@@ -991,6 +829,7 @@ try {
   const darkMonitor = monitorPage(darkPage);
   await darkPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(darkPage, "dark-narrow");
+  await assertMosaicLattice(darkPage, false);
   await assertAuthoritySurface(darkPage, seeded);
   await assertNoCredentialOrLandingGap(darkPage, [resident.discovery.capability]);
   darkMonitor.assertClean();

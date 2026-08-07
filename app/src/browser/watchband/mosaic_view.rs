@@ -155,6 +155,8 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
             data-module={geometry.module.to_string()}
             data-track-count={crate::mosaic::TRACK_COUNT.to_string()}
             data-base-span={geometry.base_span.to_string()}
+            data-min-lane={geometry.min_lane.to_string()}
+            data-min-card-rows={crate::mosaic::MIN_CARD_ROWS.to_string()}
             data-tall-threshold={crate::mosaic::TALL_THRESHOLD_PX.to_string()}
             data-measurement-phase={measurement_phase}
             aria-label={format!(

@@ -254,6 +254,98 @@ fn install_file_shape_overrun(fixture: &Fixture) {
 }
 
 #[test]
+fn scoped_verifier_runs_one_package_without_any_full_only_action() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.repository.join("src/lib.rs"),
+        "pub fn fixture() { assert_eq!(2 + 2, 4); }\n",
+    )
+    .expect("write one-package staged change");
+    git(&fixture.repository, &["add", "src/lib.rs"]);
+
+    let programs = fixture.root.join("programs");
+    fs::create_dir(&programs).expect("create scoped verifier program directory");
+    install_unset_hooks_git(&programs);
+    let cargo_log = fixture.root.join("cargo-actions");
+    executable(
+        &programs.join("cargo"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            cargo_log.display()
+        ),
+    );
+    let browser_marker = fixture.root.join("browser-invoked");
+    executable(
+        &programs.join("npm"),
+        &format!(
+            "#!/bin/sh\nprintf 'invoked\\n' > '{}'\nexit 99\n",
+            browser_marker.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["verify", "--package", "verify-process-fixture"])
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, &programs)
+        .output()
+        .expect("launch scoped verifier process");
+
+    assert!(output.status.success(), "{}", streams(&output));
+    assert_eq!(
+        fs::read_to_string(cargo_log)
+            .expect("read scoped Cargo actions")
+            .lines()
+            .collect::<Vec<_>>(),
+        [
+            "fmt --package verify-process-fixture -- --check",
+            concat!(
+                "clippy --locked --package verify-process-fixture --all-targets ",
+                "-- -D warnings"
+            ),
+            "test --locked --package verify-process-fixture --all-targets",
+            "test --locked --package verify-process-fixture --doc",
+        ]
+    );
+    assert!(
+        !browser_marker.exists(),
+        "scoped verification launched the full browser suite"
+    );
+
+    let stdout = String::from_utf8(output.stdout.clone()).expect("scoped stdout is UTF-8");
+    assert!(stdout.contains(concat!(
+        "[verify] scoped package verify-process-fixture; feedback only: ",
+        "run `cargo xtask verify` before task completion\n"
+    )));
+    assert!(stdout.contains("[verify] scoped gate arms run: none\n"));
+    let skipped = GateId::ALL
+        .into_iter()
+        .map(GateId::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert!(stdout.contains(&format!("[verify] scoped gate arms skipped: {skipped}\n")));
+    for full_only in [
+        "[verify] cargo fmt --all -- --check",
+        "[verify] cargo clippy --locked --workspace --all-targets -- -D warnings",
+        "[verify] cargo check --locked --workspace --target wasm32-unknown-unknown",
+        "[verify] npm run test:canvas (BROWSER-1kKSWhZk guard)",
+        "[verify] canonical Rust gate battery",
+        "[verify] contract landing",
+    ] {
+        assert!(
+            !stdout.lines().any(|line| line == full_only),
+            "scoped verifier executed full-only action {full_only}: {stdout}"
+        );
+    }
+    assert!(
+        output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .all(|line| BatteryReport::decode(line).is_err()),
+        "scoped verifier emitted a complete full-battery report"
+    );
+}
+
+#[test]
 fn command_help_enumerates_every_single_gate_arm_spelling() {
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("help")
@@ -263,7 +355,7 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
     assert!(output.status.success(), "{}", streams(&output));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("cargo xtask <help|verify|gate ARM|"),
+        stdout.contains("cargo xtask <help|verify [--package PACKAGE]|gate ARM|"),
         "{}",
         streams(&output)
     );

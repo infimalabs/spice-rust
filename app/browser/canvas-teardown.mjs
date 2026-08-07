@@ -28,6 +28,20 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const harness = join(here, "canvas-teardown-harness.mjs");
 
+/// Launch the real harness one generation below a disposable parent. The
+/// intermediate relays readiness and diagnostics but deliberately owns no
+/// cleanup, so killing it tests only the harness's parent-death path.
+const INTERMEDIATE_PARENT = `
+  import { spawn } from "node:child_process";
+  const harness = spawn(process.execPath, [process.argv[1], process.argv[2]], {
+    cwd: process.cwd(),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  harness.stdout.pipe(process.stdout);
+  harness.stderr.pipe(process.stderr);
+  await new Promise(() => {});
+`;
+
 /// Longest the harness is given to reach a live vendor stand-in.
 const READY_MS = 60_000;
 
@@ -69,8 +83,11 @@ async function survivors(pids, bound) {
 /// never received it, so nothing downstream can end it. That is why the whole
 /// readiness section is guarded rather than the individual throw sites -- there
 /// are four of them, and the next one added would otherwise be the fifth leak.
-async function launchHarness(mode) {
-  const child = spawn(process.execPath, [harness, mode], {
+async function launchHarness(mode, throughIntermediate = false) {
+  const args = throughIntermediate
+    ? ["--input-type=module", "--eval", INTERMEDIATE_PARENT, harness, mode]
+    : [harness, mode];
+  const child = spawn(process.execPath, args, {
     cwd: root,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -103,6 +120,7 @@ async function launchHarness(mode) {
   });
   try {
     const ready = await Promise.race([announced, failedEarly, timeout]);
+    assert.ok(Number.isInteger(ready.harness), "the harness announces its own pid");
     assert.ok(ready.vendors.length > 0, "the harness announces the stand-ins it launched");
     assert.deepEqual(
       ready.vendors.filter((pid) => !alive(pid)),
@@ -190,7 +208,7 @@ function signal(target, name) {
 /// its occupants per red run, on a machine where eleven worktrees run batteries
 /// at once. Never raises, because the failure being reported is the scenario's.
 async function reapResidue(ready) {
-  const reported = [ready.resident, ...ready.vendors];
+  const reported = [ready.harness, ready.resident, ...ready.vendors];
   const owned = reported.filter((pid) => Number.isInteger(pid) && pid > 1);
   for (const name of ["SIGTERM", "SIGKILL"]) {
     const living = owned.filter(alive);
@@ -208,14 +226,15 @@ async function reapResidue(ready) {
   await rm(ready.linkedRoot, { recursive: true, force: true }).catch(() => {});
 }
 
-/// Whether a path is still present, used to prove teardown ordering.
-async function present(path) {
+/// Require one owned directory to be absent for the exact filesystem reason.
+async function assertGone(path, message) {
+  let code = null;
   try {
     await access(path);
-    return true;
-  } catch {
-    return false;
+  } catch (error) {
+    code = error.code;
   }
+  assert.equal(code, "ENOENT", message);
 }
 
 /// A run stopped by a catchable signal still reaps, and still reports stopping.
@@ -243,12 +262,8 @@ async function assertInterruptedRunReaps() {
       "SIGINT",
       `an interrupted run still terminates by its signal, not code ${code}`,
     );
-    assert.equal(await present(ready.fixture), false, "the fixture directory is removed");
-    assert.equal(
-      await present(ready.linkedRoot),
-      false,
-      "the linked worktree root is removed",
-    );
+    await assertGone(ready.fixture, "the fixture directory is removed");
+    await assertGone(ready.linkedRoot, "the linked worktree root is removed");
   } finally {
     await reapResidue(ready);
   }
@@ -276,12 +291,8 @@ async function assertFailedRunReaps() {
       /injected harness failure after vendor launch/,
       "the original failure is what the run reports, not an error raised by teardown",
     );
-    assert.equal(await present(ready.fixture), false, "the fixture directory is removed");
-    assert.equal(
-      await present(ready.linkedRoot),
-      false,
-      "the linked worktree root is removed",
-    );
+    await assertGone(ready.fixture, "the fixture directory is removed");
+    await assertGone(ready.linkedRoot, "the linked worktree root is removed");
   } finally {
     await reapResidue(ready);
   }
@@ -337,16 +348,37 @@ async function assertFailedLaunchReaps() {
       [],
       `a failed launch reaps the resident and every stand-in under it: ${failure.message}`,
     );
-    assert.equal(
-      await present(ready.fixture),
-      false,
-      "the fixture directory of a failed launch is removed",
-    );
-    assert.equal(
-      await present(ready.linkedRoot),
-      false,
+    await assertGone(ready.fixture, "the fixture directory of a failed launch is removed");
+    await assertGone(
+      ready.linkedRoot,
       "the linked worktree root of a failed launch is removed",
     );
+  } finally {
+    await reapResidue(ready);
+  }
+}
+
+/// A harness whose parent is killed still notices reparenting and cleans itself.
+async function assertParentDeathReaps() {
+  const { child: parent, ready, diagnostics } = await launchHarness("idle", true);
+  const parentExit = exits(parent);
+  parent.kill("SIGKILL");
+  const [code, ended] = await parentExit;
+  try {
+    assert.equal(
+      ended,
+      "SIGKILL",
+      `the intermediate parent is killed rather than exiting with code ${code}`,
+    );
+    const owned = [ready.harness, ready.resident, ...ready.vendors];
+    const living = await survivors(owned, REAP_MS);
+    assert.deepEqual(
+      living,
+      [],
+      `a parentless harness reaps itself, its resident, and every stand-in: ${diagnostics()}`,
+    );
+    await assertGone(ready.fixture, "a parentless harness removes its fixture directory");
+    await assertGone(ready.linkedRoot, "a parentless harness removes its lanes directory");
   } finally {
     await reapResidue(ready);
   }
@@ -357,4 +389,5 @@ export async function assertFixtureTeardownReaps() {
   await assertInterruptedRunReaps();
   await assertFailedRunReaps();
   await assertFailedLaunchReaps();
+  await assertParentDeathReaps();
 }
