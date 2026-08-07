@@ -80,6 +80,35 @@ impl Fixture {
         self.expect(&["update-ref", "refs/remotes/origin/main", &tip]);
     }
 
+    /// Publish an integration commit standing one ahead of the branch tip.
+    ///
+    /// Where the published commit is the tip itself, that same short oid also
+    /// stands in the abandoned-commits list the refusal prints, so a message
+    /// naming it there satisfies an assertion meant for the baseline and the
+    /// baseline field could be a constant. Publishing ahead separates the two:
+    /// the baseline commit is then one no abandoned commit can impersonate.
+    ///
+    /// It is also the shape the refusal describes rather than an arrangement
+    /// invented for the assertion -- a task boundary that advanced the
+    /// integration reference past this lane. The branch is left where it was,
+    /// because a fixture that moved it would be publishing this lane's own tip
+    /// again under another name.
+    fn publish_commit_ahead_of_tip(&self) {
+        let tip = self.head();
+        let tree = format!("{tip}^{{tree}}");
+        let advanced = self.expect(&[
+            "commit-tree",
+            &tree,
+            "-p",
+            &tip,
+            "-m",
+            "integration advanced past this lane",
+        ]);
+        self.add_origin_remote();
+        self.track("origin", "refs/heads/main");
+        self.expect(&["update-ref", "refs/remotes/origin/main", &advanced]);
+    }
+
     /// Pair the current branch with a remote and an integration branch, in the
     /// local scope the guard reads.
     fn track(&self, remote: &str, merge: &str) {
@@ -425,6 +454,35 @@ fn refusal(damage: WorktreeDamage) -> String {
     .to_string()
 }
 
+/// The one phrase binding a resolved baseline reference to the commit it stood
+/// at, asserted whole rather than as two independent searches.
+///
+/// The refusal also prints the abandoned commits, so the message is full of
+/// short oids. A bare search for the baseline commit is satisfied by any of
+/// them, and an assertion that searches that way holds just as well for a
+/// guard rendering a baseline commit it never resolved. Binding the commit to
+/// the reference it follows is what makes finding it mean anything.
+fn baseline_phrase(reference: &str, commit: &str) -> String {
+    format!("resolved to {reference} at {commit}")
+}
+
+/// The hand-built refusal keeps its baseline commit beside its reference.
+///
+/// The fixture-driven assertions below depend on exactly this adjacency, and a
+/// rewording that split the pair would leave them searching for a phrase no
+/// message contains -- failing loudly, but for a reason that reads as a lost
+/// resolution rather than a moved word. Pinned here from hand-built fields so
+/// the shape is stated once, without a git fixture, next to the values that
+/// compose it.
+#[test]
+fn a_refusal_names_its_baseline_commit_beside_the_reference_it_resolved() {
+    let message = refusal(WorktreeDamage::Untouched);
+    assert!(
+        message.contains(&baseline_phrase("refs/remotes/origin/main", "0ddba11")),
+        "the refusal parted the baseline reference from the commit it stood at: {message}"
+    );
+}
+
 /// The guard cannot prove which command produced a matching tree, so this arm
 /// names the observable state without prescribing destructive recovery.
 #[test]
@@ -690,7 +748,7 @@ fn refusal_message(fixture: &Fixture) -> String {
 #[test]
 fn a_refusal_names_the_integration_reference_it_resolved() {
     let fixture = Fixture::history("names-integration");
-    fixture.publish_current_tip();
+    fixture.publish_commit_ahead_of_tip();
     fixture.point_origin_head_at("trunk");
     let published = fixture.expect(&["rev-parse", "--short", "refs/remotes/origin/main"]);
 
@@ -705,7 +763,7 @@ fn a_refusal_names_the_integration_reference_it_resolved() {
         "the refusal named the backstop instead of the integration branch: {message}"
     );
     assert!(
-        message.contains(&published),
+        message.contains(&baseline_phrase("refs/remotes/origin/main", &published)),
         "the refusal named a reference without the commit it stood at: {message}"
     );
 }
@@ -809,7 +867,7 @@ fn the_pairing_names_the_remote_rather_than_assuming_origin() {
 #[test]
 fn the_baseline_under_a_poisoned_effective_remote_is_the_one_local_scope_names() {
     let fixture = Fixture::history("shadow-parity");
-    fixture.publish_current_tip();
+    fixture.publish_commit_ahead_of_tip();
     fixture.poison_effective_remote();
     let published = fixture.expect(&["rev-parse", "--short", "refs/remotes/origin/main"]);
 
@@ -831,7 +889,7 @@ fn the_baseline_under_a_poisoned_effective_remote_is_the_one_local_scope_names()
         "the guard did not resolve the reference local scope names: {message}"
     );
     assert!(
-        message.contains(&published),
+        message.contains(&baseline_phrase("refs/remotes/origin/main", &published)),
         "the refusal named a reference without the commit it stood at: {message}"
     );
 }
