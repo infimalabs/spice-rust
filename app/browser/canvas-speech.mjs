@@ -1,0 +1,201 @@
+// Speech installation and backend scenarios for the Canvas browser suite.
+import assert from "node:assert/strict";
+
+import {
+  assertOfflineObserved,
+  assertOnlineObserved,
+  chooseCanvasView,
+  CONNECT_MS,
+  monitorPage,
+} from "./canvas-fixture.mjs";
+
+async function routeSpeechBootstrap(page, speech) {
+  await page.route("**/bootstrap", async (route) => {
+    const response = await route.fetch();
+    const bootstrap = await response.json();
+    bootstrap.speech = speech;
+    await route.fulfill({
+      response,
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify(bootstrap),
+    });
+  });
+}
+
+export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) {
+  await context.addInitScript((voiceNames) => {
+    window.__speechLog = [];
+    class FakeVoice {
+      constructor(name) { this.name = name; }
+    }
+    class FakeUtterance {
+      constructor(text) {
+        this.text = text;
+        this.voice = null;
+        this.rate = 1;
+        this.onend = null;
+        this.onerror = null;
+      }
+    }
+    class FakeAudio {
+      constructor(src) {
+        this.src = src;
+        this.currentTime = 0;
+        this.onended = null;
+        this.onerror = null;
+        window.__speechLog.push({ action: "audio", src });
+      }
+      play() {
+        window.__speechLog.push({ action: "play" });
+        return Promise.resolve();
+      }
+      pause() { window.__speechLog.push({ action: "pause" }); }
+    }
+    window.SpeechSynthesisVoice = FakeVoice;
+    window.SpeechSynthesisUtterance = FakeUtterance;
+    window.Audio = FakeAudio;
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        cancel() { window.__speechLog.push({ action: "cancel" }); },
+        getVoices() { return voiceNames.map((name) => new FakeVoice(name)); },
+        speak(utterance) {
+          window.__speechLog.push({
+            action: "speak",
+            text: utterance.text,
+            voice: utterance.voice?.name,
+            rate: utterance.rate,
+          });
+        },
+      },
+    });
+  }, voices);
+}
+
+export async function installSocketControl(context) {
+  await context.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    window.__canvasSockets = [];
+    window.WebSocket = class FixtureWebSocket extends NativeWebSocket {
+      constructor(...args) {
+        super(...args);
+        window.__canvasSockets.push(this);
+      }
+    };
+  });
+}
+
+export async function assertSystemSpeech(page) {
+  await chooseCanvasView(page, "Flow");
+  const button = page.locator(".speech-button");
+  await button.waitFor();
+  assert.equal(await button.getAttribute("aria-label"), "Read current canvas");
+  const before = await button.boundingBox();
+  assert.ok(before, "speech control has stable geometry");
+  await button.click();
+  await page.locator('.speech-button[data-state="playing"]').waitFor();
+  assert.equal(await button.getAttribute("aria-label"), "Stop reading");
+  const after = await button.boundingBox();
+  assert.deepEqual(after, before, "play state does not shift the speech control");
+  const spoken = await page.evaluate(() => window.__speechLog.find((row) => row.action === "speak"));
+  assert.equal(spoken.voice, "Zoe (Premium)");
+  assert.equal(spoken.rate, 1);
+  assert.match(spoken.text, /Flow/);
+  assert.match(spoken.text, /Current work/);
+  await button.click();
+  await page.locator('.speech-button[data-state="idle"]').waitFor();
+  const actions = await page.evaluate(() => window.__speechLog.map((row) => row.action));
+  assert.ok(actions.includes("cancel"), "stop cancels system speech");
+}
+
+export async function assertSpeechVariants(browser, endpoint) {
+  const unavailableContext = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  await installBrowserSpeech(unavailableContext, []);
+  const unavailablePage = await unavailableContext.newPage();
+  const unavailableMonitor = monitorPage(unavailablePage);
+  await unavailablePage.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(unavailablePage, "Flow");
+  await assertOnlineObserved(unavailablePage, "the page loads with speech unavailable", CONNECT_MS);
+  await unavailablePage.locator(".speech-button").click();
+  await unavailablePage.locator('.speech-button[data-state="error"]').waitFor();
+  assert.match(await unavailablePage.locator(".speech-button").getAttribute("title"), /Zoe.*unavailable/);
+  unavailableMonitor.assertClean();
+  await unavailableContext.close();
+
+  const variants = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  await installBrowserSpeech(variants);
+
+  const disabled = await variants.newPage();
+  const disabledMonitor = monitorPage(disabled);
+  await routeSpeechBootstrap(disabled, { backend: "disabled" });
+  await disabled.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(disabled, "Flow");
+  await assertOnlineObserved(disabled, "the page loads with speech disabled", CONNECT_MS);
+  assert.equal(await disabled.locator(".speech-button").count(), 0, "disabled hides playback");
+  disabledMonitor.assertClean();
+  await disabled.close();
+
+  const externalUnavailable = await variants.newPage();
+  const externalUnavailableMonitor = monitorPage(externalUnavailable);
+  await routeSpeechBootstrap(externalUnavailable, {
+    backend: "external",
+    content_type: "audio/wav",
+    words_per_minute: 175,
+    available: false,
+  });
+  await externalUnavailable.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(externalUnavailable, "Flow");
+  await assertOnlineObserved(externalUnavailable, "no external backend is offered", CONNECT_MS);
+  const unavailableButton = externalUnavailable.locator(".speech-button");
+  assert.equal(await unavailableButton.getAttribute("aria-label"), "Speech unavailable");
+  assert.equal(await unavailableButton.isDisabled(), true);
+  externalUnavailableMonitor.assertClean();
+  await externalUnavailable.close();
+
+  const external = await variants.newPage();
+  const externalMonitor = monitorPage(external);
+  await routeSpeechBootstrap(external, {
+    backend: "external",
+    content_type: "audio/wav",
+    words_per_minute: 175,
+    available: true,
+  });
+  let submitted;
+  await external.route("**/speech", async (route) => {
+    submitted = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: "audio/wav",
+      body: Buffer.from("fixture-audio"),
+    });
+  });
+  await external.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(external, "Flow");
+  await assertOnlineObserved(external, "the page loads against the external backend", CONNECT_MS);
+  const externalButton = external.locator(".speech-button");
+  await externalButton.click();
+  await external.locator('.speech-button[data-state="playing"]').waitFor();
+  assert.deepEqual(Object.keys(submitted), ["text"]);
+  assert.match(submitted.text, /Flow/);
+  await externalButton.click();
+  await external.locator('.speech-button[data-state="idle"]').waitFor();
+  const externalActions = await external.evaluate(() => window.__speechLog.map((row) => row.action));
+  assert.ok(externalActions.includes("play"));
+  assert.ok(externalActions.includes("pause"));
+  externalMonitor.assertClean();
+  await external.close();
+
+  const malformed = await variants.newPage();
+  const malformedMonitor = monitorPage(malformed);
+  await routeSpeechBootstrap(malformed, { backend: "system", voice: "Zoe (Premium)" });
+  await malformed.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(malformed, "Chronology");
+  await assertOfflineObserved(malformed, "a malformed bootstrap is rejected");
+  assert.match(await malformed.locator(".status-copy").innerText(), /bootstrap response was invalid/);
+  assert.equal(await malformed.locator(".speech-button").count(), 0);
+  assert.match(await malformed.locator(".event.fault").innerText(), /bootstrap response was invalid/);
+  malformedMonitor.assertClean();
+  await malformed.close();
+
+  await variants.close();
+}

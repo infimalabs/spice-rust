@@ -22,21 +22,25 @@ import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs"
 import {
   assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
+} from "./canvas-endpoint-probes.mjs";
+import { assertLineageLifeIsolation } from "./canvas-lineage-life.mjs";
+import {
+  assertSpeechVariants,
+  assertSystemSpeech,
+  installBrowserSpeech,
+  installSocketControl,
+} from "./canvas-speech.mjs";
+import {
   assertGenerationOnline,
   assertHeldTaskCount,
   assertOfflineObserved,
-  assertLineageLifeIsolation,
   assertResidentLossObserved,
   assertResidentRestart,
-  assertSpeechVariants,
-  assertSystemSpeech,
   assertWaitReportDistinguishesLayout,
   assertWaitReporting,
   buildResident,
   chooseCanvasView,
   configureFixture,
-  installBrowserSpeech,
-  installSocketControl,
   journalExtent,
   monitorPage,
   reply,
