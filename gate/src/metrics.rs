@@ -29,9 +29,9 @@ pub use declaration::{
     RustDocMarkdownCitationAllowanceKind, STRUCTURAL_ARMS, STRUCTURAL_METRICS, ScopeDeclaration,
 };
 pub use evidence::{
-    EvidenceError, EvidenceState, FunctionKey, LatchBinding, MetricEvidence, MetricKey,
-    MetricMeasurement, MetricReport, ParserEvidence, RuleBinding, STRUCTURAL_METRIC_REPORT_VERSION,
-    StructuralArmEvidence,
+    EvidenceError, EvidenceState, FunctionKey, LatchBinding, MEASUREMENT_FINDING_LIMIT,
+    MetricEvidence, MetricFinding, MetricKey, MetricMeasurement, MetricReport, ParserEvidence,
+    RuleBinding, STRUCTURAL_METRIC_REPORT_VERSION, StructuralArmEvidence,
 };
 pub use parity::{
     MetricParity, ParityError, PredecessorMetricObservation, PredecessorMetricResult,

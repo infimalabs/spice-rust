@@ -1,8 +1,9 @@
 //! The refusal fold is bounded human guidance, never report authority.
 
 use super::*;
+use crate::battery::refusal_fold::REFUSAL_FOLD_SITE_LIMIT;
 use crate::metrics::{
-    EvidenceState as MetricState, LatchBinding, MetricEvidence, MetricId, MetricKey,
+    EvidenceState as MetricState, LatchBinding, MetricEvidence, MetricFinding, MetricId, MetricKey,
     MetricMeasurement, ParserEvidence, ParserId, RuleBinding, StructuralArmEvidence,
 };
 
@@ -131,6 +132,97 @@ fn metric_fold_names_every_breaching_key_value_and_bound() {
     assert_eq!(fold.omitted_findings(), 0);
 }
 
+/// The fold names where inside the refused file the breach actually is.
+///
+/// A metric key names a file and a value says how many times it offends; before
+/// the measurement carried findings the fold stopped exactly there, so the
+/// reader of a refusal was told `retired_names.rs` has one phantom citation and
+/// left to find it by reading. Both halves are asserted: an absence has no
+/// correct spelling to offer and must not invent one, while a case mismatch
+/// knows the tracked spelling and is useless without it.
+#[test]
+fn a_metric_fold_names_the_site_inside_the_file_it_refused() {
+    let report = markdown_breach_report(vec![
+        (
+            MetricId::RustDocMarkdownTargetAbsences,
+            "gate/tests/retired_names.rs",
+            vec![finding("gate/tests/retired_names.rs", 3, "NAMES.md", None)],
+        ),
+        (
+            MetricId::MarkdownLinkCaseMismatches,
+            "docs/guide.md",
+            vec![finding(
+                "docs/guide.md",
+                1,
+                "Target.md",
+                Some("docs/target.md"),
+            )],
+        ),
+    ]);
+    let fold = report.refusal_fold();
+    let text = fold.as_str();
+
+    assert!(
+        text.contains("  site path=\"gate/tests/retired_names.rs\" line=3 target=\"NAMES.md\"\n"),
+        "the fold names the citing line and the unresolved target: {text}"
+    );
+    assert!(
+        text.contains(concat!(
+            "  site path=\"docs/guide.md\" line=1 target=\"Target.md\" ",
+            "expected=\"docs/target.md\"\n"
+        )),
+        "a miscased link names the spelling written and the spelling tracked: {text}"
+    );
+    assert!(
+        !text.contains("sites-undisplayed"),
+        "a complete listing must not claim it was shortened: {text}"
+    );
+    assert_eq!(fold.omitted_findings(), 0);
+}
+
+/// One pathological file cannot spend the fold on itself, and says so.
+///
+/// The count of undisplayed sites is the whole point of the bound being visible:
+/// a reader who sees three sites and no counter reasonably concludes there were
+/// three, fixes them, and is refused again by the ones never shown.
+#[test]
+fn a_fold_shortens_a_long_site_listing_and_states_how_many_it_withheld() {
+    let planted = REFUSAL_FOLD_SITE_LIMIT + 2;
+    let findings: Vec<_> = (0..planted)
+        .map(|index| {
+            finding(
+                "docs/many.md",
+                index as u64 + 1,
+                &format!("Note{index}.md"),
+                Some(&format!("docs/note{index}.md")),
+            )
+        })
+        .collect();
+    let report = markdown_breach_report(vec![(
+        MetricId::MarkdownLinkCaseMismatches,
+        "docs/many.md",
+        findings,
+    )]);
+    let text = report.refusal_fold().as_str().to_owned();
+
+    assert_eq!(
+        text.matches("  site path=").count(),
+        REFUSAL_FOLD_SITE_LIMIT,
+        "the fold renders exactly the bounded listing: {text}"
+    );
+    assert!(
+        text.contains(&format!("value={planted}")),
+        "the count stays whole: shortening the listing is not shortening the breach: {text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "  sites-undisplayed={}\n",
+            planted - REFUSAL_FOLD_SITE_LIMIT
+        )),
+        "the fold states how many sites it withheld: {text}"
+    );
+}
+
 #[test]
 fn fold_limit_is_deterministic_and_reports_omissions() {
     let oversized_reason = "x".repeat(BATTERY_REFUSAL_FOLD_MAX_BYTES * 2);
@@ -213,6 +305,61 @@ fn metric_breach_report() -> BatteryReport {
         ],
     );
     replace_metric_arm(&mut evidence, GateId::MagicNumbers, vec![magic_row()]);
+    report_with_evidence(&fixture, evidence)
+}
+
+fn finding(path: &str, line: u64, target: &str, expected: Option<&str>) -> MetricFinding {
+    MetricFinding {
+        path: path.to_owned(),
+        line,
+        target: target.to_owned(),
+        expected: expected.map(str::to_owned),
+    }
+}
+
+/// A Markdown arm refusing on zero tolerance, with the sites it refused over.
+fn markdown_breach_report(rows: Vec<(MetricId, &str, Vec<MetricFinding>)>) -> BatteryReport {
+    let fixture = Fixture::new();
+    let mut evidence = fixtures::passing(&fixture.source);
+    let present: Vec<_> = rows.iter().map(|(metric, _, _)| *metric).collect();
+    let mut metrics: Vec<_> = rows
+        .into_iter()
+        .map(|(metric, path, findings)| {
+            let measurement = MetricMeasurement::new(
+                findings.len() as u64,
+                ParserEvidence::Native {
+                    parser: ParserId::MarkdownTrackedTargetsV2,
+                },
+            )
+            .with_findings(findings);
+            MetricEvidence::new(
+                metric,
+                MetricKey::path(path).expect("markdown fixture path key"),
+                MetricState::measured(measurement),
+            )
+            .expect("markdown fixture metric evidence")
+        })
+        .collect();
+    // The arm is complete or it is not an arm: a Markdown metric this fixture
+    // does not breach still has to say why it measured nothing.
+    for metric in [
+        MetricId::MarkdownLinkCaseMismatches,
+        MetricId::RustDocMarkdownTargetAbsences,
+    ] {
+        if !present.contains(&metric) {
+            metrics.push(
+                MetricEvidence::new(
+                    metric,
+                    MetricKey::Arm,
+                    MetricState::NotApplicable {
+                        reason: "fixture plants no breach for this metric".to_owned(),
+                    },
+                )
+                .expect("not-applicable markdown metric evidence"),
+            );
+        }
+    }
+    replace_metric_arm(&mut evidence, GateId::MarkdownLinks, metrics);
     report_with_evidence(&fixture, evidence)
 }
 

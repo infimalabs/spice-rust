@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gate::battery::{ArmEvidence, BatteryState};
 use gate::metrics::{
-    EvidenceState, LatchBinding, MagicFinding, MetricEvidence, MetricId, MetricKey,
+    EvidenceState, LatchBinding, MagicFinding, MetricEvidence, MetricFinding, MetricId, MetricKey,
     MetricMeasurement, MetricParity, MetricReport, MetricStateBinding, MetricUnit, ParseError,
     ParserEvidence, ParserId, PredecessorMetricObservation, PredecessorMetricResult,
     RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, ResolvedMetricRule, RuleBinding,
@@ -734,12 +734,25 @@ fn rust_doc_citation_arm_state(scan: &RustDocMarkdownCitationScan) -> BatterySta
         MetricEvidence::new(
             MetricId::RustDocMarkdownTargetAbsences,
             MetricKey::path("proof/src/config.rs").expect("citation metric path"),
-            EvidenceState::measured(MetricMeasurement::new(
-                scan.findings().len() as u64,
-                ParserEvidence::Native {
-                    parser: ParserId::MarkdownTrackedTargetsV2,
-                },
-            )),
+            EvidenceState::measured(
+                MetricMeasurement::new(
+                    scan.findings().len() as u64,
+                    ParserEvidence::Native {
+                        parser: ParserId::MarkdownTrackedTargetsV2,
+                    },
+                )
+                .with_findings(
+                    scan.findings()
+                        .iter()
+                        .map(|finding| MetricFinding {
+                            path: finding.source_path().to_owned(),
+                            line: finding.line(),
+                            target: finding.target_path().to_owned(),
+                            expected: None,
+                        })
+                        .collect(),
+                ),
+            ),
         )
         .expect("citation metric fixture evidence"),
     ];
@@ -1327,6 +1340,14 @@ fn measured_evidence(metric: MetricId) -> MetricEvidence {
                     parser: ParserId::MarkdownTrackedTargetsV2,
                 },
             )
+            // The one breach this fixture counts has to name itself, because a
+            // zero-tolerance measurement that names nothing is not encodable.
+            .with_findings(vec![MetricFinding {
+                path: "docs/vocabulary.md".to_owned(),
+                line: 1,
+                target: "docs/Vocabulary.md".to_owned(),
+                expected: Some("docs/vocabulary.md".to_owned()),
+            }])
         }
     };
     MetricEvidence::new(metric, key, EvidenceState::measured(measurement)).unwrap()

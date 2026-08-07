@@ -9,13 +9,22 @@ use std::fmt;
 
 use super::family_evidence::metric_terminal;
 use super::{ArmEvidence, BatteryArmResult, BatteryReport};
-use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricKey};
+use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricKey, MetricMeasurement};
 
 /// Hard byte limit for one human-facing refusal fold.
 pub const BATTERY_REFUSAL_FOLD_MAX_BYTES: usize = 65_536;
 
 /// Space retained whenever truncation is necessary for exact omission counts.
 const TRUNCATION_FOOTER_RESERVE: usize = 256;
+
+/// Sites one refusing measurement names inside the file it already named.
+///
+/// Deliberately far below the report's own listing bound: the canonical report
+/// carries the listing a tool reads, this carries the handful a human needs to
+/// know where to start looking. Rendering every carried site would let one
+/// pathological file spend the whole fold budget and push other refusing arms
+/// out of the text entirely, which trades a known blind spot for a worse one.
+pub(super) const REFUSAL_FOLD_SITE_LIMIT: usize = 3;
 
 /// One bounded, non-authoritative rendering of a canonical report refusal.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -275,7 +284,38 @@ fn metric_finding(result: &BatteryArmResult, metric: &MetricEvidence) -> Option<
         }
     }
     finding.push('\n');
+    if let MetricState::Measured { measurement } = metric.state() {
+        finding.push_str(&finding_sites(measurement));
+    }
     Some(finding)
+}
+
+/// Name where inside the file the breach sits, one bounded line per site.
+///
+/// A metric key names a file; before this the fold stopped there and left the
+/// reader to search it. The undisplayed count is stated rather than implied,
+/// because a reader who cannot tell a complete listing from a shortened one
+/// will read three sites as the whole breach and stop early.
+fn finding_sites(measurement: &MetricMeasurement) -> String {
+    let findings = measurement.findings();
+    let mut sites = String::new();
+    for finding in findings.iter().take(REFUSAL_FOLD_SITE_LIMIT) {
+        sites.push_str(&format!(
+            "  site path={} line={} target={}",
+            quoted(&finding.path),
+            finding.line,
+            quoted(&finding.target)
+        ));
+        if let Some(expected) = finding.expected.as_deref() {
+            sites.push_str(&format!(" expected={}", quoted(expected)));
+        }
+        sites.push('\n');
+    }
+    let undisplayed = findings.len().saturating_sub(REFUSAL_FOLD_SITE_LIMIT);
+    if undisplayed > 0 {
+        sites.push_str(&format!("  sites-undisplayed={undisplayed}\n"));
+    }
+    sites
 }
 
 fn metric_key(key: &MetricKey) -> String {
