@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -237,8 +238,15 @@ fn find_codex_thread(thread: &str, environment: &Environment) -> Result<PathBuf,
     } else {
         state_failure = Some(format!("missing Codex state database {}", state.display()));
     }
-    if let Some(path) = find_named_transcript(&root.join("sessions"), thread) {
-        return Ok(path);
+    match find_named_transcript(&root.join("sessions"), thread) {
+        Ok(Some(path)) => return Ok(path),
+        Ok(None) => {}
+        Err(error) => {
+            return Err(state_failure.map_or_else(
+                || error.to_string(),
+                |failure| format!("{failure}; {error}"),
+            ));
+        }
     }
     Err(state_failure.unwrap_or_else(|| {
         format!("Codex thread {thread} is absent from state and session storage")
@@ -269,34 +277,120 @@ fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, Strin
 
 fn find_claude_thread(thread: &str, environment: &Environment) -> Result<PathBuf, String> {
     let root = environment_root(environment.claude_home.as_deref(), environment, ".claude")?;
-    find_named_transcript(&root.join("projects"), thread).ok_or_else(|| {
-        format!(
-            "Claude thread {thread} is absent beneath {}",
-            root.join("projects").display()
-        )
-    })
+    let projects = root.join("projects");
+    find_named_transcript(&projects, thread)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            format!(
+                "Claude thread {thread} is absent beneath {}",
+                projects.display()
+            )
+        })
 }
 
-fn find_named_transcript(root: &Path, thread: &str) -> Option<PathBuf> {
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum TranscriptSearchIssue {
+    Directory { path: PathBuf, detail: String },
+    Entry { path: PathBuf, detail: String },
+    FileType { path: PathBuf, detail: String },
+    Depth { path: PathBuf },
+}
+
+impl fmt::Display for TranscriptSearchIssue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Directory { path, detail } => {
+                write!(
+                    formatter,
+                    "could not read directory {}: {detail}",
+                    path.display()
+                )
+            }
+            Self::Entry { path, detail } => write!(
+                formatter,
+                "could not read an entry beneath {}: {detail}",
+                path.display()
+            ),
+            Self::FileType { path, detail } => {
+                write!(formatter, "could not inspect {}: {detail}", path.display())
+            }
+            Self::Depth { path } => write!(
+                formatter,
+                "search depth {SEARCH_DEPTH} was reached at {}",
+                path.display()
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct TranscriptSearchError {
+    issues: Vec<TranscriptSearchIssue>,
+}
+
+impl fmt::Display for TranscriptSearchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("transcript search was incomplete: ")?;
+        for (index, issue) in self.issues.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str("; ")?;
+            }
+            write!(formatter, "{issue}")?;
+        }
+        Ok(())
+    }
+}
+
+fn find_named_transcript(
+    root: &Path,
+    thread: &str,
+) -> Result<Option<PathBuf>, TranscriptSearchError> {
     let mut pending = vec![(root.to_path_buf(), 0_usize)];
     let mut matches = Vec::new();
+    let mut issues = Vec::new();
     while let Some((directory, depth)) = pending.pop() {
-        if depth > SEARCH_DEPTH {
-            continue;
-        }
-        let Ok(entries) = fs::read_dir(directory) else {
-            continue;
-        };
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            let Ok(kind) = entry.file_type() else {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) => {
+                issues.push(TranscriptSearchIssue::Directory {
+                    path: directory,
+                    detail: error.to_string(),
+                });
                 continue;
+            }
+        };
+        let mut readable = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(entry) => readable.push(entry),
+                Err(error) => issues.push(TranscriptSearchIssue::Entry {
+                    path: directory.clone(),
+                    detail: error.to_string(),
+                }),
+            }
+        }
+        readable.sort_by_key(fs::DirEntry::file_name);
+        for entry in readable {
+            let path = entry.path();
+            let kind = match entry.file_type() {
+                Ok(kind) => kind,
+                Err(error) => {
+                    issues.push(TranscriptSearchIssue::FileType {
+                        path,
+                        detail: error.to_string(),
+                    });
+                    continue;
+                }
             };
             if kind.is_symlink() {
                 continue;
             }
             if kind.is_dir() {
-                pending.push((path, depth + 1));
+                if depth == SEARCH_DEPTH {
+                    issues.push(TranscriptSearchIssue::Depth { path });
+                } else {
+                    pending.push((path, depth + 1));
+                }
                 continue;
             }
             let name = entry.file_name().to_string_lossy().replace('-', "");
@@ -305,8 +399,12 @@ fn find_named_transcript(root: &Path, thread: &str) -> Option<PathBuf> {
             }
         }
     }
+    issues.sort();
+    if !issues.is_empty() {
+        return Err(TranscriptSearchError { issues });
+    }
     matches.sort();
-    matches.into_iter().next_back()
+    Ok(matches.into_iter().next_back())
 }
 
 fn environment_root(
@@ -352,5 +450,158 @@ fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Refusal {
         expected: Some("immutable transcript evidence readable as JSONL".to_owned()),
         observed,
         remedy: remedy.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::{
+        Environment, SEARCH_DEPTH, find_claude_thread, find_codex_thread, find_named_transcript,
+    };
+
+    const THREAD: &str = "0123456789abcdef0123456789abcdef";
+    static FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            let serial = FIXTURE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "spice-session-source-{}-{serial}-{label}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("session source fixture root");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).expect("remove session source fixture");
+        }
+    }
+
+    fn claude_environment(home: &Path) -> Environment {
+        Environment {
+            codex_thread: None,
+            claude_session: None,
+            preferred_vendor: None,
+            codex_home: None,
+            claude_home: Some(home.to_path_buf()),
+            home: None,
+        }
+    }
+
+    fn codex_environment(home: &Path) -> Environment {
+        Environment {
+            codex_thread: None,
+            claude_session: None,
+            preferred_vendor: None,
+            codex_home: Some(home.to_path_buf()),
+            claude_home: None,
+            home: None,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_directory_is_not_reported_as_an_absent_claude_thread() {
+        let scratch = Scratch::new("unreadable");
+        let projects = scratch.path().join("projects");
+        let denied = projects.join("denied");
+        fs::create_dir_all(&denied).expect("denied branch exists");
+        let original = fs::metadata(&denied)
+            .expect("denied branch metadata")
+            .permissions();
+        let mut blocked = original.clone();
+        blocked.set_mode(0o0);
+        fs::set_permissions(&denied, blocked).expect("deny fixture branch reads");
+
+        let read_result = fs::read_dir(&denied);
+        let lookup = find_claude_thread(THREAD, &claude_environment(scratch.path()));
+        fs::set_permissions(&denied, original).expect("restore fixture permissions");
+        let read_error = read_result
+            .expect_err("fixture must force a real read_dir failure")
+            .to_string();
+        let error = lookup.expect_err("an incomplete walk cannot claim absence");
+        assert!(error.contains(&denied.display().to_string()), "{error}");
+        assert!(error.contains(&read_error), "{error}");
+        assert!(!error.contains(" absent "), "{error}");
+    }
+
+    #[test]
+    fn directory_beyond_the_search_bound_is_not_reported_as_absence() {
+        let scratch = Scratch::new("depth");
+        let projects = scratch.path().join("projects");
+        let mut directory = projects.clone();
+        for depth in 0..=SEARCH_DEPTH {
+            directory = directory.join(format!("level-{depth}"));
+        }
+        fs::create_dir_all(&directory).expect("deep transcript branch exists");
+        fs::write(directory.join(format!("thread-{THREAD}.jsonl")), b"\n")
+            .expect("deep transcript exists");
+
+        let error = find_claude_thread(THREAD, &claude_environment(scratch.path()))
+            .expect_err("a bounded-out hit cannot become absence");
+
+        assert!(
+            error.contains(&format!("search depth {SEARCH_DEPTH} was reached")),
+            "{error}"
+        );
+        assert!(error.contains(&directory.display().to_string()), "{error}");
+        assert!(!error.contains(" absent "), "{error}");
+    }
+
+    #[test]
+    fn codex_keeps_state_failure_beside_the_incomplete_session_path() {
+        let scratch = Scratch::new("codex-depth");
+        let sessions = scratch.path().join("sessions");
+        let mut directory = sessions.clone();
+        for depth in 0..=SEARCH_DEPTH {
+            directory = directory.join(format!("level-{depth}"));
+        }
+        fs::create_dir_all(&directory).expect("deep Codex session branch exists");
+
+        let error = find_codex_thread(THREAD, &codex_environment(scratch.path()))
+            .expect_err("Codex cannot erase either failed lookup path");
+
+        assert!(
+            error.contains(&scratch.path().join("state_5.sqlite").display().to_string()),
+            "{error}"
+        );
+        assert!(error.contains(&directory.display().to_string()), "{error}");
+        assert!(!error.contains(" absent "), "{error}");
+    }
+
+    #[test]
+    fn complete_walk_distinguishes_empty_from_newest_match() {
+        let scratch = Scratch::new("complete");
+        let root = scratch.path().join("sessions");
+        fs::create_dir_all(&root).expect("session root exists");
+        assert_eq!(
+            find_named_transcript(&root, THREAD).expect("empty complete walk"),
+            None
+        );
+
+        let older = root.join(format!("a-{THREAD}.jsonl"));
+        let newest = root.join(format!("z-{THREAD}.jsonl.gz"));
+        fs::write(&older, b"\n").expect("older transcript exists");
+        fs::write(&newest, b"\n").expect("newest transcript exists");
+        assert_eq!(
+            find_named_transcript(&root, THREAD).expect("complete matching walk"),
+            Some(newest)
+        );
     }
 }
