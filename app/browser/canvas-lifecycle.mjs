@@ -158,15 +158,34 @@ export function ownFixture({ fixture, linkedRoot }) {
       // Read the ledger before anything is removed: it lives inside the
       // fixture directory, and it is the only record of what to reap.
       const vendors = await recordedVendorPids(fixture);
-      await stopOwnedResident(owner);
-      await reapRecordedVendors(vendors);
-      await rm(fixture, { recursive: true, force: true });
-      if (linkedRoot) await rm(linkedRoot, { recursive: true, force: true });
+      await attempt(() => stopOwnedResident(owner), "could not stop its resident");
+      await attempt(() => reapRecordedVendors(vendors), "could not reap its stand-ins");
+      await attempt(() => rm(fixture, { recursive: true, force: true }), `left ${fixture}`);
+      if (linkedRoot) {
+        await attempt(() => rm(linkedRoot, { recursive: true, force: true }), `left ${linkedRoot}`);
+      }
     },
   };
   outstanding.add(owner);
   installHandlers();
   return owner;
+}
+
+/// Run one teardown step, reporting rather than raising if it cannot finish.
+///
+/// Two properties depend on this. Steps stay independent: a resident that
+/// refuses to stop must not skip the reap that ends the stand-ins it left
+/// behind, nor the directories neither of them owns. And a step that fails
+/// stays non-fatal: teardown runs inside the caller's `finally`, so throwing
+/// would report trouble here in place of the assertion that sent us here. The
+/// failure still goes to stderr, where it is visible without being mistaken
+/// for the reason the run ended.
+async function attempt(step, note) {
+  try {
+    await step();
+  } catch (error) {
+    process.stderr.write(`canvas fixture ${note}: ${error}\n`);
+  }
 }
 
 /// Ask the resident to shut down, and escalate against it alone if it will not.
@@ -191,11 +210,12 @@ async function stopOwnedResident(owner) {
   }
 }
 
-/// End the recorded stand-ins that outlived the resident's own shutdown.
+/// End the recorded stand-ins, which the resident's own shutdown leaves running.
 ///
-/// On the graceful path this finds nothing left to do, which is the point: it
-/// is a backstop for the resident having been killed, having crashed, or never
-/// having reached the occupants it launched.
+/// Not a backstop for the killed-resident case alone, though it covers that too.
+/// Deleting this step reds the *failure* scenario, whose resident is asked to
+/// stop gracefully and does: a completed `spice down` returns with these
+/// stand-ins still alive, so this is what actually ends them on every path.
 async function reapRecordedVendors(vendors) {
   const living = () => vendors.filter(alive);
   if (living().length === 0) return;
@@ -226,9 +246,11 @@ function withBound(work, bound) {
 function onTermination(signal) {
   return () => {
     void (async () => {
-      // A cleanup that throws here must not become an unhandled rejection: that
-      // would replace the interruption the caller asked for with a crash, and
-      // would skip the owners this one was standing in front of.
+      // `cleanup` promises not to throw, and this holds it to that promise
+      // rather than trusting it. Nothing catches a rejection thrown from a
+      // signal handler: it would become an unhandled rejection, replacing the
+      // interruption the caller asked for with a crash, and abandoning the
+      // owners queued behind this one at the exact moment they must be cleaned.
       for (const owner of [...outstanding]) {
         try {
           await owner.cleanup();
