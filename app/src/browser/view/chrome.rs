@@ -24,15 +24,24 @@ pub(super) fn render_command_bar(
     surface: &SurfaceData,
     cursor: &str,
     sender: &SenderHandle,
+    submissions: &SubmissionStatus,
 ) -> Html {
     let runtime = surface.as_ref();
     if **mosaic {
-        return render_mosaic_command_bar(axis, mosaic, active_axis, runtime, cursor, sender);
+        return render_mosaic_command_bar(
+            axis,
+            mosaic,
+            active_axis,
+            runtime,
+            cursor,
+            sender,
+            submissions,
+        );
     }
     html! {
         <header class="commandbar">
             <div class="brand">
-                {render_agent_roster(runtime)}
+                {render_agent_roster(runtime, submissions)}
                 <span class="brand-name">{"Spice Canvas"}</span>
             </div>
             <nav class="pills" aria-label="Canvas views">
@@ -40,7 +49,7 @@ pub(super) fn render_command_bar(
                     "Agents",
                     "Converse with seated agents",
                     **mosaic,
-                    watchband::badge(waiting_directives(runtime)),
+                    watchband::badge(waiting_directives(runtime, submissions)),
                     {
                         let mosaic = mosaic.clone();
                         Callback::from(move |_| mosaic.set(true))
@@ -103,6 +112,7 @@ fn render_mosaic_command_bar(
     runtime: Option<&CanvasRuntime>,
     cursor: &str,
     sender: &SenderHandle,
+    submissions: &SubmissionStatus,
 ) -> Html {
     let task_pills = task_pills(runtime);
     html! {
@@ -146,7 +156,7 @@ fn render_mosaic_command_bar(
                     "Agents",
                     "Converse with seated agents",
                     **mosaic,
-                    watchband::badge(waiting_directives(runtime)),
+                    watchband::badge(waiting_directives(runtime, submissions)),
                     {
                         let mosaic = mosaic.clone();
                         Callback::from(move |_| mosaic.set(true))
@@ -214,7 +224,7 @@ fn render_canvas_menu(
     }
 }
 
-fn render_agent_roster(runtime: Option<&CanvasRuntime>) -> Html {
+fn render_agent_roster(runtime: Option<&CanvasRuntime>, submissions: &SubmissionStatus) -> Html {
     let members = runtime
         .and_then(|runtime| {
             let lanes = runtime.lanes()?;
@@ -228,10 +238,12 @@ fn render_agent_roster(runtime: Option<&CanvasRuntime>) -> Html {
                     .iter()
                     .flat_map(|lineage| lineage.members.iter())
                     .map(|member| {
-                        let pending = waiting
+                        let backend = waiting
                             .iter()
                             .find(|row| row.lane == member.lane)
-                            .map_or(0, |row| row.pending.len());
+                            .map(|row| row.pending.as_slice())
+                            .unwrap_or(&[]);
+                        let pending = submissions.pending(member.lane, backend);
                         (member, pending)
                     })
                     .collect::<Vec<_>>(),
@@ -344,10 +356,12 @@ fn render_pill(
 }
 
 /// Directives waiting across every lane, which is what the feed is for.
-fn waiting_directives(runtime: Option<&CanvasRuntime>) -> usize {
-    runtime.and_then(CanvasRuntime::inbox).map_or(0, |inbox| {
-        inbox.lanes.iter().map(|lane| lane.pending.len()).sum()
-    })
+fn waiting_directives(runtime: Option<&CanvasRuntime>, submissions: &SubmissionStatus) -> usize {
+    let waiting = runtime
+        .and_then(CanvasRuntime::inbox)
+        .map(|inbox| inbox.lanes.as_slice())
+        .unwrap_or(&[]);
+    submissions.total_pending(waiting.iter().map(|row| (row.lane, row.pending.as_slice())))
 }
 
 /// What one axis currently counts, or zero when its answer has not arrived.

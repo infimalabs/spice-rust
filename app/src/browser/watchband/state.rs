@@ -50,9 +50,9 @@ pub(in crate::browser) enum ComposerAction {
     Clear {
         lane: String,
     },
-    Restore {
+    RestoreAll {
         lane: String,
-        draft: ComposerDraft,
+        drafts: Vec<ComposerDraft>,
     },
 }
 
@@ -103,8 +103,8 @@ impl Reducible for ComposerDrafts {
             ComposerAction::Clear { lane } => {
                 next.0.clear(&lane);
             }
-            ComposerAction::Restore { lane, draft } => {
-                next.0.restore(lane, draft);
+            ComposerAction::RestoreAll { lane, drafts } => {
+                next.0.restore_all(lane, drafts.into_iter());
             }
         }
         Rc::new(next)
@@ -114,5 +114,9 @@ impl Reducible for ComposerDrafts {
 impl ComposerDrafts {
     pub(super) fn get(&self, lane: &str) -> Option<&ComposerDraft> {
         self.0.get(lane)
+    }
+
+    pub(in crate::browser) fn is_unsafe(&self) -> bool {
+        self.0.is_unsafe()
     }
 }
