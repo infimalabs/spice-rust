@@ -850,6 +850,31 @@ fn publish_correction(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
+/// One decided claim and the board snapshot it was decided against.
+///
+/// The allocator's re-read guard exists precisely because deciding a claim and
+/// writing it down are separated in time. Naming that separation is what makes
+/// the hazard expressible: everything `commit_claim` writes, the guard's
+/// observation included, is derived from the one snapshot `claim_plan` read,
+/// never from a second read taken later. This is the shape `DocPlan` already
+/// runs, where the plan carries the snapshot its decision was made against and
+/// the later steps consume it.
+struct ClaimPlan {
+    snapshot: ValidatedSnapshot,
+    selected: Entry,
+    task: TaskHandle,
+    possession: Possession,
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+    at: Instant,
+    expiry: Instant,
+    maximum: Instant,
+    git: Option<GitBoundary>,
+    source: body::SourceBoundary,
+    origin: wire::Origin,
+    next: Option<Box<str>>,
+}
+
 fn claim_win(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -858,48 +883,43 @@ fn claim_win(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let possession = match possession_rule(win) {
-        Ok(possession) => possession,
+    let plan = match claim_plan(bus, command, win, repository, projects, allocation) {
+        Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
-    let snapshot = match validated_snapshot(
+    commit_claim(bus, command, win, projects, plan)
+}
+
+/// Decide the claim against one board read.
+fn claim_plan(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    win: &ClaimWin,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Result<ClaimPlan, Outcome<CommandAnswer>> {
+    let possession = possession_rule(win)?;
+    let snapshot = validated_snapshot(
         bus,
         command.actor().clone(),
         projects,
         allocation,
-    ) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
-    let selected = match claim_selection(&snapshot, command, possession) {
-        Ok(selected) => selected,
-        Err(outcome) => return outcome,
-    };
+    )?;
+    let selected = claim_selection(&snapshot, command, possession)?.clone();
     let task = selected.statement().handle.clone();
-    let (lane, occupant) = match claim_residency(command) {
-        Ok(seat) => seat,
-        Err(outcome) => return outcome,
-    };
-    let (at, expiry, maximum) = match claim_deadlines() {
-        Ok(deadlines) => deadlines,
-        Err(outcome) => return outcome,
-    };
-    let git = match claim_git_boundary(
+    let (lane, occupant) = claim_residency(command)?;
+    let (at, expiry, maximum) = claim_deadlines()?;
+    let git = claim_git_boundary(
         repository,
         &snapshot,
         command,
         possession.captures(),
-    ) {
-        Ok(git) => git,
-        Err(outcome) => return outcome,
-    };
-    let source = match claim_source_boundary(bus, &lane) {
-        Ok(source) => source,
-        Err(outcome) => return outcome,
-    };
+    )?;
+    let source = claim_source_boundary(bus, &lane)?;
     let next = projected_claim_next_action(
         &snapshot,
-        selected,
+        &selected,
         command,
         lane,
         occupant,
@@ -908,10 +928,47 @@ fn claim_win(
         maximum,
         projects,
     );
-    let origin = match task_origin(&task) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
-    };
+    let origin = task_origin(&task)?;
+    Ok(ClaimPlan {
+        snapshot,
+        selected,
+        task,
+        possession,
+        lane,
+        occupant,
+        at,
+        expiry,
+        maximum,
+        git,
+        source,
+        origin,
+        next,
+    })
+}
+
+/// Write the decided claim down under the guard that re-reads its snapshot.
+fn commit_claim(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    win: &ClaimWin,
+    projects: &ProjectPolicy,
+    plan: ClaimPlan,
+) -> Outcome<CommandAnswer> {
+    let ClaimPlan {
+        snapshot,
+        selected,
+        task,
+        possession,
+        lane,
+        occupant,
+        at,
+        expiry,
+        maximum,
+        git,
+        source,
+        origin,
+        next,
+    } = plan;
     let mut write = JournalWrite::new(
         command.actor().clone(),
         origin,
@@ -929,7 +986,7 @@ fn claim_win(
     if let Err(outcome) = append_claim_heads(
         &mut write,
         command,
-        selected,
+        &selected,
         &task,
         lane,
         occupant,
@@ -944,7 +1001,7 @@ fn claim_win(
     let answer = wire::intent::ClaimAnswer {
         task: task.clone(),
         holder: command.actor().clone(),
-        warnings: board::claim_overlaps(selected, &snapshot.entries)
+        warnings: board::claim_overlaps(&selected, &snapshot.entries)
             .into_iter()
             .map(|overlap| wire::intent::ClaimWarning {
                 task: overlap.task,
