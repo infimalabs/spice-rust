@@ -580,6 +580,96 @@ fn active_claim_is_only_admitted_from_matching_coherent_live_heads() {
 }
 
 #[test]
+fn active_claim_refuses_a_lease_whose_start_has_not_arrived() {
+    let entry = claimed_entry("BOARD-a1", "todo");
+
+    // The sibling case bounds the lease from above. This one bounds it from
+    // below, and the two are separate guards rather than one interval test: a
+    // claim written ahead of its start is a lease nobody holds yet, and the
+    // refusal carries the instant it begins so the caller need not read it back
+    // off a head it was just refused possession of.
+    assert!(matches!(
+        Active::admit(&entry, &Actor::Spice, instant("2026-08-01T05:59:59.999Z")),
+        Err(ClaimRefusal::NotStarted { start }) if start == instant("2026-08-01T06:00:00.000Z")
+    ));
+
+    // The boundary is inclusive at the start instant, which fixes the
+    // comparison in both directions. A guard reading `now <= lease.start` would
+    // refuse this admission, and one reading `now < lease.renewal` would refuse
+    // it as well.
+    Active::admit(&entry, &Actor::Spice, instant("2026-08-01T06:00:00.000Z"))
+        .expect("a lease is held from its start instant");
+}
+
+#[test]
+fn active_claim_refuses_a_split_epoch_and_each_out_of_order_lease_bound() {
+    let live = instant("2026-08-01T06:05:00.000Z");
+
+    // The epoch pair is what binds a lease to the claim that opened it. A lease
+    // renewed under one epoch cannot vouch for a claim recorded under another,
+    // so the refusal names both sides rather than reporting a bare disagreement.
+    let mut divergent = claim(ClaimDisposition::Active);
+    divergent.epoch = uuid("019fbbde-5105-75a3-a76a-722afde1e411");
+    let split = admitted(
+        statement("BOARD-a1"),
+        workflow("todo"),
+        Some(divergent),
+        Some(lease()),
+    )
+    .expect("valid heads");
+    assert!(matches!(
+        Active::admit(&split, &Actor::Spice, live),
+        Err(ClaimRefusal::Epoch {
+            claim: recorded,
+            lease: vouching,
+        }) if recorded == uuid("019fbbde-5105-75a3-a76a-722afde1e411")
+            && vouching == uuid("019fbbde-5105-75a3-a76a-722afde1e410")
+    ));
+
+    // Coherence is a chain of three inequalities, and one case can only prove
+    // one link. Each lease below breaks exactly one and satisfies the other two,
+    // so no surviving comparison can carry the refusal for its neighbours.
+    for (broken, incoherent) in [
+        (
+            "renewal before start",
+            LeaseHead {
+                renewal: instant("2026-08-01T05:59:00.000Z"),
+                ..lease()
+            },
+        ),
+        (
+            "renewal after expiry",
+            LeaseHead {
+                renewal: instant("2026-08-01T06:11:00.000Z"),
+                ..lease()
+            },
+        ),
+        (
+            "expiry past maximum",
+            LeaseHead {
+                expiry: instant("2026-08-01T06:21:00.000Z"),
+                ..lease()
+            },
+        ),
+    ] {
+        let entry = admitted(
+            statement("BOARD-a1"),
+            workflow("todo"),
+            Some(claim(ClaimDisposition::Active)),
+            Some(incoherent),
+        )
+        .expect("valid heads");
+        assert!(
+            matches!(
+                Active::admit(&entry, &Actor::Spice, live),
+                Err(ClaimRefusal::IncoherentLease)
+            ),
+            "{broken} leaves the lease incoherent",
+        );
+    }
+}
+
+#[test]
 fn workflow_advances_only_one_declared_station_and_completes_only_the_last() {
     let todo = claimed_entry("BOARD-a1", "todo");
     let active = Active::admit(&todo, &Actor::Spice, instant("2026-08-01T06:05:00.000Z"))
