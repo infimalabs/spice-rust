@@ -11,6 +11,7 @@ mod execution;
 mod family_evidence;
 mod manifest_contract;
 mod receipt;
+mod refusal_fold;
 #[cfg(not(target_arch = "wasm32"))]
 mod repository_executor;
 
@@ -40,6 +41,7 @@ pub use receipt::{
     BatteryReceipt, GATE_BATTERY_RECEIPT_VERSION, ReceiptRefusal, UnsupportedReceipt,
     supported_pairs,
 };
+pub use refusal_fold::{BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryRefusalFold};
 #[cfg(not(target_arch = "wasm32"))]
 pub use repository_executor::RepositoryExecutionEvent;
 
