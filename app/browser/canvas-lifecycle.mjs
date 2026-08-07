@@ -31,6 +31,7 @@ import { once } from "node:events";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { childExited } from "./canvas-child-state.mjs";
 import { VENDOR_PID_LEDGER, stopResident } from "./canvas-fixture.mjs";
 
 /// Signals a spec process can be asked to stop by and still clean up.
@@ -126,7 +127,9 @@ export async function recordedVendorPids(fixture) {
 /// Returns the owner rather than taking a callback so that a scenario can keep
 /// using its existing `try`/`finally` shape: the only requirement is that
 /// `cleanup` is reached, and a signal arriving before that reaches it instead.
-export function ownFixture({ fixture, linkedRoot }) {
+/// The resident stop operation is injectable so focused checks can observe this
+/// boundary without replacing the real child whose state it decides from.
+export function ownFixture({ fixture, linkedRoot, stop = stopResident }) {
   const owner = {
     fixture,
     linkedRoot,
@@ -158,7 +161,7 @@ export function ownFixture({ fixture, linkedRoot }) {
       // Read the ledger before anything is removed: it lives inside the
       // fixture directory, and it is the only record of what to reap.
       const vendors = await recordedVendorPids(fixture);
-      await attempt(() => stopOwnedResident(owner), "could not stop its resident");
+      await attempt(() => stopOwnedResident(owner, stop), "could not stop its resident");
       await attempt(() => reapRecordedVendors(vendors), "could not reap its stand-ins");
       await attempt(() => rm(fixture, { recursive: true, force: true }), `left ${fixture}`);
       if (linkedRoot) {
@@ -189,22 +192,22 @@ async function attempt(step, note) {
 }
 
 /// Ask the resident to shut down, and escalate against it alone if it will not.
-async function stopOwnedResident(owner) {
+async function stopOwnedResident(owner, stop) {
   const resident = owner.resident;
-  if (!resident || resident.child.exitCode !== null) return;
+  if (!resident || childExited(resident.child)) return;
   try {
-    await withBound(stopResident(owner.fixture, resident), GRACEFUL_MS);
+    await withBound(stop(owner.fixture, resident), GRACEFUL_MS);
   } catch {
     // A resident that cannot be asked to stop is escalated against below. The
     // reason it refused is not actionable here and must not mask the caller's.
   }
-  if (resident.child.exitCode !== null) return;
+  if (childExited(resident.child)) return;
   for (const signal of ["SIGTERM", "SIGKILL"]) {
     const exited = once(resident.child, "exit");
     resident.child.kill(signal);
     const stopped = await Promise.race([
       exited.then(() => true),
-      settles(() => resident.child.exitCode !== null, ESCALATION_MS),
+      settles(() => childExited(resident.child), ESCALATION_MS),
     ]);
     if (stopped) return;
   }

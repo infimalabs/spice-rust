@@ -27,6 +27,7 @@ import {
   toolResultRecord,
   triggeredActivityRecord,
 } from "./canvas-activity-records.mjs";
+import { childExited } from "./canvas-child-state.mjs";
 import { describeConnection, describeResident } from "./canvas-endpoint-probes.mjs";
 
 export { describeConnection, describeResident, TOOL_ACTIVITY_TEXT };
@@ -133,7 +134,7 @@ export async function startResident(fixture) {
     } catch (readError) {
       residue = [`<unreadable: ${readError}>`];
     }
-    if (child.exitCode === null) {
+    if (!childExited(child)) {
       const exited = once(child, "exit");
       child.kill("SIGKILL");
       await exited;
@@ -602,7 +603,7 @@ export async function chooseCanvasView(page, name) {
 }
 
 export async function stopResident(fixture, resident) {
-  const exited = resident.child.exitCode === null
+  const exited = !childExited(resident.child)
     ? once(resident.child, "exit")
     : Promise.resolve();
   await execute(binary, ["--json", "down"], { cwd: fixture, timeout: 10_000 });
