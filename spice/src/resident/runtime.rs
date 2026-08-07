@@ -125,13 +125,17 @@ struct ResidentLock {
 
 impl ResidentLock {
     fn acquire(paths: &RuntimePaths) -> CommandResult<Self> {
+        Self::acquire_with(paths, || {})
+    }
+
+    fn acquire_with(paths: &RuntimePaths, after_contention: impl FnMut()) -> CommandResult<Self> {
         fs::create_dir_all(&paths.runtime).map_err(|error| {
             environment_fault("resident::runtime-unavailable", &error.to_string())
         })?;
         let name = LockName::new("resident").expect("resident is a non-empty lock name");
         let lock = LockFile::new(name, &paths.resident);
         match lock
-            .try_acquire()
+            .try_acquire_with(after_contention)
             .map_err(|error| environment_fault("resident::lock-unavailable", &error.to_string()))?
         {
             Acquisition::Acquired(possession) => {
