@@ -21,6 +21,7 @@ fn task_add(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let requested = add.project.as_deref().unwrap_or("task.private");
     let project = match projects.admit_manual_creation(requested) {
@@ -38,7 +39,7 @@ fn task_add(
             );
         }
     };
-    create_task(bus, command, add, project, add.clone(), projects)
+    create_task(bus, command, add, project, add.clone(), projects, allocation)
 }
 
 fn task_oops_add(
@@ -46,6 +47,7 @@ fn task_oops_add(
     command: &wire::AdmittedCommand,
     add: &TaskOopsAdd,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let project = match projects.admit_system_creation(&SystemTaskRoute::oops()) {
         Ok(project) => project,
@@ -65,7 +67,15 @@ fn task_oops_add(
         flow: None,
         depends: Vec::new(),
     };
-    create_task(bus, command, &normalized, project, add.clone(), projects)
+    create_task(
+        bus,
+        command,
+        &normalized,
+        project,
+        add.clone(),
+        projects,
+        allocation,
+    )
 }
 
 fn create_task<B: serde::Serialize>(
@@ -75,12 +85,13 @@ fn create_task<B: serde::Serialize>(
     project: Project,
     request_body: B,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let prepared = match prepare_task(command, add, &project, projects) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -241,8 +252,9 @@ fn task_note(
     command: &wire::AdmittedCommand,
     note: &TaskNote,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -297,6 +309,7 @@ fn task_defer(
     command: &wire::AdmittedCommand,
     defer: &TaskDefer,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     change_deferral(
         bus,
@@ -305,6 +318,7 @@ fn task_defer(
         Some(defer.wait),
         defer.clone(),
         projects,
+        allocation,
     )
 }
 
@@ -313,8 +327,17 @@ fn task_wake(
     command: &wire::AdmittedCommand,
     task: &TaskRef,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    change_deferral(bus, command, &task.task, None, task.clone(), projects)
+    change_deferral(
+        bus,
+        command,
+        &task.task,
+        None,
+        task.clone(),
+        projects,
+        allocation,
+    )
 }
 
 fn change_deferral<B: serde::Serialize + Clone>(
@@ -324,8 +347,9 @@ fn change_deferral<B: serde::Serialize + Clone>(
     deferral: Option<Instant>,
     intent: B,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -414,8 +438,9 @@ fn task_delete(
     command: &wire::AdmittedCommand,
     delete: &TaskDelete,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -524,8 +549,9 @@ fn task_depends(
     command: &wire::AdmittedCommand,
     depends: &TaskDepends,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -639,8 +665,9 @@ fn task_edit(
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -829,6 +856,7 @@ fn claim_win(
     win: &ClaimWin,
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let possession = match possession_rule(win) {
         Ok(possession) => possession,
@@ -838,6 +866,7 @@ fn claim_win(
         bus,
         command.actor().clone(),
         projects,
+        allocation,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -1024,6 +1053,7 @@ fn claim_selection<'a>(
             &snapshot.entries,
             command.actor(),
             subscription,
+            snapshot.answer.allocation_band,
         )
         .map(|selected| selected.entry())
         .ok_or_else(|| {
@@ -1204,6 +1234,7 @@ fn guard_claim(
                 .clone(),
                 residency_position: snapshot.answer.residency.position,
                 projects: projects.clone(),
+                band: snapshot.answer.allocation_band,
             },
         );
     }
@@ -1225,6 +1256,25 @@ fn append_claim_heads(
     maximum: Instant,
     git: Option<GitBoundary>,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    let claim_cause = if selected.workflow().phase.as_str() == "review" {
+        let assigned = write
+            .fact(
+                body::TaskAssigned {
+                    task: task.clone(),
+                    reviewer: command.actor().clone(),
+                    phase: selected.workflow().phase.clone(),
+                },
+                FactCause::Root,
+            )
+            .map_err(|error| store_fault("review::assignment-build", &error.to_string()))?;
+        let mut workflow = selected.workflow().clone();
+        workflow.assignment = Some(command.actor().clone());
+        workflow.review = "assigned".to_owned();
+        write.workflow_head(task.clone(), assigned, move |_| workflow);
+        FactCause::Pending(assigned)
+    } else {
+        FactCause::Root
+    };
     let won = write
         .fact(
             body::ClaimWon {
@@ -1236,7 +1286,7 @@ fn append_claim_heads(
                 until: expiry,
                 git,
             },
-            FactCause::Root,
+            claim_cause,
         )
         .map_err(|error| {
             store_fault("claim::win-build", &error.to_string())
@@ -1260,11 +1310,5 @@ fn append_claim_heads(
         maximum,
         epoch,
     });
-    if selected.workflow().phase.as_str() == "review" {
-        let mut workflow = selected.workflow().clone();
-        workflow.assignment = Some(command.actor().clone());
-        workflow.review = "assigned".to_owned();
-        write.workflow_head(task.clone(), won, move |_| workflow);
-    }
     Ok(())
 }

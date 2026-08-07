@@ -125,7 +125,13 @@ fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandA
     mutate_from_board(repository, contract, |board| {
         let entries = actor_entries(&board)?;
         let subscription = allocation_subscription(&board.residency.body, &board.principal)?;
-        let selected = board::select(&entries, &board.principal, subscription).ok_or_else(|| {
+        let selected = board::select(
+            &entries,
+            &board.principal,
+            subscription,
+            board.allocation_band,
+        )
+        .ok_or_else(|| {
             refusal(
                 "board::allocator-empty",
                 None,
@@ -1026,7 +1032,7 @@ pub(crate) fn dispatch(
         dialect::PROJECT_MAX_DEPTH as u64,
     )
     .expect("board command test project policy");
-    dispatch_with_repository(bus, command, None, &projects)
+    dispatch_with_repository(bus, command, None, &projects, &board::NextConfig::default())
 }
 
 /// Dispatch with the resident repository required by production Git boundaries.
@@ -1035,52 +1041,59 @@ pub(crate) fn dispatch_with_repository(
     command: &wire::AdmittedCommand,
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Option<Outcome<CommandAnswer>> {
     let outcome = match command.body() {
         wire::intent::Intent::BoardRead(read) => {
-            read_board(bus, read, command.actor().clone(), projects)
+            read_board(bus, read, command.actor().clone(), projects, allocation)
         }
         wire::intent::Intent::BoardGraph(graph) => {
-            read_graph(bus, graph, command.actor().clone(), projects)
+            read_graph(bus, graph, command.actor().clone(), projects, allocation)
         }
         wire::intent::Intent::BoardHandout(handout) => {
-            read_handout(bus, handout, command.actor().clone(), projects)
+            read_handout(bus, handout, command.actor().clone(), projects, allocation)
         }
         wire::intent::Intent::DocLedger(ledger) => {
-            read_ledger(bus, ledger, command.actor().clone(), projects)
+            read_ledger(bus, ledger, command.actor().clone(), projects, allocation)
         }
-        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects),
-        wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add, projects),
-        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects),
-        wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, projects),
+        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects, allocation),
+        wire::intent::Intent::TaskOopsAdd(add) => {
+            task_oops_add(bus, command, add, projects, allocation)
+        }
+        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects, allocation),
+        wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, projects, allocation),
         wire::intent::Intent::TaskDelete(delete) => {
-            task_delete(bus, command, delete, projects)
+            task_delete(bus, command, delete, projects, allocation)
         }
-        wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, projects),
+        wire::intent::Intent::TaskDefer(defer) => {
+            task_defer(bus, command, defer, projects, allocation)
+        }
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::TaskWake => {
-            task_wake(bus, command, task, projects)
+            task_wake(bus, command, task, projects, allocation)
         }
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
-            claim_free(bus, command, task, projects)
+            claim_free(bus, command, task, projects, allocation)
         }
         wire::intent::Intent::TaskDepends(depends) => {
-            task_depends(bus, command, depends, projects)
+            task_depends(bus, command, depends, projects, allocation)
         }
         wire::intent::Intent::ClaimWin(win) => {
-            claim_win(bus, command, win, repository, projects)
+            claim_win(bus, command, win, repository, projects, allocation)
         }
         wire::intent::Intent::ClaimRenew(renew)
             if command.kind() == CommandKind::ClaimRenew =>
         {
-            claim_reclaim(bus, command, renew, projects)
+            claim_reclaim(bus, command, renew, projects, allocation)
         }
         wire::intent::Intent::TaskDone(done) => {
-            task_done(bus, command, done, repository, projects)
+            task_done(bus, command, done, repository, projects, allocation)
         }
         wire::intent::Intent::TaskReview(review) => {
-            task_review(bus, command, review, repository, projects)
+            task_review(bus, command, review, repository, projects, allocation)
         }
-        wire::intent::Intent::DocApply(apply) => doc_apply(bus, command, apply, projects),
+        wire::intent::Intent::DocApply(apply) => {
+            doc_apply(bus, command, apply, projects, allocation)
+        }
         _ => return None,
     };
     Some(outcome)

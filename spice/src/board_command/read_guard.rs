@@ -7,6 +7,7 @@ fn validated_snapshot(
     bus: &Bus,
     principal: wire::Actor,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let observed = bus
         .task_snapshot()
@@ -85,6 +86,7 @@ fn validated_snapshot(
                 public_max_depth: projects.public_max_depth(),
             },
             actor_route,
+            allocation_band: allocation.band(),
             tasks,
             residency,
         },
@@ -346,8 +348,9 @@ fn read_board(
     read: &BoardRead,
     principal: wire::Actor,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let mut snapshot = match validated_snapshot(bus, principal, projects) {
+    let mut snapshot = match validated_snapshot(bus, principal, projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -383,6 +386,7 @@ fn read_graph(
     graph: &BoardGraph,
     principal: wire::Actor,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     if let Some(at) = &graph.at {
         return refusal(
@@ -403,7 +407,7 @@ fn read_graph(
             );
         }
     };
-    let snapshot = match validated_snapshot(bus, principal, projects) {
+    let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -424,6 +428,7 @@ fn read_handout(
     handout: &BoardHandout,
     principal: wire::Actor,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     if let Some(at) = &handout.at {
         return refusal(
@@ -439,7 +444,7 @@ fn read_handout(
             "name an output path or -",
         );
     }
-    let snapshot = match validated_snapshot(bus, principal, projects) {
+    let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -460,8 +465,9 @@ fn read_ledger(
     ledger: &DocLedger,
     principal: wire::Actor,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, principal, projects) {
+    let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -534,6 +540,7 @@ struct AllocationObservation {
     subscription: wire::LineageSubscription,
     residency_position: Seq,
     projects: ProjectPolicy,
+    band: u64,
 }
 
 fn allocation_subscription<'a>(
@@ -649,7 +656,12 @@ fn guard_allocation(
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if board::select(&entries, &observed.actor, &observed.subscription)
+        if board::select(
+            &entries,
+            &observed.actor,
+            &observed.subscription,
+            observed.band,
+        )
             .is_some_and(|selected| selected.entry().statement().handle == observed.winner)
         {
             Ok(())

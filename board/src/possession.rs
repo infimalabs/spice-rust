@@ -552,6 +552,7 @@ mod tests {
         win(
             &mut journal,
             WinRequest {
+                band: 2,
                 projects: projects(),
                 command: uuid(31),
                 actor: Actor::Lane(uuid(20)),

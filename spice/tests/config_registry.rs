@@ -62,8 +62,7 @@ answer = "deny"
 skip = ["src/**", "fixtures/"]
 
 [board.next]
-review = -75.5
-band = 3.0
+band = 3
 
 [lane]
 life = "Steer"
@@ -391,7 +390,6 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "consent.rule[].answer",
     "consent.rule[].budget",
     "gate.walk.skip",
-    "board.next.review",
     "board.next.band",
     "lane.life",
     "lane.lease",

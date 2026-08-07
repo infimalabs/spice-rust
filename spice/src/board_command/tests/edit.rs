@@ -318,7 +318,7 @@
         let entries = actor_entries(&answer).expect("allocation board entries validate");
         let subscription = allocation_subscription(&answer.residency.body, actor)
             .expect("allocation board has one lineage subscription");
-        board::select(&entries, actor, subscription).map(|selection| {
+        board::select(&entries, actor, subscription, answer.allocation_band).map(|selection| {
             (
                 selection.entry().statement().handle.to_string(),
                 selection.urgency().value(),

@@ -855,16 +855,9 @@ registry! {
         class: Policy,
         flag: None,
     }
-    fixed "board.next.review" {
-        kind: Float,
-        builtin: Some(Builtin::Float(-100.0)),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
     fixed "board.next.band" {
-        kind: Float,
-        builtin: Some(Builtin::Float(2.0)),
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(2)),
         layers: TRACKED,
         class: Policy,
         flag: None,

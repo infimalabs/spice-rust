@@ -30,8 +30,7 @@ answer = "deny"
 skip = ["src/**", "fixtures/"]
 
 [board.next]
-review = -75.5
-band = 3.0
+band = 3
 
 [lane]
 life = "Steer"
@@ -106,8 +105,7 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
     assert!(!skips[0].matches("src", Shape::Directory));
     assert!(!skips[0].matches("docs/src/lib.rs", Shape::File));
 
-    assert_eq!(decoded.board().next().review(), -75.5);
-    assert_eq!(decoded.board().next().band(), 3.0);
+    assert_eq!(decoded.board().next().band(), 3);
     assert_eq!(decoded.lane().life(), Life::Steer);
     assert_eq!(decoded.lane().lease().to_string(), "90s");
     assert_eq!(decoded.lane().vendor().as_str(), "codex");
@@ -154,8 +152,7 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
     assert_eq!(root.consent().policy().posture(), Answer::Queue);
     assert!(root.consent().policy().rules().is_empty());
     assert!(root.gate().walk().skip().rules().is_empty());
-    assert_eq!(root.board().next().review(), -100.0);
-    assert_eq!(root.board().next().band(), 2.0);
+    assert_eq!(root.board().next().band(), 2);
     assert_eq!(root.lane().life(), Life::Drive);
     assert_eq!(root.lane().lease().to_string(), "15m");
     assert_eq!(root.lane().vendor().as_str(), "claude");
@@ -363,6 +360,18 @@ fn unknown_fields_name_their_domain_and_key() {
         );
         assert!(error.contains("extra"), "refusal omitted the key: {error}");
     }
+}
+
+#[test]
+fn retired_review_coefficient_and_fractional_band_refuse_loudly() {
+    let review = decode("[board.next]\nreview = -100.0\n")
+        .expect_err("the removed review coefficient must not remain inert");
+    assert!(review.contains("board.next"), "{review}");
+    assert!(review.contains("review"), "{review}");
+
+    let band = decode("[board.next]\nband = 2.5\n")
+        .expect_err("an integer urgency scalar needs an integer tie band");
+    assert!(band.contains("board.next.band"), "{band}");
 }
 
 #[test]

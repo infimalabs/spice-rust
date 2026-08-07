@@ -285,6 +285,8 @@ pub struct BoardAnswer {
     pub project_policy: BoardProjectPolicy,
     /// Complete actor-specific route captured by the snapshot authority.
     pub actor_route: BoardActorRoute,
+    /// Urgency distance the resident captured as one equivalent allocation band.
+    pub allocation_band: u64,
     /// Complete current task evidence bundles in ascending handle order.
     pub tasks: Vec<BoardTask>,
     /// Current resident and lane head used by possession witnesses.

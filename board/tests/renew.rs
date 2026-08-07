@@ -40,6 +40,7 @@ fn projects() -> board::ProjectPolicy {
 
 fn win_request(command: u8) -> WinRequest {
     WinRequest {
+        band: 2,
         projects: projects(),
         command: uuid(command),
         actor: Actor::Lane(uuid(20)),
