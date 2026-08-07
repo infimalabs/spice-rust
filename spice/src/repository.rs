@@ -1,4 +1,31 @@
 //! Resolve the one repository-common Spice state root from Git's own files.
+//!
+//! # Coexistence with the predecessor
+//!
+//! The state root this module resolves -- `<git-common-dir>/.spice`, spelled by
+//! [`STATE_DIRECTORY`] -- is shared. The Python predecessor keeps its own
+//! durable state in that same directory and is expected to keep doing so
+//! indefinitely; neither system is scheduled to replace the other.
+//!
+//! The policy that shared root imposes:
+//!
+//! 1. No command in this port may import, convert, or rewrite the predecessor's
+//!    durable state, and none may do so as an incidental effect of another verb.
+//!    An in-place rewrite is still an in-place rewrite when it is called a
+//!    migration.
+//! 2. The only paths this runtime creates or writes under that root are the ones
+//!    [`StatePaths::owned_directories`] and [`StatePaths::owned_files`] name,
+//!    plus whatever sits inside a [`StatePaths::exclusive_directories`] entry --
+//!    a lock is named after whoever asked for it, so no list could enumerate one
+//!    in advance. Everything else under the root is another system's property
+//!    and is left exactly as found, byte for byte.
+//! 3. A cross-system bridge is refused by default. The sole translator that
+//!    exists, `spice config migrate-tasks`, runs only when an operator names an
+//!    export path on the command line, reads that one file, and writes nothing.
+//!
+//! `tests/coexistence.rs` enforces 2 and 3 by identity rather than by reading
+//! this comment: it seeds predecessor-owned files under a fixture root, runs the
+//! binary, and compares the bytes back.
 
 use std::error::Error;
 use std::fmt;
@@ -34,6 +61,10 @@ pub struct StatePaths {
     tape: PathBuf,
     artifact_data: PathBuf,
     artifacts: PathBuf,
+    install_record: PathBuf,
+    local_configuration: PathBuf,
+    lane_canvas: PathBuf,
+    inbox: PathBuf,
 }
 
 impl StatePaths {
@@ -50,6 +81,10 @@ impl StatePaths {
             degraded: runtime.join("degraded"),
             tape: runtime.join("tape"),
             artifacts: artifact_data.join("tasks"),
+            install_record: runtime.join("install.json"),
+            local_configuration: runtime.join("config.toml"),
+            lane_canvas: runtime.join("canvas-lanes"),
+            inbox: runtime.join("inbox"),
             artifact_data,
             runtime,
             data,
@@ -121,6 +156,152 @@ impl StatePaths {
     pub fn artifacts(&self) -> &Path {
         &self.artifacts
     }
+
+    /// Receipt `spice install --apply` leaves behind.
+    ///
+    /// `crate::install` spells this name a second time, as a path relative to
+    /// the common directory, because a plan describes its operations before a
+    /// [`StatePaths`] exists to resolve them against. `tests/coexistence.rs`
+    /// closes that gap by identity rather than by comparing the two literals:
+    /// it applies a real plan and requires the receipt to land here.
+    #[must_use]
+    pub fn install_record(&self) -> &Path {
+        &self.install_record
+    }
+
+    /// Machine-local configuration this port reads and republishes.
+    #[must_use]
+    pub fn local_configuration(&self) -> &Path {
+        &self.local_configuration
+    }
+
+    /// Parent of per-lane canvas discovery files.
+    #[must_use]
+    pub fn lane_canvas(&self) -> &Path {
+        &self.lane_canvas
+    }
+
+    /// Parent of per-lane steering inboxes.
+    ///
+    /// The predecessor also keeps an inbox, but it puts one in each worktree
+    /// rather than one beside the shared root, so the two never name the same
+    /// file and this directory is unambiguously this port's.
+    #[must_use]
+    pub fn inbox(&self) -> &Path {
+        &self.inbox
+    }
+
+    /// Directories whose shape this runtime admits before it does any work.
+    ///
+    /// Admission is narrower than ownership on purpose. A path belongs here
+    /// only if a wrong shape at startup should stop the runtime, so the
+    /// directories the resident creates and clears as it runs are deliberately
+    /// absent: refusing to start because a lane surface is missing would make a
+    /// normal cold start an error.
+    fn admitted_directories(&self) -> [&Path; 8] {
+        [
+            self.runtime(),
+            self.data(),
+            self.locks(),
+            self.proof(),
+            self.degraded(),
+            self.tape(),
+            &self.artifact_data,
+            self.artifacts(),
+        ]
+    }
+
+    /// Every directory this runtime claims under the shared state root.
+    ///
+    /// This list and [`Self::owned_files`] are the whole of what this port owns
+    /// inside `.spice`. Because the root is shared with the predecessor, the
+    /// complement of these two lists is the other system's property, so naming
+    /// them once here is what lets a reader derive that complement by
+    /// subtraction. A second, hand-written list of foreign paths would drift the
+    /// moment this port claimed one more name.
+    ///
+    /// Ownership extends past what the runtime admits at startup: a name this
+    /// port writes is its own whether or not a wrong shape there should abort a
+    /// start. Deriving this list from the narrower admission list keeps the two
+    /// from disagreeing about the names they share.
+    ///
+    /// Claiming a directory does not by itself claim what is inside it: only
+    /// the directories [`Self::exclusive_directories`] repeats own their whole
+    /// contents. The rest are shared, and ownership there is decided per file.
+    #[must_use]
+    pub fn owned_directories(&self) -> [&Path; 10] {
+        let [
+            runtime,
+            data,
+            locks,
+            proof,
+            degraded,
+            tape,
+            artifact_data,
+            artifacts,
+        ] = self.admitted_directories();
+        [
+            runtime,
+            data,
+            locks,
+            proof,
+            degraded,
+            tape,
+            artifact_data,
+            artifacts,
+            self.lane_canvas(),
+            self.inbox(),
+        ]
+    }
+
+    /// Directories whose entire contents belong to this port.
+    ///
+    /// Everything the runtime writes below one of these is its own, so no name
+    /// inside them has to be enumerated. The two directories deliberately left
+    /// out are the ones both systems write into: the root itself, which holds
+    /// the predecessor's `taskrc` beside this port's `config.toml`, and `data`,
+    /// which holds its databases beside this port's journal. Ownership there is
+    /// per file, which is why [`Self::owned_files`] names each one.
+    #[must_use]
+    pub fn exclusive_directories(&self) -> [&Path; 8] {
+        [
+            self.locks(),
+            self.proof(),
+            self.degraded(),
+            self.tape(),
+            &self.artifact_data,
+            self.artifacts(),
+            self.lane_canvas(),
+            self.inbox(),
+        ]
+    }
+
+    /// Files whose shape this runtime admits before it does any work.
+    fn admitted_files(&self) -> [&Path; 4] {
+        [self.journal(), self.folds(), self.resident(), self.canvas()]
+    }
+
+    /// Every regular file this runtime claims under the shared state root.
+    ///
+    /// The install receipt and the machine-local configuration belong here even
+    /// though neither is authority state: ownership is about which system may
+    /// write a name, not about how durable the bytes are. Leaving either out
+    /// would make the complement described on [`Self::owned_directories`] claim
+    /// this port's own files for the predecessor. Neither is admitted, because
+    /// an operator repairing a bad `config.toml` needs the runtime to reach the
+    /// refusal that names it rather than stop at a shape check.
+    #[must_use]
+    pub fn owned_files(&self) -> [&Path; 6] {
+        let [journal, folds, resident, canvas] = self.admitted_files();
+        [
+            journal,
+            folds,
+            resident,
+            canvas,
+            self.install_record(),
+            self.local_configuration(),
+        ]
+    }
 }
 
 impl Repository {
@@ -187,24 +368,10 @@ impl Repository {
     pub fn admit_state(&self) -> Result<StatePaths, StateError> {
         refuse_retired_state(&self.common)?;
         let paths = StatePaths::new(self.common.join(STATE_DIRECTORY));
-        for path in [
-            paths.runtime(),
-            paths.data(),
-            paths.locks(),
-            paths.proof(),
-            paths.degraded(),
-            paths.tape(),
-            &paths.artifact_data,
-            paths.artifacts(),
-        ] {
+        for path in paths.admitted_directories() {
             admit(path, StateShape::Directory)?;
         }
-        for path in [
-            paths.journal(),
-            paths.folds(),
-            paths.resident(),
-            paths.canvas(),
-        ] {
+        for path in paths.admitted_files() {
             admit(path, StateShape::RegularFile)?;
         }
         Ok(paths)
