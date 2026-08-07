@@ -1,6 +1,5 @@
 //! Pure admission of allocator tuning under `[board.next]`.
 
-use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize};
 
 /// The defaultable tracked board configuration.
@@ -18,53 +17,29 @@ impl Config {
     }
 }
 
-/// The two allocator coefficients exposed by release one.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The sole allocator coefficient exposed by this release.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NextConfig {
-    #[serde(deserialize_with = "finite")]
-    review: f64,
-    #[serde(deserialize_with = "band")]
-    band: f64,
+    band: u64,
 }
 
 impl NextConfig {
-    /// Anti-self-review coefficient.
+    /// Construct one admitted allocator policy for an explicit urgency band.
     #[must_use]
-    pub const fn review(&self) -> f64 {
-        self.review
+    pub const fn new(band: u64) -> Self {
+        Self { band }
     }
 
-    /// Urgency tie-break band.
+    /// Integer urgency distance treated as an equivalent tie band.
     #[must_use]
-    pub const fn band(&self) -> f64 {
+    pub const fn band(&self) -> u64 {
         self.band
     }
 }
 
 impl Default for NextConfig {
     fn default() -> Self {
-        Self {
-            review: -100.0,
-            band: 2.0,
-        }
-    }
-}
-
-fn finite<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
-    let value = f64::deserialize(deserializer)?;
-    if value.is_finite() {
-        Ok(value)
-    } else {
-        Err(D::Error::custom("coefficient must be finite"))
-    }
-}
-
-fn band<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
-    let value = finite(deserializer)?;
-    if value >= 0.0 {
-        Ok(value)
-    } else {
-        Err(D::Error::custom("urgency band must not be negative"))
+        Self::new(2)
     }
 }

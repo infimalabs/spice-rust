@@ -59,7 +59,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 51);
+    assert_eq!(missing.provenance().len(), 50);
     assert!(
         missing
             .provenance()
@@ -629,8 +629,7 @@ budget = 2
 skip = ["target/**"]
 
 [board.next]
-review = -80.0
-band = 3.0
+band = 3
 
 [lane]
 life = "Steer"
@@ -898,7 +897,7 @@ deaths = 0
 mystery = 1
 
 [board.next]
-band = -1.0
+band = -1
 
 [proof]
 image = "latest"

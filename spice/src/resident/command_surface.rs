@@ -54,6 +54,7 @@ impl<'a> Surface<'a> {
             command,
             Some(self.repository),
             &self.config.projects,
+            &self.config.allocation,
         ) {
             return outcome;
         }

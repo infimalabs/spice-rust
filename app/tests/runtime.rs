@@ -188,6 +188,7 @@ fn board_response(
     hidden_title: &str,
 ) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
     let body = wire::intent::BoardAnswer {
+        allocation_band: 2,
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,

@@ -18,6 +18,62 @@
         assert_restart_preserves(&root, bus, epoch, &settled);
     }
 
+    #[test]
+    fn one_captured_band_drives_board_answer_server_selection_and_guard_replay() {
+        let (root, bus, epoch, seats) = fixture("allocation-band", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        let lower = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "BAND-a1",
+            "Short lower handle",
+            Some("todo"),
+        );
+        let higher = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "BAND-z1",
+            "Longer urgent flow",
+            Some("todo,verify,review"),
+        );
+        let allocation = board::NextConfig::new(1);
+        let available = board_with_allocation(&bus, epoch, lane.clone(), &allocation);
+        assert_eq!(available.allocation_band, 1);
+
+        let entries = actor_entries(&available).expect("configured board projects to entries");
+        let subscription = allocation_subscription(&available.residency.body, &lane)
+            .expect("fixture lane has one allocation subscription");
+        let selected = board::select(&entries, &lane, subscription, available.allocation_band)
+            .expect("configured client preselection has work");
+        assert_eq!(selected.entry().statement().handle, higher);
+
+        assert_committed(issue_with_allocation(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::ClaimWin,
+            claim_expected(&available, &higher, &seats[0]),
+            &ClaimWin {
+                rule: "next".parse().expect("allocator rule"),
+            },
+            &allocation,
+        ));
+        let held = board_with_allocation(&bus, epoch, lane, &allocation);
+        assert!(at(&held, &lower).claim.is_none());
+        assert_eq!(
+            at(&held, &higher)
+                .claim
+                .as_ref()
+                .expect("server and guard accepted the configured winner")
+                .body
+                .disposition,
+            ClaimDisposition::Active,
+        );
+        clean(&root, bus);
+    }
+
     fn assert_lane_resolution(
         bus: &Bus,
         epoch: CanonicalUuid,
@@ -133,6 +189,7 @@
             at(&assigned, task).workflow.body.assignment,
             Some(lane.clone())
         );
+        assert_review_assignment_fact(bus, &assigned, task, lane);
         let expected = progress_witnesses(
             &assigned,
             at(&assigned, task),
@@ -171,6 +228,38 @@
                 followup: Vec::new(),
             },
         ));
+    }
+
+    fn assert_review_assignment_fact(
+        bus: &Bus,
+        assigned: &BoardAnswer,
+        task: &TaskHandle,
+        reviewer: &Actor,
+    ) {
+        let heads = at(assigned, task);
+        let snapshot = bus.fact_snapshot().expect("review assignment facts read");
+        let envelope = snapshot
+            .facts()
+            .iter()
+            .find(|fact| fact.seq == heads.workflow.position)
+            .expect("review workflow head names a durable fact");
+        let typed: wire::Envelope<wire::Fact<wire::body::TaskAssigned>> = wire::decode(
+            &wire::encode(envelope).expect("opaque review assignment fact encodes"),
+        )
+        .expect("workflow head is the registered review assignment fact");
+        assert_eq!(typed.fact.body.task, *task);
+        assert_eq!(typed.fact.body.reviewer, *reviewer);
+        assert_eq!(typed.fact.body.phase.as_str(), "review");
+        assert!(typed.is_root(), "assignment begins the claim causal chain");
+
+        let claim = heads.claim.as_ref().expect("review claim head");
+        let won = snapshot
+            .facts()
+            .iter()
+            .find(|fact| fact.seq == claim.position)
+            .expect("review claim head names a durable fact");
+        assert_eq!(won.fact.kind(), wire::FactKind::ClaimWon);
+        assert_eq!(won.cause, Some(typed.seq));
     }
 
     fn assert_review_settled(

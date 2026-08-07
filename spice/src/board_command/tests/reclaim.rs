@@ -75,6 +75,7 @@ fn assert_reclaim_survives_restart(
             lane,
             allocation_subscription(&after_restart.residency.body, lane)
                 .expect("restarted lane subscription"),
+            after_restart.allocation_band,
         )
         .expect("allocator still has unclaimed work")
         .entry()

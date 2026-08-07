@@ -589,6 +589,7 @@ mod tests {
             &capture_command,
             None,
             &fixture.projects,
+            &board::NextConfig::default(),
         )
         .expect("board owns capture command");
         assert!(

@@ -10,6 +10,8 @@ use crate::urgency::{Urgency, declared_priority};
 pub struct Selection<'a> {
     entry: &'a Entry,
     urgency: Urgency,
+    effective_priority: i64,
+    self_review: bool,
 }
 
 impl<'a> Selection<'a> {
@@ -97,45 +99,72 @@ pub fn project_subscription_history(
 /// Select the highest-ranked subscribed and eligible task for `actor`.
 ///
 /// This is the only allocation path in `board`. It derives completed
-/// dependencies from the same supplied head set, ranks by pure urgency, and
-/// breaks ties by ascending handle spelling. Identical heads and actor always
-/// return the same task regardless of slice order.
+/// dependencies from the same supplied head set, ranks peer work before the
+/// actor's own review, then effective priority, then urgency. Scores inside
+/// `band` are equivalent and break by ascending handle spelling. Identical
+/// heads, actor, and band always return the same task regardless of slice order.
 #[must_use]
 pub fn select<'a>(
     entries: &'a [Entry],
     actor: &Actor,
     subscription: &LineageSubscription,
+    band: u64,
 ) -> Option<Selection<'a>> {
     let completed = satisfied_handles(entries);
     let priorities = effective_priorities(entries);
 
-    let mut selected: Option<Selection<'a>> = None;
-    for entry in entries
+    let candidates = entries
         .iter()
         .filter(|entry| selectable(entry, actor, subscription, &completed))
-    {
-        let effective_priority = priorities
-            .get(&entry.statement().handle)
-            .copied()
-            .unwrap_or_else(|| declared_priority(entry));
-        let candidate = Selection {
-            entry,
-            urgency: Urgency::from_heads_with_effective_priority(
+        .map(|entry| {
+            let effective_priority = priorities
+                .get(&entry.statement().handle)
+                .copied()
+                .unwrap_or_else(|| declared_priority(entry));
+            Selection {
                 entry,
-                &completed,
+                urgency: Urgency::from_heads_with_effective_priority(
+                    entry,
+                    &completed,
+                    effective_priority,
+                ),
                 effective_priority,
-            ),
-        };
-        let replaces = selected.is_none_or(|current| {
-            candidate.urgency > current.urgency
-                || (candidate.urgency == current.urgency
-                    && candidate.entry.statement().handle < current.entry.statement().handle)
-        });
-        if replaces {
-            selected = Some(candidate);
-        }
-    }
-    selected
+                self_review: is_self_review(entry, actor),
+            }
+        })
+        .collect::<Vec<_>>();
+    let peer_class = candidates.iter().any(|candidate| !candidate.self_review);
+    let effective_priority = candidates
+        .iter()
+        .filter(|candidate| candidate.self_review != peer_class)
+        .map(|candidate| candidate.effective_priority)
+        .max()?;
+    let urgency = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.self_review != peer_class
+                && candidate.effective_priority == effective_priority
+        })
+        .map(|candidate| candidate.urgency)
+        .max()?;
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            candidate.self_review != peer_class
+                && candidate.effective_priority == effective_priority
+                && urgency.value().abs_diff(candidate.urgency.value()) <= band
+        })
+        .min_by_key(|candidate| &candidate.entry.statement().handle)
+}
+
+fn is_self_review(entry: &Entry, actor: &Actor) -> bool {
+    let workflow = entry.workflow();
+    workflow.phase.as_str() == "review"
+        && workflow.review == "unassigned"
+        && workflow.assignment.is_none()
+        && entry.claim().is_some_and(|claim| {
+            claim.disposition == ClaimDisposition::Freed && &claim.actor == actor
+        })
 }
 
 /// Effective priority for every entry after unsettled public dependents flow upstream.
