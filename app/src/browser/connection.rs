@@ -96,12 +96,19 @@ async fn run_connection(
     // the acceptance frame has been admitted and the runtime published. Deriving
     // the flag from control flow rather than from a separate variable keeps the
     // two from ever disagreeing about whether this connection counted.
-    pump_session(active, surface, lineage_controls, data, actions, established)
-        .await
-        .map_err(|reason| Ended {
-            reason,
-            admitted: true,
-        })
+    pump_session(
+        active,
+        surface,
+        lineage_controls,
+        data,
+        actions,
+        established,
+    )
+    .await
+    .map_err(|reason| Ended {
+        reason,
+        admitted: true,
+    })
 }
 
 /// Carry one admitted session until it fails or the surface goes away.
@@ -778,6 +785,25 @@ fn handle_incoming(
     let runtime = data
         .as_mut()
         .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
+    let refresh = apply_response(session, lineage_controls, runtime, kind, bytes)?;
+    surface.set(data.clone());
+    Ok((Vec::new(), refresh))
+}
+
+/// Apply one admitted response; report whether the board must be re-read.
+///
+/// Split from [`handle_incoming`] so that deciding what a response *does* is
+/// separate from finding out which one arrived. The caller owns the decode, the
+/// pending lookup, and the surface publication, all of which the stream branch
+/// shares; only the arms below are specific to a response, and they are the
+/// half that grows every time a new command is answered.
+fn apply_response(
+    session: &Session,
+    lineage_controls: &UseReducerHandle<LineageControls>,
+    runtime: &mut CanvasRuntime,
+    kind: PendingKind,
+    bytes: &[u8],
+) -> Result<bool, String> {
     let refresh = match kind {
         PendingKind::Board => {
             runtime.apply_board(&admit_response(session, bytes)?);
@@ -843,6 +869,5 @@ fn handle_incoming(
             false
         }
     };
-    surface.set(data.clone());
-    Ok((Vec::new(), refresh))
+    Ok(refresh)
 }

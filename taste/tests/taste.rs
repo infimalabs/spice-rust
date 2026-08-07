@@ -1,6 +1,6 @@
 use listen::{Event, Locus, Prose, Usage};
 use taste::{Bag, Decision, JudgmentFact, Taste, Trigger, TriggerError, judge};
-use wire::FactKind;
+use wire::{FactKind, Producer};
 
 const BEHAVIOR: &str = include_str!("fixtures/behavior.txt");
 const MENTION: &str = include_str!("fixtures/mention.txt");
@@ -128,7 +128,7 @@ fn a_harmless_mention_reaches_the_clearance_fact_path() {
 }
 
 #[test]
-fn every_taste_plane_kind_has_a_judgment_producer() {
+fn every_taste_plane_kind_is_judged_here_or_named_to_another_producer() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let hit = bag
         .hits(&prose(BEHAVIOR))
@@ -147,6 +147,18 @@ fn every_taste_plane_kind_has_a_judgment_producer() {
         .filter(|kind| fold::FactPlane::Taste.contains(*kind))
         .collect::<Vec<_>>();
     taste_plane.sort_unstable();
+    let (judged, recognized): (Vec<_>, Vec<_>) = taste_plane
+        .into_iter()
+        .partition(|kind| kind.producer() == Producer::Judge);
 
-    assert_eq!(produced.as_slice(), taste_plane);
+    assert_eq!(produced.as_slice(), judged.as_slice());
+    // The rest of the plane is named rather than merely excluded, and its
+    // producer pinned to one class rather than to not-the-judge, so a kind added
+    // to the plane lands in one of these assertions instead of escaping all
+    // three.
+    assert_eq!(recognized, vec![FactKind::TasteReminded]);
+    assert_eq!(
+        FactKind::TasteReminded.producer(),
+        Producer::ResidentRecognition
+    );
 }
