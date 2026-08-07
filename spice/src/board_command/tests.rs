@@ -954,6 +954,11 @@ mod tests {
     // Their execution seam lives separately so each source stays reviewable.
     include!("tests/resolution.rs");
 
+    // The closing boundaries the completion and review transactions record.
+    // Kept beside the resolution seam because they drive its helpers, and
+    // separate from it because each fact is pinned on its own.
+    include!("tests/closing_boundary.rs");
+
     // The hidden-visibility tests and the two helpers only they use. They share
     // this module's fixture harness, so the seam is the law under test rather
     // than the scaffolding.
