@@ -688,16 +688,19 @@ async function assertPackedHistory(page, fixture, extent, linked = false) {
     if (!Number.isInteger(value)) throw new Error(`invalid rendered sequence: ${node.textContent}`);
     return value;
   }));
+  // Closes the row snapshot's bracket with no page read in between, so the fact
+  // ceiling below admits only what the resident took while the rows themselves
+  // were read. The journal only grows, so a fact the page rendered legitimately
+  // was admitted before the snapshot and is counted here too.
+  const packed = await journalExtent(fixture);
   const provenance = await journal.locator('[data-subject="facts"]').allTextContents();
   const horizons = await journal
     .locator('[data-subject="facts"] span')
     .evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim()).filter((text) => text?.startsWith("horizon ")));
-  // Sampled after every page read above rather than right after the snapshot,
-  // so one read closes the other side of the sandwich for all of them. The
-  // journal only grows, so a fact the page rendered legitimately was admitted
-  // before the snapshot and is counted here too. An earlier sample would bound
-  // the counts a few facts more tightly and leave the horizon with no ceiling
-  // at all, because nothing read after a sample can be bracketed by it.
+  // The horizon's own bracket, and the reason there are two samples rather than
+  // one. Nothing read after a sample can be bounded by it, so a horizon read
+  // below `packed` needs a reply of its own; stretching either sample to cover
+  // both would buy one ceiling by loosening the other.
   const settled = await journalExtent(fixture);
   const horizonValues = horizons.map((text) => Number(text.split(" ")[1]));
   // A floor, not an equality. `extent` was sampled before this read, and the
@@ -713,8 +716,8 @@ async function assertPackedHistory(page, fixture, extent, linked = false) {
   // stays distinct and stays contiguous, so neither proof below would see it.
   // Only a count the journal itself bounds can.
   assert.ok(
-    sequences.length <= settled.facts,
-    `no fact renders that the journal never admitted (rendered ${sequences.length} > ${settled.facts})`,
+    sequences.length <= packed.facts,
+    `no fact renders that the journal never admitted (rendered ${sequences.length} > ${packed.facts})`,
   );
 
   assertPackedPaging(provenance, horizonValues, extent, settled);
