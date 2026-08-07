@@ -20,6 +20,7 @@
 // reader who sees it far above 1 knows to ask for a second run before opening a
 // regression. That distinction is the whole value, and it costs one line.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 
 /// How far this machine is oversubscribed right now, never below one.
@@ -54,11 +55,12 @@ const LOAD_FIELD = "  load: ";
 /// Carry the reading on a failure that reached the top of the suite without one.
 ///
 /// `observedWait` reads the load for the waits routed through it, and almost
-/// nothing is routed through it. canvas.spec.mjs makes 51 raw locator waits and
-/// its helper modules make 43 more, none of them wrapped, and 34 of the spec's
-/// name no bound at all and inherit Playwright's 30000ms default. Every one of
-/// those raises a timeout naming only a selector, which is the ambiguity this
-/// module exists to remove, at the call sites where it was never removed.
+/// nothing is routed through it. Counted on this tree, canvas.spec.mjs makes 51
+/// raw locator waits and the modules it imports make 50 more, 101 in all, none
+/// of them wrapped, and most of the spec's name no bound at all and inherit
+/// Playwright's 30000ms default. Every one of those raises a timeout naming
+/// only a selector, which is the ambiguity this module exists to remove, at the
+/// call sites where it was never removed.
 ///
 /// Wrapping them one at a time would cover the waits somebody remembered to
 /// wrap. The suite is one script, so every rejection out of every one of those
@@ -77,11 +79,44 @@ export function withLoadReading(error) {
   return new Error(`${message}\n${LOAD_FIELD}${JSON.stringify(describeLoad())}`, { cause: error });
 }
 
+/// The suite script whose failure boundary this module has to stay wired into.
+const SPEC = new URL("./canvas.spec.mjs", import.meta.url);
+
+/// The catch that hands every unwinding failure to `withLoadReading`.
+///
+/// The caught binding is tied to the wrapped one by a backreference, so a catch
+/// that reports some other value, or that keeps the shape and rethrows bare,
+/// fails this even though every word it needs is still on the page.
+const BOUNDARY = /\}\s*catch\s*\((\w+)\)\s*\{\s*throw withLoadReading\(\1\);\s*\}\s*finally\s*\{/g;
+
+/// Prove the suite still routes its failures through the boundary.
+///
+/// Every other assertion in this module calls `withLoadReading` itself, so all
+/// of them pass with the catch at the foot of canvas.spec.mjs deleted -- and
+/// deleting it is what returns all 101 waits to an unattributable timeout. That
+/// was measured rather than reasoned about: with those two lines removed, a
+/// spec wait forced to time out reported `Timeout 2000ms exceeded` and no load
+/// line anywhere, while the assertions below stayed green throughout.
+///
+/// The wiring is script structure rather than anything this module can call, so
+/// reading the script is what observes it. Reading it from here also costs
+/// canvas.spec.mjs no lines, which decides the approach: it has two left under
+/// its flex, and breaching that demotes it to a limit it cannot meet.
+function assertSuiteRoutesThroughBoundary() {
+  const source = readFileSync(SPEC, "utf8");
+  assert.equal(
+    (source.match(BOUNDARY) ?? []).length,
+    1,
+    "canvas.spec.mjs routes its failures through withLoadReading exactly once",
+  );
+}
+
 /// Prove the boundary reads the load, reads all of it, and reads it once.
 ///
-/// Deleting the catch at the foot of canvas.spec.mjs, or the append above,
-/// returns all 94 of those waits to an unattributable bare timeout with the
-/// whole suite still green. This is the assertion that makes either edit fail.
+/// These cover the append. They cannot cover the wiring, for the reason given
+/// above, so `assertSuiteRoutesThroughBoundary` covers that half and is called
+/// from here -- one entry point the spec already reaches, two halves of one
+/// claim, neither of which can be deleted while the other still passes.
 export function assertBoundaryLoadReading() {
   const bare = withLoadReading(new Error("canvas wait failed: bare locator timeout"));
   assert.match(bare.message, /load: \{"loadAverage":\d/, "a bare timeout gains the reading");
@@ -94,4 +129,5 @@ export function assertBoundaryLoadReading() {
   assert.ok(bare.cause, "the timeout that reached the boundary survives as the cause");
   assert.equal(bare.message.match(/load: /g).length, 1, "the reading is written once");
   assert.equal(withLoadReading(bare), bare, "a failure already carrying a reading is left alone");
+  assertSuiteRoutesThroughBoundary();
 }
