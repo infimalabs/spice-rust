@@ -143,7 +143,10 @@ export async function recordedVendorPids(fixture) {
 /// The resident stop operation is injectable so focused checks can observe this
 /// boundary without replacing the real child whose state it decides from, and
 /// the process world for the same reason: the pids a stand-in records are not
-/// ones a check can conjure into an unkillable state for real.
+/// ones a check can conjure into an unkillable state for real. The process world
+/// governs the recorded-pid reap alone. The resident is escalated against
+/// through its own child handle, which `stop` and that handle already stand in
+/// for, so substituting a process world here does not quietly disarm it.
 export function ownFixture({
   fixture,
   linkedRoot,
