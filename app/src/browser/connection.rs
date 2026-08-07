@@ -96,12 +96,19 @@ async fn run_connection(
     // the acceptance frame has been admitted and the runtime published. Deriving
     // the flag from control flow rather than from a separate variable keeps the
     // two from ever disagreeing about whether this connection counted.
-    pump_session(active, surface, lineage_controls, data, actions, established)
-        .await
-        .map_err(|reason| Ended {
-            reason,
-            admitted: true,
-        })
+    pump_session(
+        active,
+        surface,
+        lineage_controls,
+        data,
+        actions,
+        established,
+    )
+    .await
+    .map_err(|reason| Ended {
+        reason,
+        admitted: true,
+    })
 }
 
 /// Carry one admitted session until it fails or the surface goes away.
@@ -740,6 +747,34 @@ async fn send_stream_request(
         .map_err(websocket_error)
 }
 
+/// Apply one admitted stream frame, publishing the surface it changed.
+///
+/// A liveness answer reports no state, and the caller has already taken the
+/// only thing it carries by observing that a frame arrived. Answering early
+/// skips the surface publication below, which would otherwise hand the view a
+/// fresh clone and redraw an idle board on every probe.
+fn handle_stream_frame(
+    session: &Session,
+    surface: &UseStateHandle<SurfaceData>,
+    data: &Rc<RefCell<SurfaceData>>,
+    bytes: &[u8],
+) -> Result<(Vec<StreamDirective>, bool), String> {
+    let admitted = session
+        .admit_stream(bytes)
+        .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+    if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
+        return Ok((Vec::new(), false));
+    }
+    let refresh = stale_reads(&admitted).any();
+    let directives = data
+        .borrow_mut()
+        .as_mut()
+        .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
+        .apply_stream(&admitted);
+    surface.set(data.borrow().clone());
+    Ok((directives, refresh))
+}
+
 fn handle_incoming(
     session: &Session,
     surface: &UseStateHandle<SurfaceData>,
@@ -750,24 +785,7 @@ fn handle_incoming(
 ) -> Result<(Vec<StreamDirective>, bool), String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
-        let admitted = session
-            .admit_stream(bytes)
-            .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
-        // A liveness answer reports no state, and the caller has already taken
-        // the only thing it carries by observing that a frame arrived. Leaving
-        // here skips the surface publication below, which would otherwise hand
-        // the view a fresh clone and redraw an idle board on every probe.
-        if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
-            return Ok((Vec::new(), false));
-        }
-        let refresh = stale_reads(&admitted).any();
-        let directives = data
-            .borrow_mut()
-            .as_mut()
-            .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
-            .apply_stream(&admitted);
-        surface.set(data.borrow().clone());
-        return Ok((directives, refresh));
+        return handle_stream_frame(session, surface, data, bytes);
     }
 
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
