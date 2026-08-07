@@ -29,6 +29,7 @@ import {
 } from "./canvas-activity-records.mjs";
 import { childExited } from "./canvas-child-state.mjs";
 import { describeConnection, describeResident } from "./canvas-endpoint-probes.mjs";
+import { describeLoad } from "./canvas-load.mjs";
 
 export { describeConnection, describeResident, TOOL_ACTIVITY_TEXT };
 
@@ -535,8 +536,8 @@ export function monitorPage(page) {
 /// 4ms median, 19ms maximum and the companion fault event at 7ms minimum, 11ms
 /// median, 32ms maximum. Seventy of those runs were held to a 300ms bound and
 /// none failed. Two seconds is roughly a hundred times the slowest observation,
-/// so a timeout at this bound is a defect rather than a busy machine, and the
-/// earlier ten seconds bounded nothing that was ever slow.
+/// and the margin survives a loaded machine: at load average 124 the flip still
+/// lands in 78ms. A timeout here is a defect or a tail event, not a slow box.
 export const TRANSITION_MS = 2_000;
 
 /// Slack allowed on top of a client deadline for the render that follows it.
@@ -651,6 +652,7 @@ export async function observedWait(page, label, run, context = {}) {
       `  site: ${callSite(marker)}`,
       `  connection: ${JSON.stringify(connection)}`,
       `  resident: ${JSON.stringify(resident)}`,
+      `  load: ${JSON.stringify(describeLoad())}`,
     ];
     if (context.observed) {
       report.push(`  observed: ${JSON.stringify(await readObservation(context.observed))}`);
@@ -703,6 +705,8 @@ export async function assertWaitReporting(page, resident) {
     "the report names the self-check that armed the wait rather than an instrument wrapper",
   );
   assert.match(failure.message, /"endpointState":/, "the report probes the resident endpoint");
+  // Pinned by name: deciding busy box against defect needs the number itself.
+  assert.match(failure.message, /load: \{"loadAverage":\d/, "the report reads the machine load");
   assert.ok(failure.cause, "the original timeout survives as the cause");
   assert.ok(elapsed >= WAIT_PROBE_MS, "the page-function probe reaches its named bound");
   assert.ok(
