@@ -11,6 +11,8 @@ use sill::{
 
 use super::*;
 
+// Canvas announcement and capture fixtures live behind one named boundary so
+// this resident root stays below the file-shape base, not merely its ratchet.
 #[path = "tests/canvas_announcement.rs"]
 mod canvas_announcement;
 #[path = "tests/message_unavailable.rs"]

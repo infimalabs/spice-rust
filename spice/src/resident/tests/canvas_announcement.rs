@@ -1,4 +1,7 @@
 //! Canvas announcement, opening, and captured-activity regressions.
+//!
+//! The `pub(super)` helpers below are the deliberate seam shared with the
+//! resident lifecycle cases that remain in the parent test module.
 
 use super::*;
 
