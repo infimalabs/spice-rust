@@ -38,6 +38,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 import { launchBrowser } from "./headless-launch.mjs";
+import { installBrowserSpeech, installSocketControl } from "./canvas-speech.mjs";
 
 import {
   buildResident,
@@ -45,8 +46,6 @@ import {
   configureFixture,
   describeConnection,
   describeResident,
-  installBrowserSpeech,
-  installSocketControl,
   seedAuthority,
   startResident,
   stopResident,
