@@ -58,6 +58,202 @@ struct CapturedLaunch {
     cwd: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    path: PathBuf,
+    digest: String,
+    length: u64,
+    mode: Option<u32>,
+}
+
+impl FileIdentity {
+    fn read(path: &Path) -> Self {
+        let bytes = fs::read(path).unwrap_or_else(|error| {
+            panic!("read predecessor identity {}: {error}", path.display())
+        });
+        let metadata = fs::metadata(path).unwrap_or_else(|error| {
+            panic!("inspect predecessor identity {}: {error}", path.display())
+        });
+        #[cfg(unix)]
+        let mode = Some(metadata.permissions().mode() & 0o777);
+        #[cfg(not(unix))]
+        let mode = None;
+        Self {
+            path: path.to_path_buf(),
+            digest: wire::Digest::compute(wire::Domain::DistArtifact, &bytes).to_string(),
+            length: metadata.len(),
+            mode,
+        }
+    }
+}
+
+struct PredecessorSystem {
+    executable: FileIdentity,
+    state: Vec<FileIdentity>,
+    hooks: Vec<FileIdentity>,
+    hook_config: FileIdentity,
+    worktree: PathBuf,
+    process: Child,
+    pid: u32,
+}
+
+impl PredecessorSystem {
+    fn install(fixture: &Fixture) -> Self {
+        let worktree = fixture.cleanup.join("predecessor-worktree");
+        fixture_git(
+            &fixture.root,
+            &["config", "extensions.worktreeConfig", "true"],
+        );
+        fixture_git(
+            &fixture.root,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "predecessor",
+                worktree.to_str().expect("predecessor path is UTF-8"),
+                "HEAD",
+            ],
+        );
+
+        let hooks_root = worktree.join(".spice/hooks");
+        let mut hook_paths = Vec::new();
+        for hook in ["pre-commit", "commit-msg", "reference-transaction"] {
+            let path = hooks_root.join(hook);
+            fs::create_dir_all(path.parent().expect("predecessor hook has a parent"))
+                .expect("create predecessor hooks");
+            fs::write(&path, format!("#!/bin/sh\nexec spice dev {hook} \"$@\"\n"))
+                .expect("write predecessor hook");
+            #[cfg(unix)]
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .expect("make predecessor hook executable");
+            hook_paths.push(path);
+        }
+        fixture_git(
+            &worktree,
+            &["config", "--worktree", "core.hooksPath", ".spice/hooks"],
+        );
+
+        let executable_path = fixture.cleanup.join("predecessor-bin/spice");
+        fs::create_dir_all(
+            executable_path
+                .parent()
+                .expect("predecessor bin has a parent"),
+        )
+        .expect("create predecessor bin");
+        fs::write(&executable_path, b"#!/bin/sh\necho 'Spice 0.31.0'\n")
+            .expect("write predecessor executable");
+        #[cfg(unix)]
+        fs::set_permissions(&executable_path, fs::Permissions::from_mode(0o755))
+            .expect("make predecessor executable");
+
+        let data = fixture.runtime.join("data");
+        fs::create_dir_all(&data).expect("create shared state directory");
+        let state_paths = [
+            "spiceacks.sqlite3",
+            "spicemaxims.sqlite3",
+            "spiceprojections.sqlite3",
+            "spiceteams.sqlite3",
+            "taskchampion.sqlite3",
+        ]
+        .map(|name| data.join(name));
+        for (index, path) in state_paths.iter().enumerate() {
+            fs::write(path, format!("predecessor-authority-{index}\n"))
+                .expect("write predecessor state");
+        }
+
+        let process = Command::new(ambient_executable("sleep"))
+            .arg("600")
+            .spawn()
+            .expect("start predecessor process");
+        let pid = process.id();
+        let git_pointer = fs::read_to_string(worktree.join(".git"))
+            .expect("read predecessor worktree Git pointer");
+        let hook_config = PathBuf::from(
+            git_pointer
+                .trim()
+                .strip_prefix("gitdir: ")
+                .expect("predecessor worktree names its Git directory"),
+        )
+        .join("config.worktree");
+        Self {
+            executable: FileIdentity::read(&executable_path),
+            state: state_paths
+                .iter()
+                .map(|path| FileIdentity::read(path))
+                .collect(),
+            hooks: hook_paths
+                .iter()
+                .map(|path| FileIdentity::read(path))
+                .collect(),
+            hook_config: FileIdentity::read(&hook_config),
+            worktree,
+            process,
+            pid,
+        }
+    }
+
+    fn assert_unchanged(&mut self, verb: &str) {
+        assert_eq!(
+            FileIdentity::read(&self.executable.path),
+            self.executable,
+            "{verb} changed the predecessor executable"
+        );
+        assert_eq!(
+            self.state
+                .iter()
+                .map(|identity| FileIdentity::read(&identity.path))
+                .collect::<Vec<_>>(),
+            self.state,
+            "{verb} changed predecessor durable state or authority"
+        );
+        assert_eq!(
+            self.hooks
+                .iter()
+                .map(|identity| FileIdentity::read(&identity.path))
+                .collect::<Vec<_>>(),
+            self.hooks,
+            "{verb} changed predecessor hook authority"
+        );
+        assert_eq!(
+            FileIdentity::read(&self.hook_config.path),
+            self.hook_config,
+            "{verb} changed the predecessor core.hooksPath authority"
+        );
+        assert_eq!(
+            fixture_git_output(&self.worktree, &["config", "--get", "core.hooksPath"]),
+            ".spice/hooks",
+            "{verb} stopped resolving predecessor steering hooks"
+        );
+        assert_eq!(
+            self.process.id(),
+            self.pid,
+            "{verb} replaced the predecessor PID"
+        );
+        assert!(
+            self.process
+                .try_wait()
+                .expect("inspect predecessor process")
+                .is_none(),
+            "{verb} stopped the predecessor process"
+        );
+    }
+}
+
+impl Drop for PredecessorSystem {
+    fn drop(&mut self) {
+        if self.process.try_wait().is_ok_and(|status| status.is_none()) {
+            self.process
+                .kill()
+                .expect("stop predecessor fixture process");
+            self.process
+                .wait()
+                .expect("reap predecessor fixture process");
+        }
+    }
+}
+
 #[test]
 fn composed_vendor_launches_cross_the_resident_and_sill_boundary_without_drift() {
     let fixture = Fixture::linked("vendor-process-composition");
@@ -206,20 +402,19 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
 }
 
 #[test]
-fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
-    let fixture = Fixture::new("installed-native-bootstrap");
+fn installed_spice_lifecycle_leaves_the_predecessor_system_untouched() {
+    let fixture = Fixture::new("coexisting-native-lifecycle");
     let rig = configure(&fixture);
-    prepare_cutover_repository(&fixture, &rig);
-    let (installed_binary, plan_digest, binary_digest) = stage_cutover_appliance(&fixture);
-    assert!(
-        !fixture.journal().exists(),
-        "the clean-break fixture inherited a current authority"
-    );
+    prepare_coexistence_repository(&fixture, &rig);
+    let mut predecessor = PredecessorSystem::install(&fixture);
+    let (installed_binary, plan_digest, binary_digest) = install_coexisting_appliance(&fixture);
+    predecessor.assert_unchanged("install");
 
     let (resident_path, resident_tools) = native_resident_path(&fixture);
     let mut resident =
         RunningResident::spawn_with_path(&fixture, &installed_binary, &resident_path);
     resident.assert_ready(&fixture);
+    predecessor.assert_unchanged("start");
     let claude = add_lane_with(&fixture, &installed_binary, None, Dialect::Claude);
     let codex = add_lane_with(
         &fixture,
@@ -228,7 +423,7 @@ fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
         Dialect::Codex,
     );
     let lanes = [(Dialect::Claude, claude), (Dialect::Codex, codex)];
-    let created = add_cutover_tasks(&fixture, &installed_binary, &lanes);
+    let created = add_coexistence_tasks(&fixture, &installed_binary, &lanes);
     assert_launches_with_executable(
         &fixture,
         &rig,
@@ -240,11 +435,11 @@ fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
 
     let empty_path = fixture.cleanup.join("empty-path");
     fs::create_dir(&empty_path).expect("empty PATH directory");
-    assert_cutover_allocation(&fixture, &installed_binary, &empty_path, &lanes, &created);
+    assert_coexistence_allocation(&fixture, &installed_binary, &empty_path, &lanes, &created);
     let directive_keys =
-        assert_cutover_steering(&fixture, &installed_binary, &empty_path, claude, codex);
+        assert_coexistence_steering(&fixture, &installed_binary, &empty_path, claude, codex);
     exercise_installed_surface(&fixture, &installed_binary, &empty_path, &lanes);
-    stop_cutover(
+    stop_coexisting_appliance(
         &fixture,
         &rig,
         &installed_binary,
@@ -252,15 +447,22 @@ fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
         &lanes,
         resident,
     );
+    predecessor.assert_unchanged("stop");
+    let upgrade_digest = upgrade_coexisting_appliance(&fixture, &mut predecessor);
+    predecessor.assert_unchanged("upgrade");
     eprintln!(
-        "cutover-evidence plan={plan_digest} binary={binary_digest} journal={} tasks=[{},{}] \
+        "coexistence-evidence install={plan_digest} upgrade={upgrade_digest} \
+         binary={binary_digest} journal={} tasks=[{},{}] \
          lanes=[{claude},{codex}] directives=[{},{}] vendor_logs=2 \
+         predecessor_pid={} predecessor_files={} predecessor_hooks=.spice/hooks \
          resident_path=[git:{},sleep:{}] client_path_entries=0 shutdown=clean",
         fixture.journal().display(),
         created[0],
         created[1],
         directive_keys[0],
         directive_keys[1],
+        predecessor.pid,
+        predecessor.state.len() + 1,
         resident_tools[0].display(),
         resident_tools[1].display(),
     );
@@ -307,10 +509,25 @@ fn ambient_executable(name: &str) -> PathBuf {
         .unwrap_or_else(|| panic!("fixture requires native executable {name:?}"))
 }
 
-fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
+fn fixture_git_output(root: &Path, arguments: &[&str]) -> String {
+    let output = native_git_command(root, arguments)
+        .output()
+        .expect("fixture Git query launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    String::from_utf8(output.stdout)
+        .expect("fixture Git query is UTF-8")
+        .trim()
+        .to_owned()
+}
+
+fn prepare_coexistence_repository(fixture: &Fixture, rig: &Rig) {
     let mut document =
         fs::read_to_string(fixture.root.join("spice.toml")).expect("fixture config reads");
-    document.push_str("\n[tasks]\nstems = [\"cutover\"]\n");
+    document.push_str("\n[tasks]\nstems = [\"coexistence\"]\n");
     fs::write(fixture.root.join("spice.toml"), &document).expect("Claude config extends");
     fs::write(
         fixture.root.join(".gitignore"),
@@ -324,20 +541,23 @@ fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
                 "launch-captures/\n",
                 "launch-index\n",
                 "native-path/\n",
+                "predecessor-bin/\n",
+                "predecessor-worktree/\n",
+                "upgraded-spice\n",
                 "{}",
             ),
             app_stage_ignore()
         ),
     )
-    .expect("cutover fixture ignore policy writes");
+    .expect("coexistence fixture ignore policy writes");
     fixture_git(&fixture.root, &["init", "-b", "main"]);
-    fixture_git(&fixture.root, &["config", "user.name", "Spice Cutover"]);
+    fixture_git(&fixture.root, &["config", "user.name", "Spice Coexistence"]);
     fixture_git(
         &fixture.root,
-        &["config", "user.email", "cutover@spice.invalid"],
+        &["config", "user.email", "coexistence@spice.invalid"],
     );
     fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
-    fixture_git(&fixture.root, &["commit", "-m", "empty cutover authority"]);
+    fixture_git(&fixture.root, &["commit", "-m", "coexistence fixture"]);
     assert_fixture_repository_clean(&fixture.root);
     fs::remove_dir_all(&rig.codex_worktree).expect("synthetic Codex worktree withdraws");
     fs::remove_dir_all(fixture.root.join(".git/worktrees/vendor-process-codex"))
@@ -349,14 +569,14 @@ fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
             "worktree",
             "add",
             "-b",
-            "cutover-codex",
+            "coexistence-codex",
             &codex_worktree,
             "HEAD",
         ],
     );
 }
 
-fn stage_cutover_appliance(fixture: &Fixture) -> (PathBuf, String, String) {
+fn install_coexisting_appliance(fixture: &Fixture) -> (PathBuf, String, String) {
     let repository = spice::repository::Repository::discover(&fixture.root)
         .expect("linked repository discovers");
     let source_binary = Path::new(env!("CARGO_BIN_EXE_spice"));
@@ -413,7 +633,36 @@ fn stage_cutover_appliance(fixture: &Fixture) -> (PathBuf, String, String) {
     (installed_binary, digest.as_str().to_owned(), binary_digest)
 }
 
-fn add_cutover_tasks(
+fn upgrade_coexisting_appliance(fixture: &Fixture, predecessor: &mut PredecessorSystem) -> String {
+    let repository = spice::repository::Repository::discover(&fixture.root)
+        .expect("coexistence repository discovers for upgrade");
+    let source = Path::new(env!("CARGO_BIN_EXE_spice"));
+    let upgraded = fixture.cleanup.join("upgraded-spice");
+    fs::copy(source, &upgraded).expect("copy changed upgrade binary");
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&upgraded)
+        .expect("open changed upgrade binary")
+        .write_all(b"\n")
+        .expect("change upgrade binary identity");
+    let removed =
+        spice::install::unapply(&repository).expect("reverse installed build for upgrade");
+    assert_eq!(removed.status(), spice::install::InstallStatus::Uninstalled);
+    predecessor.assert_unchanged("upgrade reversal");
+    let plan = spice::install::plan(&repository, Some(&upgraded)).expect("upgrade plans");
+    let digest = plan.digest().expect("upgrade plan digests");
+    let receipt = spice::install::apply(&repository, Some(&upgraded), &digest)
+        .expect("upgrade applies exactly");
+    assert_eq!(receipt.status(), spice::install::InstallStatus::Complete);
+    assert_eq!(
+        fs::read(spice::install::installed_binary(&repository))
+            .expect("upgraded installed binary reads"),
+        fs::read(&upgraded).expect("upgrade source reads")
+    );
+    digest.to_string()
+}
+
+fn add_coexistence_tasks(
     fixture: &Fixture,
     installed_binary: &Path,
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
@@ -426,9 +675,9 @@ fn add_cutover_tasks(
             &[
                 "task",
                 "add",
-                "Fresh Claude cutover work",
+                "Fresh Claude coexistence work",
                 "--project",
-                "cutover.rehearsal",
+                "coexistence.rehearsal",
             ],
             true,
         ))
@@ -440,9 +689,9 @@ fn add_cutover_tasks(
             &[
                 "task",
                 "add",
-                "Fresh Codex cutover work",
+                "Fresh Codex coexistence work",
                 "--project",
-                "cutover.rehearsal",
+                "coexistence.rehearsal",
             ],
             true,
         ))
@@ -450,7 +699,7 @@ fn add_cutover_tasks(
     ]
 }
 
-fn assert_cutover_allocation(
+fn assert_coexistence_allocation(
     fixture: &Fixture,
     installed_binary: &Path,
     empty_path: &Path,
@@ -490,7 +739,7 @@ fn assert_cutover_allocation(
     assert_eq!(board_handles, created_handles);
 }
 
-fn assert_cutover_steering(
+fn assert_coexistence_steering(
     fixture: &Fixture,
     installed_binary: &Path,
     empty_path: &Path,
@@ -504,7 +753,7 @@ fn assert_cutover_steering(
         &[
             "steer",
             &claude.to_string(),
-            "Claude-only cutover direction",
+            "Claude-only coexistence direction",
         ],
         true,
     ));
@@ -512,7 +761,11 @@ fn assert_cutover_steering(
         fixture,
         installed_binary,
         empty_path,
-        &["steer", &codex.to_string(), "Codex-only cutover direction"],
+        &[
+            "steer",
+            &codex.to_string(),
+            "Codex-only coexistence direction",
+        ],
         true,
     ));
     for (lane, own, foreign) in [
@@ -588,7 +841,7 @@ fn exercise_installed_surface(
     }
 }
 
-fn stop_cutover(
+fn stop_coexisting_appliance(
     fixture: &Fixture,
     rig: &Rig,
     installed_binary: &Path,

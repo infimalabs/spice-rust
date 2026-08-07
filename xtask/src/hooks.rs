@@ -66,8 +66,8 @@ pub const fn compiled_reference_transaction_guard_digest() -> u64 {
 /// Point the repository and every linked worktree at the installed hook set.
 ///
 /// This is deliberately separate from digest-bound installation: the install
-/// plan publishes bytes, while this explicit cutover changes Git configuration
-/// and publishes the executable those bytes name.
+/// plan publishes bytes, while this explicit activation changes Git
+/// configuration and publishes the executable those bytes name.
 ///
 /// `entry_point` is the executable to publish. It is a parameter rather than
 /// `current_exe` read in here so that the provenance of the published file is
@@ -93,65 +93,28 @@ pub fn activate_hooks(
             return Err(HookActivationError::HookNotExecutable(path));
         }
     }
-    // Published before the configuration flips, so the hooks Git is about to
-    // start running never observe a moment where the file they exec is absent.
-    publish_entry_point(&repository, entry_point, output)?;
-
-    let listed = git(
-        repository.worktree_root(),
-        &["worktree", "list", "--porcelain"],
-        "list Git worktrees",
-    )?;
-    let listed = utf8("git worktree list --porcelain", &listed.stdout)?;
-    for worktree in listed
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-    {
-        let prior = Command::new("git")
-            .args([
-                "-C",
-                worktree,
-                "config",
-                "--worktree",
-                "--get-all",
-                "core.hooksPath",
-            ])
-            .output()
-            .map_err(|source| HookActivationError::Launch {
-                operation: "read worktree hook override",
-                source,
-            })?;
-        if prior.status.success() {
-            let prior = utf8(
-                "git config --worktree --get-all core.hooksPath",
-                &prior.stdout,
-            )?;
-            git(
-                Path::new(worktree),
-                &["config", "--worktree", "--unset-all", "core.hooksPath"],
-                "clear worktree hook override",
-            )?;
-            writeln!(
-                output,
-                "cleared worktree hook override at {worktree} (was {})",
-                prior.trim_ascii_end()
-            )
-            .map_err(HookActivationError::Output)?;
-        } else if prior.status.code() != Some(1)
-            && !String::from_utf8_lossy(&prior.stderr)
-                .contains("extension worktreeConfig is enabled")
-        {
-            return Err(HookActivationError::Exit {
-                operation: "read worktree hook override",
-                code: prior.status.code(),
-                diagnostic: String::from_utf8_lossy(&prior.stderr).into_owned(),
-            });
-        }
-    }
-
     let hooks_text = hooks
         .to_str()
         .ok_or_else(|| HookActivationError::UnnameablePath(hooks.clone()))?;
+    let overrides = preflight_worktree_hooks(&repository, hooks_text)?;
+
+    // Publish only after every worktree has proved that activation will not
+    // replace another system's hooks. Once that preflight passes, publish
+    // before the configuration flips so Git never observes a missing target.
+    publish_entry_point(&repository, entry_point, output)?;
+    for (worktree, prior) in overrides {
+        git(
+            &worktree,
+            &["config", "--worktree", "--unset-all", "core.hooksPath"],
+            "clear worktree hook override",
+        )?;
+        writeln!(
+            output,
+            "cleared worktree hook override at {} (was {prior})",
+            worktree.display()
+        )
+        .map_err(HookActivationError::Output)?;
+    }
     git(
         repository.worktree_root(),
         &["config", "--local", "core.hooksPath", hooks_text],
@@ -176,6 +139,79 @@ pub fn activate_hooks(
     writeln!(output, "activated Spice hooks from {hooks_text}").map_err(HookActivationError::Output)
 }
 
+fn preflight_worktree_hooks(
+    repository: &spice::repository::Repository,
+    hooks_text: &str,
+) -> Result<Vec<(PathBuf, String)>, HookActivationError> {
+    let listed = git(
+        repository.worktree_root(),
+        &["worktree", "list", "--porcelain"],
+        "list Git worktrees",
+    )?;
+    let listed = utf8("git worktree list --porcelain", &listed.stdout)?;
+    let mut overrides = Vec::new();
+    for worktree in listed
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+    {
+        let configured = optional_git_config(
+            &worktree,
+            &["config", "--get-all", "core.hooksPath"],
+            "read effective worktree hooks",
+            None,
+        )?;
+        if let Some(values) = configured
+            && (values.len() != 1 || (values[0] != ".githooks" && values[0] != hooks_text))
+        {
+            return Err(HookActivationError::ForeignHookPath {
+                worktree,
+                observed: values.join(", "),
+            });
+        }
+        if let Some(values) = optional_git_config(
+            &worktree,
+            &["config", "--worktree", "--get-all", "core.hooksPath"],
+            "read worktree hook override",
+            Some("extension worktreeConfig is enabled"),
+        )? {
+            overrides.push((worktree, values.join("\n")));
+        }
+    }
+    Ok(overrides)
+}
+
+fn optional_git_config(
+    root: &Path,
+    arguments: &[&str],
+    operation: &'static str,
+    absent_diagnostic: Option<&str>,
+) -> Result<Option<Vec<String>>, HookActivationError> {
+    let output = Command::new("git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .map_err(|source| HookActivationError::Launch { operation, source })?;
+    if output.status.success() {
+        let values = utf8(operation, &output.stdout)?
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        return Ok(Some(values));
+    }
+    let diagnostic = String::from_utf8_lossy(&output.stderr).into_owned();
+    if output.status.code() == Some(1)
+        || absent_diagnostic.is_some_and(|absent| diagnostic.contains(absent))
+    {
+        return Ok(None);
+    }
+    Err(HookActivationError::Exit {
+        operation,
+        code: output.status.code(),
+        diagnostic,
+    })
+}
+
 /// Copy the executable the hooks exec to a name a hook can spell.
 ///
 /// Cargo writes its output under a content-keyed directory, so the executable
@@ -186,7 +222,7 @@ pub fn activate_hooks(
 /// Nothing rebuilds at hook time, which is the whole point of publishing, so
 /// the copy is exactly as current as the last activation left it. Activation
 /// therefore cannot be the only thing that notices a stale copy, because it is
-/// run once at cutover: it stamps [`GUARD_STAMP_PATH`] with the guard it is
+/// run once at activation: it stamps [`GUARD_STAMP_PATH`] with the guard it is
 /// publishing, and [`audit_entry_point`] is what reads that stamp afterwards.
 ///
 /// A copy is current only if its bytes and its mode are both right. Byte
@@ -262,7 +298,7 @@ fn stamp_guard(repository: &spice::repository::Repository) -> Result<(), HookAct
 /// Refuse when the guard Git enforces is not the guard in this tree.
 ///
 /// This is the half of currency that activation cannot provide. Publication
-/// happens once, at cutover, so after that the copy eleven worktrees exec is
+/// happens once, at activation, so after that the copy eleven worktrees exec is
 /// frozen: a landed change to `reference_transaction.rs` would otherwise sit
 /// unenforced behind a green battery in every lane, with nothing anywhere
 /// saying so. Reading the stamp costs one file read and needs no build, which
@@ -273,7 +309,7 @@ fn stamp_guard(repository: &spice::repository::Repository) -> Result<(), HookAct
 /// enforce a function of which lane last ran the battery, and the lanes sit at
 /// different commits, so the enforced policy would change under everyone
 /// without an operator ever choosing it. Refusing costs one documented command
-/// and leaves the choice of which build becomes authoritative where the cutover
+/// and leaves the choice of which build becomes authoritative where activation
 /// already put it.
 ///
 /// Nothing is owed while the Rust hooks are not live. Until `core.hooksPath`
@@ -411,7 +447,7 @@ fn is_executable(path: &Path) -> Result<bool, HookActivationError> {
     }
 }
 
-/// Explicit hook-cutover failure.
+/// Explicit hook-activation failure.
 #[derive(Debug)]
 pub enum HookActivationError {
     Repository(String),
@@ -430,6 +466,10 @@ pub enum HookActivationError {
         expected: u64,
     },
     UnnameablePath(PathBuf),
+    ForeignHookPath {
+        worktree: PathBuf,
+        observed: String,
+    },
     Launch {
         operation: &'static str,
         source: io::Error,
@@ -496,6 +536,12 @@ impl fmt::Display for HookActivationError {
                     path.display()
                 )
             }
+            Self::ForeignHookPath { worktree, observed } => write!(
+                formatter,
+                "refusing to replace foreign core.hooksPath {observed:?} in {}; \
+                 keep Rust and predecessor hooks in separate worktrees",
+                worktree.display()
+            ),
             Self::Launch { operation, source } => {
                 write!(formatter, "failed to launch Git to {operation}: {source}")
             }
@@ -539,6 +585,7 @@ impl std::error::Error for HookActivationError {
             | Self::HookNotExecutable(_)
             | Self::EntryPointStale { .. }
             | Self::UnnameablePath(_)
+            | Self::ForeignHookPath { .. }
             | Self::Exit { .. }
             | Self::NonUtf8 { .. }
             | Self::ConfigurationDrift { .. } => None,
