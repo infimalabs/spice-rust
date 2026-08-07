@@ -486,9 +486,9 @@ fn a_reorder_moves_the_dragged_lineage_into_the_target_position_without_moving_a
         seated(LINEAGE_THREE, &[(LANE_D, "main-d")]),
     ];
 
-    let forward = arranged(&lanes, LINEAGE_THREE, LINEAGE_ONE, LineageDrop::Reorder);
+    let backward = arranged(&lanes, LINEAGE_THREE, LINEAGE_ONE, LineageDrop::Reorder);
     assert_eq!(
-        forward,
+        backward,
         vec![
             (uuid(LINEAGE_THREE), vec![uuid(LANE_D)]),
             (uuid(LINEAGE_ONE), vec![uuid(LANE_A), uuid(LANE_B)]),
@@ -497,12 +497,16 @@ fn a_reorder_moves_the_dragged_lineage_into_the_target_position_without_moving_a
         "the dragged team takes the target's position and every agent stays put",
     );
 
-    // Dragging the other way is not the mirror image: the dragged team still
-    // lands where the target stood, which for a forward drag is one position
-    // later than the target's index in the arrangement it was read from.
-    let backward = arranged(&lanes, LINEAGE_ONE, LINEAGE_THREE, LineageDrop::Reorder);
+    // Dragging the other way is not the mirror image. A reorder always inserts
+    // the dragged team immediately before the target, which only coincides with
+    // the target's own index when the drag came from later in the row: here
+    // LINEAGE_THREE stood third, and LINEAGE_ONE lands second, because removing
+    // it first shifts the target one place earlier than the row it was read
+    // from. Asserting only the backward case would let "insert before" and
+    // "take the target's index" pass as the same rule.
+    let forward = arranged(&lanes, LINEAGE_ONE, LINEAGE_THREE, LineageDrop::Reorder);
     assert_eq!(
-        backward,
+        forward,
         vec![
             (uuid(LINEAGE_TWO), vec![uuid(LANE_C)]),
             (uuid(LINEAGE_ONE), vec![uuid(LANE_A), uuid(LANE_B)]),
@@ -550,6 +554,21 @@ fn a_drop_that_states_nothing_sends_nothing() {
         ),
         None,
         "a team dropped on itself is not an arrangement",
+    );
+    // Two live teams, two distinct identities, and a gesture the up-front
+    // guards all admit: only the arrangement it produces shows there is nothing
+    // to state. Inserting before the neighbour it already precedes rebuilds the
+    // row the canvas is showing, and committing that would write a durable fact
+    // recording no change.
+    assert_eq!(
+        arrangement(
+            &topology(&lanes),
+            uuid(LINEAGE_ONE),
+            uuid(LINEAGE_TWO),
+            LineageDrop::Reorder
+        ),
+        None,
+        "a team dropped in front of the team it already precedes states nothing",
     );
     assert_eq!(
         arrangement(
