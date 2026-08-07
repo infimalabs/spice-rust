@@ -42,6 +42,7 @@ use message_surface::{CallPreviews, CaptureSurfaces, accept_capture_record};
 use shutdown::{current_residency, drive_shutdown};
 
 include!("resident/runtime.rs");
+include!("resident/ingest_surface.rs");
 include!("resident/release.rs");
 
 #[cfg(test)]

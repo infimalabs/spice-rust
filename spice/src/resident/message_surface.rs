@@ -66,6 +66,11 @@ pub(super) fn accept_capture_record<P: AgentMessagePublisher>(
     if !lane_surface::capture_record(bus, epoch, seats, record)? {
         return Ok(());
     }
+    // The bytes behind this record are already durable, so accounting them here
+    // keeps the transcript head level with the records the resident has taken
+    // responsibility for, rather than leaving the gap for the next start to
+    // find. A record the resident did not accept above does not account either.
+    super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), diagnostic)?;
     taste_surface::recognize(
         bus,
         surfaces.paths,

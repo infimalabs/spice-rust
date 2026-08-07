@@ -17,15 +17,20 @@
 //! [`renew`] is told whether an occupant is alive; neither consults a clock, so
 //! the same facts read in the same order always reduce to the same seat.
 
-/// Accounting reads and writes the SQLite authority, whose handle types
-/// `journal` gates off `wasm32`, so this module is native-only for the same
-/// reason its dependency is.
+// Accounting is a guarded journal write, and journal gates its whole writer
+// vocabulary out of the browser build. The module follows that same gate
+// instead of asking the wasm target to carry a path it can never take.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod account;
 pub mod capture;
 pub mod config;
 pub mod drain;
 pub mod hold;
+// Ingestion drives `account`, so it inherits that module's native-only gate for
+// the same reason: the journal writer vocabulary it reaches does not exist in
+// the browser build.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ingest;
 pub mod life;
 pub mod occupant;
 pub mod renew;
