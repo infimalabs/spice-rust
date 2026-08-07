@@ -45,6 +45,7 @@ pub mod mosaic_plane;
 pub mod pane;
 pub mod runtime;
 pub mod socket;
+pub mod speech_owner;
 pub mod state;
 pub mod view;
 pub mod watchband;
