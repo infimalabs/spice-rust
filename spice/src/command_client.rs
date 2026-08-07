@@ -635,20 +635,19 @@ fn open_session(
     discovery: DiscoveryRead,
     timeout: Duration,
 ) -> ClientResult<AuthenticatedSession> {
-    let (authority, address) =
-        dialable_endpoint(&discovery.value.endpoint).map_err(Outcome::Fault)?;
-    discovery.verify_current()?;
-    discovery.require_live_publisher().map_err(Outcome::Fault)?;
-    let stream = match DeadlineStream::connect(&address, timeout) {
-        Ok(stream) => stream,
-        Err(error) => {
-            return Err(environment_fault(
-                "canvas::connect-failed",
-                &error.to_string(),
-            ));
-        }
-    };
-    discovery.verify_current()?;
+    open_session_with(contract, discovery, timeout, || {})
+}
+
+/// The request that carries the capability, built once the endpoint is known.
+///
+/// Everything secret about a session is in here: the capability rides in the
+/// query and the endpoint rides in `Origin`. Keeping its construction separate
+/// from the opening makes the one ordering that matters legible — nothing
+/// builds this until the publisher has been proved alive a second time.
+fn capability_request(
+    authority: &str,
+    discovery: &DiscoveryRead,
+) -> ClientResult<tungstenite::handshake::client::Request> {
     let mut request = match format!(
         "ws://{authority}/socket?auth={}",
         discovery.value.capability
@@ -677,6 +676,51 @@ fn open_session(
         }
     };
     request.headers_mut().insert(ORIGIN, origin);
+    Ok(request)
+}
+
+/// Open a session, proving the publisher alive on both sides of the connect.
+///
+/// The check before the connect cannot cover the connect itself. In the
+/// interval between proving the lock held and the kernel completing the TCP
+/// handshake, the resident can die and anything at all can bind the port it
+/// vacates — the socket that comes back is then a stranger's. Re-reading the
+/// record does not answer this and never will: the record is still exactly
+/// what its dead publisher wrote, byte for byte, which is the whole reason the
+/// lock is the signal and the bytes are not.
+///
+/// So the lock is probed again after the connect, and the capability is not
+/// written into a request until it answers. The order is the point. A
+/// capability spent on a foreign listener cannot be unspent, and everything
+/// past this line puts it on the wire. The earlier check is kept rather than
+/// replaced: it refuses a record already known dead without opening a
+/// connection to anyone at all.
+///
+/// `after_connect` is the seam a test uses to lose the publisher inside that
+/// interval, which is otherwise too narrow to enter on purpose.
+fn open_session_with(
+    contract: &Contract,
+    discovery: DiscoveryRead,
+    timeout: Duration,
+    after_connect: impl FnOnce(),
+) -> ClientResult<AuthenticatedSession> {
+    let (authority, address) =
+        dialable_endpoint(&discovery.value.endpoint).map_err(Outcome::Fault)?;
+    discovery.verify_current()?;
+    discovery.require_live_publisher().map_err(Outcome::Fault)?;
+    let stream = match DeadlineStream::connect(&address, timeout) {
+        Ok(stream) => stream,
+        Err(error) => {
+            return Err(environment_fault(
+                "canvas::connect-failed",
+                &error.to_string(),
+            ));
+        }
+    };
+    after_connect();
+    discovery.verify_current()?;
+    discovery.require_live_publisher().map_err(Outcome::Fault)?;
+    let request = capability_request(authority, &discovery)?;
     let opening = OpeningBound {
         bound: stream.bound,
         deadline: stream.deadline,
