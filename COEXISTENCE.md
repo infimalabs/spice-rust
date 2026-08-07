@@ -194,13 +194,17 @@ rules, so running both means the stricter one silently governs.
 What the decision costs: a lane gets one system's guarantees and not the
 other's, and moving it across is a config change with no partial state.
 
-**The command that violates this is `cargo xtask activate-hooks`.**
-`xtask/src/hooks.rs:106-133` walks `git worktree list --porcelain` and runs
-`git config --worktree --unset-all core.hooksPath` in *every* worktree before
-setting one repository-local path. Run in one lane, it strips the predecessor's
-hooks from all of them. It must refuse while a foreign hook path is live in any
-worktree it would clear, rather than clearing and reporting. Until then it is
-not safe to run unattended, and it was not run to produce this document.
+**The command that enforces this is `cargo xtask activate-hooks`.**
+`preflight_worktree_hooks` in `xtask/src/hooks.rs` walks `git worktree list
+--porcelain` and reads each worktree's effective `core.hooksPath` before
+anything is published or written. It accepts two values — the tracked
+`.githooks` and the path being activated — and refuses on any other, naming the
+worktree. The check is on the effective value across all scopes, so two values
+configured anywhere refuse even when each alone would pass. It once cleared
+every worktree unconditionally; it now cannot strip the predecessor's hooks,
+because it stops before the first write. On this fleet every lane selects
+`.spice/hooks`, so the command refuses immediately and changes nothing, which is
+also why it was not needed to produce this document.
 
 ## May the two systems share a repository?
 
@@ -209,18 +213,19 @@ enforcement.
 
 Sharing works for state, executables, processes and assets: those boundaries
 are disjoint or disjoint-by-filename and need nothing. It does not work for
-hooks, ports, discovery or configuration. Of those four, exactly one is
-protected by anything the machine enforces — hooks, by a worktree-scoped
-setting that this port's own activation command is written to delete
-fleet-wide. Ports are protected only by hand, one `--port` per invocation.
-Discovery and configuration are not protected at all.
+hooks, ports, discovery or configuration. Three of those four are now protected
+by something the machine enforces: hooks, by a worktree-scoped setting that
+this port's activation command refuses to overwrite; discovery, by a client
+that will not dial a record whose publisher no longer holds the resident lock;
+and configuration, by the schema-ownership test below. Ports are protected only
+by hand, one `--port` per invocation.
 
 So the honest answer is *shared repository yes, shared worktree no, shared
-resident never*. Three of those four are already failing quietly: a stale
-`canvas` record points this port's clients at a foreign server, one strict
-config validator reads a file the other system owns, and the fixed default
-port is unbindable in every lane. Only the config one is answered by a check
-today; the other two raise nothing, which is why they are written down here.
+resident never*. What each protection leaves open is narrower than the boundary
+itself: a stale `canvas` record is refused rather than dialed, but only once
+its publisher is actually gone; the config validator still reads a file the
+other system owns, decided rather than prevented; and the fixed default port
+remains unbindable in every lane with nothing to raise it.
 
 Schema ownership is decided: the predecessor owns root `spice.toml`, because
 its validator runs on every agent tool call fleet-wide while this port's
@@ -229,5 +234,6 @@ that file and belong in `.spice/config.toml`.
 `spice/tests/config_coexistence.rs` carries the decision and fails on a
 violation.
 
-The remaining follow-ups — invalidate `canvas` on exit, and refuse in
-`activate-hooks` rather than clear — are separate work, not done here.
+Both follow-ups this document once listed are landed: `activate-hooks` refuses
+instead of clearing, and a `canvas` record outliving its publisher now faults
+`canvas::publisher-gone`. The port collision is what remains, held by hand.

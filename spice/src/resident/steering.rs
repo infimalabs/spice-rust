@@ -99,7 +99,7 @@ pub(super) fn publish_inboxes(
     Ok(())
 }
 
-fn publish_inbox(
+pub(super) fn publish_inbox(
     bus: &Bus,
     paths: &RuntimePaths,
     residency: &ResidencyHead,

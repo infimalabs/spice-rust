@@ -326,6 +326,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 
 #[test]
 fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity() {
+    let (root, paths) = resident_fixture("capture-rendering");
     let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
         .expect("message bus starts");
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
@@ -373,12 +374,15 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
         .expect("capture fixture occupant starts");
     let mut diagnostics = Vec::new();
     let mut previews = CallPreviews::default();
+    let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
+    let steering = steer::Config::default();
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
 
     accept_capture_record(
         &bus,
         test_uuid(4),
         &mut seats,
-        &publisher,
+        &surfaces,
         &record,
         &mut previews,
         &mut diagnostics,
@@ -388,7 +392,7 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
     assert_stale_capture_ignored(
         &bus,
         &mut seats,
-        &publisher,
+        &surfaces,
         &mut updates,
         &record,
         &mut previews,
@@ -401,6 +405,106 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
         .expect("replacement occupant stops");
     drop(source);
     bus.shutdown().expect("message bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
+fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
+    let (root, paths) = resident_fixture("capture-taste");
+    let repository = Repository::discover(&root).expect("fixture repository");
+    let surface = crate::trust_command::Surface::load(&repository).expect("trust surface");
+    let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
+        .expect("message bus starts");
+    let epoch = test_uuid(4);
+    let lane = test_uuid(5);
+    let occupant = test_uuid(6);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    seed_lane(&bus, epoch, lane, occupant);
+    let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
+    let publisher = source.message_publisher();
+    let locus = listen::Locus::new(4, 120, 48);
+    let record = lane::capture::CaptureRecord {
+        lane,
+        occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
+            text: "Polling is not a completion event.".to_owned(),
+            phase: None,
+            locus,
+        })]),
+    };
+    let bag = taste::Bag::new(vec![
+        taste::Taste::new(
+            "polling".parse().expect("taste name"),
+            ["poll*"],
+            "Wait for a terminal event.",
+        )
+        .expect("taste row"),
+    ])
+    .expect("taste bag");
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            lane,
+            occupant,
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("capture fixture occupant starts");
+    let mut diagnostics = Vec::new();
+    let mut previews = CallPreviews::default();
+    let steering = steer::Config::default();
+    let surfaces = CaptureSurfaces::new(&paths, &bag, &steering, &publisher);
+
+    for _ in 0..2 {
+        accept_capture_record(
+            &bus,
+            epoch,
+            &mut seats,
+            &surfaces,
+            &record,
+            &mut previews,
+            &mut diagnostics,
+        )
+        .expect("current capture admits");
+    }
+
+    let snapshot = bus.fact_snapshot().expect("capture facts read");
+    assert_eq!(
+        snapshot
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::TasteReminded)
+            .count(),
+        1,
+        "the duplicate durable vendor record is suppressed in the same epoch"
+    );
+    assert_eq!(
+        steer::Ledger::from_snapshot(&snapshot)
+            .expect("reminder replay")
+            .pending(lane)
+            .len(),
+        1
+    );
+    assert!(
+        fs::read_to_string(steer::inbox::path(&paths.inbox, lane))
+            .expect("inbox rendering")
+            .contains("[TASTE] polling: Wait for a terminal event.")
+    );
+    assert!(diagnostics.is_empty());
+    seats
+        .vacate(lane)
+        .expect("occupant remains supervised")
+        .wait()
+        .expect("occupant stops");
+    drop(source);
+    bus.shutdown().expect("message bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 fn assert_tool_and_prose_activity(
@@ -442,10 +546,10 @@ fn assert_tool_and_prose_activity(
     ));
 }
 
-fn assert_stale_capture_ignored(
+fn assert_stale_capture_ignored<P: AgentMessagePublisher>(
     bus: &bus::Bus,
     seats: &mut Seats,
-    publisher: &impl AgentMessagePublisher,
+    surfaces: &CaptureSurfaces<'_, P>,
     updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
     record: &lane::capture::CaptureRecord,
     previews: &mut CallPreviews,
@@ -484,7 +588,7 @@ fn assert_stale_capture_ignored(
         bus,
         test_uuid(4),
         seats,
-        publisher,
+        surfaces,
         &stale,
         previews,
         diagnostics,

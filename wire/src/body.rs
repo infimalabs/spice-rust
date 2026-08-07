@@ -931,7 +931,7 @@ pub struct TasteCleared {
 /// sees the evidence from the same row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TasteReminded {
-    /// Durable directive identity, equal to the command that created it.
+    /// Durable directive identity minted by resident recognition.
     pub directive: CanonicalUuid,
     /// Directive key, spelled exactly as an operator-sent key is.
     pub key: String,
@@ -939,18 +939,19 @@ pub struct TasteReminded {
     pub lane: CanonicalUuid,
     /// Taste that fired.
     pub taste: String,
-    /// Identity of the normalized prose the taste fired on.
+    /// Identity of the taste name and normalized prose the taste fired on.
     ///
     /// Domain tagged, so the same bytes read as a taste trigger and as anything
     /// else can never collide into one identity.
     pub content: Digest,
     /// Occupant whose context the prose was authored in.
     pub occupant: CanonicalUuid,
-    /// Tape member of the boundary opening that occupant's current context.
+    /// Journal position opening that occupant's current context epoch.
     ///
-    /// Zero before the occupant has compacted. Paired with `content` this is
-    /// what makes one reminder per compaction epoch decidable from the durable
-    /// stream alone, rather than from a separate memory of what has fired.
+    /// This is the latest matching `lane::started`, `lane::renewed`, or
+    /// subsequent `lane::compacted` fact. Paired with `content` it makes one
+    /// reminder per compaction epoch decidable from the durable stream alone,
+    /// rather than from a separate memory of what has fired.
     pub compaction: u64,
     /// Exact transcript locus of the prose that fired the taste.
     pub locus: TranscriptLocus,

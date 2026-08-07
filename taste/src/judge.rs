@@ -1,4 +1,4 @@
-//! The sole candidate-to-fact transition.
+//! Historical candidate-to-curation-fact transitions.
 
 use wire::{Fact, FactKind, body};
 
@@ -60,7 +60,9 @@ impl Judgment {
     /// Mint the one fact selected by this explicit judgment.
     ///
     /// A candidate hit has no fact conversion. Judging is therefore the only
-    /// door to either the confirmation or clearance journal path.
+    /// door to either historical confirmation or clearance path; live
+    /// reminders are assembled by resident recognition with authority this
+    /// pure type deliberately does not carry.
     #[must_use]
     pub fn into_fact(self) -> JudgmentFact {
         let taste = self.hit.taste().to_string();
