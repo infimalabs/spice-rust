@@ -252,24 +252,19 @@ fn native_canvas_stream_renders_seeded_lane_task_and_canned_turns() {
     let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
         .expect("browser demo seed succeeds");
     let root_for_down = environment.root.clone();
-    let outcome = canvas_environment(environment, false, false, |discovery_path| {
-        crate::command_client::open_canvas_with(
-            discovery_path,
-            || {},
-            |endpoint| {
-                let discovery = read_discovery(discovery_path);
-                assert_eq!(endpoint, discovery.endpoint);
-                assert_browser_seed(&discovery);
-                assert!(matches!(
-                    crate::resident::down_from(
-                        &root_for_down,
-                        crate::cli::contract(&["down"]).expect("down contract"),
-                    ),
-                    Outcome::Reply(_)
-                ));
-                Ok(())
-            },
-        )
+    let discovery_path = environment.state.canvas().to_path_buf();
+    let outcome = canvas_environment(environment, false, false, true, |endpoint| {
+        let discovery = read_discovery(&discovery_path);
+        assert_eq!(endpoint, discovery.endpoint);
+        assert_browser_seed(&discovery);
+        assert!(matches!(
+            crate::resident::down_from(
+                &root_for_down,
+                crate::cli::contract(&["down"]).expect("down contract"),
+            ),
+            Outcome::Reply(_)
+        ));
+        Ok(())
     });
     let Outcome::Reply(answer) = outcome else {
         panic!("served browser demo replies: {outcome:?}");
@@ -286,18 +281,101 @@ fn native_canvas_stream_renders_seeded_lane_task_and_canned_turns() {
     assert!(root.exists());
 }
 
+/// Seed one demo root these gate cases can run to completion.
+///
+/// Both interrupt after launch rather than stopping the resident from inside
+/// the launcher, which is how every other case here ends its run. That pattern
+/// is unavailable to the case that matters: a plain run never calls the
+/// launcher at all, so a launcher that shuts the resident down would hang
+/// exactly when it passes. The injected signal is sent on both paths, so the
+/// two cases below differ only in the flag under test.
+fn gate_environment(name: &str) -> (Scratch, Environment) {
+    let scratch = Scratch::new(name);
+    let root = scratch.child("demo-root");
+    fs::create_dir(&root).unwrap();
+    let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
+        .expect("gate demo seed succeeds");
+    (scratch, environment)
+}
+
+/// A plain `spice demo` must not seize the operator's browser: the mirror of
+/// `announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it`, and
+/// what a run in an agent's hot loop actually does. Deleting the `open` check in
+/// `canvas_environment_with` reddens this. The launcher panics rather than
+/// returning `Err`, so a call cannot be absorbed by the `canvas::launch-failed`
+/// path and reported as some other failure.
+#[test]
+fn a_plain_demo_run_never_calls_the_browser_launcher() {
+    let (_scratch, environment) = gate_environment("plain-no-open");
+    let outcome = canvas_environment_with(environment, false, false, false, true, |endpoint| {
+        panic!("a plain demo run must not open a browser: {endpoint}")
+    });
+    let Outcome::Reply(answer) = outcome else {
+        panic!("a plain demo run replies: {outcome:?}");
+    };
+    assert_eq!(answer.body.mode, "canvas");
+    assert!(
+        answer
+            .body
+            .endpoint
+            .as_deref()
+            .is_some_and(|value| value.starts_with("http://127.0.0.1:")),
+        "the endpoint is reported even though nothing was opened: {:?}",
+        answer.body.endpoint
+    );
+}
+
+/// `--open` hands the launcher the admitted endpoint and no other, mirroring
+/// `opening_at_start_dials_exactly_the_endpoint_that_was_announced`. The
+/// capability stays; only its default moved.
+#[test]
+fn demo_open_dials_exactly_the_endpoint_it_reports() {
+    let (_scratch, environment) = gate_environment("explicit-open");
+    let mut dialled = None;
+    let outcome = canvas_environment_with(environment, false, false, true, true, |endpoint| {
+        dialled = Some(endpoint.to_owned());
+        Ok(())
+    });
+    let Outcome::Reply(answer) = outcome else {
+        panic!("an opening demo run replies: {outcome:?}");
+    };
+    assert!(dialled.is_some(), "--open reaches the launcher");
+    assert_eq!(dialled.as_deref(), answer.body.endpoint.as_deref());
+}
+
+/// The gate above is only reachable if the flag exists and defaults off. This
+/// asks the generated parser rather than the contract string, because the
+/// string is what registers the flag and a test that re-read it would pass on
+/// a `demo` that never grew one.
+#[test]
+fn demo_registers_open_and_defaults_it_off() {
+    let parse = |arguments: &[&str]| {
+        let parsed = crate::cli::command()
+            .try_get_matches_from(arguments)
+            .expect("the demo invocation parses");
+        crate::cli::selected_matches(&parsed).get_flag("open")
+    };
+    assert!(
+        !parse(&["spice", "demo"]),
+        "a plain demo run is the one an agent makes without thinking about it"
+    );
+    assert!(parse(&["spice", "demo", "--open"]));
+    assert!(
+        crate::cli::command()
+            .try_get_matches_from(["spice", "demo", "--no-open"])
+            .is_err(),
+        "opting out of a launching default is the shape this task refused"
+    );
+}
+
 #[test]
 fn launch_failure_preserves_one_reusable_or_removable_recovery_root() {
     let scratch = Scratch::new("launch-failure");
     let root = scratch.child("failed-root");
     let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
         .expect("failure demo seed succeeds");
-    let outcome = canvas_environment(environment, true, false, |discovery_path| {
-        crate::command_client::open_canvas_with(
-            discovery_path,
-            || {},
-            |_endpoint| Err("fixture browser launcher failed".to_owned()),
-        )
+    let outcome = canvas_environment(environment, true, false, true, |_endpoint| {
+        Err("fixture browser launcher failed".to_owned())
     });
     let Outcome::Fault(fault) = outcome else {
         panic!("launcher failure is typed: {outcome:?}");
@@ -317,9 +395,8 @@ fn interruption_preserves_even_an_automatic_cleanup_root() {
     fs::create_dir(&root).unwrap();
     let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
         .expect("automatic demo seed succeeds");
-    let outcome = canvas_environment_with(environment, true, false, true, |discovery_path| {
-        crate::command_client::open_canvas_with(discovery_path, || {}, |_endpoint| Ok(()))
-    });
+    let outcome =
+        canvas_environment_with(environment, true, false, false, true, |_endpoint| Ok(()));
     let Outcome::Reply(answer) = outcome else {
         panic!("interrupted demo replies with recovery: {outcome:?}");
     };
@@ -337,21 +414,15 @@ fn clean_automatic_service_removes_only_its_demo_root() {
     let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
         .expect("automatic cleanup seed succeeds");
     let root_for_down = fs::canonicalize(&root).unwrap();
-    let outcome = canvas_environment(environment, true, false, |discovery_path| {
-        crate::command_client::open_canvas_with(
-            discovery_path,
-            || {},
-            |_endpoint| {
-                assert!(matches!(
-                    crate::resident::down_from(
-                        &root_for_down,
-                        crate::cli::contract(&["down"]).expect("down contract"),
-                    ),
-                    Outcome::Reply(_)
-                ));
-                Ok(())
-            },
-        )
+    let outcome = canvas_environment(environment, true, false, true, |_endpoint| {
+        assert!(matches!(
+            crate::resident::down_from(
+                &root_for_down,
+                crate::cli::contract(&["down"]).expect("down contract"),
+            ),
+            Outcome::Reply(_)
+        ));
+        Ok(())
     });
     let Outcome::Reply(answer) = outcome else {
         panic!("clean demo service replies: {outcome:?}");
