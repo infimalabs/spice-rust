@@ -1179,6 +1179,20 @@ pub struct JournalIngested {
     pub stream: String,
     /// Opaque durable source generation the batch was read from.
     pub source: CanonicalUuid,
+    /// Generation this batch retired, present only when [`Self::source`] is a
+    /// new generation restarting the stream from its origin.
+    ///
+    /// A reader cannot infer supersession from a source that merely differs:
+    /// that reading turns a batch written against a stale head, or a batch that
+    /// named the wrong source, into a silent generation change that abandons
+    /// the accounted position. Naming the retired generation makes the claim
+    /// explicit and lets the guard refuse every batch that does not make it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub supersedes: Option<CanonicalUuid>,
     /// Position the batch continued from.
     pub from: TranscriptPosition,
     /// Position the batch left the source head at.

@@ -149,6 +149,7 @@ fn ingested_batch() -> wire::body::JournalIngested {
         vendor: head.vendor.clone(),
         stream: head.stream.clone(),
         source: head.source,
+        supersedes: None,
         from: TranscriptPosition {
             member: 1,
             offset: 0,

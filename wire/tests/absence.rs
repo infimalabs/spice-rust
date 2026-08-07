@@ -38,7 +38,8 @@ const LANE: &str = r#"{
 
 const CURSOR: &str = r#"{}"#;
 
-/// One accounted batch, whose only absent field is the optional counter.
+/// One accounted batch continuing its own generation, so the retired
+/// generation and the optional counter are both absent.
 const INGESTED: &str = r#"{
   "kind": "journal::ingested",
   "lane": "018f82d4-6f59-7d06-92e3-bce913116305",
