@@ -22,6 +22,8 @@ const CHANGED: &str = "allocator inputs changed before the claim could commit";
 pub struct Request {
     /// Captured project vocabulary used by both allocation observations.
     pub projects: ProjectPolicy,
+    /// Captured urgency equivalence band used by both allocation observations.
+    pub band: u64,
     /// Identity stored with the canonical command receipt.
     pub command: CanonicalUuid,
     /// Principal derived from the authenticated resident capability.
@@ -254,6 +256,8 @@ fn build_write(
 ) -> Result<(TaskHandle, JournalWrite), WinError> {
     let winner = observed.winner().clone();
     let expected_witnesses = witnesses(&request, observed.selected());
+    let review_workflow = (observed.selected().workflow().body().phase.as_str() == "review")
+        .then(|| observed.selected().workflow().body().clone());
 
     let origin = format!("task:{winner}")
         .parse()
@@ -266,6 +270,24 @@ fn build_write(
     );
     write.guard(change_guard(request.clone(), observed));
 
+    let claim_cause = if let Some(mut workflow) = review_workflow {
+        let assigned = write
+            .fact(
+                body::TaskAssigned {
+                    task: winner.clone(),
+                    reviewer: request.actor.clone(),
+                    phase: workflow.phase.clone(),
+                },
+                FactCause::Root,
+            )
+            .map_err(WinError::Build)?;
+        workflow.assignment = Some(request.actor.clone());
+        workflow.review = "assigned".to_owned();
+        write.workflow_head(winner.clone(), assigned, move |_| workflow);
+        FactCause::Pending(assigned)
+    } else {
+        FactCause::Root
+    };
     let fact = write
         .fact(
             body::ClaimWon {
@@ -277,7 +299,7 @@ fn build_write(
                 until: request.expiry,
                 git: None,
             },
-            FactCause::Root,
+            claim_cause,
         )
         .map_err(WinError::Build)?;
     let claim_actor = request.actor.clone();
@@ -439,7 +461,7 @@ fn observe(
             ))
         })?;
     let subscription = admit_residency(&effective_residency, request)?;
-    let winner = select(&entries, &request.actor, subscription)
+    let winner = select(&entries, &request.actor, subscription, request.band)
         .ok_or(Refusal::Empty)?
         .entry()
         .statement()
@@ -598,6 +620,7 @@ mod tests {
                 dialect::PROJECT_MAX_DEPTH as u64,
             )
             .expect("fixture project policy"),
+            band: 2,
             command: uuid(command),
             actor: Actor::Lane(lane),
             lane,

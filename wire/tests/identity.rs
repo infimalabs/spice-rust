@@ -102,7 +102,8 @@ const fn position(domain: Domain) -> usize {
         | Domain::GateBatteryManifest
         | Domain::GateBatteryReport
         | Domain::GateBatteryReceipt
-        | Domain::GateConfiguration => late_position(domain),
+        | Domain::GateConfiguration
+        | Domain::TasteProse => late_position(domain),
     }
 }
 
@@ -163,6 +164,7 @@ const fn late_position(domain: Domain) -> usize {
         Domain::GateBatteryReport => 40,
         Domain::GateBatteryReceipt => 41,
         Domain::GateConfiguration => 42,
+        Domain::TasteProse => 43,
         _ => panic!("domain position partition is closed"),
     }
 }
@@ -179,7 +181,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 43] = [
+const DOMAINS: [Domain; 44] = [
     Domain::BoardDocument,
     Domain::BoardTaskIdentity,
     Domain::BoardBarrier,
@@ -223,6 +225,7 @@ const DOMAINS: [Domain; 43] = [
     Domain::GateBatteryReport,
     Domain::GateBatteryReceipt,
     Domain::GateConfiguration,
+    Domain::TasteProse,
 ];
 
 #[test]
@@ -317,6 +320,7 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.gate.battery-report.v1",
             "spice.gate.battery-receipt.v1",
             "spice.gate.configuration.v1",
+            "spice.taste.prose.v1",
         ],
         "a domain tag changed; that re-points digests already published under it"
     );

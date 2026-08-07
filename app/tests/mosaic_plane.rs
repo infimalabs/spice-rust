@@ -1,5 +1,5 @@
 use app::mosaic::{Candidate, Lifecycle};
-use app::mosaic_plane::arrange;
+use app::mosaic_plane::{MeasuredCard, PersistentLanePlane, Transition, arrange};
 
 fn candidates(span: usize, rows: i32) -> Vec<Candidate> {
     vec![Candidate { span, rows }]
@@ -43,4 +43,188 @@ fn sibling_lane_planes_never_share_a_row_floor() {
     assert_eq!(busy.max_row, 12);
     assert_eq!(quiet.cards[0].base, 0);
     assert_eq!(quiet.max_row, 2);
+}
+
+fn measured(key: &'static str, candidates: Vec<Candidate>) -> MeasuredCard<&'static str> {
+    MeasuredCard {
+        key,
+        candidates,
+        latched: None,
+        content_revision: 0,
+    }
+}
+
+#[test]
+fn persistent_noop_and_append_never_repack_committed_cards() {
+    let initial = [
+        measured("a", candidates(3, 3)),
+        measured("b", candidates(3, 4)),
+    ];
+    let plane = PersistentLanePlane::new(900, &initial);
+    let committed = plane.cards().to_vec();
+
+    let noop = plane.reconcile(900, &initial);
+    assert_eq!(noop.cards(), committed);
+    assert_eq!(noop.commits(), plane.commits());
+    assert_eq!(noop.transition(), plane.transition());
+
+    let appended = plane.reconcile(
+        900,
+        &[
+            initial[0].clone(),
+            initial[1].clone(),
+            measured("c", candidates(12, 5)),
+        ],
+    );
+    assert_eq!(&appended.cards()[..2], committed);
+    assert_eq!(appended.cards()[2].key, "c");
+    assert_eq!(appended.transition(), Transition::Append);
+}
+
+#[test]
+fn content_resize_latches_horizontal_placement_and_uses_fresh_rows() {
+    let plane = PersistentLanePlane::new(
+        900,
+        &[
+            measured("a", candidates(3, 3)),
+            measured("b", candidates(3, 3)),
+        ],
+    );
+    let before = plane.cards()[0].card.clone();
+    let resized = plane.reconcile(
+        900,
+        &[
+            MeasuredCard {
+                key: "a",
+                candidates: vec![
+                    Candidate { span: 3, rows: 7 },
+                    Candidate { span: 6, rows: 2 },
+                ],
+                latched: None,
+                content_revision: 0,
+            },
+            measured("b", candidates(3, 3)),
+        ],
+    );
+    let after = &resized.cards()[0].card;
+    assert_eq!((after.track, after.span), (before.track, before.span));
+    assert_eq!(after.rows, 7);
+    assert_eq!(resized.transition(), Transition::ContentResize);
+}
+
+#[test]
+fn a_latched_span_measurement_is_part_of_content_identity() {
+    let candidates = vec![
+        Candidate { span: 3, rows: 3 },
+        Candidate { span: 6, rows: 3 },
+    ];
+    let plane = PersistentLanePlane::new(900, &[measured("a", candidates.clone())]);
+    assert_eq!(plane.cards()[0].card.span, 6);
+    let resized = plane.reconcile(
+        900,
+        &[MeasuredCard {
+            key: "a",
+            candidates,
+            latched: Some(Candidate { span: 6, rows: 5 }),
+            content_revision: 0,
+        }],
+    );
+    assert_eq!(resized.cards()[0].card.rows, 5);
+    assert_eq!(resized.transition(), Transition::ContentResize);
+}
+
+#[test]
+fn a_content_revision_commits_even_when_the_lattice_rows_are_unchanged() {
+    let initial = measured("a", candidates(3, 3));
+    let plane = PersistentLanePlane::new(900, std::slice::from_ref(&initial));
+    let resolved = plane.reconcile(
+        900,
+        &[MeasuredCard {
+            content_revision: 1,
+            ..initial
+        }],
+    );
+    assert_eq!(resolved.cards()[0].card, plane.cards()[0].card);
+    assert_eq!(resolved.commits(), plane.commits() + 1);
+    assert_eq!(resolved.transition(), Transition::ContentResize);
+}
+
+#[test]
+fn frozen_content_resolution_keeps_shrink_reservation_and_ripples_growth() {
+    let initial = [
+        measured("a", candidates(12, 2)),
+        measured("b", candidates(12, 2)),
+        measured("c", candidates(12, 2)),
+        measured("d", candidates(12, 2)),
+    ];
+    let plane = PersistentLanePlane::new(900, &initial);
+    assert_eq!(plane.cards()[1].card.lifecycle, Lifecycle::Frozen);
+
+    let shrunk = plane.reconcile(
+        900,
+        &[
+            initial[0].clone(),
+            measured("b", candidates(12, 1)),
+            initial[2].clone(),
+            initial[3].clone(),
+        ],
+    );
+    assert_eq!(shrunk.cards()[1].card.rows, 2);
+    assert_eq!(shrunk.cards()[0].card.base, plane.cards()[0].card.base);
+
+    let grown = plane.reconcile(
+        900,
+        &[
+            initial[0].clone(),
+            measured("b", candidates(12, 4)),
+            initial[2].clone(),
+            initial[3].clone(),
+        ],
+    );
+    assert_eq!(grown.cards()[1].card.rows, 4);
+    assert!(grown.cards()[0].card.base < plane.cards()[0].card.base);
+    assert_eq!(grown.cards()[2].card.base, plane.cards()[2].card.base);
+}
+
+#[test]
+fn prefix_backfill_lands_below_without_moving_committed_geometry() {
+    let initial = [
+        measured("b", candidates(6, 3)),
+        measured("c", candidates(6, 4)),
+    ];
+    let plane = PersistentLanePlane::new(900, &initial);
+    let committed = plane
+        .cards()
+        .iter()
+        .map(|entry| {
+            (
+                entry.card.track,
+                entry.card.span,
+                entry.card.base,
+                entry.card.rows,
+            )
+        })
+        .collect::<Vec<_>>();
+    let backfilled = plane.reconcile(
+        900,
+        &[
+            measured("a", candidates(12, 2)),
+            initial[0].clone(),
+            initial[1].clone(),
+        ],
+    );
+    let retained = backfilled.cards()[1..]
+        .iter()
+        .map(|entry| {
+            (
+                entry.card.track,
+                entry.card.span,
+                entry.card.base,
+                entry.card.rows,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(retained, committed);
+    assert!(backfilled.cards()[0].card.base < 0);
+    assert_eq!(backfilled.transition(), Transition::Backfill);
 }

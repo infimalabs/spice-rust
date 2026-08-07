@@ -10,6 +10,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use sill::{Availability, LockFile, LockName};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
@@ -125,10 +126,11 @@ fn execute_mapped(
         Err(outcome) => return outcome,
     };
     let discovery_path = selected_discovery_path(operator_discovery, connection);
-    let discovery = match DiscoveryRead::open(&discovery_path) {
-        Ok(discovery) => discovery,
-        Err(outcome) => return outcome,
-    };
+    let discovery =
+        match DiscoveryRead::open(&discovery_path, &resident_lock_path(operator_discovery)) {
+            Ok(discovery) => discovery,
+            Err(outcome) => return outcome,
+        };
     request(contract, mapped, discovery)
 }
 
@@ -146,7 +148,10 @@ pub(crate) fn authenticate(
         ));
     }
     let connection = ambient_lane_identity()?.map_or(Connection::Operator, Connection::Lane);
-    let discovery = DiscoveryRead::open(&selected_discovery_path(discovery_path, connection))?;
+    let discovery = DiscoveryRead::open(
+        &selected_discovery_path(discovery_path, connection),
+        &resident_lock_path(discovery_path),
+    )?;
     let session = open_session(contract, discovery, OPENING_BOUND)?;
     Ok(session.accepted.epoch)
 }
@@ -201,29 +206,51 @@ fn selected_discovery_path(operator_discovery: &Path, connection: Connection) ->
     }
 }
 
+/// The lock the resident that published a discovery record holds while it runs.
+///
+/// This is the same sibling derivation [`selected_discovery_path`] makes:
+/// `repository.rs` builds both `canvas` and `resident` on the runtime
+/// directory, so the operator discovery path names the lock beside it. The
+/// operator path is used for lane records too, because one resident publishes
+/// every lane surface under `canvas-lanes` and holds exactly one lock for all
+/// of them; walking up from a lane record instead would have to know how deep
+/// it sits.
+fn resident_lock_path(operator_discovery: &Path) -> PathBuf {
+    operator_discovery.with_file_name("resident")
+}
+
 struct DiscoveryRead {
     path: PathBuf,
     parent: PathBuf,
+    resident_lock: PathBuf,
     parent_identity: FileIdentity,
     file_identity: FileIdentity,
     value: canvas::Discovery,
 }
 
 impl DiscoveryRead {
-    fn open(path: &Path) -> ClientResult<Self> {
-        Self::open_fault(path).map_err(Outcome::Fault)
+    fn open(path: &Path, resident_lock: &Path) -> ClientResult<Self> {
+        Self::open_fault(path, resident_lock).map_err(Outcome::Fault)
     }
 
     #[cfg(test)]
-    fn open_with(path: &Path, before_open: impl FnOnce()) -> ClientResult<Self> {
-        Self::open_fault_with(path, before_open).map_err(Outcome::Fault)
+    fn open_with(
+        path: &Path,
+        resident_lock: &Path,
+        before_open: impl FnOnce(),
+    ) -> ClientResult<Self> {
+        Self::open_fault_with(path, resident_lock, before_open).map_err(Outcome::Fault)
     }
 
-    fn open_fault(path: &Path) -> Result<Self, Fault> {
-        Self::open_fault_with(path, || {})
+    fn open_fault(path: &Path, resident_lock: &Path) -> Result<Self, Fault> {
+        Self::open_fault_with(path, resident_lock, || {})
     }
 
-    fn open_fault_with(path: &Path, before_open: impl FnOnce()) -> Result<Self, Fault> {
+    fn open_fault_with(
+        path: &Path,
+        resident_lock: &Path,
+        before_open: impl FnOnce(),
+    ) -> Result<Self, Fault> {
         let parent = path.parent().ok_or_else(|| {
             environment_fault_value(
                 "canvas::discovery-unavailable",
@@ -264,12 +291,52 @@ impl DiscoveryRead {
         let read = Self {
             path: path.to_path_buf(),
             parent: parent.to_path_buf(),
+            resident_lock: resident_lock.to_path_buf(),
             parent_identity,
             file_identity,
             value,
         };
         read.verify_current_fault()?;
         Ok(read)
+    }
+
+    /// Refuse an endpoint whose publishing resident is no longer running.
+    ///
+    /// A discovery record is a claim about a process, not just a document, and
+    /// nothing in its bytes expires. The kernel's `flock` on the resident lock
+    /// is the one signal that does: it is released on any process death, so it
+    /// answers for a resident that was killed exactly as it answers for one
+    /// that exited through either orderly path. The lock's *contents* cannot
+    /// stand in for it — they name a pid the operating system may already have
+    /// reissued.
+    ///
+    /// This is the difference between refusing and dialling whatever now holds
+    /// the port. The port is not the resident's to keep: a foreign server that
+    /// binds it inherits a client that is about to present a capability token
+    /// to a process with no concept of one.
+    ///
+    /// The probe never creates the lock file, so a runtime that has never had
+    /// a resident reads as gone rather than as an error.
+    ///
+    /// A lock that cannot be probed at all is its own answer, and not the same
+    /// one: the record may be perfectly good and its publisher perfectly alive.
+    /// Naming it after the discovery file would send a reader to inspect bytes
+    /// that are not the problem, so it keeps the lock's own reason. Either way
+    /// the endpoint is refused — "unknown" is not permission to dial.
+    fn require_live_publisher(&self) -> Result<(), Fault> {
+        let name = LockName::new("resident").expect("resident is a non-empty lock name");
+        let availability = LockFile::new(name, &self.resident_lock)
+            .availability()
+            .map_err(|error| {
+                environment_fault_value("canvas::publisher-unknown", &error.to_string())
+            })?;
+        match availability {
+            Availability::Held => Ok(()),
+            Availability::Available => Err(environment_fault_value(
+                "canvas::publisher-gone",
+                "canvas discovery outlived the resident that published it",
+            )),
+        }
     }
 
     fn verify_current(&self) -> ClientResult<()> {
@@ -571,6 +638,7 @@ fn open_session(
     let (authority, address) =
         dialable_endpoint(&discovery.value.endpoint).map_err(Outcome::Fault)?;
     discovery.verify_current()?;
+    discovery.require_live_publisher().map_err(Outcome::Fault)?;
     let stream = match DeadlineStream::connect(&address, timeout) {
         Ok(stream) => stream,
         Err(error) => {

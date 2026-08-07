@@ -674,6 +674,7 @@ mod tests {
                 &lane,
                 allocation_subscription(&available.residency.body, &lane)
                     .expect("fixture lane subscription"),
+                available.allocation_band,
             )
                 .expect("allocator winner")
                 .entry()

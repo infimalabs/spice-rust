@@ -474,6 +474,86 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
     bus.shutdown().expect("bus shuts down");
 }
 
+/// A probe is answered on a socket that carries no subscription at all.
+///
+/// The client sends this when nothing has arrived for a while, which on a quiet
+/// board is the normal state rather than a broken one. So the answer cannot
+/// depend on there being a subscription to answer from, and it has to name the
+/// probe that asked: a fixed identity would let one stale answer satisfy every
+/// later probe, which is exactly the half-open socket the probe exists to catch.
+#[tokio::test(flavor = "current_thread")]
+async fn a_liveness_probe_is_answered_per_probe_and_still_admits_its_generation() {
+    let app = TestApp::new();
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "probe horizon", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind_streaming(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        epoch(),
+        capabilities,
+        app.source(),
+        speech(),
+        bus.reader(),
+        8,
+    )
+    .await
+    .expect("streaming server binds");
+    let address = server.local_addr().expect("address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+
+    for probe in [identity(0xf1), identity(0xf2)] {
+        send_client(
+            &mut socket,
+            &wire::StreamRequest::Ping {
+                v: wire::WireVersion::CURRENT,
+                id: probe,
+                epoch: epoch(),
+            },
+        )
+        .await;
+        assert!(
+            matches!(
+                stream_frame(&mut socket).await,
+                wire::StreamFrame::Pong { id, epoch: answered, .. }
+                    if id == probe && answered == epoch()
+            ),
+            "each probe is answered by its own identity"
+        );
+    }
+
+    // A probe addressed to a replaced generation is told so. Answering it with
+    // a Pong would report a healthy socket to a client whose whole view is
+    // stale, which is the one case where staying connected is the wrong move.
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Ping {
+            v: wire::WireVersion::CURRENT,
+            id: identity(0xf3),
+            epoch: identity(0xf9),
+        },
+    )
+    .await;
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Fault { fault, .. } if fault.reason == "stream::epoch-mismatch"
+    ));
+
+    shutdown.send(()).expect("shutdown signals");
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+    bus.shutdown().expect("bus shuts down");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author() {
     let app = TestApp::new();
@@ -545,6 +625,136 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
         .await
         .expect("server task joins")
         .expect("server stops");
+    bus.shutdown().expect("bus shuts down");
+}
+
+/// An inbound transport that always has another message waiting.
+///
+/// The session only ever asks whether a transport message is available, so a
+/// source that answers immediately is a faithful stand-in for a peer that keeps
+/// the socket busy, and it is ready on every poll rather than on a race.
+struct ReadyInbound;
+
+impl super::socket::Inbound for ReadyInbound {
+    async fn next_message(
+        &mut self,
+    ) -> Option<Result<::axum::extract::ws::Message, ::axum::Error>> {
+        Some(Ok(::axum::extract::ws::Message::Close(None)))
+    }
+}
+
+/// Every source a session can serve, each one ready before any of them is read.
+fn every_source_ready() -> (
+    bus::Bus,
+    tokio::sync::broadcast::Sender<wire::AgentMessage>,
+    Option<bus::BroadcastSubscriber>,
+    Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
+) {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    let broadcasts = bus.reader().subscribe();
+    for index in 0..8 {
+        commit_stream(&bus, &format!("ready commit {index}"), false);
+    }
+    let (publisher, transcript) = tokio::sync::broadcast::channel(16);
+    for offset in 0..8 {
+        publisher
+            .send(agent_message(0xe9, offset, "ready message"))
+            .expect("the retained receiver holds the channel open");
+    }
+    (bus, publisher, Some(broadcasts), Some(transcript))
+}
+
+/// Each rotation step serves its own source while all three stay ready.
+///
+/// Every source is ready before the first call and none is exhausted by the
+/// four, so the lead is the only thing left that can decide which event comes
+/// back. One fixed order answers `Journal` every time; a rotation that fails to
+/// cycle answers `Journal` after the first step; and the fourth call is what
+/// proves the cycle closes rather than parking on its last source. One lead is
+/// carried across all four calls, so the advance a session depends on is the
+/// same advance under test.
+///
+/// Readiness is established by the assertions themselves rather than by timing.
+/// Were the journal or the transcript source empty, the very step that must
+/// yield it would return a later source instead and fail there, so this cannot
+/// decay into a test that passes because nothing was ever ready.
+#[tokio::test(flavor = "current_thread")]
+async fn each_rotation_step_serves_its_own_source_while_all_three_stay_ready() {
+    use super::socket::{Event, Lead, next_event};
+
+    let (bus, _publisher, mut broadcasts, mut messages) = every_source_ready();
+    let (_closed, mut closed) = tokio::sync::watch::channel(false);
+    let mut inbound = ReadyInbound;
+    let mut lead = Lead::Journal;
+
+    for expected in ["journal", "message", "inbound", "journal"] {
+        let event = next_event(
+            &mut lead,
+            &mut inbound,
+            &mut closed,
+            &mut broadcasts,
+            &mut messages,
+            true,
+        )
+        .await;
+        let served = match event {
+            Event::Closed(_) => "closed",
+            Event::Journal(notice) => {
+                notice.expect("the journal source stayed ready");
+                "journal"
+            }
+            Event::Message(notice) => {
+                notice.expect("the transcript source stayed ready");
+                "message"
+            }
+            Event::Inbound(_) => "inbound",
+        };
+        assert_eq!(
+            served, expected,
+            "this rotation step must serve its own source while the others are ready"
+        );
+    }
+
+    bus.shutdown().expect("bus shuts down");
+}
+
+/// Close outranks every work source, so fairness is not bought with a late exit.
+///
+/// Fairness is bought by rotating the work sources, and the risk of that is
+/// trading a starvation bug for a close-ordering one. Shutdown is re-signalled
+/// before each step because a watch marks its value seen once observed, so each
+/// step is a fresh race between a ready close and three ready work sources.
+#[tokio::test(flavor = "current_thread")]
+async fn close_outranks_every_ready_work_source_on_every_lead() {
+    use super::socket::{Event, Lead, next_event};
+
+    let (bus, _publisher, mut broadcasts, mut messages) = every_source_ready();
+    let (shutdown, mut closed) = tokio::sync::watch::channel(false);
+    let mut inbound = ReadyInbound;
+    let mut lead = Lead::Journal;
+
+    for _ in 0..3 {
+        shutdown
+            .send(true)
+            .expect("the session holds the watch open");
+        assert!(
+            matches!(
+                next_event(
+                    &mut lead,
+                    &mut inbound,
+                    &mut closed,
+                    &mut broadcasts,
+                    &mut messages,
+                    true,
+                )
+                .await,
+                Event::Closed(Ok(()))
+            ),
+            "close must lead this rotation step even with every work source ready"
+        );
+    }
+
     bus.shutdown().expect("bus shuts down");
 }
 

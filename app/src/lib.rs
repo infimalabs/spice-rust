@@ -45,8 +45,11 @@ mod composer_submissions;
 pub mod mosaic;
 pub mod mosaic_plane;
 pub mod pane;
+#[cfg(any(target_arch = "wasm32", test))]
+mod reconnect;
 pub mod runtime;
 pub mod socket;
+pub mod speech_owner;
 pub mod state;
 pub mod view;
 pub mod watchband;

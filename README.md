@@ -22,7 +22,10 @@ hook whose entry point is absent, and Git aborts every ref update rather than
 degrading to no guard. Nothing republishes that copy afterwards, so a landed
 change to the guard leaves Git enforcing the older one until this command runs
 again; `cargo xtask verify` refuses while that is true and names the command
-above. Build this lane's Canvas app, then start Spice with:
+above. Activation is repository-wide rather than per-worktree: it clears the
+worktree-scoped `core.hooksPath` in every linked worktree, so run it only when
+the whole repository is meant to run these hooks. Build this lane's Canvas app,
+then start Spice with:
 
 ```sh
 cargo xtask app
@@ -46,9 +49,10 @@ That URL is announced only after the resident reads back the discovery file it
 just published and admits it, so it has already passed the same ownership,
 loopback-origin, and generation checks a client applies. `127.0.0.1:8765` is
 the default; `--host` and `--port` bind a different address, and `--port 0`
-takes any free port. The listener is IPv4 loopback unless `--host` names
-another address of this machine, so by default the app is reachable only from
-the host running it.
+takes any free port. Name a port wherever the predecessor's serve resident
+already holds 8765: that default binds or refuses, with no fallback. The
+listener is IPv4 loopback unless `--host` names another address of this
+machine, so by default the app is reachable only from the host running it.
 
 A non-loopback listener requires explicit consent and a URL-safe bearer token:
 
@@ -66,8 +70,11 @@ From a VPN browser, replace `127.0.0.1` with the resident host's VPN address,
 keep the announced port and `#TOKEN`, and open that URL. Never put the token
 before `#`.
 
-The one-time predecessor shutdown and empty-authority start are specified in
-[CUTOVER.md](CUTOVER.md).
+This appliance installs beside the Python predecessor rather than replacing it,
+and both are meant to keep running. [INSTALL.md](INSTALL.md) is that runbook: it
+names the port the predecessor already holds, the hook path the two cannot
+share, and what a retirement would destroy if one were ever wanted.
+[COEXISTENCE.md](COEXISTENCE.md) registers every boundary where they touch.
 
 The activation command refuses unless all three hooks are executable. The
 pre-commit hook runs the canonical verifier, which performs

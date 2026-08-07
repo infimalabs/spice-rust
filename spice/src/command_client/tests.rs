@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use sill::{Acquisition, Possession};
+
 use wire::intent::{StateAnswer, UpChange};
 use wire::{ResidentState, Seq, SeqRange};
 
@@ -26,9 +28,12 @@ const COMMAND_CONTRACT: Contract = Contract {
 struct Fixture {
     root: PathBuf,
     canvas: PathBuf,
+    publisher: Option<Possession>,
 }
 
 impl Fixture {
+    /// A runtime whose published records have a resident still holding the
+    /// lock, because that is the only state in which a client may dial them.
     fn new(name: &str) -> Self {
         let root = std::env::temp_dir().join(format!(
             "spice-command-client-{name}-{}-{}",
@@ -37,7 +42,30 @@ impl Fixture {
         ));
         fs::create_dir(&root).expect("fixture runtime directory");
         let canvas = root.join("canvas");
-        Self { root, canvas }
+        let lock = LockFile::new(
+            LockName::new("resident").expect("resident is a non-empty lock name"),
+            resident_lock_path(&canvas),
+        );
+        let Acquisition::Acquired(publisher) = lock.try_acquire().expect("fixture resident lock")
+        else {
+            panic!("a fixture runtime nothing else has seen cannot be contended");
+        };
+        Self {
+            root,
+            canvas,
+            publisher: Some(publisher),
+        }
+    }
+
+    /// Lose the publisher the way a killed resident does.
+    ///
+    /// Dropping the possession releases the kernel lock and nothing else: the
+    /// record it published stays exactly as written, and so does the holder
+    /// line in the lock file naming a pid. `ResidentLock`'s own `Drop`, which
+    /// truncates that line, is deliberately not run here — a fixture that
+    /// cleaned up after itself would only prove the orderly path.
+    fn release_publisher(&mut self) {
+        self.publisher = None;
     }
 
     fn publish(&self) -> canvas::Discovery {
@@ -282,7 +310,8 @@ fn the_answer_bound_registry_widens_exactly_the_contended_commands() {
 fn discovery_replacement_is_detected_by_file_identity() {
     let fixture = Fixture::new("replacement");
     let original = fixture.publish();
-    let read = DiscoveryRead::open(&fixture.canvas).expect("discovery opens");
+    let read = DiscoveryRead::open(&fixture.canvas, &fixture.root.join("resident"))
+        .expect("discovery opens");
     let replacement = canvas::Discovery {
         capability: uuid(3),
         epoch: uuid(4),
@@ -470,6 +499,107 @@ fn canvas_rechecks_discovery_identity_immediately_before_launch() {
     assert!(!fault.detail.contains(&original.capability.to_string()));
 }
 
+/// A record outlives its publisher, and the reader refuses it unread.
+///
+/// Both halves run against one fixture and one set of published bytes, so the
+/// only thing that changes between the launch and the refusal is whether a
+/// process still holds the resident lock. The live half is what makes the
+/// refusal mean something: without it, a reader that refused everything would
+/// pass.
+///
+/// Nothing on disk distinguishes the two states. The record is byte-identical
+/// and the lock file still names the pid that wrote it, which is exactly the
+/// evidence a killed resident leaves behind — and exactly why the pid in it
+/// cannot be the check.
+#[test]
+fn canvas_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
+    let mut fixture = Fixture::new("canvas-publisher-gone");
+    let discovery = fixture.publish();
+    let mut launched = Vec::new();
+
+    let live = open_canvas_with(
+        &fixture.canvas,
+        || {},
+        |endpoint| {
+            launched.push(endpoint.to_owned());
+            Ok(())
+        },
+    );
+    assert!(
+        matches!(live, Outcome::Reply(_)),
+        "a record whose publisher is live must open: {live:?}"
+    );
+    assert_eq!(launched, [discovery.endpoint.as_str()]);
+
+    let record = fs::read(&fixture.canvas).expect("published record reads");
+    let holder = fs::read(fixture.root.join("resident")).expect("holder line reads");
+    fixture.release_publisher();
+    assert_eq!(
+        fs::read(&fixture.canvas).expect("record survives the publisher"),
+        record,
+        "releasing the lock must not be a rewrite of the record under test"
+    );
+    assert_eq!(
+        fs::read(fixture.root.join("resident")).expect("holder line survives"),
+        holder,
+        "a killed resident leaves its holder line naming a pid that is gone"
+    );
+
+    let gone = open_canvas_with(
+        &fixture.canvas,
+        || {},
+        |endpoint| {
+            launched.push(endpoint.to_owned());
+            Ok(())
+        },
+    );
+
+    let Outcome::Fault(fault) = gone else {
+        panic!("a record whose publisher is gone must fault");
+    };
+    assert_eq!(fault.reason, "canvas::publisher-gone");
+    assert_eq!(
+        launched,
+        [discovery.endpoint],
+        "the endpoint must not reach the launcher a second time"
+    );
+    assert!(!fault.detail.contains(&discovery.capability.to_string()));
+}
+
+/// A lock that cannot be probed refuses under its own name, not the record's.
+///
+/// The published record here is byte-perfect and owner-only; only the lock is
+/// unusable. Reporting that as a discovery fault would name the one file that
+/// is not at fault, and admitting it would dial an endpoint nobody has shown
+/// is served.
+#[test]
+fn canvas_refuses_a_publisher_whose_lock_cannot_be_probed() {
+    let mut fixture = Fixture::new("canvas-publisher-unknown");
+    let discovery = fixture.publish();
+    fixture.release_publisher();
+
+    let resident = fixture.root.join("resident");
+    fs::remove_file(&resident).expect("fixture lock file removes");
+    fs::create_dir(&resident).expect("fixture lock becomes unprobeable");
+
+    let mut launched = false;
+    let outcome = open_canvas_with(
+        &fixture.canvas,
+        || {},
+        |_| {
+            launched = true;
+            Ok(())
+        },
+    );
+
+    let Outcome::Fault(fault) = outcome else {
+        panic!("an unprobeable lock must fault");
+    };
+    assert_eq!(fault.reason, "canvas::publisher-unknown");
+    assert!(!launched, "an unprobeable lock must not reach the launcher");
+    assert!(!fault.detail.contains(&discovery.capability.to_string()));
+}
+
 #[test]
 fn canvas_launcher_interruption_is_one_typed_fault() {
     let fixture = Fixture::new("canvas-launch-interruption");
@@ -523,7 +653,9 @@ fn discovery_symlinks_and_public_modes_are_refused() {
     let discovery = fixture.publish();
     fs::set_permissions(&fixture.canvas, fs::Permissions::from_mode(0o644))
         .expect("fixture mode changes");
-    let Err(Outcome::Fault(fault)) = DiscoveryRead::open(&fixture.canvas) else {
+    let Err(Outcome::Fault(fault)) =
+        DiscoveryRead::open(&fixture.canvas, &fixture.root.join("resident"))
+    else {
         panic!("public discovery must be refused");
     };
     assert_eq!(fault.reason, "canvas::discovery-insecure");
@@ -532,7 +664,9 @@ fn discovery_symlinks_and_public_modes_are_refused() {
     let target = fixture.root.join("target");
     discovery.publish(&target).expect("target publishes");
     symlink(&target, &fixture.canvas).expect("fixture symlink");
-    let Err(Outcome::Fault(fault)) = DiscoveryRead::open(&fixture.canvas) else {
+    let Err(Outcome::Fault(fault)) =
+        DiscoveryRead::open(&fixture.canvas, &fixture.root.join("resident"))
+    else {
         panic!("symlink discovery must be refused");
     };
     assert_eq!(fault.reason, "canvas::discovery-insecure");
@@ -549,7 +683,7 @@ fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() 
     let mut anchor = None;
 
     let started = Instant::now();
-    let outcome = DiscoveryRead::open_with(&fixture.canvas, || {
+    let outcome = DiscoveryRead::open_with(&fixture.canvas, &fixture.root.join("resident"), || {
         fs::remove_file(&fixture.canvas).expect("regular discovery removes");
         let status = ProcessCommand::new("mkfifo")
             .arg(&fixture.canvas)

@@ -3,8 +3,9 @@ fn claim_free(
     command: &wire::AdmittedCommand,
     task: &TaskRef,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -80,8 +81,9 @@ fn claim_reclaim(
     command: &wire::AdmittedCommand,
     renew: &ClaimRenew,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -243,11 +245,13 @@ fn task_done(
     done: &TaskDone,
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_snapshot(
         bus,
         command.actor().clone(),
         projects,
+        allocation,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -542,8 +546,9 @@ fn task_review(
     review: &TaskReview,
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -635,8 +640,9 @@ fn doc_apply(
     command: &wire::AdmittedCommand,
     apply: &DocApply,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let plan = match validate_doc_plan(bus, command, apply, projects) {
+    let plan = match validate_doc_plan(bus, command, apply, projects, allocation) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
@@ -651,6 +657,7 @@ fn validate_doc_plan(
     command: &wire::AdmittedCommand,
     apply: &DocApply,
     projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Result<DocPlan, Outcome<CommandAnswer>> {
     let preview = board::Preview::classify(&apply.document).map_err(|error| {
         refusal(
@@ -666,7 +673,7 @@ fn validate_doc_plan(
             &format!("apply the document digest {}", preview.digest()),
         ));
     }
-    let snapshot = validated_snapshot(bus, command.actor().clone(), projects)?;
+    let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
     require_doc_barrier(command, apply, &snapshot)?;
     let project = preview
         .document()

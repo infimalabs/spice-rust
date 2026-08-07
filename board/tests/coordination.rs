@@ -372,7 +372,7 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
     let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
     for actor in [Actor::Spice, Actor::Operator, Actor::Lane(lane)] {
         assert_eq!(
-            select(&entries, &actor, &all_projects())
+            select(&entries, &actor, &all_projects(), 2)
                 .expect("public task remains eligible")
                 .entry()
                 .statement()
@@ -642,6 +642,51 @@ fn urgency_is_a_pure_total_scalar_over_heads() {
 }
 
 #[test]
+fn urgency_band_changes_only_the_winner_inside_one_priority_class() {
+    let mut assigned_workflow = workflow("todo");
+    assigned_workflow.assignment = Some(Actor::Spice);
+    let lower_handle =
+        admitted(statement("BOARD-a1"), assigned_workflow, None, None).expect("assigned candidate");
+    let higher_handle = entry("BOARD-z1");
+    let ordered = [lower_handle.clone(), higher_handle.clone()];
+    let reversed = [higher_handle, lower_handle];
+
+    let outside = select(&ordered, &Actor::Spice, &all_projects(), 99).expect("eligible task");
+    assert_eq!(outside.entry().statement().handle, handle("BOARD-z1"));
+    let inside = select(&ordered, &Actor::Spice, &all_projects(), 100).expect("eligible task");
+    let reversed_inside =
+        select(&reversed, &Actor::Spice, &all_projects(), 100).expect("eligible task");
+    assert_eq!(inside.entry().statement().handle, handle("BOARD-a1"));
+    assert_eq!(
+        reversed_inside.entry().statement().handle,
+        inside.entry().statement().handle,
+    );
+}
+
+#[test]
+fn self_review_is_a_last_resort_class_instead_of_an_exclusion() {
+    let mut self_review_head = statement("BOARD-a1");
+    self_review_head.tags.push("priority:critical".to_owned());
+    let self_review = admitted(
+        self_review_head,
+        workflow("review"),
+        Some(claim(ClaimDisposition::Freed)),
+        Some(lease()),
+    )
+    .expect("self-authored review");
+    let peer_work = entry("BOARD-z1");
+
+    let entries = [self_review.clone(), peer_work];
+    let selected =
+        select(&entries, &Actor::Spice, &all_projects(), 2).expect("peer work remains eligible");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    let fallback_entries = [self_review];
+    let fallback = select(&fallback_entries, &Actor::Spice, &all_projects(), 2)
+        .expect("own review remains eligible on a quiet board");
+    assert_eq!(fallback.entry().statement().handle, handle("BOARD-a1"));
+}
+
+#[test]
 fn allocation_is_deterministic_and_has_one_eligibility_path() {
     let first = entry("BOARD-a1");
     let second = entry("BOARD-b2");
@@ -687,14 +732,75 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
         completed, deferred, active, first, assigned, second, blocked,
     ];
 
-    let selected = select(&ordered, &Actor::Spice, &all_projects()).expect("eligible task");
-    let selected_again = select(&reversed, &Actor::Spice, &all_projects()).expect("eligible task");
+    let selected = select(&ordered, &Actor::Spice, &all_projects(), 2).expect("eligible task");
+    let selected_again =
+        select(&reversed, &Actor::Spice, &all_projects(), 2).expect("eligible task");
     assert_eq!(selected.entry().statement().handle, handle("BOARD-a1"));
     assert_eq!(
         selected_again.entry().statement().handle,
         selected.entry().statement().handle
     );
     assert_eq!(selected_again.urgency(), selected.urgency());
+}
+
+#[test]
+fn prerequisite_inherits_the_critical_priority_it_directly_unblocks() {
+    let prerequisite = entry("BOARD-z1");
+    let mut critical_head = statement("BOARD-c1");
+    critical_head.tags.push("priority:critical".to_owned());
+    critical_head.dependencies.push(handle("BOARD-z1"));
+    let critical = admitted(critical_head, workflow("todo"), None, None).expect("critical task");
+    let mut medium_head = statement("BOARD-m1");
+    medium_head.tags.push("priority:medium".to_owned());
+    let medium = admitted(medium_head, workflow("todo"), None, None).expect("medium task");
+    let ordered = [prerequisite.clone(), critical.clone(), medium.clone()];
+    let reversed = [medium, critical, prerequisite];
+
+    let selected = select(&ordered, &Actor::Spice, &all_projects(), 2).expect("eligible task");
+    let selected_again =
+        select(&reversed, &Actor::Spice, &all_projects(), 2).expect("eligible task");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(
+        selected_again.entry().statement().handle,
+        selected.entry().statement().handle,
+    );
+    assert_eq!(selected_again.urgency(), selected.urgency());
+}
+
+#[test]
+fn prerequisite_inherits_priority_through_a_two_edge_chain() {
+    let first = entry("BOARD-z1");
+    let mut second_head = statement("BOARD-z2");
+    second_head.dependencies.push(handle("BOARD-z1"));
+    let second = admitted(second_head, workflow("todo"), None, None).expect("second prerequisite");
+    let mut critical_head = statement("BOARD-c1");
+    critical_head.tags.push("priority:critical".to_owned());
+    critical_head.dependencies.push(handle("BOARD-z2"));
+    let critical = admitted(critical_head, workflow("todo"), None, None).expect("critical task");
+    let mut medium_head = statement("BOARD-m1");
+    medium_head.tags.push("priority:medium".to_owned());
+    let medium = admitted(medium_head, workflow("todo"), None, None).expect("medium task");
+    let entries = [first, second, critical, medium];
+
+    let selected = select(&entries, &Actor::Spice, &all_projects(), 2).expect("eligible task");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+}
+
+#[test]
+fn priority_inheritance_terminates_on_a_dependency_cycle() {
+    let mut first_head = statement("BOARD-z1");
+    first_head.tags.push("priority:critical".to_owned());
+    first_head.dependencies.push(handle("BOARD-z2"));
+    let first = admitted(first_head, workflow("todo"), None, None).expect("first cycle entry");
+    let mut second_head = statement("BOARD-z2");
+    second_head.dependencies.push(handle("BOARD-z1"));
+    let second = admitted(second_head, workflow("todo"), None, None).expect("second cycle entry");
+    let medium = entry("BOARD-m1");
+
+    let entries = [first, second, medium];
+    let selected = select(&entries, &Actor::Spice, &all_projects(), 2)
+        .expect("cycle leaves the independent task eligible");
+    assert_eq!(selected.entry().statement().handle, handle("BOARD-m1"));
 }
 
 #[test]
@@ -757,6 +863,7 @@ fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
             &entries,
             &actor,
             &subscription(wire::intent::LineageLife::Steer),
+            2,
         )
         .expect("steer has manual work")
         .entry()
@@ -770,6 +877,7 @@ fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
             &entries,
             &actor,
             &subscription(wire::intent::LineageLife::Drain),
+            2,
         )
         .expect("drain has all assignable work")
         .entry()

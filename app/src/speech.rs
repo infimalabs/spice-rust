@@ -8,6 +8,8 @@ use web_sys::{
     SpeechSynthesisUtterance, Url,
 };
 
+use crate::speech_owner::PlaybackOwnership;
+
 const REFERENCE_WORDS_PER_MINUTE: f32 = 175.0;
 const MIN_SYSTEM_RATE: f32 = 0.5;
 const MAX_SYSTEM_RATE: f32 = 2.0;
@@ -16,7 +18,7 @@ const MAX_RENDERED_TEXT_BYTES: usize = 32 * 1_024;
 /// One browser playback owner. Replacements always stop the prior media first.
 #[derive(Default)]
 pub struct Controller {
-    generation: u64,
+    ownership: PlaybackOwnership,
     synthesis: Option<SpeechSynthesis>,
     utterance: Option<SpeechSynthesisUtterance>,
     audio: Option<HtmlAudioElement>,
@@ -28,18 +30,24 @@ pub struct Controller {
 impl Controller {
     /// Stop current media, invalidate pending fetches, and begin one replacement.
     pub fn begin(&mut self) -> u64 {
-        self.stop();
-        self.generation
+        let generation = self.ownership.begin();
+        self.release_media();
+        generation
     }
 
     /// Whether an asynchronous renderer result still belongs to this owner.
     pub const fn is_current(&self, generation: u64) -> bool {
-        self.generation == generation
+        self.ownership.is_current(generation)
     }
 
     /// Stop current system or external playback and invalidate pending work.
     pub fn stop(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
+        self.ownership.stop();
+        self.release_media();
+    }
+
+    /// Release browser resources without changing playback ownership.
+    fn release_media(&mut self) {
         if let Some(utterance) = &self.utterance {
             utterance.set_onend(None);
             utterance.set_onerror(None);

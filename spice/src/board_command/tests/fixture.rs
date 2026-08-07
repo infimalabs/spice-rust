@@ -85,7 +85,39 @@ fn issue<B: Serialize>(
     expected: Vec<Witness>,
     body: &B,
 ) -> Outcome<CommandAnswer> {
-    let command = Command {
+    let command = fixture_command(epoch, actor, kind, expected, body);
+    dispatch(bus, &command).expect("board command owns fixture kind")
+}
+
+fn issue_with_allocation<B: Serialize>(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    kind: CommandKind,
+    expected: Vec<Witness>,
+    body: &B,
+    allocation: &board::NextConfig,
+) -> Outcome<CommandAnswer> {
+    let command = fixture_command(epoch, actor, kind, expected, body);
+    let projects = ProjectPolicy::new(
+        ["board".to_owned(), "rim".to_owned()],
+        ["sandbox".to_owned()],
+        dialect::PROJECT_MIN_DEPTH as u64,
+        dialect::PROJECT_MAX_DEPTH as u64,
+    )
+    .expect("board command test project policy");
+    dispatch_with_repository(bus, &command, None, &projects, allocation)
+        .expect("board command owns fixture kind")
+}
+
+fn fixture_command<B: Serialize>(
+    epoch: CanonicalUuid,
+    actor: Actor,
+    kind: CommandKind,
+    expected: Vec<Witness>,
+    body: &B,
+) -> wire::AdmittedCommand {
+    Command {
         v: WireVersion::CURRENT,
         id: uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed)),
         epoch,
@@ -98,8 +130,7 @@ fn issue<B: Serialize>(
         actor,
         epoch,
     })
-    .expect("fixture command admits");
-    dispatch(bus, &command).expect("board command owns fixture kind")
+    .expect("fixture command admits")
 }
 
 fn assert_committed(outcome: Outcome<CommandAnswer>) -> CommandAnswer {
@@ -128,6 +159,32 @@ fn board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswer {
     }) = outcome
     else {
         panic!("board read did not return a snapshot: {outcome:?}");
+    };
+    assert_eq!(position, answer.cursor);
+    *answer
+}
+
+fn board_with_allocation(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    allocation: &board::NextConfig,
+) -> BoardAnswer {
+    let outcome = issue_with_allocation(
+        bus,
+        epoch,
+        actor,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead { family: None },
+        allocation,
+    );
+    let Outcome::Reply(Reply {
+        position: ReplyPosition::Snapshot(position),
+        body: CommandAnswer::Board(answer),
+    }) = outcome
+    else {
+        panic!("configured board read did not return a snapshot: {outcome:?}");
     };
     assert_eq!(position, answer.cursor);
     *answer

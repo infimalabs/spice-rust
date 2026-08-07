@@ -128,7 +128,7 @@ fn a_harmless_mention_reaches_the_clearance_fact_path() {
 }
 
 #[test]
-fn every_taste_plane_kind_has_a_judgment_producer() {
+fn every_taste_plane_kind_has_its_declared_producer() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let hit = bag
         .hits(&prose(BEHAVIOR))
@@ -141,12 +141,24 @@ fn every_taste_plane_kind_has_a_judgment_producer() {
     ];
     produced.sort_unstable();
 
-    let mut taste_plane = FactKind::ALL
+    let mut judgment_kinds = FactKind::ALL
         .iter()
         .copied()
-        .filter(|kind| fold::FactPlane::Taste.contains(*kind))
+        .filter(|kind| {
+            fold::FactPlane::Taste.contains(*kind) && kind.producer() == wire::Producer::Judge
+        })
         .collect::<Vec<_>>();
-    taste_plane.sort_unstable();
+    judgment_kinds.sort_unstable();
 
-    assert_eq!(produced.as_slice(), taste_plane);
+    assert_eq!(produced.as_slice(), judgment_kinds);
+
+    let recognized = FactKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| {
+            fold::FactPlane::Taste.contains(*kind)
+                && kind.producer() == wire::Producer::ResidentRecognition
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(recognized, [FactKind::TasteReminded]);
 }

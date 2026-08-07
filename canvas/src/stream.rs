@@ -522,7 +522,7 @@ pub enum Failure {
 }
 
 impl Failure {
-    fn admission(error: wire::StreamAdmissionError) -> Self {
+    pub(crate) fn admission(error: wire::StreamAdmissionError) -> Self {
         match error {
             wire::StreamAdmissionError::Wire(refusal) => Self::Refusal(refusal),
             wire::StreamAdmissionError::Epoch(fault)

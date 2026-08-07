@@ -1,11 +1,21 @@
 use super::*;
 
+/// Run connections one after another for as long as the surface is mounted.
+///
+/// Each attempt is awaited to completion before the next begins, and the socket
+/// it opens lives in that call's locals rather than a handle anything else can
+/// reach. So an ending connection has no successor to confuse itself with: the
+/// next one does not exist yet. A guard comparing the closing socket against
+/// the current one would have nothing to compare, which is why none appears
+/// here — the hazard it answers needs two live connections, and spawning a
+/// second one is what would reintroduce it.
 pub(super) async fn run_surface(
     active: Rc<Cell<bool>>,
     handles: SurfaceHandles,
     mut actions: UnboundedReceiver<ClientAction>,
 ) {
     let data = Rc::new(RefCell::new(SurfaceData::default()));
+    let mut backoff = crate::reconnect::Backoff::new();
     while active.get() {
         if matches!(&*handles.connection, Connection::Starting) {
             handles.connection.set(Connection::Connecting);
@@ -18,13 +28,25 @@ pub(super) async fn run_surface(
         // guard stops, and the break above has already taken that exit. An `Ok`
         // arriving here would mean the two guards disagree, so it fails loudly
         // instead of publishing an offline reason no socket ever produced.
-        let reason =
+        let ended =
             result.expect_err("run_connection returns Ok only once the surface is inactive");
         handles.submissions.queue.borrow_mut().reconnect();
         handles.submissions.publish();
-        handles.connection.set(Connection::Offline(reason));
-        TimeoutFuture::new(RECONNECT_DELAY_MILLIS).await;
+        let delay = backoff.settle(ended.admitted);
+        handles.connection.set(Connection::Offline(ended.reason));
+        TimeoutFuture::new(delay).await;
     }
+}
+
+/// Why one connection ended, and whether it ever became an admitted session.
+///
+/// Every end is a failure to the surface, but they are not the same evidence. A
+/// connection that reached admission proved the resident reachable, so whatever
+/// ended it says nothing about how long the next attempt should wait; one that
+/// never got there is the only kind that should push the delay out.
+struct Ended {
+    reason: String,
+    admitted: bool,
 }
 
 async fn run_connection(
@@ -32,9 +54,11 @@ async fn run_connection(
     handles: &SurfaceHandles,
     data: &Rc<RefCell<SurfaceData>>,
     actions: &mut UnboundedReceiver<ClientAction>,
-) -> Result<(), String> {
-    let abort = web_sys::AbortController::new()
-        .map_err(|_| "browser could not create a connection abort controller".to_owned())?;
+) -> Result<(), Ended> {
+    let abort = web_sys::AbortController::new().map_err(|_| Ended {
+        reason: "browser could not create a connection abort controller".to_owned(),
+        admitted: false,
+    })?;
     let signal = abort.signal();
     let established = {
         let handshake = establish_connection(
@@ -57,7 +81,43 @@ async fn run_connection(
                 ))
             }
         }
-    }?;
+    }
+    .map_err(|reason| Ended {
+        reason,
+        admitted: false,
+    })?;
+    // Reaching here *is* the admission: `establish_connection` only returns once
+    // the acceptance frame has been admitted and the runtime published. Deriving
+    // the flag from control flow rather than from a separate variable keeps the
+    // two from ever disagreeing about whether this connection counted.
+    pump_session(active, handles, data, actions, established)
+        .await
+        .map_err(|reason| Ended {
+            reason,
+            admitted: true,
+        })
+}
+
+/// Carry one admitted session until it fails or the surface goes away.
+///
+/// The select is the entire event loop, and the silence timer is one of its
+/// arms rather than a separate poller: it is a real future that completes only
+/// when no inbound frame and no operator action reached us first, so an idle
+/// board costs nothing until the moment silence becomes worth asking about.
+///
+/// A half-open socket is the case this exists for. It stays open, reports no
+/// error, and simply stops delivering, so the reader future never completes and
+/// every assertion downstream of it waits forever. The probe converts that into
+/// an ordinary failure, which the one existing reconnect boundary already
+/// handles -- deliberately not a second reconnect path, which would race the
+/// first and double-subscribe.
+async fn pump_session(
+    active: &Rc<Cell<bool>>,
+    handles: &SurfaceHandles,
+    data: &Rc<RefCell<SurfaceData>>,
+    actions: &mut UnboundedReceiver<ClientAction>,
+    established: EstablishedConnection,
+) -> Result<(), String> {
     let EstablishedConnection {
         session,
         mut writer,
@@ -68,13 +128,20 @@ async fn run_connection(
     send_subscription(&principal, data, &mut writer).await?;
     send_refresh(&principal, &mut writer, &mut pending, &handles.submissions).await?;
     drain_submissions(&principal, &mut writer, &mut pending, &handles.submissions).await?;
-
+    let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
+    let mut probed = false;
     while active.get() {
         let incoming = reader.next().fuse();
         let action = actions.next().fuse();
         futures_util::pin_mut!(incoming, action);
+        let mut rearm = false;
         select! {
             frame = incoming => {
+                // Any frame proves the socket carries traffic, so the answer to
+                // a probe need not be the Pong specifically -- a refusal names
+                // a reachable resident just as well.
+                rearm = true;
+                probed = false;
                 let frame = frame
                     .ok_or_else(|| "resident closed the socket".to_owned())?
                     .map_err(websocket_error)?;
@@ -115,10 +182,37 @@ async fn run_connection(
                     action,
                 )
                 .await?;
-            }
+            },
+            () = silence => {
+                if probed {
+                    return Err(format!(
+                        "canvas socket stayed open without answering a liveness probe within \
+                         {LIVENESS_PROBE_MILLIS} ms"
+                    ));
+                }
+                rearm = true;
+                probed = true;
+                send_probe(&principal, &mut writer).await?;
+            },
+        }
+        if rearm {
+            silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
         }
     }
     Ok(())
+}
+
+/// Ask the resident to prove it is still reading this socket.
+async fn send_probe(principal: &Principal, writer: &mut SocketWriter) -> Result<(), String> {
+    send_stream_request(
+        writer,
+        &StreamRequest::Ping {
+            v: WireVersion::CURRENT,
+            id: random_uuid()?,
+            epoch: principal.epoch(),
+        },
+    )
+    .await
 }
 
 /// Establish every prerequisite of the resident event loop as one boundary.
@@ -728,6 +822,34 @@ async fn send_stream_request(
         .map_err(websocket_error)
 }
 
+/// Apply one admitted stream frame, publishing the surface it changed.
+///
+/// A liveness answer reports no state, and the caller has already taken the
+/// only thing it carries by observing that a frame arrived. Answering early
+/// skips the surface publication below, which would otherwise hand the view a
+/// fresh clone and redraw an idle board on every probe.
+fn handle_stream_frame(
+    session: &Session,
+    surface: &UseStateHandle<SurfaceData>,
+    data: &Rc<RefCell<SurfaceData>>,
+    bytes: &[u8],
+) -> Result<(Vec<StreamDirective>, bool), String> {
+    let admitted = session
+        .admit_stream(bytes)
+        .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+    if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
+        return Ok((Vec::new(), false));
+    }
+    let refresh = stale_reads(&admitted).any();
+    let directives = data
+        .borrow_mut()
+        .as_mut()
+        .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
+        .apply_stream(&admitted);
+    surface.set(data.borrow().clone());
+    Ok((directives, refresh))
+}
+
 fn handle_incoming(
     session: &Session,
     handles: &SurfaceHandles,
@@ -737,7 +859,7 @@ fn handle_incoming(
 ) -> Result<(Vec<StreamDirective>, bool), String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
-        return apply_stream_frame(session, handles, data, bytes);
+        return handle_stream_frame(session, &handles.surface, data, bytes);
     }
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
     let kind = pending
@@ -750,25 +872,6 @@ fn handle_incoming(
     let refresh = apply_command_response(session, handles, runtime, identity.id, kind, bytes)?;
     handles.surface.set(data.clone());
     Ok((Vec::new(), refresh))
-}
-
-fn apply_stream_frame(
-    session: &Session,
-    handles: &SurfaceHandles,
-    data: &Rc<RefCell<SurfaceData>>,
-    bytes: &[u8],
-) -> Result<(Vec<StreamDirective>, bool), String> {
-    let admitted = session
-        .admit_stream(bytes)
-        .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
-    let refresh = stale_reads(&admitted).any();
-    let directives = data
-        .borrow_mut()
-        .as_mut()
-        .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
-        .apply_stream(&admitted);
-    handles.surface.set(data.borrow().clone());
-    Ok((directives, refresh))
 }
 
 fn apply_command_response(

@@ -19,6 +19,7 @@ struct SurfaceConfig {
     steering: steer::Config,
     consent: consent::Policy,
     speech: canvas::SpeechConfig,
+    allocation: board::NextConfig,
     projects: board::ProjectPolicy,
 }
 
@@ -61,6 +62,7 @@ where
             steering: loaded.resolved().root().steer().clone(),
             consent: loaded.resolved().root().consent().policy().clone(),
             speech: loaded.resolved().root().say().clone(),
+            allocation: *loaded.resolved().root().board().next(),
             projects: loaded.resolved().root().tasks().project_policy(),
         },
         trust: crate::trust_command::Surface::from_loaded(&loaded),

@@ -43,6 +43,7 @@ fn projects() -> board::ProjectPolicy {
 fn request(command: u8) -> Request {
     let lane = uuid(20);
     Request {
+        band: 2,
         projects: projects(),
         command: uuid(command),
         actor: Actor::Lane(lane),

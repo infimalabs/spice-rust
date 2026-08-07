@@ -19,6 +19,15 @@ impl Urgency {
     /// carries several priority tags, the strongest declared priority wins.
     #[must_use]
     pub fn from_heads(entry: &Entry, completed: &BTreeSet<TaskHandle>) -> Self {
+        Self::from_heads_with_effective_priority(entry, completed, declared_priority(entry))
+    }
+
+    /// Score one entry after allocation has resolved graph-inherited priority.
+    pub(crate) fn from_heads_with_effective_priority(
+        entry: &Entry,
+        completed: &BTreeSet<TaskHandle>,
+        effective_priority: i64,
+    ) -> Self {
         let workflow = entry.workflow();
         let mut score = if workflow.status == "pending" {
             10_000_i64
@@ -26,7 +35,11 @@ impl Urgency {
             -10_000_i64
         };
 
-        score = score.saturating_add(priority(entry));
+        score = score.saturating_add(effective_priority);
+        // `next::select` calls this only after `workable` has proved every
+        // dependency satisfied, so this term is always zero for allocation.
+        // It remains observable through `from_heads` for diagnostics that
+        // deliberately score an arbitrary, possibly blocked head bundle.
         let missing = entry
             .statement()
             .dependencies
@@ -65,7 +78,7 @@ impl Urgency {
     }
 }
 
-fn priority(entry: &Entry) -> i64 {
+pub(crate) fn declared_priority(entry: &Entry) -> i64 {
     entry
         .statement()
         .tags

@@ -93,10 +93,22 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
         .stream
         .as_ref()
         .map(crate::stream::Source::subscribe_messages);
+    let mut lead = Lead::Journal;
     loop {
-        tokio::select! {
-            biased;
-            changed = closed.changed() => {
+        let live = subscription
+            .as_ref()
+            .is_some_and(crate::stream::Subscription::is_live);
+        let event = next_event(
+            &mut lead,
+            &mut socket,
+            &mut closed,
+            &mut broadcasts,
+            &mut message_broadcasts,
+            live,
+        )
+        .await;
+        match event {
+            Event::Closed(changed) => {
                 if changed.is_err() || *closed.borrow() {
                     if let Some(frame) = subscription
                         .as_ref()
@@ -107,23 +119,16 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
                     return;
                 }
             }
-            notice = async {
-                broadcasts
-                    .as_mut()
-                    .expect("enabled branch has a Bus broadcast")
-                    .recv()
-                    .await
-            }, if broadcasts.is_some()
-                && subscription
-                    .as_ref()
-                    .is_some_and(crate::stream::Subscription::is_live) => {
+            Event::Journal(notice) => {
                 if matches!(
                     route_broadcast(
                         &mut socket,
                         &state,
                         &accepted,
                         capability,
-                        subscription.as_mut().expect("live branch has a subscription"),
+                        subscription
+                            .as_mut()
+                            .expect("live branch has a subscription"),
                         notice,
                     )
                     .await,
@@ -132,23 +137,16 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
                     return;
                 }
             }
-            notice = async {
-                message_broadcasts
-                    .as_mut()
-                    .expect("enabled branch has a message broadcast")
-                    .recv()
-                    .await
-            }, if message_broadcasts.is_some()
-                && subscription
-                    .as_ref()
-                    .is_some_and(crate::stream::Subscription::is_live) => {
+            Event::Message(notice) => {
                 if matches!(
                     route_message_broadcast(
                         &mut socket,
                         &state,
                         &accepted,
                         capability,
-                        subscription.as_ref().expect("live branch has a subscription"),
+                        subscription
+                            .as_ref()
+                            .expect("live branch has a subscription"),
                         notice,
                     )
                     .await,
@@ -157,7 +155,7 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
                     return;
                 }
             }
-            message = socket.recv() => {
+            Event::Inbound(message) => {
                 let Some(Ok(message)) = message else {
                     return;
                 };
@@ -186,6 +184,133 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
             }
         }
     }
+}
+
+/// Which work source a session evaluates first on one iteration.
+///
+/// Shutdown is deliberately not a member. It leads every arm because its
+/// priority is correctness rather than fairness: a session that can observe
+/// close must not route another frame first. Rotating it behind a work source
+/// would trade a starvation bug for a close-ordering bug.
+#[derive(Clone, Copy)]
+pub(super) enum Lead {
+    Journal,
+    Message,
+    Inbound,
+}
+
+impl Lead {
+    /// Take this turn's lead and leave the next one in its place.
+    ///
+    /// Advancing is folded into the read so a caller cannot hold the lead
+    /// still: a loop that forgot to rotate would be a fixed order again, and
+    /// there would be no separate statement for a test to hold responsible.
+    const fn take(&mut self) -> Self {
+        let leading = *self;
+        *self = match leading {
+            Self::Journal => Self::Message,
+            Self::Message => Self::Inbound,
+            Self::Inbound => Self::Journal,
+        };
+        leading
+    }
+}
+
+/// The receiving half of a session transport.
+///
+/// Dispatch order is the property worth guarding here, and a live socket can
+/// only be made ready by a real peer racing the session. Naming the inbound
+/// source lets the rotation be decided against a source that is ready on
+/// demand, so the ordering is observed rather than timed.
+pub(super) trait Inbound {
+    /// Receive the next transport message, or `None` once the peer is gone.
+    fn next_message(&mut self) -> impl Future<Output = Option<Result<Message, ::axum::Error>>>;
+}
+
+impl Inbound for WebSocket {
+    fn next_message(&mut self) -> impl Future<Output = Option<Result<Message, ::axum::Error>>> {
+        self.recv()
+    }
+}
+
+/// One event a session acted on, named so the sources can be reordered.
+pub(super) enum Event {
+    Closed(Result<(), tokio::sync::watch::error::RecvError>),
+    Journal(Result<bus::JournalCommit, tokio::sync::broadcast::error::RecvError>),
+    Message(Result<wire::AgentMessage, tokio::sync::broadcast::error::RecvError>),
+    Inbound(Option<Result<Message, ::axum::Error>>),
+}
+
+/// Await the next event for one session, rotating which work source leads.
+///
+/// `tokio::select!` under `biased` evaluates its arms in source order every
+/// iteration, so a source that is ready every time keeps every later arm from
+/// running at all. One fixed order therefore lets a committing fleet's journal
+/// broadcasts hold off this session's own operator commands and agent messages
+/// without a bound, which per-connection isolation does not help: the flood and
+/// the starved requests share the connection.
+///
+/// Rotating which of the three work sources is evaluated first bounds the wait
+/// at two iterations rather than at the journal falling quiet. No source is
+/// ever *disabled* to make room, because a disabled broadcast receiver stops
+/// draining its channel and converts a scheduling question into a lag question,
+/// changing the retained-cursor overflow behavior this rotation must leave
+/// alone.
+pub(super) async fn next_event(
+    lead: &mut Lead,
+    socket: &mut impl Inbound,
+    closed: &mut tokio::sync::watch::Receiver<bool>,
+    broadcasts: &mut Option<bus::BroadcastSubscriber>,
+    messages: &mut Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
+    live: bool,
+) -> Event {
+    let journal = broadcasts.is_some() && live;
+    let transcript = messages.is_some() && live;
+    match lead.take() {
+        Lead::Journal => tokio::select! {
+            biased;
+            changed = closed.changed() => Event::Closed(changed),
+            notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
+            notice = recv_message(messages), if transcript => Event::Message(notice),
+            message = socket.next_message() => Event::Inbound(message),
+        },
+        Lead::Message => tokio::select! {
+            biased;
+            changed = closed.changed() => Event::Closed(changed),
+            notice = recv_message(messages), if transcript => Event::Message(notice),
+            message = socket.next_message() => Event::Inbound(message),
+            notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
+        },
+        Lead::Inbound => tokio::select! {
+            biased;
+            changed = closed.changed() => Event::Closed(changed),
+            message = socket.next_message() => Event::Inbound(message),
+            notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
+            notice = recv_message(messages), if transcript => Event::Message(notice),
+        },
+    }
+}
+
+/// Read one journal commit from the enabled Bus broadcast.
+async fn recv_journal(
+    broadcasts: &mut Option<bus::BroadcastSubscriber>,
+) -> Result<bus::JournalCommit, tokio::sync::broadcast::error::RecvError> {
+    broadcasts
+        .as_mut()
+        .expect("enabled branch has a Bus broadcast")
+        .recv()
+        .await
+}
+
+/// Read one agent message from the enabled transcript broadcast.
+async fn recv_message(
+    messages: &mut Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
+) -> Result<wire::AgentMessage, tokio::sync::broadcast::error::RecvError> {
+    messages
+        .as_mut()
+        .expect("enabled branch has a message broadcast")
+        .recv()
+        .await
 }
 
 async fn route_message_broadcast(
@@ -464,6 +589,18 @@ async fn route_stream(
             })),
         },
         wire::StreamRequest::Thread { .. } => source.thread(accepted, &request),
+        // Admitted like every other request, so a probe from a replaced
+        // generation is told so rather than being reassured by a Pong. The
+        // client only needs *an* answer to prove the socket still carries
+        // traffic, so a refusal serves that purpose as well as a Pong does.
+        wire::StreamRequest::Ping { id, .. } => request
+            .admit(state.epoch)
+            .map(|()| wire::StreamFrame::Pong {
+                v: wire::WireVersion::CURRENT,
+                id: *id,
+                epoch: state.epoch,
+            })
+            .map_err(crate::stream::Failure::admission),
     };
     if !state.capabilities.matches(capability, &accepted.actor) {
         send_replaced(socket, state.epoch, Some(request.id())).await;
