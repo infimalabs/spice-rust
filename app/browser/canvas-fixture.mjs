@@ -24,8 +24,9 @@ import { promisify } from "node:util";
 import { HANDSHAKE_TIMEOUT_MS, RECONNECT_DELAY_MS } from "./client-deadlines.mjs";
 import {
   activityRecord, sessionRecord, TOOL_ACTIVITY_TEXT, toolActivityRecord, toolCallId, toolResultRecord, triggeredActivityRecord,
-} from "./canvas-transcript-records.mjs";
+} from "./claude-transcript-fixture.mjs";
 import { assertTiledWorkspace } from "./tiled-workspace.mjs";
+export { TOOL_ACTIVITY_TEXT } from "./claude-transcript-fixture.mjs";
 
 const execute = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -308,10 +309,7 @@ function assertNewestLaneActivity(actual, expected) {
 }
 
 export async function configureFixture(
-  fixture,
-  linkedRoot,
-  memberCount = 5,
-  { noCardMember = null } = {},
+  fixture, linkedRoot, memberCount = 5, { noCardMember = null } = {},
 ) {
   assert.ok(
     noCardMember === null

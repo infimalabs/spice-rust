@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 
-import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
-import { TOOL_ACTIVITY_TEXT } from "./canvas-transcript-records.mjs";
+import { TOOL_ACTIVITY_TEXT, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 
 const newerProse = "assistant: newest lane prose witness";
 
