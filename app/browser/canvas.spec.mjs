@@ -1335,6 +1335,10 @@ async function assertSameGenerationResume(
 }
 
 assertBoundaryLoadReading();
+// The launch-site guard interrogates this exact executable, so building is a
+// precondition rather than something an agent must remember after source gains
+// a no-pop gate. No fixture process can start before both steps pass.
+await buildResident();
 await assertHeadlessLaunchSites();
 await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
@@ -1342,7 +1346,6 @@ await assertSignalExitedChildSkipsTeardown();
 await assertLineageDrainFailureTeardown();
 await assertSurvivingVendorsAreReported();
 await assertFullyReapedVendorsStaySilent();
-await buildResident();
 await assertFixtureTeardownReaps();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
 const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
