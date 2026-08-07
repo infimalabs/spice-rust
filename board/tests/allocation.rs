@@ -134,8 +134,28 @@ fn fixture() -> Journal {
     journal
 }
 
+/// A proven boundary carrying one accounted head.
+///
+/// Deliberately not an empty `Proven`: an empty one is byte-identical for every
+/// lane, so a claim fact that dropped the caller's boundary entirely would
+/// still compare equal to this fixture and the loss would not show.
+fn source_boundary(lane: CanonicalUuid) -> body::SourceBoundary {
+    body::SourceBoundary::Proven {
+        heads: vec![wire::TranscriptSourceHead {
+            lane,
+            vendor: "claude".parse().expect("fixture vendor"),
+            stream: "session".to_owned(),
+            source: uuid(23),
+            next: body::TranscriptPosition {
+                member: 4,
+                offset: 512,
+            },
+        }],
+    }
+}
+
 /// Open a transaction on the fixture's task and mint one claim into it.
-fn minted(journal: &mut Journal, git: Option<body::GitBoundary>) {
+fn minted(journal: &mut Journal, git: Option<body::GitBoundary>, source: body::SourceBoundary) {
     let task = handle("BOARD-a1");
     let actor = Actor::Lane(uuid(20));
     let mut write = JournalWrite::new(
@@ -157,6 +177,7 @@ fn minted(journal: &mut Journal, git: Option<body::GitBoundary>) {
             expiry: instant(20),
             maximum: instant(35),
             git,
+            source,
         },
     )
     .expect("the claim mints");
@@ -175,7 +196,11 @@ fn minted(journal: &mut Journal, git: Option<body::GitBoundary>) {
 #[test]
 fn the_one_claim_minter_writes_every_lifecycle_field() {
     let mut journal = fixture();
-    minted(&mut journal, None);
+    minted(
+        &mut journal,
+        None,
+        body::SourceBoundary::Proven { heads: Vec::new() },
+    );
 
     let facts = journal.fact_snapshot().expect("claim fact stream");
     let claim = facts
@@ -186,10 +211,16 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
     // Named one by one rather than counted, because a count admits a rename.
     // `git` is absent because this claim was minted without a boundary, and the
     // field is skipped when it is empty; the test below mints one with it.
+    // `source` is present for the same claim, because an empty proven boundary
+    // is a boundary that was read and found empty; only the value the legacy
+    // migration supplies for facts stored before boundaries were recorded is
+    // skipped, and no live minter can produce it.
     let written: BTreeSet<&str> = claim.fact.body().keys().map(String::as_str).collect();
     assert_eq!(
         written,
-        BTreeSet::from(["task", "actor", "lane", "occupant", "epoch", "until"]),
+        BTreeSet::from([
+            "task", "actor", "lane", "occupant", "epoch", "until", "source",
+        ]),
         "the claim fact carries exactly the fields the minter writes"
     );
 
@@ -234,6 +265,11 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
 /// allocator hardcoded it empty while the resident threaded a real worktree
 /// through, which is why it is the one worth proving reaches the journal from a
 /// caller rather than from the writer's own defaults.
+///
+/// `source` is proven beside it for the same reason and one more: the minter is
+/// handed an already-open transaction, so it cannot read a transcript boundary
+/// itself and has no default to fall back to. Whatever the caller passes is the
+/// only boundary the claim can ever open at.
 #[test]
 fn a_caller_supplied_boundary_reaches_the_claim() {
     let mut journal = fixture();
@@ -244,7 +280,7 @@ fn a_caller_supplied_boundary_reaches_the_claim() {
         upstream_head: Some("a-baseline-commit".to_owned()),
         local_commits: 2,
     };
-    minted(&mut journal, Some(boundary));
+    minted(&mut journal, Some(boundary), source_boundary(uuid(20)));
 
     let facts = journal.fact_snapshot().expect("claim fact stream");
     let claim = facts
@@ -279,5 +315,28 @@ fn a_caller_supplied_boundary_reaches_the_claim() {
     assert_eq!(
         git.get("local_commits").and_then(|value| value.as_u64()),
         Some(2)
+    );
+
+    let head = claim
+        .fact
+        .body()
+        .get("source")
+        .and_then(|source| source.get("proven"))
+        .and_then(|proven| proven.get("heads"))
+        .and_then(|heads| heads.get(0))
+        .expect("the claim carries the accounted head it was minted with");
+    assert_eq!(
+        head.get("lane").and_then(|value| value.as_str()),
+        Some(uuid(20).to_string().as_str())
+    );
+    assert_eq!(
+        head.get("stream").and_then(|value| value.as_str()),
+        Some("session")
+    );
+    assert_eq!(
+        head.get("next")
+            .and_then(|next| next.get("offset"))
+            .and_then(|value| value.as_u64()),
+        Some(512)
     );
 }

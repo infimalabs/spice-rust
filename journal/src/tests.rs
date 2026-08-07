@@ -18,6 +18,7 @@ use wire::head::TranscriptSourceHead;
 
 use crate::{Journal, JournalReader, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
 
+mod boundary;
 mod read;
 mod schema;
 mod transcript;

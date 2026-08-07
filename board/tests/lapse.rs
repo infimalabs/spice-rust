@@ -8,7 +8,7 @@ use journal::{FactCause, Journal, JournalWrite};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Instant,
     LaneResidency, LeaseHead, Origin, Phase, Producer, ResidencyHead, ResidentState, TaskHandle,
-    TaskHead, WireVersion, Witness, WorkflowHead, body, intent,
+    TaskHead, TranscriptSourceHead, WireVersion, Witness, WorkflowHead, body, intent,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -37,12 +37,41 @@ fn projects() -> board::ProjectPolicy {
     .expect("fixture project policy")
 }
 
+/// One non-empty proven boundary, so an opening fact carries something to lose.
+///
+/// An empty `heads` list compares equal to the boundary a claim would carry if
+/// the field were dropped on the way through, which would let the assertion
+/// below pass on exactly the shape it exists to catch.
+fn opening_boundary() -> body::SourceBoundary {
+    body::SourceBoundary::Proven {
+        heads: vec![TranscriptSourceHead {
+            lane: uuid(20),
+            vendor: "claude".parse().expect("fixture vendor"),
+            stream: "session".to_owned(),
+            source: uuid(23),
+            next: body::TranscriptPosition {
+                member: 1,
+                offset: 4096,
+            },
+        }],
+    }
+}
+
 /// Seed one active claim the way the claim command writes it.
 ///
 /// The shared minter writes the fact and both heads, and the transaction
 /// carries the command receipt beside them, so `command` is spent here exactly
 /// as a real claim would spend it.
 fn claim(journal: &mut Journal, command: u8) {
+    claim_opening(
+        journal,
+        command,
+        body::SourceBoundary::Proven { heads: Vec::new() },
+    );
+}
+
+/// Seed that same claim with a caller-chosen opening boundary.
+fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundary) {
     let heads = journal
         .read_with(|read| read.task_heads())
         .expect("heads before the claim");
@@ -94,6 +123,7 @@ fn claim(journal: &mut Journal, command: u8) {
             expiry: instant(20),
             maximum: instant(35),
             git: None,
+            source,
         },
     )
     .expect("the claim mints");
@@ -483,6 +513,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
                 epoch: uuid(22),
                 until: instant(20),
                 git: None,
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
         )
@@ -602,6 +633,137 @@ fn a_superseded_expiry_is_refused_and_the_renewed_one_still_lapses() {
             &Actor::Lane(uuid(20))
         ),
         "a lease lapsed at its renewed expiry leaves the task allocatable again"
+    );
+}
+
+/// The opening fact keeps its boundary and no renewal records one of its own.
+///
+/// This coverage arrived in the renew suite, but what it constrains is the fact
+/// schema and the writer that emits it, not the module the suite named. A claim
+/// opens against a proven transcript position; a renewal only moves the lease,
+/// so a boundary on `ClaimRenewed` would assert a provenance the renewal never
+/// established. The writer exercised here is the one the resident actually uses,
+/// which is the whole reason the property still has a subject after the
+/// unreached module is gone.
+#[test]
+fn an_opening_boundary_survives_renewals_that_record_none_of_their_own() {
+    let mut journal = fixture(None);
+    claim_opening(&mut journal, 31, opening_boundary());
+    renew(&mut journal, 32, 25);
+    renew(&mut journal, 33, 30);
+
+    let facts = journal.fact_snapshot().expect("renewed facts");
+    let kinds = facts
+        .facts()
+        .iter()
+        .map(|fact| fact.fact.kind())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        vec![
+            wire::FactKind::TaskAdded,
+            wire::FactKind::ClaimWon,
+            wire::FactKind::ClaimRenewed,
+            wire::FactKind::ClaimRenewed,
+        ],
+    );
+    let won: body::ClaimWon = facts.facts()[1]
+        .fact
+        .read()
+        .expect("the opening fact reads back through the registry");
+    assert_eq!(won.source, opening_boundary());
+
+    // Read as text rather than as a field, because the absence being proven is
+    // the absence of a field: an added one would compile everywhere and only
+    // show up as a key nothing here would otherwise look at.
+    for position in [2, 3] {
+        let renewal: body::ClaimRenewed = facts.facts()[position]
+            .fact
+            .read()
+            .expect("the renewal reads back through the registry");
+        let encoded = String::from_utf8(wire::encode(&renewal).expect("encode the renewal"))
+            .expect("a renewal encodes as text");
+        assert!(
+            !encoded.contains("source"),
+            "renewal {position} recorded a boundary of its own: {encoded}",
+        );
+    }
+}
+
+/// A task command whose transaction appends no fact is refused, not receipted.
+///
+/// A journal write can carry a command receipt without carrying a fact, because
+/// the receipt is assembled without one. That shape is unrepresentable: a
+/// receipt records the span of facts it caused, and a write with no fact has no
+/// span to name, so the commit path reaches for a first and last position that
+/// are not there. Removing this refusal does not make such a write succeed
+/// quietly -- it aborts the process inside position assignment. What the
+/// refusal buys is a typed refusal a producer can report at the door instead of
+/// a panic underneath it, and it has to come from the transaction itself,
+/// because every producer assembles its receipt before it can know whether its
+/// facts survived the guards.
+///
+/// The witness positions are fixture values. Command law admits a witness list
+/// by kind rather than by position, and this transaction is refused before any
+/// guard reads, so nothing here depends on which position they name.
+#[test]
+fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
+    let mut journal = claimed();
+    let before = journal.fact_snapshot().expect("facts before").facts().len();
+    let holder = Actor::Lane(uuid(20));
+    let head = wire::Seq::new(2).expect("fixture head position");
+
+    let mut write = JournalWrite::new(
+        holder.clone(),
+        "task:BOARD-a1".parse::<Origin>().expect("origin"),
+        instant(10),
+        Producer::BusTimer,
+    );
+    write
+        .command_result(
+            Command {
+                v: WireVersion::CURRENT,
+                id: uuid(34),
+                epoch: uuid(22),
+                kind: CommandKind::ClaimRenew,
+                expected: vec![
+                    Witness::Claim {
+                        task: task(),
+                        head: Some(head),
+                    },
+                    Witness::Lease { task: task(), head },
+                    Witness::Residency {
+                        lane: uuid(20),
+                        occupant: uuid(21),
+                        epoch: uuid(22),
+                    },
+                ],
+                body: intent::ClaimRenew {
+                    task: task(),
+                    lease_seconds: 15,
+                },
+            },
+            uuid(22),
+            intent::ClaimAnswer {
+                task: task(),
+                holder,
+                warnings: Vec::new(),
+                next: None,
+            },
+        )
+        .expect("the receipt itself is well formed");
+
+    let error = journal
+        .apply(write)
+        .expect_err("a transaction appending no fact cannot apply");
+    assert!(
+        error.to_string().contains("must append at least one fact"),
+        "a factless transaction was refused for another reason: {error}",
+    );
+    assert_eq!(
+        journal.fact_snapshot().expect("facts after").facts().len(),
+        before,
+        "a refused transaction appended a fact",
     );
 }
 

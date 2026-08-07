@@ -83,6 +83,20 @@ pub(in crate::resident) fn configure(
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
+    // A policy-only change moves no member, so it names no lane and crosses no
+    // lane's attribution; the empty read is the honest answer rather than a
+    // skipped one.
+    let moved: Vec<CanonicalUuid> = membership
+        .as_ref()
+        .map(|change| change.member)
+        .into_iter()
+        .collect();
+    let sources = match bus.lane_source_boundaries(&moved) {
+        Ok(sources) => sources,
+        Err(error) => {
+            return typed_store_fault("lineage::boundary-unreadable", &error.to_string());
+        }
+    };
     let mut write = match write(
         command.actor().clone(),
         epoch,
@@ -102,6 +116,7 @@ pub(in crate::resident) fn configure(
             life: request.life,
             from_manual_projects: previous.manual_projects,
             manual_projects: configured_manual_projects,
+            sources,
         },
         FactCause::Existing(observed.position()),
     ) {
@@ -324,6 +339,34 @@ fn first_free_derived_lineage(head: &wire::ResidencyHead, source: CanonicalUuid)
 /// groups the lane answer into team surfaces, so the head's lane order *is* the
 /// durable team order. Rewriting that order below is what makes a drag durable
 /// without teaching the canvas a second ordering to disagree with.
+/// Lanes this arrangement moved between lineages, in arranged order.
+///
+/// Reordering lanes inside one lineage moves no lane between lineages and so
+/// splits no attribution; only a lane whose owning lineage differs across the
+/// transaction crosses a boundary a reducer has to account for. Narrowing to
+/// those keeps the recorded boundaries the exact set the gesture changed rather
+/// than a snapshot of every seated lane.
+fn moved_lanes(
+    from: &[wire::body::LineageStanding],
+    to: &[wire::body::LineageStanding],
+) -> Vec<CanonicalUuid> {
+    let owner = |standings: &[wire::body::LineageStanding], lane: &CanonicalUuid| {
+        standings
+            .iter()
+            .find(|standing| standing.lanes.contains(lane))
+            .map(|standing| standing.lineage_id)
+    };
+    let mut moved = Vec::new();
+    for standing in to {
+        for lane in &standing.lanes {
+            if owner(from, lane) != Some(standing.lineage_id) {
+                moved.push(*lane);
+            }
+        }
+    }
+    moved
+}
+
 fn standings(lanes: &[wire::LaneResidency]) -> Vec<wire::body::LineageStanding> {
     let mut standings = Vec::<wire::body::LineageStanding>::new();
     for row in lanes {
@@ -477,6 +520,12 @@ pub(in crate::resident) fn arrange(
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let sources = match bus.lane_source_boundaries(&moved_lanes(&from, &lineages)) {
+        Ok(sources) => sources,
+        Err(error) => {
+            return typed_store_fault("lineage::arrange-boundary-unreadable", &error.to_string());
+        }
+    };
     let mut write = match write(
         command.actor().clone(),
         epoch,
@@ -487,7 +536,11 @@ pub(in crate::resident) fn arrange(
     };
     guard_residency(&mut write, &observed);
     let fact = match write.fact(
-        wire::body::LineageArranged { from, lineages },
+        wire::body::LineageArranged {
+            from,
+            lineages,
+            sources,
+        },
         FactCause::Existing(observed.position()),
     ) {
         Ok(fact) => fact,

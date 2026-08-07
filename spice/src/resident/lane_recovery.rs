@@ -55,6 +55,8 @@ struct CarriedClaim {
     task: wire::TaskHandle,
     claim: journal::JournalHead<wire::ClaimHead>,
     lease: journal::JournalHead<wire::LeaseHead>,
+    /// Accounted transcript the predecessor occupant stopped spending at.
+    source: wire::body::SourceBoundary,
 }
 
 pub(super) fn import(
@@ -378,13 +380,27 @@ fn observe_carried_claim(
                 "reallocate an expired claim before importing its lane",
             ));
         }
-        carried = Some(CarriedClaim {
-            task: heads.statement().body().handle.clone(),
-            claim: claim.clone(),
-            lease: lease.clone(),
-        });
+        carried = Some((
+            heads.statement().body().handle.clone(),
+            claim.clone(),
+            lease.clone(),
+        ));
     }
-    Ok(carried)
+    // Read once the lane is known to carry a claim, and at the same barrier the
+    // claim and lease heads were observed at, so the successor takes over at the
+    // position its predecessor is guarded against having moved past.
+    carried
+        .map(|(task, claim, lease)| {
+            Ok(CarriedClaim {
+                task,
+                claim,
+                lease,
+                source: bus.source_boundary(&lane).map_err(|error| {
+                    store_fault("lane::claim-boundary-unreadable", &error.to_string())
+                })?,
+            })
+        })
+        .transpose()
 }
 
 fn guard_carried_claim(write: &mut JournalWrite, carried: &CarriedClaim) {
@@ -418,6 +434,7 @@ fn append_claim_carry(
                 occupant,
                 ancestor: context.ancestor,
                 epoch,
+                source: carried.source.clone(),
             },
             FactCause::Pending(cause),
         )

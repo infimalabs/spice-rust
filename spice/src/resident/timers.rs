@@ -413,6 +413,7 @@ mod tests {
                         upstream_head: Some("baseline".to_owned()),
                         local_commits: 1,
                     }),
+                    source: body::SourceBoundary::Proven { heads: Vec::new() },
                 },
                 FactCause::Pending(added),
             )

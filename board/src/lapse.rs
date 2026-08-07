@@ -581,6 +581,7 @@ mod tests {
                 expiry: instant(20),
                 maximum: instant(35),
                 git: None,
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
         )
         .expect("the claim mints");

@@ -893,6 +893,15 @@ fn claim_win(
         Ok(git) => git,
         Err(outcome) => return outcome,
     };
+    let source = match bus.source_boundary(&lane) {
+        Ok(source) => source,
+        Err(error) => {
+            return store_fault(
+                "claim::boundary-unreadable",
+                &error.to_string(),
+            );
+        }
+    };
     let next = projected_claim_next_action(
         &snapshot,
         selected,
@@ -933,6 +942,7 @@ fn claim_win(
         expiry,
         maximum,
         git,
+        source,
     ) {
         return outcome;
     }
@@ -1255,6 +1265,7 @@ fn append_claim_heads(
     expiry: Instant,
     maximum: Instant,
     git: Option<GitBoundary>,
+    source: body::SourceBoundary,
 ) -> Result<(), Outcome<CommandAnswer>> {
     board::allocate::mint(
         write,
@@ -1269,6 +1280,7 @@ fn append_claim_heads(
             expiry,
             maximum,
             git,
+            source,
         },
     )
     .map(|_| ())
