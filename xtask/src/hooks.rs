@@ -139,6 +139,26 @@ pub fn activate_hooks(
     writeln!(output, "activated Spice hooks from {hooks_text}").map_err(HookActivationError::Output)
 }
 
+/// Refuse before the first write when a worktree selects foreign hooks.
+///
+/// **Same-worktree coexistence is unsupported for hooks.** `core.hooksPath` is
+/// single-valued per scope, so one worktree gets this port's guarantees or the
+/// Python predecessor's and never both. The stronger claim -- unsupported per
+/// *repository* -- is refused by the evidence: `extensions.worktreeConfig` makes
+/// per-worktree selection real, and lanes do run on it.
+///
+/// The other direction, one hook path dispatching to both, is rejected because
+/// `reference-transaction` runs inside the ref transaction while the
+/// repository-global `packed-refs` lock is held; it therefore execs a prebuilt
+/// binary and never a build system. A dispatcher would pay a second interpreter
+/// start under that lock on every ref update, in all lanes at once. The two
+/// gates also disagree on rules, so running both means the stricter one governs
+/// silently.
+///
+/// So this walks every worktree and reads its *effective* `core.hooksPath`
+/// before anything is published. Two values configured across scopes refuse even
+/// where each alone would pass. It once cleared every worktree unconditionally;
+/// stopping here is what keeps it from stripping the predecessor's hooks.
 fn preflight_worktree_hooks(
     repository: &spice::repository::Repository,
     hooks_text: &str,

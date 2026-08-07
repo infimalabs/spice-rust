@@ -4,9 +4,7 @@ Spice and the Python predecessor are two systems on one machine, not two stages
 of one. Both are installed, both read this repository, and both run
 indefinitely: there is no date, release, or step at which one of them ends.
 Nothing here stops, drains, imports, or replaces the other, and neither is a
-precondition for the other. [COEXISTENCE.md](COEXISTENCE.md) registers every
-boundary where the two touch, gives each a verdict, and says which of the
-conflicts anything on the machine actually enforces.
+precondition for the other.
 
 Run the commands below from the worktree being installed. Paths stay explicit
 because this appliance is invoked by path, never by name.
@@ -73,8 +71,8 @@ take a lane away from the predecessor.
 
 Run it only when the whole repository is meant to run this appliance's hooks.
 `core.hooksPath` is single-valued per scope, so a worktree gets one system's
-gate or the other's and never both, which is why COEXISTENCE.md settles this as
-*shared repository yes, shared worktree no*. On this fleet every lane selects
+gate or the other's and never both: shared repository yes, shared worktree no.
+On this fleet every lane selects
 the predecessor's `.spice/hooks`, so activation refuses on the first one it
 reads and changes nothing; moving a lane across is an operator decision that
 precedes the command rather than something the command performs.
@@ -136,19 +134,10 @@ hook assets or the verifier guard change — `cargo xtask verify` refuses while
 the published copy is not the running build's, and names the command. An
 upgrade stops nothing outside this appliance.
 
-## What replaced the cutover runbook
+## The independence proof
 
-This document replaces `CUTOVER.md`, which specified a one-time clean break:
-drain every predecessor lane, terminate each recorded process group, move the
-ambient `spice` entrypoint aside, assert the native journal absent, declare the
-transition forward-only once `up` was invoked, require an empty board, and
-refuse to restore predecessor authority afterwards. That procedure is retired,
-not deferred. None of its steps is a precondition for installing, starting,
-stopping, or upgrading this appliance, and its requirement that the native
-journal be absent had already stopped being true of the live tree, where
-`spicejournal.sqlite3` exists.
-
-Its rehearsal is kept, renamed to say what it proves:
+Nothing above is a precondition for the predecessor, and nothing the predecessor
+does is a precondition for this appliance. One test carries that claim:
 
 ```sh
 cargo test --locked -p spice --test resident \
@@ -162,7 +151,7 @@ client commands with an empty executable search path, and proves Python and
 Taskwarrior absent from both. The empty authority it asserts is its fixture's.
 Read as an independence proof — this appliance needs no predecessor tool to
 install, seat lanes, steer them, or shut down — it is exactly the evidence
-coexistence rests on, so it keeps every assertion it made under the old name.
+coexistence rests on.
 
 ## Retiring either system is not part of normal operation
 

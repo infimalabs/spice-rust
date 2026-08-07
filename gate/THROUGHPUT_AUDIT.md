@@ -5,6 +5,11 @@ Task: `THROUGH-1kKR1m2q`
 This is an evidence report and a removal/deferral proposal. It changes no gate.
 The governing operator direction is steering `1kKR1gmK`: focus on speed and
 throughput now, identify overzealous checks, and harden and polish after cutover.
+
+That cutover is not happening: this port and the Python predecessor both run
+indefinitely, and no step retires either. The measurements below stand, but
+every "defer to post-cutover" row names a date that will not arrive — read those
+as deferred with no scheduled return, and requiring a fresh reason to restore.
 The later load warning `1kKRGGHk` specifically called out repetitive work in
 high-volume hooks.
 
