@@ -77,6 +77,21 @@ where
     E: Fn(&T) -> Vec<u8>,
 {
     covered.insert(name.to_owned());
+    assert_identity_law(name, samples, encode);
+}
+
+/// The law itself, stated without claiming coverage of a re-exported name.
+///
+/// Separated from [`law_under`] because the audit reads `covered` as a set of
+/// root re-exports and reports anything else as stale. A generic type applied
+/// to one body — `Fact<TasteReminded>` — is a distinct encoding worth asserting
+/// and is not a name `wire` re-exports, so it states the law here and leaves
+/// the coverage registry alone.
+fn assert_identity_law<T, E>(name: &str, samples: &[T], encode: E)
+where
+    T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+    E: Fn(&T) -> Vec<u8>,
+{
     assert!(
         samples.len() >= 2,
         "{name} needs at least two samples for the pairwise check to say anything",
@@ -324,6 +339,87 @@ fn a_command_keeps_the_multiplicity_its_canonical_bytes_keep() {
         once, twice,
         "equality must keep the multiplicity the bytes keep",
     );
+}
+
+/// Parse a timestamp fixture and narrow it the way the wire admits one.
+fn instant(text: &str) -> Instant {
+    Instant::new(text.parse().expect("timestamp")).expect("instant is in the wire year range")
+}
+
+/// A complete taste reminder, every field spelled rather than defaulted in.
+///
+/// `compaction` is `0` because that is what the field means before the occupant
+/// has compacted, not because zero is what a `u64` falls back to; the variant
+/// below carries the post-compaction case.
+///
+/// Built as one base the variants differ from in exactly one place, so what
+/// each sample proves is stated by which field it moved rather than by reading
+/// two unrelated values side by side.
+fn reminder() -> body::TasteReminded {
+    body::TasteReminded {
+        directive: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+        key: "taste-hedging-1".to_owned(),
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+        taste: "hedging".to_owned(),
+        content: Digest::compute(Domain::TasteProse, b"it might possibly be the case that"),
+        occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+        compaction: 0,
+        locus: body::TranscriptLocus {
+            member: 12,
+            offset: 4096,
+            length: 512,
+            event: 3,
+            line: 7,
+            column: 19,
+        },
+        text: "say it plainly or do not say it".to_owned(),
+        expires: instant("2030-04-12T18:44:09.271Z"),
+    }
+}
+
+/// A fact is its body's bytes, and the reminder body is ten fields wide.
+///
+/// [`Fact`] is registered in the crossing fixture over one body, `TaskDone`,
+/// which carries a handle and two strings. That says nothing about a body
+/// composed of a [`Digest`], an [`Instant`], a bare `u64` compaction epoch, and
+/// a six-field locus: each is a place a field can be dropped at encode or
+/// narrowed at render while derived equality keeps the distinction the bytes
+/// lost. `TranscriptLocus` is reached here and nowhere else in this fixture —
+/// it is not re-exported from `wire`'s root, and the coverage audit walks only
+/// those, so nothing ever asked for a sample of it.
+///
+/// The samples are a base reminder plus one variant per field, each differing
+/// from the base in exactly that field. A field the encoding drops therefore
+/// makes its own variant encode to the base's bytes while comparing unequal,
+/// and the pairwise arm names which one. Two merely different reminders would
+/// not say that: they differ everywhere at once, so the bytes differ for
+/// whichever fields do survive and the dropped field hides behind them.
+#[test]
+fn a_taste_reminder_fact_carries_no_more_than_its_bytes() {
+    let base = reminder();
+    let other = uuid("018f82d4-6f59-7d06-92e3-bce9131163c4");
+    let samples = [
+        base.clone(),
+        body::TasteReminded { directive: other, ..base.clone() },
+        body::TasteReminded { key: "taste-hedging-2".to_owned(), ..base.clone() },
+        body::TasteReminded { lane: other, ..base.clone() },
+        body::TasteReminded { taste: "padding".to_owned(), ..base.clone() },
+        body::TasteReminded {
+            content: Digest::compute(Domain::TasteProse, b"it is the case that"),
+            ..base.clone()
+        },
+        body::TasteReminded { occupant: other, ..base.clone() },
+        body::TasteReminded { compaction: 7, ..base.clone() },
+        body::TasteReminded {
+            locus: body::TranscriptLocus { column: 20, ..base.locus },
+            ..base.clone()
+        },
+        body::TasteReminded { text: "cut the hedge".to_owned(), ..base.clone() },
+        body::TasteReminded { expires: instant("2030-04-12T18:44:09.272Z"), ..base.clone() },
+    ]
+    .map(Fact::new);
+
+    assert_identity_law("Fact<TasteReminded>", &samples, encoded_by_wire);
 }
 
 /// An actor ranks by the text it crosses as, not by where it was declared.
