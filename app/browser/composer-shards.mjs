@@ -86,6 +86,12 @@ export async function assertComposerShards({
     .getByRole("button", { name: "Quote this message" });
   const quoteStack = quoteLane.locator(".agent-composer-stack");
   const quotePrimary = quoteStack.locator(".composer-shard--primary");
+  const primaryShard = team.locator(
+    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary`,
+  );
+  // Located by the class the heading wears rather than as a strong under the
+  // header: the renew control lives in this header's drawer and carries a
+  // strong of its own, so a descendant tag match resolves to two elements.
   const primaryHeadings = team.locator(
     ".team-agent .composer-shard--primary .composer-shard-heading > .composer-shard-prose",
   );
@@ -94,6 +100,9 @@ export async function assertComposerShards({
     seeded.primaryHeadings.length,
     "every seated lane exposes one primary prose heading",
   );
+  // Every lane's agent names itself by its own worktree basename, so each
+  // expectation below is a different string and the sweep fails if one lane's
+  // standing is rendered into another lane's heading.
   const observedHeadings = [];
   for (const expected of seeded.primaryHeadings) {
     const heading = team.locator(
@@ -117,6 +126,15 @@ export async function assertComposerShards({
     new Set(observedHeadings).size,
     seeded.primaryHeadings.length,
     "primary prose headings remain pairwise distinct across seated lanes",
+  );
+  // The agent name is required to stay discoverable from this heading rather
+  // than dropped, and it still is -- not as the heading text, which the
+  // reference shows as prose, but as the label of the control the heading ends
+  // with, so the name is reachable without leaving the header.
+  assert.equal(
+    await primaryShard.locator(".agent-action-menu > summary").getAttribute("aria-label"),
+    `Actions for ${seeded.agentName}`,
+    "the agent name stays discoverable from the heading, in its actions control",
   );
   assert.equal(
     await quoteStack.locator(".composer-shard").count(),
