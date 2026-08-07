@@ -1,8 +1,7 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::collections::BTreeSet;
 
 use board::Snapshot;
-use board::allocate::{Refusal, Request, WinError, win};
+use board::allocate::{Mint, mint};
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, FactKind, Instant, LaneResidency, LeaseHead,
@@ -38,44 +37,6 @@ fn projects() -> board::ProjectPolicy {
         dialect::PROJECT_MAX_DEPTH as u64,
     )
     .expect("fixture project policy")
-}
-
-fn request(command: u8) -> Request {
-    let lane = uuid(20);
-    Request {
-        band: 2,
-        projects: projects(),
-        command: uuid(command),
-        actor: Actor::Lane(lane),
-        lane,
-        occupant: uuid(21),
-        epoch: uuid(22),
-        at: instant(5),
-        expiry: instant(20),
-        maximum: instant(35),
-        rule: "next".parse().expect("current allocation rule"),
-        source: source_boundary(lane),
-    }
-}
-
-/// A proven boundary carrying one accounted head.
-///
-/// Deliberately not an empty `Proven`: an empty one is byte-identical for every
-/// lane, so a claim fact that dropped the request's boundary entirely would
-/// still compare equal to this fixture and the loss would not show.
-fn source_boundary(lane: CanonicalUuid) -> body::SourceBoundary {
-    body::SourceBoundary::Proven {
-        heads: vec![wire::TranscriptSourceHead {
-            lane,
-            vendor: "claude".parse().expect("fixture vendor"),
-            stream: "session".to_owned(),
-            source: uuid(23),
-            next: body::TranscriptPosition {
-                member: 4,
-                offset: 512,
-            },
-        }],
-    }
 }
 
 fn workflow() -> WorkflowHead {
@@ -116,11 +77,8 @@ fn residency() -> ResidencyHead {
     }
 }
 
-fn fixture(path: Option<&Path>, with_residency: bool) -> Journal {
-    let mut journal = path.map_or_else(
-        || Journal::in_memory().expect("in-memory allocation journal"),
-        |path| Journal::open(path).expect("file allocation journal"),
-    );
+fn fixture() -> Journal {
+    let mut journal = Journal::in_memory().expect("in-memory allocation journal");
     let origin = "task:BOARD-root".parse::<Origin>().expect("fixture origin");
     let mut write = JournalWrite::new(
         Actor::Spice,
@@ -168,7 +126,7 @@ fn fixture(path: Option<&Path>, with_residency: bool) -> Journal {
             revision: position,
         });
         write.workflow_head(task, fact, move |_| flow);
-        if index == 0 && with_residency {
+        if index == 0 {
             write.residency_head(fact, |_| residency());
         }
     }
@@ -176,389 +134,209 @@ fn fixture(path: Option<&Path>, with_residency: bool) -> Journal {
     journal
 }
 
-fn append_hidden(journal: &mut Journal) -> TaskHandle {
-    let task = handle("HIDDEN-z9");
-    let origin = "task:HIDDEN-root"
-        .parse::<Origin>()
-        .expect("fixture origin");
-    let flow = workflow();
+/// A proven boundary carrying one accounted head.
+///
+/// Deliberately not an empty `Proven`: an empty one is byte-identical for every
+/// lane, so a claim fact that dropped the caller's boundary entirely would
+/// still compare equal to this fixture and the loss would not show.
+fn source_boundary(lane: CanonicalUuid) -> body::SourceBoundary {
+    body::SourceBoundary::Proven {
+        heads: vec![wire::TranscriptSourceHead {
+            lane,
+            vendor: "claude".parse().expect("fixture vendor"),
+            stream: "session".to_owned(),
+            source: uuid(23),
+            next: body::TranscriptPosition {
+                member: 4,
+                offset: 512,
+            },
+        }],
+    }
+}
+
+/// Open a transaction on the fixture's task and mint one claim into it.
+fn minted(journal: &mut Journal, git: Option<body::GitBoundary>, source: body::SourceBoundary) {
+    let task = handle("BOARD-a1");
+    let actor = Actor::Lane(uuid(20));
     let mut write = JournalWrite::new(
-        Actor::Spice,
-        origin.clone(),
-        instant(1),
+        actor.clone(),
+        "task:BOARD-a1".parse().expect("claim origin"),
+        instant(5),
         Producer::CommandDoor,
     );
-    let fact = write
-        .fact(
-            body::TaskAdded {
-                task: task.clone(),
-                uuid: uuid(3),
-                title: "Retain hidden evidence".to_owned(),
-                description: Some("Hidden scheduling detail".to_owned()),
-                acceptance: vec!["Hidden evidence settles".to_owned()],
-                project: ".maxim_proposal.theme_2".to_owned(),
-                tags: vec!["priority:critical".to_owned()],
-                depends: Vec::new(),
-                flow: flow.flow.clone(),
-                phase: flow.phase.clone(),
-                revision: 1,
-            },
-            FactCause::Root,
-        )
-        .expect("hidden task fact");
-    let statement_task = task.clone();
-    write.task_head(fact, move |position| TaskHead {
-        handle: statement_task,
-        uuid: uuid(3),
-        title: "Retain hidden evidence".to_owned(),
-        description: Some("Hidden scheduling detail".to_owned()),
-        acceptance: vec!["Hidden evidence settles".to_owned()],
-        project: ".maxim_proposal.theme_2".to_owned(),
-        tags: vec!["priority:critical".to_owned()],
-        dependencies: Vec::new(),
-        provenance: origin,
-        revision: position,
-    });
-    write.workflow_head(task.clone(), fact, move |_| flow);
-    journal.apply(write).expect("seed hidden task");
-    task
+    mint(
+        &mut write,
+        Mint {
+            task: &task,
+            actor: &actor,
+            workflow: &workflow(),
+            lane: uuid(20),
+            occupant: uuid(21),
+            epoch: uuid(22),
+            at: instant(5),
+            expiry: instant(20),
+            maximum: instant(35),
+            git,
+            source,
+        },
+    )
+    .expect("the claim mints");
+    journal.apply(write).expect("the minted claim commits");
 }
 
+/// Everything a claim carries reaches the journal through the one minter.
+///
+/// This replaced two independent minting sites, and the cost of that split was
+/// that a field added to the claim had to be copied into both by hand. So the
+/// guard is not that the minter works, which the fixture above already shows,
+/// but that nothing a claim carries can be added without landing here: the fact
+/// body is named field by field, and both heads are destructured whole, so a
+/// field added to either one stops compiling until someone says where the
+/// minter gets it from.
 #[test]
-fn journal_allocator_never_claims_hidden_rows_even_at_higher_urgency() {
-    let mut journal = fixture(None, true);
-    let hidden = append_hidden(&mut journal);
-
-    let won = win(&mut journal, request(30)).expect("public allocator winner");
-    assert_eq!(won.task(), &handle("BOARD-a1"));
-    let snapshot = Snapshot::read(&journal, &projects()).expect("mixed snapshot");
-    let hidden = snapshot
-        .entries()
-        .iter()
-        .find(|entry| entry.statement().handle == hidden)
-        .expect("hidden row retained");
-    assert!(hidden.project().visibility().is_hidden());
-    assert!(hidden.claim().is_none());
-}
-
-#[test]
-fn allocator_claims_in_deterministic_order_and_never_claims_twice() {
-    let mut journal = fixture(None, true);
-
-    let first = win(&mut journal, request(31)).expect("highest urgency task wins");
-    assert_eq!(first.task(), &handle("BOARD-a1"));
-    assert_eq!(first.first(), first.last());
-
-    let before_fault = journal.fact_snapshot().expect("before duplicate receipt");
-    assert!(matches!(
-        win(&mut journal, request(31)),
-        Err(WinError::Commit(_))
-    ));
-    assert_eq!(
-        journal
-            .fact_snapshot()
-            .expect("duplicate receipt rolls back"),
-        before_fault
+fn the_one_claim_minter_writes_every_lifecycle_field() {
+    let mut journal = fixture();
+    minted(
+        &mut journal,
+        None,
+        body::SourceBoundary::Proven { heads: Vec::new() },
     );
-    let after_fault = Snapshot::read(&journal, &projects()).expect("board after rolled-back claim");
-    assert!(
-        after_fault
-            .entries()
-            .iter()
-            .find(|entry| entry.statement().handle == handle("BOARD-b2"))
-            .expect("second task")
-            .claim()
-            .is_none()
-    );
-
-    let second = win(&mut journal, request(32)).expect("next eligible task wins");
-    assert_eq!(second.task(), &handle("BOARD-b2"));
-    assert_ne!(first.task(), second.task());
-
-    let before_empty = journal.fact_snapshot().expect("fact snapshot");
-    assert!(matches!(
-        win(&mut journal, request(33)),
-        Err(WinError::Refused(Refusal::Empty))
-    ));
-    let after_empty = journal.fact_snapshot().expect("fact snapshot");
-    assert_eq!(after_empty, before_empty);
-
-    let snapshot = Snapshot::read(&journal, &projects()).expect("claimed board snapshot");
-    assert_eq!(snapshot.entries().len(), 2);
-    for entry in snapshot.entries() {
-        assert_eq!(
-            entry.claim().map(|claim| claim.disposition),
-            Some(ClaimDisposition::Active)
-        );
-        let lease = entry.lease().expect("winning claim carries a lease");
-        assert_eq!(lease.start, instant(5));
-        assert_eq!(lease.renewal, instant(5));
-        assert_eq!(lease.expiry, instant(20));
-        assert_eq!(lease.maximum, instant(35));
-        assert_eq!(lease.epoch, uuid(22));
-    }
 
     let facts = journal.fact_snapshot().expect("claim fact stream");
-    assert_eq!(facts.facts().len(), 4);
-    assert_eq!(facts.facts()[2].fact.kind(), FactKind::ClaimWon);
-    assert_eq!(facts.facts()[3].fact.kind(), FactKind::ClaimWon);
-    let verified = journal.verify().expect("claims and receipts verify");
-    assert_eq!(verified.facts, 4);
-    assert_eq!(verified.receipts, 2);
+    let claim = facts
+        .facts()
+        .iter()
+        .find(|envelope| envelope.fact.kind() == FactKind::ClaimWon)
+        .expect("minting writes a claim fact");
+    // Named one by one rather than counted, because a count admits a rename.
+    // `git` is absent because this claim was minted without a boundary, and the
+    // field is skipped when it is empty; the test below mints one with it.
+    // `source` is present for the same claim, because an empty proven boundary
+    // is a boundary that was read and found empty; only the value the legacy
+    // migration supplies for facts stored before boundaries were recorded is
+    // skipped, and no live minter can produce it.
+    let written: BTreeSet<&str> = claim.fact.body().keys().map(String::as_str).collect();
+    assert_eq!(
+        written,
+        BTreeSet::from([
+            "task", "actor", "lane", "occupant", "epoch", "until", "source",
+        ]),
+        "the claim fact carries exactly the fields the minter writes"
+    );
+
+    let snapshot = Snapshot::read(&journal, &projects()).expect("claimed board");
+    let entry = snapshot
+        .entries()
+        .iter()
+        .find(|entry| entry.statement().handle == handle("BOARD-a1"))
+        .expect("the claimed task is on the board");
+    let ClaimHead {
+        actor,
+        fact,
+        lane,
+        occupant,
+        epoch,
+        disposition,
+    } = entry.claim().expect("minting writes a claim head");
+    assert_eq!(actor, &Actor::Lane(uuid(20)));
+    assert_eq!(*fact, claim.seq);
+    assert_eq!(*lane, uuid(20));
+    assert_eq!(*occupant, uuid(21));
+    assert_eq!(*epoch, uuid(22));
+    assert_eq!(*disposition, ClaimDisposition::Active);
+
+    let LeaseHead {
+        start,
+        renewal,
+        expiry,
+        maximum,
+        epoch,
+    } = entry.lease().expect("minting writes a lease head");
+    assert_eq!(*start, instant(5));
+    assert_eq!(*renewal, instant(5));
+    assert_eq!(*expiry, instant(20));
+    assert_eq!(*maximum, instant(35));
+    assert_eq!(*epoch, uuid(22));
 }
 
+/// A boundary the caller supplies survives the minter it is handed to.
+///
+/// `git` is the field the two minting sites actually disagreed about: the
+/// allocator hardcoded it empty while the resident threaded a real worktree
+/// through, which is why it is the one worth proving reaches the journal from a
+/// caller rather than from the writer's own defaults.
+///
+/// `source` is proven beside it for the same reason and one more: the minter is
+/// handed an already-open transaction, so it cannot read a transcript boundary
+/// itself and has no default to fall back to. Whatever the caller passes is the
+/// only boundary the claim can ever open at.
 #[test]
-fn invalid_rule_deadline_and_residency_leave_authority_untouched() {
-    let cases = [
-        {
-            let mut request = request(41);
-            request.rule = "other".parse().expect("alternate rule");
-            let expected = Refusal::Rule(request.rule.clone());
-            (request, expected)
-        },
-        {
-            let mut request = request(42);
-            request.expiry = request.at;
-            let expected = Refusal::Deadline {
-                at: request.at,
-                expiry: request.expiry,
-                maximum: request.maximum,
-            };
-            (request, expected)
-        },
-        {
-            let mut request = request(43);
-            request.epoch = uuid(23);
-            let expected = Refusal::StaleEpoch {
-                seated: uuid(22),
-                named: uuid(23),
-            };
-            (request, expected)
-        },
-        {
-            let mut request = request(44);
-            request.occupant = uuid(24);
-            let expected = Refusal::Displaced {
-                lane: uuid(20),
-                seated: Some(uuid(21)),
-                named: uuid(24),
-            };
-            (request, expected)
-        },
-        {
-            let mut request = request(45);
-            request.actor = Actor::Lane(uuid(25));
-            let expected = Refusal::ActorLane {
-                actor: uuid(25),
-                named: uuid(20),
-            };
-            (request, expected)
-        },
-    ];
+fn a_caller_supplied_boundary_reaches_the_claim() {
+    let mut journal = fixture();
+    let boundary = body::GitBoundary {
+        head: "a-recorded-commit".to_owned(),
+        integrated: "an-integrated-commit".to_owned(),
+        upstream: Some("origin/main".to_owned()),
+        upstream_head: Some("a-baseline-commit".to_owned()),
+        local_commits: 2,
+    };
+    minted(&mut journal, Some(boundary), source_boundary(uuid(20)));
 
-    for (request, expected) in cases {
-        let mut journal = fixture(None, true);
-        let before = journal.fact_snapshot().expect("before refusal");
-        match win(&mut journal, request) {
-            Err(WinError::Refused(observed)) => assert_eq!(observed, expected),
-            other => panic!("expected {expected:?}, found {other:?}"),
-        }
-        assert_eq!(journal.fact_snapshot().expect("after refusal"), before);
-        assert_eq!(
-            journal.verify().expect("fixture remains coherent").receipts,
-            0
-        );
-    }
-
-    let mut missing = fixture(None, false);
-    let before = missing.fact_snapshot().expect("before missing residency");
-    assert!(matches!(
-        win(&mut missing, request(46)),
-        Err(WinError::Refused(Refusal::MissingResidency))
-    ));
-    assert_eq!(missing.fact_snapshot().expect("after refusal"), before);
-}
-
-#[test]
-fn a_claim_without_a_lease_is_a_zero_write_snapshot_fault() {
-    let mut malformed = fixture(None, true);
-    let task = handle("BOARD-a1");
-    let claim_request = request(47);
-    let mut write = JournalWrite::new(
-        claim_request.actor.clone(),
-        "task:BOARD-a1".parse().expect("claim origin"),
-        claim_request.at,
-        Producer::CommandDoor,
-    );
-    let fact = write
-        .fact(
-            body::ClaimWon {
-                task: task.clone(),
-                actor: claim_request.actor.clone(),
-                lane: claim_request.lane,
-                occupant: claim_request.occupant,
-                epoch: claim_request.epoch,
-                until: claim_request.expiry,
-                git: None,
-                source: claim_request.source.clone(),
-            },
-            FactCause::Root,
-        )
-        .expect("malformed claim fact");
-    write.claim_head(task, fact, move |position| ClaimHead {
-        actor: claim_request.actor,
-        fact: position,
-        lane: claim_request.lane,
-        occupant: claim_request.occupant,
-        epoch: claim_request.epoch,
-        disposition: ClaimDisposition::Active,
-    });
-    malformed
-        .apply(write)
-        .expect("seed claim without its required lease head");
-    let before = malformed.fact_snapshot().expect("before malformed read");
-    assert!(matches!(
-        win(&mut malformed, request(48)),
-        Err(WinError::Read(_))
-    ));
+    let facts = journal.fact_snapshot().expect("claim fact stream");
+    let claim = facts
+        .facts()
+        .iter()
+        .find(|envelope| envelope.fact.kind() == FactKind::ClaimWon)
+        .expect("minting writes a claim fact");
+    let git = claim
+        .fact
+        .body()
+        .get("git")
+        .expect("the claim carries the boundary it was minted with");
+    // Read back field by field rather than compared against the fixture struct,
+    // so the assertion cannot pass by echoing its own input through the same
+    // serializer that wrote it.
     assert_eq!(
-        malformed.fact_snapshot().expect("after malformed read"),
-        before
-    );
-}
-
-#[test]
-fn a_disordered_lease_is_a_zero_write_snapshot_fault() {
-    let mut disordered = fixture(None, true);
-    let task = handle("BOARD-a1");
-    let claim_request = request(49);
-    let mut write = JournalWrite::new(
-        claim_request.actor.clone(),
-        "task:BOARD-a1".parse().expect("claim origin"),
-        claim_request.at,
-        Producer::CommandDoor,
-    );
-    let fact = write
-        .fact(
-            body::ClaimWon {
-                task: task.clone(),
-                actor: claim_request.actor.clone(),
-                lane: claim_request.lane,
-                occupant: claim_request.occupant,
-                epoch: claim_request.epoch,
-                until: claim_request.expiry,
-                git: None,
-                source: claim_request.source.clone(),
-            },
-            FactCause::Root,
-        )
-        .expect("malformed lease fact");
-    write.claim_head(task.clone(), fact, move |position| ClaimHead {
-        actor: claim_request.actor,
-        fact: position,
-        lane: claim_request.lane,
-        occupant: claim_request.occupant,
-        epoch: claim_request.epoch,
-        disposition: ClaimDisposition::Freed,
-    });
-    write.lease_head(task, fact, move |_| LeaseHead {
-        start: instant(20),
-        renewal: instant(5),
-        expiry: instant(20),
-        maximum: instant(35),
-        epoch: uuid(22),
-    });
-    disordered
-        .apply(write)
-        .expect("seed a canonically encoded but disordered lease");
-    let before = disordered
-        .fact_snapshot()
-        .expect("before disordered lease read");
-    assert!(matches!(
-        win(&mut disordered, request(50)),
-        Err(WinError::Read(_))
-    ));
-    assert_eq!(
-        disordered
-            .fact_snapshot()
-            .expect("after disordered lease refusal"),
-        before
-    );
-}
-
-#[test]
-fn independent_connections_observe_the_same_single_allocation_path() {
-    let store = Store::new();
-    drop(fixture(Some(store.path()), true));
-    let mut first = Journal::open(store.path()).expect("first process connection");
-    let mut second = Journal::open(store.path()).expect("second process connection");
-
-    assert_eq!(
-        win(&mut first, request(51))
-            .expect("first connection wins")
-            .task(),
-        &handle("BOARD-a1")
+        git.get("head").and_then(|value| value.as_str()),
+        Some("a-recorded-commit")
     );
     assert_eq!(
-        win(&mut second, request(52))
-            .expect("second connection sees the committed claim")
-            .task(),
-        &handle("BOARD-b2")
-    );
-    assert!(matches!(
-        win(&mut first, request(53)),
-        Err(WinError::Refused(Refusal::Empty))
-    ));
-
-    let snapshot = Snapshot::read(&second, &projects()).expect("shared authority snapshot");
-    assert_eq!(
-        snapshot
-            .entries()
-            .iter()
-            .filter(|entry| entry
-                .claim()
-                .is_some_and(|claim| { claim.disposition == ClaimDisposition::Active }))
-            .count(),
-        2
+        git.get("integrated").and_then(|value| value.as_str()),
+        Some("an-integrated-commit")
     );
     assert_eq!(
-        second.verify().expect("shared authority verifies").receipts,
-        2
+        git.get("upstream").and_then(|value| value.as_str()),
+        Some("origin/main")
     );
-}
+    assert_eq!(
+        git.get("upstream_head").and_then(|value| value.as_str()),
+        Some("a-baseline-commit")
+    );
+    assert_eq!(
+        git.get("local_commits").and_then(|value| value.as_u64()),
+        Some(2)
+    );
 
-struct Store {
-    path: PathBuf,
-}
-
-impl Store {
-    fn new() -> Self {
-        Self {
-            path: std::env::temp_dir().join(format!(
-                "spice-board-allocation-{}-{}.sqlite",
-                std::process::id(),
-                uuid(60),
-            )),
-        }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for Store {
-    fn drop(&mut self) {
-        for path in [
-            self.path.clone(),
-            self.path.with_extension("sqlite-wal"),
-            self.path.with_extension("sqlite-shm"),
-        ] {
-            match fs::remove_file(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => panic!("remove allocation fixture: {error}"),
-            }
-        }
-    }
+    let head = claim
+        .fact
+        .body()
+        .get("source")
+        .and_then(|source| source.get("proven"))
+        .and_then(|proven| proven.get("heads"))
+        .and_then(|heads| heads.get(0))
+        .expect("the claim carries the accounted head it was minted with");
+    assert_eq!(
+        head.get("lane").and_then(|value| value.as_str()),
+        Some(uuid(20).to_string().as_str())
+    );
+    assert_eq!(
+        head.get("stream").and_then(|value| value.as_str()),
+        Some("session")
+    );
+    assert_eq!(
+        head.get("next")
+            .and_then(|next| next.get("offset"))
+            .and_then(|value| value.as_u64()),
+        Some(512)
+    );
 }

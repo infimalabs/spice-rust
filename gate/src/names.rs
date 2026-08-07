@@ -24,8 +24,26 @@ impl RetiredName {
 
 /// The complete port-owned vocabulary retirement ledger.
 ///
-/// This table deliberately lives in the Rust tree. It must not be generated
-/// from or compared with preliminary design material at build or test time.
+/// This table deliberately lives in the Rust tree and is the only authority for
+/// what is retired. It must not be generated from or compared with preliminary
+/// design material at build or test time, and no reader should have to leave
+/// the repository to learn what a row means.
+///
+/// A row retires a concept, not a word, and the three fields say which concept.
+/// `successor` usually identifies it, because naming what replaced it names
+/// what it was: a row succeeded by `doc` retired a way of talking about
+/// documents, whatever verb it happened to wear. A successor of `deleted` is
+/// the exception, saying the concept was dropped and not replaced, and there
+/// `retired` carries the identification alone. `retired` always labels the
+/// concept, and is what the refusal message quotes back. `spellings` is exactly
+/// what the gate refuses on the row's behalf, scoped to reach the retired
+/// concept and stop there.
+///
+/// So a live surface sharing a word with a retired concept is not itself a
+/// violation, and the row narrows rather than the surface renaming. Renaming it
+/// would be the more disruptive of the two whenever the port already coins that
+/// concept in durable vocabulary, because the durable spelling cannot move
+/// without stranding what is already written under it.
 pub const RETIRED_NAMES: &[RetiredName] = &[
     RetiredName::new("serve", "up, canvas", &["serve"]),
     RetiredName::new("study, studies", "gate", &["study", "studies"]),
@@ -34,7 +52,14 @@ pub const RETIRED_NAMES: &[RetiredName] = &[
         "ratchet",
         &["flex", "sticky", "jitter"],
     ),
-    RetiredName::new("ingest", "doc", &["ingest"]),
+    // Scoped to the concept actually retired, which is the creation surface
+    // this row's own successor names: `task ingest` in the predecessor, beside
+    // the row below retiring the same subsystem. The bare verb is not refused,
+    // because the port already coins the transcript-tape sense in durable
+    // vocabulary the gate admits -- `JournalIngested`, persisted as the fact
+    // kind `journal::ingested` -- so refusing only its verb form split one
+    // concept across two spellings and advised "use doc" where no doc exists.
+    RetiredName::new("task ingest", "doc", &["task ingest", "ingest doc"]),
     RetiredName::new("taskdoc", "doc, dialect", &["taskdoc", "task doc"]),
     RetiredName::new("incepted", "born", &["incepted"]),
     RetiredName::new("inbox item", "directive", &["inbox item"]),
@@ -88,13 +113,37 @@ pub struct RetiredMatch {
 /// Find every retired concept named by an identifier, key, or spelling.
 #[must_use]
 pub fn retired_matches(candidate: &str) -> Vec<RetiredMatch> {
-    let candidate_words = tokenize(candidate);
+    matching(&tokenize(candidate), contains_words)
+}
+
+/// Find every retired concept named by a published command path.
+///
+/// A command path is matched whole, where a declaration is matched by contained
+/// word, and the difference is the position rather than the ledger. An
+/// identifier is a name the port coined out of whatever words it liked, so a
+/// retired word anywhere inside it is that word shipped. A command path is one
+/// published name assembled from a stem and a leaf, and passing through a stem
+/// is not naming it: `session briefing` publishes `briefing` beneath `session`,
+/// and refusing it for containing a retired word would refuse every path routed
+/// under one. What a path can do is *be* the retired name, which is what the
+/// ledger's own phrase spellings describe -- `task ingest` is written as the
+/// command it retires, so a row published at exactly that path is that command
+/// shipped.
+#[must_use]
+pub fn retired_command_matches(path: &str) -> Vec<RetiredMatch> {
+    matching(&tokenize(path), equals_words)
+}
+
+fn matching(
+    candidate_words: &[String],
+    reach: fn(&[String], &[String]) -> bool,
+) -> Vec<RetiredMatch> {
     RETIRED_NAMES
         .iter()
         .filter(|entry| {
             entry.spellings.iter().any(|spelling| {
                 let retired_words = tokenize(spelling);
-                contains_words(&candidate_words, &retired_words)
+                reach(candidate_words, &retired_words)
             })
         })
         .map(|entry| RetiredMatch {
@@ -138,6 +187,10 @@ fn contains_words(candidate: &[String], retired: &[String]) -> bool {
             .any(|window| window == retired)
 }
 
+fn equals_words(candidate: &[String], retired: &[String]) -> bool {
+    !retired.is_empty() && candidate == retired
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -147,11 +200,18 @@ mod tests {
     const SOURCE_ROW_COUNT: usize = 25;
 
     #[test]
-    fn every_source_row_names_a_successor_and_unique_spellings() {
+    fn every_source_row_carries_a_label_successor_and_unique_spellings() {
         assert_eq!(RETIRED_NAMES.len(), SOURCE_ROW_COUNT);
         let mut spellings = BTreeSet::new();
 
         for entry in RETIRED_NAMES {
+            assert!(
+                !entry.retired.is_empty(),
+                "the row succeeded by {} carries no label, so a reader cannot \
+                 tell which concept it retires and every refusal it raises \
+                 quotes an empty name back",
+                entry.successor
+            );
             assert!(
                 !entry.successor.is_empty(),
                 "{} has no successor",
@@ -168,6 +228,56 @@ mod tests {
                     "duplicate retired spelling {spelling}"
                 );
             }
+        }
+    }
+
+    /// The row refuses the retired creation surface and not the bare word.
+    ///
+    /// Both halves are load-bearing, and both were shown so: widening the
+    /// spellings back to the bare verb reds the second loop, narrowing them
+    /// past the creation surface reds the first. That is what keeps this an
+    /// amendment to the row's scope rather than a deletion of the retirement.
+    /// The name avoids spelling the row it tests, because this declaration is
+    /// itself in the gate's jurisdiction.
+    #[test]
+    fn the_retired_creation_surface_is_refused_and_the_transcript_sense_admitted() {
+        for coined in ["task_ingest", "TaskIngest", "ingest_doc"] {
+            assert!(
+                retired_matches(coined).iter().any(|m| m.successor == "doc"),
+                "{coined} names the retired creation surface"
+            );
+        }
+
+        for coined in ["ingest", "ingest_transcripts", "IngestError"] {
+            assert!(
+                retired_matches(coined).is_empty(),
+                "{coined} names the transcript sense the port coins as journal::ingested"
+            );
+        }
+    }
+
+    /// A command path is the name it publishes, not every word it routes under.
+    ///
+    /// Both admissions below are live commands, and both are why this position
+    /// matches whole rather than by contained word: judging them the way an
+    /// identifier is judged refuses `spice session briefing` and `spice dev
+    /// pre-commit` for the stem and leaf they are filed under. Measured, not
+    /// assumed -- swapping this rule for the declaration rule reds the workspace
+    /// sweep with exactly those two and nothing else.
+    #[test]
+    fn a_command_path_is_refused_only_when_the_path_is_the_retired_name() {
+        assert!(
+            retired_command_matches("task ingest")
+                .iter()
+                .any(|found| found.successor == "doc"),
+            "a row published at the retired path is that command shipped"
+        );
+
+        for routed in ["session briefing", "dev pre-commit"] {
+            assert!(
+                retired_command_matches(routed).is_empty(),
+                "{routed} passes through a retired word without naming it"
+            );
         }
     }
 

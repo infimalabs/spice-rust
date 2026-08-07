@@ -2,15 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use board::Snapshot;
-use board::allocate::{Request as WinRequest, win};
+use board::allocate::{Mint, mint};
 use board::lapse::{Request as LapseRequest, lapse};
 use board::possession::{FreeRequest, free};
 use board::renew::{Refusal, RenewError, Request, renew};
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LaneResidency, Origin, Phase,
-    Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead, TranscriptSourceHead,
-    WorkflowHead, body, intent,
+    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Instant,
+    LaneResidency, Origin, Phase, Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead,
+    TranscriptSourceHead, WireVersion, Witness, WorkflowHead, body, intent,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -39,23 +39,6 @@ fn projects() -> board::ProjectPolicy {
     .expect("fixture project policy")
 }
 
-fn win_request(command: u8) -> WinRequest {
-    WinRequest {
-        band: 2,
-        projects: projects(),
-        command: uuid(command),
-        actor: Actor::Lane(uuid(20)),
-        lane: uuid(20),
-        occupant: uuid(21),
-        epoch: uuid(22),
-        at: instant(5),
-        expiry: instant(20),
-        maximum: instant(35),
-        rule: "next".parse().expect("rule"),
-        source: body::SourceBoundary::Proven { heads: Vec::new() },
-    }
-}
-
 /// One boundary with an accounted stream in it.
 ///
 /// Deliberately not the empty `Proven` the other fixtures open with: an
@@ -74,6 +57,104 @@ fn opening_boundary() -> body::SourceBoundary {
             },
         }],
     }
+}
+
+/// Seed one active claim the way the claim command writes it.
+///
+/// The shared minter writes the fact and both heads, and the transaction
+/// carries the command receipt beside them, so `command` is spent here exactly
+/// as a real claim would spend it.
+fn claim(journal: &mut Journal, command: u8) {
+    claim_opening(
+        journal,
+        command,
+        body::SourceBoundary::Proven { heads: Vec::new() },
+    );
+}
+
+/// Seed one active claim opening at a given transcript boundary.
+///
+/// The shared minter writes the fact and both heads, and the transaction
+/// carries the command receipt beside them, so `command` is spent here exactly
+/// as a real claim would spend it.
+fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundary) {
+    let heads = journal
+        .read_with(|read| read.task_heads())
+        .expect("heads before the claim");
+    let selected = heads
+        .iter()
+        .find(|heads| heads.statement().body().handle == task())
+        .expect("the fixture task is on the board");
+    let workflow = selected.workflow().body().clone();
+    let expected = vec![
+        Witness::Task {
+            task: task(),
+            head: selected.statement().position(),
+        },
+        Witness::Workflow {
+            task: task(),
+            head: selected.workflow().position(),
+            phase: workflow.phase.clone(),
+        },
+        Witness::Claim {
+            task: task(),
+            head: selected.claim().map(journal::JournalHead::position),
+        },
+        Witness::Eligibility {
+            rule: "next".parse().expect("rule"),
+        },
+        Witness::Residency {
+            lane: uuid(20),
+            occupant: uuid(21),
+            epoch: uuid(22),
+        },
+    ];
+    let actor = Actor::Lane(uuid(20));
+    let mut write = JournalWrite::new(
+        actor.clone(),
+        "task:BOARD-a1".parse().expect("claim origin"),
+        instant(5),
+        Producer::CommandDoor,
+    );
+    mint(
+        &mut write,
+        Mint {
+            task: &task(),
+            actor: &actor,
+            workflow: &workflow,
+            lane: uuid(20),
+            occupant: uuid(21),
+            epoch: uuid(22),
+            at: instant(5),
+            expiry: instant(20),
+            maximum: instant(35),
+            git: None,
+            source,
+        },
+    )
+    .expect("the claim mints");
+    write
+        .command_result(
+            Command {
+                v: WireVersion::CURRENT,
+                id: uuid(command),
+                epoch: uuid(22),
+                kind: CommandKind::ClaimWin,
+                expected,
+                body: intent::ClaimWin {
+                    rule: "next".parse().expect("rule"),
+                },
+            },
+            uuid(22),
+            intent::ClaimAnswer {
+                task: task(),
+                holder: actor,
+                warnings: Vec::new(),
+                next: None,
+            },
+        )
+        .expect("the claim receipt builds");
+    journal.apply(write).expect("the claim commits");
 }
 
 fn renew_request(command: u8) -> Request {
@@ -185,7 +266,7 @@ fn fixture(path: Option<&Path>) -> Journal {
 
 fn claimed() -> Journal {
     let mut journal = fixture(None);
-    win(&mut journal, win_request(31)).expect("claim task");
+    claim(&mut journal, 31);
     journal
 }
 
@@ -228,9 +309,7 @@ fn renewal_preserves_claim_and_extends_only_the_lease() {
 #[test]
 fn renewing_an_occupant_leaves_the_opening_boundary_open() {
     let mut journal = fixture(None);
-    let mut opening = win_request(31);
-    opening.source = opening_boundary();
-    win(&mut journal, opening).expect("claim task at a proven boundary");
+    claim_opening(&mut journal, 31, opening_boundary());
 
     renew(&mut journal, renew_request(32)).expect("first renewal");
     let mut again = renew_request(33);
@@ -463,34 +542,34 @@ fn renewal_refusals_preserve_every_fact_and_head() {
 #[test]
 fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
     let mut journal = fixture(None);
-    let request = win_request(49);
+    let actor = Actor::Lane(uuid(20));
     let mut write = JournalWrite::new(
-        request.actor.clone(),
+        actor.clone(),
         "task:BOARD-a1".parse().expect("claim origin"),
-        request.at,
+        instant(5),
         Producer::CommandDoor,
     );
     let fact = write
         .fact(
             body::ClaimWon {
                 task: task(),
-                actor: request.actor.clone(),
-                lane: request.lane,
-                occupant: request.occupant,
-                epoch: request.epoch,
-                until: request.expiry,
+                actor: actor.clone(),
+                lane: uuid(20),
+                occupant: uuid(21),
+                epoch: uuid(22),
+                until: instant(20),
                 git: None,
-                source: request.source.clone(),
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
         )
         .expect("claim fact");
     write.claim_head(task(), fact, move |position| ClaimHead {
-        actor: request.actor,
+        actor,
         fact: position,
-        lane: request.lane,
-        occupant: request.occupant,
-        epoch: request.epoch,
+        lane: uuid(20),
+        occupant: uuid(21),
+        epoch: uuid(22),
         disposition: ClaimDisposition::Active,
     });
     journal.apply(write).expect("seed malformed claim");
@@ -515,7 +594,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
 fn independent_connections_observe_stale_and_current_expiry_events() {
     let store = Store::new();
     let mut seeded = fixture(Some(store.path()));
-    win(&mut seeded, win_request(31)).expect("claim through seed connection");
+    claim(&mut seeded, 31);
     drop(seeded);
     let mut first = Journal::open(store.path()).expect("first connection");
     let mut second = Journal::open(store.path()).expect("second connection");
@@ -554,18 +633,18 @@ fn independent_connections_observe_stale_and_current_expiry_events() {
         .expect("renewed lease remains active");
 
     lapse(&mut first, lapse_request(54, 25)).expect("new expiry lapses");
-    let mut request = win_request(55);
-    request.at = instant(26);
-    request.expiry = instant(30);
-    assert_eq!(
-        win(&mut second, request)
-            .expect("lapsed task reallocates")
-            .task(),
-        &task()
+    let reallocatable = Snapshot::read(&second, &projects()).expect("second sees the new expiry");
+    assert!(
+        board::eligible_entry(
+            reallocatable.entries(),
+            &reallocatable.entries()[0],
+            &Actor::Lane(uuid(20))
+        ),
+        "a lease lapsed at its renewed expiry leaves the task allocatable again"
     );
     assert_eq!(
         second.verify().expect("shared authority verifies").receipts,
-        4
+        3
     );
 }
 
