@@ -26,6 +26,7 @@ import {
 import { assertLineageLifeIsolation } from "./canvas-lineage-life.mjs";
 import { assertLineageDrainFailureTeardown } from "./canvas-lineage-teardown.mjs";
 import { ownFixture } from "./canvas-lifecycle.mjs";
+import { assertBoundaryLoadReading, withLoadReading } from "./canvas-load.mjs";
 import { assertSignalExitedChildSkipsTeardown } from "./canvas-signal-teardown.mjs";
 import { assertFixtureTeardownReaps } from "./canvas-teardown.mjs";
 import {
@@ -1333,6 +1334,7 @@ async function assertSameGenerationResume(
   assert.ok(after.length > before.length, "same-generation resume appends missed facts");
 }
 
+assertBoundaryLoadReading();
 await assertHeadlessLaunchSites();
 await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
@@ -1487,6 +1489,8 @@ try {
   lightMonitor.assertClean();
 
   await light.close();
+} catch (error) {
+  throw withLoadReading(error);
 } finally {
   if (browser) await browser.close();
   await owner.cleanup();
