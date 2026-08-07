@@ -250,6 +250,34 @@ fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
 }
 
 #[test]
+fn distinct_contents_in_separate_records_both_commit_in_one_suppression_epoch() {
+    let fixture = Fixture::new("distinct-records");
+    let bag = bag(&[
+        ("polling", &["poll*"], "Wait."),
+        ("fallbacks", &["fallback*"], "Keep one path."),
+    ]);
+
+    fixture.recognize(
+        &bag,
+        &prose_record(fixture.lane, fixture.occupant, "polling now"),
+    );
+    fixture.recognize(
+        &bag,
+        &prose_record(fixture.lane, fixture.occupant, "fallback now"),
+    );
+
+    let reminders = fixture.reminders();
+    assert_eq!(reminders.len(), 2);
+    assert_ne!(reminders[0].content, reminders[1].content);
+    assert!(
+        reminders
+            .iter()
+            .all(|body| body.compaction == fixture.anchor.get())
+    );
+    fixture.finish();
+}
+
+#[test]
 fn duplicate_hits_records_and_restart_replay_create_one_reminder_in_the_epoch() {
     let fixture = Fixture::new("deduplicate");
     let bag = bag(&[(
