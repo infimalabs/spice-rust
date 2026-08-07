@@ -990,6 +990,78 @@ fn nonzero_vendor_exits_are_reaped_and_recorded_for_both_dialects() {
     }
 }
 
+/// A vendor the resident had to kill is recorded as killed, not as an exit.
+///
+/// This is the one ending the resident causes itself, and it used to be the one
+/// it could not name. A signalled process reports no status, so the resident
+/// substituted `-1` and published `lane::exited` — the same document a vendor
+/// that returned `-1` on its own produces. The grace overrun was gone from the
+/// record the moment it was written.
+///
+/// The vendor here ignores TERM outright rather than trapping it slowly, so the
+/// escalation is the fixture's subject instead of a race it might win. Both
+/// halves of the assertion carry weight: `lane::killed` must be present, and
+/// `lane::exited` must be absent for the same lane, because a resident that
+/// wrote both would still leave a reader unable to say which ending happened.
+#[test]
+fn a_vendor_that_ignores_termination_is_recorded_as_killed_rather_than_exited() {
+    let fixture = Fixture::linked("vendor-killed");
+    let rig = configure(&fixture);
+    let pid_file = fixture.cleanup.join("ignoring-vendor-pid");
+    fs::write(
+        &rig.claude_binary,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "trap '' TERM INT\n",
+                "printf '%s\\n' \"$$\" > {}\n",
+                "printf '%s\\n' {}\n",
+                "while :; do sleep 1; done\n",
+            ),
+            shell_word(&pid_file.display().to_string()),
+            shell_word(Dialect::Claude.session_record()),
+        ),
+    )
+    .expect("ignoring vendor installs");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    let lane = add_lane(&fixture, None, Dialect::Claude);
+    drain(&fixture, lane);
+
+    let pid = fs::read_to_string(&pid_file)
+        .expect("vendor pid reads")
+        .trim()
+        .parse::<u32>()
+        .expect("vendor pid parses");
+    assert!(!process_alive(pid), "killed vendor was not reaped");
+    let facts = journal::JournalReader::open(fixture.journal())
+        .expect("kill journal reads")
+        .fact_snapshot()
+        .expect("kill facts read");
+    let named = |kind| {
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| {
+                fact.fact.kind() == kind
+                    && fact.fact.body().get("lane")
+                        == Some(&serde_json::Value::String(lane.to_string()))
+            })
+            .count()
+    };
+    assert_eq!(named(FactKind::LaneKilled), 1, "the kill is recorded once");
+    assert_eq!(
+        named(FactKind::LaneExited),
+        0,
+        "a kill is not also published as an exit the occupant chose"
+    );
+
+    let down = operator(&fixture, &["down"], true);
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
 #[test]
 fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
     let fixture = Fixture::linked("vendor-malformed-codex-session");

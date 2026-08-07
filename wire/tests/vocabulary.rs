@@ -111,6 +111,12 @@ const COMMIT_LANDED: &str = r#"{
   "verdict": "clean"
 }"#;
 
+const LANE_KILLED: &str = r#"{
+  "kind": "lane::killed",
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c4"
+}"#;
+
 const PROOF_SEALED: &str = r#"{
   "kind": "proof::sealed",
   "commit": "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a2",
@@ -182,6 +188,39 @@ fn a_nested_body_keeps_its_specified_entry_fields() {
         panic!("the fixture publishes exactly one target");
     };
     assert_eq!(target.target, "aarch64-apple-darwin");
+}
+
+/// A killed occupant is a different ending from an exited one, on the wire.
+///
+/// The two used to be one record: the resident's own kill was published as
+/// `lane::exited` carrying the `-1` the platform reports for any signalled
+/// process, which is the same document an occupant that returned `-1` itself
+/// produces. Reading a kill back out of the journal meant guessing.
+///
+/// The round trip alone would not prove that, because a kind that decoded as
+/// either ending would still re-encode to its own document. So the second half
+/// re-labels the fixture as `lane::exited` and requires the decode to refuse:
+/// the killed body must not answer for the exit kind, which is what makes the
+/// separation real for a reader rather than only for the writer.
+#[test]
+fn a_kill_and_an_exit_are_separate_records_that_cannot_be_read_as_each_other() {
+    let fact: Fact<body::LaneKilled> = round_trip(LANE_KILLED);
+
+    assert_eq!(fact.kind(), FactKind::LaneKilled);
+    assert_eq!(fact.producer(), Producer::ResidentRecognition);
+    assert_ne!(
+        fact.body.lane, fact.body.occupant,
+        "the fixture names the lane and its occupant separately"
+    );
+
+    let relabelled = LANE_KILLED.replace("lane::killed", "lane::exited");
+    let error = wire::decode::<Fact<body::LaneKilled>>(relabelled.as_bytes())
+        .expect_err("a killed body does not answer for the exited kind");
+    let detail = error.to_string();
+    assert!(
+        detail.contains("lane::exited") && detail.contains("lane::killed"),
+        "the refusal names the kind it read and the kind it expected: {detail}"
+    );
 }
 
 #[test]

@@ -973,6 +973,18 @@ fn wake(
     }
 }
 
+/// End a lane's occupant without publishing how it ended.
+///
+/// The dropped [`StopEvidence`] is the point rather than an oversight. Every
+/// caller here is a compensation path — `await_session`, `commit_restored`,
+/// `propose_wake`, or the commit itself failed — so the seating this unwinds
+/// was never committed. An ending fact names the residency it closes, and there
+/// is no committed residency to close: publishing one would assert a lane life
+/// the journal never recorded beginning, which is a worse record than silence.
+///
+/// The distinction this discards is only owed where an occupancy was durable,
+/// which is [`stop_occupant`]'s other caller, and that one carries the evidence
+/// through to a fact.
 fn stop_lane(seats: &mut Seats, lane: CanonicalUuid) {
     if let Some(occupant) = seats.vacate(lane) {
         let _stopped = stop_occupant(occupant);
@@ -1003,9 +1015,16 @@ fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> 
     Ok(())
 }
 
+/// How an occupant's residency ended, as the resident itself observed it.
+///
+/// The three arms are three different endings, not three values of one. Only
+/// [`Self::Exited`] carries a code, because only an occupant that chose its own
+/// end has one to report.
 enum StopEvidence {
     Drained,
     Exited(i32),
+    /// The resident ended it after the termination grace elapsed.
+    Killed,
 }
 
 fn stop_occupant(occupant: Occupant) -> Result<StopEvidence, String> {
@@ -1029,9 +1048,11 @@ fn stop_occupant(occupant: Occupant) -> Result<StopEvidence, String> {
             occupant.kill().map_err(|error| error.to_string())?;
             let reap = occupant.reap_bound();
             match occupant.wait_for(reap).map_err(|error| error.to_string())? {
-                OccupantWait::Exited { outcome, .. } => {
-                    Ok(StopEvidence::Exited(exit_code(&outcome)))
-                }
+                // The wait outcome is deliberately not read for a code here.
+                // This resident sent the signal that ended it, so whatever
+                // status the platform reports is a description of that signal
+                // rather than anything the occupant decided.
+                OccupantWait::Exited { .. } => Ok(StopEvidence::Killed),
                 OccupantWait::Running(_) => {
                     Err("process group survived its configured reap bound".to_owned())
                 }

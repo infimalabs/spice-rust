@@ -145,6 +145,13 @@ pub(super) fn propose_drain(
             },
             FactCause::Existing(observed.position()),
         ),
+        StopEvidence::Killed => write.fact(
+            wire::body::LaneKilled {
+                lane: request.lane,
+                occupant,
+            },
+            FactCause::Existing(observed.position()),
+        ),
     }
     .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
     write.residency_head(fact, move |_| next);

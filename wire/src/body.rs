@@ -874,6 +874,21 @@ pub struct LaneDrained {
     pub occupant: CanonicalUuid,
 }
 
+/// The resident ended an occupant that outlived its termination grace.
+///
+/// Separate from [`LaneExited`] because a kill is a different ending, not an
+/// exit status the occupant chose. A signalled process has no status of its own
+/// to report, so recording one would mean publishing the resident's substitute
+/// for a missing number as though the occupant had returned it. This kind
+/// carries no code for the same reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneKilled {
+    /// Vacated lane.
+    pub lane: CanonicalUuid,
+    /// Occupant the resident ended.
+    pub occupant: CanonicalUuid,
+}
+
 /// Work run without the resident left a marker that the next resident recognized once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneDegraded {
