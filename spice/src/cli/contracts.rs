@@ -294,17 +294,6 @@ const CONTRACTS: &[Contract] = &[
         "journal::restore_verify"
     ),
     row!(
-        ["dev", "pre-commit"],
-        "dev pre-commit",
-        Local,
-        None,
-        [],
-        [Daemonless, Toolful],
-        GATE_POLICY_TOOLS,
-        Reply,
-        "gate::pre-commit"
-    ),
-    row!(
         ["gate"],
         "gate [--at REV]",
         Local,
@@ -336,6 +325,23 @@ const CONTRACTS: &[Contract] = &[
         GATE_MUTATION_TOOLS,
         Reply,
         "gate::kill"
+    ),
+    // Published as `dev pre-commit` until this row moved. `dev` was the
+    // predecessor's single `configure_dev_parser` family, which this port split
+    // into `install` and `gate`; both successors are live, and this leaf was the
+    // only one the split left behind. Its contract id and its handler already
+    // named `gate`, so the retirement row for `dev` was accurate and the path
+    // was the leftover -- the path moved rather than the row narrowing.
+    row!(
+        ["gate", "pre-commit"],
+        "gate pre-commit",
+        Local,
+        None,
+        [],
+        [Daemonless, Toolful],
+        GATE_POLICY_TOOLS,
+        Reply,
+        "gate::pre-commit"
     ),
     row!(
         ["gate", "receipt"],

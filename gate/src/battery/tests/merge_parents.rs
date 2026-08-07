@@ -182,7 +182,7 @@ fn findings(report: &BatteryReport, id: GateId) -> &[crate::ArmFinding] {
 /// Commit `INHERITED` on a side branch and merge it into `main`, uncommitted.
 ///
 /// The merge is left with `MERGE_HEAD` in place and the merged content staged,
-/// which is exactly the state `spice dev pre-commit` observes when Git invokes
+/// which is exactly the state `spice gate pre-commit` observes when Git invokes
 /// it for the merge commit.
 fn merged_repository(root: &Path) -> PathBuf {
     let repository = production_repository(root);

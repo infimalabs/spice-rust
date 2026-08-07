@@ -87,6 +87,15 @@ pub const RETIRED_NAMES: &[RetiredName] = &[
         &["bypassPermissions"],
     ),
     RetiredName::new("replica", "head", &["replica"]),
+    // Over-scoped on purpose, and left that way. The retired concept is the
+    // predecessor's agent-state briefing that `recall` replaced; the live
+    // `session briefing` is a different thing wearing the same word, published
+    // as `rim::session_briefing`, Local and Offline, where `recall` is
+    // `lane::recall`, Read and Resident -- another subsystem, transport and
+    // authority. Narrowing the spelling to quiet the sweep would stop refusing
+    // the prose that reintroduces the old concept, which is the whole point of
+    // the row. The live leaf survives instead on position: a command path is
+    // matched whole, so routing under a retired word is not naming it.
     RetiredName::new("briefing", "recall", &["briefing"]),
     RetiredName::new(
         "source (attribution lens)",
@@ -258,12 +267,18 @@ mod tests {
 
     /// A command path is the name it publishes, not every word it routes under.
     ///
-    /// Both admissions below are live commands, and both are why this position
-    /// matches whole rather than by contained word: judging them the way an
-    /// identifier is judged refuses `spice session briefing` and `spice dev
-    /// pre-commit` for the stem and leaf they are filed under. Measured, not
-    /// assumed -- swapping this rule for the declaration rule reds the workspace
-    /// sweep with exactly those two and nothing else.
+    /// The admission below is a live command, and it is why this position
+    /// matches whole rather than by contained word: judging it the way an
+    /// identifier is judged refuses `spice session briefing` for the leaf it is
+    /// filed under. Measured, not assumed -- swapping this rule for the
+    /// declaration rule reds the workspace sweep with exactly that one path and
+    /// nothing else.
+    ///
+    /// `dev` is the same rule read from the other side. It once held a live
+    /// leaf, `dev pre-commit`, which passed through the retired word the way
+    /// `session briefing` still does; that leaf has since moved to `gate
+    /// pre-commit`, so nothing publishes under the stem and the bare path names
+    /// the retired concept outright. The word never changed -- the position did.
     #[test]
     fn a_command_path_is_refused_only_when_the_path_is_the_retired_name() {
         assert!(
@@ -273,12 +288,17 @@ mod tests {
             "a row published at the retired path is that command shipped"
         );
 
-        for routed in ["session briefing", "dev pre-commit"] {
-            assert!(
-                retired_command_matches(routed).is_empty(),
-                "{routed} passes through a retired word without naming it"
-            );
-        }
+        assert!(
+            retired_command_matches("dev")
+                .iter()
+                .any(|found| found.successor == "gate, install"),
+            "a stem with no surviving leaf is a path that names itself"
+        );
+
+        assert!(
+            retired_command_matches("session briefing").is_empty(),
+            "session briefing passes through a retired word without naming it"
+        );
     }
 
     #[test]
