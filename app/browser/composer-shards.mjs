@@ -8,7 +8,7 @@ import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 /// at all the explicitly named lineage-stream default. Both branches are read
 /// back off the live DOM rather than spelled out here, because a hand-written
 /// anchor id is precisely what went stale when that resolver landed.
-async function primaryDestination(team, lane) {
+export async function primaryDestination(team, lane) {
   const link = team.locator(
     `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-link`,
   );

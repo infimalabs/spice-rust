@@ -311,7 +311,15 @@ function assertNewestLaneActivity(actual, expected) {
   assert.equal(actual, expected, "newest lane activity wins across tool and prose shapes");
 }
 
-export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
+export async function configureFixture(
+  fixture, linkedRoot, memberCount = 5, { noCardMember = null } = {},
+) {
+  assert.ok(
+    noCardMember === null
+      || (Number.isInteger(noCardMember) && noCardMember >= 2 && noCardMember <= memberCount),
+    "a no-card fixture member names one linked worktree",
+  );
+  const noCardWorktree = noCardMember === null ? "" : `lane-${noCardMember}`;
   await execute("git", ["init", "--quiet"], { cwd: fixture });
   await mkdir(join(fixture, "dist"), { recursive: true });
   await cp(join(root, "dist/stage-app"), join(fixture, "dist/stage-app"), { recursive: true });
@@ -321,7 +329,9 @@ export async function configureFixture(fixture, linkedRoot, memberCount = 5) {
     "trap 'exit 0' TERM INT",
     "name=${PWD##*/}",
     `printf '%s\\n' '${sessionRecord}'`,
-    concatAgentRecord(),
+    `if [ "$name" != "${noCardWorktree}" ]; then`,
+    `  ${concatAgentRecord()}`,
+    "fi",
     "periodic=0",
     'case "$PWD" in',
     "  *lane-2) periodic=1 ;;",
