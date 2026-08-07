@@ -224,6 +224,12 @@ fn a_shadowed_upstream_does_not_publish_a_lanes_local_commits() {
         config_get(&scratch, "branch.main-b.merge"),
         "refs/heads/main"
     );
+    // The trap this test exists for: the effective remote is the shadow's `.`
+    // while the repository's own pairing still names origin. Without this the
+    // fixture could stop reproducing the disagreement and the test below would
+    // keep passing for the wrong reason.
+    assert_eq!(config_get(&scratch, "branch.main-b.remote"), ".");
+    assert_eq!(config_get_local(&scratch, "branch.main-b.remote"), "origin");
     assert_eq!(rev_parse(&scratch, "refs/remotes/origin/main"), protected);
     assert_eq!(rev_parse(&scratch, "refs/heads/main"), base);
 
@@ -242,9 +248,25 @@ fn a_shadowed_upstream_does_not_publish_a_lanes_local_commits() {
     );
 }
 
-/// Put `lane` under the shadow: the self-merge the shadow pins in system scope
-/// is recorded first, so `@{upstream}` resolves to the lane itself, and the true
-/// integration branch is appended last, where `git config --get` reports it.
+/// Put `lane` under the shadow, in the scopes the real shadow writes.
+///
+/// Measured in a live lane worktree with `git config --show-origin` rather than
+/// reconstructed: `branch.<lane>.merge` carries `refs/heads/<lane>` from the
+/// agent's generated config and `refs/heads/main` from the repository's own,
+/// while `branch.<lane>.remote` carries `origin` from the repository and `.`
+/// from the command line. So the shadow never touches the repository's real
+/// pairing; it layers over it. `@{upstream}` resolves to the lane itself
+/// because git tracking reads the *first* merge value and the single-valued
+/// remote resolves to `.`, and that is the whole point of the shadow --
+/// `git status` stops moving when origin advances.
+///
+/// The two halves are therefore recorded differently on purpose. The self-merge
+/// is added first and the true integration branch last, reproducing the order
+/// that makes `@{upstream}` self-referential while the repository's own value
+/// stays last. The `.` remote goes to worktree scope, which stands in for the
+/// command scope a fixture cannot set: both outrank local, and what matters is
+/// that the effective remote disagrees with the local one. A guard that read
+/// the effective value would find `.` and quietly protect nothing.
 ///
 /// The local `refs/heads/main` is left behind at `stale` so it cannot stand in
 /// for the remote-tracking reference the contract names; a lane worktree has no
@@ -257,15 +279,15 @@ fn shadow_lane_branch(scratch: &Scratch, lane: &str, tip: &str, stale: &str) {
     );
     git(scratch, &["update-ref", "refs/heads/main", stale]);
     let merge = format!("branch.{lane}.merge");
+    let remote = format!("branch.{lane}.remote");
     git(
         scratch,
         &["config", "--add", &merge, &format!("refs/heads/{lane}")],
     );
-    git(
-        scratch,
-        &["config", "--add", &format!("branch.{lane}.remote"), "."],
-    );
+    git(scratch, &["config", "--local", &remote, "origin"]);
     git(scratch, &["config", "--add", &merge, "refs/heads/main"]);
+    git(scratch, &["config", "extensions.worktreeConfig", "true"]);
+    git(scratch, &["config", "--worktree", &remote, "."]);
 }
 
 fn guard(scratch: &Scratch, prepared: &str) -> Result<(), impl std::error::Error + use<>> {
@@ -274,6 +296,14 @@ fn guard(scratch: &Scratch, prepared: &str) -> Result<(), impl std::error::Error
 
 fn config_get(scratch: &Scratch, key: &str) -> String {
     String::from_utf8(git(scratch, &["config", "--get", key]).stdout)
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+/// The repository's own value, ignoring whatever the shadow layers above it.
+fn config_get_local(scratch: &Scratch, key: &str) -> String {
+    String::from_utf8(git(scratch, &["config", "--local", "--get", key]).stdout)
         .unwrap()
         .trim()
         .to_owned()
