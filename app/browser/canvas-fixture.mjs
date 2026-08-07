@@ -45,6 +45,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const binary = join(root, "target/debug/spice");
 
+/// Where a run leaves the screenshots an argument about pixels is settled from.
+///
+/// Named beside `root` because two modules write into it and neither owns it:
+/// the spec, and the agent-console assertions the spec delegates to.
+export const artifacts = join(root, "artifacts/canvas");
+
+/// A generation epoch no live resident will mint, for forging an older client.
+///
+/// The time bits of this v7 identifier read 2024-05-21, so a surface deciding
+/// freshness by comparing epochs treats a request carrying it as belonging to
+/// a generation already replaced -- on any machine, in any year this runs.
+export const staleEpoch = "018f9999-9999-7444-8888-999999999999";
+
 export async function buildResident() {
   try {
     await execute("cargo", ["xtask", "app"], {
