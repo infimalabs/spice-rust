@@ -424,17 +424,13 @@ fn validate_session_head(row: &wire::LaneResidency) -> CommandResult<&wire::Lane
 
 /// Select the declaration dialect owned by this lane's vendor.
 fn session_dialect(vendor: &wire::Name) -> CommandResult<listen::Dialect> {
-    let dialect = match vendor.as_str() {
-        "claude" => listen::Dialect::Claude,
-        "codex" => listen::Dialect::Codex,
-        other => {
-            return Err(session_head_refusal(
-                "lane::session-vendor-unsupported",
-                Some("claude or codex".to_owned()),
-                Some(other.to_owned()),
-                "select a vendor with a current session declaration dialect",
-            ));
-        }
+    let Some(dialect) = super::super::ingest_dialect(vendor) else {
+        return Err(session_head_refusal(
+            "lane::session-vendor-unsupported",
+            Some("claude or codex".to_owned()),
+            Some(vendor.as_str().to_owned()),
+            "select a vendor with a current session declaration dialect",
+        ));
     };
     Ok(dialect)
 }
