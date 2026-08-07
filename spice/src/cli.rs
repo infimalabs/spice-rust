@@ -320,7 +320,7 @@ pub fn landing(path: &[&str]) -> Landing {
     }
 }
 
-/// Build the one parser and help tree from [`CONTRACTS`].
+/// Build the one parser and help tree from the registry [`contracts()`] returns.
 pub fn command() -> Command {
     command_from(contracts())
 }
