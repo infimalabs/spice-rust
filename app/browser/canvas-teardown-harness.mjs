@@ -49,7 +49,13 @@ const owner = ownFixture({ fixture, linkedRoot });
 /// A bare unresolved promise would not: with no referenced handle pending, Node
 /// considers the loop drained and exits cleanly, which would make the interrupt
 /// this harness exists to receive arrive at a process that had already gone.
-const heartbeat = setInterval(() => {}, 1_000);
+/// The same tick also notices a parent that has already gone. The absolute
+/// value matters: a harness first observed after reparenting already reads 1,
+/// so comparing against an earlier sample would miss that state forever.
+let endIdleWait = () => {};
+const heartbeat = setInterval(() => {
+  if (process.ppid === 1) endIdleWait();
+}, 1_000);
 
 try {
   const worktrees = await configureFixture(fixture, linkedRoot, 1);
@@ -81,7 +87,14 @@ try {
   // of what leaks. A parent that only knew the stand-in pids could watch every
   // one of them go and still have left a `spice up` behind.
   const resident = owner.resident.child.pid;
-  const announcement = JSON.stringify({ ready: true, fixture, linkedRoot, resident, vendors });
+  const announcement = JSON.stringify({
+    ready: true,
+    harness: process.pid,
+    fixture,
+    linkedRoot,
+    resident,
+    vendors,
+  });
   if (mode === "mute") {
     // Announce where the parent collects diagnostics rather than where it reads
     // readiness, then close stdout so the parent's readiness race loses at the
@@ -94,8 +107,10 @@ try {
   }
 
   if (mode === "fail") throw new Error(INJECTED);
-  // idle and mute: the parent ends this process once it has seen the line above.
-  await new Promise(() => {});
+  // idle and mute: a live parent ends this process after reading the line. If
+  // that parent is gone instead, the heartbeat resolves this same wait so the
+  // fixture still crosses its normal finally boundary.
+  await new Promise((resolve) => { endIdleWait = resolve; });
 } finally {
   clearInterval(heartbeat);
   await owner.cleanup();
