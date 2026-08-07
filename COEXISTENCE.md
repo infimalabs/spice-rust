@@ -18,7 +18,7 @@ run.
 | 2 | Durable state | `$COMMON/.spice/data/spicejournal.sqlite3` | `spiceacks`, `spicemaxims`, `spiceprojections`, `spiceteams`, `taskchampion` in the same directory | shared-by-design |
 | 3 | Discovery | writes `$COMMON/.spice/canvas` | writes no such file | **conflicting** |
 | 4 | Hooks | `.spice-install/git-hooks` via `core.hooksPath` | `.spice/hooks` via `core.hooksPath` | **conflicting** |
-| 5 | Configuration | owns root `spice.toml` | reads that same file as its `repository` layer, and refuses unknown keys | **conflicting** |
+| 5 | Configuration | authors root `spice.toml`, predecessor roots only | reads that same file as its `repository` layer, and refuses unknown keys | **decided** |
 | 6 | Processes | transient CLI invocations, plus listeners on non-default ports | long-lived serve residents, PIDs 10865 and 25690 | disjoint |
 | 7 | Ports | `127.0.0.1:8765` (`resident/runtime.rs:195`) | `serve.port = 8765` | **conflicting** |
 | 8 | Browser assets | `dist/stage-app/`, per worktree | embedded in `spice-z/spice/serve/web.py` | disjoint |
@@ -118,13 +118,36 @@ $ spice config show   # grouped by scope
 repository  ~/devel/spice-rust-a/spice.toml   (31 keys)
 system      ~/devel/spice-z/spice/spice.toml  (249 keys)
 worktree    …/worktrees/spice-rust-a/.spice/config/spice.toml (7 keys)
+
+$ cargo run -q -p spice -- config --json \
+  | jq -r '.body.provenance[]|select(.source=="tracked")|.path' | cut -d. -f1 | sort -u
+policy
+tasks
+taste
 ```
 
 The predecessor reads **this repository's** `spice.toml` as its `repository`
-layer, and `spice-z/spice/config/schema.py:357` is documented as *"Refuse the
-first structurally unknown key in one source layer."* One file, two readers,
-one strict validator that does not know the other's schema. A key added here
-for this port can refuse the predecessor across the whole fleet.
+layer; this port reads the same bytes as its `tracked` layer. One file, two
+readers, one strict validator that does not know the other's schema. Planting
+one root this port's registry admits, in memory and never in the file:
+
+```
+$ cd ~/devel/spice-z   # this repo's own spice/ shadows the Python package
+$ REPO=~/devel/spice-rust-b python3 -c 'import os, tomllib
+from pathlib import Path
+from spice.config.schema import validate_config_keys as check
+p = Path(os.environ["REPO"]) / "spice.toml"; d = tomllib.loads(p.read_text())
+check(d, source_name="repository", source_path=p); print("accepted as written")
+check(dict(d, gate={}), source_name="repository", source_path=p)'
+accepted as written
+SpiceError: unknown configuration key gate (source=repository path=…/spice.toml);
+            did you mean taste?
+```
+
+The file is accepted as written and refused with one port root added, so the
+refusal is the schema gap and nothing else. Its advice points at `taste`, an
+unrelated table — and because the shared hook runs this validator on every
+agent tool call, that advice lands on every lane at once.
 
 Boundary 8 — browser assets.
 
@@ -171,13 +194,17 @@ rules, so running both means the stricter one silently governs.
 What the decision costs: a lane gets one system's guarantees and not the
 other's, and moving it across is a config change with no partial state.
 
-**The command that violates this is `cargo xtask activate-hooks`.**
-`xtask/src/hooks.rs:106-133` walks `git worktree list --porcelain` and runs
-`git config --worktree --unset-all core.hooksPath` in *every* worktree before
-setting one repository-local path. Run in one lane, it strips the predecessor's
-hooks from all of them. It must refuse while a foreign hook path is live in any
-worktree it would clear, rather than clearing and reporting. Until then it is
-not safe to run unattended, and it was not run to produce this document.
+**The command that enforces this is `cargo xtask activate-hooks`.**
+`preflight_worktree_hooks` in `xtask/src/hooks.rs` walks `git worktree list
+--porcelain` and reads each worktree's effective `core.hooksPath` before
+anything is published or written. It accepts two values — the tracked
+`.githooks` and the path being activated — and refuses on any other, naming the
+worktree. The check is on the effective value across all scopes, so two values
+configured anywhere refuse even when each alone would pass. It once cleared
+every worktree unconditionally; it now cannot strip the predecessor's hooks,
+because it stops before the first write. On this fleet every lane selects
+`.spice/hooks`, so the command refuses immediately and changes nothing, which is
+also why it was not needed to produce this document.
 
 ## May the two systems share a repository?
 
@@ -186,19 +213,27 @@ enforcement.
 
 Sharing works for state, executables, processes and assets: those boundaries
 are disjoint or disjoint-by-filename and need nothing. It does not work for
-hooks, ports, discovery or configuration. Of those four, exactly one is
-protected by anything the machine enforces — hooks, by a worktree-scoped
-setting that this port's own activation command is written to delete
-fleet-wide. Ports are protected only by hand, one `--port` per invocation.
-Discovery and configuration are not protected at all.
+hooks, ports, discovery or configuration. Three of those four are now protected
+by something the machine enforces: hooks, by a worktree-scoped setting that
+this port's activation command refuses to overwrite; discovery, by a client
+that will not dial a record whose publisher no longer holds the resident lock;
+and configuration, by the schema-ownership test below. Ports are protected only
+by hand, one `--port` per invocation.
 
 So the honest answer is *shared repository yes, shared worktree no, shared
-resident never*. Three of those four are already failing quietly: a stale
-`canvas` record points this port's clients at a foreign server, one strict
-config validator reads a file the other system owns, and the fixed default
-port is unbindable in every lane. None of the three raises an error today,
-which is exactly why they are written down here.
+resident never*. What each protection leaves open is narrower than the boundary
+itself: a stale `canvas` record is refused rather than dialed, but only once
+its publisher is actually gone; the config validator still reads a file the
+other system owns, decided rather than prevented; and the fixed default port
+remains unbindable in every lane with nothing to raise it.
 
-The follow-ups this implies — invalidate `canvas` on exit, refuse in
-`activate-hooks` rather than clear, and decide who owns the root `spice.toml`
-schema — are separate work, not done here.
+Schema ownership is decided: the predecessor owns root `spice.toml`, because
+its validator runs on every agent tool call fleet-wide while this port's
+refuses one command locally. Ten roots this registry admits are barred from
+that file and belong in `.spice/config.toml`.
+`spice/tests/config_coexistence.rs` carries the decision and fails on a
+violation.
+
+Both follow-ups this document once listed are landed: `activate-hooks` refuses
+instead of clearing, and a `canvas` record outliving its publisher now faults
+`canvas::publisher-gone`. The port collision is what remains, held by hand.

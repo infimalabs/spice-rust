@@ -112,6 +112,12 @@ impl DraftStore {
         self.0.remove(target);
     }
 
+    pub(crate) fn is_unsafe(&self) -> bool {
+        self.0.values().any(|draft| {
+            !draft.body.is_empty() || !draft.quotes.is_empty() || !draft.attachments.is_empty()
+        })
+    }
+
     /// Build one request from one target without observing sibling drafts.
     pub(crate) fn prepare(&self, target: &str) -> Option<PreparedSubmission> {
         let snapshot = self.get(target)?.clone();
@@ -164,6 +170,17 @@ impl DraftStore {
                 issue: current.issue.or(snapshot.issue),
             },
         );
+    }
+
+    /// Restore authored submissions ahead of anything typed since they left.
+    pub(crate) fn restore_all(
+        &mut self,
+        target: String,
+        snapshots: impl DoubleEndedIterator<Item = ComposerDraft>,
+    ) {
+        for snapshot in snapshots.rev() {
+            self.restore(target.clone(), snapshot);
+        }
     }
 }
 
@@ -476,5 +493,56 @@ mod tests {
             ["newer-quote", "sent-quote"]
         );
         assert_eq!(store.get("agent-b").unwrap().body, "untouched");
+    }
+
+    #[test]
+    fn unsafe_state_and_batch_restore_share_the_complete_draft_shape() {
+        let mut store = DraftStore::default();
+        assert!(!store.is_unsafe());
+        store.set_body("agent-a".to_owned(), "typed after send".to_owned());
+        assert!(store.is_unsafe());
+
+        store.restore_all(
+            "agent-a".to_owned(),
+            vec![
+                ComposerDraft {
+                    body: "first sent".to_owned(),
+                    attachments: vec![attachment("first")],
+                    ..ComposerDraft::default()
+                },
+                ComposerDraft {
+                    body: "second queued".to_owned(),
+                    attachments: vec![attachment("second")],
+                    ..ComposerDraft::default()
+                },
+            ]
+            .into_iter(),
+        );
+        let restored = store.get("agent-a").unwrap();
+        assert_eq!(
+            restored.body,
+            "first sent\n\nsecond queued\n\ntyped after send"
+        );
+        assert_eq!(
+            restored
+                .attachments
+                .iter()
+                .map(|attachment| attachment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+
+        store.clear("agent-a");
+        store.add_quote(
+            "agent-a".to_owned(),
+            "source".to_owned(),
+            1,
+            "quoted".to_owned(),
+            None,
+        );
+        assert!(
+            store.is_unsafe(),
+            "an untouched quote is still authored intent"
+        );
     }
 }

@@ -40,6 +40,8 @@ pub(super) struct CanvasRender<'a> {
     pub lineage_mode: &'a UseStateHandle<LineageMode>,
     pub lineage_controls: &'a UseReducerHandle<LineageControls>,
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
+    pub submissions: &'a SubmissionHandle,
+    pub unsafe_intent: bool,
     pub sender: &'a SenderHandle,
     pub agents: &'a AgentControls,
     pub note_task: &'a UseStateHandle<String>,
@@ -60,7 +62,11 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
         .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
     html! {
-        <div class="shell">
+        <div
+            class="shell"
+            data-unsafe-intent={render.unsafe_intent.to_string()}
+            data-submission-count={render.submissions.status.len().to_string()}
+        >
             {chrome::render_command_bar(
                 render.axis,
                 render.mosaic,
@@ -68,6 +74,7 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
                 render.surface,
                 &cursor,
                 render.sender,
+                &render.submissions.status,
             )}
             {render_workspace(&render, active_axis)}
         </div>
@@ -104,6 +111,7 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                         render.surface,
                         render.sender,
                         render.composer_drafts,
+                        render.submissions,
                         render.lineage_mode,
                         render.lineage_controls,
                         render.agents,

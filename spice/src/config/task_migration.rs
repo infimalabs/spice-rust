@@ -3,6 +3,36 @@
 //! Ordinary configuration admission never calls this module. The translator
 //! accepts one closed JSON schema, emits the sole current [`TaskMetadata`]
 //! shape, and refuses every raw Taskwarrior override before execution.
+//!
+//! # The only cross-system bridge
+//!
+//! This is the sole bridge from the predecessor into this port, and the
+//! coexistence policy in `crate::repository` binds it:
+//!
+//! - **Operator trigger.** Refused by default. Nothing invokes this module on
+//!   its own; it runs only when an operator types `spice config migrate-tasks`
+//!   and names an export path, and it reads only the file so named. It never
+//!   discovers, opens, or converts the predecessor's live databases.
+//! - **Version mapping.** [`PREDECESSOR_TASK_RELEASE`] names the one source
+//!   release and [`TASK_MIGRATION_SCHEMA_VERSION`] the one export schema.
+//!   Anything else refuses rather than being interpreted generously.
+//! - **Identity mapping.** Every emitted value carries a
+//!   [`MigrationProvenance`] naming the source file, the exact predecessor
+//!   field path, its list index, and the lineage it came from, so each output
+//!   traces back to the byte that produced it.
+//! - **Verified backup.** None is required, and that is a property rather than
+//!   an omission: the translation reads bytes and returns a report, so there is
+//!   no prior state to preserve. `tests/coexistence.rs` holds it to that by
+//!   identity, not by assertion.
+//! - **Failure boundary.** The whole export is validated before anything is
+//!   emitted. A refusal is typed, names its witness, and is total -- there is no
+//!   partially translated result to reason about.
+//! - **Reversal.** Discarding the report reverses it completely, because
+//!   nothing durable was written. Applying the report is a separate, deliberate
+//!   act by the operator and is not part of this bridge.
+//!
+//! A bridge that ever needs to write would not qualify under any of the five
+//! above as they stand, and would have to re-specify all of them first.
 
 use std::collections::BTreeSet;
 use std::error::Error;

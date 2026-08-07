@@ -62,18 +62,22 @@ authority on either side.
 ## Hooks are a repository-wide choice
 
 `cargo xtask activate-hooks` is not scoped to the worktree that runs it. It
-walks `git worktree list --porcelain` and clears the worktree-scoped
-`core.hooksPath` in every linked worktree before configuring one common path
-(`xtask/src/hooks.rs:106-133`). What that destroys is each worktree's own hook
-selection, including the predecessor's `.spice/hooks` in lanes nobody was
-installing.
+walks `git worktree list --porcelain` and reads the effective `core.hooksPath`
+of every linked worktree before publishing or configuring anything
+(`preflight_worktree_hooks`, `xtask/src/hooks.rs`). Two values pass: the tracked
+`.githooks` a fresh checkout runs, and the path being activated. Any other
+value, or more than one value from any scope, is another system's selection, and
+activation refuses naming that worktree rather than clearing it. Nothing is
+published and no configuration is written when it refuses, so the command cannot
+take a lane away from the predecessor.
 
 Run it only when the whole repository is meant to run this appliance's hooks.
 `core.hooksPath` is single-valued per scope, so a worktree gets one system's
 gate or the other's and never both, which is why COEXISTENCE.md settles this as
-*shared repository yes, shared worktree no*. Until activation learns to refuse
-while a foreign hook path is live somewhere it would clear, treat this as an
-operator decision rather than a step of the runbook above.
+*shared repository yes, shared worktree no*. On this fleet every lane selects
+the predecessor's `.spice/hooks`, so activation refuses on the first one it
+reads and changes nothing; moving a lane across is an operator decision that
+precedes the command rather than something the command performs.
 
 ## Start
 
@@ -97,11 +101,14 @@ its bearer token.
 Discovery is a single file, `$SPICE_COMMON/.spice/canvas`. A resident withdraws
 it on exit, `up` clears a stale one after taking the resident lock
 (`spice/src/resident/runtime.rs:386`), and `down` faults with
-`canvas::release-incomplete` when a record survives the release (`:531`).
-Neither path covers a resident that died without unwinding, and a record left
-that way points clients at whatever answers the port next — on this fleet, the
-predecessor. If a client behaves as though it reached a foreign server, read
-that file before anything else.
+`canvas::release-incomplete` when a record survives the release (`:535`).
+Neither path covers a resident that died without unwinding, so the client does
+not trust the record alone: before dialing it probes the resident lock beside
+the record and faults `canvas::publisher-gone` when the kernel reports that
+lock free (`spice/src/command_client.rs:326`). `flock` is released on any
+process death, so a killed resident answers the same as an exited one. A client
+that faults this way has been kept off whatever answers the port next — on this
+fleet, the predecessor.
 
 ## Operate and stop
 
@@ -141,11 +148,11 @@ stopping, or upgrading this appliance, and its requirement that the native
 journal be absent had already stopped being true of the live tree, where
 `spicejournal.sqlite3` exists.
 
-Its rehearsal is kept, unchanged, name included:
+Its rehearsal is kept, renamed to say what it proves:
 
 ```sh
 cargo test --locked -p spice --test resident \
-  staged_installed_spice_rehearses_clean_break_without_predecessor_tools
+  installed_spice_lifecycle_leaves_the_predecessor_system_untouched
 ```
 
 That test never stopped anything belonging to the predecessor. It builds its
@@ -155,7 +162,7 @@ client commands with an empty executable search path, and proves Python and
 Taskwarrior absent from both. The empty authority it asserts is its fixture's.
 Read as an independence proof — this appliance needs no predecessor tool to
 install, seat lanes, steer them, or shut down — it is exactly the evidence
-coexistence rests on, so it keeps its assertions and its name.
+coexistence rests on, so it keeps every assertion it made under the old name.
 
 ## Retiring either system is not part of normal operation
 

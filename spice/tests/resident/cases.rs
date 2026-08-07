@@ -385,6 +385,42 @@ fn command_client_process_renders_one_success_across_reconnects() {
     assert!(json_elapsed < CLIENT_DEADLINE_BOUND);
 }
 
+/// A resident that answers `down` and leaves its record published is refused.
+///
+/// The reply is the same on both halves, so the successful one is what proves
+/// the fault is about the record rather than about the exchange: the client
+/// waits for the lock either way, and only the surviving discovery file
+/// separates them. This is the release side of the same invariant a reader
+/// enforces from the outside — a published record must mean a running
+/// publisher — checked here where the resident is the one at fault.
+#[test]
+fn down_refuses_a_resident_that_released_without_withdrawing_discovery() {
+    let fixture = Fixture::new("client-release-incomplete");
+
+    let (withdrawn, _) = fake_down(&fixture, FakeBehavior::Success, true);
+    assert!(
+        withdrawn.status.success(),
+        "a withdrawn record must complete down: {:?}",
+        withdrawn.stderr
+    );
+    assert!(
+        !fixture.canvas().exists(),
+        "the successful half must leave no record behind"
+    );
+
+    let (retained, elapsed) = fake_down(&fixture, FakeBehavior::RetainedDiscovery, true);
+    assert_eq!(retained.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&retained) else {
+        panic!("a record surviving release must fault");
+    };
+    assert_eq!(fault.reason, "canvas::release-incomplete");
+    assert!(
+        fixture.canvas().exists(),
+        "the fault must name a record that really is still published"
+    );
+    assert!(elapsed < CLIENT_DEADLINE_BOUND);
+}
+
 #[test]
 fn authenticated_board_snapshot_survives_a_resident_restart() {
     let fixture = Fixture::new("board-restart");
@@ -575,6 +611,11 @@ fn command_client_process_refuses_untrusted_discovery_before_connecting() {
     assert_eq!(fault.reason, "canvas::discovery-unavailable");
 
     fs::create_dir_all(&fixture.runtime).expect("fixture runtime directory");
+    // Every refusal below is about the discovery being untrustworthy, so a
+    // publisher holds the runtime lock throughout: without one the client
+    // would refuse for the unrelated reason that nobody is serving, and this
+    // case would stop testing what it names.
+    let publisher = fake_publisher(&fixture);
     fs::write(fixture.canvas(), b"not current discovery").expect("malformed discovery writes");
     #[cfg(unix)]
     fs::set_permissions(fixture.canvas(), fs::Permissions::from_mode(0o600))
@@ -637,6 +678,25 @@ fn command_client_process_refuses_untrusted_discovery_before_connecting() {
     let capability = capability.to_string();
     assert!(
         !unavailable
+            .stderr
+            .windows(capability.len())
+            .any(|w| w == capability.as_bytes())
+    );
+
+    // The same unanswered endpoint, one variable changed: the publisher is
+    // gone. `connect-failed` above is a report about a socket and says nothing
+    // about who owns it, which is why a foreign server holding the port earns
+    // a connection rather than a refusal. Losing the lock is what makes this
+    // record unusable, and the client says so instead of dialling to find out.
+    drop(publisher);
+    let orphaned = invoke(&fixture, "down");
+    assert_eq!(orphaned.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&orphaned) else {
+        panic!("discovery outliving its publisher must fault");
+    };
+    assert_eq!(fault.reason, "canvas::publisher-gone");
+    assert!(
+        !orphaned
             .stderr
             .windows(capability.len())
             .any(|w| w == capability.as_bytes())

@@ -548,8 +548,8 @@ pub(super) fn state(
 /// Admit one already-durable capture report from the current occupant.
 ///
 /// Stale reports can race a completed drain or renewal and are discarded by
-/// exact occupant identity. Session recognition and Canvas message projection
-/// consume this same admission decision.
+/// exact occupant identity. Session recognition, taste recognition, and Canvas
+/// message rendering consume this same admission decision.
 pub(super) fn capture_record(
     bus: &Bus,
     epoch: CanonicalUuid,

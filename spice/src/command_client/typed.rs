@@ -41,7 +41,8 @@ pub(crate) fn execute_typed<B: Serialize>(
         Err(outcome) => return outcome,
     };
     let discovery_path = selected_discovery_path(state.canvas(), connection);
-    let discovery = match DiscoveryRead::open(&discovery_path) {
+    let discovery = match DiscoveryRead::open(&discovery_path, &resident_lock_path(state.canvas()))
+    {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
     };

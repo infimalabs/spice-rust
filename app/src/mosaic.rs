@@ -361,6 +361,78 @@ pub fn pack(candidate_sets: &[Vec<Candidate>], track_count: usize) -> Vec<Card> 
     cards
 }
 
+/// Append newly measured cards without re-deciding any committed placement.
+///
+/// This is the live-arrival path.  Re-running [`pack`] over the complete
+/// stream happens to reproduce many simple prefixes, but it discards the
+/// lifecycle latches and content-resize history that make a live plane stable.
+#[must_use]
+pub fn append(cards: &[Card], candidate_sets: &[Vec<Candidate>], track_count: usize) -> Vec<Card> {
+    let tracks = normalize_tracks(track_count);
+    let mut appended = cards.to_vec();
+    let mut floor = derive_row_floor(cards, tracks);
+    let first_index = cards
+        .iter()
+        .map(|card| card.creation_index)
+        .max()
+        .map_or(0, |index| {
+            index
+                .checked_add(1)
+                .expect("Mosaic creation index space is exhausted")
+        });
+    for (offset, candidates) in candidate_sets.iter().enumerate() {
+        let placement = decide(candidates, &floor, tracks);
+        let card = Card {
+            creation_index: first_index
+                .checked_add(offset)
+                .expect("Mosaic creation index space is exhausted"),
+            track: placement.track,
+            span: placement.span,
+            base: placement.base,
+            rows: placement.rows,
+            lifecycle: Lifecycle::Liquid,
+            candidates: candidates.clone(),
+        };
+        floor = commit(&floor, &card, tracks);
+        appended.push(card);
+        appended = recompute_frozen(&appended, FREEZE_DEPTH);
+    }
+    appended
+}
+
+/// Place older backfill below a committed plane without moving its cards.
+///
+/// Creation indices are labels rather than coordinates.  Renumbering them is
+/// therefore safe here: the backfill receives the earlier labels, while every
+/// existing card retains its exact track, span, base, and row reservation.
+#[must_use]
+pub fn backfill(
+    cards: &[Card],
+    candidate_sets: &[Vec<Candidate>],
+    track_count: usize,
+) -> Vec<Card> {
+    if candidate_sets.is_empty() {
+        return cards.to_vec();
+    }
+    let mut older = pack(candidate_sets, track_count);
+    let (older_max, _) = extent(&older);
+    let (_, committed_min) = extent(cards);
+    let shift = committed_min - older_max;
+    for card in &mut older {
+        card.base += shift;
+    }
+    let offset = older.len();
+    let mut committed = cards.to_vec();
+    for card in &mut committed {
+        card.creation_index = card
+            .creation_index
+            .checked_add(offset)
+            .expect("Mosaic creation index space is exhausted");
+    }
+    older.extend(committed);
+    recompute_frozen(&older, FREEZE_DEPTH)
+}
+
 fn tracks_overlap(left: &Card, right: &Card) -> bool {
     left.track < right.track + right.span && right.track < left.track + left.span
 }

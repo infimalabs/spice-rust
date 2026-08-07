@@ -11,28 +11,16 @@ use super::*;
 /// second one is what would reintroduce it.
 pub(super) async fn run_surface(
     active: Rc<Cell<bool>>,
-    connection: UseStateHandle<Connection>,
-    surface: UseStateHandle<SurfaceData>,
-    speech: UseStateHandle<wire::SpeechPlayback>,
-    lineage_controls: UseReducerHandle<LineageControls>,
+    handles: SurfaceHandles,
     mut actions: UnboundedReceiver<ClientAction>,
 ) {
     let data = Rc::new(RefCell::new(SurfaceData::default()));
     let mut backoff = crate::reconnect::Backoff::new();
     while active.get() {
-        if matches!(&*connection, Connection::Starting) {
-            connection.set(Connection::Connecting);
+        if matches!(&*handles.connection, Connection::Starting) {
+            handles.connection.set(Connection::Connecting);
         }
-        let result = run_connection(
-            &active,
-            &connection,
-            &surface,
-            &speech,
-            &lineage_controls,
-            &data,
-            &mut actions,
-        )
-        .await;
+        let result = run_connection(&active, &handles, &data, &mut actions).await;
         if !active.get() {
             break;
         }
@@ -42,8 +30,10 @@ pub(super) async fn run_surface(
         // instead of publishing an offline reason no socket ever produced.
         let ended =
             result.expect_err("run_connection returns Ok only once the surface is inactive");
+        handles.submissions.queue.borrow_mut().reconnect();
+        handles.submissions.publish();
         let delay = backoff.settle(ended.admitted);
-        connection.set(Connection::Offline(ended.reason));
+        handles.connection.set(Connection::Offline(ended.reason));
         TimeoutFuture::new(delay).await;
     }
 }
@@ -61,10 +51,7 @@ struct Ended {
 
 async fn run_connection(
     active: &Rc<Cell<bool>>,
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    speech: &UseStateHandle<wire::SpeechPlayback>,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    handles: &SurfaceHandles,
     data: &Rc<RefCell<SurfaceData>>,
     actions: &mut UnboundedReceiver<ClientAction>,
 ) -> Result<(), Ended> {
@@ -74,7 +61,14 @@ async fn run_connection(
     })?;
     let signal = abort.signal();
     let established = {
-        let handshake = establish_connection(connection, surface, speech, data, &signal).fuse();
+        let handshake = establish_connection(
+            &handles.connection,
+            &handles.surface,
+            &handles.speech,
+            data,
+            &signal,
+        )
+        .fuse();
         let deadline = TimeoutFuture::new(CONNECTION_HANDSHAKE_TIMEOUT_MILLIS).fuse();
         futures_util::pin_mut!(handshake, deadline);
         select! {
@@ -96,19 +90,12 @@ async fn run_connection(
     // the acceptance frame has been admitted and the runtime published. Deriving
     // the flag from control flow rather than from a separate variable keeps the
     // two from ever disagreeing about whether this connection counted.
-    pump_session(
-        active,
-        surface,
-        lineage_controls,
-        data,
-        actions,
-        established,
-    )
-    .await
-    .map_err(|reason| Ended {
-        reason,
-        admitted: true,
-    })
+    pump_session(active, handles, data, actions, established)
+        .await
+        .map_err(|reason| Ended {
+            reason,
+            admitted: true,
+        })
 }
 
 /// Carry one admitted session until it fails or the surface goes away.
@@ -126,8 +113,7 @@ async fn run_connection(
 /// first and double-subscribe.
 async fn pump_session(
     active: &Rc<Cell<bool>>,
-    surface: &UseStateHandle<SurfaceData>,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    handles: &SurfaceHandles,
     data: &Rc<RefCell<SurfaceData>>,
     actions: &mut UnboundedReceiver<ClientAction>,
     established: EstablishedConnection,
@@ -139,6 +125,9 @@ async fn pump_session(
         principal,
         mut pending,
     } = established;
+    send_subscription(&principal, data, &mut writer).await?;
+    send_refresh(&principal, &mut writer, &mut pending, &handles.submissions).await?;
+    drain_submissions(&principal, &mut writer, &mut pending, &handles.submissions).await?;
     let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
     let mut probed = false;
     while active.get() {
@@ -160,20 +149,39 @@ async fn pump_session(
                 let (directives, refresh) =
                     handle_incoming(
                         &session,
-                        surface,
-                        lineage_controls,
+                        handles,
                         data,
                         &mut pending,
                         &bytes,
                     )?;
                 relay_directives(&principal, &mut writer, directives).await?;
                 if refresh {
-                    send_refresh(&principal, &mut writer, &mut pending).await?;
+                    send_refresh(
+                        &principal,
+                        &mut writer,
+                        &mut pending,
+                        &handles.submissions,
+                    )
+                    .await?;
                 }
+                drain_submissions(
+                    &principal,
+                    &mut writer,
+                    &mut pending,
+                    &handles.submissions,
+                )
+                .await?;
             },
             action = action => {
                 let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
-                dispatch_action(&principal, &mut writer, &mut pending, action).await?;
+                dispatch_action(
+                    &principal,
+                    &mut writer,
+                    &mut pending,
+                    &handles.submissions,
+                    action,
+                )
+                .await?;
             },
             () = silence => {
                 if probed {
@@ -215,11 +223,9 @@ async fn establish_connection(
     data: &Rc<RefCell<SurfaceData>>,
     signal: &web_sys::AbortSignal,
 ) -> Result<EstablishedConnection, String> {
-    let (session, mut writer, mut reader) = open_socket(speech, signal).await?;
+    let (session, writer, mut reader) = open_socket(speech, signal).await?;
     let principal = admit_runtime(&session, &mut reader, connection, surface, data).await?;
-    let mut pending = BTreeMap::new();
-    send_subscription(&principal, data, &mut writer).await?;
-    send_refresh(&principal, &mut writer, &mut pending).await?;
+    let pending = BTreeMap::new();
     Ok(EstablishedConnection {
         session,
         writer,
@@ -324,10 +330,14 @@ async fn dispatch_action(
     principal: &Principal,
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    submissions: &SubmissionHandle,
     action: ClientAction,
 ) -> Result<(), String> {
     match action {
-        ClientAction::Refresh => send_refresh(principal, writer, pending).await,
+        ClientAction::DrainSubmissions => {
+            drain_submissions(principal, writer, pending, submissions).await
+        }
+        ClientAction::Refresh => send_refresh(principal, writer, pending, submissions).await,
         ClientAction::Seat {
             name,
             worktree,
@@ -397,7 +407,6 @@ async fn dispatch_action(
             epoch,
             message,
             attachments,
-            resolve,
         } => {
             let body = SteerSend {
                 lane,
@@ -413,7 +422,7 @@ async fn dispatch_action(
                 principal,
                 writer,
                 pending,
-                PendingKind::Steer { lane, resolve },
+                PendingKind::Steer { lane },
                 CommandKind::SteerSend,
                 expected,
                 body,
@@ -421,6 +430,43 @@ async fn dispatch_action(
             .await
         }
     }
+}
+
+async fn drain_submissions(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    submissions: &SubmissionHandle,
+) -> Result<(), String> {
+    let ready = submissions.queue.borrow().ready();
+    for submission in ready {
+        let body = SteerSend {
+            lane: submission.lane,
+            message: submission.message.clone(),
+            attachments: submission.attachments.clone(),
+        };
+        let expected = vec![Witness::Residency {
+            lane: submission.lane,
+            occupant: submission.occupant,
+            epoch: submission.epoch,
+        }];
+        send_typed_as(
+            principal,
+            writer,
+            pending,
+            submission.id,
+            PendingKind::SteerSubmission {
+                lane: submission.lane,
+            },
+            CommandKind::SteerSend,
+            expected,
+            body,
+        )
+        .await?;
+        submissions.queue.borrow_mut().sent(submission.id)?;
+        submissions.publish();
+    }
+    Ok(())
 }
 
 async fn send_lineage_configuration(
@@ -570,6 +616,7 @@ async fn send_refresh(
     principal: &Principal,
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    submissions: &SubmissionHandle,
 ) -> Result<(), String> {
     send_if_offered(
         principal,
@@ -591,11 +638,12 @@ async fn send_refresh(
         LaneRead {},
     )
     .await?;
+    let covered = submissions.queue.borrow().accepted();
     send_if_offered(
         principal,
         writer,
         pending,
-        PendingKind::Inbox,
+        PendingKind::Inbox { covered },
         CommandKind::SteerInbox,
         vec![],
         SteerInbox { lane: None },
@@ -657,6 +705,33 @@ async fn send_typed<B: Serialize>(
     body: B,
 ) -> Result<(), String> {
     let id = random_uuid()?;
+    send_typed_as(
+        principal,
+        writer,
+        pending,
+        id,
+        pending_kind,
+        kind,
+        expected,
+        body,
+    )
+    .await
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a replayed command carries its durable identity beside the ordinary typed send"
+)]
+async fn send_typed_as<B: Serialize>(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    id: CanonicalUuid,
+    pending_kind: PendingKind,
+    kind: CommandKind,
+    expected: Vec<Witness>,
+    body: B,
+) -> Result<(), String> {
     let command = SteerPane::over(principal)
         .command(id, kind, expected, body)
         .map_err(|error| error.to_string())?;
@@ -747,36 +822,45 @@ async fn send_stream_request(
         .map_err(websocket_error)
 }
 
-fn handle_incoming(
+/// Apply one admitted stream frame, publishing the surface it changed.
+///
+/// A liveness answer reports no state, and the caller has already taken the
+/// only thing it carries by observing that a frame arrived. Answering early
+/// skips the surface publication below, which would otherwise hand the view a
+/// fresh clone and redraw an idle board on every probe.
+fn handle_stream_frame(
     session: &Session,
     surface: &UseStateHandle<SurfaceData>,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    data: &Rc<RefCell<SurfaceData>>,
+    bytes: &[u8],
+) -> Result<(Vec<StreamDirective>, bool), String> {
+    let admitted = session
+        .admit_stream(bytes)
+        .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+    if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
+        return Ok((Vec::new(), false));
+    }
+    let refresh = stale_reads(&admitted).any();
+    let directives = data
+        .borrow_mut()
+        .as_mut()
+        .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
+        .apply_stream(&admitted);
+    surface.set(data.borrow().clone());
+    Ok((directives, refresh))
+}
+
+fn handle_incoming(
+    session: &Session,
+    handles: &SurfaceHandles,
     data: &Rc<RefCell<SurfaceData>>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
 ) -> Result<(Vec<StreamDirective>, bool), String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
-        let admitted = session
-            .admit_stream(bytes)
-            .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
-        // A liveness answer reports no state, and the caller has already taken
-        // the only thing it carries by observing that a frame arrived. Leaving
-        // here skips the surface publication below, which would otherwise hand
-        // the view a fresh clone and redraw an idle board on every probe.
-        if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
-            return Ok((Vec::new(), false));
-        }
-        let refresh = stale_reads(&admitted).any();
-        let directives = data
-            .borrow_mut()
-            .as_mut()
-            .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
-            .apply_stream(&admitted);
-        surface.set(data.borrow().clone());
-        return Ok((directives, refresh));
+        return handle_stream_frame(session, &handles.surface, data, bytes);
     }
-
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
     let kind = pending
         .remove(&identity.id)
@@ -785,26 +869,20 @@ fn handle_incoming(
     let runtime = data
         .as_mut()
         .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
-    let refresh = apply_response(session, lineage_controls, runtime, kind, bytes)?;
-    surface.set(data.clone());
+    let refresh = apply_command_response(session, handles, runtime, identity.id, kind, bytes)?;
+    handles.surface.set(data.clone());
     Ok((Vec::new(), refresh))
 }
 
-/// Apply one admitted response; report whether the board must be re-read.
-///
-/// Split from [`handle_incoming`] so that deciding what a response *does* is
-/// separate from finding out which one arrived. The caller owns the decode, the
-/// pending lookup, and the surface publication, all of which the stream branch
-/// shares; only the arms below are specific to a response, and they are the
-/// half that grows every time a new command is answered.
-fn apply_response(
+fn apply_command_response(
     session: &Session,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    handles: &SurfaceHandles,
     runtime: &mut CanvasRuntime,
+    id: CanonicalUuid,
     kind: PendingKind,
     bytes: &[u8],
 ) -> Result<bool, String> {
-    let refresh = match kind {
+    Ok(match kind {
         PendingKind::Board => {
             runtime.apply_board(&admit_response(session, bytes)?);
             false
@@ -815,20 +893,10 @@ fn apply_response(
         // order the resident last stated, so a refused arrangement has nothing
         // local to take back and needs no re-read either.
         PendingKind::Lanes | PendingKind::LineageArrange => {
-            let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
-                admit_response(session, bytes)?;
-            if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
-                lineage_controls.dispatch(LineageControlAction::SyncLanes {
-                    answer: reply.body.clone(),
-                    settle: false,
-                });
-            }
-            runtime.apply_lanes(&admitted);
-            false
+            apply_lane_response(session, handles, runtime, bytes)?
         }
-        PendingKind::Inbox => {
-            runtime.apply_inbox(&admit_response(session, bytes)?);
-            false
+        PendingKind::Inbox { covered } => {
+            apply_inbox_response(session, handles, runtime, &covered, bytes)?
         }
         PendingKind::Consent => {
             runtime.apply_consent(&admit_response(session, bytes)?);
@@ -844,18 +912,21 @@ fn apply_response(
             runtime.apply_lane_change(&admitted);
             true
         }
-        PendingKind::LineageConfigure(lineage) => {
-            apply_lineage_configuration(session, lineage_controls, runtime, lineage, bytes)?
-        }
-        PendingKind::Steer { lane, resolve } => {
+        PendingKind::LineageConfigure(lineage) => apply_lineage_configuration(
+            session,
+            &handles.lineage_controls,
+            runtime,
+            lineage,
+            bytes,
+        )?,
+        PendingKind::Steer { lane } => {
             let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
                 admit_response(session, bytes)?;
-            let accepted = matches!(&admitted.get().outcome, wire::Outcome::Reply(_));
             runtime.apply_steer(&admitted, lane);
-            if let Some(resolve) = resolve {
-                resolve.emit(accepted);
-            }
             true
+        }
+        PendingKind::SteerSubmission { lane } => {
+            apply_submission_response(session, handles, runtime, id, lane, bytes)?
         }
         PendingKind::Note(task) => {
             let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
@@ -868,6 +939,80 @@ fn apply_response(
             runtime.apply_decision(&admitted);
             false
         }
+    })
+}
+
+fn apply_lane_response(
+    session: &Session,
+    handles: &SurfaceHandles,
+    runtime: &mut CanvasRuntime,
+    bytes: &[u8],
+) -> Result<bool, String> {
+    let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
+        admit_response(session, bytes)?;
+    if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
+        handles
+            .lineage_controls
+            .dispatch(LineageControlAction::SyncLanes {
+                answer: reply.body.clone(),
+                settle: false,
+            });
+    }
+    runtime.apply_lanes(&admitted);
+    Ok(false)
+}
+
+fn apply_inbox_response(
+    session: &Session,
+    handles: &SurfaceHandles,
+    runtime: &mut CanvasRuntime,
+    covered: &BTreeMap<CanonicalUuid, String>,
+    bytes: &[u8],
+) -> Result<bool, String> {
+    let admitted: crate::Admitted<Response<wire::intent::InboxAnswer>> =
+        admit_response(session, bytes)?;
+    let answered = if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
+        handles.submissions.queue.borrow_mut().observe_backend(
+            reply.body.lanes.iter().flat_map(|lane| lane.pending.iter()),
+            covered,
+        )?;
+        handles.submissions.publish();
+        true
+    } else {
+        false
     };
-    Ok(refresh)
+    runtime.apply_inbox(&admitted);
+    Ok(answered && !handles.submissions.queue.borrow().accepted().is_empty())
+}
+
+fn apply_submission_response(
+    session: &Session,
+    handles: &SurfaceHandles,
+    runtime: &mut CanvasRuntime,
+    id: CanonicalUuid,
+    lane: CanonicalUuid,
+    bytes: &[u8],
+) -> Result<bool, String> {
+    let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
+        admit_response(session, bytes)?;
+    match &admitted.get().outcome {
+        wire::Outcome::Reply(reply) => handles.submissions.queue.borrow_mut().accept(
+            id,
+            reply.body.directive,
+            reply.body.key.clone(),
+            reply.body.disposition,
+        )?,
+        wire::Outcome::Refusal(_) | wire::Outcome::Fault(_) => {
+            let restored = handles.submissions.queue.borrow_mut().refuse(id)?;
+            handles
+                .composer_drafts
+                .dispatch(ComposerAction::RestoreAll {
+                    lane: lane.to_string(),
+                    drafts: restored,
+                });
+        }
+    }
+    handles.submissions.publish();
+    runtime.apply_steer(&admitted, lane);
+    Ok(true)
 }

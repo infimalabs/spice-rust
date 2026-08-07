@@ -40,6 +40,8 @@ pub mod compose;
 mod composer_drafts;
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_markdown;
+#[cfg(any(target_arch = "wasm32", test))]
+mod composer_submissions;
 pub mod mosaic;
 pub mod mosaic_plane;
 pub mod pane;

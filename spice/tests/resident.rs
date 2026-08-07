@@ -374,6 +374,12 @@ fn trust_pended(fixture: &Fixture) -> Vec<wire::body::TrustPended> {
 #[derive(Clone, Copy)]
 enum FakeBehavior {
     Success,
+    /// `Success` in every byte on the wire, but the discovery record stays
+    /// published after the reply. Nothing the client reads distinguishes it
+    /// from `Success`; the difference is only visible on disk, which is what
+    /// makes it the fixture for a resident that answered and then failed to
+    /// withdraw.
+    RetainedDiscovery,
     Replay,
     EchoCapability,
     ResidentLoss,
@@ -384,8 +390,28 @@ enum FakeBehavior {
     OpeningStall,
 }
 
+/// Hold the runtime lock the way the resident being faked would.
+///
+/// A fake resident that only binds a port is not yet a publisher a client may
+/// dial: possession of this lock is what separates a record whose author is
+/// still running from one it left behind, so a fixture that serves the socket
+/// has to hold it too. The caller keeps the possession for as long as the fake
+/// is meant to be alive.
+fn fake_publisher(fixture: &Fixture) -> sill::Possession {
+    let lock = sill::LockFile::new(
+        sill::LockName::new("resident").expect("resident is a non-empty lock name"),
+        fixture.resident(),
+    );
+    let sill::Acquisition::Acquired(publisher) = lock.try_acquire().expect("fixture resident lock")
+    else {
+        panic!("a fixture runtime with no resident cannot be contended");
+    };
+    publisher
+}
+
 fn fake_down(fixture: &Fixture, behavior: FakeBehavior, json: bool) -> (Output, Duration) {
     fs::create_dir_all(&fixture.runtime).expect("fixture runtime directory");
+    let publisher = fake_publisher(fixture);
     let listener = TcpListener::bind("127.0.0.1:0").expect("fake resident binds");
     let discovery = canvas::Discovery {
         endpoint: format!(
@@ -403,7 +429,14 @@ fn fake_down(fixture: &Fixture, behavior: FakeBehavior, json: bool) -> (Output, 
     let stop = Arc::new(AtomicBool::new(false));
     let server_stop = Arc::clone(&stop);
     let server = std::thread::spawn(move || {
-        run_fake_resident(listener, server_discovery, canvas, behavior, server_stop);
+        run_fake_resident(
+            listener,
+            server_discovery,
+            canvas,
+            behavior,
+            server_stop,
+            publisher,
+        );
     });
     let started = Monotonic::now();
     let output = invoke_form(fixture, "down", json);
@@ -419,6 +452,14 @@ fn run_fake_resident(
     canvas: PathBuf,
     behavior: FakeBehavior,
     stop: Arc<AtomicBool>,
+    // The runtime lock, possessed for exactly as long as this fake serves and
+    // released on every path out of it. It is acquired before the thread
+    // starts, so a client can never observe the window between binding a port
+    // and becoming a publisher. Releasing it here rather than in the caller is
+    // what lets `down` finish: a successful shutdown blocks on acquiring this
+    // lock to confirm the resident really went away, so a fixture that held it
+    // past the reply would hang the client instead of the resident.
+    _publisher: sill::Possession,
 ) {
     if matches!(behavior, FakeBehavior::TotalDeadlineDrip) {
         run_deadline_drip(listener, &discovery, &canvas, stop);

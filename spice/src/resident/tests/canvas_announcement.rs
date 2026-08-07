@@ -127,7 +127,15 @@ pub(super) fn test_uuid(last: u8) -> CanonicalUuid {
 }
 
 /// One published discovery, at a path the caller owns for the test.
-fn published_discovery(name: &str, port: u16) -> (PathBuf, PathBuf, canvas::Discovery) {
+///
+/// The returned possession is the publisher. A resident announces its own
+/// discovery while it is running and holding the runtime lock, so a fixture
+/// that published without one would be announcing a record a client is
+/// required to refuse — the caller has to keep it alive for the announcement.
+fn published_discovery(
+    name: &str,
+    port: u16,
+) -> (PathBuf, PathBuf, canvas::Discovery, sill::Possession) {
     let root = fixture(name);
     fs::create_dir_all(&root).expect("announcement fixture root");
     let path = root.join("canvas");
@@ -139,7 +147,15 @@ fn published_discovery(name: &str, port: u16) -> (PathBuf, PathBuf, canvas::Disc
     discovery
         .publish(&path)
         .expect("fixture discovery publishes");
-    (root, path, discovery)
+    let lock = sill::LockFile::new(
+        sill::LockName::new("resident").expect("resident is a non-empty lock name"),
+        root.join("resident"),
+    );
+    let sill::Acquisition::Acquired(publisher) = lock.try_acquire().expect("fixture resident lock")
+    else {
+        panic!("an announcement fixture nothing else has seen cannot be contended");
+    };
+    (root, path, discovery, publisher)
 }
 
 /// The announced endpoint is one that passed admission, and nothing dials it.
@@ -151,7 +167,7 @@ fn published_discovery(name: &str, port: u16) -> (PathBuf, PathBuf, canvas::Disc
 /// untouched until `--open` asks for it.
 #[test]
 fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
-    let (root, path, discovery) = published_discovery("announce-endpoint", 48231);
+    let (root, path, discovery, _publisher) = published_discovery("announce-endpoint", 48231);
     let mut dialled = None;
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
@@ -185,7 +201,7 @@ fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
 /// `--open` hands the launcher the admitted endpoint and no other.
 #[test]
 fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
-    let (root, path, discovery) = published_discovery("announce-open", 48232);
+    let (root, path, discovery, _publisher) = published_discovery("announce-open", 48232);
     let mut dialled = None;
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
@@ -221,7 +237,7 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
 fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
     const TOKEN: &str = "correct-horse-battery-staple";
 
-    let (root, path, discovery) = published_discovery("announce-authenticated", 48234);
+    let (root, path, discovery, _publisher) = published_discovery("announce-authenticated", 48234);
     let mut dialled = None;
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
@@ -267,7 +283,7 @@ fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
 /// and this is the one case that produces something else.
 #[test]
 fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
-    let (root, path, discovery) = published_discovery("announce-stale", 48233);
+    let (root, path, discovery, _publisher) = published_discovery("announce-stale", 48233);
     let replacement = canvas::Discovery {
         capability: test_uuid(3),
         epoch: test_uuid(4),
@@ -310,6 +326,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 
 #[test]
 fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity() {
+    let (root, paths) = resident_fixture("capture-rendering");
     let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
         .expect("message bus starts");
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
@@ -357,12 +374,15 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
         .expect("capture fixture occupant starts");
     let mut diagnostics = Vec::new();
     let mut previews = CallPreviews::default();
+    let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
+    let steering = steer::Config::default();
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
 
     accept_capture_record(
         &bus,
         test_uuid(4),
         &mut seats,
-        &publisher,
+        &surfaces,
         &record,
         &mut previews,
         &mut diagnostics,
@@ -372,7 +392,7 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
     assert_stale_capture_ignored(
         &bus,
         &mut seats,
-        &publisher,
+        &surfaces,
         &mut updates,
         &record,
         &mut previews,
@@ -385,6 +405,106 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
         .expect("replacement occupant stops");
     drop(source);
     bus.shutdown().expect("message bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
+fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
+    let (root, paths) = resident_fixture("capture-taste");
+    let repository = Repository::discover(&root).expect("fixture repository");
+    let surface = crate::trust_command::Surface::load(&repository).expect("trust surface");
+    let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
+        .expect("message bus starts");
+    let epoch = test_uuid(4);
+    let lane = test_uuid(5);
+    let occupant = test_uuid(6);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    seed_lane(&bus, epoch, lane, occupant);
+    let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
+    let publisher = source.message_publisher();
+    let locus = listen::Locus::new(4, 120, 48);
+    let record = lane::capture::CaptureRecord {
+        lane,
+        occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
+            text: "Polling is not a completion event.".to_owned(),
+            phase: None,
+            locus,
+        })]),
+    };
+    let bag = taste::Bag::new(vec![
+        taste::Taste::new(
+            "polling".parse().expect("taste name"),
+            ["poll*"],
+            "Wait for a terminal event.",
+        )
+        .expect("taste row"),
+    ])
+    .expect("taste bag");
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            lane,
+            occupant,
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("capture fixture occupant starts");
+    let mut diagnostics = Vec::new();
+    let mut previews = CallPreviews::default();
+    let steering = steer::Config::default();
+    let surfaces = CaptureSurfaces::new(&paths, &bag, &steering, &publisher);
+
+    for _ in 0..2 {
+        accept_capture_record(
+            &bus,
+            epoch,
+            &mut seats,
+            &surfaces,
+            &record,
+            &mut previews,
+            &mut diagnostics,
+        )
+        .expect("current capture admits");
+    }
+
+    let snapshot = bus.fact_snapshot().expect("capture facts read");
+    assert_eq!(
+        snapshot
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::TasteReminded)
+            .count(),
+        1,
+        "the duplicate durable vendor record is suppressed in the same epoch"
+    );
+    assert_eq!(
+        steer::Ledger::from_snapshot(&snapshot)
+            .expect("reminder replay")
+            .pending(lane)
+            .len(),
+        1
+    );
+    assert!(
+        fs::read_to_string(steer::inbox::path(&paths.inbox, lane))
+            .expect("inbox rendering")
+            .contains("[TASTE] polling: Wait for a terminal event.")
+    );
+    assert!(diagnostics.is_empty());
+    seats
+        .vacate(lane)
+        .expect("occupant remains supervised")
+        .wait()
+        .expect("occupant stops");
+    drop(source);
+    bus.shutdown().expect("message bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 fn assert_tool_and_prose_activity(
@@ -426,10 +546,10 @@ fn assert_tool_and_prose_activity(
     ));
 }
 
-fn assert_stale_capture_ignored(
+fn assert_stale_capture_ignored<P: AgentMessagePublisher>(
     bus: &bus::Bus,
     seats: &mut Seats,
-    publisher: &impl AgentMessagePublisher,
+    surfaces: &CaptureSurfaces<'_, P>,
     updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
     record: &lane::capture::CaptureRecord,
     previews: &mut CallPreviews,
@@ -468,7 +588,7 @@ fn assert_stale_capture_ignored(
         bus,
         test_uuid(4),
         seats,
-        publisher,
+        surfaces,
         &stale,
         previews,
         diagnostics,

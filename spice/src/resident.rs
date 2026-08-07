@@ -33,11 +33,12 @@ mod message_surface;
 mod policy_surface;
 mod shutdown;
 mod steering;
+mod taste_surface;
 mod timers;
 
 #[cfg(test)]
 use message_surface::AgentMessagePublisher;
-use message_surface::{CallPreviews, accept_capture_record};
+use message_surface::{CallPreviews, CaptureSurfaces, accept_capture_record};
 use shutdown::{current_residency, drive_shutdown};
 
 include!("resident/runtime.rs");
