@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { connect, createServer } from "node:net";
 
+import { childExited } from "./canvas-child-state.mjs";
+
 /// The page-side connection state, read from the topbar that carries it.
 ///
 /// The class names Online against Offline and the label carries the reason the
@@ -47,7 +49,7 @@ export async function describeResident(resident, probeTimeout = 2_000) {
   const endpoint = resident.discovery?.endpoint ?? null;
   return {
     known: true,
-    exited: resident.child.exitCode !== null || resident.child.signalCode !== null,
+    exited: childExited(resident.child),
     exitCode: resident.child.exitCode,
     signal: resident.child.signalCode,
     endpoint,

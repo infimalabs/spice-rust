@@ -37,6 +37,8 @@ import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
+
+import { childExited } from "./canvas-child-state.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 import { installBrowserSpeech, installSocketControl } from "./canvas-speech.mjs";
 
@@ -180,7 +182,7 @@ async function cycle(fixture, browser, seed) {
     }
   } finally {
     await context.close();
-    if (resident.child.exitCode === null) {
+    if (!childExited(resident.child)) {
       const exited = once(resident.child, "exit");
       resident.child.kill("SIGKILL");
       await exited;

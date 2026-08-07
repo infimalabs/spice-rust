@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { childExited } from "./canvas-child-state.mjs";
 import {
   chooseCanvasView,
   configureFixture,
@@ -166,7 +167,7 @@ export async function assertLineageLifeIsolation(browser) {
     // left the resident, its stand-ins, and both directories behind. The owner
     // below runs whatever this could not.
     try {
-      if (resident?.child.exitCode === null) {
+      if (resident && !childExited(resident.child)) {
         const liveTeam = await reply(fixture, ["lane"]);
         for (const agent of liveTeam.body.lanes) {
           await reply(fixture, ["lane", "drain", agent.lane]);
