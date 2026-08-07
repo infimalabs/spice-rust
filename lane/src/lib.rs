@@ -22,6 +22,7 @@ pub mod capture;
 pub mod config;
 pub mod drain;
 pub mod hold;
+pub mod ingest;
 pub mod life;
 pub mod occupant;
 pub mod renew;
