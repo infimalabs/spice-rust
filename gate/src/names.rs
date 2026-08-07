@@ -24,8 +24,26 @@ impl RetiredName {
 
 /// The complete port-owned vocabulary retirement ledger.
 ///
-/// This table deliberately lives in the Rust tree. It must not be generated
-/// from or compared with preliminary design material at build or test time.
+/// This table deliberately lives in the Rust tree and is the only authority for
+/// what is retired. It must not be generated from or compared with preliminary
+/// design material at build or test time, and no reader should have to leave
+/// the repository to learn what a row means.
+///
+/// A row retires a concept, not a word, and the three fields say which concept.
+/// `successor` usually identifies it, because naming what replaced it names
+/// what it was: a row succeeded by `doc` retired a way of talking about
+/// documents, whatever verb it happened to wear. A successor of `deleted` is
+/// the exception, saying the concept was dropped and not replaced, and there
+/// `retired` carries the identification alone. `retired` always labels the
+/// concept, and is what the refusal message quotes back. `spellings` is exactly
+/// what the gate refuses on the row's behalf, scoped to reach the retired
+/// concept and stop there.
+///
+/// So a live surface sharing a word with a retired concept is not itself a
+/// violation, and the row narrows rather than the surface renaming. Renaming it
+/// would be the more disruptive of the two whenever the port already coins that
+/// concept in durable vocabulary, because the durable spelling cannot move
+/// without stranding what is already written under it.
 pub const RETIRED_NAMES: &[RetiredName] = &[
     RetiredName::new("serve", "up, canvas", &["serve"]),
     RetiredName::new("study, studies", "gate", &["study", "studies"]),
@@ -154,11 +172,18 @@ mod tests {
     const SOURCE_ROW_COUNT: usize = 25;
 
     #[test]
-    fn every_source_row_names_a_successor_and_unique_spellings() {
+    fn every_source_row_carries_a_label_successor_and_unique_spellings() {
         assert_eq!(RETIRED_NAMES.len(), SOURCE_ROW_COUNT);
         let mut spellings = BTreeSet::new();
 
         for entry in RETIRED_NAMES {
+            assert!(
+                !entry.retired.is_empty(),
+                "the row succeeded by {} carries no label, so a reader cannot \
+                 tell which concept it retires and every refusal it raises \
+                 quotes an empty name back",
+                entry.successor
+            );
             assert!(
                 !entry.successor.is_empty(),
                 "{} has no successor",
