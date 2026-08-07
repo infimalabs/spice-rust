@@ -9,7 +9,8 @@ use board::renew::{Refusal, RenewError, Request, renew};
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LaneResidency, Origin, Phase,
-    Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead, WorkflowHead, body, intent,
+    Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead, TranscriptSourceHead,
+    WorkflowHead, body, intent,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -52,6 +53,26 @@ fn win_request(command: u8) -> WinRequest {
         maximum: instant(35),
         rule: "next".parse().expect("rule"),
         source: body::SourceBoundary::Proven { heads: Vec::new() },
+    }
+}
+
+/// One boundary with an accounted stream in it.
+///
+/// Deliberately not the empty `Proven` the other fixtures open with: an
+/// assertion that renewal left this exact value in place can only fail if the
+/// value it is compared against is one renewal could plausibly have replaced.
+fn opening_boundary() -> body::SourceBoundary {
+    body::SourceBoundary::Proven {
+        heads: vec![TranscriptSourceHead {
+            lane: uuid(20),
+            vendor: "claude".parse().expect("fixture vendor"),
+            stream: "session".to_owned(),
+            source: uuid(23),
+            next: body::TranscriptPosition {
+                member: 1,
+                offset: 4096,
+            },
+        }],
     }
 }
 
@@ -194,6 +215,138 @@ fn renewal_preserves_claim_and_extends_only_the_lease() {
     assert_eq!(facts.facts().len(), 3);
     assert_eq!(facts.facts()[2].fact.kind(), wire::FactKind::ClaimRenewed);
     assert_eq!(journal.verify().expect("authority verifies").receipts, 2);
+}
+
+/// Renewing an occupant's possession leaves the opening boundary open.
+///
+/// A renewal extends a lease inside one phase interval; it neither closes the
+/// interval nor reopens it. A renewal that wrote its own boundary would make
+/// the interval appear to restart at every heartbeat, and every sample spent
+/// before that heartbeat would fall outside the accounted window the reducer
+/// later splits on. Two renewals rather than one, because a single one cannot
+/// tell *left alone* apart from *rewritten to the value it already held*.
+#[test]
+fn renewing_an_occupant_leaves_the_opening_boundary_open() {
+    let mut journal = fixture(None);
+    let mut opening = win_request(31);
+    opening.source = opening_boundary();
+    win(&mut journal, opening).expect("claim task at a proven boundary");
+
+    renew(&mut journal, renew_request(32)).expect("first renewal");
+    let mut again = renew_request(33);
+    again.at = instant(12);
+    again.until = instant(30);
+    renew(&mut journal, again).expect("second renewal");
+
+    let facts = journal.fact_snapshot().expect("renewed facts");
+    let kinds = facts
+        .facts()
+        .iter()
+        .map(|fact| fact.fact.kind())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        vec![
+            wire::FactKind::TaskAdded,
+            wire::FactKind::ClaimWon,
+            wire::FactKind::ClaimRenewed,
+            wire::FactKind::ClaimRenewed,
+        ],
+    );
+    let won: body::ClaimWon = facts.facts()[1]
+        .fact
+        .read()
+        .expect("the opening fact reads back through the registry");
+    assert_eq!(won.source, opening_boundary());
+
+    // Read as text rather than as a field, because the absence being proven is
+    // the absence of a field: an added one would compile everywhere and only
+    // show up as a key nothing here would otherwise look at.
+    for position in [2, 3] {
+        let renewal: body::ClaimRenewed = facts.facts()[position]
+            .fact
+            .read()
+            .expect("the renewal reads back through the registry");
+        let encoded = String::from_utf8(wire::encode(&renewal).expect("encode the renewal"))
+            .expect("a renewal encodes as text");
+        assert!(
+            !encoded.contains("source"),
+            "renewal {position} recorded a boundary of its own: {encoded}",
+        );
+    }
+}
+
+/// A task command whose transaction appends no fact is refused, not receipted.
+///
+/// A journal write can carry a command receipt without carrying a fact, and
+/// that shape is exactly a partial application: the caller is told its command
+/// succeeded while the canonical stream records nothing it could have succeeded
+/// at, so a later reader sees a receipt with no cause. The refusal has to come
+/// from the transaction itself, because every producer assembles its receipt
+/// before it can know whether its facts survived the guards.
+///
+/// The witness positions are fixture values. Command law admits a witness list
+/// by kind rather than by position, and this transaction is refused before any
+/// guard reads, so nothing here depends on which position they name.
+#[test]
+fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
+    let mut journal = claimed();
+    let before = journal.fact_snapshot().expect("facts before").facts().len();
+    let holder = Actor::Lane(uuid(20));
+    let head = wire::Seq::new(2).expect("fixture head position");
+
+    let mut write = JournalWrite::new(
+        holder.clone(),
+        "task:BOARD-a1".parse::<Origin>().expect("origin"),
+        instant(10),
+        Producer::BusTimer,
+    );
+    write
+        .command_result(
+            wire::Command {
+                v: wire::WireVersion::CURRENT,
+                id: uuid(34),
+                epoch: uuid(22),
+                kind: wire::CommandKind::ClaimRenew,
+                expected: vec![
+                    wire::Witness::Claim {
+                        task: task(),
+                        head: Some(head),
+                    },
+                    wire::Witness::Lease { task: task(), head },
+                    wire::Witness::Residency {
+                        lane: uuid(20),
+                        occupant: uuid(21),
+                        epoch: uuid(22),
+                    },
+                ],
+                body: intent::ClaimRenew {
+                    task: task(),
+                    lease_seconds: 15,
+                },
+            },
+            uuid(22),
+            intent::ClaimAnswer {
+                task: task(),
+                holder,
+                warnings: Vec::new(),
+                next: None,
+            },
+        )
+        .expect("the receipt itself is well formed");
+
+    let error = journal
+        .apply(write)
+        .expect_err("a transaction appending no fact cannot apply");
+    assert!(
+        error.to_string().contains("must append at least one fact"),
+        "a factless transaction was refused for another reason: {error}",
+    );
+    assert_eq!(
+        journal.fact_snapshot().expect("facts after").facts().len(),
+        before,
+        "a refused transaction appended a fact",
+    );
 }
 
 #[test]
