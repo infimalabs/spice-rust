@@ -323,12 +323,13 @@ fn since(
 /// # The slot decorates an attribution rather than carrying one
 ///
 /// Six slots dealt per identity, with nothing arbitrating between members,
-/// repeat inside a single lineage: two members share a slot once in six, four
-/// members roughly seven times in ten, six members roughly ninety-eight times
-/// in a hundred. A lineage of six wearing six distinct colours is the
-/// 720-in-46656 case rather than the rule, and capping membership at six moves
-/// none of those numbers, because the repetition is in the dealing and not in
-/// the size.
+/// repeat inside a single lineage. The chance that some two members share a
+/// slot runs 16.67% at two members, 44.44% at three, 72.22% at four, 90.74% at
+/// five and 98.46% at six, and is certainty above six, where six slots cannot
+/// seat a seventh member however they are dealt. A lineage of six wearing six
+/// distinct colours is the 720-in-46656 case rather than the rule, and capping
+/// membership at six moves none of those numbers, because the repetition is in
+/// the dealing and not in the size.
 ///
 /// So the colour is not what tells two agents apart and no surface may read it
 /// that way. A card names its lane in `data-agent-lane`, and shows the worktree
