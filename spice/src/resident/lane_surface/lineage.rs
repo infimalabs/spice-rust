@@ -1,4 +1,20 @@
-//! Atomic task-subscription and membership changes for one Canvas lineage.
+//! The two writes that address Canvas lineages rather than the seats in them.
+//!
+//! [`configure`] names one lineage and changes it: its task-subscription
+//! policy, and at most one member's home. [`arrange`] names no lineage in
+//! particular and restates the whole topology at once, rewriting both the order
+//! lineages stand in and which lineage each lane belongs to, since dropping a
+//! team onto another is the same durable write as reordering two.
+//!
+//! The asymmetry is deliberate. A partial configuration is a change; a partial
+//! arrangement is a loss, because the head's lane order *is* the durable team
+//! order, so a lane the operator failed to restate would vanish from every team
+//! while still being seated. [`arrange`] therefore admits only a faithful
+//! restatement of the current lane table and repairs nothing by inference.
+//!
+//! `lane::arrange` is deliberately not here. It moves one seated member before
+//! another and states only that pair, so it lives beside the seat surface in
+//! the parent module even though both laws write the one lane table.
 
 use super::*;
 
