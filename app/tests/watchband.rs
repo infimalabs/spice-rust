@@ -1,8 +1,8 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN, accent, arrangement, badge,
-    elapsed_label, first_nonquoted_prose, leaf, one_line, reported_tasks, short, standing_title,
-    standings, ticker_line, topology, truncate,
+    ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN, accent,
+    arrangement, badge, elapsed_label, first_nonquoted_prose, leaf, one_line, reported_tasks,
+    short, standing_title, standings, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -164,7 +164,7 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     )];
     let tasks = [task("FIDELIT-1kKRSfyV", "review", LANE_A, 7, "active")];
 
-    let rows = standings(&lanes, &waiting, &tasks, at(0));
+    let rows = standings(&lanes, &waiting, &tasks);
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].worktree, "main-c");
@@ -188,7 +188,7 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows[1].headline, None);
     assert_eq!(rows[1].handle, None);
     assert_eq!(rows[1].phase, None);
-    assert_eq!(rows[1].held, None);
+    assert_eq!(rows[1].held_since, None);
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn one_lineage_emits_one_standing_per_member_without_losing_the_lineage_identity
         members: vec![member(LANE_A, "main-a"), member(LANE_B, "main-b")],
     };
 
-    let rows = standings(&[lineage], &[], &[], at(0));
+    let rows = standings(&[lineage], &[], &[]);
 
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|row| row.lineage_id == uuid(EPOCH)));
@@ -223,7 +223,7 @@ fn the_headline_is_the_newest_producer_preview() {
         ],
     )];
 
-    let rows = standings(&lanes, &waiting, &[], at(0));
+    let rows = standings(&lanes, &waiting, &[]);
 
     assert_eq!(rows[0].headline.as_deref(), Some("newer author words"));
 }
@@ -233,7 +233,7 @@ fn absent_producer_preview_does_not_reinterpret_the_directive_text() {
     let lanes = [lane(LANE_A, "main-c")];
     let waiting = [inbox(LANE_A, &[("text the client must not parse", None)])];
 
-    let rows = standings(&lanes, &waiting, &[], at(0));
+    let rows = standings(&lanes, &waiting, &[]);
 
     assert_eq!(rows[0].pending, 1);
     assert_eq!(rows[0].headline, None);
@@ -252,26 +252,37 @@ fn the_newest_active_claim_on_a_lane_is_the_one_showing() {
         task("OTHER-1kKRRQJN", "todo", LANE_B, 13, "active"),
     ];
 
-    let rows = standings(&lanes, &[], &tasks, at(0));
+    let rows = standings(&lanes, &[], &tasks);
 
     assert_eq!(rows[0].handle.as_deref(), Some("NEWER-1kKRSfyV"));
     assert_eq!(rows[0].phase.as_deref(), Some("review"));
 }
 
+/// A standing states *when* the lease moved, not how long ago, and the two
+/// instants stay told apart.
+///
+/// The second half is the part that matters to a quiet canvas. One row, built
+/// once, is read against two clocks a minute apart and spells two different
+/// ages — so a lane the resident has stopped mentioning still advances, because
+/// nothing about the age was decided when the row was made. A `standings` that
+/// baked an elapsed span would return the same number to both reads and pass
+/// only the first four assertions.
 #[test]
-fn the_lease_measures_holding_and_renewal_separately() {
+fn a_standing_carries_lease_instants_that_age_after_the_row_is_built() {
     let lanes = [lane(LANE_A, "main-c")];
     let tasks = [task("FIDELIT-1kKRSfyV", "review", LANE_A, 7, "active")];
 
-    let rows = standings(&lanes, &[], &tasks, at(0));
+    let rows = standings(&lanes, &[], &tasks);
 
-    assert_eq!(rows[0].held, Some(300_000));
-    assert_eq!(rows[0].renewed, Some(4_000));
-    assert_eq!(elapsed_label(rows[0].held.expect("the lease began")), "5m");
-    assert_eq!(
-        elapsed_label(rows[0].renewed.expect("the lease renewed")),
-        "4s"
-    );
+    let held = rows[0].held_since.expect("the lease began");
+    let renewed = rows[0].renewed_at.expect("the lease renewed");
+    assert_eq!(held, at(-300_000));
+    assert_eq!(renewed, at(-4_000));
+    assert_eq!(elapsed_label(at(0) - held), "5m");
+    assert_eq!(elapsed_label(at(0) - renewed), "4s");
+
+    assert_eq!(elapsed_label(at(60_000) - held), "6m");
+    assert_eq!(elapsed_label(at(60_000) - renewed), "1m");
 }
 
 #[test]
@@ -279,8 +290,8 @@ fn a_lane_keeps_its_accent_when_the_table_reorders() {
     let forward = [lane(LANE_A, "main-c"), lane(LANE_B, "main-g")];
     let reversed = [lane(LANE_B, "main-g"), lane(LANE_A, "main-c")];
 
-    let first = standings(&forward, &[], &[], at(0));
-    let second = standings(&reversed, &[], &[], at(0));
+    let first = standings(&forward, &[], &[]);
+    let second = standings(&reversed, &[], &[]);
 
     // An accent read from the row index would move with the reorder, and one
     // fixed for every lane would survive the reorder but collapse the two
@@ -294,7 +305,7 @@ fn a_lane_keeps_its_accent_when_the_table_reorders() {
 
 #[test]
 fn a_lane_is_named_by_the_identity_the_resident_gave_it() {
-    let rows = standings(&[lane(LANE_A, "main-c")], &[], &[], at(0));
+    let rows = standings(&[lane(LANE_A, "main-c")], &[], &[]);
 
     assert_eq!(rows[0].name, "11111111");
     assert_eq!(rows[0].name.chars().count(), SHORT_LEN);
@@ -311,7 +322,7 @@ fn a_lane_is_labelled_by_what_separates_it_from_its_fleet() {
         lane(LANE_B, "/fleet/one/spice-rust-g/"),
     ];
 
-    let rows = standings(&lanes, &[], &[], at(0));
+    let rows = standings(&lanes, &[], &[]);
 
     assert_eq!(rows[0].label, "spice-rust-a");
     assert_eq!(rows[1].label, "spice-rust-g");
@@ -330,7 +341,7 @@ fn a_configured_agent_name_wins_while_an_unconfigured_lane_uses_the_worktree_lea
     configured.members[0].name = Some("Ava".to_owned());
     let unconfigured = lane(LANE_B, "/fleet/one/spice-rust-g");
 
-    let rows = standings(&[configured, unconfigured], &[], &[], at(0));
+    let rows = standings(&[configured, unconfigured], &[], &[]);
 
     assert_eq!(rows[0].label, "Ava");
     assert_eq!(rows[0].worktree, "/fleet/one/spice-rust-a");
@@ -346,7 +357,7 @@ fn configured_agent_names_distinguish_two_lanes_that_share_one_worktree() {
     let mut matilda = lane(LANE_B, "/fleet/shared");
     matilda.members[0].name = Some("Matilda".to_owned());
 
-    let rows = standings(&[ava, matilda], &[], &[], at(0));
+    let rows = standings(&[ava, matilda], &[], &[]);
 
     assert_eq!(rows[0].label, "Ava");
     assert_eq!(rows[1].label, "Matilda");
@@ -355,7 +366,7 @@ fn configured_agent_names_distinguish_two_lanes_that_share_one_worktree() {
 
 #[test]
 fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution() {
-    let mut standing = standings(&[lane(LANE_A, "/fleet/one/spice-rust-a")], &[], &[], at(0))
+    let mut standing = standings(&[lane(LANE_A, "/fleet/one/spice-rust-a")], &[], &[])
         .pop()
         .expect("fixture standing");
     assert_eq!(
@@ -388,6 +399,92 @@ fn elapsed_names_one_unit_at_each_boundary() {
     assert_eq!(elapsed_label(3_600_000), "1h");
     assert_eq!(elapsed_label(86_399_999), "23h");
     assert_eq!(elapsed_label(86_400_000), "1d");
+}
+
+/// A ticking age may only change text, never the box the text sits in. The box
+/// is sized once from `AGE_LABEL_WIDTH`, so that promise is only as good as the
+/// label's inability to outgrow it — a single wider return reflows the slot and
+/// every card beside it.
+///
+/// The sweep is what makes this more than a spot check. It walks every second
+/// across the first two days, so it crosses each unit boundary the operator
+/// actually watches, then jumps to the inputs no operator produces on purpose:
+/// an unset instant read against the browser epoch, and the saturating end of
+/// the type. Those are the ones that used to escape — the day arm counted up
+/// without a ceiling, so `i64::MAX` spelled a thirteen-character label.
+#[test]
+fn age_labels_never_outgrow_the_slot() {
+    let sweep = (0..=172_800).map(|second| second * 1_000);
+    let extremes = [i64::MIN, -1, 1_754_000_000_000, i64::MAX - 1, i64::MAX];
+    for millis in sweep.chain(extremes) {
+        let label = elapsed_label(millis);
+        assert!(
+            label.chars().count() <= AGE_LABEL_WIDTH,
+            "elapsed_label({millis}) is {:?}, wider than the {AGE_LABEL_WIDTH}-character slot",
+            label
+        );
+        assert!(
+            !label.contains(char::is_whitespace),
+            "elapsed_label({millis}) is {label:?}, which can wrap out of a single line"
+        );
+    }
+}
+
+/// The saturating arm has to be legible as saturation, not misread as a real
+/// count, and it has to begin exactly one day after the last true count.
+#[test]
+fn the_day_arm_saturates_rather_than_widening() {
+    assert_eq!(elapsed_label(99 * 86_400_000), "99d");
+    assert_eq!(elapsed_label(100 * 86_400_000), "99d+");
+    assert_eq!(elapsed_label(i64::MAX), "99d+");
+}
+
+/// `age_labels_never_outgrow_the_slot` proves the label fits the budget; this
+/// proves the budget is the one the browser actually applies.
+///
+/// The canvas is served under `style-src 'self'`, so the component cannot hand
+/// the width to the page as an inline style computed from `AGE_LABEL_WIDTH` —
+/// the browser refuses the attribute and the slot silently loses its floor. The
+/// number therefore lives twice, once in Rust and once written out by hand in
+/// the stylesheet, and two copies of a number drift. This reads the stylesheet
+/// back at test time and refuses the drift from either side: widening the label
+/// budget without widening the rule fails here, and so does editing the rule.
+///
+/// Deleting the declaration is a failure too, not a quiet pass — each step of
+/// the parse below expects what it looks for, so an absent rule, an absent
+/// `min-width` or a width expressed in some other unit all fail loudly rather
+/// than leaving nothing to compare.
+#[test]
+fn the_stylesheet_sizes_the_age_slot_from_the_label_budget() {
+    const STYLESHEET: &str = include_str!("../style.css");
+
+    let rule = STYLESHEET
+        .split_once("[data-age-slot] {")
+        .expect("the stylesheet has a rule sizing the age slot")
+        .1
+        .split_once('}')
+        .expect("the age slot rule is closed")
+        .0;
+    let declared = rule
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("min-width:"))
+        .expect("the age slot rule floors the slot with a min-width")
+        .trim()
+        .trim_end_matches(';')
+        .trim()
+        // Character widths rather than pixels because the budget being bound is
+        // counted in characters; any other unit would compare two different
+        // things and only look like agreement.
+        .strip_suffix("ch")
+        .expect("the age slot is sized in character widths")
+        .parse::<usize>()
+        .expect("the age slot width is a whole number of characters");
+
+    assert_eq!(
+        declared, AGE_LABEL_WIDTH,
+        "app/style.css floors the age slot at {declared}ch, but elapsed_label is \
+         bounded to {AGE_LABEL_WIDTH} characters"
+    );
 }
 
 #[test]

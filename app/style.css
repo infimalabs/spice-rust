@@ -818,3 +818,21 @@ tbody tr:last-child td { border-bottom: 0; }
 .form input, .form textarea { width: 100%; padding: 9px 10px; }
 .form textarea { min-height: 92px; resize: vertical; }
 .form button { justify-self: start; background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Every relative age the canvas draws, sized once so ticking cannot reflow it.
+   The width is the widest label `elapsed_label` can return, which is stated in
+   Rust as `app::watchband::AGE_LABEL_WIDTH`. It is repeated here because the
+   canvas serves `style-src 'self'`, so the component cannot carry the number
+   in an inline style; `the_age_slot_is_as_wide_as_the_widest_label` reads this
+   declaration back and fails if the two ever disagree. Crossing 9s -> 10s or
+   59s -> 1m therefore replaces a text node and moves nothing, and tabular
+   figures stop the digits from differing in width among themselves, which is
+   what makes "11s" and "59s" the same size rather than merely both under the
+   ceiling. */
+[data-age-slot] {
+  display: inline-block;
+  min-width: 4ch;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
