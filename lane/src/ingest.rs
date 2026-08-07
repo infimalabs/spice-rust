@@ -467,6 +467,31 @@ mod tests {
         scratch.remove();
     }
 
+    /// A head standing past every member the tape offers is not a resume.
+    ///
+    /// The stored position names a member the tape no longer supplies at all,
+    /// so no boundary exists to continue from. Reading the absence as a fresh
+    /// tape would account the whole generation from the origin a second time,
+    /// so the pass refuses and leaves the head where the last real batch put it.
+    #[test]
+    fn a_head_past_every_member_the_tape_supplies_refuses_without_moving_it() {
+        let scratch = Scratch::new("gap");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
+        tape.tee(&line(USAGE)).expect("the record is durable");
+        let journal = &mut authority();
+        let opening = accounted(journal, scratch.path());
+
+        fs::remove_file(member(scratch.path())).expect("every member is withdrawn");
+
+        match ingest(journal, ingestion(scratch.path())) {
+            Err(IngestError::Scan(ScanError::CheckpointGap { .. })) => {}
+            other => panic!("a head past every member was not refused: {other:?}"),
+        }
+        assert_eq!(head(journal).expect("a head stands").next, opening.to);
+        assert_eq!(batches(journal).len(), 1, "the refusal appended a fact");
+        scratch.remove();
+    }
+
     fn authority() -> Journal {
         Journal::in_memory().expect("in-memory authority")
     }
