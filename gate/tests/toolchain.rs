@@ -863,3 +863,45 @@ fn javascript_unused_scopes_candidates_to_top_level_and_counts_every_reference_f
 
     measure_toolchain(observations).expect("JavaScript findings are admitted");
 }
+
+/// The formatter gap `cargo fmt --all` cannot see, proven from both sides.
+///
+/// The command this arm replaced is run for real over the same tree and has to
+/// report nothing, so the finding below is attributable to naming the paths
+/// rather than to a fixture that was unformatted somewhere `cargo fmt` could
+/// already reach. Reading only the arm could not tell a formatter gap from a
+/// fixture that was never unformatted in the first place.
+///
+/// Splitting a module with `include!` is not a hypothetical shape here:
+/// `spice/src/board_command.rs` is eleven of them in a row, and every one of
+/// those files was drifting unread until the arm named its own paths.
+#[test]
+fn the_formatter_names_a_file_cargo_fmt_cannot_reach() {
+    let repository = including_repository("toolchain-included", UNFORMATTED_INCLUDED);
+    let workspace = workspace_formatter_output(&repository.root);
+    assert!(
+        !workspace.contains("Diff in"),
+        "the command this arm replaced already reached the included file, so this \
+         fixture cannot prove the gap it exists to prove: {workspace}"
+    );
+
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[INCLUDED],
+    );
+
+    assert_eq!(
+        arm(&observations, GateId::Formatters).findings,
+        [ArmFinding {
+            path: Some(INCLUDED.to_owned()),
+            line: None,
+            column: None,
+            detail: FindingDetail::Formatting {
+                formatter: "rustfmt".to_owned(),
+            },
+        }],
+        "the formatter arm named something other than the one file \
+         `cargo fmt` cannot open"
+    );
+}

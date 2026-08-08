@@ -4,7 +4,8 @@ mod support;
 
 use support::git_commit;
 use support::toolchain::{
-    acquired, arm, canvas_nonzero_directory, scanning_repository, toolchain_directory,
+    UNPARSABLE_INCLUDED, acquired, arm, canvas_nonzero_directory, including_repository,
+    scanning_repository, toolchain_directory,
 };
 
 /// A refusal the formatter cannot explain is retained with the code it gave.
@@ -15,16 +16,17 @@ use support::toolchain::{
 /// carries a source the formatter cannot parse, which it reports on its error
 /// stream, so it exits nonzero having named no differing file at all.
 ///
+/// That unreadable source is reached only by `include!`, which is the failure
+/// mode the formatter gap was made of: the arm concluding a tree is formatted
+/// because nothing told it otherwise. Findings alone would read exactly like a
+/// canonical tree, so the refusal is what has to survive rather than the count.
+///
 /// The code ships twice, once as a field and once inside the sentence, and both
 /// spellings are held to each other. A reader shown a sentence naming one code
 /// beside a field carrying another has been handed an invented number.
 #[test]
 fn a_formatter_refusal_naming_no_file_carries_the_code_it_refused_with() {
-    let repository = scanning_repository(
-        "toolchain-unparsable",
-        "fn main( {\n",
-        "Every sentence here is ordinary.\n",
-    );
+    let repository = including_repository("toolchain-unparsable", UNPARSABLE_INCLUDED);
     let observations = acquired(
         &repository,
         Some(toolchain_directory().into_os_string()),
@@ -35,7 +37,7 @@ fn a_formatter_refusal_naming_no_file_carries_the_code_it_refused_with() {
     assert_eq!(
         observation.outcome,
         ArmOutcome::NonzeroAnalysis,
-        "the formatter read a tree Cargo has no manifest for: {}",
+        "the formatter arm reported this over a file it could not read: {}",
         observation.reason
     );
     let code = observation

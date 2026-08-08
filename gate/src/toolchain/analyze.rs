@@ -606,10 +606,14 @@ include!("analyze/javascript.rs");
 /// The formatter invocation for one selected tree, or the refusal to build it.
 ///
 /// Every selected path is named on the command line rather than left to a
-/// crate-root walk. `cargo fmt --all` reaches a file only through the `mod`
-/// declarations that lead to it, so a file composed in with `include!` is
-/// counted as selected, measured by every other arm, and never handed to the
-/// formatter at all. Naming the paths is what makes the arm's own count and its
+/// crate-root walk. rustfmt reaches a file by walking the `mod` declarations
+/// down from each crate root, and this repository splits its largest modules
+/// with `include!` instead -- `spice/src/board_command.rs` is eleven of them in
+/// a row -- so an included file is named by a macro and belongs to no module
+/// path. `cargo fmt --all` opens the including file and never the included one,
+/// which leaves those files counted as selected, measured by every other arm,
+/// and never handed to the formatter at all. Naming the paths is the one way
+/// rustfmt will open them, and it is what makes the arm's own count and its
 /// coverage the same set.
 fn formatter_invocation(
     root: &Path,
@@ -662,6 +666,9 @@ pub(super) fn formatters(
         Ok(sources) => sources,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
+    // A tree with nothing to format runs no formatter at all, rather than one
+    // named an empty file list: rustfmt reads stdin when it is named no path,
+    // and would sit on it until the bounds killed the arm.
     if sources.is_empty() {
         return Analysis::not_applicable(declaration);
     }
@@ -1075,11 +1082,13 @@ fn rust_sources(root: &Path) -> Result<Vec<String>, String> {
 
 /// The edition the root manifest pins, which the formatter must be told.
 ///
-/// `cargo fmt` reads the edition out of the manifest before it invokes the
-/// formatter. Handing the formatter its paths directly skips that read, and the
-/// formatter's own default is the 2015 edition, so an unread edition would
-/// measure every selected file against a grammar this workspace does not use.
-/// Refusing is the alternative to guessing one.
+/// `cargo fmt` reads the edition out of the manifest of the package owning each
+/// target it drives, before it invokes the formatter. Handing the formatter its
+/// paths directly skips that read, and an included file has no package behind it
+/// to read one from in the first place, since no cargo target claims it. The
+/// formatter's own default is the 2015 edition, and a wrong edition is not a
+/// formatting difference: rustfmt refuses to parse the file at all. Refusing is
+/// the alternative to guessing one.
 ///
 /// Both spellings are read because a root manifest carries the edition in
 /// either: a workspace declares one its members inherit, and a single-package

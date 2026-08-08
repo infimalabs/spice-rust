@@ -322,8 +322,8 @@ mod tests {
     #[test]
     fn a_wrapped_rust_concat_is_reassembled_and_exactly_exempted() {
         const PREFIX: &str = "SPICE";
-        const SUFFIX: &str = "_SPLIT";
-        const NAME: &str = concat!("SPICE", "_SPLIT"); // env-policy: not-an-env SPICE_SPLIT
+        const SUFFIX: &str = "_SPLIT_LANE";
+        let name = concat!("SPICE", "_SPLIT_LANE"); // env-policy: not-an-env SPICE_SPLIT_LANE
         let source = format!(
             concat!(
                 "let value = std::env::var(concat!(\n",
@@ -337,7 +337,7 @@ mod tests {
         );
         assert_eq!(
             references_in(Some("rs"), None, &source),
-            BTreeSet::from([(1, NAME.to_owned())])
+            BTreeSet::from([(1, name.to_owned())])
         );
 
         let exempted = format!(
@@ -353,7 +353,7 @@ mod tests {
             prefix = PREFIX,
             suffix = SUFFIX,
             marker = ENV_NAME_LITERAL_MARKER,
-            name = NAME,
+            name = name,
         );
         assert!(references_in(Some("rs"), None, &exempted).is_empty());
 
@@ -368,11 +368,11 @@ mod tests {
             prefix = PREFIX,
             suffix = SUFFIX,
             marker = ENV_NAME_LITERAL_MARKER,
-            name = NAME,
+            name = name,
         );
         assert_eq!(
             references_in(Some("rs"), None, &unrelated_marker),
-            BTreeSet::from([(1, NAME.to_owned())]),
+            BTreeSet::from([(1, name.to_owned())]),
             "a marker in a later statement cannot exempt a concat through comment punctuation",
         );
 

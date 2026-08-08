@@ -182,6 +182,109 @@ fn before_has_table(connection: &Connection, table: &str) -> bool {
         > 0
 }
 
+/// The two records a migration advances together, read as one pair.
+///
+/// Read together because the failure this guards against is a disagreement
+/// between them, and asserting one without the other cannot see it.
+fn version_records(connection: &Connection) -> (u32, u32) {
+    (
+        connection
+            .query_row(
+                "SELECT version FROM journal_schema WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read the stored schema version"),
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("read the pragma version"),
+    )
+}
+
+/// A migration abandoned after both version records are written strands nothing.
+///
+/// `advance` writes the step and both version records onto a transaction it does
+/// not own, so the whole promise rests on the caller committing or not. This
+/// test becomes that caller and then fails, which is the one thing the suite
+/// never did: the existing coverage opens a journal and lets it commit, so every
+/// write in `advance` could be leaking out of the transaction and every test
+/// would still pass.
+///
+/// The failure is injected after `advance` returns rather than inside a step,
+/// and that placement is the point. A step that fails takes nothing with it
+/// because the version records never ran, so it cannot tell whether those
+/// records are inside the transaction. Failing here, with both records already
+/// written, is the only moment that can.
+///
+/// The three assertions taken before the rollback are what keep the three after
+/// it from passing vacuously: an `advance` that wrote nothing at all would leave
+/// the authority at version 1 too.
+#[test]
+fn a_migration_that_fails_after_writing_both_version_records_commits_nothing() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("schema-one-abandoned.sqlite3");
+    schema_one_authority(&path);
+    let before = {
+        let reader = Connection::open(&path).expect("read the schema-1 fixture back");
+        assert!(
+            !before_has_table(&reader, "transcript_source_heads"),
+            "the fixture must actually be at schema 1, or the step under test never runs"
+        );
+        assert_eq!(
+            version_records(&reader),
+            (1, 1),
+            "the fixture must start at schema 1 by both records"
+        );
+        table_census(&reader)
+    };
+
+    {
+        let mut connection = Connection::open(&path).expect("open the authority to migrate it");
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)
+            .expect("take the exclusive transaction a write open takes");
+        let migration = crate::migrate::advance(&transaction)
+            .expect("the migration itself succeeds; this test fails the open around it")
+            .expect("a schema-1 authority has a step to take");
+
+        assert_eq!((migration.from(), migration.to()), (1, SCHEMA_VERSION));
+        assert!(
+            before_has_table(&transaction, "transcript_source_heads"),
+            "the step must have applied, or the rollback below has nothing to undo"
+        );
+        assert_eq!(
+            version_records(&transaction),
+            (SCHEMA_VERSION, SCHEMA_VERSION),
+            "both records must read forward inside the transaction, or this test \
+             proves only that a migration which did nothing changed nothing"
+        );
+
+        // The open fails here: after the step, after both version records, and
+        // before anything commits. Dropping the transaction unclaimed is what a
+        // failed open does, and it must take all three writes with it.
+        transaction
+            .execute_batch("SELECT no_such_function();")
+            .expect_err("the injected failure must actually fail");
+    }
+
+    let after = Connection::open(&path).expect("read the authority back after the failed open");
+    assert_eq!(
+        version_records(&after),
+        (1, 1),
+        "a failed migration must leave the authority at the version it started \
+         from; a record that survived the rollback strands it between two"
+    );
+    assert!(
+        !before_has_table(&after, "transcript_source_heads"),
+        "the step must roll back with the records it was supposed to travel with"
+    );
+    assert_eq!(
+        table_census(&after),
+        before,
+        "every table must read back exactly as it did before the failed migration"
+    );
+}
+
 #[test]
 fn a_read_only_open_names_the_write_open_that_would_migrate() {
     let scratch = Scratch::new();
