@@ -784,6 +784,71 @@ fn a_queue_abandoning_published_history_is_still_refused() {
     );
 }
 
+/// The new value git queues for a deletion.
+const DELETED: &str = "0000000000000000000000000000000000000000";
+
+/// A deletion gives up the whole branch, which is the largest rewind there is,
+/// and it arrives as a value that names no commit at all.
+///
+/// That is why [`Rewind`] carries an optional new commit instead of a commit:
+/// every question phrased as "does the new commit still reach the tip" is
+/// unanswerable here, and answering it as "reached, so nothing was given up" is
+/// exactly backwards. The zero values already elsewhere in this file are a
+/// declared old value and an `AUTO_MERGE` cleanup pair, neither of which is a
+/// deletion of the current branch, so before this pair nothing exercised it.
+///
+/// Two tests rather than one because two consumers ask, and each asks alone:
+/// a deletion under a resolvable upstream reaches [`refuse_abandoning_rewind`]
+/// and never the other, so a single test leaves whichever consumer it missed
+/// free to permit the deletion outright.
+#[test]
+fn deleting_the_branch_abandons_the_published_history_it_held() {
+    let fixture = Fixture::history("deleted-published");
+    let tip = fixture.head();
+    fixture.publish_commit_ahead_of_tip();
+
+    let error = apply(
+        fixture.path(),
+        OsStr::new(PREPARED),
+        &format!("{tip} {DELETED} refs/heads/main\n"),
+    )
+    .expect_err("deleting the branch gives up every published commit it held");
+
+    assert!(
+        matches!(error, ReferenceTransactionError::ProtectedHistory { .. }),
+        "a deletion reached no refusal naming the commits it abandons: {error:?}"
+    );
+}
+
+/// The other consumer, on the same deletion.
+///
+/// An upstream that resolves to no commit establishes nothing, so a deletion
+/// under it is unknown rather than cleared -- and unknown is the answer the
+/// guard must reach without first deciding the deletion abandoned nothing.
+#[test]
+fn deleting_the_branch_under_an_unresolvable_upstream_stays_unjudgeable() {
+    let fixture = Fixture::history("deleted-unjudgeable");
+    let tip = fixture.head();
+    fixture.add_origin_remote();
+    fixture.track("origin", "refs/heads/main");
+
+    let error = apply(
+        fixture.path(),
+        OsStr::new(PREPARED),
+        &format!("{tip} {DELETED} refs/heads/main\n"),
+    )
+    .expect_err("an upstream resolving to no commit cannot clear a deletion");
+
+    // Named, not merely an error: permitting the deletion here would be an
+    // `Ok`, but so would refusing it for history this guard never read, and
+    // only one of those is the answer an unresolvable upstream licenses.
+    assert!(
+        matches!(error, ReferenceTransactionError::UnjudgeableUpstream { .. }),
+        "the deletion was answered from something other than the upstream it \
+         could not resolve: {error:?}"
+    );
+}
+
 /// Drive a genuine refusal and answer with what its message said.
 fn refusal_message(fixture: &Fixture) -> String {
     let tip = fixture.head();
