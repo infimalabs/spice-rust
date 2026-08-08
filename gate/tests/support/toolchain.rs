@@ -276,7 +276,12 @@ pub(crate) fn including_repository(label: &str, included: &str) -> Tree {
 /// because the arm reports the file and no locus within it.
 pub(crate) const UNFORMATTED_INCLUDED: &str = "async fn included( ) {\n    let  reached=1;\n}\n";
 
-/// An included file no edition can parse, so the second pass names nothing.
+/// An included file no edition can parse, so the formatter names nothing.
+///
+/// The arm is then left with an empty finding list and a nonzero exit, which is
+/// the shape a canonical tree also has minus the exit code. Reporting clean
+/// here is the failure mode the formatter gap was made of, so the refusal is
+/// what has to survive rather than the count.
 pub(crate) const UNPARSABLE_INCLUDED: &str = "fn included( {\n";
 
 /// What `cargo fmt --all -- --check` on its own says about one fixture tree.
