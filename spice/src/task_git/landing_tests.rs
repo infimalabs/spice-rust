@@ -4,9 +4,9 @@
 //! boundary function, because the claim being proved is that a landing is
 //! refused -- not that a predicate returns true.
 //!
-//! Three enter through the conflict path and one through a merge the lane built
+//! Four enter through the conflict path and one through a merge the lane built
 //! itself, which are the two ways a landing arrives already shaped and so the
-//! two call sites the boundary has. The fifth takes neither: it is an ordinary
+//! two call sites the boundary has. The sixth takes neither: it is an ordinary
 //! machine merge, and it is here to prove the boundary stays quiet when the
 //! landing carries peer work it did not write.
 
@@ -222,6 +222,35 @@ fn a_merge_the_lane_built_itself_is_checked_before_it_is_accepted() {
     assert!(
         !refusal.detail.contains("agent.txt"),
         "the lane's own path is inside the footprint and must not be reported: {}",
+        refusal.detail
+    );
+}
+
+#[test]
+fn a_drifted_path_holding_a_space_is_quoted_where_the_recipe_is_pasted() {
+    let fixture = Fixture::new("quoting");
+    fixture.agent_commit(&[("shared.txt", "agent\n")]);
+    fixture.peer_commit(&[("shared.txt", "peer\n"), ("peer notes.txt", "peer\n")]);
+    paused_at_overlap(&fixture);
+    fixture.resolve(&[
+        ("shared.txt", "resolved\n"),
+        ("peer notes.txt", "clobbered\n"),
+        ("stray file.txt", "stray\n"),
+    ]);
+
+    let refusal = publish(&fixture.repository(), metadata()).expect_err("drifted landing refused");
+
+    assert!(
+        refusal.remedy.contains("-- 'peer notes.txt'")
+            && refusal.remedy.contains("git rm -- 'stray file.txt'"),
+        "a pasted path is one pathspec, not two: {}",
+        refusal.remedy
+    );
+    // The listing is prose rather than a command, so it names the path bare,
+    // which is also where the predecessor stops quoting.
+    assert!(
+        refusal.detail.contains("rewrites-baseline peer notes.txt"),
+        "the listing names the path as git printed it: {}",
         refusal.detail
     );
 }

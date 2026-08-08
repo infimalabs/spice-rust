@@ -92,7 +92,7 @@ pub(super) fn require_landing_within_footprint(
 /// `spice/tasks/git/merging.py:336` and because the exclusion is a decision
 /// rather than a default worth inheriting silently -- if this listing ever
 /// grows `-m` or `--first-parent`, the default reverses and the flag is what
-/// holds the meaning still. Measured, not assumed: dropping it leaves all five
+/// holds the meaning still. Measured, not assumed: dropping it leaves all six
 /// fixtures green.
 fn footprint_paths(
     root: &Path,
@@ -159,6 +159,32 @@ fn drift_refusal(label: &str, upstream_head: &str, classified: &[(String, Drift)
     )
 }
 
+/// Quote a path the way the predecessor's `shlex.join` does.
+///
+/// Only the recipe is quoted, never the listing above it. The listing is prose
+/// naming what drifted, and the predecessor leaves it bare for the same reason;
+/// the recipe is meant to be pasted, and `diff --name-only` prints a path
+/// holding a space verbatim, so leaving it bare there would split one pathspec
+/// into two and recover something nobody asked for.
+///
+/// `spice/src/demo_command/recovery.rs` carries the same rule. It stays copied
+/// rather than shared because a git boundary reaching into the demo command for
+/// a string helper is a worse coupling than six lines are a duplication.
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'_' | b'@' | b'%' | b'+' | b'=' | b':' | b',' | b'.' | b'/' | b'-'
+                )
+        })
+    {
+        return value.to_owned();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
 /// Both recoveries, because the boundary cannot tell which one is meant.
 ///
 /// Drift is equally consistent with a resolution that reached too far and with
@@ -170,7 +196,7 @@ fn remedy(label: &str, upstream_head: &str, classified: &[(String, Drift)]) -> S
         classified
             .iter()
             .filter(|(_, drift)| *drift == wanted)
-            .map(|(path, _)| format!(" {path}"))
+            .map(|(path, _)| format!(" {}", shell_quote(path)))
             .collect::<String>()
     };
     let rewrites = restore(Drift::RewritesBaseline);
