@@ -152,6 +152,7 @@ fn create_task<B: serde::Serialize>(
     let answer = wire::intent::TaskAnswer {
         task: prepared.task,
         status: "pending".to_owned(),
+        learning: None,
         next,
     };
     if let Err(error) = write.command_result(
@@ -300,6 +301,7 @@ pub(super) fn task_note(
     let answer = wire::intent::TaskAnswer {
         task: note.task.clone(),
         status: "noted".to_owned(),
+        learning: None,
         next,
     };
     if let Err(error) = write.command_result(
@@ -419,6 +421,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
     let answer = wire::intent::TaskAnswer {
         task: task.clone(),
         status: status.to_owned(),
+        learning: None,
         next: None,
     };
     if let Err(error) =
@@ -540,6 +543,7 @@ pub(super) fn task_delete(
         // advance; the work goes on somewhere else, not here.
         task: delete.task.clone(),
         status: "deleted".to_owned(),
+        learning: None,
         next: None,
     };
     if let Err(error) = write.command_result(
@@ -650,6 +654,7 @@ pub(super) fn task_depends(
     let answer = wire::intent::TaskAnswer {
         task: depends.task.clone(),
         status: "edited".to_owned(),
+        learning: None,
         next,
     };
     if let Err(error) = write.command_result(
@@ -846,6 +851,7 @@ fn publish_correction(
     let answer = wire::intent::TaskAnswer {
         task: edit.task.clone(),
         status: "edited".to_owned(),
+        learning: None,
         next,
     };
     if let Err(error) = write.command_result(

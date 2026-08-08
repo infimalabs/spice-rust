@@ -855,6 +855,13 @@ pub struct TaskAnswer {
     pub task: TaskHandle,
     /// Its status after the transaction.
     pub status: String,
+    /// Best-effort learning continuation run after a successful completion.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub learning: Option<Box<TaskLearning>>,
     /// Exact CLI command admitted as the next action, when one is available.
     #[serde(
         default,
@@ -862,6 +869,33 @@ pub struct TaskAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub next: Option<Box<str>>,
+}
+
+/// Bounded task-completion learning distillation report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskLearning {
+    /// Records atomically retained after confirmation and eviction.
+    pub stored: u64,
+    /// Bounded candidates extracted from the exact claim-to-completion span.
+    pub candidates: u64,
+    /// One reason for each candidate the independent judge skipped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
+    /// Whole-operation skip reason when no record could be retained.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub reason: Option<String>,
+    /// Bounded diagnostic detail for the skip, when useful.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub detail: Option<String>,
 }
 
 /// The answer a claim command returns.

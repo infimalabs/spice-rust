@@ -127,6 +127,7 @@ pub struct StatePaths {
     local_configuration: PathBuf,
     lane_canvas: PathBuf,
     inbox: PathBuf,
+    learnings: PathBuf,
 }
 
 impl StatePaths {
@@ -149,6 +150,7 @@ impl StatePaths {
             local_configuration: runtime.join("config.toml"),
             lane_canvas: runtime.join("canvas-lanes"),
             inbox: runtime.join("inbox"),
+            learnings: runtime.join("learnings"),
             artifact_data,
             runtime,
             data,
@@ -267,6 +269,16 @@ impl StatePaths {
         &self.inbox
     }
 
+    /// Rust-owned bounded operational learnings, partitioned by project stem.
+    ///
+    /// The predecessor's similarly named store is worktree-visible at
+    /// `<worktree>/.spice/learnings`; this directory is below the Git-common
+    /// state root. The equal leaf name therefore does not create shared files.
+    #[must_use]
+    pub fn learnings(&self) -> &Path {
+        &self.learnings
+    }
+
     /// Directories whose shape this runtime admits before it does any work.
     ///
     /// Admission is narrower than ownership on purpose. A path belongs here
@@ -305,7 +317,7 @@ impl StatePaths {
     /// the directories [`Self::exclusive_directories`] repeats own their whole
     /// contents. The rest are shared, and ownership there is decided per file.
     #[must_use]
-    pub fn owned_directories(&self) -> [&Path; 10] {
+    pub fn owned_directories(&self) -> [&Path; 11] {
         let [
             runtime,
             data,
@@ -327,6 +339,7 @@ impl StatePaths {
             artifacts,
             self.lane_canvas(),
             self.inbox(),
+            self.learnings(),
         ]
     }
 
@@ -340,7 +353,7 @@ impl StatePaths {
     /// Ownership there is per file, which is why [`Self::owned_files`] names
     /// each one.
     #[must_use]
-    pub fn exclusive_directories(&self) -> [&Path; 8] {
+    pub fn exclusive_directories(&self) -> [&Path; 9] {
         [
             self.locks(),
             self.proof(),
@@ -350,6 +363,7 @@ impl StatePaths {
             self.artifacts(),
             self.lane_canvas(),
             self.inbox(),
+            self.learnings(),
         ]
     }
 

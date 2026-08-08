@@ -403,6 +403,7 @@ fn append_done(
     Ok(wire::intent::TaskAnswer {
         task: done.task.clone(),
         status: transition.next().status.clone(),
+        learning: None,
         next,
     })
 }
@@ -574,6 +575,7 @@ pub(super) fn task_review(
     let answer = wire::intent::TaskAnswer {
         task: review.task.clone(),
         status: "completed".to_owned(),
+        learning: None,
         next: None,
     };
     if let Err(error) = write.command_result(
