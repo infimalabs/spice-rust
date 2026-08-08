@@ -71,12 +71,26 @@ name, identified from the surrounding `.about` and `.subcommand_required`
 builder chain rather than from the call alone.
 
 Two attempts to break these negatives by omission also failed, and are recorded
-so they are not re-run. The two sides share no `SPICE_` environment name at all
--- 20 in the port against 29 in the predecessor, empty intersection, checked
-non-vacuously. And the binary-name convergence is not a seam: both build a
-program named `spice`, but the port installs under `<common>/.spice-install`
-while the live `core.hooksPath` is `.spice/hooks`, and `spice-install` appears
-nowhere in the predecessor tree.
+so they are not re-run. The two sides share no tracked-tree token outside this
+record matching `SPICE_[A-Z0-9_]+`. To reproduce that result, run this in each
+checkout:
+
+```sh
+git grep -h -o -E 'SPICE_[A-Z0-9_]+' -- ':!spice/COEXISTENCE.md' | sort -u
+```
+
+Save the two outputs as `port.names` and `predecessor.names`, then run `comm -12
+port.names predecessor.names`. Both input sets were nonempty and the
+intersection was empty when rechecked for this edit against the clean
+predecessor revision `7380d9a09b86637ef923f3ee0c5360b8413b8319`. Excluding
+the record keeps the command printed here from manufacturing its own match. The
+rule deliberately over-approximates environment names by retaining test
+placeholders and partial tokens too: an empty intersection over those larger
+sets proves the narrower runtime vocabularies do not overlap without a judgment
+call about which names are real. And the binary-name convergence is not a seam:
+both build a program named `spice`, but the port installs under
+`<common>/.spice-install` while the live `core.hooksPath` is `.spice/hooks`, and
+`spice-install` appears nowhere in the predecessor tree.
 
 ## Seam A -- the shared state root
 
