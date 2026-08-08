@@ -74,10 +74,7 @@ pub fn reference_transaction(
 /// `PATH` repeats policy after the Rust-owned checks finish.
 const VERIFY_ACTIONS: [Action; 11] = [
     Action::EntryPoint,
-    Action::Command(Step::cargo(
-        "cargo fmt --all -- --check",
-        &["fmt", "--all", "--", "--check"],
-    )),
+    Action::Format,
     Action::Command(Step::cargo(
         "cargo clippy --locked --workspace --all-targets -- -D warnings",
         &[
@@ -132,14 +129,16 @@ const VERIFY_ACTIONS: [Action; 11] = [
     Action::Landing,
 ];
 
-const SCOPED_COMMANDS: [ScopedCommand; 4] = [
-    ScopedCommand::Format,
+const SCOPED_COMMANDS: [ScopedCommand; 3] = [
     ScopedCommand::Clippy,
     ScopedCommand::Test,
     ScopedCommand::DocTest,
 ];
 
 const BATTERY_LABEL: &str = "canonical Rust gate battery";
+/// Direct formatting over the gate-owned complete Rust-source selection.
+const FORMAT_LABEL: &str =
+    "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>";
 /// Documentation is swept with the targets named, not with cargo's default set.
 ///
 /// This is also the only action that resolves intra-doc links at all.
@@ -191,6 +190,7 @@ impl Step {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Action {
     EntryPoint,
+    Format,
     Command(Step),
     Browser,
     Battery,
@@ -199,7 +199,6 @@ enum Action {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ScopedCommand {
-    Format,
     Clippy,
     Test,
     DocTest,
@@ -208,7 +207,6 @@ enum ScopedCommand {
 impl ScopedCommand {
     fn label(self, package: &str) -> String {
         match self {
-            Self::Format => format!("cargo fmt --package {package} -- --check"),
             Self::Clippy => {
                 format!("cargo clippy --locked --package {package} --all-targets -- -D warnings")
             }
@@ -221,10 +219,6 @@ impl ScopedCommand {
 
     fn arguments(self, package: &str) -> Vec<String> {
         match self {
-            Self::Format => ["fmt", "--package", package, "--", "--check"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
             Self::Clippy => [
                 "clippy",
                 "--locked",
@@ -255,6 +249,7 @@ impl Action {
         match self {
             Self::Command(step) => step.label,
             Self::EntryPoint => ENTRY_POINT_LABEL,
+            Self::Format => FORMAT_LABEL,
             Self::Browser => BROWSER_LABEL,
             Self::Battery => BATTERY_LABEL,
             Self::Landing => landing::LABEL,
@@ -270,6 +265,7 @@ struct Status {
 
 trait Runner {
     fn entry_point(&mut self) -> Result<String, String>;
+    fn format(&mut self) -> io::Result<Status>;
     fn run(&mut self, step: Step) -> io::Result<Status>;
     fn run_scoped(&mut self, step: ScopedCommand, package: &str) -> io::Result<Status>;
     fn browser(&mut self) -> io::Result<BrowserRun>;
@@ -306,6 +302,40 @@ impl Runner for SystemRunner {
         let mut report = Vec::new();
         hooks::audit_entry_point(Path::new("."), &mut report).map_err(|error| error.to_string())?;
         String::from_utf8(report).map_err(|error| error.to_string())
+    }
+
+    fn format(&mut self) -> io::Result<Status> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let root = Path::new(".");
+            let sources = gate::formatter_sources(root).map_err(io::Error::other)?;
+            if sources.is_empty() {
+                return Ok(Status {
+                    success: true,
+                    code: Some(0),
+                });
+            }
+            let edition = gate::formatter_edition(root).map_err(io::Error::other)?;
+            let status = Command::new("rustfmt")
+                .args([
+                    "--edition",
+                    edition.as_str(),
+                    "--check",
+                    "--files-with-diff",
+                ])
+                .args(sources)
+                .status()?;
+            Ok(Status {
+                success: status.success(),
+                code: status.code(),
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Err(io::Error::other(
+                "repository formatting is unavailable on wasm32",
+            ))
+        }
     }
 
     fn run(&mut self, step: Step) -> io::Result<Status> {
@@ -413,7 +443,7 @@ pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
     verify_with(&mut SystemRunner, output)
 }
 
-/// Run formatter, lint, test, and documentation feedback for one Cargo package.
+/// Run lint, test, and documentation feedback for one Cargo package.
 ///
 /// This is deliberately not the completion battery. Its first output records
 /// every full verifier action and canonical battery arm it does not execute.
@@ -476,6 +506,18 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
                 output
                     .write_all(report.as_bytes())
                     .map_err(VerifyError::Output)?;
+            }
+            Action::Format => {
+                let status = runner.format().map_err(|source| VerifyError::Launch {
+                    label: FORMAT_LABEL,
+                    source,
+                })?;
+                if !status.success {
+                    return Err(VerifyError::Exit {
+                        label: FORMAT_LABEL,
+                        code: status.code,
+                    });
+                }
             }
             Action::Command(step) => {
                 let status = runner.run(step).map_err(|source| VerifyError::Launch {
@@ -770,6 +812,21 @@ mod tests {
                 .expect("fixture has one entry-point outcome")
         }
 
+        fn format(&mut self) -> io::Result<Status> {
+            self.calls.push(FORMAT_LABEL);
+            match self.outcomes.pop_front().expect("fixture has an outcome") {
+                Outcome::Success => Ok(Status {
+                    success: true,
+                    code: Some(0),
+                }),
+                Outcome::Exit(code) => Ok(Status {
+                    success: false,
+                    code: Some(code),
+                }),
+                Outcome::Launch => Err(io::Error::other("fixture formatter launch refusal")),
+            }
+        }
+
         fn run(&mut self, step: Step) -> io::Result<Status> {
             self.calls.push(step.label);
             match self.outcomes.pop_front().expect("fixture has an outcome") {
@@ -841,6 +898,7 @@ mod tests {
             .into_iter()
             .map(|action| match action {
                 Action::Command(step) => format!("[verify] {}\n", step.label),
+                Action::Format => format!("[verify] {FORMAT_LABEL}\n"),
                 Action::EntryPoint => {
                     format!("[verify] {ENTRY_POINT_LABEL}\n{ENTRY_POINT_FIXTURE}")
                 }
@@ -914,7 +972,7 @@ mod tests {
     #[test]
     fn scoped_command_failure_stops_before_later_package_commands() {
         let mut runner = scoped_runner();
-        runner.scoped_outcomes = [Outcome::Success, Outcome::Exit(17)].into_iter().collect();
+        runner.scoped_outcomes = [Outcome::Exit(17)].into_iter().collect();
         let mut output = Vec::new();
 
         let error = verify_package_with("gate", &mut runner, &mut output)
@@ -927,10 +985,7 @@ mod tests {
         assert_eq!(runner.calls, [ENTRY_POINT_LABEL]);
         assert_eq!(
             runner.scoped_calls,
-            [
-                (ScopedCommand::Format, "gate".to_owned()),
-                (ScopedCommand::Clippy, "gate".to_owned()),
-            ]
+            [(ScopedCommand::Clippy, "gate".to_owned())]
         );
     }
 
@@ -938,10 +993,7 @@ mod tests {
     fn verifier_steps_match_the_complete_command_guard() {
         const GUARDED_ACTIONS: [Action; 11] = [
             Action::EntryPoint,
-            Action::Command(Step::cargo(
-                "cargo fmt --all -- --check",
-                &["fmt", "--all", "--", "--check"],
-            )),
+            Action::Format,
             Action::Command(Step::cargo(
                 "cargo clippy --locked --workspace --all-targets -- -D warnings",
                 &[
@@ -1305,8 +1357,16 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(action, Action::Command(_)))
                 .count(),
-            7,
-            "exactly seven declared Cargo commands precede compiled landing"
+            6,
+            "exactly six declared Cargo commands precede compiled landing"
+        );
+        assert_eq!(
+            VERIFY_ACTIONS
+                .iter()
+                .filter(|action| matches!(action, Action::Format))
+                .count(),
+            1,
+            "one gate-selected formatter action precedes compiled landing"
         );
         assert_eq!(
             VERIFY_ACTIONS
@@ -1346,7 +1406,7 @@ mod tests {
     fn successful_commands() -> Vec<Outcome> {
         VERIFY_ACTIONS
             .iter()
-            .filter(|action| matches!(action, Action::Command(_)))
+            .filter(|action| matches!(action, Action::Format | Action::Command(_)))
             .map(|_| Outcome::Success)
             .collect()
     }

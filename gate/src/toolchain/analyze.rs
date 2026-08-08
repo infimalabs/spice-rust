@@ -143,7 +143,7 @@ impl Analysis {
 /// ensures its retained tool evidence is empty.
 pub(super) fn before_tools(declaration: ToolchainDeclaration, root: &Path) -> Option<Analysis> {
     match declaration.id {
-        GateId::Formatters => match rust_sources(root) {
+        GateId::Formatters => match formatter_sources(root) {
             Ok(sources) if sources.is_empty() => Some(Analysis::not_applicable(declaration)),
             Ok(_) => None,
             Err(reason) => Some(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
@@ -627,7 +627,7 @@ fn formatter_invocation(
             format!("formatters declares no {FORMATTER} to invoke the check through"),
         ));
     };
-    let edition = match workspace_edition(root) {
+    let edition = match formatter_edition(root) {
         Ok(edition) => edition,
         Err(reason) => return Err(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
     };
@@ -663,7 +663,7 @@ pub(super) fn formatters(
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
 ) -> Analysis {
-    let sources = match rust_sources(root) {
+    let sources = match formatter_sources(root) {
         Ok(sources) => sources,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -1070,7 +1070,7 @@ fn relative_to(roots: &[PathBuf], reported: &str) -> Option<String> {
 }
 
 /// Count the selected Rust sources the formatter check applies to.
-fn rust_sources(root: &Path) -> Result<Vec<String>, String> {
+pub(super) fn formatter_sources(root: &Path) -> Result<Vec<String>, String> {
     let walked = Jurisdiction::walk(root, &Ignore::default())
         .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
     Ok(walked
@@ -1105,7 +1105,7 @@ fn rust_sources(root: &Path) -> Result<Vec<String>, String> {
 /// multiline snippet and the executor refuses to publish a multiline reason at
 /// all, so an unflattened diagnosis would be replaced by the refusal to carry
 /// it rather than reaching the reader.
-fn workspace_edition(root: &Path) -> Result<String, String> {
+pub(super) fn formatter_edition(root: &Path) -> Result<String, String> {
     let manifest = root.join("Cargo.toml");
     let text = fs::read_to_string(&manifest)
         .map_err(|error| format!("the root manifest could not be read: {error}"))?;
