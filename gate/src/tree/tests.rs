@@ -406,6 +406,61 @@ fn a_gate_tree_workspace_with_no_lock_beside_it_is_left_alone() {
     );
 }
 
+/// A killed run can remove its workspace and die before unlinking its lock.
+///
+/// The fixture takes and releases the production lock without ever creating
+/// the directory, leaving exactly that residue rather than spelling an
+/// imitation lock file directly.
+#[test]
+fn a_parentless_gate_tree_lock_no_live_run_holds_is_reclaimed() {
+    let scratch = Scratch::new("parentless-lock");
+    let workspace = scratch.root.join("spice-gate-tree-4242-parentless");
+    let lock = planted_lock(&workspace);
+    let Ok(Acquisition::Acquired(possession)) = lock.try_acquire() else {
+        panic!("a fresh workspace name's lock must be acquirable");
+    };
+    drop(possession);
+    assert!(!workspace.exists(), "the fixture must have no workspace");
+    assert!(lock.path().is_file(), "the fixture must leave its lock");
+
+    super::reclaim_abandoned(&scratch.root);
+
+    assert!(
+        !lock.path().exists(),
+        "an unheld lock outlived the absent workspace it names"
+    );
+}
+
+/// A live run locks a fresh name before it creates the workspace directory.
+///
+/// The sweep is driven while that production possession remains held, making
+/// the pre-creation window deterministic rather than asking the test to race.
+#[test]
+fn a_parentless_gate_tree_lock_a_live_run_holds_is_never_unlinked() {
+    let scratch = Scratch::new("held-parentless-lock");
+    let workspace = scratch.root.join("spice-gate-tree-4242-precreate");
+    let lock = planted_lock(&workspace);
+    let Ok(Acquisition::Acquired(held)) = lock.try_acquire() else {
+        panic!("a fresh workspace name's lock must be acquirable");
+    };
+    assert!(
+        !workspace.exists(),
+        "the live run has not created its workspace"
+    );
+
+    super::reclaim_abandoned(&scratch.root);
+
+    assert!(
+        lock.path().exists(),
+        "the sweep unlinked a live run's lock before its workspace existed"
+    );
+    assert!(
+        matches!(lock.try_acquire(), Ok(Acquisition::Contended)),
+        "the live run's production possession must still guard the name"
+    );
+    drop(held);
+}
+
 /// Materializing a tree is what runs the reclaim.
 ///
 /// The tests above drive [`super::reclaim_abandoned`] directly, which pins what
