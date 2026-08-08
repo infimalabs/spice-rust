@@ -10,6 +10,63 @@ use gate::metrics::{EvidenceState, MetricId, MetricKey};
 use gate::{ArmEvidence, BATTERY_REFUSAL_FOLD_MAX_BYTES, BatteryArmResult, BatteryReport, GateId};
 
 const PROCESS_PATH: &str = concat!("PA", "TH");
+const FORMAT_ACTION: &str =
+    "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>";
+
+#[test]
+fn verifier_refuses_a_formatting_defect_reached_only_through_include() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.repository.join("src/lib.rs"),
+        "include!(\"mutation.rs\");\n",
+    )
+    .expect("write include-only fixture root");
+    fs::write(
+        fixture.repository.join("src/mutation.rs"),
+        "pub fn mutation( ) { let value=1; assert_eq!(value,1); }\n",
+    )
+    .expect("write unformatted included source");
+    git(
+        &fixture.repository,
+        &["add", "src/lib.rs", "src/mutation.rs"],
+    );
+
+    let programs = fixture.root.join("programs");
+    fs::create_dir(&programs).expect("create formatter fixture program directory");
+    install_unset_hooks_git(&programs);
+    install_real_rustfmt(&programs);
+    let cargo_marker = fixture.root.join("cargo-invoked");
+    executable(
+        &programs.join("cargo"),
+        &format!(
+            "#!/bin/sh\nprintf 'invoked\\n' > '{}'\nexit 0\n",
+            cargo_marker.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("verify")
+        .current_dir(&fixture.repository)
+        .env(PROCESS_PATH, &programs)
+        .output()
+        .expect("launch verifier against an include-only formatting defect");
+
+    assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("src/mutation.rs"),
+        "formatter refusal does not name the included source: {}",
+        streams(&output)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(FORMAT_ACTION),
+        "verifier did not attribute the refusal to its formatter action: {}",
+        streams(&output)
+    );
+    assert!(
+        !cargo_marker.exists(),
+        "the verifier crossed its formatter refusal"
+    );
+}
 
 #[test]
 fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
@@ -17,6 +74,7 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create process fixture directory");
     install_unset_hooks_git(&programs);
+    install_real_rustfmt(&programs);
     let forbidden_marker = fixture.root.join("forbidden-program-invoked");
     for program in ["python", "python3", "taskwarrior", "task"] {
         executable(
@@ -29,7 +87,7 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
         );
     }
 
-    // The process under test is the real verifier binary. Its seven Cargo build,
+    // The process under test is the real verifier binary. Its six Cargo build,
     // test, and documentation actions and browser receipt are logged fixtures so
     // this integration test does not recursively launch either toolchain from
     // inside Cargo. The following battery action is not replaceable and
@@ -89,10 +147,9 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
         fs::read_to_string(&cargo_log)
             .expect("read verifier Cargo actions")
             .lines()
-            .take(7)
+            .take(6)
             .collect::<Vec<_>>(),
         [
-            "fmt --all -- --check",
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
@@ -298,7 +355,6 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
             .lines()
             .collect::<Vec<_>>(),
         [
-            "fmt --package verify-process-fixture -- --check",
             concat!(
                 "clippy --locked --package verify-process-fixture --all-targets ",
                 "-- -D warnings"
@@ -325,7 +381,10 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
         .join(", ");
     assert!(stdout.contains(&format!("[verify] scoped gate arms skipped: {skipped}\n")));
     for full_only in [
-        "[verify] cargo fmt --all -- --check",
+        concat!(
+            "[verify] rustfmt --edition <workspace> --check --files-with-diff ",
+            "<gate::formatter_sources>"
+        ),
         "[verify] cargo clippy --locked --workspace --all-targets -- -D warnings",
         "[verify] cargo check --locked --workspace --target wasm32-unknown-unknown",
         "[verify] npm run test:canvas (BROWSER-1kKSWhZk guard)",
@@ -394,6 +453,7 @@ fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() 
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create process fixture directory");
     install_unset_hooks_git(&programs);
+    install_real_rustfmt(&programs);
     let cargo_log = fixture.root.join("cargo-actions");
     executable(
         &programs.join("cargo"),
@@ -423,7 +483,6 @@ fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() 
             .lines()
             .collect::<Vec<_>>(),
         [
-            "fmt --all -- --check",
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
@@ -442,6 +501,7 @@ fn verifier_wasm_clippy_rejects_a_lint_hidden_from_the_native_target() {
     wasm_lint_fixture(&fixture.repository);
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create wasm lint fixture programs");
+    install_real_rustfmt(&programs);
     let cargo_log = fixture.root.join("cargo-actions");
     executable(
         &programs.join("cargo"),
@@ -494,7 +554,6 @@ fn verifier_wasm_clippy_rejects_a_lint_hidden_from_the_native_target() {
             .lines()
             .collect::<Vec<_>>(),
         [
-            "fmt --all -- --check",
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
         ],
@@ -621,6 +680,26 @@ fn install_unset_hooks_git(programs: &Path) {
             "exit 98\n",
         ),
     );
+}
+
+fn install_real_rustfmt(programs: &Path) {
+    let output = Command::new("rustup")
+        .args(["which", "rustfmt"])
+        .output()
+        .expect("query the active Rust toolchain for rustfmt");
+    assert!(output.status.success(), "{}", streams(&output));
+    let rustfmt = PathBuf::from(
+        String::from_utf8(output.stdout)
+            .expect("rustfmt path is UTF-8")
+            .trim(),
+    );
+    assert!(
+        rustfmt.is_file(),
+        "rustfmt path exists: {}",
+        rustfmt.display()
+    );
+    std::os::unix::fs::symlink(rustfmt, programs.join("rustfmt"))
+        .expect("install the real rustfmt in the verifier fixture rim");
 }
 
 fn git(root: &Path, arguments: &[&str]) {

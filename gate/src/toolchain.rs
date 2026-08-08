@@ -9,6 +9,8 @@
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +22,31 @@ use crate::manifest::GateId;
 /// which a version-3 reader cannot retain, so the schema is renamed rather than
 /// widened silently.
 pub const TOOLCHAIN_REPORT_VERSION: u64 = 4;
+
+/// Select every Rust source the repository formatter must read.
+///
+/// This is the single path authority shared by the compiled Formatters arm and
+/// repository-local verification. Paths are relative to `root`, ordered by the
+/// jurisdiction walk, and include sources reached only through `include!`.
+///
+/// # Errors
+///
+/// Returns the jurisdiction walk failure that prevented a complete selection.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn formatter_sources(root: &Path) -> Result<Vec<String>, String> {
+    analyze::formatter_sources(root)
+}
+
+/// Read the Rust edition governing direct formatter invocation at `root`.
+///
+/// # Errors
+///
+/// Returns a missing, unreadable, or malformed root manifest, or a manifest
+/// that declares no package or workspace Rust edition.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn formatter_edition(root: &Path) -> Result<String, String> {
+    analyze::formatter_edition(root)
+}
 
 /// A compiled source of configuration admitted by one arm.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
