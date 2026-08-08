@@ -131,7 +131,7 @@ fn establish_task_baseline(fixture: &Fixture) {
     fixture_git(fixture, &["push", "--set-upstream", "origin", "main"]);
 }
 
-fn fixture_git(fixture: &Fixture, arguments: &[&str]) {
+pub(super) fn fixture_git(fixture: &Fixture, arguments: &[&str]) {
     let output = Command::new("git")
         .arg("-C")
         .arg(&fixture.root)
@@ -1015,4 +1015,5 @@ fn finish_dependent_task(fixture: &Fixture, lane: wire::CanonicalUuid, after: &w
     assert!(reviewed.next.is_none());
 }
 
-include!("lane_process/task_and_recovery.rs");
+#[path = "lane_process/task_and_recovery.rs"]
+mod task_and_recovery;

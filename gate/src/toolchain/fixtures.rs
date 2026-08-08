@@ -1,3 +1,5 @@
+use super::*;
+
 use crate::manifest::PREDECESSOR_GATE_RELEASE;
 
 fn exact_tools(gate: GateId) -> Vec<ToolEvidence> {
@@ -52,7 +54,7 @@ fn fixture_finding(gate: GateId, suffix: &str) -> ArmFinding {
 /// The column is chosen per gate because these arms do not agree on having
 /// one, and one shared literal hid that. Each arm below carries the reason its
 /// own producer gives.
-fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
+pub(super) fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
     let (path, column, detail) = match gate {
         // The formatter records that a file is not formatted and carries the
         // earliest differing region as a line, so its analysis reports no

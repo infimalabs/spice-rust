@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn lane_claim_free_done_and_review_finding_survive_restart() {
     let (root, bus, epoch, seats) = fixture("workflow", 2);
@@ -88,7 +90,7 @@ fn assert_lane_resolution(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat], lane_
     );
 }
 
-fn advance_task_to_review(
+pub(super) fn advance_task_to_review(
     bus: &Bus,
     epoch: CanonicalUuid,
     seat: &Seat,
@@ -126,7 +128,7 @@ fn advance_task_to_review(
     claim_and_complete_task(bus, epoch, seat, lane, task);
 }
 
-fn claim_and_complete_task(
+pub(super) fn claim_and_complete_task(
     bus: &Bus,
     epoch: CanonicalUuid,
     seat: &Seat,
@@ -160,7 +162,7 @@ fn claim_and_complete_task(
     ));
 }
 
-fn complete_review_with_finding(
+pub(super) fn complete_review_with_finding(
     bus: &Bus,
     epoch: CanonicalUuid,
     seat: &Seat,

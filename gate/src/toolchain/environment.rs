@@ -774,4 +774,4 @@ fn destructured() -> &'static Regex {
 }
 
 #[cfg(test)]
-include!("environment/tests.rs");
+mod tests;

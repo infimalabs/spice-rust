@@ -933,8 +933,10 @@ fn native_executable_digest() -> Option<&'static str> {
         .as_deref()
 }
 
-include!("analyze/syntax.rs");
-include!("analyze/corpus.rs");
+mod syntax;
+pub(in crate::hygiene) use syntax::*;
+mod corpus;
+use corpus::*;
 
 #[cfg(test)]
-include!("analyze/tests.rs");
+mod tests;

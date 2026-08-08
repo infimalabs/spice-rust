@@ -1,3 +1,5 @@
+use super::*;
+
 /// How one lower-is-better floor obtains its current measurement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloorKind {
@@ -19,8 +21,8 @@ impl FloorKind {
 /// One compiled lower-is-better name in the current gate set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorDeclaration {
-    name: String,
-    kind: FloorKind,
+    pub(super) name: String,
+    pub(super) kind: FloorKind,
 }
 
 impl FloorDeclaration {
@@ -45,11 +47,11 @@ impl FloorDeclaration {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ToolDeclaration {
-    name: String,
-    program: String,
-    probe_arguments: Vec<String>,
-    probe_output: String,
+pub(super) struct ToolDeclaration {
+    pub(super) name: String,
+    pub(super) program: String,
+    pub(super) probe_arguments: Vec<String>,
+    pub(super) probe_output: String,
 }
 
 impl ToolDeclaration {
@@ -62,7 +64,7 @@ impl ToolDeclaration {
         }
     }
 
-    fn render(&self, into: &mut String) {
+    pub(super) fn render(&self, into: &mut String) {
         let _ = writeln!(into, "tool {} program {}", self.name, self.program);
         for argument in &self.probe_arguments {
             let _ = writeln!(into, "tool {} probe-argument {argument}", self.name);
@@ -139,9 +141,9 @@ pub fn declared_mutation_tools() -> Result<Vec<ExecutableDeclaration>, GateSetEr
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MetricDeclaration {
+pub(super) struct MetricDeclaration {
     tool: String,
-    metric: Metric,
+    pub(super) metric: Metric,
 }
 
 impl MetricDeclaration {
@@ -186,10 +188,10 @@ const MUTATION_GRACE: Duration = Duration::from_secs(1);
 const MUTATION_CAPTURE: usize = 640 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct KillBoundsDeclaration {
+pub(super) struct KillBoundsDeclaration {
     deadlines: Deadlines,
     grace: Duration,
-    capture: usize,
+    pub(super) capture: usize,
 }
 
 impl KillBoundsDeclaration {
@@ -234,10 +236,10 @@ impl KillBoundsDeclaration {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct KillDeclaration {
-    tool: MutationTool,
-    battery: MutationBattery,
-    bounds: KillBoundsDeclaration,
+pub(super) struct KillDeclaration {
+    pub(super) tool: MutationTool,
+    pub(super) battery: MutationBattery,
+    pub(super) bounds: KillBoundsDeclaration,
 }
 
 impl KillDeclaration {
@@ -304,16 +306,16 @@ const CAMP_LOCI: [(&str, &str); 4] = [
 /// The compiled checks and floor names this build can execute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GateSet {
-    metrics: Vec<MetricDeclaration>,
-    camp_metrics: Vec<MetricDeclaration>,
-    camp: Camp,
-    kill: KillDeclaration,
-    floors: Vec<FloorDeclaration>,
-    tools: Vec<ToolDeclaration>,
+    pub(super) metrics: Vec<MetricDeclaration>,
+    pub(super) camp_metrics: Vec<MetricDeclaration>,
+    pub(super) camp: Camp,
+    pub(super) kill: KillDeclaration,
+    pub(super) floors: Vec<FloorDeclaration>,
+    pub(super) tools: Vec<ToolDeclaration>,
 }
 
 impl GateSet {
-    fn current() -> Result<Self, GateSetError> {
+    pub(super) fn current() -> Result<Self, GateSetError> {
         let camp_metrics = current_camp_metrics()?;
         let camp = Camp::new([SharedBound::new(
             CAMP_BOUND,
@@ -337,7 +339,7 @@ impl GateSet {
         )
     }
 
-    fn admit(
+    pub(super) fn admit(
         mut metrics: Vec<MetricDeclaration>,
         mut camp_metrics: Vec<MetricDeclaration>,
         camp: Camp,
@@ -427,7 +429,7 @@ impl GateSet {
         &self.camp
     }
 
-    fn build_kill(&self) -> Kill {
+    pub(super) fn build_kill(&self) -> Kill {
         self.kill
             .build()
             .expect("an admitted mutation declaration remains valid")

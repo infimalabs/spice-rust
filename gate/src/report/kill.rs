@@ -1,13 +1,15 @@
+use super::*;
+
 /// Complete mutation inventory retained without executable reconstruction authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportMutationInventory {
-    tool: MutationToolIdentity,
-    targets: Vec<String>,
-    mutants: Vec<String>,
-    attempts: u64,
-    seed: u64,
-    timeout_seconds: u64,
+    pub(super) tool: MutationToolIdentity,
+    pub(super) targets: Vec<String>,
+    pub(super) mutants: Vec<String>,
+    pub(super) attempts: u64,
+    pub(super) seed: u64,
+    pub(super) timeout_seconds: u64,
 }
 
 impl ReportMutationInventory {
@@ -65,8 +67,8 @@ impl ReportMutationInventory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportRate {
-    numerator: u64,
-    denominator: u64,
+    pub(super) numerator: u64,
+    pub(super) denominator: u64,
 }
 
 impl ReportRate {
@@ -230,9 +232,9 @@ impl ReportCompletion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportProcess {
-    completion: ReportCompletion,
-    stdout: ReportStream,
-    stderr: ReportStream,
+    pub(super) completion: ReportCompletion,
+    pub(super) stdout: ReportStream,
+    pub(super) stderr: ReportStream,
 }
 
 impl ReportProcess {
@@ -349,11 +351,11 @@ impl ReportOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportAttempt {
-    number: u64,
-    seed: u64,
-    kind: ReportAttemptKind,
-    process: ReportProcess,
-    outcome: ReportOutcome,
+    pub(super) number: u64,
+    pub(super) seed: u64,
+    pub(super) kind: ReportAttemptKind,
+    pub(super) process: ReportProcess,
+    pub(super) outcome: ReportOutcome,
 }
 
 impl ReportAttempt {
@@ -430,9 +432,9 @@ impl ReportMutantDisposition {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportMutant {
-    identity: String,
-    attempts: Vec<ReportAttempt>,
-    disposition: ReportMutantDisposition,
+    pub(super) identity: String,
+    pub(super) attempts: Vec<ReportAttempt>,
+    pub(super) disposition: ReportMutantDisposition,
 }
 
 impl ReportMutant {
@@ -526,23 +528,23 @@ impl ReportMutationMovement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KillReport {
-    version: u64,
-    inventory: ReportMutationInventory,
-    baseline: ReportProcess,
-    mutants: Vec<ReportMutant>,
+    pub(super) version: u64,
+    pub(super) inventory: ReportMutationInventory,
+    pub(super) baseline: ReportProcess,
+    pub(super) mutants: Vec<ReportMutant>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    rate: Option<ReportRate>,
-    movement: ReportMutationMovement,
+    pub(super) rate: Option<ReportRate>,
+    pub(super) movement: ReportMutationMovement,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    proposed_floor: Option<ReportRate>,
+    pub(super) proposed_floor: Option<ReportRate>,
 }
 
 impl KillReport {

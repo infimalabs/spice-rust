@@ -1,3 +1,5 @@
+use super::*;
+
 // The follow-up tracking a review carries beside its verdict.
 //
 // The predecessor refuses an unclean review that names no follow-up, so a
@@ -17,7 +19,7 @@ const FOLLOWUP_FIELDS: &str = "title, project, description, acceptance or flow";
 const FOLLOWUP_REPEATS: &[&str] = &["acceptance", "flow"];
 
 /// Whether a finding records a clean review rather than a requested change.
-fn review_is_clean(finding: &str) -> bool {
+pub(super) fn review_is_clean(finding: &str) -> bool {
     let finding = finding.trim();
     finding.is_empty() || finding.eq_ignore_ascii_case("clean")
 }
@@ -84,7 +86,7 @@ fn parse_followup(spec: &str) -> Result<TaskAdd, String> {
 ///
 /// Every record is parsed before the first handle is minted, so a malformed
 /// record later in the batch cannot leave earlier ones half-planned.
-fn plan_followups(
+pub(super) fn plan_followups(
     board: &BoardAnswer,
     matches: &ArgMatches,
     expected: &mut Vec<Witness>,
@@ -119,7 +121,7 @@ fn plan_followups(
 }
 
 /// Resolve every `--followup` handle and witness the edge it will gain.
-fn plan_followup_edges(
+pub(super) fn plan_followup_edges(
     board: &BoardAnswer,
     matches: &ArgMatches,
     task: &TaskHandle,
@@ -147,7 +149,7 @@ fn plan_followup_edges(
 }
 
 /// Create the `--then` statements and wire the `--followup` edges.
-fn record_followups(
+pub(super) fn record_followups(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
     snapshot: &ValidatedSnapshot,
@@ -245,6 +247,74 @@ fn create_followup(
         ..statement
     });
     write.workflow_head(followup.task.clone(), added, move |_| workflow);
+    Ok(())
+}
+
+/// Wire one existing task to follow the reviewed task.
+fn wire_followup_edge(
+    write: &mut JournalWrite,
+    snapshot: &ValidatedSnapshot,
+    review: &TaskReview,
+    handle: &TaskHandle,
+    reviewed: PendingFact,
+    projects: &ProjectPolicy,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let Some(entry) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.statement().handle == *handle)
+    else {
+        return Err(refusal(
+            "task::unknown",
+            Some(handle.to_string()),
+            "name an existing task as the review follow-up",
+        ));
+    };
+    if entry.workflow().status == "completed" {
+        return Err(refusal(
+            "task::settled",
+            Some(handle.to_string()),
+            "track a review finding with a pending follow-up task",
+        ));
+    }
+    let mut statement = entry.statement().clone();
+    if *handle == review.task || statement.dependencies.contains(&review.task) {
+        return Err(refusal(
+            "task::dependency-refused",
+            Some(format!("{handle} after {}", review.task)),
+            "name a distinct follow-up that does not already follow the reviewed task",
+        ));
+    }
+    statement.dependencies.push(review.task.clone());
+    if let Err(error) = Entry::new(
+        statement.clone(),
+        entry.workflow().clone(),
+        entry.claim().cloned(),
+        entry.lease().cloned(),
+        projects,
+    ) {
+        return Err(refusal(
+            "task::dependency-refused",
+            Some(error.to_string()),
+            "submit a valid acyclic follow-up edge",
+        ));
+    }
+    let revision = u32::try_from(entry.statement().revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
+    let edited = write
+        .fact(
+            body::TaskEdited {
+                task: handle.clone(),
+                revision,
+            },
+            FactCause::Pending(reviewed),
+        )
+        .map_err(|error| store_fault("review::followup-edge", &error.to_string()))?;
+    write.task_head(edited, move |position| TaskHead {
+        revision: position,
+        ..statement
+    });
     Ok(())
 }
 
@@ -367,72 +437,4 @@ mod followup_tests {
             "the refusal names the grammar: {shapeless}"
         );
     }
-}
-
-/// Wire one existing task to follow the reviewed task.
-fn wire_followup_edge(
-    write: &mut JournalWrite,
-    snapshot: &ValidatedSnapshot,
-    review: &TaskReview,
-    handle: &TaskHandle,
-    reviewed: PendingFact,
-    projects: &ProjectPolicy,
-) -> Result<(), Outcome<CommandAnswer>> {
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.statement().handle == *handle)
-    else {
-        return Err(refusal(
-            "task::unknown",
-            Some(handle.to_string()),
-            "name an existing task as the review follow-up",
-        ));
-    };
-    if entry.workflow().status == "completed" {
-        return Err(refusal(
-            "task::settled",
-            Some(handle.to_string()),
-            "track a review finding with a pending follow-up task",
-        ));
-    }
-    let mut statement = entry.statement().clone();
-    if *handle == review.task || statement.dependencies.contains(&review.task) {
-        return Err(refusal(
-            "task::dependency-refused",
-            Some(format!("{handle} after {}", review.task)),
-            "name a distinct follow-up that does not already follow the reviewed task",
-        ));
-    }
-    statement.dependencies.push(review.task.clone());
-    if let Err(error) = Entry::new(
-        statement.clone(),
-        entry.workflow().clone(),
-        entry.claim().cloned(),
-        entry.lease().cloned(),
-        projects,
-    ) {
-        return Err(refusal(
-            "task::dependency-refused",
-            Some(error.to_string()),
-            "submit a valid acyclic follow-up edge",
-        ));
-    }
-    let revision = u32::try_from(entry.statement().revision.get())
-        .unwrap_or(u32::MAX)
-        .saturating_add(1);
-    let edited = write
-        .fact(
-            body::TaskEdited {
-                task: handle.clone(),
-                revision,
-            },
-            FactCause::Pending(reviewed),
-        )
-        .map_err(|error| store_fault("review::followup-edge", &error.to_string()))?;
-    write.task_head(edited, move |position| TaskHead {
-        revision: position,
-        ..statement
-    });
-    Ok(())
 }

@@ -207,7 +207,8 @@ pub enum Landing {
     Unaccounted,
 }
 
-include!("cli/contracts.rs");
+mod contracts;
+use contracts::*;
 
 /// The complete registry in the order used by help and Doctor rendering.
 ///

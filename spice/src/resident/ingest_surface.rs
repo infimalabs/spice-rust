@@ -1,3 +1,5 @@
+use super::*;
+
 /// The one logical stream a lane's selected capture writes.
 const INGEST_STREAM: &str = "session";
 
@@ -6,7 +8,7 @@ const INGEST_STREAM: &str = "session";
 /// The map is closed and shared: a vendor that can be launched is a vendor
 /// whose transcript can be read, so the launch door and the ingestion door must
 /// never disagree about which spellings those are.
-fn ingest_dialect(vendor: &wire::Name) -> Option<listen::Dialect> {
+pub(super) fn ingest_dialect(vendor: &wire::Name) -> Option<listen::Dialect> {
     match vendor.as_str() {
         "claude" => Some(listen::Dialect::Claude),
         "codex" => Some(listen::Dialect::Codex),
@@ -25,7 +27,7 @@ fn ingest_dialect(vendor: &wire::Name) -> Option<listen::Dialect> {
 ///
 /// The residency read and every accounting share one writer transaction, so a
 /// lane cannot be seated into or out of the sweep midway through it.
-fn ingest_transcripts(
+pub(super) fn ingest_transcripts(
     bus: &Bus,
     paths: &RuntimePaths,
     only: Option<CanonicalUuid>,

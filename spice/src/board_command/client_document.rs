@@ -1,6 +1,8 @@
+use super::*;
+
 // Authored-document client operations kept beside the native board client.
 
-fn run_doc(
+pub(super) fn run_doc(
     repository: &Repository,
     contract: &Contract,
     matches: &ArgMatches,
@@ -105,7 +107,7 @@ fn read_doc_input(matches: &ArgMatches) -> Result<String, Outcome<CommandAnswer>
         .map_err(|error| environment_fault("doc::input-unreadable", &error.to_string()))
 }
 
-fn document_handles(document: &dialect::Document) -> Vec<TaskHandle> {
+pub(super) fn document_handles(document: &dialect::Document) -> Vec<TaskHandle> {
     document
         .nodes
         .iter()
@@ -133,7 +135,7 @@ fn document_handle(project: Option<&str>, node: &dialect::Node) -> TaskHandle {
         .expect("document handle uses admitted ASCII components")
 }
 
-fn board_barrier(board: &BoardAnswer) -> Digest {
+pub(super) fn board_barrier(board: &BoardAnswer) -> Digest {
     let heads = board
         .tasks
         .iter()

@@ -1,3 +1,5 @@
+use super::*;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
@@ -6,7 +8,7 @@ use std::time::Instant;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 
-fn required_read(root: &Path, args: &[&str], action: &str) -> Result<String, Error> {
+pub(super) fn required_read(root: &Path, args: &[&str], action: &str) -> Result<String, Error> {
     let output = run(root, args)?;
     if output.success() {
         Ok(output.stdout.trim().to_owned())
@@ -15,16 +17,16 @@ fn required_read(root: &Path, args: &[&str], action: &str) -> Result<String, Err
     }
 }
 
-fn try_read(root: &Path, args: &[&str]) -> Result<Option<String>, Error> {
+pub(super) fn try_read(root: &Path, args: &[&str]) -> Result<Option<String>, Error> {
     let output = run(root, args)?;
     Ok(output.success().then(|| output.stdout.trim().to_owned()))
 }
 
-fn run(root: &Path, args: &[&str]) -> Result<GitOutput, Error> {
+pub(super) fn run(root: &Path, args: &[&str]) -> Result<GitOutput, Error> {
     run_bounded(root, args, None)
 }
 
-fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<GitOutput, Error> {
+pub(super) fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<GitOutput, Error> {
     run_bounded(root, args, Some(input))
 }
 
@@ -33,7 +35,7 @@ fn run_bounded(root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<GitOu
 }
 
 #[cfg(test)]
-fn run_observing_descendant_grace(
+pub(super) fn run_observing_descendant_grace(
     root: &Path,
     args: &[&str],
     descendant_grace_started: &mut dyn FnMut(),
@@ -102,7 +104,7 @@ fn command_limit(args: &[&str]) -> Duration {
     }
 }
 
-fn supervise_git(
+pub(super) fn supervise_git(
     process: &mut GitProcess,
     mut workers: CommandWorkers,
     args: &[&str],
@@ -251,7 +253,7 @@ fn fail_supervision<T>(
     Err(error)
 }
 
-struct GitProcess {
+pub(super) struct GitProcess {
     child: std::process::Child,
     pid: u32,
     status: Option<std::process::ExitStatus>,
@@ -261,7 +263,7 @@ struct GitProcess {
 
 /// What the kernel actually established about Git's process group.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GroupPresence {
+pub(super) enum GroupPresence {
     Present,
     Absent,
     Indeterminate,
@@ -269,7 +271,7 @@ enum GroupPresence {
 
 /// The evidence rule at one of the three process-group observation sites.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GroupProbeSite {
+pub(super) enum GroupProbeSite {
     GitExited,
     TermSentBeforeKill,
     KillSent,
@@ -290,7 +292,7 @@ impl GitProcess {
     }
 
     #[cfg(all(test, unix))]
-    fn with_group_probe(
+    pub(super) fn with_group_probe(
         child: std::process::Child,
         probe: impl FnMut(GroupProbeSite, rustix::process::Pid) -> GroupPresence + 'static,
     ) -> Self {
@@ -309,7 +311,7 @@ impl GitProcess {
         Ok(self.status)
     }
 
-    fn terminate(&mut self) -> Result<(), Error> {
+    pub(super) fn terminate(&mut self) -> Result<(), Error> {
         self.signal_group(false)?;
         // After TERM but before KILL, only observed absence may suppress
         // escalation. Each unreadable observation is re-read once immediately;
@@ -414,7 +416,7 @@ impl GitProcess {
 /// group without spending the whole grace. The two post-exit consumers have
 /// already observed Git's exit or delivered KILL, so only positive presence is
 /// evidence that their settling work remains unfinished.
-fn group_is_settled_against(
+pub(super) fn group_is_settled_against(
     probe_site: GroupProbeSite,
     mut observe: impl FnMut() -> Result<GroupPresence, Error>,
 ) -> Result<bool, Error> {
@@ -432,7 +434,7 @@ fn group_is_settled_against(
 }
 
 #[cfg(unix)]
-fn classify_group_probe(result: Result<(), rustix::io::Errno>) -> GroupPresence {
+pub(super) fn classify_group_probe(result: Result<(), rustix::io::Errno>) -> GroupPresence {
     match result {
         Ok(()) | Err(rustix::io::Errno::PERM) => GroupPresence::Present,
         Err(rustix::io::Errno::SRCH) => GroupPresence::Absent,
@@ -447,7 +449,7 @@ enum WorkerEvent {
     Panicked(&'static str),
 }
 
-struct CommandWorkers {
+pub(super) struct CommandWorkers {
     events: mpsc::Receiver<WorkerEvent>,
     handles: Vec<JoinHandle<()>>,
     stdout: Option<Vec<u8>>,
@@ -456,7 +458,7 @@ struct CommandWorkers {
 }
 
 impl CommandWorkers {
-    fn start(process: &mut GitProcess, input: Option<&[u8]>) -> Result<Self, Error> {
+    pub(super) fn start(process: &mut GitProcess, input: Option<&[u8]>) -> Result<Self, Error> {
         let stdout = process.child.stdout.take().ok_or_else(|| {
             Error::fault("git::stdout-missing", "Git stdout pipe was unavailable")
         })?;

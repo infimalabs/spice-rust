@@ -137,8 +137,10 @@ pub(crate) struct ReportVersionEvidence {
     pub(crate) version: u64,
 }
 
-include!("report/gate.rs");
-include!("report/kill.rs");
+mod gate;
+pub use gate::*;
+mod kill;
+pub use kill::*;
 
 fn require_strict_names<'a>(
     report: &'static str,
@@ -163,5 +165,6 @@ fn quoted(value: &str) -> String {
     serde_json::to_string(value).expect("a Rust string always has one JSON spelling")
 }
 
-include!("report/render.rs");
-include!("report/fixtures.rs");
+mod render;
+pub use render::*;
+mod fixtures;

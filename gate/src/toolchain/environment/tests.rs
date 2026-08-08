@@ -1,400 +1,398 @@
-mod tests {
-    use super::*;
-    use crate::toolchain::PACKAGED_ENV_INCLUDES;
+use super::*;
 
-    /// The one-based character column one needle occupies in one fixture line.
-    fn column_at(line: &str, needle: &str) -> u32 {
-        let start = line
-            .find(needle)
-            .expect("the fixture line names the needle");
-        u32::try_from(line[..start].chars().count() + 1).expect("a fixture column fits")
-    }
+use crate::toolchain::PACKAGED_ENV_INCLUDES;
 
-    /// Every packaged spelling compiles, so no analysis can panic on a tree.
-    ///
-    /// The predecessor dialect carries a look-behind and a back-reference this
-    /// engine has neither of, and both are answered by the compiler in this
-    /// module rather than by dropping the pattern. This forces every table.
-    #[test]
-    fn every_packaged_spelling_compiles_in_this_engine() {
+/// The one-based character column one needle occupies in one fixture line.
+fn column_at(line: &str, needle: &str) -> u32 {
+    let start = line
+        .find(needle)
+        .expect("the fixture line names the needle");
+    u32::try_from(line[..start].chars().count() + 1).expect("a fixture column fits")
+}
+
+/// Every packaged spelling compiles, so no analysis can panic on a tree.
+///
+/// The predecessor dialect carries a look-behind and a back-reference this
+/// engine has neither of, and both are answered by the compiler in this
+/// module rather than by dropping the pattern. This forces every table.
+#[test]
+fn every_packaged_spelling_compiles_in_this_engine() {
+    assert!(
+        !watchlist().is_empty(),
+        "the packaged watchlist is not empty"
+    );
+    assert!(
+        declared_names().is_empty(),
+        "release 0.31.0 declares no environment names"
+    );
+    assert!(!declaration_names().is_empty());
+    assert!(!context_names().is_empty());
+    assert_eq!(context().as_str(), CONTEXT_TEMPLATE);
+    assert_eq!(destructured().as_str(), DESTRUCTURED_TEMPLATE);
+    for (family, patterns) in access_gate() {
         assert!(
-            !watchlist().is_empty(),
-            "the packaged watchlist is not empty"
+            !patterns.is_empty(),
+            "{family} declares an idiom to gate on"
         );
+    }
+    for (family, patterns) in access_names() {
+        assert!(!patterns.is_empty(), "{family} reads a name off its access");
+    }
+}
+
+/// The compiled env extensions and the declared globs are one selection.
+#[test]
+fn compiled_env_extensions_cover_exactly_the_declared_globs() {
+    let expected: Vec<String> = ENV_EXTENSIONS
+        .iter()
+        .map(|extension| format!("**/*.{extension}"))
+        .collect();
+    assert_eq!(PACKAGED_ENV_INCLUDES, expected);
+}
+
+/// Every family the profile gives suffixes also gets an idiom and a name.
+#[test]
+fn every_declared_family_has_an_idiom_and_a_finding_name() {
+    for (family, suffixes) in PACKAGED_ENV_PROFILE.family_suffixes {
+        assert!(!suffixes.is_empty(), "{family} claims no suffix");
         assert!(
-            declared_names().is_empty(),
-            "release 0.31.0 declares no environment names"
-        );
-        assert!(!declaration_names().is_empty());
-        assert!(!context_names().is_empty());
-        assert_eq!(context().as_str(), CONTEXT_TEMPLATE);
-        assert_eq!(destructured().as_str(), DESTRUCTURED_TEMPLATE);
-        for (family, patterns) in access_gate() {
-            assert!(
-                !patterns.is_empty(),
-                "{family} declares an idiom to gate on"
-            );
-        }
-        for (family, patterns) in access_names() {
-            assert!(!patterns.is_empty(), "{family} reads a name off its access");
-        }
-    }
-
-    /// The compiled env extensions and the declared globs are one selection.
-    #[test]
-    fn compiled_env_extensions_cover_exactly_the_declared_globs() {
-        let expected: Vec<String> = ENV_EXTENSIONS
-            .iter()
-            .map(|extension| format!("**/*.{extension}"))
-            .collect();
-        assert_eq!(PACKAGED_ENV_INCLUDES, expected);
-    }
-
-    /// Every family the profile gives suffixes also gets an idiom and a name.
-    #[test]
-    fn every_declared_family_has_an_idiom_and_a_finding_name() {
-        for (family, suffixes) in PACKAGED_ENV_PROFILE.family_suffixes {
-            assert!(!suffixes.is_empty(), "{family} claims no suffix");
-            assert!(
-                access_gate().iter().any(|(named, _)| named == family),
-                "{family} has suffixes and no access idiom to gate them with"
-            );
-            assert!(
-                PACKAGED_ENV_PROFILE
-                    .finding_names
-                    .iter()
-                    .any(|(named, _)| named == family),
-                "{family} would report under an invented finding name"
-            );
-        }
-    }
-
-    /// An included extension with no family is still scanned, just not gated.
-    #[test]
-    fn a_family_is_only_claimed_by_the_suffixes_the_profile_names() {
-        assert_eq!(family("py"), Some("python"));
-        assert_eq!(family("zsh"), Some("shell"));
-        assert_eq!(family("ts"), Some("javascript"));
-        assert_eq!(family("rs"), None);
-        assert!(ENV_EXTENSIONS.contains(&"rs"));
-    }
-
-    #[test]
-    fn the_scanner_never_reports_its_own_implementation() {
-        assert!(is_scanner_itself("spice/studies/envpolicy.py"));
-        assert!(!is_scanner_itself("spice/studies/envpolicyx.py"));
-    }
-
-    /// Two reads of one name on one line are two accesses, not one.
-    ///
-    /// Findings are refused as duplicates when they agree in every field, so
-    /// the column is what keeps the second read from being dropped. Collapsing
-    /// them would report one place the environment is read where there are two.
-    #[test]
-    fn two_reads_on_one_line_are_two_accesses_at_two_columns() {
-        let read = "os.getenv(\"SPICE_HOOKS\")";
-        let line = format!("value = {read} or {read}");
-        let found = accesses(Some("python"), &line);
-        assert_eq!(found.len(), 2, "one line, two reads, two accesses");
-        assert_eq!(found[0].name, "SPICE_HOOKS");
-        assert_eq!(found[1].name, "SPICE_HOOKS");
-        assert_ne!(found[0].column, found[1].column);
-        assert_eq!(found[0].column, column_at(&line, "SPICE_HOOKS"));
-    }
-
-    /// Two dynamic reads on one line are two accesses, not the first one.
-    ///
-    /// Neither read carries a literal, so both are named by the family idiom
-    /// and only the column tells them apart. A gate that answered with its
-    /// first match would report one place the environment is read where the
-    /// line commits two.
-    #[test]
-    fn two_dynamic_reads_on_one_line_are_two_accesses() {
-        let line = "value = os.environ[first] or os.getenv(second)";
-        let found = accesses(Some("python"), line);
-        assert_eq!(found.len(), 2, "one line, two dynamic reads, two accesses");
-        assert_eq!(found[0].name, "os env access");
-        assert_eq!(found[1].name, "os env access");
-        assert_eq!(found[0].column, column_at(line, "os.environ"));
-        assert_eq!(found[1].column, column_at(line, "os.getenv"));
-    }
-
-    /// A watchlisted read beside a dynamic read is two differently named accesses.
-    ///
-    /// This is the case neither extractor sees alone: the watchlist names the
-    /// first read and knows nothing of the second, the gate finds both idioms
-    /// and can name neither literal. Answering from whichever extractor spoke
-    /// first loses one of the two accesses the line commits.
-    #[test]
-    fn a_watchlisted_read_beside_a_dynamic_read_is_two_accesses() {
-        let line = "value = os.getenv(\"SPICE_HOOKS\") or os.environ[key]";
-        let found = accesses(Some("python"), line);
-        assert_eq!(found.len(), 2, "one literal read and one dynamic read");
-        assert_eq!(found[0].name, "SPICE_HOOKS");
-        assert_eq!(found[0].column, column_at(line, "SPICE_HOOKS"));
-        assert_eq!(found[1].name, "os env access");
-        assert_eq!(found[1].column, column_at(line, "os.environ"));
-    }
-
-    /// The same line read the other way around is still ordered by column.
-    ///
-    /// Here the dynamic read comes first and the watchlisted one second, so the
-    /// idiom the gate names sits to the left of the literal the watchlist
-    /// names. The two extractors are read in a fixed order, literals and then
-    /// idioms, which is the opposite of the order this line commits them in,
-    /// so only sorting the accesses by column puts them where the line reads.
-    #[test]
-    fn a_dynamic_read_before_a_watchlisted_read_is_ordered_by_column() {
-        let line = "value = os.environ[key] or os.getenv(\"SPICE_HOOKS\")";
-        let found = accesses(Some("python"), line);
-        assert_eq!(found.len(), 2, "one dynamic read and one literal read");
-        assert_eq!(found[0].name, "os env access");
-        assert_eq!(found[0].column, column_at(line, "os.environ"));
-        assert_eq!(found[1].name, "SPICE_HOOKS");
-        assert_eq!(found[1].column, column_at(line, "SPICE_HOOKS"));
-    }
-
-    /// One read both extractors catch is one access, named by its literal.
-    ///
-    /// The gate matches the idiom and the watchlist matches the literal inside
-    /// it. Reporting both would double every ordinary read, so the literal is
-    /// owned by the access it sits in and the idiom stays silent about it.
-    #[test]
-    fn a_watchlisted_read_inside_an_idiom_is_one_access_not_two() {
-        let line = "value = os.getenv(\"SPICE_HOOKS\")";
-        let found = accesses(Some("python"), line);
-        assert_eq!(found.len(), 1, "both extractors caught one read");
-        assert_eq!(found[0].name, "SPICE_HOOKS");
-        assert_eq!(found[0].column, column_at(line, "SPICE_HOOKS"));
-    }
-
-    /// A read under a name the watchlist never heard of is still an access.
-    ///
-    /// The gate names the family idiom because a dynamic read has no literal to
-    /// name, and that is the whole reason it exists beside the watchlist.
-    #[test]
-    fn a_read_no_watchlist_pattern_catches_is_named_by_the_gate() {
-        let line = "home = os.environ[key]";
-        let found = accesses(Some("python"), line);
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].name, "os env access");
-        assert_eq!(found[0].column, column_at(line, "os.environ"));
-        assert!(
-            accesses(None, line).is_empty(),
-            "a file of no declared family has no idiom to be gated by"
-        );
-    }
-
-    /// The escape guard the packaged shell spelling opens with is honoured.
-    #[test]
-    fn an_escaped_shell_expansion_is_not_an_access() {
-        assert_eq!(accesses(Some("shell"), "echo $HOME").len(), 1);
-        assert!(accesses(Some("shell"), r"echo \$HOME").is_empty());
-    }
-
-    /// A marker on the line waives that line outright.
-    #[test]
-    fn a_marker_on_one_line_waives_that_line() {
-        let text = concat!(
-            "first = os.getenv(\"HOME\")  # env-policy: allow\n",
-            "second = os.getenv(\"HOME\")\n"
-        );
-        assert_eq!(waived_lines(text), BTreeSet::from([1]));
-    }
-
-    /// A standalone marker comment waives the whole statement after it.
-    ///
-    /// The scanner catches whichever line the access is spelled on, which for a
-    /// call broken over several lines is not the line a reader would annotate.
-    #[test]
-    fn a_standalone_marker_waives_the_statement_that_follows_it() {
-        let text = concat!(
-            "# env-policy: allow\n",
-            "value = os.getenv(\n",
-            "    \"HOME\",\n",
-            ")\n",
-            "other = os.getenv(\"HOME\")\n"
-        );
-        assert_eq!(waived_lines(text), BTreeSet::from([1, 2, 3, 4]));
-    }
-
-    /// A bracket inside a string cannot open a statement that never closes.
-    #[test]
-    fn string_contents_and_comments_do_not_decide_where_a_statement_ends() {
-        assert_eq!(structural_line("value = \"(((\"  # (((").trim(), "value =");
-        assert_eq!(delimiter_delta("([{}])"), 0);
-        assert_eq!(
-            statement_spans(&["value = \"(((\"", "", "other = 1"]),
-            [(1, 1), (3, 3)]
-        );
-    }
-
-    /// A statement left open at the end of a file still occupies its lines.
-    #[test]
-    fn an_unclosed_statement_runs_to_the_end_of_the_file() {
-        assert_eq!(statement_spans(&["value = (", "    1,"]), [(1, 2)]);
-    }
-
-    /// Both quote characters read, which is what the back-reference did.
-    #[test]
-    fn a_quoted_literal_is_read_under_either_quote_character() {
-        assert!(references(Some("python"), "os.getenv(\"HOME\")").contains("HOME"));
-        assert!(references(Some("python"), "os.getenv('HOME')").contains("HOME"));
-    }
-
-    /// Every idiom the predecessor counts as a reference is counted here.
-    #[test]
-    fn a_reference_is_read_from_access_declaration_context_and_watchlist() {
-        assert!(references(Some("lua"), "os.getenv('LUA_PATH')").contains("LUA_PATH"));
-        assert!(references(None, "READY_ENV = \"READY\"").contains("READY"));
-        let contextual = references(None, "environ.update({\"SPICE_HOOKS\": \"1\"})");
-        assert!(contextual.contains("SPICE_HOOKS"));
-        assert_eq!(
-            references(
-                Some("javascript"),
-                "const { ONE, TWO: two, ...rest } = process.env;"
-            ),
-            BTreeSet::from(["ONE".to_owned(), "TWO".to_owned()])
+            access_gate().iter().any(|(named, _)| named == family),
+            "{family} has suffixes and no access idiom to gate them with"
         );
         assert!(
-            references(None, "let quoted = \"PLAIN\";").is_empty(),
-            "a quoted literal on an ordinary line is not an environment name"
+            PACKAGED_ENV_PROFILE
+                .finding_names
+                .iter()
+                .any(|(named, _)| named == family),
+            "{family} would report under an invented finding name"
         );
     }
+}
 
-    /// The explicit assertion removes only the broad watchlist inference.
-    #[test]
-    fn a_named_non_environment_literal_is_not_a_ledger_reference() {
-        // The generated source below contains the exact names; this test source
-        // constructs them so the repository ledger does not consume its fixture.
-        const FIXTURE: &str = concat!("SPICE", "_123"); // env-policy: not-an-env SPICE_123
-        const ACCESS: &str = concat!("SPICE", "_REAL"); // env-policy: not-an-env SPICE_REAL
-        let fixture =
-            format!("let invalid = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {FIXTURE}");
-        assert!(references(None, &fixture).is_empty());
-        assert!(
-            references(None, &format!("let invalid = \"{FIXTURE}\";")).contains(FIXTURE),
-            "the unmarked control must still exercise the broad watchlist"
-        );
-        assert!(
-            references(
-                Some("python"),
-                &format!("os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}")
-            )
-            .contains(ACCESS),
-            "the marker cannot suppress a name grounded by an access idiom"
-        );
-        assert!(accesses(None, &fixture).is_empty());
-        let actual = accesses(
+/// An included extension with no family is still scanned, just not gated.
+#[test]
+fn a_family_is_only_claimed_by_the_suffixes_the_profile_names() {
+    assert_eq!(family("py"), Some("python"));
+    assert_eq!(family("zsh"), Some("shell"));
+    assert_eq!(family("ts"), Some("javascript"));
+    assert_eq!(family("rs"), None);
+    assert!(ENV_EXTENSIONS.contains(&"rs"));
+}
+
+#[test]
+fn the_scanner_never_reports_its_own_implementation() {
+    assert!(is_scanner_itself("spice/studies/envpolicy.py"));
+    assert!(!is_scanner_itself("spice/studies/envpolicyx.py"));
+}
+
+/// Two reads of one name on one line are two accesses, not one.
+///
+/// Findings are refused as duplicates when they agree in every field, so
+/// the column is what keeps the second read from being dropped. Collapsing
+/// them would report one place the environment is read where there are two.
+#[test]
+fn two_reads_on_one_line_are_two_accesses_at_two_columns() {
+    let read = "os.getenv(\"SPICE_HOOKS\")";
+    let line = format!("value = {read} or {read}");
+    let found = accesses(Some("python"), &line);
+    assert_eq!(found.len(), 2, "one line, two reads, two accesses");
+    assert_eq!(found[0].name, "SPICE_HOOKS"); // env-policy: allow
+    assert_eq!(found[1].name, "SPICE_HOOKS"); // env-policy: allow
+    assert_ne!(found[0].column, found[1].column);
+    assert_eq!(found[0].column, column_at(&line, "SPICE_HOOKS")); // env-policy: allow
+}
+
+/// Two dynamic reads on one line are two accesses, not the first one.
+///
+/// Neither read carries a literal, so both are named by the family idiom
+/// and only the column tells them apart. A gate that answered with its
+/// first match would report one place the environment is read where the
+/// line commits two.
+#[test]
+fn two_dynamic_reads_on_one_line_are_two_accesses() {
+    let line = "value = os.environ[first] or os.getenv(second)";
+    let found = accesses(Some("python"), line);
+    assert_eq!(found.len(), 2, "one line, two dynamic reads, two accesses");
+    assert_eq!(found[0].name, "os env access");
+    assert_eq!(found[1].name, "os env access");
+    assert_eq!(found[0].column, column_at(line, "os.environ"));
+    assert_eq!(found[1].column, column_at(line, "os.getenv"));
+}
+
+/// A watchlisted read beside a dynamic read is two differently named accesses.
+///
+/// This is the case neither extractor sees alone: the watchlist names the
+/// first read and knows nothing of the second, the gate finds both idioms
+/// and can name neither literal. Answering from whichever extractor spoke
+/// first loses one of the two accesses the line commits.
+#[test]
+fn a_watchlisted_read_beside_a_dynamic_read_is_two_accesses() {
+    let line = "value = os.getenv(\"SPICE_HOOKS\") or os.environ[key]";
+    let found = accesses(Some("python"), line);
+    assert_eq!(found.len(), 2, "one literal read and one dynamic read");
+    assert_eq!(found[0].name, "SPICE_HOOKS"); // env-policy: allow
+    assert_eq!(found[0].column, column_at(line, "SPICE_HOOKS")); // env-policy: allow
+    assert_eq!(found[1].name, "os env access");
+    assert_eq!(found[1].column, column_at(line, "os.environ"));
+}
+
+/// The same line read the other way around is still ordered by column.
+///
+/// Here the dynamic read comes first and the watchlisted one second, so the
+/// idiom the gate names sits to the left of the literal the watchlist
+/// names. The two extractors are read in a fixed order, literals and then
+/// idioms, which is the opposite of the order this line commits them in,
+/// so only sorting the accesses by column puts them where the line reads.
+#[test]
+fn a_dynamic_read_before_a_watchlisted_read_is_ordered_by_column() {
+    let line = "value = os.environ[key] or os.getenv(\"SPICE_HOOKS\")";
+    let found = accesses(Some("python"), line);
+    assert_eq!(found.len(), 2, "one dynamic read and one literal read");
+    assert_eq!(found[0].name, "os env access");
+    assert_eq!(found[0].column, column_at(line, "os.environ"));
+    assert_eq!(found[1].name, "SPICE_HOOKS"); // env-policy: allow
+    assert_eq!(found[1].column, column_at(line, "SPICE_HOOKS")); // env-policy: allow
+}
+
+/// One read both extractors catch is one access, named by its literal.
+///
+/// The gate matches the idiom and the watchlist matches the literal inside
+/// it. Reporting both would double every ordinary read, so the literal is
+/// owned by the access it sits in and the idiom stays silent about it.
+#[test]
+fn a_watchlisted_read_inside_an_idiom_is_one_access_not_two() {
+    let line = "value = os.getenv(\"SPICE_HOOKS\")";
+    let found = accesses(Some("python"), line);
+    assert_eq!(found.len(), 1, "both extractors caught one read");
+    assert_eq!(found[0].name, "SPICE_HOOKS"); // env-policy: allow
+    assert_eq!(found[0].column, column_at(line, "SPICE_HOOKS")); // env-policy: allow
+}
+
+/// A read under a name the watchlist never heard of is still an access.
+///
+/// The gate names the family idiom because a dynamic read has no literal to
+/// name, and that is the whole reason it exists beside the watchlist.
+#[test]
+fn a_read_no_watchlist_pattern_catches_is_named_by_the_gate() {
+    let line = "home = os.environ[key]";
+    let found = accesses(Some("python"), line);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "os env access");
+    assert_eq!(found[0].column, column_at(line, "os.environ"));
+    assert!(
+        accesses(None, line).is_empty(),
+        "a file of no declared family has no idiom to be gated by"
+    );
+}
+
+/// The escape guard the packaged shell spelling opens with is honoured.
+#[test]
+fn an_escaped_shell_expansion_is_not_an_access() {
+    assert_eq!(accesses(Some("shell"), "echo $HOME").len(), 1);
+    assert!(accesses(Some("shell"), r"echo \$HOME").is_empty());
+}
+
+/// A marker on the line waives that line outright.
+#[test]
+fn a_marker_on_one_line_waives_that_line() {
+    let text = concat!(
+        "first = os.getenv(\"HOME\")  # env-policy: allow\n",
+        "second = os.getenv(\"HOME\")\n"
+    );
+    assert_eq!(waived_lines(text), BTreeSet::from([1]));
+}
+
+/// A standalone marker comment waives the whole statement after it.
+///
+/// The scanner catches whichever line the access is spelled on, which for a
+/// call broken over several lines is not the line a reader would annotate.
+#[test]
+fn a_standalone_marker_waives_the_statement_that_follows_it() {
+    let text = concat!(
+        "# env-policy: allow\n",
+        "value = os.getenv(\n",
+        "    \"HOME\",\n",
+        ")\n",
+        "other = os.getenv(\"HOME\")\n"
+    );
+    assert_eq!(waived_lines(text), BTreeSet::from([1, 2, 3, 4]));
+}
+
+/// A bracket inside a string cannot open a statement that never closes.
+#[test]
+fn string_contents_and_comments_do_not_decide_where_a_statement_ends() {
+    assert_eq!(structural_line("value = \"(((\"  # (((").trim(), "value =");
+    assert_eq!(delimiter_delta("([{}])"), 0);
+    assert_eq!(
+        statement_spans(&["value = \"(((\"", "", "other = 1"]),
+        [(1, 1), (3, 3)]
+    );
+}
+
+/// A statement left open at the end of a file still occupies its lines.
+#[test]
+fn an_unclosed_statement_runs_to_the_end_of_the_file() {
+    assert_eq!(statement_spans(&["value = (", "    1,"]), [(1, 2)]);
+}
+
+/// Both quote characters read, which is what the back-reference did.
+#[test]
+fn a_quoted_literal_is_read_under_either_quote_character() {
+    assert!(references(Some("python"), "os.getenv(\"HOME\")").contains("HOME"));
+    assert!(references(Some("python"), "os.getenv('HOME')").contains("HOME"));
+}
+
+/// Every idiom the predecessor counts as a reference is counted here.
+#[test]
+fn a_reference_is_read_from_access_declaration_context_and_watchlist() {
+    assert!(references(Some("lua"), "os.getenv('LUA_PATH')").contains("LUA_PATH"));
+    assert!(references(None, "READY_ENV = \"READY\"").contains("READY"));
+    let contextual = references(None, "environ.update({\"SPICE_HOOKS\": \"1\"})");
+    assert!(contextual.contains("SPICE_HOOKS")); // env-policy: allow
+    assert_eq!(
+        references(
+            Some("javascript"),
+            "const { ONE, TWO: two, ...rest } = process.env;"
+        ),
+        BTreeSet::from(["ONE".to_owned(), "TWO".to_owned()])
+    );
+    assert!(
+        references(None, "let quoted = \"PLAIN\";").is_empty(),
+        "a quoted literal on an ordinary line is not an environment name"
+    );
+}
+
+/// The explicit assertion removes only the broad watchlist inference.
+#[test]
+fn a_named_non_environment_literal_is_not_a_ledger_reference() {
+    // The generated source below contains the exact names; this test source
+    // constructs them so the repository ledger does not consume its fixture.
+    const FIXTURE: &str = concat!("SPICE", "_123"); // env-policy: not-an-env SPICE_123
+    const ACCESS: &str = concat!("SPICE", "_REAL"); // env-policy: not-an-env SPICE_REAL
+    let fixture = format!("let invalid = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {FIXTURE}");
+    assert!(references(None, &fixture).is_empty());
+    assert!(
+        references(None, &format!("let invalid = \"{FIXTURE}\";")).contains(FIXTURE),
+        "the unmarked control must still exercise the broad watchlist"
+    );
+    assert!(
+        references(
             Some("python"),
-            &format!("os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}"),
-        );
-        assert_eq!(actual.len(), 1);
-        assert_eq!(actual[0].name, finding_name("python"));
+            &format!("os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}")
+        )
+        .contains(ACCESS),
+        "the marker cannot suppress a name grounded by an access idiom"
+    );
+    assert!(accesses(None, &fixture).is_empty());
+    let actual = accesses(
+        Some("python"),
+        &format!("os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}"),
+    );
+    assert_eq!(actual.len(), 1);
+    assert_eq!(actual[0].name, finding_name("python"));
+}
+
+/// A marker must name one exact ledger-shaped token to have any effect.
+#[test]
+fn a_non_environment_marker_never_waives_the_whole_line() {
+    // Build both fixture names before formatting the synthetic source, which
+    // keeps this scanner test outside the repository's own name inventory.
+    const FIXTURE: &str = concat!("SPICE", "_123"); // env-policy: not-an-env SPICE_123
+    const OTHER: &str = concat!("SPICE", "_OTHER"); // env-policy: not-an-env SPICE_OTHER
+    for line in [
+        format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER}"),
+        format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {OTHER}"),
+    ] {
+        assert!(references(None, &line).contains(FIXTURE));
     }
+}
 
-    /// A marker must name one exact ledger-shaped token to have any effect.
-    #[test]
-    fn a_non_environment_marker_never_waives_the_whole_line() {
-        // Build both fixture names before formatting the synthetic source, which
-        // keeps this scanner test outside the repository's own name inventory.
-        const FIXTURE: &str = concat!("SPICE", "_123"); // env-policy: not-an-env SPICE_123
-        const OTHER: &str = concat!("SPICE", "_OTHER"); // env-policy: not-an-env SPICE_OTHER
-        for line in [
-            format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER}"),
-            format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {OTHER}"),
-        ] {
-            assert!(references(None, &line).contains(FIXTURE));
-        }
-    }
+/// A ledger name is a shape, and a trailing underscore is not that shape.
+#[test]
+fn a_ledger_name_opens_on_a_letter_and_never_closes_on_an_underscore() {
+    assert!(is_ledger_name("ALPHA_HOME"));
+    assert!(is_ledger_name("_PRIVATE"));
+    assert!(!is_ledger_name("TRAILING_"));
+    assert!(!is_ledger_name("lower"));
+    assert!(!is_ledger_name(""));
+}
 
-    /// A ledger name is a shape, and a trailing underscore is not that shape.
-    #[test]
-    fn a_ledger_name_opens_on_a_letter_and_never_closes_on_an_underscore() {
-        assert!(is_ledger_name("ALPHA_HOME"));
-        assert!(is_ledger_name("_PRIVATE"));
-        assert!(!is_ledger_name("TRAILING_"));
-        assert!(!is_ledger_name("lower"));
-        assert!(!is_ledger_name(""));
-    }
+/// Literal-only Rust concatenations are one reference even across lines.
+#[test]
+fn a_wrapped_rust_concat_is_reassembled_and_exactly_exempted() {
+    const PREFIX: &str = "SPICE";
+    const SUFFIX: &str = "_SPLIT_LANE";
+    let name = concat!("SPICE", "_SPLIT_LANE"); // env-policy: not-an-env SPICE_SPLIT_LANE
+    let source = format!(
+        concat!(
+            "let value = std::env::var(concat!(\n",
+            "    \"{PREFIX}\", // keep the namespace visible\n",
+            "    /* join the literal tokens */\n",
+            "    \"{SUFFIX}\",\n",
+            "));\n"
+        ),
+        PREFIX = PREFIX,
+        SUFFIX = SUFFIX,
+    );
+    assert_eq!(
+        references_in(Some("rs"), None, &source),
+        BTreeSet::from([(1, name.to_owned())])
+    );
 
-    /// Literal-only Rust concatenations are one reference even across lines.
-    #[test]
-    fn a_wrapped_rust_concat_is_reassembled_and_exactly_exempted() {
-        const PREFIX: &str = "SPICE";
-        const SUFFIX: &str = "_SPLIT_LANE";
-        let name = concat!("SPICE", "_SPLIT_LANE"); // env-policy: not-an-env SPICE_SPLIT_LANE
-        let source = format!(
-            concat!(
-                "let value = std::env::var(concat!(\n",
-                "    \"{PREFIX}\", // keep the namespace visible\n",
-                "    /* join the literal tokens */\n",
-                "    \"{SUFFIX}\",\n",
-                "));\n"
-            ),
-            PREFIX = PREFIX,
-            SUFFIX = SUFFIX,
-        );
-        assert_eq!(
-            references_in(Some("rs"), None, &source),
-            BTreeSet::from([(1, name.to_owned())])
-        );
+    let exempted = format!(
+        concat!(
+            "let value = {{\n",
+            "    // {marker} {name}\n",
+            "    std::env::var(concat!(\n",
+            "        \"{prefix}\",\n",
+            "        \"{suffix}\",\n",
+            "    ))\n",
+            "}};\n"
+        ),
+        prefix = PREFIX,
+        suffix = SUFFIX,
+        marker = ENV_NAME_LITERAL_MARKER,
+        name = name,
+    );
+    assert!(references_in(Some("rs"), None, &exempted).is_empty());
 
-        let exempted = format!(
-            concat!(
-                "let value = {{\n",
-                "    // {marker} {name}\n",
-                "    std::env::var(concat!(\n",
-                "        \"{prefix}\",\n",
-                "        \"{suffix}\",\n",
-                "    ))\n",
-                "}};\n"
-            ),
-            prefix = PREFIX,
-            suffix = SUFFIX,
-            marker = ENV_NAME_LITERAL_MARKER,
-            name = name,
-        );
-        assert!(references_in(Some("rs"), None, &exempted).is_empty());
+    let unrelated_marker = format!(
+        concat!(
+            "let value = std::env::var(concat!(\n",
+            "    \"{prefix}\", /* an unmatched ( is comment prose */\n",
+            "    \"{suffix}\",\n",
+            "));\n",
+            "let fixture = \"{name}\"; // {marker} {name}\n",
+        ),
+        prefix = PREFIX,
+        suffix = SUFFIX,
+        marker = ENV_NAME_LITERAL_MARKER,
+        name = name,
+    );
+    assert_eq!(
+        references_in(Some("rs"), None, &unrelated_marker),
+        BTreeSet::from([(1, name.to_owned())]),
+        "a marker in a later statement cannot exempt a concat through comment punctuation",
+    );
 
-        let unrelated_marker = format!(
-            concat!(
-                "let value = std::env::var(concat!(\n",
-                "    \"{prefix}\", /* an unmatched ( is comment prose */\n",
-                "    \"{suffix}\",\n",
-                "));\n",
-                "let fixture = \"{name}\"; // {marker} {name}\n",
-            ),
-            prefix = PREFIX,
-            suffix = SUFFIX,
-            marker = ENV_NAME_LITERAL_MARKER,
-            name = name,
-        );
-        assert_eq!(
-            references_in(Some("rs"), None, &unrelated_marker),
-            BTreeSet::from([(1, name.to_owned())]),
-            "a marker in a later statement cannot exempt a concat through comment punctuation",
-        );
-
-        let examples = format!(
-            concat!(
-                "let joined = concat!(\"A\", \"B\"); ",
-                "let example = r#\"concat!(\"{prefix}\", \"{suffix}\")\"#;\n",
-                "let joined = concat!(\"A\", \"B\"); ",
-                "// concat!(\"{prefix}\", \"{suffix}\")\n",
-                "let wrapped = r#\"\n",
-                "concat!(\"{prefix}\", \"{suffix}\")\n",
-                "\"#;\n",
-                "/*\n",
-                "concat!(\"{prefix}\", \"{suffix}\")\n",
-                "*/\n"
-            ),
-            prefix = PREFIX,
-            suffix = SUFFIX,
-        );
-        assert!(
-            references_in(Some("rs"), None, &examples).is_empty(),
-            "a macro spelling in a single- or multi-line string or comment is not source code"
-        );
-    }
+    let examples = format!(
+        concat!(
+            "let joined = concat!(\"A\", \"B\"); ",
+            "let example = r#\"concat!(\"{prefix}\", \"{suffix}\")\"#;\n",
+            "let joined = concat!(\"A\", \"B\"); ",
+            "// concat!(\"{prefix}\", \"{suffix}\")\n",
+            "let wrapped = r#\"\n",
+            "concat!(\"{prefix}\", \"{suffix}\")\n",
+            "\"#;\n",
+            "/*\n",
+            "concat!(\"{prefix}\", \"{suffix}\")\n",
+            "*/\n"
+        ),
+        prefix = PREFIX,
+        suffix = SUFFIX,
+    );
+    assert!(
+        references_in(Some("rs"), None, &examples).is_empty(),
+        "a macro spelling in a single- or multi-line string or comment is not source code"
+    );
 }

@@ -605,7 +605,8 @@ fn env_sources(root: &Path) -> Result<Vec<String>, String> {
     Ok(sources)
 }
 
-include!("analyze/javascript.rs");
+mod javascript;
+pub(in crate::toolchain) use javascript::*;
 
 /// Run the declared formatter check over the complete selected tree.
 ///
@@ -615,9 +616,9 @@ include!("analyze/javascript.rs");
 ///
 /// It takes two passes to cover the tree, because the declared one cannot.
 /// rustfmt reaches a file by walking `mod` declarations down from each crate
-/// root, and this repository splits its largest modules with `include!`
-/// instead -- `spice/src/board_command.rs:25-32` is eleven of them in a row --
-/// so an included file is named by a macro and belongs to no module path.
+/// root, and a file reached through `include!` is named by a macro instead, so
+/// it belongs to no module path -- `proof/src/container.rs` reaches
+/// `container/tests.rs` that way, one of seven such files left here.
 /// `cargo fmt --all` opens the including file and never the included one, and
 /// reports a tree clean while those files drift. The second pass names them on
 /// the command line, which is the one way rustfmt will open them.
@@ -1384,4 +1385,4 @@ fn word_at(text: &str, start: usize, end: usize) -> Option<(u32, String)> {
 }
 
 #[cfg(test)]
-include!("analyze/tests.rs");
+mod tests;

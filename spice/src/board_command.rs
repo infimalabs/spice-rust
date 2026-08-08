@@ -22,11 +22,19 @@ use wire::{
 
 use crate::cli::Contract;
 
-include!("board_command/client.rs");
-include!("board_command/client_document.rs");
-include!("board_command/followup.rs");
-include!("board_command/next_action.rs");
-include!("board_command/mutation.rs");
-include!("board_command/progress.rs");
-include!("board_command/read_guard.rs");
-include!("board_command/tests.rs");
+mod client;
+pub(crate) use client::*;
+mod client_document;
+use client_document::*;
+mod followup;
+use followup::*;
+mod next_action;
+use next_action::*;
+mod mutation;
+use mutation::*;
+mod progress;
+use progress::*;
+mod read_guard;
+use read_guard::*;
+#[cfg(test)]
+mod tests;

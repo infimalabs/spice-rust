@@ -1,4 +1,6 @@
-fn claim_free(
+use super::*;
+
+pub(super) fn claim_free(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     task: &TaskRef,
@@ -76,7 +78,7 @@ fn claim_free(
     committed(bus, write, CommandAnswer::Claim(answer))
 }
 
-fn claim_reclaim(
+pub(super) fn claim_reclaim(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     renew: &ClaimRenew,
@@ -239,7 +241,7 @@ fn admit_reclaim_residency(
         "read current lane residency and reclaim its exact active claim",
     ))
 }
-fn task_done(
+pub(super) fn task_done(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     done: &TaskDone,
@@ -501,7 +503,7 @@ fn review_verdict(
     Ok((verdict, finding))
 }
 
-fn task_review(
+pub(super) fn task_review(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     review: &TaskReview,
@@ -601,7 +603,7 @@ struct DocTaskSpec {
     initial: wire::Phase,
 }
 
-fn doc_apply(
+pub(super) fn doc_apply(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     apply: &DocApply,

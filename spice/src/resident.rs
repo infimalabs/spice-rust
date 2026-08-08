@@ -42,9 +42,12 @@ use message_surface::AgentMessagePublisher;
 use message_surface::{CallPreviews, CaptureSurfaces, accept_capture_record};
 use shutdown::{current_residency, drive_shutdown};
 
-include!("resident/runtime.rs");
-include!("resident/ingest_surface.rs");
-include!("resident/release.rs");
+mod runtime;
+pub(crate) use runtime::*;
+mod ingest_surface;
+use ingest_surface::*;
+mod release;
+use release::*;
 
 #[cfg(test)]
 #[path = "resident/tests.rs"]

@@ -869,9 +869,9 @@ fn javascript_unused_scopes_candidates_to_top_level_and_counts_every_reference_f
 /// The declared workspace pass is run first over the same tree and has to
 /// report nothing, so the finding below is attributable to the second pass
 /// rather than to a fixture that was unformatted somewhere the first pass could
-/// already reach. Splitting a module with `include!` is not a hypothetical
-/// shape here: `spice/src/board_command.rs` is eleven of them in a row, and
-/// every one of those files was drifting unread until this pass existed.
+/// already reach. Splitting a file off with `include!` is not a hypothetical
+/// shape here: seven files still reach a sibling that way, `proof/src/container.rs`
+/// among them, and every one of them was drifting unread until this pass existed.
 #[test]
 fn the_formatter_names_a_file_only_the_included_pass_can_reach() {
     let repository = including_repository("toolchain-included", UNFORMATTED_INCLUDED);

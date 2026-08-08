@@ -1,9 +1,11 @@
+use super::*;
+
 /// Drive one correction through the door the CLI leaf reaches.
 ///
 /// The witnesses are read from the board immediately before the command, so
 /// a scenario that edits twice in a row observes the head the first edit
 /// published rather than a stale one.
-fn correct(
+pub(super) fn correct(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
@@ -313,7 +315,7 @@ fn only(task: &TaskHandle) -> TaskEdit {
 /// This is the ranking itself rather than a field read back off the row, so
 /// a correction that stored a priority the allocator never scores would
 /// leave the answer unmoved.
-fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Option<(String, i64)> {
+pub(super) fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Option<(String, i64)> {
     let answer = board(bus, epoch, actor.clone());
     let entries = actor_entries(&answer).expect("allocation board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)

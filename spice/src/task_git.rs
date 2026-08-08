@@ -25,8 +25,7 @@ use crate::repository::Repository;
 
 const PUBLISH_RACE_RETRY_LIMIT: usize = 5;
 const TRANSACTION_FILE: &str = "spice-task-boundary";
-const MERGE_STATE_FILES: &[&str] =
-    &["ORIG_HEAD", "MERGE_MODE", "MERGE_MSG", "MERGE_HEAD"];
+const MERGE_STATE_FILES: &[&str] = &["ORIG_HEAD", "MERGE_MODE", "MERGE_MSG", "MERGE_HEAD"];
 const LOCAL_COMMAND_LIMIT: Duration = Duration::from_secs(10);
 const NETWORK_COMMAND_LIMIT: Duration = Duration::from_secs(30);
 const OUTPUT_DRAIN_LIMIT: Duration = Duration::from_secs(1);
@@ -75,11 +74,7 @@ pub struct Error {
 }
 
 impl Error {
-    fn refusal(
-        reason: &'static str,
-        detail: impl Into<String>,
-        remedy: impl Into<String>,
-    ) -> Self {
+    fn refusal(reason: &'static str, detail: impl Into<String>, remedy: impl Into<String>) -> Self {
         Self {
             class: ErrorClass::Refusal,
             reason,
@@ -88,10 +83,7 @@ impl Error {
         }
     }
 
-    fn fault(
-        reason: &'static str,
-        detail: impl Into<String>,
-    ) -> Self {
+    fn fault(reason: &'static str, detail: impl Into<String>) -> Self {
         Self {
             class: ErrorClass::Fault,
             reason,
@@ -162,10 +154,7 @@ impl GitOutput {
         if output.is_empty() {
             format!("could not {action} (git exit {})", self.status)
         } else {
-            format!(
-                "could not {action} (git exit {})\n{output}",
-                self.status
-            )
+            format!("could not {action} (git exit {})\n{output}", self.status)
         }
     }
 }
@@ -200,16 +189,8 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
         )
     })?;
     fetch(root, &target)?;
-    let upstream_head = required_read(
-        root,
-        &["rev-parse", &target.baseline],
-        "read baseline",
-    )?;
-    let head = required_read(
-        root,
-        &["rev-parse", "HEAD"],
-        "read lane HEAD",
-    )?;
+    let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
+    let head = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let local_commits = ahead_count(root, &target.baseline)?;
     if local_commits == 0 {
         return Err(Error::refusal(
@@ -218,11 +199,7 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
             "make and commit the intended change before task capture",
         ));
     }
-    let subject = required_read(
-        root,
-        &["log", "-1", "--format=%s"],
-        "read commit subject",
-    )?;
+    let subject = required_read(root, &["log", "-1", "--format=%s"], "read commit subject")?;
     Ok(Capture {
         boundary: boundary(
             head.clone(),
@@ -250,7 +227,11 @@ pub fn stranded_commits(repository: &Repository) -> Result<Vec<String>, Error> {
     };
     let listed = required_read(
         root,
-        &["log", "--format=%h %s", &format!("{}..HEAD", target.baseline)],
+        &[
+            "log",
+            "--format=%h %s",
+            &format!("{}..HEAD", target.baseline),
+        ],
         "list local commits",
     )?;
     Ok(listed.lines().map(str::to_owned).collect())
@@ -282,34 +263,27 @@ pub fn prepare_free(repository: &Repository, task: &str) -> Result<(), Error> {
 }
 
 /// Safely advance a clean lane before allocator possession is minted.
-pub fn prepare_claim(
-    repository: &Repository,
-) -> Result<GitBoundary, Error> {
+pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
     require_clean(root, "task next")?;
-    let before = required_read(
-        root,
-        &["rev-parse", "HEAD"],
-        "read lane HEAD",
-    )?;
+    let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let Some(target) = resolve_target(root)? else {
         return Ok(boundary(before.clone(), before, None, None, 0));
     };
     fetch(root, &target)?;
-    let upstream_head = required_read(
-        root,
-        &["rev-parse", &target.baseline],
-        "read baseline",
-    )?;
+    let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
     let ahead = ahead_count(root, &target.baseline)?;
     if ahead != 0 {
         return Err(Error::refusal(
             "git::claim-loose-commits",
-            format!(concat!(
-                "the lane has {ahead} local commit(s) outside a ",
-                "claimed task boundary",
-            ), ahead = ahead),
+            format!(
+                concat!(
+                    "the lane has {ahead} local commit(s) outside a ",
+                    "claimed task boundary",
+                ),
+                ahead = ahead
+            ),
             concat!(
                 "run task capture for those commits before ",
                 "requesting task next",
@@ -320,10 +294,14 @@ pub fn prepare_claim(
         if !is_ancestor(root, &before, &upstream_head)? {
             return Err(Error::refusal(
                 "git::claim-diverged",
-                format!(concat!(
-                    "lane HEAD {before} does not fast-forward to ",
-                    "{upstream_head}",
-                ), before = before, upstream_head = upstream_head),
+                format!(
+                    concat!(
+                        "lane HEAD {before} does not fast-forward to ",
+                        "{upstream_head}",
+                    ),
+                    before = before,
+                    upstream_head = upstream_head
+                ),
                 concat!(
                     "publish or capture the local history before ",
                     "claiming new work",
@@ -347,19 +325,12 @@ pub fn prepare_claim(
 }
 
 /// Publish one task phase before its journal transition commits.
-pub fn publish(
-    repository: &Repository,
-    meta: Metadata<'_>,
-) -> Result<GitBoundary, Error> {
+pub fn publish(repository: &Repository, meta: Metadata<'_>) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
     require_no_open_merge(root, meta.label)?;
     require_clean(root, "task completion")?;
-    let observed_head = required_read(
-        root,
-        &["rev-parse", "HEAD"],
-        "read lane HEAD",
-    )?;
+    let observed_head = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let Some(target) = resolve_target(root)? else {
         return Ok(boundary(
             observed_head.clone(),
@@ -370,18 +341,9 @@ pub fn publish(
         ));
     };
     fetch(root, &target)?;
-    let upstream_head = required_read(
-        root,
-        &["rev-parse", &target.baseline],
-        "read baseline",
-    )?;
-    let agent_head = if is_ancestor(
-        root,
-        &observed_head,
-        &upstream_head,
-    )? {
-        recovered_lane_head(root, &observed_head, meta)?
-            .unwrap_or(observed_head)
+    let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
+    let agent_head = if is_ancestor(root, &observed_head, &upstream_head)? {
+        recovered_lane_head(root, &observed_head, meta)?.unwrap_or(observed_head)
     } else {
         observed_head
     };
@@ -390,13 +352,7 @@ pub fn publish(
     // Bind the authored tree and any non-empty lane command before the merge.
     // An empty lane declaration deliberately defers to each integrated tree.
     let admission = Admission::resolve(repository, &agent_head)?;
-    let integrated = integrate(
-        root,
-        &agent_head,
-        &upstream_head,
-        &message,
-        meta.label,
-    )?;
+    let integrated = integrate(root, &agent_head, &upstream_head, &message, meta.label)?;
     let (integrated, published_upstream) = publish_with_retry(
         root,
         &target,
@@ -436,11 +392,7 @@ fn boundary(
 }
 
 fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
-    let remotes = required_read(
-        root,
-        &["remote"],
-        "list Git remotes",
-    )?;
+    let remotes = required_read(root, &["remote"], "list Git remotes")?;
     if !remotes.lines().any(|remote| remote == "origin") {
         return Ok(None);
     }
@@ -460,9 +412,9 @@ fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
         root,
         &["config", "--get", &format!("branch.{branch}.merge")],
     )?;
-    if let Some(branch) = configured.and_then(|value| {
-        value.strip_prefix("refs/heads/").map(str::to_owned)
-    }) {
+    if let Some(branch) =
+        configured.and_then(|value| value.strip_prefix("refs/heads/").map(str::to_owned))
+    {
         return Ok(Some(Target {
             baseline: format!("origin/{branch}"),
             remote: "origin".to_owned(),
@@ -476,9 +428,7 @@ fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
     )?;
     let branch = symbolic
         .strip_prefix("refs/remotes/origin/")
-        .ok_or_else(|| {
-            Error::fault("git::baseline-invalid", symbolic.clone())
-        })?
+        .ok_or_else(|| Error::fault("git::baseline-invalid", symbolic.clone()))?
         .to_owned();
     Ok(Some(Target {
         baseline: format!("origin/{branch}"),
@@ -505,12 +455,9 @@ fn ahead_count(root: &Path, baseline: &str) -> Result<u32, Error> {
         &["rev-list", "--count", &format!("{baseline}..HEAD")],
         "count local commits",
     )?;
-    value.parse().map_err(|_| {
-        Error::fault(
-            "git::ahead-invalid",
-            format!("Git returned {value:?}"),
-        )
-    })
+    value
+        .parse()
+        .map_err(|_| Error::fault("git::ahead-invalid", format!("Git returned {value:?}")))
 }
 
 fn integrate(
@@ -524,35 +471,17 @@ fn integrate(
         return Ok(agent_head.to_owned());
     }
     if is_ancestor(root, agent_head, upstream_head)? {
-        let current = required_read(
-            root,
-            &["rev-parse", "HEAD"],
-            "read lane HEAD",
-        )?;
+        let current = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
         if current != upstream_head {
-            materialize_and_update(
-                root,
-                upstream_head,
-                &current,
-                "advance integrated baseline",
-            )?;
+            materialize_and_update(root, upstream_head, &current, "advance integrated baseline")?;
         }
         return Ok(upstream_head.to_owned());
     }
     if is_ancestor(root, upstream_head, agent_head)? {
-        if merge_first_parent(root, agent_head)?.as_deref()
-            == Some(upstream_head)
-        {
+        if merge_first_parent(root, agent_head)?.as_deref() == Some(upstream_head) {
             return Ok(agent_head.to_owned());
         }
-        return synthesize_and_update(
-            root,
-            agent_head,
-            upstream_head,
-            agent_head,
-            message,
-            label,
-        );
+        return synthesize_and_update(root, agent_head, upstream_head, agent_head, message, label);
     }
     let computed = merge_tree(root, agent_head, upstream_head)?;
     if !computed.conflicts.is_empty() {
@@ -609,27 +538,21 @@ fn synthesize_and_update(
         ));
     }
     let merge_head = created.stdout.trim().to_owned();
-    let expected = required_read(
-        root,
-        &["rev-parse", "HEAD"],
-        "read lane HEAD",
-    )?;
-    materialize_and_update(
-        root,
-        &merge_head,
-        &expected,
-        "advance branch to task merge",
-    )
-    .map_err(|error| with_retry_remedy(error, label))?;
+    let expected = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
+    materialize_and_update(root, &merge_head, &expected, "advance branch to task merge")
+        .map_err(|error| with_retry_remedy(error, label))?;
     Ok(merge_head)
 }
 
 fn with_retry_remedy(mut error: Error, label: &str) -> Error {
     if error.class == ErrorClass::Refusal {
-        error.remedy = format!(concat!(
-            "inspect git status and HEAD, then retry task ",
-            "completion for {label}",
-        ), label = label);
+        error.remedy = format!(
+            concat!(
+                "inspect git status and HEAD, then retry task ",
+                "completion for {label}",
+            ),
+            label = label
+        );
     }
     error
 }
@@ -639,11 +562,7 @@ struct MergeTree {
     conflicts: Vec<String>,
 }
 
-fn merge_tree(
-    root: &Path,
-    left: &str,
-    right: &str,
-) -> Result<MergeTree, Error> {
+fn merge_tree(root: &Path, left: &str, right: &str) -> Result<MergeTree, Error> {
     let merged = run(
         root,
         &[
@@ -661,8 +580,7 @@ fn merge_tree(
         .filter(|field| !field.is_empty())
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    if merged.status == 1 && !tree.is_empty() && !conflicts.is_empty()
-    {
+    if merged.status == 1 && !tree.is_empty() && !conflicts.is_empty() {
         return Ok(MergeTree { tree, conflicts });
     }
     if merged.success() && !tree.is_empty() && conflicts.is_empty() {
@@ -706,10 +624,7 @@ fn publish_with_retry(
     if !is_push_race(&pushed) {
         return Err(Error::fault(
             "git::publish-failed",
-            pushed.detail(&format!(
-                "publish task work to {}",
-                target.baseline
-            )),
+            pushed.detail(&format!("publish task work to {}", target.baseline)),
         ));
     }
     for _ in 0..PUBLISH_RACE_RETRY_LIMIT {
@@ -723,13 +638,7 @@ fn publish_with_retry(
             return Ok((integrated, fresh));
         }
         if fresh != upstream_head {
-            integrated = integrate_retry(
-                root,
-                &integrated,
-                &fresh,
-                message,
-                label,
-            )?;
+            integrated = integrate_retry(root, &integrated, &fresh, message, label)?;
             upstream_head = fresh;
             // The race produced a tree nothing has read yet. Every other path
             // out of this loop pushes the commit admitted above it.
@@ -742,19 +651,13 @@ fn publish_with_retry(
         if !is_push_race(&pushed) {
             return Err(Error::fault(
                 "git::publish-failed",
-                pushed.detail(&format!(
-                    "publish task work to {}",
-                    target.baseline
-                )),
+                pushed.detail(&format!("publish task work to {}", target.baseline)),
             ));
         }
     }
     Err(Error::refusal(
         "git::publish-race-exhausted",
-        pushed.detail(&format!(
-            "publish task work to {}",
-            target.baseline
-        )),
+        pushed.detail(&format!("publish task work to {}", target.baseline)),
         format!(
             concat!(
                 "fetch {}, inspect {}, preserve lane commit ",
@@ -777,17 +680,8 @@ fn integrate_retry(
     label: &str,
 ) -> Result<String, Error> {
     if is_ancestor(root, integrated, fresh)? {
-        let current = required_read(
-            root,
-            &["rev-parse", "HEAD"],
-            "read lane HEAD",
-        )?;
-        materialize_and_update(
-            root,
-            fresh,
-            &current,
-            "advance to raced baseline",
-        )?;
+        let current = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
+        materialize_and_update(root, fresh, &current, "advance to raced baseline")?;
         return Ok(fresh.to_owned());
     }
     let computed = merge_tree(root, integrated, fresh)?;
@@ -802,30 +696,15 @@ fn integrate_retry(
         )?;
         return Err(conflict_error(label, fresh));
     }
-    synthesize_and_update(
-        root,
-        &computed.tree,
-        fresh,
-        integrated,
-        message,
-        label,
-    )
+    synthesize_and_update(root, &computed.tree, fresh, integrated, message, label)
 }
 
-fn push(
-    root: &Path,
-    target: &Target,
-    commit: &str,
-    expected: &str,
-) -> Result<GitOutput, Error> {
+fn push(root: &Path, target: &Target, commit: &str, expected: &str) -> Result<GitOutput, Error> {
     run(
         root,
         &[
             "push",
-            &format!(
-                "--force-with-lease=refs/heads/{}:{expected}",
-                target.branch
-            ),
+            &format!("--force-with-lease=refs/heads/{}:{expected}", target.branch),
             &target.remote,
             &format!("{commit}:refs/heads/{}", target.branch),
         ],
@@ -833,8 +712,7 @@ fn push(
 }
 
 fn is_push_race(output: &GitOutput) -> bool {
-    let detail = format!("{}\n{}", output.stdout, output.stderr)
-        .to_ascii_lowercase();
+    let detail = format!("{}\n{}", output.stdout, output.stderr).to_ascii_lowercase();
     [
         "non-fast-forward",
         "fetch first",
@@ -848,10 +726,14 @@ fn is_push_race(output: &GitOutput) -> bool {
             && detail.contains("failed to update ref"))
 }
 
-include!("task_git/admission.rs");
-include!("task_git/transaction.rs");
-include!("task_git/command.rs");
+mod admission;
+use admission::*;
+mod transaction;
+use transaction::*;
+mod command;
+use command::*;
 #[cfg(test)]
-include!("task_git/command_tests.rs");
+#[cfg(unix)]
+mod command_tests;
 #[cfg(test)]
-include!("task_git/tests.rs");
+mod tests;

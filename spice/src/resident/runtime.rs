@@ -1,27 +1,29 @@
+use super::*;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct RuntimePaths {
-    worktree: PathBuf,
-    common: PathBuf,
-    runtime: PathBuf,
-    data: PathBuf,
-    journal: PathBuf,
-    resident: PathBuf,
-    canvas: PathBuf,
-    lane_canvas: PathBuf,
-    inbox: PathBuf,
-    degraded: PathBuf,
-    tape: PathBuf,
-    stage: PathBuf,
+pub(super) struct RuntimePaths {
+    pub(super) worktree: PathBuf,
+    pub(super) common: PathBuf,
+    pub(super) runtime: PathBuf,
+    pub(super) data: PathBuf,
+    pub(super) journal: PathBuf,
+    pub(super) resident: PathBuf,
+    pub(super) canvas: PathBuf,
+    pub(super) lane_canvas: PathBuf,
+    pub(super) inbox: PathBuf,
+    pub(super) degraded: PathBuf,
+    pub(super) tape: PathBuf,
+    pub(super) stage: PathBuf,
 }
 
-struct SurfaceConfig {
+pub(super) struct SurfaceConfig {
     canvas: canvas::Config,
-    steering: steer::Config,
-    taste: taste::Bag,
-    consent: consent::Policy,
+    pub(super) steering: steer::Config,
+    pub(super) taste: taste::Bag,
+    pub(super) consent: consent::Policy,
     speech: canvas::SpeechConfig,
-    allocation: board::NextConfig,
-    projects: board::ProjectPolicy,
+    pub(super) allocation: board::NextConfig,
+    pub(super) projects: board::ProjectPolicy,
 }
 
 struct SurfaceLaunch<'a> {
@@ -37,18 +39,18 @@ struct SurfaceLaunch<'a> {
 }
 
 // Runtime policy and trust identity are projections of this one captured generation.
-struct StartupSurface {
-    config: SurfaceConfig,
-    trust: crate::trust_command::Surface,
+pub(super) struct StartupSurface {
+    pub(super) config: SurfaceConfig,
+    pub(super) trust: crate::trust_command::Surface,
 }
 
-fn load_startup_surface(
+pub(super) fn load_startup_surface(
     repository: &Repository,
 ) -> Result<StartupSurface, spice::config::LoadError> {
     load_startup_surface_with(repository, || {})
 }
 
-fn load_startup_surface_with<F>(
+pub(super) fn load_startup_surface_with<F>(
     repository: &Repository,
     after_capture: F,
 ) -> Result<StartupSurface, spice::config::LoadError>
@@ -71,7 +73,7 @@ where
     })
 }
 
-fn require_current_surface(
+pub(super) fn require_current_surface(
     repository: &Repository,
     surface: &crate::trust_command::Surface,
 ) -> Result<(), GuardError> {
@@ -83,7 +85,7 @@ fn require_current_surface(
 
 impl RuntimePaths {
     #[cfg(test)]
-    fn discover(start: &Path) -> CommandResult<Self> {
+    pub(super) fn discover(start: &Path) -> CommandResult<Self> {
         let repository = Repository::discover(start)
             .map_err(|error| environment_fault("resident::git-unavailable", &error.to_string()))?;
         Self::from_repository(&repository)
@@ -109,7 +111,7 @@ impl RuntimePaths {
         })
     }
 
-    fn clear_stale_surfaces(&self) -> CommandResult<()> {
+    pub(super) fn clear_stale_surfaces(&self) -> CommandResult<()> {
         remove_if_present(&self.canvas)
             .map_err(|error| environment_fault("canvas::stale-discovery", &error.to_string()))?;
         remove_tree_if_present(&self.lane_canvas)
@@ -118,16 +120,19 @@ impl RuntimePaths {
 }
 
 #[derive(Debug)]
-struct ResidentLock {
+pub(super) struct ResidentLock {
     possession: Possession,
 }
 
 impl ResidentLock {
-    fn acquire(paths: &RuntimePaths) -> CommandResult<Self> {
+    pub(super) fn acquire(paths: &RuntimePaths) -> CommandResult<Self> {
         Self::acquire_with(paths, || {})
     }
 
-    fn acquire_with(paths: &RuntimePaths, after_contention: impl FnMut()) -> CommandResult<Self> {
+    pub(super) fn acquire_with(
+        paths: &RuntimePaths,
+        after_contention: impl FnMut(),
+    ) -> CommandResult<Self> {
         fs::create_dir_all(&paths.runtime).map_err(|error| {
             environment_fault("resident::runtime-unavailable", &error.to_string())
         })?;
@@ -166,7 +171,7 @@ impl ResidentLock {
         }
     }
 
-    fn set_epoch(&self, epoch: CanonicalUuid) -> io::Result<()> {
+    pub(super) fn set_epoch(&self, epoch: CanonicalUuid) -> io::Result<()> {
         self.possession
             .rewrite_record(holder_record(std::process::id(), Some(epoch)).as_bytes())
     }
@@ -208,7 +213,8 @@ impl Drop for PublishedDiscovery {
 /// invocation, by hand. That is the standing arrangement between two systems
 /// that both keep running -- not a rough edge on the way to one replacing the
 /// other -- and no check records that the workaround is required.
-const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8765);
+pub(super) const DEFAULT_LISTEN: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8765);
 /// Bounds on an operator-supplied bearer token for a non-loopback bind.
 ///
 /// Stated rather than inlined so the refusal text and the check cannot come to
@@ -228,7 +234,7 @@ pub(crate) struct CanvasBinding {
     access: CanvasAccess,
 }
 
-struct CanvasAccess {
+pub(super) struct CanvasAccess {
     policy: canvas::axum::Access,
     token: Option<String>,
 }
@@ -276,7 +282,7 @@ pub(crate) fn up(
 /// Both are parsed strictly: what the operator named is what gets bound, so a
 /// host that is not an address of this machine has to fail here by name rather
 /// than resolve to something they did not ask for.
-fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
+pub(super) fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
     let host = match leaf.get_one::<String>("host") {
         Some(host) => host.parse::<IpAddr>().map_err(|_| {
             listen_refusal(
@@ -296,7 +302,10 @@ fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
     Ok(SocketAddr::new(host, port))
 }
 
-fn requested_access(leaf: &clap::ArgMatches, listen: SocketAddr) -> CommandResult<CanvasAccess> {
+pub(super) fn requested_access(
+    leaf: &clap::ArgMatches,
+    listen: SocketAddr,
+) -> CommandResult<CanvasAccess> {
     let token = leaf.get_one::<String>("auth-token").cloned();
     if let Some(token) = token.as_deref()
         && !auth_token_is_valid(token)
@@ -479,7 +488,7 @@ fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
     })
 }
 
-fn settle_surface(
+pub(super) fn settle_surface(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
@@ -574,7 +583,7 @@ fn acquire_released_resident(paths: &RuntimePaths) -> CommandResult<Possession> 
 }
 
 #[derive(Clone, Copy, Debug)]
-struct StartupCommit {
+pub(super) struct StartupCommit {
     first: u64,
     last: u64,
 }
@@ -657,7 +666,7 @@ pub(super) fn startup_subscriptions(
     Ok(indexed.into_values().collect())
 }
 
-fn commit_startup(
+pub(super) fn commit_startup(
     bus: &Bus,
     repository: &Repository,
     surface: &crate::trust_command::Surface,
@@ -667,7 +676,7 @@ fn commit_startup(
     commit_startup_with(bus, repository, surface, epoch, migration, || {})
 }
 
-fn commit_startup_with<F>(
+pub(super) fn commit_startup_with<F>(
     bus: &Bus,
     repository: &Repository,
     surface: &crate::trust_command::Surface,
@@ -928,7 +937,7 @@ async fn run_surface(
 /// diagnostic and goes where the other diagnostics went. A shell that reads the
 /// endpoint stream to dial it cannot tell a URL from a sentence explaining why
 /// there is not one, so it sees an empty capture instead.
-fn announce_canvas(
+pub(super) fn announce_canvas(
     discovery_path: &Path,
     auth_token: Option<&str>,
     open: bool,

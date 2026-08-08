@@ -1,24 +1,26 @@
+use super::*;
+
 // Generic identity, hash, spelling, and rank laws shared by this fixture.
 
 /// Row used by the packed frames.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct Row {
-    task: TaskHandle,
+pub(super) struct Row {
+    pub(super) task: TaskHandle,
 }
 
-fn uuid(text: &str) -> CanonicalUuid {
+pub(super) fn uuid(text: &str) -> CanonicalUuid {
     text.parse().expect("canonical uuid")
 }
 
-fn seq(value: u64) -> Seq {
+pub(super) fn seq(value: u64) -> Seq {
     Seq::new(value).expect("non-zero position")
 }
 
-fn handle(text: &str) -> TaskHandle {
+pub(super) fn handle(text: &str) -> TaskHandle {
     text.parse().expect("task handle")
 }
 
-fn digest(nibble: &str) -> Digest {
+pub(super) fn digest(nibble: &str) -> Digest {
     nibble.repeat(64).parse().expect("digest spelling")
 }
 
@@ -33,7 +35,7 @@ fn hash_of<T: Hash>(value: &T) -> u64 {
 /// Checks, per sample: encoding then decoding returns an equal value, and
 /// re-encoding the decoded value returns identical bytes. Checks, per ordered
 /// pair: byte equality holds exactly when value equality holds.
-fn law<T>(covered: &mut BTreeSet<String>, name: &str, samples: &[T])
+pub(super) fn law<T>(covered: &mut BTreeSet<String>, name: &str, samples: &[T])
 where
     T: Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
 {
@@ -56,7 +58,7 @@ fn encoded_by_wire<T: Serialize>(value: &T) -> Vec<u8> {
 /// `expected`, so a client that lists the same predicates in another order
 /// spells the same request. Checking `Command` under the generic encoder would
 /// report the type covered while testing bytes nothing takes an identity over.
-fn canonical_command_identity<B: Serialize>(command: &Command<B>) -> Vec<u8> {
+pub(super) fn canonical_command_identity<B: Serialize>(command: &Command<B>) -> Vec<u8> {
     command
         .canonical_json()
         .expect("command canonicalizes")
@@ -70,7 +72,7 @@ fn canonical_command_identity<B: Serialize>(command: &Command<B>) -> Vec<u8> {
 /// type is free to bind a narrower rendering than the generic one, and only the
 /// bound rendering is the one anything takes an identity over. Each call names
 /// which it checked.
-fn law_under<T, E>(covered: &mut BTreeSet<String>, name: &str, samples: &[T], encode: E)
+pub(super) fn law_under<T, E>(covered: &mut BTreeSet<String>, name: &str, samples: &[T], encode: E)
 where
     T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
     E: Fn(&T) -> Vec<u8>,
@@ -166,7 +168,7 @@ where
 ///
 /// A type whose rank is a declared sequence rather than its text belongs in
 /// [`ranked_law`] instead.
-fn spelling_law<T>(covered: &mut BTreeSet<String>, name: &str, samples: &[T])
+pub(super) fn spelling_law<T>(covered: &mut BTreeSet<String>, name: &str, samples: &[T])
 where
     T: Serialize + serde::de::DeserializeOwned + Ord + Hash + std::fmt::Debug,
 {
@@ -214,7 +216,7 @@ where
 /// a spelling order wearing a different name, and belongs in [`spelling_law`]
 /// where the whole sequence is checked rather than the sequence someone
 /// remembered to list.
-fn ranked_law<T>(covered: &mut BTreeSet<String>, name: &str, ascending: &[T])
+pub(super) fn ranked_law<T>(covered: &mut BTreeSet<String>, name: &str, ascending: &[T])
 where
     T: Serialize + serde::de::DeserializeOwned + Ord + Hash + std::fmt::Debug,
 {
@@ -248,7 +250,7 @@ where
 /// This is a registered fact body rather than a shape declared here, because
 /// [`Fact`] admits only bodies the vocabulary binds. It serves the command
 /// samples too, whose bodies are unconstrained.
-fn body(validation: &str) -> body::TaskDone {
+pub(super) fn body(validation: &str) -> body::TaskDone {
     body::TaskDone {
         task: handle("SPICE-aBcD"),
         validation: validation.to_owned(),
@@ -258,26 +260,26 @@ fn body(validation: &str) -> body::TaskDone {
 }
 
 /// A digest fixture, spelled the one way a digest is spelled.
-const DIGEST: &str = "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a291b7c8d0e5f6a3b2c1d4e7f8";
+pub(super) const DIGEST: &str = "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a291b7c8d0e5f6a3b2c1d4e7f8";
 
 /// Parse a phase fixture, which is one lower-case word by construction.
-fn phase(text: &str) -> Phase {
+pub(super) fn phase(text: &str) -> Phase {
     text.parse().expect("phase")
 }
 
 /// Parse a name fixture, which is one lower-case word by construction.
-fn name(text: &str) -> Name {
+pub(super) fn name(text: &str) -> Name {
     text.parse().expect("name")
 }
 
-fn task_witness() -> Witness {
+pub(super) fn task_witness() -> Witness {
     Witness::Task {
         task: handle("SPICE-aBcD"),
         head: seq(48190),
     }
 }
 
-fn workflow_witness() -> Witness {
+pub(super) fn workflow_witness() -> Witness {
     Witness::Workflow {
         task: handle("SPICE-aBcD"),
         head: seq(48190),
@@ -286,7 +288,7 @@ fn workflow_witness() -> Witness {
 }
 
 /// A command differing from its siblings only in the predicates it names.
-fn command(kind: &str, expected: Vec<Witness>) -> Command<body::TaskDone> {
+pub(super) fn command(kind: &str, expected: Vec<Witness>) -> Command<body::TaskDone> {
     Command {
         v: WireVersion(1),
         id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
