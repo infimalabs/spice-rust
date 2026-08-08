@@ -98,15 +98,16 @@ its bearer token.
 
 Discovery is a single file, `$SPICE_COMMON/.spice/canvas`. A resident withdraws
 it on exit, `up` clears a stale one after taking the resident lock
-(`spice/src/resident/runtime.rs:386`), and `down` faults with
-`canvas::release-incomplete` when a record survives the release (`:531`).
-Neither path covers a resident that died without unwinding, so the client does
-not trust the record alone: before dialing it probes the resident lock beside
-the record and faults `canvas::publisher-gone` when the kernel reports that
-lock free (`spice/src/command_client.rs:326`). `flock` is released on any
-process death, so a killed resident answers the same as an exited one. A client
-that faults this way has been kept off whatever answers the port next — on this
-fleet, the predecessor.
+(`clear_stale_surfaces` in `spice/src/resident/runtime.rs`), and `down` faults
+with `canvas::release-incomplete` when a record survives the release, in that
+same file. Neither path covers a resident that died without unwinding, so the
+client does not trust the record alone: before dialing it probes the resident
+lock beside the record and faults `canvas::publisher-gone` when the kernel
+reports that lock free (`require_live_publisher` in
+`spice/src/command_client.rs`). `flock` is released on any process death, so a
+killed resident answers the same as an exited one. A client that faults this
+way has been kept off whatever answers the port next — on this fleet, the
+predecessor.
 
 ## Operate and stop
 
