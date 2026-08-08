@@ -288,6 +288,39 @@ pub enum EffortUnavailableCode {
     ArithmeticOverflow,
 }
 
+impl EffortUnavailableCode {
+    /// Stable wire spelling of this code.
+    ///
+    /// A surface that must name a reason would otherwise encode the value and
+    /// read one word back out of the bytes, which is a decoder standing in for
+    /// a noun. The match is exhaustive, so a code added without a spelling
+    /// fails to compile, and a test pins every spelling against the encoder so
+    /// the two cannot drift into two different words for one reason.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingStart => "missing-start",
+            Self::MissingEnd => "missing-end",
+            Self::IncompleteBoundary => "incomplete-boundary",
+            Self::TranscriptMissing => "transcript-missing",
+            Self::SourceGap => "source-gap",
+            Self::SourceReplaced => "source-replaced",
+            Self::ClaimFreed => "claim-freed",
+            Self::ClaimLapsed => "claim-lapsed",
+            Self::ClaimStolen => "claim-stolen",
+            Self::TaskDeleted => "task-deleted",
+            Self::BrokenCarry => "broken-carry",
+            Self::OccupantDisagreement => "occupant-disagreement",
+            Self::SessionDisagreement => "session-disagreement",
+            Self::LineageDisagreement => "lineage-disagreement",
+            Self::MalformedUsage => "malformed-usage",
+            Self::UntaggedLaunch => "untagged-launch",
+            Self::MixedLaunch => "mixed-launch",
+            Self::ArithmeticOverflow => "arithmetic-overflow",
+        }
+    }
+}
+
 /// One reason-coded unavailable observation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

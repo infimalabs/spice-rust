@@ -9,8 +9,8 @@ use wire::intent::{CommandAnswer, Intent};
 use wire::{CanonicalUuid, CommandKind, Outcome, Refusal};
 
 use super::{
-    RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, lane_recovery,
-    lane_surface, policy_surface, steering,
+    RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, effort_surface,
+    lane_recovery, lane_surface, policy_surface, steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -128,6 +128,9 @@ impl<'a> Surface<'a> {
             ),
             (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => {
                 steering::dispose(self.bus, self.paths, self.epoch, command, dispose)
+            }
+            (CommandKind::EffortRead, Intent::EffortRead(read)) => {
+                effort_surface::read(self.bus, self.paths, read)
             }
             (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
                 policy_surface::read(self.bus, &self.config.consent)

@@ -791,6 +791,7 @@ fn paths(root: &std::path::Path) -> RuntimePaths {
         runtime: root.join("runtime"),
         data: root.join("data"),
         journal: root.join("journal"),
+        folds: root.join("folds"),
         resident: root.join("resident"),
         canvas: root.join("canvas"),
         lane_canvas: root.join("lanes"),

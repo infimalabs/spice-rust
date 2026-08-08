@@ -7,12 +7,13 @@ use crate::command::CommandKind;
 use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
-    ConsentRead, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger, InboxAnswer,
-    LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneSeat, LaneState,
-    LineageArrange, LineageConfigure, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish,
-    StateAnswer, SteerDispose, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer,
-    TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
-    TaskReview, TasteAnswer, TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
+    ConsentRead, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger, EffortAnswer,
+    EffortRead, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall,
+    LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer, RecognitionAnswer,
+    Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox, SteerSend, TaskAdd,
+    TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote,
+    TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer, TasteRecord, TextAnswer, TrustAnswer,
+    TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -26,6 +27,8 @@ pub enum BodyShape {
     BoardHandout,
     /// [`DocLedger`]
     DocLedger,
+    /// [`EffortRead`]
+    EffortRead,
     /// [`TaskAdd`]
     TaskAdd,
     /// [`TaskOopsAdd`], the strict body for the server-owned `.oops` route.
@@ -121,6 +124,8 @@ pub enum AnswerShape {
     ConsentQueue,
     /// [`ConsentPolicyAnswer`]
     ConsentPolicy,
+    /// [`EffortAnswer`]
+    Effort,
     /// [`TrustAnswer`]
     Trust,
     /// [`LaneAnswer`]
@@ -161,6 +166,8 @@ pub enum CommandAnswer {
     ConsentQueue(ConsentQueueAnswer),
     /// [`AnswerShape::ConsentPolicy`]
     ConsentPolicy(ConsentPolicyAnswer),
+    /// [`AnswerShape::Effort`]
+    Effort(Box<EffortAnswer>),
     /// [`AnswerShape::Trust`]
     Trust(TrustAnswer),
     /// [`AnswerShape::Lane`]
@@ -192,6 +199,7 @@ impl CommandAnswer {
             Self::Consent(_) => AnswerShape::Consent,
             Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
             Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
+            Self::Effort(_) => AnswerShape::Effort,
             Self::Trust(_) => AnswerShape::Trust,
             Self::Lane(_) => AnswerShape::Lane,
             Self::LaneChange(_) => AnswerShape::LaneChange,
@@ -223,6 +231,7 @@ impl AnswerShape {
             | Self::Consent
             | Self::ConsentQueue => self.decode_primary(bytes),
             Self::ConsentPolicy
+            | Self::Effort
             | Self::Trust
             | Self::Lane
             | Self::LaneChange
@@ -251,6 +260,7 @@ impl AnswerShape {
     fn decode_secondary(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
         Ok(match self {
             Self::ConsentPolicy => CommandAnswer::ConsentPolicy(crate::decode(bytes)?),
+            Self::Effort => CommandAnswer::Effort(Box::new(crate::decode(bytes)?)),
             Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
             Self::Lane => CommandAnswer::Lane(Box::new(crate::decode(bytes)?)),
             Self::LaneChange => CommandAnswer::LaneChange(crate::decode(bytes)?),
@@ -294,6 +304,7 @@ impl CommandKind {
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
+            | Self::EffortRead
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TaskEdit
@@ -349,6 +360,7 @@ impl CommandKind {
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
+            Self::EffortRead => Binding::of(B::EffortRead, A::Effort),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
@@ -419,6 +431,8 @@ pub enum Intent {
     BoardHandout(BoardHandout),
     /// [`BodyShape::DocLedger`]
     DocLedger(DocLedger),
+    /// [`BodyShape::EffortRead`]
+    EffortRead(EffortRead),
     /// [`BodyShape::TaskAdd`]
     TaskAdd(TaskAdd),
     /// [`BodyShape::TaskOopsAdd`]
@@ -500,6 +514,7 @@ impl Intent {
             | Self::BoardGraph(_)
             | Self::BoardHandout(_)
             | Self::DocLedger(_)
+            | Self::EffortRead(_)
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
             | Self::TaskEdit(_)
@@ -544,6 +559,7 @@ impl Intent {
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
+            Self::EffortRead(_) => BodyShape::EffortRead,
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
@@ -613,6 +629,7 @@ impl BodyShape {
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
+                | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TaskEdit
@@ -639,6 +656,7 @@ impl BodyShape {
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
+                | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TaskEdit
@@ -659,6 +677,7 @@ impl BodyShape {
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
+            Self::EffortRead => Intent::EffortRead(crate::decode(bytes)?),
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),

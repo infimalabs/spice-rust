@@ -668,6 +668,16 @@ async fn send_refresh(
         vec![],
         ConsentPolicy {},
     )
+    .await?;
+    send_if_offered(
+        principal,
+        writer,
+        pending,
+        PendingKind::Effort,
+        CommandKind::EffortRead,
+        vec![],
+        EffortRead { task: None },
+    )
     .await
 }
 
@@ -904,6 +914,10 @@ fn apply_command_response(
         }
         PendingKind::Policy => {
             runtime.apply_policy(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::Effort => {
+            runtime.apply_effort(&admit_response(session, bytes)?);
             false
         }
         PendingKind::LaneSeat => {

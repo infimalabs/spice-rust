@@ -34,6 +34,8 @@ pub enum CommandKind {
     BoardHandout,
     /// Emit one canonical authored-document ledger.
     DocLedger,
+    /// Read reduced claim-to-terminal phase effort.
+    EffortRead,
     /// Add one task as direct intent.
     TaskAdd,
     /// Add one task through the fixed server-owned `.oops` route.
@@ -482,6 +484,7 @@ impl CommandKind {
         Self::BoardGraph,
         Self::BoardHandout,
         Self::DocLedger,
+        Self::EffortRead,
         Self::TaskAdd,
         Self::TaskOopsAdd,
         Self::TaskEdit,
@@ -539,6 +542,7 @@ impl CommandKind {
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
+            | Self::EffortRead
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TaskEdit
@@ -591,6 +595,7 @@ impl CommandKind {
             Self::BoardGraph => "board::graph",
             Self::BoardHandout => "board::handout",
             Self::DocLedger => "doc::ledger",
+            Self::EffortRead => "effort::read",
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
             Self::TaskEdit => "task::edit",
@@ -660,7 +665,7 @@ impl CommandKind {
     #[must_use]
     pub const fn law(self) -> Law {
         match self {
-            Self::BoardRead | Self::BoardGraph | Self::DocLedger => Law::READ,
+            Self::BoardRead | Self::BoardGraph | Self::DocLedger | Self::EffortRead => Law::READ,
             Self::BoardHandout => Law::OPERATOR_READ,
             Self::TaskAdd | Self::TaskOopsAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
@@ -718,6 +723,7 @@ impl CommandKind {
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
+                | Self::EffortRead
                 | Self::SteerInbox
                 | Self::ConsentRead
                 | Self::ConsentPolicy
