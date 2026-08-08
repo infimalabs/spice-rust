@@ -208,8 +208,11 @@ fn is_test(preceding: &str) -> bool {
 /// four names are shared between the two enums, which is the left end; a variant
 /// whose name is a prefix of a sibling's contains it too, so `Refusal::Changed`
 /// must not be answered for by `Refusal::ChangedElsewhere`, which is the right.
-/// Neither end costs an honest binding: every real occurrence opens on `(`, `&`
-/// or a space and closes on `(`, `)`, `,` or the end of its line.
+/// Neither end costs an honest binding, and the two law tests settle that rather
+/// than a list here: they run every real binding through this function, so one
+/// written with an identifier character against either side of its path would
+/// red them. A spelled-out set of delimiters would instead go stale the first
+/// time a binding is written some other way, and say nothing when it did.
 fn names(text: &str, refusal: &str) -> bool {
     let whole = |letter: char| !letter.is_alphanumeric() && letter != '_';
     text.match_indices(refusal).any(|(at, _)| {
