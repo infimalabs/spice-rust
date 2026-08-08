@@ -25,9 +25,17 @@ use crate::cli::Contract;
 // `mod` rather than `include!`, which reverses the decision EFFORT-1kKrXfRq
 // recorded here. That decision's measurements survive the reversal: a child
 // module does already read its ancestors' private items, so the guard tests
-// below keep calling `claim_plan` and `commit_claim` unchanged, and converting
-// a *test* root would be a rename rather than a split, which is why
-// `wire/tests/` is left alone.
+// below keep calling `claim_plan` and `commit_claim` unchanged.
+//
+// A `tests/` root takes one extra precaution rather than an exemption. Every
+// file directly under `tests/` is its own crate root, and a root resolves
+// `mod foo;` against its own directory, so a bare `mod` there binds the
+// sibling integration target `tests/foo.rs` instead of the intended child
+// `tests/<root>/foo.rs` -- silently, with no compiler error. Pinning each
+// child with `#[path]` keeps it a split rather than a rename, which is how
+// `wire/tests/identity_law.rs` converted its four fragments here: a bare
+// `mod vocabulary;` in that root would have bound the 18-test
+// `wire/tests/vocabulary.rs` in place of the one-test file beside it.
 //
 // What it weighed against conversion was that the formatters gate covers a
 // fragment regardless, by naming every path it selects on the formatter's own
