@@ -888,6 +888,176 @@ fn a_tree_built_by_losing_the_publication_race_is_refused() {
     );
 }
 
+/// The control every skip case below is measured against.
+///
+/// Without it they would pass against a launch boundary that never advanced
+/// anything: "kept its work" is trivially true of a lane nothing ever moves.
+/// This test puts a lane in the position the skip cases start from -- one
+/// commit behind a baseline the peer pushed -- and shows that position does
+/// advance, so the skips that follow are decisions rather than inability.
+///
+/// The second call is where `current` comes from, and it is the same call that
+/// just advanced: an advance that reported itself twice would mean the note
+/// describes the attempt rather than the outcome.
+#[test]
+fn launch_advances_a_lane_that_is_behind_and_then_reports_current() {
+    let fixture = Fixture::new("launch-behind");
+    let before = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+    let baseline = fixture.peer_commit("peer.txt", "peer\n");
+
+    let advance = advance_at_launch(&fixture.repository());
+
+    assert_eq!(
+        advance,
+        LaunchAdvance::Updated {
+            before,
+            after: baseline.clone(),
+        }
+    );
+    assert_eq!(
+        advance.to_string(),
+        "updated working tree to the current baseline"
+    );
+    assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), baseline);
+    assert_eq!(fixture.agent.join("peer.txt").read_to_string(), "peer\n");
+
+    let settled = advance_at_launch(&fixture.repository());
+
+    assert_eq!(settled, LaunchAdvance::Current);
+    assert_eq!(settled.to_string(), "current");
+}
+
+/// GIT-04, dirty: the uncommitted edit is the lane's, and it stays.
+#[test]
+fn launch_leaves_a_dirty_lane_holding_its_uncommitted_work() {
+    let fixture = Fixture::new("launch-dirty");
+    let before = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+    fixture.peer_commit("peer.txt", "peer\n");
+    fs::write(fixture.agent.join("README.md"), "lane edit\n").expect("write uncommitted lane work");
+
+    let advance = advance_at_launch(&fixture.repository());
+
+    assert_eq!(advance, LaunchAdvance::Skipped(LaunchSkip::Dirty));
+    assert_eq!(advance.to_string(), "skipped:dirty");
+    assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), before);
+    assert_eq!(
+        fixture.agent.join("README.md").read_to_string(),
+        "lane edit\n",
+        "the launch boundary reset a lane's uncommitted work"
+    );
+}
+
+/// GIT-04, divergent: no fast-forward exists, so neither side is discarded.
+#[test]
+fn launch_leaves_a_divergent_lane_holding_its_own_commit() {
+    let fixture = Fixture::new("launch-diverged");
+    let lane = fixture.agent_commit("lane.txt", "lane\n");
+    fixture.peer_commit("peer.txt", "peer\n");
+
+    let advance = advance_at_launch(&fixture.repository());
+
+    assert_eq!(advance, LaunchAdvance::Skipped(LaunchSkip::Diverged));
+    assert_eq!(advance.to_string(), "skipped:diverged");
+    assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), lane);
+    assert_eq!(fixture.agent.join("lane.txt").read_to_string(), "lane\n");
+    assert!(
+        !fixture.agent.join("peer.txt").exists(),
+        "the launch boundary merged a baseline it could not fast-forward to"
+    );
+}
+
+/// GIT-04, unfetchable: an origin that cannot be reached is not an origin that
+/// is absent, and the two carry different notes.
+#[test]
+fn launch_leaves_an_unfetchable_lane_where_it_stands() {
+    let fixture = Fixture::new("launch-unfetchable");
+    let before = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+    fixture.peer_commit("peer.txt", "peer\n");
+    let unreachable = fixture.agent.join("no-such-remote.git");
+    git(
+        &fixture.agent,
+        &["remote", "set-url", "origin", path(&unreachable)],
+    );
+
+    let advance = advance_at_launch(&fixture.repository());
+
+    assert_eq!(advance, LaunchAdvance::Skipped(LaunchSkip::FetchFailed));
+    assert_eq!(advance.to_string(), "skipped:fetch-failed");
+    assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), before);
+    assert!(
+        !fixture.agent.join("peer.txt").exists(),
+        "an unreachable origin still moved the lane"
+    );
+}
+
+/// GIT-04, ahead alone: the other half of the split `diverged` comes from.
+///
+/// A lane that is ahead and a lane that has also fallen behind both have
+/// commits the baseline lacks and neither can fast-forward, so one branch
+/// answering for both would go unnoticed with only the divergent case pinned.
+/// The remote is read afterwards because the difference between declining to
+/// advance and publishing is invisible in the lane alone.
+#[test]
+fn launch_leaves_a_lane_that_is_only_ahead_carrying_its_commit() {
+    let fixture = Fixture::new("launch-ahead");
+    let baseline = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+    let lane = fixture.agent_commit("lane.txt", "lane\n");
+
+    let advance = advance_at_launch(&fixture.repository());
+
+    assert_eq!(advance, LaunchAdvance::Skipped(LaunchSkip::Ahead));
+    assert_eq!(advance.to_string(), "skipped:ahead");
+    assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), lane);
+    assert_eq!(
+        remote_head(&fixture),
+        baseline,
+        "the launch boundary published a lane commit"
+    );
+}
+
+/// GIT-04, no remote: nothing to advance towards is a note, not a failure.
+///
+/// Kept distinct from an unreachable one because the two ask different things
+/// of whoever reads them: this lane is configured that way, that lane is not.
+#[test]
+fn launch_names_a_lane_with_no_origin_rather_than_failing() {
+    let fixture = Fixture::new("launch-no-remote");
+    let before = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+    git(&fixture.agent, &["remote", "remove", "origin"]);
+
+    let advance = advance_at_launch(&fixture.repository());
+
+    assert_eq!(advance, LaunchAdvance::Skipped(LaunchSkip::NoRemote));
+    assert_eq!(advance.to_string(), "skipped:no-remote");
+    assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), before);
+}
+
+/// GIT-04, uninspectable: an inspection that cannot answer still starts a lane.
+///
+/// A branch with no configured upstream and no `origin/HEAD` to fall back on
+/// leaves the baseline unresolvable. The predecessor raises here and the caller
+/// swallows it; this port has no exception to swallow, so the same condition
+/// has to arrive as the note.
+#[test]
+fn launch_names_an_unresolvable_baseline_rather_than_raising() {
+    let fixture = Fixture::new("launch-uninspectable");
+    let before = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+    git(&fixture.agent, &["config", "--unset", "branch.main.merge"]);
+    git(
+        &fixture.agent,
+        &["remote", "set-head", "origin", "--delete"],
+    );
+
+    let advance = advance_at_launch(&fixture.repository());
+
+    assert_eq!(
+        advance,
+        LaunchAdvance::Skipped(LaunchSkip::BaselineUninspectable)
+    );
+    assert_eq!(advance.to_string(), "skipped:baseline-uninspectable");
+    assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), before);
+}
+
 trait ReadText {
     fn read_to_string(&self) -> String;
 }

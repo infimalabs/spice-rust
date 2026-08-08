@@ -324,6 +324,26 @@ pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
     ))
 }
 
+/// GIT-04, at agent launch: advance opportunistically and never raise.
+///
+/// Delegates to the launch module, which documents the rules and every note
+/// they can produce. It is spelled out here rather than re-exported because
+/// this module is the enumerated git surface: a boundary that is not declared
+/// beside its siblings is a boundary a reader has to go looking for.
+///
+/// Call it before reading the repository's configuration, as the resident's
+/// occupant launch does. A fast-forward can change the executable configuration
+/// a lane runs under, so advancing afterwards would compose an occupant from
+/// configuration the tree no longer has.
+///
+/// The returned note may be dropped. Every caller today does, matching the
+/// predecessor at the same seam: GIT-04 leaves no failure to propagate, and the
+/// resident has nothing launch-time an operator reads. Returning it anyway is
+/// what keeps publishing it later a wiring change rather than a redesign.
+pub fn advance_at_launch(repository: &Repository) -> LaunchAdvance {
+    launch::advance(repository.worktree_root())
+}
+
 /// Publish one task phase before its journal transition commits.
 pub fn publish(repository: &Repository, meta: Metadata<'_>) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
@@ -728,6 +748,8 @@ fn is_push_race(output: &GitOutput) -> bool {
 
 mod admission;
 use admission::*;
+mod launch;
+pub use launch::{LaunchAdvance, LaunchSkip};
 mod transaction;
 use transaction::*;
 mod command;

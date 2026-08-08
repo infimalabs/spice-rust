@@ -37,6 +37,11 @@ pub(in crate::resident) fn occupant_launch(
         resume,
     } = request;
     let repository = launch_repository(paths, worktree)?;
+    // Ahead of the configuration load, and dropping its note, both deliberately:
+    // `advance_at_launch` documents why. Inlined here rather than wrapped in a
+    // helper so that `xtask/tests/git_boundaries.rs`, which reads this file for
+    // the call, is reading the live call site instead of a name in dead code.
+    spice::task_git::advance_at_launch(&repository);
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
     let plan = launch_plan(&repository, &resolved, name, lane, resume)?;
