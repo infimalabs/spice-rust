@@ -400,6 +400,17 @@ impl Repository {
     /// ambient working directory. A normal worktree owns a `.git` directory;
     /// a linked worktree owns a `.git` pointer whose target may in turn carry
     /// Git's `commondir` file. Those are the only admitted shapes.
+    ///
+    /// This is also why the port owes no equivalent of the predecessor's
+    /// worktree re-exec. Its `_reexec_dev_command_for_worktree_checkout`
+    /// re-runs a `dev` command under the worktree's own `.venv`, so an
+    /// installed console script cannot import one checkout's package while
+    /// acting on another's files. Nothing here resolves code or data from
+    /// the binary's own location: data is baked by `include_str!`, and the
+    /// gate's own `current_exe` read digests the running binary instead of
+    /// loading beside it. One installed binary is shared by every worktree
+    /// on purpose, and a caller-supplied start is what keeps the worktree
+    /// it acts on unambiguous.
     pub fn discover(start: impl AsRef<Path>) -> Result<Self, ResolveError> {
         let requested = start.as_ref();
         let start = fs::canonicalize(requested)
