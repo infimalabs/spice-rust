@@ -440,6 +440,89 @@ export async function journalExtent(fixture) {
   };
 }
 
+// Re-declare the vendor section so later launches carry a different identity.
+//
+// `[vendor.claude]` in this fixture names only a binary, so the model and effort
+// a launch records fall to their builtins and every occupant wears one identity.
+// Configuration is resolved per launch rather than held from resident startup --
+// `lane_surface/launch.rs` calls `config::load_repository` on the way in -- so a
+// section rewritten between two launches is what makes the second one differ.
+export async function declareVendorModel(fixture, model) {
+  const path = join(fixture, "spice.toml");
+  const text = await readFile(path, "utf8");
+  const cleared = text.replace(/^model = .*\n/m, "");
+  const declared = cleared.replace(
+    /^\[vendor\.claude\]\n/m,
+    `[vendor.claude]\nmodel = ${JSON.stringify(model)}\n`,
+  );
+  assert.notEqual(declared, cleared, "the fixture's vendor section admits a model");
+  await writeFile(path, declared);
+  // Committed rather than left in the tree, because the phase this rewrite spans
+  // is closed by `task done`, which refuses a dirty worktree with
+  // `git::worktree-dirty`. Leaving the rewrite uncommitted would end the seeding
+  // on that refusal instead of on the identity it exists to move.
+  await execute("git", ["add", "spice.toml"], { cwd: fixture });
+  await execute("git", [
+    "-c", "user.name=Canvas Fixture",
+    "-c", "user.email=canvas@example.invalid",
+    "commit", "--quiet", "-m", `canvas fixture launches ${model}`,
+  ], { cwd: fixture });
+}
+
+// Add a linked worktree at the fixture's current commit.
+//
+// The worktrees seated at fixture setup are detached at the commit that created
+// them, so a section rewritten afterwards is invisible from any of them.
+// `spice.toml` is resolved from the launching worktree's own checkout
+// (`config::load_repository` on the path `lane_surface/launch.rs` hands it), so
+// a successor that must launch under the rewrite needs a worktree checked out
+// after it.
+export async function addLinkedWorktree(fixture, linkedRoot, name) {
+  const worktree = join(linkedRoot, name);
+  await execute("git", ["worktree", "add", "--quiet", "--detach", worktree, "HEAD"], {
+    cwd: fixture,
+  });
+  return realpath(worktree);
+}
+
+// Hand a lane's claim to a successor occupant elsewhere and wait for the launch
+// it declares to be folded.
+//
+// Importing is two commands, not one: `lane import` refuses an occupied lane
+// with `lane::import-occupied`, so the sitting occupant is drained first. The
+// pair keeps the claim -- `lane drain` records `LaneExited` and `LaneDrained`
+// without freeing it, and `lane import` records `ClaimCarried` onto the
+// successor -- which is what keeps a replacement inside the phase rather than
+// ending it.
+//
+// `lane wake` is not the other half of that pair even though it reads like it
+// and its contract row names `ClaimCarried`: `propose_wake` writes only the
+// session declaration and `LaneStarted`, so the effort fold sees no carry and
+// prices the phase under the opening occupant alone. Import is also why the
+// successor is somewhere else -- `lane import` refuses the worktree the lane
+// already sits in with `lane::import-unmoved`.
+//
+// The import reply returns once its own facts are written, which is before the
+// stand-in has printed anything. The fact that matters here is the ingest
+// accounting what the successor declared, so this waits for the extent to grow
+// past the reply rather than treating the reply as the event.
+export async function importLaneAndFold(fixture, lane, worktree) {
+  await reply(fixture, ["lane", "drain", lane]);
+  await reply(fixture, ["lane", "import", lane, worktree]);
+  const imported = await journalExtent(fixture);
+  const deadline = Date.now() + 20_000;
+  let extent = imported;
+  while (extent.facts <= imported.facts) {
+    assert.ok(
+      Date.now() < deadline,
+      `importing ${lane} folds the launch it declared: still ${extent.facts} facts`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    extent = await journalExtent(fixture);
+  }
+  return extent;
+}
+
 export async function seedAuthority(fixture) {
   const pending = await reply(fixture, ["trust"]);
   const digest = pending.body.digest;
