@@ -608,6 +608,9 @@ fn segments_between(
         };
         let (source, from) = match left_head {
             Some(head) if head.source == right_head.source => (head.source, head.next),
+            Some(head) if evidence.supersedes_between(right_head, head, left.seq, right.seq) => {
+                (right_head.source, ORIGIN)
+            }
             Some(head) => {
                 push_reason(
                     reasons,
@@ -961,6 +964,9 @@ impl Evidence {
 
         let mut segments = Vec::new();
         for batch in matched {
+            if self.superseded_after(batch) {
+                continue;
+            }
             let mut batch_usage = zero_usage();
             for sample in &batch.body.usage {
                 if sample_locus(sample, &batch.body, reasons).is_none() {
@@ -1012,6 +1018,53 @@ impl Evidence {
             });
         }
         segments
+    }
+
+    fn supersedes_between(
+        &self,
+        successor: &wire::TranscriptSourceHead,
+        predecessor: &wire::TranscriptSourceHead,
+        after: Seq,
+        before: Seq,
+    ) -> bool {
+        let mut source = successor.source;
+        let mut seen = BTreeSet::new();
+        while source != predecessor.source {
+            if !seen.insert(source) {
+                return false;
+            }
+            let links = self
+                .batches
+                .iter()
+                .filter(|batch| {
+                    batch.seq > after
+                        && batch.seq < before
+                        && batch.body.lane == successor.lane
+                        && batch.body.vendor == successor.vendor
+                        && batch.body.stream == successor.stream
+                        && batch.body.source == source
+                        && batch.body.from == ORIGIN
+                })
+                .filter_map(|batch| batch.body.supersedes)
+                .collect::<Vec<_>>();
+            let [retired] = links.as_slice() else {
+                return false;
+            };
+            source = *retired;
+        }
+        true
+    }
+
+    fn superseded_after(&self, retired: &Batch) -> bool {
+        self.batches.iter().any(|successor| {
+            successor.seq > retired.seq
+                && successor.body.lane == retired.body.lane
+                && successor.body.vendor == retired.body.vendor
+                && successor.body.stream == retired.body.stream
+                && successor.body.source != retired.body.source
+                && successor.body.from == ORIGIN
+                && successor.body.supersedes == Some(retired.body.source)
+        })
     }
 
     fn latest_session(

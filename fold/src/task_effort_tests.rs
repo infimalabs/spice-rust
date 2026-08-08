@@ -243,6 +243,81 @@ fn replacement_mixed_identity_and_overflow_are_each_withheld() {
 }
 
 #[test]
+fn an_explicit_supersession_discards_the_retired_generation_but_not_its_audit() {
+    let mut facts = Facts::new();
+    facts.task();
+    facts.lane();
+    facts.session(occupant_a(), "sonnet", "high");
+    let before_claim = facts.batch(source(), ORIGIN, pos(1, 50), vec![sample(1, 10, 10, 91)], 0);
+    facts.claim(occupant_a(), proven(Some(pos(1, 50))));
+    let retired = facts.batch(
+        source(),
+        pos(1, 50),
+        pos(1, 100),
+        vec![sample(1, 60, 10, 13)],
+        0,
+    );
+    facts.push(body::LaneArranged {
+        lane: lane(),
+        from_lineage_id: lineage_a(),
+        lineage_id: lineage_b(),
+        before: lane(),
+        sources: vec![body::LaneSourceBoundary {
+            lane: lane(),
+            source: proven(Some(pos(1, 100))),
+        }],
+    });
+    let current = facts.superseding_batch(
+        other_source(),
+        source(),
+        ORIGIN,
+        pos(1, 60),
+        vec![sample(1, 20, 10, 7)],
+    );
+    facts.done(proven_head(other_source(), pos(1, 60)));
+
+    let snapshot = facts.snapshot();
+    let answer = derive(&snapshot).expect("supersession derives");
+    assert_available(&answer.phases[0], 7);
+    assert_eq!(answer.phases[0].segments.len(), 1);
+    assert_eq!(answer.phases[0].segments[0].source, other_source());
+    assert_eq!(answer.aggregates[0].usage_sum.input_tokens, 7);
+
+    let audit = snapshot
+        .facts()
+        .iter()
+        .filter(|envelope| envelope.fact.kind() == FactKind::JournalIngested)
+        .map(|envelope| {
+            let batch: body::JournalIngested = read(envelope);
+            (
+                envelope.seq,
+                batch.source,
+                batch.supersedes,
+                batch.from,
+                batch.to,
+                batch.usage[0].input_tokens,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        audit,
+        vec![
+            (before_claim, source(), None, ORIGIN, pos(1, 50), 91),
+            (retired, source(), None, pos(1, 50), pos(1, 100), 13,),
+            (
+                current,
+                other_source(),
+                Some(source()),
+                ORIGIN,
+                pos(1, 60),
+                7,
+            ),
+        ],
+        "the fold rewrote or moved a durable audit fact"
+    );
+}
+
+#[test]
 fn complete_no_usage_is_numeric_zero_but_an_untagged_launch_is_not() {
     let mut zero = Facts::new();
     zero.task();
@@ -625,19 +700,42 @@ impl Facts {
         to: TranscriptPosition,
         usage: Vec<body::TranscriptUsage>,
         non_usage_records: u64,
-    ) {
+    ) -> Seq {
+        self.batch_after(source, None, from, to, usage, non_usage_records)
+    }
+
+    fn superseding_batch(
+        &mut self,
+        source: CanonicalUuid,
+        supersedes: CanonicalUuid,
+        from: TranscriptPosition,
+        to: TranscriptPosition,
+        usage: Vec<body::TranscriptUsage>,
+    ) -> Seq {
+        self.batch_after(source, Some(supersedes), from, to, usage, 0)
+    }
+
+    fn batch_after(
+        &mut self,
+        source: CanonicalUuid,
+        supersedes: Option<CanonicalUuid>,
+        from: TranscriptPosition,
+        to: TranscriptPosition,
+        usage: Vec<body::TranscriptUsage>,
+        non_usage_records: u64,
+    ) -> Seq {
         self.push(body::JournalIngested {
             lane: lane(),
             vendor: vendor(),
             stream: "session".to_owned(),
             source,
-            supersedes: None,
+            supersedes,
             from,
             to,
             usage,
             non_usage_records,
             residue_records: 0,
-        });
+        })
     }
 
     fn done(&mut self, source: SourceBoundary) {
