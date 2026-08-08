@@ -45,12 +45,15 @@ pub fn commit_message(
 /// Guard a Git reference transaction from abandoning upstream-merged commits.
 ///
 /// States other than `prepared` are intentionally inert, as required by Git's
-/// reference-transaction hook protocol.
+/// reference-transaction hook protocol. A rewind whose declared upstream
+/// resolves to no commit is refused rather than permitted: a guard that could
+/// not read the upstream has cleared nothing, and passing it would report what
+/// it reports after checking one.
 ///
 /// # Errors
 ///
-/// Returns malformed hook input, Git execution failure, or a protected-history
-/// refusal.
+/// Returns malformed hook input, Git execution failure, a protected-history
+/// refusal, or an upstream this guard could not resolve.
 pub fn reference_transaction(
     repository: &Path,
     state: &OsStr,
