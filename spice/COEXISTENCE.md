@@ -30,6 +30,14 @@ unresolvable from here; the test asserts they stay that way, so a predecessor
 path that ever becomes a real file here is reported rather than silently
 resolved against the wrong tree.
 
+Their anchors are not checked, and that is a choice rather than an oversight.
+Checking them means reading a checkout at some path outside this repository,
+which makes the suite pass or fail on how one machine is laid out. The
+predecessor is a reference to read while editing this file, not a fixture to
+build tests on. Every predecessor sentence here is therefore a hand measurement
+dated to the revision it was written against, and correcting one means opening
+that tree yourself.
+
 ## The two measured negatives
 
 These determine the shape of everything else: there is no direct call seam in
@@ -127,14 +135,13 @@ file counts are:
 
 The zero is therefore the predecessor's silence about the port's store and not
 a search that cannot find anything. All three figures are measurements of a
-moving tree rather than constants; `spice/tests/coexistence_record.rs` reads
-them from this table and runs the named searches against the predecessor
-checkout so drift fails. A machine without that checkout refuses rather than
-passing unchecked, because a silent skip retires the pin exactly when nobody is
-watching; set `SPICE_PREDECESSOR_OPTIONAL` to run without it and the skip says
-so on every run. The tree-wide maxim result holds for the bare token and
-the full `spicemaxims.sqlite3` filename alike, over the tracked set or over the
-working tree with `__pycache__` excluded. The tests-only result is a defensible
+moving tree rather than constants, and nothing in this repository re-runs them:
+the searches are written out so the next editor can repeat them by hand against
+whatever checkout they have, which is the only place that tree exists. Read them
+as dated, like every other sentence here about the predecessor. The tree-wide
+maxim result holds for the bare token and the full `spicemaxims.sqlite3`
+filename alike, over the tracked set or over the working tree with `__pycache__`
+excluded. The tests-only result is a defensible
 search for a sentence about what the predecessor asserts, but not the search the
 preceding sentence describes; an earlier generation of this record confused
 the two. This is not a general claim that the predecessor tests nothing about
@@ -232,10 +239,11 @@ only the predecessor's is activated here.
 
 **Deliberate, load-bearing.**
 
-`policy.admission` is declared once, at
-`spice-z/spice/config/schema.py#policy.admission`, and no production Python
-reads the value. That narrow claim is the one the evidence supports; the key is
-not confined to the schema table.
+`policy.admission` is declared once, as the bare key `"admission"` in the policy
+table at `spice-z/spice/config/schema.py#"admission"`, and no production Python
+reads the value. The predecessor spells the leaf rather than the dotted path, so
+that is what the anchor names. That narrow claim is the one the evidence
+supports; the key is not confined to the schema table.
 
 The predecessor carries a regression test for it:
 `spice-z/tests/test_configlayer.py#test_repository_configuration_admits_the_rust_publisher_admission_argv`.
