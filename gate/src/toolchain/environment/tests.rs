@@ -308,6 +308,43 @@ mod tests {
         }
     }
 
+    /// The commit hook's waiver is not this ledger's literal exemption.
+    ///
+    /// The two markers are separate vocabularies over the same line, and the
+    /// arm's findings guidance has to say which clears what. A line carrying
+    /// the hook's waiver is a line about the environment, so its quoted literal
+    /// comes back as a reference; the exemption cannot reach it, because the
+    /// context path never consults exemptions. Guidance recommending the pair
+    /// would read as an escape and land the author back in this ledger.
+    #[test]
+    fn the_commit_hooks_waiver_is_not_the_ledgers_literal_exemption() {
+        // Built rather than written, so the repository ledger does not consume
+        // this test's own fixture name.
+        const FIXTURE: &str = concat!("SPICE", "_WAIVED"); // env-policy: not-an-env SPICE_WAIVED
+        let allow = PACKAGED_ENV_PROFILE.allow_marker;
+        assert_ne!(
+            allow, ENV_NAME_LITERAL_MARKER,
+            "one spelling would make the guidance question below meaningless"
+        );
+        assert!(
+            references(
+                None,
+                &format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {FIXTURE}")
+            )
+            .is_empty(),
+            "the exemption must clear the literal alone, or the lines below prove nothing"
+        );
+        for line in [
+            format!("let value = \"{FIXTURE}\"; // {allow}"),
+            format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {FIXTURE} {allow}"),
+        ] {
+            assert!(
+                references(None, &line).contains(FIXTURE),
+                "the hook's waiver leaves the literal accounted here: {line}"
+            );
+        }
+    }
+
     /// A ledger name is a shape, and a trailing underscore is not that shape.
     #[test]
     fn a_ledger_name_opens_on_a_letter_and_never_closes_on_an_underscore() {

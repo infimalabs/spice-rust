@@ -33,9 +33,9 @@ use sill::{Argv, Completion, Environment, spawn};
 
 use super::{
     ArmFinding, ArmOutcome, ArmTiming, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind,
-    FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
-    PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, SourceLocus, TASTE_EXTENSIONS, ToolchainDeclaration,
-    column_of, environment,
+    FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
+    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, SourceLocus,
+    TASTE_EXTENSIONS, ToolchainDeclaration, column_of, environment,
 };
 use crate::GateId;
 use crate::jurisdiction::{Ignore, Jurisdiction};
@@ -478,6 +478,13 @@ fn env_policy_with(
 /// complete tree never references is stale and carries none, because there is
 /// no place to point at. Both directions are reported, so the ledger cannot
 /// drift in either one without saying so.
+///
+/// The guidance names both waiver spellings, because they are two vocabularies
+/// over one line. `env-policy: not-an-env NAME` is a current-port assertion the
+/// installed hook has never heard of, and the hook's own `env-policy: allow`
+/// reads here as environment context, which returns the literal as a reference
+/// instead of exempting it. Recommending the first alone steers an author into
+/// a refusal from the second, and recommending the pair steers them back here.
 pub(super) fn env_name_ledger(
     declaration: ToolchainDeclaration,
     root: &Path,
@@ -552,9 +559,13 @@ fn env_name_ledger_with(
         analysis.reason.push_str(&format!(
             concat!(
                 "; mark a quoted non-environment literal as ",
-                "`{marker} NAME` on its line"
+                "`{marker} NAME` on its line, which only this ledger reads. ",
+                "The commit hook waives by `{allow}` alone, and that marker ",
+                "makes every quoted literal on its line a reference here, so ",
+                "a literal both gates flag wants listing in `policy.env_names`"
             ),
-            marker = ENV_NAME_LITERAL_MARKER
+            marker = ENV_NAME_LITERAL_MARKER,
+            allow = PACKAGED_ENV_PROFILE.allow_marker,
         ));
     }
     analysis
