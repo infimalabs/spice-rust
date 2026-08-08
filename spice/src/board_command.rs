@@ -34,8 +34,9 @@ use crate::cli::Contract;
 // `tests/<root>/foo.rs` -- silently, with no compiler error. Pinning each
 // child with `#[path]` keeps it a split rather than a rename, which is how
 // `wire/tests/identity_law.rs` converted its four fragments here: a bare
-// `mod vocabulary;` in that root would have bound the 18-test
-// `wire/tests/vocabulary.rs` in place of the one-test file beside it.
+// `mod vocabulary;` in that root would have bound the 18-test sibling
+// `wire/tests/vocabulary.rs` rather than the one-test child
+// `wire/tests/identity_law/vocabulary.rs` one directory below.
 //
 // What it weighed against conversion was that the formatters gate covers a
 // fragment regardless, by naming every path it selects on the formatter's own
