@@ -16,6 +16,8 @@ pub mod battery;
 pub mod camp;
 pub mod config;
 pub mod core;
+#[cfg(not(target_arch = "wasm32"))]
+mod held_root;
 pub mod hygiene;
 pub mod input;
 pub mod jurisdiction;

@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CompileInvocation, HOME_DIRECTORY, build_root, run_compile_analysis_with_wait,
-    tool_search_path,
+    CompileInvocation, HOME_DIRECTORY, run_compile_analysis_with_wait, tool_search_path,
 };
+use crate::held_root;
 use crate::measure::Bounds;
 use crate::toolchain::{ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
 use sill::{Environment, Possession, WaitPolicy};
@@ -149,12 +149,12 @@ fn milliseconds(duration: Duration) -> u64 {
 /// is also the shape that survives a killed run: whatever the previous arm left
 /// behind is indistinguishable from a root in active use by looking at it.
 ///
-/// The mechanism is therefore the possession lock in [`super::build_root`],
-/// which both compiling arms share: this arm removes a build root only while it
-/// holds that root's lock, so a contended root is one it never owns anything to
-/// tear down for, and a root whose lock is free is the wreckage of a killed run
-/// and is reclaimed. That module carries the invariant and why it is spelled in
-/// the signature of [`build_root::remove_build_root`].
+/// The mechanism is therefore the possession lock in [`crate::held_root`], which
+/// every surface holding a scratch directory shares: this arm removes a build
+/// root only while it holds that root's lock, so a contended root is one it
+/// never owns anything to tear down for, and a root whose lock is free is the
+/// wreckage of a killed run and is reclaimed. That module carries the invariant
+/// and why it is spelled in the signature of [`held_root::remove_held_root`].
 struct RustWorkspace {
     root: PathBuf,
     cargo_target: PathBuf,
@@ -184,7 +184,7 @@ fn build_root_path(selected: &Path) -> Result<PathBuf, String> {
 impl RustWorkspace {
     fn create(selected: &Path) -> Result<Self, String> {
         let root = build_root_path(selected)?;
-        let possession = build_root::hold(&root, RUST_LOCK, RUST_LABEL)?;
+        let possession = held_root::hold(&root, RUST_LOCK, RUST_LABEL)?;
         fs::create_dir(&root).map_err(|error| {
             format!(
                 "rust analysis workspace {} could not be created: {error}",
@@ -200,7 +200,7 @@ impl RustWorkspace {
                 "rust analysis output directories for {} could not be created: {error}",
                 selected.display()
             );
-            let removal = build_root::remove_build_root(&root, &possession);
+            let removal = held_root::remove_held_root(&root, &possession);
             return Err(match removal.reason(RUST_LABEL, &root) {
                 Some(reason) => format!("{created}; {reason}"),
                 None => created,
@@ -221,7 +221,7 @@ impl RustWorkspace {
     /// build root undiagnosable from the remover's side.
     fn release(mut self) -> Option<String> {
         self.possession.take().and_then(|possession| {
-            build_root::remove_build_root(&self.root, &possession).reason(RUST_LABEL, &self.root)
+            held_root::remove_held_root(&self.root, &possession).reason(RUST_LABEL, &self.root)
         })
     }
 }
@@ -233,7 +233,7 @@ impl Drop for RustWorkspace {
     /// arrives here already emptied and this does nothing.
     fn drop(&mut self) {
         if let Some(possession) = self.possession.take() {
-            let _ = build_root::remove_build_root(&self.root, &possession);
+            let _ = held_root::remove_held_root(&self.root, &possession);
         }
     }
 }
@@ -270,7 +270,7 @@ mod tests {
 
     /// The lock guarding one of this arm's build roots, as `hold` resolves it.
     fn build_root_lock(root: &Path) -> Result<LockFile, String> {
-        build_root::build_root_lock(root, RUST_LOCK, RUST_LABEL)
+        held_root::held_root_lock(root, RUST_LOCK, RUST_LABEL)
     }
 
     static NEXT_RUST_FIXTURE: AtomicU64 = AtomicU64::new(0);

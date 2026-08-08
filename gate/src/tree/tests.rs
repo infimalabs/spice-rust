@@ -1,8 +1,10 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
+
+use sill::Acquisition;
 
 use super::{Selector, TreeError};
 
@@ -264,5 +266,188 @@ fn packed_refs_reflogs_pseudorefs_and_ancestry_resolve_from_the_capture() {
     assert_eq!(
         fs::read(packed.root().join("selected.txt")).expect("read the packed revision"),
         b"second\n"
+    );
+}
+
+/// A private stand-in for the temporary directory the reclaim sweeps.
+///
+/// The real one is shared with every other checkout on this machine, and the
+/// reclaim removes what it finds there, so a fixture that pointed the sweep at
+/// it would be deciding the fate of a peer's live gate run rather than its own
+/// planted evidence.
+struct Scratch {
+    root: PathBuf,
+}
+
+impl Scratch {
+    fn new(label: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "gate-tree-reclaim-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("create a reclaim scratch directory");
+        Self { root }
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        super::make_removable(&self.root);
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+/// Plant a workspace shaped like the one a killed gate run leaves behind.
+///
+/// The planted tree is sealed through the production sealer rather than left
+/// writable. A materialization seals what it measures, and a sealed directory
+/// cannot be read in order to empty it, so a reclaim that never lifted the seal
+/// would still sweep a writable imitation clean and prove nothing.
+fn plant_workspace(scratch: &Path) -> PathBuf {
+    let workspace = scratch.join("spice-gate-tree-4242-0");
+    let root = workspace.join("root");
+    fs::create_dir_all(&root).expect("plant a gate tree workspace");
+    fs::write(root.join("selected.txt"), b"measured\n").expect("plant a selected file");
+    super::make_immutable(&root).expect("seal the planted tree");
+    workspace
+}
+
+/// The lock a live gate run would hold over this workspace.
+///
+/// Resolved through the production helper rather than spelled here, so a
+/// fixture cannot prove that some lock contends while the reclaim consults a
+/// different one.
+fn planted_lock(workspace: &Path) -> sill::LockFile {
+    super::workspace_lock(workspace).expect("the planted workspace names a lock")
+}
+
+#[test]
+fn a_gate_tree_workspace_no_live_run_holds_is_reclaimed_rather_than_accumulating() {
+    let scratch = Scratch::new("abandoned");
+    let workspace = plant_workspace(&scratch.root);
+    let lock = planted_lock(&workspace);
+    // What a killed run leaves: the workspace, and its lock held by nobody.
+    let Ok(Acquisition::Acquired(possession)) = lock.try_acquire() else {
+        panic!("a freshly planted workspace must be lockable");
+    };
+    drop(possession);
+    let measured = workspace.join("root/selected.txt");
+
+    super::reclaim_abandoned(&scratch.root);
+
+    assert!(
+        !measured.exists(),
+        "the abandoned tree's bytes outlived the run that was killed holding them"
+    );
+    assert!(
+        !workspace.exists(),
+        "the abandoned workspace accumulated instead of being reclaimed"
+    );
+    assert!(
+        !lock.path().exists(),
+        "the lock outlived the workspace it names, accumulating one file per run"
+    );
+}
+
+/// A workspace a live run is measuring out of is never removed.
+///
+/// The holder is a second acquisition of the very lock the reclaim consults.
+/// `flock` grants per open file description, so this contends exactly as a
+/// separate process would, which is what makes the decision drivable here
+/// rather than something a fixture has to win a race to observe.
+#[test]
+fn a_gate_tree_workspace_a_live_run_holds_is_never_removed() {
+    let scratch = Scratch::new("held");
+    let workspace = plant_workspace(&scratch.root);
+    let lock = planted_lock(&workspace);
+    let Ok(Acquisition::Acquired(held)) = lock.try_acquire() else {
+        panic!("a freshly planted workspace must be lockable");
+    };
+    let measured = workspace.join("root/selected.txt");
+
+    super::reclaim_abandoned(&scratch.root);
+
+    assert_eq!(
+        fs::read(&measured).expect("the held tree's bytes survive the sweep"),
+        b"measured\n",
+        "a workspace a live run holds was removed out from under it"
+    );
+    assert!(
+        lock.path().exists(),
+        "the held workspace's lock was unlinked while its run still held it"
+    );
+    drop(held);
+}
+
+/// An unlocked workspace belongs to an older build, not to a dead run.
+///
+/// Every workspace this build mints is locked before it exists, so an unlocked
+/// one was minted by a gate that predates the lock and is most likely a live
+/// run of that gate sharing this temporary directory. Reclaiming it would
+/// delete the tree that run is measuring, so it is left for an operator.
+#[test]
+fn a_gate_tree_workspace_with_no_lock_beside_it_is_left_alone() {
+    let scratch = Scratch::new("unlocked");
+    let workspace = plant_workspace(&scratch.root);
+    let measured = workspace.join("root/selected.txt");
+
+    super::reclaim_abandoned(&scratch.root);
+
+    assert_eq!(
+        fs::read(&measured).expect("an unlocked workspace survives the sweep"),
+        b"measured\n",
+        "a workspace an older build is measuring was removed out from under it"
+    );
+    assert!(
+        !planted_lock(&workspace).path().exists(),
+        "the sweep locked a workspace into ownership it was asked only to consider"
+    );
+}
+
+/// Materializing a tree is what runs the reclaim.
+///
+/// The tests above drive [`super::reclaim_abandoned`] directly, which pins what
+/// it decides and says nothing about whether production ever calls it. This one
+/// plants into the real temporary directory -- the one a selection sweeps --
+/// and lets an ordinary selection be the only thing that touches it.
+///
+/// The planted name carries a word no minted name contains, so it can never be
+/// a workspace a concurrent selection in this process is using, and a peer
+/// sweeping the same shared directory can only reach the same verdict.
+#[test]
+fn materializing_a_tree_reclaims_an_abandoned_workspace() {
+    static NEXT_ABANDONED: AtomicU64 = AtomicU64::new(0);
+    let repository = Repository::new("reclaim-on-materialize");
+    repository.write("selected.txt", b"selected\n");
+    repository.git(&["add", "selected.txt"]);
+    let abandoned = std::env::temp_dir().join(format!(
+        "spice-gate-tree-{}-abandoned-{}",
+        std::process::id(),
+        NEXT_ABANDONED.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&abandoned).expect("plant an abandoned workspace beside the real ones");
+    let lock = planted_lock(&abandoned);
+    let Ok(Acquisition::Acquired(possession)) = lock.try_acquire() else {
+        panic!("a freshly planted workspace must be lockable");
+    };
+    drop(possession);
+
+    let selected = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the staged index");
+
+    assert!(
+        !abandoned.exists(),
+        "selecting a tree left an abandoned workspace behind in the shared directory"
+    );
+    assert!(
+        !lock.path().exists(),
+        "selecting a tree left an abandoned workspace's lock behind"
+    );
+    assert!(
+        selected.root().join("selected.txt").is_file(),
+        "the selection that swept still materialized its own tree"
     );
 }
