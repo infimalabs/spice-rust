@@ -12,6 +12,7 @@ pub(in crate::resident) struct OccupantLaunch {
     pub(in crate::resident) spec: Spec,
     pub(in crate::resident) observation: Observation,
     pub(in crate::resident) session: SessionProof,
+    pub(in crate::resident) git: String,
 }
 
 pub(in crate::resident) struct OccupantLaunchRequest<'a> {
@@ -37,11 +38,10 @@ pub(in crate::resident) fn occupant_launch(
         resume,
     } = request;
     let repository = launch_repository(paths, worktree)?;
-    // Ahead of the configuration load, and dropping its note, both deliberately:
-    // `advance_at_launch` documents why. Inlined here rather than wrapped in a
-    // helper so that `xtask/tests/git_boundaries.rs`, which reads this file for
-    // the call, is reading the live call site instead of a name in dead code.
-    spice::task_git::advance_at_launch(&repository);
+    // Run ahead of configuration load so the launch reads the advanced tree.
+    // Keep this call at the live seam: `xtask/tests/git_boundaries.rs` proves
+    // both that every launch reaches it and that its exact note is published.
+    let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
     let plan = launch_plan(&repository, &resolved, name, lane, resume)?;
@@ -70,6 +70,7 @@ pub(in crate::resident) fn occupant_launch(
         vendor: name.clone(),
         model,
         effort,
+        git: git.clone(),
         epoch,
         stream,
         expected,
@@ -89,6 +90,7 @@ pub(in crate::resident) fn occupant_launch(
         spec,
         observation,
         session: SessionProof { session, state },
+        git,
     })
 }
 

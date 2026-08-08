@@ -48,6 +48,7 @@ struct ProvenOccupant {
     occupant: CanonicalUuid,
     group: u32,
     session: wire::LaneSession,
+    git: String,
 }
 
 #[derive(Clone)]
@@ -88,6 +89,7 @@ pub(super) fn import(
         lane: request.lane,
         from: context.row.worktree.clone(),
         to: context.worktree.clone(),
+        git: Some(proven.git.clone().into_boxed_str()),
     };
     let proposal = propose_import(command, epoch, request, &context, &proven, answer.clone());
     let proposal = match proposal {
@@ -224,6 +226,7 @@ fn launch_import(
         },
         Arc::clone(&runtime.capture),
     )?;
+    let git = launch.git;
     let proof = launch.session;
     let group = seats
         .seat_observed(context.row.lane, occupant, launch.spec, launch.observation)
@@ -240,6 +243,7 @@ fn launch_import(
         occupant,
         group,
         session,
+        git,
     })
 }
 

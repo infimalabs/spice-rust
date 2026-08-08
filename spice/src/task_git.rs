@@ -336,10 +336,9 @@ pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
 /// a lane runs under, so advancing afterwards would compose an occupant from
 /// configuration the tree no longer has.
 ///
-/// The returned note may be dropped. Every caller today does, matching the
-/// predecessor at the same seam: GIT-04 leaves no failure to propagate, and the
-/// resident has nothing launch-time an operator reads. Returning it anyway is
-/// what keeps publishing it later a wiring change rather than a redesign.
+/// The resident publishes the returned note in the launch transition and in
+/// the durable session identity. GIT-04 leaves no failure to propagate, but its
+/// safe no-op is still observable rather than becoming an invisible decision.
 pub fn advance_at_launch(repository: &Repository) -> LaunchAdvance {
     launch::advance(repository.worktree_root())
 }

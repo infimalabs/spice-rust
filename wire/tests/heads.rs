@@ -110,6 +110,7 @@ const RESIDENCY: &str = r#"{
       "vendor": "claude",
       "model": "sonnet",
       "effort": "high",
+      "git": "current",
       "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
       "stream": "stdout",
       "identity": "018f7777-7777-7444-8888-999999999999",
@@ -243,7 +244,11 @@ fn a_pre_extension_residency_head_has_one_visible_unrecorded_launch_state() {
 
     let encoded = serde_json::to_value(decoded).expect("the current head re-encodes");
     let session = &encoded["lanes"][0]["session"];
-    assert!(session.get("model").is_none() && session.get("effort").is_none());
+    assert!(
+        session.get("model").is_none()
+            && session.get("effort").is_none()
+            && session.get("git").is_none()
+    );
 
     for (present, missing) in [("model", "effort"), ("effort", "model")] {
         let mut incomplete: serde_json::Value =

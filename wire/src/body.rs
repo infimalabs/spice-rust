@@ -782,7 +782,7 @@ pub struct LaneArranged {
     pub sources: Vec<LaneSourceBoundary>,
 }
 
-/// Exact model and effort supplied to one vendor launch.
+/// Exact model, effort, and observable Git outcome for one vendor launch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneLaunchIdentity {
@@ -790,6 +790,13 @@ pub struct LaneLaunchIdentity {
     pub model: String,
     /// Reasoning effort supplied to the vendor launch.
     pub effort: String,
+    /// GIT-04 outcome observed before this launch read repository configuration.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git: Option<String>,
 }
 
 impl LaneLaunchIdentity {
@@ -798,24 +805,36 @@ impl LaneLaunchIdentity {
         Self {
             model: model.into(),
             effort: effort.into(),
+            git: None,
         }
+    }
+
+    /// Attach the observable GIT-04 launch outcome to a current launch.
+    #[must_use]
+    pub fn with_git(mut self, git: impl Into<String>) -> Self {
+        self.git = Some(git.into());
+        self
     }
 
     pub(crate) fn from_parts(
         model: Option<String>,
         effort: Option<String>,
+        git: Option<String>,
     ) -> Result<Option<Self>, &'static str> {
-        match (model, effort) {
-            (Some(model), Some(effort)) => Ok(Some(Self::new(model, effort))),
-            (None, None) => Ok(None),
-            (Some(_), None) => Err("lane launch identity is missing effort"),
-            (None, Some(_)) => Err("lane launch identity is missing model"),
+        match (model, effort, git) {
+            (Some(model), Some(effort), git) => Ok(Some(Self { model, effort, git })),
+            (None, None, None) => Ok(None),
+            (Some(_), None, _) => Err("lane launch identity is missing effort"),
+            (None, Some(_), _) => Err("lane launch identity is missing model"),
+            (None, None, Some(_)) => Err("lane launch identity is missing model and effort"),
         }
     }
 
-    pub(crate) fn into_parts(identity: Option<Self>) -> (Option<String>, Option<String>) {
-        identity.map_or((None, None), |identity| {
-            (Some(identity.model), Some(identity.effort))
+    pub(crate) fn into_parts(
+        identity: Option<Self>,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        identity.map_or((None, None, None), |identity| {
+            (Some(identity.model), Some(identity.effort), identity.git)
         })
     }
 }
@@ -872,6 +891,12 @@ struct LaneSessionDeclaredWire {
         deserialize_with = "crate::optional::present"
     )]
     effort: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    git: Option<String>,
     epoch: CanonicalUuid,
     stream: String,
     identity: String,
@@ -889,7 +914,7 @@ impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
             occupant: wire.occupant,
             worktree: wire.worktree,
             vendor: wire.vendor,
-            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort)?,
+            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort, wire.git)?,
             epoch: wire.epoch,
             stream: wire.stream,
             identity: wire.identity,
@@ -902,7 +927,7 @@ impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
 
 impl From<LaneSessionDeclared> for LaneSessionDeclaredWire {
     fn from(declaration: LaneSessionDeclared) -> Self {
-        let (model, effort) = LaneLaunchIdentity::into_parts(declaration.launch);
+        let (model, effort, git) = LaneLaunchIdentity::into_parts(declaration.launch);
         Self {
             lane: declaration.lane,
             occupant: declaration.occupant,
@@ -910,6 +935,7 @@ impl From<LaneSessionDeclared> for LaneSessionDeclaredWire {
             vendor: declaration.vendor,
             model,
             effort,
+            git,
             epoch: declaration.epoch,
             stream: declaration.stream,
             identity: declaration.identity,

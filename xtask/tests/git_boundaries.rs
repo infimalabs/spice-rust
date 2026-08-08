@@ -56,7 +56,7 @@ const CONTROL_PLANE_SOURCES: [&str; 2] = ["spice/src/task_git.rs", "spice/src/ta
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 10] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 11] = [
     // The whole of GIT-01's production surface: one fetch, one push, both in
     // the control-plane module and both reached only through a boundary.
     ("spice/src/task_git.rs", "fetch", 1),
@@ -73,7 +73,8 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 10] = [
     ("spice/src/task_git/tests.rs", "ls-remote", 2),
     ("spice/src/task_git/tests.rs", "pull", 1),
     ("spice/src/task_git/tests.rs", "push", 8),
-    ("spice/tests/resident/lane_process.rs", "push", 1),
+    ("spice/tests/resident/lane_process.rs", "clone", 1),
+    ("spice/tests/resident/lane_process.rs", "push", 2),
 ];
 
 /// The activation surface, which GIT-06 keeps free of git entirely.
@@ -266,6 +267,31 @@ fn the_git_writing_boundaries_are_claim_completion_and_launch() {
             );
         }
     }
+
+    let advance_call = qualified_call("spice/src/task_git.rs", "advance_at_launch");
+    let note_assignment = format!("let git = {advance_call}&repository).to_string();");
+    assert!(
+        surface.contains(&note_assignment),
+        "{LAUNCH_SURFACE} must retain the exact GIT-04 result instead of silently discarding it"
+    );
+    let reporter = surface
+        .split_once("Arc::new(DeclarationReporter {")
+        .and_then(|(_, tail)| tail.split_once("});"))
+        .map(|(reporter, _)| reporter)
+        .expect("the live launch seam constructs its declaration reporter");
+    assert!(
+        reporter.contains("git: git.clone(),"),
+        "the retained GIT-04 note does not reach the durable declaration reporter"
+    );
+    let launch = surface
+        .split_once("Ok(OccupantLaunch {")
+        .and_then(|(_, tail)| tail.split_once("})"))
+        .map(|(launch, _)| launch)
+        .expect("the live launch seam returns its occupant launch");
+    assert!(
+        launch.lines().any(|line| line.trim() == "git,"),
+        "the retained GIT-04 note does not reach the immediate launch result"
+    );
 
     let activation = sources
         .iter()

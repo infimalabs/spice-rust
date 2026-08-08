@@ -100,6 +100,7 @@ pub(super) fn propose_seat(
             lane: request.lane,
             from: "absent".to_owned(),
             to: OCCUPIED.to_owned(),
+            git: Some(prepared.proven.git.clone().into_boxed_str()),
         },
     )?;
     Ok(write)
