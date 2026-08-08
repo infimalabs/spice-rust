@@ -644,17 +644,21 @@ export async function chooseCanvasView(page, name) {
   }
   // Returning here would return on dispatch, which is what made every later
   // wait ambiguous: a selector wait that follows an unapplied switch is deaf
-  // rather than slow, and both spell the same bare TimeoutError. The two modes
-  // confirm differently, but not because the marker stops being rendered: the
-  // mosaic bar (`render_mosaic_command_bar` in app/src/browser/view/chrome.rs)
-  // renders its own Agents pill through `render_pill`, whose selected argument
-  // is the mosaic state, so `aria-current` really is set on it.
-  // Confirming on the workspace class instead asks for the state directly
-  // rather than for a marker whose visibility is incidental to it.
-  const applied =
-    name === "Agents"
-      ? page.locator(".mosaic-workspace")
-      : button.and(page.locator('[aria-current="page"]'));
+  // rather than slow, and both spell the same bare TimeoutError. Every view
+  // confirms the same way, on the pill the switch selects: `render_pill` in
+  // app/src/browser/view/chrome.rs sets `aria-current` from the state the
+  // click just wrote, so the marker appears only once the switch is applied.
+  //
+  // Agents was special-cased onto `.mosaic-workspace` on the reasoning that
+  // its pill sits inside the menu this function has just closed and so can
+  // never be visible. That was wrong twice over: `render_canvas_menu` holds
+  // only Magnitude and Flow, and the mosaic bar renders its own Agents pill
+  // into `nav.canvas-shortcuts`, a sibling of the menu that team-menu.mjs
+  // already reads the text and bounding rect of. The branch is gone because
+  // the marker was measured, not argued: with it removed the suite passes,
+  // and at every Agents switch `.mosaic-workspace` was already present the
+  // moment the marker settled, so the marker never lands the earlier.
+  const applied = button.and(page.locator('[aria-current="page"]'));
   await applied.waitFor({ timeout: TRANSITION_MS });
 }
 
