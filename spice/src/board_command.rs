@@ -22,6 +22,21 @@ use wire::{
 
 use crate::cli::Contract;
 
+// These are `include!` rather than `mod` by decision, measured rather than
+// assumed. `mod` would not cost the tests below their reach: a child module
+// already reads its ancestors' private items, so `claim_plan` and
+// `commit_claim` would stay callable. What the single namespace buys is
+// narrower than it looks, and what converting costs is 126 items promoted to
+// `pub(super)` and 25 fragments opened with `use super::*`, counted across this
+// root, its test fragments, `resident` and `task_git`. What `include!` costs is
+// that `cargo fmt` walks modules and so exits zero over a drifted fragment;
+// the formatters gate closes exactly that by running a second rustfmt pass over
+// every `include!` target, and the arms that walk the tree reach a fragment by
+// path like any other file.
+// Converting is also not a rename: a crate root resolves child modules against
+// the directory holding the root file, so `mod vocabulary;` in
+// `wire/tests/identity_law.rs` binds the 18-test `wire/tests/vocabulary.rs`
+// rather than the one-test file beside it, with no compiler error.
 include!("board_command/client.rs");
 include!("board_command/client_document.rs");
 include!("board_command/followup.rs");
