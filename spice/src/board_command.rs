@@ -30,9 +30,11 @@ use crate::cli::Contract;
 // `pub(super)` and 25 fragments opened with `use super::*`, counted across this
 // root, its test fragments, `resident` and `task_git`. What `include!` costs is
 // that `cargo fmt` walks modules and so exits zero over a drifted fragment;
-// the formatters gate closes exactly that by running a second rustfmt pass over
-// every `include!` target, and the arms that walk the tree reach a fragment by
-// path like any other file.
+// the formatters gate closes exactly that by naming every path it selects on
+// the formatter's own command line, so a fragment is covered for being selected
+// rather than for being reachable: the set the arm counts and the set the
+// formatter opens are one set, and no fragment can drift unseen. The arms that
+// walk the tree reach a fragment by path like any other file.
 // Converting is also not a rename: a crate root resolves child modules against
 // the directory holding the root file, so `mod vocabulary;` in
 // `wire/tests/identity_law.rs` binds the 18-test `wire/tests/vocabulary.rs`
