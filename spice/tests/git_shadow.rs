@@ -1,0 +1,198 @@
+//! The one file this port writes outside the shared state root, pinned.
+//!
+//! `spice/src/repository.rs` records that `<git-dir>/agent.gitconfig` is written
+//! whole by this port and whole by the predecessor's `spice/agent/shadow.py`,
+//! and that they coexist only because both generate the same bytes and read the
+//! file back before writing. Neither the coexistence policy nor
+//! `tests/coexistence.rs` reaches it: both are scoped to
+//! `<git-common-dir>/.spice`, and this path is under no `.spice` at all.
+//!
+//! So the anchor and the filename are held here instead. Everything runs
+//! against a linked worktree on purpose. In an ordinary checkout
+//! `--absolute-git-dir` and `--git-common-dir` name the same directory, so a
+//! test placed there passes whichever one the code asks for, and the divergence
+//! this file exists to catch would be invisible.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use sill::Environment;
+use spice::repository::Repository;
+
+/// The filename both implementations write, spelled out rather than imported.
+///
+/// The port's own constant is private, and importing it would make this
+/// assertion follow a rename instead of catching one. The predecessor spells it
+/// in `spice/agent/shadow.py` as `AGENT_GITCONFIG_NAME`; the two agreeing is
+/// the thing under test, so each side states it independently.
+const AGENT_GITCONFIG_NAME: &str = "agent.gitconfig";
+
+/// The shadow lands in the per-worktree Git directory, not the common one.
+///
+/// A linked worktree separates the two: `--absolute-git-dir` reports
+/// `<common>/worktrees/<name>` while `--git-common-dir` reports `<common>`, and
+/// the worktree's own `.git` is a file rather than a directory. The positive
+/// assertion names the first, and the negative one denies the second, so
+/// resolving the anchor the other way reds this test rather than relocating a
+/// file the predecessor will then write again beside it.
+#[test]
+fn the_git_shadow_is_written_to_the_per_worktree_git_directory() {
+    let fixture = Fixture::new("anchor");
+    let repository = Repository::discover(&fixture.linked).expect("linked worktree resolves");
+
+    let environment = spice::git_shadow::environment(&repository, fixture.base())
+        .expect("the Git shadow composes over a linked worktree");
+
+    assert_ne!(
+        fixture.common,
+        fixture.per_worktree_git_dir(),
+        "the fixture is not a linked worktree, so it cannot tell the two anchors \
+         apart and the assertions below would hold either way"
+    );
+    let published = fixture.per_worktree_git_dir().join(AGENT_GITCONFIG_NAME);
+    assert_eq!(
+        Path::new(shadow_path(&environment)),
+        published,
+        "the shadow was published somewhere other than the per-worktree Git directory"
+    );
+    assert!(
+        fs::read_to_string(&published)
+            .expect("the environment names a shadow that was written")
+            .contains(&format!("[branch \"{}\"]", fixture.branch)),
+        "a file exists at {} but it is not the shadow for this worktree's branch",
+        published.display()
+    );
+    assert!(
+        !fixture.common.join(AGENT_GITCONFIG_NAME).exists(),
+        "the shadow was written to the common Git directory, where one worktree's \
+         branch would overwrite every other worktree's"
+    );
+}
+
+/// Publishing twice leaves the byte-identical file the second run found.
+///
+/// Both implementations compare before writing, which is the whole reason a
+/// whole-file write by two systems is safe here. A port that stopped comparing
+/// would still pass the anchor assertion above while rewriting the
+/// predecessor's file on every run, so the modification time is read to catch
+/// a write that changed nothing but happened anyway.
+#[test]
+fn a_second_publication_rewrites_nothing() {
+    let fixture = Fixture::new("idempotent");
+    let repository = Repository::discover(&fixture.linked).expect("linked worktree resolves");
+
+    spice::git_shadow::environment(&repository, fixture.base()).expect("the first shadow composes");
+    let published = fixture.per_worktree_git_dir().join(AGENT_GITCONFIG_NAME);
+    let first = fs::metadata(&published).expect("the first run published the shadow");
+    let written = fs::read(&published).expect("the published shadow reads back");
+
+    spice::git_shadow::environment(&repository, fixture.base())
+        .expect("the second shadow composes");
+
+    let second = fs::metadata(&published).expect("the shadow survives a second run");
+    assert_eq!(
+        fs::read(&published).expect("the shadow reads back unchanged"),
+        written,
+        "the second run changed the bytes of a file the predecessor also writes"
+    );
+    assert_eq!(
+        first
+            .modified()
+            .expect("a published shadow carries a modification time"),
+        second
+            .modified()
+            .expect("a surviving shadow carries a modification time"),
+        "the second run republished identical bytes instead of leaving the file alone"
+    );
+}
+
+/// The `GIT_CONFIG_SYSTEM` value the shadow published.
+fn shadow_path(environment: &Environment) -> &std::ffi::OsStr {
+    environment
+        .entries()
+        .iter()
+        .find(|(key, _)| key == "GIT_CONFIG_SYSTEM")
+        .map(|(_, value)| value.as_os_str())
+        .expect("the Git shadow names its system config")
+}
+
+/// One committed repository and one linked worktree checked out beside it.
+struct Fixture {
+    common: PathBuf,
+    linked: PathBuf,
+    branch: String,
+}
+
+impl Fixture {
+    fn new(label: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "spice-git-shadow-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("create Git shadow fixture root");
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "user.email", "shadow@example.invalid"]);
+        git(&root, &["config", "user.name", "Git Shadow Fixture"]);
+        fs::write(root.join("README.md"), "fixture\n").expect("seed a tracked file");
+        git(&root, &["add", "README.md"]);
+        git(&root, &["commit", "-qm", "fixture commit"]);
+        // Canonical from here on: the runtime canonicalizes while discovering,
+        // and on macOS the temporary directory is reached through a symlink, so
+        // an uncanonicalized root would never equal the paths it reports.
+        let root = fs::canonicalize(&root).expect("canonicalize fixture root");
+
+        let branch = format!("lane-{label}");
+        let linked = root.join("lane");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &branch,
+                linked.to_str().expect("fixture path is text"),
+            ],
+        );
+        Self {
+            common: root.join(".git"),
+            linked,
+            branch,
+        }
+    }
+
+    /// The directory `rev-parse --absolute-git-dir` reports for the worktree.
+    fn per_worktree_git_dir(&self) -> PathBuf {
+        self.common.join("worktrees").join(
+            self.linked
+                .file_name()
+                .expect("the linked worktree is named"),
+        )
+    }
+
+    /// An environment carrying only what launching Git needs.
+    ///
+    /// Nothing Git-related is inherited: the shadow filters `GIT_CONFIG_*` out of
+    /// the environment it probes with, and a caller's real `GIT_CONFIG_SYSTEM`
+    /// leaking in would be read back as this test's own answer.
+    fn base(&self) -> Environment {
+        Environment::new([("PATH", "/usr/bin:/bin")]).expect("fixture environment admits")
+    }
+}
+
+fn git(root: &Path, arguments: &[&str]) {
+    let output = Command::new("/usr/bin/git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .expect("Git shadow fixture Git launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
