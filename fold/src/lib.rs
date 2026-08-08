@@ -6,6 +6,8 @@ mod contract;
 mod inventory;
 #[cfg(not(target_arch = "wasm32"))]
 mod store;
+#[cfg(not(target_arch = "wasm32"))]
+mod task_effort;
 
 pub use contract::{
     AnswerContent, Availability, Beyond, ConfigSource, Cursor, FactPlane, HeadSource, Horizon,
@@ -18,6 +20,8 @@ pub use inventory::{
 pub use store::{
     Materialization, ReadOutcome, RebuildCause, Reducer, Reduction, Refusal, Store, StoreError,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use task_effort::{TaskEffortReducer, select_task_effort, task_effort_answer};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

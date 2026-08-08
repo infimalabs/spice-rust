@@ -24,7 +24,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::body::{ConsentQueueCause, DirectiveAttachment, TranscriptLocus};
+use crate::body::{
+    ConsentQueueCause, DirectiveAttachment, SourceBoundary, TranscriptLocus, TranscriptPosition,
+};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
 use crate::head::{ResidentState, TapeLocus, TrustState};
@@ -174,6 +176,212 @@ pub struct TaskDefer {
 pub struct TaskRef {
     /// The subject.
     pub task: TaskHandle,
+}
+
+/// Select task-effort rows from the one replayable effort fold.
+///
+/// Absence means every task. Filtering is a read concern rather than reducer
+/// state, so both the filtered and unfiltered CLI surfaces consume the same
+/// complete materialization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffortRead {
+    /// One task to retain, or every task when absent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub task: Option<TaskHandle>,
+}
+
+/// Exact vendor launch identity that makes one effort value comparable.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffortIdentity {
+    /// Vendor that emitted the accounted transcript.
+    pub vendor: Name,
+    /// Concrete model supplied to the vendor launch.
+    pub model: String,
+    /// Reasoning effort supplied to the vendor launch.
+    pub effort: String,
+}
+
+/// Checked normalized usage totals.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffortUsage {
+    /// Completed vendor turns.
+    pub turns: u64,
+    /// Uncached input tokens.
+    pub input_tokens: u64,
+    /// Cached input tokens.
+    pub cached_input_tokens: u64,
+    /// Input tokens written to cache.
+    pub cache_write_input_tokens: u64,
+    /// Output tokens.
+    pub output_tokens: u64,
+    /// Reasoning output tokens, absent when any contributing sample omitted the counter.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub reasoning_output_tokens: Option<u64>,
+}
+
+/// One source-contiguous, occupant- and lineage-attributed part of a phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffortSegmentAnswer {
+    /// Lane whose transcript supplies this segment.
+    pub lane: CanonicalUuid,
+    /// Occupant credited with this segment.
+    pub occupant: CanonicalUuid,
+    /// Canvas lineage credited at this exact source locus.
+    pub lineage: CanonicalUuid,
+    /// Exact vendor session identity covering this source locus.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub session: Option<String>,
+    /// Opaque transcript generation.
+    pub source: CanonicalUuid,
+    /// First included record boundary.
+    pub from: TranscriptPosition,
+    /// First excluded record boundary.
+    pub to: TranscriptPosition,
+    /// Comparable launch identity, absent only on a reason-coded unavailable phase.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub identity: Option<EffortIdentity>,
+    /// Usage wholly contained by this half-open segment.
+    pub usage: EffortUsage,
+}
+
+/// Stable reason one phase cannot contribute a numeric sizing value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EffortUnavailableCode {
+    MissingStart,
+    MissingEnd,
+    IncompleteBoundary,
+    TranscriptMissing,
+    SourceGap,
+    SourceReplaced,
+    ClaimFreed,
+    ClaimLapsed,
+    ClaimStolen,
+    TaskDeleted,
+    BrokenCarry,
+    OccupantDisagreement,
+    SessionDisagreement,
+    LineageDisagreement,
+    MalformedUsage,
+    UntaggedLaunch,
+    MixedLaunch,
+    ArithmeticOverflow,
+}
+
+/// One reason-coded unavailable observation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffortUnavailable {
+    /// Stable code suitable for grouping and tests.
+    pub code: EffortUnavailableCode,
+    /// Recorded or evidence-specific detail; never a guessed replacement value.
+    pub detail: String,
+}
+
+/// Numeric or withheld phase result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum EffortAvailability {
+    /// Closed, fully covered, and identically tagged.
+    Available {
+        /// Tuple every segment agreed on.
+        identity: EffortIdentity,
+        /// Checked sum of every segment.
+        usage: EffortUsage,
+        /// Claim-to-terminal wall time in whole milliseconds.
+        wall_ms: u64,
+    },
+    /// Visible but excluded from every numeric aggregate.
+    Unavailable {
+        /// Every independently observed reason, in stable code/detail order.
+        reasons: Vec<EffortUnavailable>,
+    },
+}
+
+/// One claim-to-terminal workflow-phase attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffortPhaseAnswer {
+    /// Task this phase belongs to.
+    pub task: TaskHandle,
+    /// Workflow phase name at the opening claim.
+    pub phase: Phase,
+    /// Zero-based workflow attempt index advanced by each phase transition.
+    pub phase_index: u32,
+    /// ClaimWon fact opening this attempt.
+    pub opening: Seq,
+    /// TaskDone or TaskReviewed fact closing it, absent when interrupted.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub closing: Option<Seq>,
+    /// Renewal facts observed without splitting the phase.
+    pub renewals: u32,
+    /// Exact recorded opening boundary.
+    pub opening_boundary: SourceBoundary,
+    /// Exact recorded closing boundary, absent when no terminal fact exists.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub closing_boundary: Option<SourceBoundary>,
+    /// Verified source-contiguous attribution pieces.
+    pub segments: Vec<EffortSegmentAnswer>,
+    /// Numeric answer or explicit withholding reasons.
+    pub availability: EffortAvailability,
+}
+
+/// Comparable totals and integer averages for one exact identity and phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffortAggregateAnswer {
+    /// Exact tuple defining comparability.
+    pub identity: EffortIdentity,
+    /// Workflow phase partition.
+    pub phase: Phase,
+    /// Available phases in the partition.
+    pub count: u64,
+    /// Checked token totals.
+    pub usage_sum: EffortUsage,
+    /// Per-phase integer token averages.
+    pub usage_average: EffortUsage,
+    /// Checked wall-time sum.
+    pub wall_ms_sum: u64,
+    /// Per-phase integer wall-time average.
+    pub wall_ms_average: u64,
+}
+
+/// The one typed answer shared by text, JSON, and later Canvas consumers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffortAnswer {
+    /// Task phases in opening-fact, task, phase-index, segment-locus order.
+    pub phases: Vec<EffortPhaseAnswer>,
+    /// Comparable partitions in identity then phase order.
+    pub aggregates: Vec<EffortAggregateAnswer>,
 }
 
 /// Wire a dependency edge between two existing tasks.

@@ -467,6 +467,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "board::status"
     ),
     row!(
+        ["task", "effort"],
+        "task effort [HANDLE]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Resident],
+        Reply,
+        "fold::task_effort"
+    ),
+    row!(
         ["task", "next"],
         "task next",
         OperatorOrLane,
