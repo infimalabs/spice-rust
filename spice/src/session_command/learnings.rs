@@ -286,12 +286,18 @@ fn extract(data: &Dataset, context: &CompletionContext) -> Vec<LearningCandidate
     let messages = turns
         .iter()
         .flat_map(|turn| {
-            turn.messages.iter().map(move |message| {
-                (
-                    compact(&message.text),
-                    turn.turn_id.as_deref().unwrap_or(""),
-                )
-            })
+            turn.messages
+                .iter()
+                .filter(|message| {
+                    message.ts.as_str() >= context.claim_started_at.as_str()
+                        && message.ts.as_str() <= context.done_at.as_str()
+                })
+                .map(move |message| {
+                    (
+                        compact(&message.text),
+                        turn.turn_id.as_deref().unwrap_or(""),
+                    )
+                })
         })
         .filter(|(text, _)| !text.is_empty())
         .take(MAX_SCAN_MESSAGES);

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
-use super::judge::{FunctionJudge, failure, invoke, parse_yes_no};
+use super::judge::{DEFAULT_JUDGE, FunctionJudge, failure, invoke, parse_yes_no};
 use super::store::{LearningStore, write_unchecked};
 use super::*;
 use crate::session_command::model::{MessageRecord, TurnRecord, Vendor};
@@ -155,6 +155,59 @@ fn exact_claim_span_yields_bounded_candidates_with_exact_provenance() {
         candidates
             .iter()
             .all(|candidate| !candidate.statement.contains("outside"))
+    );
+}
+
+#[test]
+fn boundary_crossing_turns_contribute_only_messages_inside_the_claim_span() {
+    let start = "2026-08-08T10:00:00.000Z";
+    let end = "2026-08-08T11:00:00.000Z";
+    let mut crossing_start = turn(
+        "crossing-start",
+        "2026-08-08T09:59:00.000Z",
+        "2026-08-08T10:01:00.000Z",
+        &[],
+    );
+    crossing_start.messages = vec![
+        message(
+            "2026-08-08T09:59:30.000Z",
+            "crossing-start",
+            "Always exclude this pre-claim statement.",
+        ),
+        message(
+            "2026-08-08T10:00:30.000Z",
+            "crossing-start",
+            "Always retain this in-claim statement.",
+        ),
+    ];
+    let mut crossing_end = turn(
+        "crossing-end",
+        "2026-08-08T10:59:00.000Z",
+        "2026-08-08T11:01:00.000Z",
+        &[],
+    );
+    crossing_end.messages = vec![
+        message(
+            "2026-08-08T10:59:30.000Z",
+            "crossing-end",
+            "Always retain this second in-claim statement.",
+        ),
+        message(
+            "2026-08-08T11:00:30.000Z",
+            "crossing-end",
+            "Always exclude this post-completion statement.",
+        ),
+    ];
+    let mut data = Dataset::default();
+    data.turns.extend([crossing_start, crossing_end]);
+
+    let candidates = extract(&data, &context(start, end));
+
+    assert_eq!(candidates.len(), 2);
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.statement.contains("in-claim"))
     );
 }
 
@@ -313,6 +366,35 @@ fn confirmation_refresh_preserves_original_wording_and_provenance() {
     assert_eq!(second[0].source_task, "SESSION-original");
     assert_eq!(second[0].created_at, "2026-08-08T10:00:00.000Z");
     assert_eq!(second[0].last_confirmed_at, "2026-08-08T11:00:00.000Z");
+
+    let older = candidate(
+        "always preserve this exact original wording",
+        "SESSION-older-observation",
+    );
+    let third = store
+        .confirm(&[older], "2026-08-08T10:30:00.000Z")
+        .expect("older reconfirmation cannot corrupt chronology");
+    assert_eq!(third[0].confirmation_count, 3);
+    assert_eq!(third[0].last_confirmed_at, "2026-08-08T11:00:00.000Z");
+    assert_eq!(
+        store.load().expect("strict reload after older observation")[0].statement,
+        "Always Preserve This Exact Original Wording."
+    );
+}
+
+#[test]
+fn task_done_declares_the_compiled_independent_judge() {
+    let contract = spice::cli::contract(&["task", "done"]).expect("task done contract");
+    let tool = contract
+        .tools
+        .iter()
+        .find(|tool| tool.name == DEFAULT_JUDGE)
+        .expect("compiled learning judge is declared");
+
+    assert_eq!(tool.owner, "session_command::learnings::ProcessJudge");
+    assert_eq!(tool.requirement, wire::DoctorToolRequirement::Optional);
+    assert_eq!(tool.bounds, wire::DoctorToolBounds::TaskBoundary);
+    assert_eq!(tool.cancellation, wire::DoctorToolCancellation::Deadline);
 }
 
 #[test]

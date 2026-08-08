@@ -187,7 +187,7 @@ pub enum DoctorToolSource {
     ProofRuntime,
     /// The sealed Proof battery supplies a program inside the container.
     ProofBattery,
-    /// The resident task-boundary contract supplies Git.
+    /// The task-boundary contract supplies a bounded executable.
     TaskBoundaryContract,
     /// A worktree-local integration seam supplies the executable.
     WorktreeConfiguration,
@@ -216,7 +216,7 @@ pub enum DoctorToolBounds {
     GateContract,
     /// Proof owns runtime, drain, reap, grace, and capture limits.
     ProofLimits,
-    /// Task Git owns command deadlines and bounded captured output.
+    /// The task boundary owns command deadlines and bounded captured output.
     TaskBoundary,
     /// Observation never starts the tool.
     NotExecuted,
