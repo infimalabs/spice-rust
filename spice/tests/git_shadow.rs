@@ -8,11 +8,10 @@
 //! `<git-common-dir>/.spice`, and this path is under no `.spice` at all.
 //!
 //! So the anchor, the filename and the header line are held here instead.
-//! Everything runs
-//! against a linked worktree on purpose. In an ordinary checkout
-//! `--absolute-git-dir` and `--git-common-dir` name the same directory, so a
-//! test placed there passes whichever one the code asks for, and the divergence
-//! this file exists to catch would be invisible.
+//! Everything runs against a linked worktree on purpose. In an ordinary
+//! checkout `--absolute-git-dir` and `--git-common-dir` name the same
+//! directory, so a test placed there passes whichever one the code asks for,
+//! and the divergence this file exists to catch would be invisible.
 
 use std::fs;
 use std::path::{Path, PathBuf};
