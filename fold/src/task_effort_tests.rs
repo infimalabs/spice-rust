@@ -832,8 +832,14 @@ fn incomplete(reason: &str) -> SourceBoundary {
 
 /// The single incomplete-boundary detail a withheld interval reports.
 ///
-/// Asserting exactly one also pins that the opening bound is reported once,
-/// where the fold both records it directly and reads it again as the first cut.
+/// Asserting exactly one pins what the reader receives for one withheld bound,
+/// and nothing more. It is deliberately not a guard against the bound being
+/// recorded twice: `finish` sorts and dedups reasons by code and detail, and
+/// both recorders spell the detail identically, so a doubled recording collapses
+/// before any assertion can see it. That duplicate is observable only under
+/// mutation, by severing one recorder and finding the interval still withheld,
+/// which is why removing it was a precondition for pinning the bounds separately
+/// rather than a change any assertion here could have caught.
 fn boundary_detail(phase: &EffortPhaseAnswer) -> &str {
     let found = reasons(phase)
         .iter()
