@@ -109,8 +109,8 @@ pub struct WorkingState {
     pub pending_inbox_count: usize,
     /// Current process actor's claim, if one is active in this worktree.
     pub claim: Option<ClaimState>,
-    /// Most recently fired maxim bag.
-    pub last_maxim: String,
+    /// Most recently fired taste bag.
+    pub last_taste: String,
 }
 
 impl WorkingState {
@@ -122,7 +122,7 @@ impl WorkingState {
                 .claim
                 .as_ref()
                 .is_some_and(|claim| !clean(&claim.handle).is_empty())
-            || !clean(&self.last_maxim).is_empty()
+            || !clean(&self.last_taste).is_empty()
     }
 }
 
@@ -130,13 +130,13 @@ impl WorkingState {
 ///
 /// Persisted identities are not accepted by this boundary. An absent or
 /// ambiguous environment, or duplicate live claims for one actor, yields no
-/// claim while retaining the independently observed inbox and maxim signals.
+/// claim while retaining the independently observed inbox and taste signals.
 #[must_use]
 pub fn collect_working_state(
     environment: ProcessEnvironment<'_>,
     pending_inbox_count: usize,
     claims: &[ClaimObservation],
-    last_maxim: impl Into<String>,
+    last_taste: impl Into<String>,
 ) -> WorkingState {
     let claim = environment.current_actor().and_then(|current| {
         let mut matching = claims.iter().filter(|observation| {
@@ -148,7 +148,7 @@ pub fn collect_working_state(
     WorkingState {
         pending_inbox_count,
         claim,
-        last_maxim: last_maxim.into(),
+        last_taste: last_taste.into(),
     }
 }
 
@@ -374,7 +374,7 @@ struct StateKey {
     pending_inbox_count: u64,
     claim_handle: String,
     claim_phase: String,
-    last_maxim: String,
+    last_taste: String,
     tier: LeaseTier,
 }
 
@@ -385,7 +385,7 @@ impl From<&WorkingState> for StateKey {
             pending_inbox_count: u64::try_from(snapshot.pending_inbox_count).unwrap_or(u64::MAX),
             claim_handle: claim.map_or_else(String::new, |claim| clean(&claim.handle)),
             claim_phase: claim.map_or_else(String::new, |claim| clean(&claim.phase)),
-            last_maxim: clean(&snapshot.last_maxim),
+            last_taste: clean(&snapshot.last_taste),
             tier: LeaseTier::from_remaining(claim.and_then(|claim| claim.remaining)),
         }
     }
@@ -431,9 +431,9 @@ fn render(snapshot: &WorkingState) -> String {
             }
         }
     }
-    let maxim = clean(&snapshot.last_maxim);
-    if !maxim.is_empty() {
-        parts.push(format!("last maxim {maxim}"));
+    let taste = clean(&snapshot.last_taste);
+    if !taste.is_empty() {
+        parts.push(format!("last taste {taste}"));
     }
     format!("🌶️ Working state: {}.", parts.join("; "))
 }
@@ -497,7 +497,7 @@ mod tests {
     use super::*;
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-    const WORKING_STATE_LINE_CEILING: usize = 160;
+    const WORKING_STATE_LINE_LIMIT: usize = 160;
 
     fn fixture(name: &str) -> PathBuf {
         let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
@@ -518,7 +518,7 @@ mod tests {
                 elapsed: Some(Duration::from_secs(90)),
                 remaining: remaining.map(Duration::from_secs),
             }),
-            last_maxim: "fallbacks".to_owned(),
+            last_taste: "fallbacks".to_owned(),
         }
     }
 
@@ -533,11 +533,12 @@ mod tests {
 
         assert_eq!(
             line,
-            "🌶️ Working state: 1 pending inbox; claim METER-00000001 todo for 90s; last maxim fallbacks."
+            "🌶️ Working state: 1 pending inbox; claim METER-00000001 todo for 90s; \
+             last taste fallbacks."
         );
         assert!(!line.contains('\n'));
         assert_eq!(line.matches('.').count(), 1);
-        assert!(line.len() < WORKING_STATE_LINE_CEILING);
+        assert!(line.len() < WORKING_STATE_LINE_LIMIT);
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
