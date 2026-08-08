@@ -829,11 +829,17 @@ fn a_refusal_names_the_integration_reference_it_resolved() {
 /// the fixture rather than written down here.
 ///
 /// Every other assertion in this file reads the branch, the baseline, or the
-/// worktree damage; none reads a rewound commit, so the abandoned list could be
-/// rendered as any constant and the whole package stays green. Measured that
-/// way: replacing the list with a literal leaves `cargo test -p xtask` at 119
-/// passed. So the guard could name a single commit it never protected in place
-/// of every commit it did.
+/// worktree damage; none reads a rewound commit, so before this test the
+/// abandoned list could be rendered as any constant and the whole package
+/// stayed green. Measured that way: replacing the list with a literal left
+/// `cargo test -p xtask` reporting no failures at all. So the guard could name
+/// a single commit it never protected in place of every commit it did.
+///
+/// The passing count that measurement produced is deliberately not written
+/// down. It moves with every merge that adds a test anywhere in the package --
+/// it already has -- while the claim the number was standing in for, that no
+/// test in the package noticed, is what this test now falsifies and is not
+/// something a reader has to reproduce a count to check.
 ///
 /// `publish_commit_ahead_of_tip` is what lets the list be named without
 /// ambiguity, and the two inequalities below are controls on the fixture rather
