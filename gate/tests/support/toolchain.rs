@@ -290,13 +290,28 @@ pub(crate) const UNPARSABLE_INCLUDED: &str = "fn included( {\n";
 /// that this exact command reports nothing about a file the arm reports. An
 /// assertion that read only the arm could not tell a formatter gap from a
 /// fixture that was never unformatted in the first place.
+///
+/// Callers read this to establish an absence, so silence has to mean the
+/// command looked and found nothing rather than that it never ran. Only one
+/// nonzero exit is legitimate here -- `--check` reports a diff that way, and it
+/// prints that diff on stdout first. A nonzero carrying no stdout at all is a
+/// pass that did not happen, and handing it back would let a control assert the
+/// absence of a report the command was never in a position to make.
 pub(crate) fn workspace_formatter_output(root: &Path) -> String {
     let output = Command::new(toolchain_directory().join("cargo"))
         .args(["fmt", "--all", "--", "--check"])
         .current_dir(root)
         .output()
         .expect("the declared workspace formatter pass runs over the fixture");
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    let rendered = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        output.status.success() || !rendered.is_empty(),
+        "the workspace formatter pass reported nothing because it did not run \
+         over the fixture: {}, stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    rendered
 }
 
 /// One committed fixture repository whose Python names the environment.
