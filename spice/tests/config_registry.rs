@@ -12,6 +12,9 @@ hidden_stems = ["oops", "sandbox", "sandbox"]
 project_min_depth = 2
 project_max_depth = 3
 
+[judge]
+enabled = true
+
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
 package_roots = ["src/fixture"]
@@ -228,7 +231,7 @@ fn sample_path(template: &str) -> Vec<OwnedSegment> {
 }
 
 #[test]
-fn root_is_exactly_the_fourteen_typed_domains() {
+fn root_is_exactly_the_fifteen_typed_domains() {
     let root = decode(&complete()).expect("the complete root decodes");
     let round_trip = decode(&toml::to_string_pretty(&root).expect("root renders"))
         .expect("rendered root decodes");
@@ -243,6 +246,7 @@ fn root_is_exactly_the_fourteen_typed_domains() {
     );
     assert_eq!(root.tasks().project_min_depth(), 2);
     assert_eq!(root.tasks().project_max_depth(), 3);
+    assert_eq!(root.judge().enabled(), Some(true));
     assert_eq!(
         root.policy().env_names(),
         ["FIXTURE_INBOX", "FIXTURE_PROOF"]
@@ -254,8 +258,8 @@ fn root_is_exactly_the_fourteen_typed_domains() {
     assert_eq!(
         table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         BTreeSet::from([
-            "tasks", "policy", "taste", "consent", "gate", "board", "lane", "steer", "vendor",
-            "listen", "lock", "canvas", "say", "proof",
+            "tasks", "judge", "policy", "taste", "consent", "gate", "board", "lane", "steer",
+            "vendor", "listen", "lock", "canvas", "say", "proof",
         ])
     );
 
@@ -369,6 +373,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "tasks.hidden_stems",
     "tasks.project_min_depth",
     "tasks.project_max_depth",
+    "judge.enabled",
     "policy.env_names",
     "policy.commit_message.allowed_trailers",
     "policy.commit_message.blocked_trailers",
@@ -533,6 +538,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
     assert_eq!(
         local,
         [
+            "judge.enabled",
             "listen.window",
             "lock.busy",
             "lock.taken",

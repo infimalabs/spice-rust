@@ -44,6 +44,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("tasks.hidden_stems", TRACKED),
     ConfigKeyDeclaration::new("tasks.project_min_depth", TRACKED),
     ConfigKeyDeclaration::new("tasks.project_max_depth", TRACKED),
+    ConfigKeyDeclaration::new("judge.enabled", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("policy.env_names", TRACKED),
     ConfigKeyDeclaration::new("policy.commit_message.allowed_trailers", TRACKED),
     ConfigKeyDeclaration::new("policy.commit_message.blocked_trailers", TRACKED),

@@ -54,6 +54,10 @@ stems = [
 project_min_depth = 2
 project_max_depth = 3
 
+[judge]
+# Adjudicate maxim trigger candidates before they become lane direction.
+enabled = true
+
 [policy]
 # The native Git publisher runs this cheap repository load over every
 # synthesized integration before it can reach the shared baseline.

@@ -6,7 +6,7 @@
 /// open when `migrate::MIGRATIONS` carries the step, and refused by name when it
 /// does not. A newer version is always refused: this build cannot know what the
 /// release that wrote it added.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod guard;
@@ -79,7 +79,7 @@ pub struct JournalReader {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Journal {
-    /// Opens or creates an authority database and admits only schema v1.
+    /// Opens or creates an authority database and admits the current schema.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
         let path = path.as_ref();
         Self::from_connection(Connection::open(path).map_err(|source| OpenError::Open {
