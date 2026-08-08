@@ -1,4 +1,6 @@
-fn configure(fixture: &Fixture) -> Rig {
+use super::*;
+
+pub(super) fn configure(fixture: &Fixture) -> Rig {
     let common = fixture
         .runtime
         .parent()
@@ -50,7 +52,7 @@ fn configure(fixture: &Fixture) -> Rig {
     }
 }
 
-fn write_vendor(binary: &Path, captures: &Path, index: &Path, dialect: Dialect) {
+pub(super) fn write_vendor(binary: &Path, captures: &Path, index: &Path, dialect: Dialect) {
     fs::write(
         binary,
         format!(
@@ -80,7 +82,11 @@ fn write_vendor(binary: &Path, captures: &Path, index: &Path, dialect: Dialect) 
         .expect("fixture vendor becomes executable");
 }
 
-fn add_lane(fixture: &Fixture, worktree: Option<&Path>, dialect: Dialect) -> wire::CanonicalUuid {
+pub(super) fn add_lane(
+    fixture: &Fixture,
+    worktree: Option<&Path>,
+    dialect: Dialect,
+) -> wire::CanonicalUuid {
     add_lane_with(
         fixture,
         Path::new(env!("CARGO_BIN_EXE_spice")),
@@ -89,7 +95,7 @@ fn add_lane(fixture: &Fixture, worktree: Option<&Path>, dialect: Dialect) -> wir
     )
 }
 
-fn add_lane_with(
+pub(super) fn add_lane_with(
     fixture: &Fixture,
     executable: &Path,
     worktree: Option<&Path>,
@@ -107,7 +113,7 @@ fn add_lane_with(
     answer.lane
 }
 
-fn drain(fixture: &Fixture, lane: wire::CanonicalUuid) {
+pub(super) fn drain(fixture: &Fixture, lane: wire::CanonicalUuid) {
     drain_with(fixture, Path::new(env!("CARGO_BIN_EXE_spice")), lane);
 }
 
@@ -121,12 +127,12 @@ fn drain_with(fixture: &Fixture, executable: &Path, lane: wire::CanonicalUuid) {
     assert!(output.status.success(), "drain failed: {:?}", output.stderr);
 }
 
-fn wake(fixture: &Fixture, lane: wire::CanonicalUuid) {
+pub(super) fn wake(fixture: &Fixture, lane: wire::CanonicalUuid) {
     let output = operator(fixture, &["lane", "wake", &lane.to_string()], true);
     assert!(output.status.success(), "wake failed: {:?}", output.stderr);
 }
 
-fn operator(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
+pub(super) fn operator(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
     operator_with(
         fixture,
         Path::new(env!("CARGO_BIN_EXE_spice")),
@@ -148,7 +154,7 @@ fn operator_with(fixture: &Fixture, executable: &Path, arguments: &[&str], json:
         .expect("operator command launches")
 }
 
-fn lane_with(
+pub(super) fn lane_with(
     fixture: &Fixture,
     executable: &Path,
     lane: wire::CanonicalUuid,
@@ -167,7 +173,7 @@ fn lane_with(
         .expect("lane command launches")
 }
 
-fn operator_with_path(
+pub(super) fn operator_with_path(
     fixture: &Fixture,
     executable: &Path,
     path: &Path,
@@ -188,7 +194,7 @@ fn operator_with_path(
         .expect("PATH-confined operator command launches")
 }
 
-fn lane_command(
+pub(super) fn lane_command(
     fixture: &Fixture,
     executable: &Path,
     lane: wire::CanonicalUuid,
@@ -211,7 +217,7 @@ fn lane_command(
 }
 
 #[track_caller]
-fn reply_body<T: serde::de::DeserializeOwned>(output: &Output) -> T {
+pub(super) fn reply_body<T: serde::de::DeserializeOwned>(output: &Output) -> T {
     assert!(
         output.status.success(),
         "command failed: stdout={:?} stderr={:?}",
@@ -225,7 +231,7 @@ fn reply_body<T: serde::de::DeserializeOwned>(output: &Output) -> T {
     wire::decode(&bytes).expect("reply body decodes")
 }
 
-fn assert_launches(
+pub(super) fn assert_launches(
     fixture: &Fixture,
     rig: &Rig,
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
@@ -241,7 +247,7 @@ fn assert_launches(
     );
 }
 
-fn assert_launches_with_executable(
+pub(super) fn assert_launches_with_executable(
     fixture: &Fixture,
     rig: &Rig,
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
@@ -278,7 +284,7 @@ fn assert_launches_with_executable(
     }
 }
 
-fn durable_head(fixture: &Fixture) -> wire::ResidencyHead {
+pub(super) fn durable_head(fixture: &Fixture) -> wire::ResidencyHead {
     journal::JournalReader::open(fixture.journal())
         .expect("resident journal reads")
         .read(|read| read.residency_head())
@@ -293,7 +299,7 @@ fn durable_head(fixture: &Fixture) -> wire::ResidencyHead {
 /// has to assert a presence and an absence for the same lane, so a copy that
 /// drifted would not read as a gap; it would quietly weaken whichever side of
 /// whichever test it was copied into.
-fn lane_facts(fixture: &Fixture, lane: wire::CanonicalUuid, kind: FactKind) -> usize {
+pub(super) fn lane_facts(fixture: &Fixture, lane: wire::CanonicalUuid, kind: FactKind) -> usize {
     journal::JournalReader::open(fixture.journal())
         .expect("lane journal reads")
         .fact_snapshot()
@@ -308,7 +314,7 @@ fn lane_facts(fixture: &Fixture, lane: wire::CanonicalUuid, kind: FactKind) -> u
         .count()
 }
 
-fn captures(index: &Path, dialect: Dialect) -> Vec<PathBuf> {
+pub(super) fn captures(index: &Path, dialect: Dialect) -> Vec<PathBuf> {
     fs::read_to_string(index)
         .expect("launch index reads")
         .lines()
@@ -321,7 +327,7 @@ fn captures(index: &Path, dialect: Dialect) -> Vec<PathBuf> {
         .collect()
 }
 
-fn assert_processes_stopped(index: &Path, expected_per_vendor: usize) {
+pub(super) fn assert_processes_stopped(index: &Path, expected_per_vendor: usize) {
     for dialect in [Dialect::Claude, Dialect::Codex] {
         let launches = captures(index, dialect);
         assert_eq!(launches.len(), expected_per_vendor);
@@ -343,7 +349,7 @@ fn assert_processes_stopped(index: &Path, expected_per_vendor: usize) {
     }
 }
 
-fn binary(rig: &Rig, dialect: Dialect) -> &Path {
+pub(super) fn binary(rig: &Rig, dialect: Dialect) -> &Path {
     match dialect {
         Dialect::Claude => &rig.claude_binary,
         Dialect::Codex => &rig.codex_binary,
@@ -351,7 +357,7 @@ fn binary(rig: &Rig, dialect: Dialect) -> &Path {
 }
 
 impl CapturedLaunch {
-    fn read(base: &Path) -> Self {
+    pub(super) fn read(base: &Path) -> Self {
         let argv = nul_fields(&fs::read(base.with_extension("argv")).expect("argv capture reads"));
         let environment =
             nul_fields(&fs::read(base.with_extension("env")).expect("environment capture reads"))
@@ -571,7 +577,7 @@ fn expected_codex_argv(
     argv
 }
 
-fn assert_tapes(fixture: &Fixture, lanes: &[(Dialect, wire::CanonicalUuid); 2]) {
+pub(super) fn assert_tapes(fixture: &Fixture, lanes: &[(Dialect, wire::CanonicalUuid); 2]) {
     for (dialect, lane) in lanes {
         let path = fixture
             .runtime
@@ -603,7 +609,7 @@ fn json_string(value: &str) -> String {
     serde_json::to_string(value).expect("fixture string encodes")
 }
 
-fn fixture_git(root: &Path, arguments: &[&str]) {
+pub(super) fn fixture_git(root: &Path, arguments: &[&str]) {
     let output = native_git_command(root, arguments)
         .output()
         .expect("fixture Git launches");
@@ -614,7 +620,7 @@ fn fixture_git(root: &Path, arguments: &[&str]) {
     );
 }
 
-fn fixture_git_stdout_with_environment(
+pub(super) fn fixture_git_stdout_with_environment(
     root: &Path,
     arguments: &[&str],
     environment: &BTreeMap<String, String>,
@@ -638,7 +644,7 @@ fn fixture_git_stdout_with_environment(
         .to_owned()
 }
 
-fn native_git_command(root: &Path, arguments: &[&str]) -> Command {
+pub(super) fn native_git_command(root: &Path, arguments: &[&str]) -> Command {
     let mut command = Command::new("git");
     command.arg("-C").arg(root).args(arguments);
     command

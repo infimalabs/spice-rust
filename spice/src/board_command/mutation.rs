@@ -1,8 +1,10 @@
+use super::*;
+
 /// One actor-filtered board snapshot whose cursor and entries were validated together.
-struct ValidatedSnapshot {
-    cursor: wire::Seq,
-    answer: BoardAnswer,
-    entries: Vec<Entry>,
+pub(super) struct ValidatedSnapshot {
+    pub(super) cursor: wire::Seq,
+    pub(super) answer: BoardAnswer,
+    pub(super) entries: Vec<Entry>,
 }
 
 struct PreparedTask {
@@ -16,7 +18,7 @@ struct PreparedTask {
     workflow: WorkflowHead,
 }
 
-fn task_add(
+pub(super) fn task_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
@@ -50,7 +52,7 @@ fn task_add(
     )
 }
 
-fn task_oops_add(
+pub(super) fn task_oops_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskOopsAdd,
@@ -253,7 +255,7 @@ fn add_oops_note(
     Ok(())
 }
 
-fn task_note(
+pub(super) fn task_note(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     note: &TaskNote,
@@ -310,7 +312,7 @@ fn task_note(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
-fn task_defer(
+pub(super) fn task_defer(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     defer: &TaskDefer,
@@ -328,7 +330,7 @@ fn task_defer(
     )
 }
 
-fn task_wake(
+pub(super) fn task_wake(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     task: &TaskRef,
@@ -439,7 +441,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
 /// the actor whose claim was overridden and the claim is freed in the same
 /// transaction -- a lane left holding a withdrawn task would renew its lease
 /// against a row nothing can ever advance.
-fn task_delete(
+pub(super) fn task_delete(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     delete: &TaskDelete,
@@ -550,7 +552,7 @@ fn task_delete(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
-fn task_depends(
+pub(super) fn task_depends(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     depends: &TaskDepends,
@@ -666,7 +668,7 @@ fn task_depends(
 /// so the durable record is a new revision rather than an overwrite: the prior
 /// text stays readable in the journal and the edit carries the actor that made
 /// it. Only fields the caller named move; the rest ride through untouched.
-fn task_edit(
+pub(super) fn task_edit(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,
@@ -865,15 +867,15 @@ fn publish_correction(
 /// never from a second read taken later. This is the shape `DocPlan` already
 /// runs, where the plan carries the snapshot its decision was made against and
 /// the later steps consume it.
-struct ClaimPlan {
+pub(super) struct ClaimPlan {
     snapshot: ValidatedSnapshot,
-    selected: Entry,
+    pub(super) selected: Entry,
     grant: ClaimGrant,
     next: Option<Box<str>>,
     possession: Possession,
 }
 
-fn claim_win(
+pub(super) fn claim_win(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     win: &ClaimWin,
@@ -892,7 +894,7 @@ fn claim_win(
 ///
 /// Every refusal a caller could have avoided is raised here, in order, and the
 /// caller sees the first one only.
-fn claim_plan(
+pub(super) fn claim_plan(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     win: &ClaimWin,
@@ -930,7 +932,7 @@ fn claim_plan(
 /// contract rather than an accident of writing: each step here can refuse, and
 /// the caller sees the first refusal only, so a seat that cannot be read is
 /// reported before a boundary that cannot be captured.
-struct ClaimGrant {
+pub(super) struct ClaimGrant {
     lane: wire::CanonicalUuid,
     occupant: wire::CanonicalUuid,
     at: Instant,
@@ -941,7 +943,7 @@ struct ClaimGrant {
 }
 
 /// Resolve the seat, the deadlines and the two boundaries one claim records.
-fn claim_grant(
+pub(super) fn claim_grant(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     repository: Option<&Repository>,
@@ -974,7 +976,7 @@ fn claim_grant(
 ///
 /// The plan arrives whole rather than as loose arguments so the guard's
 /// observation can only come from the snapshot the decision was made against.
-fn commit_claim(
+pub(super) fn commit_claim(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     win: &ClaimWin,
@@ -1091,7 +1093,7 @@ fn projected_claim_next_action(
 
 /// Which possession law one claim win asks the board to apply.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Possession {
+pub(super) enum Possession {
     /// The allocator chooses among tasks nobody holds.
     Next,
     /// The caller names a task nobody holds.
@@ -1252,7 +1254,7 @@ fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswe
     Ok((at, expiry, maximum))
 }
 
-fn claim_git_boundary(
+pub(super) fn claim_git_boundary(
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,

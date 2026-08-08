@@ -1,7 +1,9 @@
+use super::*;
+
 // Source audit proving that every public export has structural or sampled coverage.
 
 /// Fail by name when a re-exported type has no executable or structural proof.
-fn assert_coverage_is_complete(covered: &BTreeSet<String>) {
+pub(super) fn assert_coverage_is_complete(covered: &BTreeSet<String>) {
     let source = fs::read_to_string(lib_source()).expect("wire/src/lib.rs is readable");
     let exports = parse_exports(&source).expect("wire/src/lib.rs re-exports parse");
     let modules = read_module_sources(&exports);

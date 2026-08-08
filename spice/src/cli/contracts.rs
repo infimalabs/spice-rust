@@ -1,3 +1,5 @@
+use super::*;
+
 macro_rules! row {
     (
         [$($path:literal),+], $syntax:literal, $principal:ident,
@@ -48,7 +50,7 @@ macro_rules! row {
 }
 
 /// Every current leaf. Parser registration and help are generated from these rows.
-const CONTRACTS: &[Contract] = &[
+pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["demo"],
         "demo [--root DIR] [--reuse DIR] [--seed-only] [--preserve] [--open]",

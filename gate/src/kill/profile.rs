@@ -1,7 +1,9 @@
+use super::*;
+
 /// The pinned mutation executable and its complete explicit environment.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MutationTool {
-    cargo_program: PathBuf,
+    pub(super) cargo_program: PathBuf,
     mutants_program: PathBuf,
     identity: String,
     environment: Environment,
@@ -123,7 +125,7 @@ impl MutationTool {
         );
     }
 
-    fn identify(&self) -> Result<MutationToolIdentity, KillError> {
+    pub(super) fn identify(&self) -> Result<MutationToolIdentity, KillError> {
         let declaration = {
             let mut rendered = String::new();
             self.render(&mut rendered);
@@ -139,7 +141,7 @@ impl MutationTool {
         ))
     }
 
-    fn environment(
+    pub(super) fn environment(
         &self,
         build_root: &Path,
         seed: u64,
@@ -269,9 +271,9 @@ fn operational_identity(
 /// Stable target selection, retry count, and seed for one mutation battery.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MutationBattery {
-    targets: Vec<String>,
-    attempts: usize,
-    seed: u64,
+    pub(super) targets: Vec<String>,
+    pub(super) attempts: usize,
+    pub(super) seed: u64,
 }
 
 impl MutationBattery {
@@ -337,10 +339,10 @@ impl MutationBattery {
 /// Sill bounds shared by tool attestation, inventory, baseline, and attempts.
 #[derive(Clone, Debug)]
 pub struct KillBounds {
-    deadlines: Deadlines,
-    wait: WaitPolicy,
-    grace: Duration,
-    capture: usize,
+    pub(super) deadlines: Deadlines,
+    pub(super) wait: WaitPolicy,
+    pub(super) grace: Duration,
+    pub(super) capture: usize,
 }
 
 impl KillBounds {
@@ -371,7 +373,7 @@ impl KillBounds {
         })
     }
 
-    fn timeout_seconds(&self) -> u64 {
+    pub(super) fn timeout_seconds(&self) -> u64 {
         let runtime = self.deadlines.runtime();
         runtime
             .as_secs()

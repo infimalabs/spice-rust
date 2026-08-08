@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug)]
 struct JavascriptDeclaration {
     path: String,
@@ -23,7 +25,10 @@ struct JavascriptInventory {
 /// identifier. Consequently `(1, 0)` means a production declaration is truly
 /// unused, while `(1, n)` means its only uses beyond the declaration occur in
 /// configured test roots.
-pub(super) fn javascript_unused(declaration: ToolchainDeclaration, root: &Path) -> Analysis {
+pub(in crate::toolchain) fn javascript_unused(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+) -> Analysis {
     let inventory = match javascript_inventory(root) {
         Ok(inventory) => inventory,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
@@ -203,7 +208,7 @@ fn javascript_exempt(path: &str, symbol: &str) -> bool {
         .any(|(exempt_path, exempt_symbol, _)| path == *exempt_path && symbol == *exempt_symbol)
 }
 
-fn source_line(source: &str, start_byte: usize) -> Option<u32> {
+pub(super) fn source_line(source: &str, start_byte: usize) -> Option<u32> {
     let prefix = source.as_bytes().get(..start_byte)?;
     u32::try_from(prefix.iter().filter(|byte| **byte == b'\n').count() + 1).ok()
 }

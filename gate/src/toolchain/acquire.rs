@@ -661,4 +661,4 @@ fn version_output(
 }
 
 #[cfg(test)]
-include!("acquire/tests.rs");
+mod tests;

@@ -1,3 +1,5 @@
+use super::*;
+
 // `ClaimGrant` documents its resolution order as a contract: each step can
 // refuse, the caller sees the first refusal only, and a seat that cannot be read
 // is reported before a boundary that cannot be captured. Only `claim_source_

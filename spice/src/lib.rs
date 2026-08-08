@@ -19,6 +19,4 @@ pub mod placeholder;
 pub mod repository;
 pub mod resident_lock;
 #[cfg(not(target_arch = "wasm32"))]
-// Gate's source ceiling is narrower than rustfmt's default width.
-#[rustfmt::skip]
 pub mod task_git;

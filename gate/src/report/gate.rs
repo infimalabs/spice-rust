@@ -1,10 +1,12 @@
+use super::*;
+
 /// One completed ordinary measurement copied out of a current run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportMeasurement {
-    metric: String,
-    value: u64,
-    files: Vec<String>,
+    pub(super) metric: String,
+    pub(super) value: u64,
+    pub(super) files: Vec<String>,
 }
 
 impl ReportMeasurement {
@@ -34,7 +36,7 @@ impl ReportMeasurement {
         &self.files
     }
 
-    fn measurement(&self) -> Measurement {
+    pub(super) fn measurement(&self) -> Measurement {
         Measurement::new(&self.metric, self.value, self.files.iter().cloned())
     }
 }
@@ -43,8 +45,8 @@ impl ReportMeasurement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportFloor {
-    metric: String,
-    value: u64,
+    pub(super) metric: String,
+    pub(super) value: u64,
 }
 
 impl ReportFloor {
@@ -65,18 +67,18 @@ impl ReportFloor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GateReport {
-    version: u64,
-    standing: Standing,
-    findings: Vec<Finding>,
-    long_lines: Vec<LongLineFinding>,
-    measurements: Vec<ReportMeasurement>,
+    pub(super) version: u64,
+    pub(super) standing: Standing,
+    pub(super) findings: Vec<Finding>,
+    pub(super) long_lines: Vec<LongLineFinding>,
+    pub(super) measurements: Vec<ReportMeasurement>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    tightening: Option<Vec<ReportFloor>>,
-    verdict: Verdict,
+    pub(super) tightening: Option<Vec<ReportFloor>>,
+    pub(super) verdict: Verdict,
 }
 
 impl GateReport {

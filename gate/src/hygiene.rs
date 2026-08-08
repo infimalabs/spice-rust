@@ -1000,4 +1000,4 @@ impl fmt::Display for HygieneError {
 impl Error for HygieneError {}
 
 #[cfg(test)]
-include!("hygiene/fixtures.rs");
+mod fixtures;

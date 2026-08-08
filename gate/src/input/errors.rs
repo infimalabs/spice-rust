@@ -1,3 +1,5 @@
+use super::*;
+
 /// One exact tracked field refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldError {
@@ -7,7 +9,7 @@ pub struct FieldError {
 }
 
 impl FieldError {
-    fn missing(path: &Path, field: &str) -> Self {
+    pub(super) fn missing(path: &Path, field: &str) -> Self {
         Self {
             path: path.to_path_buf(),
             field: field.to_owned(),
@@ -15,7 +17,7 @@ impl FieldError {
         }
     }
 
-    fn unknown(path: &Path, field: &str) -> Self {
+    pub(super) fn unknown(path: &Path, field: &str) -> Self {
         Self {
             path: path.to_path_buf(),
             field: field.to_owned(),
@@ -23,7 +25,7 @@ impl FieldError {
         }
     }
 
-    fn type_mismatch(path: &Path, field: &str, expected: &str) -> Self {
+    pub(super) fn type_mismatch(path: &Path, field: &str, expected: &str) -> Self {
         Self {
             path: path.to_path_buf(),
             field: field.to_owned(),

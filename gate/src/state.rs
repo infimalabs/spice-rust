@@ -43,10 +43,14 @@ pub fn current_state_path(common_git_directory: &Path) -> PathBuf {
         .join(CURRENT_STATE_FILE)
 }
 
-include!("state/bound.rs");
-include!("state/ledger.rs");
-include!("state/transaction.rs");
-include!("state/migration.rs");
+mod bound;
+pub use bound::*;
+mod ledger;
+pub use ledger::*;
+mod transaction;
+pub use transaction::*;
+mod migration;
+pub use migration::*;
 
 #[cfg(test)]
 mod fixtures;

@@ -1,3 +1,5 @@
+use super::*;
+
 // The allocator's re-read guard refuses three separate ways, and one scenario
 // that moves everything at once cannot tell them apart. Each test in this file
 // moves only what a single comparison reads, so severing that comparison alone
@@ -55,7 +57,7 @@
 // test-only entry point EFFORT-1kKp0Mv6 forbids, so this is recorded rather than
 // covered. Making that window enterable is what the seam is for, and entering it
 // is what the two tests above do.
-fn guard_projects() -> ProjectPolicy {
+pub(super) fn guard_projects() -> ProjectPolicy {
     ProjectPolicy::new(
         ["board".to_owned(), "rim".to_owned()],
         ["sandbox".to_owned()],
@@ -69,7 +71,7 @@ fn guard_projects() -> ProjectPolicy {
 ///
 /// This is the ranking itself, through the same `board::select` the guard calls,
 /// so the winner is fixture setup rather than anything under test here.
-fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
+pub(super) fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
     let entries = actor_entries(answer).expect("allocation guard board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)
         .expect("allocation guard board has one lineage subscription");

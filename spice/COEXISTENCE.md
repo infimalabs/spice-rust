@@ -116,22 +116,26 @@ across a full install, upgrade, allocation, steering and shutdown.
 The reciprocal is absent **for stores specifically**, and that scope is
 load-bearing: nothing in the predecessor tree asserts anything about
 `spicejournal.sqlite3`, which is unreferenced anywhere in that tree rather than
-merely in its `.py` files. Checked non-vacuously by re-running that same
-tree-wide search against a store the predecessor does own: `git grep -l
-spicemaxims` over the predecessor tree returns eight files where `git grep -l
-spicejournal` returns none. So the absence is the predecessor's silence about
-the port's store and not a search that cannot find anything.
+merely in its `.py` files. The exact non-vacuity searches and their measured
+file counts are:
 
-Both figures are measurements of a moving tree rather than constants, and the
-search is spelled out so the next reader re-runs it instead of inheriting it.
-Eight is tree-wide and holds for the bare token and the full
-`spicemaxims.sqlite3` filename alike, over the tracked set or over the working
-tree with `__pycache__` excluded. Three is the count under `tests/` alone: a
-defensible search for a sentence about what the predecessor asserts, but not the
-search this sentence describes, and an earlier generation of this record quoted
-it under this sentence. This is not a
-general claim that the predecessor tests nothing about the port. It does, about
-configuration vocabulary, which is Seam F.
+| Predecessor search | Files |
+| --- | ---: |
+| `git grep -l spicemaxims` | 8 |
+| `git grep -l spicemaxims -- tests/` | 3 |
+| `git grep -l spicejournal` | 0 |
+
+The zero is therefore the predecessor's silence about the port's store and not
+a search that cannot find anything. All three figures are measurements of a
+moving tree rather than constants; `spice/tests/coexistence_record.rs` reads
+them from this table and runs the named searches against the predecessor
+checkout so drift fails. The tree-wide maxim result holds for the bare token and
+the full `spicemaxims.sqlite3` filename alike, over the tracked set or over the
+working tree with `__pycache__` excluded. The tests-only result is a defensible
+search for a sentence about what the predecessor asserts, but not the search the
+preceding sentence describes; an earlier generation of this record confused
+the two. This is not a general claim that the predecessor tests nothing about
+the port. It does, about configuration vocabulary, which is Seam F.
 
 ## Seam C -- the agent gitconfig
 

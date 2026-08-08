@@ -1,3 +1,5 @@
+use super::*;
+
 // A closing boundary is written by the transaction that advances the phase,
 // and until these tests existed nothing read it back: recording the migrated
 // unrecorded value at both sites left the whole package green. The two facts
@@ -109,7 +111,7 @@ fn proven_with_seeded_head(lane: CanonicalUuid) -> serde_json::Value {
     })
 }
 
-/// Pins the closing boundary on the `TaskDone` fact `append_done` writes.
+/// Pins the closing-boundary read in `task_done` before it writes `TaskDone`.
 #[test]
 fn a_completed_task_records_an_explicit_proven_closing_boundary() {
     let (_root, bus, epoch, seats) = fixture("closing-boundary-done", 1);
@@ -133,7 +135,7 @@ fn a_completed_task_records_an_explicit_proven_closing_boundary() {
     );
 }
 
-/// Pins the closing boundary on the `TaskReviewed` fact `task_review` writes.
+/// Pins the closing-boundary read in `task_review` before it writes `TaskReviewed`.
 ///
 /// The review is issued by a second lane, because a review routes to a peer,
 /// and the boundary recorded is the reviewing lane's own. That last property is
@@ -173,4 +175,40 @@ fn a_completed_review_records_the_reviewing_lanes_own_closing_boundary() {
          boundary stays proven at zero even though the journal now holds a \
          head: a boundary that ignored its lane would carry the seeded head here"
     );
+}
+
+#[test]
+fn closing_boundary_doc_sites_resolve_by_name_to_the_reads_they_describe() {
+    let sites = include_str!("closing_boundary.rs")
+        .lines()
+        .filter(|line| line.starts_with("/// Pins the closing-boundary read in `"))
+        .map(|line| {
+            line.split('`')
+                .nth(1)
+                .expect("a closing-boundary citation names its function")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sites.len(),
+        2,
+        "both closing-boundary tests must name their production read"
+    );
+
+    let progress = include_str!("../progress.rs");
+    for site in sites {
+        assert!(
+            !site.contains([':', '.']),
+            "the closing-boundary citation must be a function name, not a line: {site}"
+        );
+        let marker = format!("fn {site}(");
+        let start = progress
+            .find(&marker)
+            .unwrap_or_else(|| panic!("closing-boundary site `{site}` exists in progress.rs"));
+        let rest = &progress[start + marker.len()..];
+        let end = rest.find("\npub(super) fn ").unwrap_or(rest.len());
+        assert!(
+            rest[..end].contains("source_boundary(&lane)"),
+            "`{site}` must contain the closing-boundary read its test describes"
+        );
+    }
 }
