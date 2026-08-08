@@ -16,9 +16,10 @@
 //! The four tests fall into two deliberately independent pairs. The two
 //! network tests read subcommand literals and know nothing about module
 //! structure; the boundary test reads public entry points and knows nothing
-//! about subcommands. A new network call site reds the network pair alone; a
-//! new public git entry point, or a git reference appearing in the activation
-//! surface, reds the boundary test alone. The fourth test polices neither
+//! about subcommands. A new network call site reds the network pair alone. The
+//! boundary test alone reds for a new public git entry point, for a launch-time
+//! entry point the resident stops calling, and for a git reference appearing in
+//! the activation surface. The fourth test polices neither
 //! surface: it asserts that the other three are reached by the canonical
 //! verifier.
 
@@ -99,7 +100,10 @@ enum Boundary {
     Claim,
     /// GIT-03, at phase completion: integrate and publish the task boundary.
     PhaseCompletion,
-    /// GIT-04, at agent launch: publish the per-worktree git shadow.
+    /// GIT-04, at agent launch: advance opportunistically and never raise, and
+    /// publish the per-worktree git shadow. Two writes, one boundary: the
+    /// shadow composes the environment the lane runs under, and the advance
+    /// fast-forwards the lane to the baseline when every rule allows it.
     Launch,
     /// Not a boundary. Reads the lane without moving it or reaching a remote.
     ReadOnly,
@@ -122,6 +126,7 @@ const ENTRY_POINTS: [(&str, &[(&str, Boundary)]); 2] = [
     (
         "spice/src/task_git.rs",
         &[
+            ("advance_at_launch", Boundary::Launch),
             ("capture", Boundary::Claim),
             ("prepare_claim", Boundary::Claim),
             ("prepare_free", Boundary::ReadOnly),
@@ -130,6 +135,20 @@ const ENTRY_POINTS: [(&str, &[(&str, Boundary)]); 2] = [
         ],
     ),
 ];
+
+/// The one production seam every occupant launch passes through.
+///
+/// The `Launch` disposition is a claim about what happens at runtime, and prose
+/// cannot hold it: without reading this file, either Launch entry point could
+/// be dropped from the resident and the assertions below would stay green while
+/// the disposition went on describing behaviour the tree no longer has.
+///
+/// The needle is the fully qualified call, derived from the module path rather
+/// than spelled out, so it cannot be satisfied by a same-named neighbour --
+/// `launch_environment` lives in this very file. Importing a git module and
+/// calling it unqualified therefore reds this test, which is the intended
+/// trade: the seam is small and the qualified form is what makes it greppable.
+const LAUNCH_SURFACE: &str = "spice/src/resident/lane_surface/launch.rs";
 
 /// The verifier action that runs this file, and the source that declares it.
 const WORKSPACE_TEST_ACTION: &str = "cargo test --locked --workspace --all-targets";
@@ -231,6 +250,23 @@ fn the_git_writing_boundaries_are_claim_completion_and_launch() {
         "git is touched at exactly three control-plane boundaries"
     );
 
+    let surface = sources
+        .get(LAUNCH_SURFACE)
+        .unwrap_or_else(|| panic!("{LAUNCH_SURFACE} is tracked"));
+    for (module, entries) in ENTRY_POINTS {
+        for (symbol, boundary) in entries {
+            if *boundary != Boundary::Launch {
+                continue;
+            }
+            let call = qualified_call(module, symbol);
+            assert!(
+                surface.contains(&call),
+                "{symbol} is dispositioned Launch, but {LAUNCH_SURFACE} never \
+                 calls {call}), so nothing reaches it when a lane starts"
+            );
+        }
+    }
+
     let activation = sources
         .iter()
         .filter(|(path, _)| path.starts_with(ACTIVATION_CRATE))
@@ -298,6 +334,19 @@ fn this_battery_runs_inside_the_canonical_verifier() {
 /// itself into the fixture half. Both forms select the same files today.
 fn is_fixture(path: &str) -> bool {
     path.ends_with("/tests.rs") || path.ends_with("_tests.rs") || path.contains("/tests/")
+}
+
+/// How an entry point is spelled when another crate module calls it.
+///
+/// Derived from the module's own path so the needle cannot drift away from the
+/// file it is about: renaming or moving a git module changes both halves of
+/// `ENTRY_POINTS` and this needle together.
+fn qualified_call(module: &str, symbol: &str) -> String {
+    let path = module
+        .strip_prefix("spice/src/")
+        .and_then(|rest| rest.strip_suffix(".rs"))
+        .unwrap_or_else(|| panic!("{module} is not a module of the spice crate"));
+    format!("spice::{}::{symbol}(", path.replace('/', "::"))
 }
 
 /// Every network subcommand literal in the tracked set, counted per file.
