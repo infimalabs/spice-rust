@@ -56,7 +56,7 @@ const CONTROL_PLANE_SOURCES: [&str; 2] = ["spice/src/task_git.rs", "spice/src/ta
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 11] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 14] = [
     // The whole of GIT-01's production surface: one fetch, one push, both in
     // the control-plane module and both reached only through a boundary.
     ("spice/src/task_git.rs", "fetch", 1),
@@ -68,6 +68,16 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 11] = [
     // Fixtures driving a real local remote. These are the counts that move
     // when someone writes a new git test, which is the point: the number is
     // small enough to read and a reviewer sees the new fixture in the diff.
+    //
+    // GIT-08's fixtures build the same shape as `task_git/tests.rs` below -- an
+    // agent clone and a peer clone over one bare remote -- because drift is
+    // only observable once a peer has landed work the task never wrote. They
+    // live in their own file rather than joining those counts because
+    // `spice/src/task_git/tests.rs` sits past the file-shape flex and is
+    // latched to base, so touching it would red an unrelated gate.
+    ("spice/src/task_git/landing_tests.rs", "clone", 1),
+    ("spice/src/task_git/landing_tests.rs", "fetch", 1),
+    ("spice/src/task_git/landing_tests.rs", "push", 2),
     ("spice/src/task_git/tests.rs", "clone", 1),
     ("spice/src/task_git/tests.rs", "fetch", 1),
     ("spice/src/task_git/tests.rs", "ls-remote", 2),
