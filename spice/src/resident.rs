@@ -43,7 +43,7 @@ use message_surface::{CallPreviews, CaptureSurfaces, accept_capture_record};
 use shutdown::{current_residency, drive_shutdown};
 
 mod runtime;
-pub(crate) use runtime::*;
+pub(super) use runtime::*;
 mod ingest_surface;
 use ingest_surface::*;
 mod release;

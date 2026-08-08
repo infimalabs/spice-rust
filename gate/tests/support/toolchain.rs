@@ -245,13 +245,13 @@ pub(crate) fn scanning_repository(label: &str, source: &str, prose: &str) -> Tre
 /// One committed repository whose only unformatted file is reached by a macro.
 ///
 /// [`SOURCE`] is canonical and reaches [`INCLUDED`] through `include!`, which is
-/// exactly the shape the declared workspace pass calls clean: rustfmt opens a
+/// exactly the shape the command this arm replaced calls clean: rustfmt opens a
 /// file by walking `mod` declarations down from the crate root, and a file named
 /// by a macro sits on no module path, so `cargo fmt --all` never reads it.
 ///
 /// The included content is the caller's, because the two things this shape can
-/// do to the second pass -- give it a file to name, and give it a file it
-/// cannot read -- are different reports and each is asserted on its own.
+/// do to the arm -- give it a file to name, and give it a file it cannot read
+/// -- are different reports and each is asserted on its own.
 pub(crate) fn including_repository(label: &str, included: &str) -> Tree {
     let repository = contract_repository(label);
     set_environment_names(&repository, &[]);
@@ -267,19 +267,24 @@ pub(crate) fn including_repository(label: &str, included: &str) -> Tree {
 
 /// An included file that is readable Rust and is not formatted like rustfmt.
 ///
-/// The unformatted spacing is on the first line so the finding's locus is
-/// pinned by the same line the file opens with, and that line is `async fn` on
-/// purpose: a file the workspace pass never opened reaches rustfmt with no
-/// package behind it and must be told which edition to parse under. `async fn`
-/// is a parse error before Rust 2018, so a pass that named the wrong edition,
-/// or none, refuses this file outright rather than quietly reporting a diff
-/// that happened not to depend on the edition at all.
+/// The file opens on `async fn` on purpose: a file `cargo fmt` never opened
+/// reaches rustfmt with no package behind it and must be told which edition to
+/// parse under. `async fn` is a parse error before Rust 2018, so a pass that
+/// named the wrong edition, or none, refuses this file outright rather than
+/// quietly reporting a difference that happened not to depend on the edition at
+/// all. The spacing that makes it uncanonical is spread across both lines,
+/// because the arm reports the file and no locus within it.
 pub(crate) const UNFORMATTED_INCLUDED: &str = "async fn included( ) {\n    let  reached=1;\n}\n";
 
-/// An included file no edition can parse, so the second pass names nothing.
+/// An included file no edition can parse, so the formatter names nothing.
+///
+/// The arm is then left with an empty finding list and a nonzero exit, which is
+/// the shape a canonical tree also has minus the exit code. Reporting clean
+/// here is the failure mode the formatter gap was made of, so the refusal is
+/// what has to survive rather than the count.
 pub(crate) const UNPARSABLE_INCLUDED: &str = "fn included( {\n";
 
-/// What the declared workspace pass on its own says about one fixture tree.
+/// What `cargo fmt --all -- --check` on its own says about one fixture tree.
 ///
 /// Run for real rather than inferred, because the whole claim under test is
 /// that this exact command reports nothing about a file the arm reports. An

@@ -356,7 +356,7 @@ fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
         formatting,
         &[ArmFinding {
             path: Some(SOURCE.to_owned()),
-            line: Some(1),
+            line: None,
             column: None,
             detail: FindingDetail::Formatting {
                 formatter: "rustfmt".to_owned(),
@@ -866,19 +866,23 @@ fn javascript_unused_scopes_candidates_to_top_level_and_counts_every_reference_f
 
 /// The formatter gap `cargo fmt --all` cannot see, proven from both sides.
 ///
-/// The declared workspace pass is run first over the same tree and has to
-/// report nothing, so the finding below is attributable to the second pass
-/// rather than to a fixture that was unformatted somewhere the first pass could
-/// already reach. Splitting a file off with `include!` is not a hypothetical
-/// shape here: seven files still reach a sibling that way, `proof/src/container.rs`
-/// among them, and every one of them was drifting unread until this pass existed.
+/// The command this arm replaced is run for real over the same tree and has to
+/// report nothing, so the finding below is attributable to naming the paths
+/// rather than to a fixture that was unformatted somewhere `cargo fmt` could
+/// already reach. Reading only the arm could not tell a formatter gap from a
+/// fixture that was never unformatted in the first place.
+///
+/// Splitting a file off with `include!` is not a hypothetical shape here:
+/// seven files still reach a sibling that way, `proof/src/container.rs` among
+/// them, and every one of them was drifting unread until the arm named its own
+/// paths.
 #[test]
-fn the_formatter_names_a_file_only_the_included_pass_can_reach() {
+fn the_formatter_names_a_file_cargo_fmt_cannot_reach() {
     let repository = including_repository("toolchain-included", UNFORMATTED_INCLUDED);
     let workspace = workspace_formatter_output(&repository.root);
     assert!(
         !workspace.contains("Diff in"),
-        "the declared workspace pass already reached the included file, so this \
+        "the command this arm replaced already reached the included file, so this \
          fixture cannot prove the gap it exists to prove: {workspace}"
     );
 
@@ -892,54 +896,13 @@ fn the_formatter_names_a_file_only_the_included_pass_can_reach() {
         arm(&observations, GateId::Formatters).findings,
         [ArmFinding {
             path: Some(INCLUDED.to_owned()),
-            line: Some(1),
+            line: None,
             column: None,
             detail: FindingDetail::Formatting {
                 formatter: "rustfmt".to_owned(),
             },
         }],
-        "the formatter arm named something other than the one file the \
-         workspace pass cannot open"
-    );
-}
-
-/// A second pass that cannot read its file refuses, and never reports clean.
-///
-/// This is the failure mode the gap itself was made of: the arm concluding a
-/// tree is formatted because nothing told it otherwise. An included file no
-/// edition parses leaves the second pass exiting nonzero with no file named,
-/// and the workspace pass -- which never opens that file -- stays silent, so
-/// findings alone would read exactly like a canonical tree.
-#[test]
-fn a_second_pass_that_names_no_file_refuses_instead_of_passing() {
-    let repository = including_repository("toolchain-unparsable", UNPARSABLE_INCLUDED);
-    let workspace = workspace_formatter_output(&repository.root);
-    assert!(
-        !workspace.contains("Diff in"),
-        "the declared workspace pass reached the unparsable file, so its silence \
-         is not what leaves the arm with nothing to report: {workspace}"
-    );
-
-    let observations = acquired(
-        &repository,
-        Some(toolchain_directory().into_os_string()),
-        &[INCLUDED],
-    );
-
-    let formatters = arm(&observations, GateId::Formatters);
-    assert_eq!(
-        formatters.outcome,
-        ArmOutcome::NonzeroAnalysis,
-        "the formatter arm reported {:?} over a file it could not read",
-        formatters.reason
-    );
-    assert!(
-        formatters.findings.is_empty(),
-        "a refusing pass named a differing file it never reported"
-    );
-    assert!(
-        formatters.reason.starts_with("rustfmt refused with "),
-        "the refusal named something other than the pass that earned it: {}",
-        formatters.reason
+        "the formatter arm named something other than the one file \
+         `cargo fmt` cannot open"
     );
 }

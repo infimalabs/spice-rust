@@ -33,6 +33,30 @@ use super::*;
 // hand-built ones green: an observation this file builds itself cannot notice
 // that production stopped carrying its own. That is the coverage the end-to-end
 // drives own, and it is also the argument the seam exists for.
+//
+// The seam is also the ceiling. Both `..._between_the_claim_plan_...` tests call
+// `claim_plan` and `commit_claim` themselves, so `claim_win` -- which is those
+// two calls and nothing else -- is the one composition nothing here drives.
+// Measured at `afea4d03`: assigning `plan.snapshot` from a second
+// `validated_snapshot` taken between the two calls hands the guard an
+// observation the decision was never made against, defeating it outright, and
+// all 227 tests in the spice bin stay green. The identical defect one level
+// down, `commit_claim` re-reading, reds the two tests above and nothing else --
+// re-read with the plan's own allocator config, since substituting the default
+// reds a third test for a reason that has nothing to do with the second read.
+//
+// The gap is not reach. Refusing inside `claim_win` outright reds 20 of those
+// 227 -- 18 in `board_command::tests`, one in `subscription`, one in
+// `resident::timers::tests` -- and none of the seven here, so the composition is
+// well driven and this file is precisely the part of the bin that steps over it.
+// What no drive can do is see the second read. Two snapshots with no write
+// between them are equal, so the defect surfaces only if the board moves between
+// the two calls, and a claim runs to completion inside one synchronous call: a
+// sequential test has nowhere to put that write, and a concurrent writer cannot
+// be made to land in the window. The hook that would let one land is the
+// test-only entry point EFFORT-1kKp0Mv6 forbids, so this is recorded rather than
+// covered. Making that window enterable is what the seam is for, and entering it
+// is what the two tests above do.
 pub(super) fn guard_projects() -> ProjectPolicy {
     ProjectPolicy::new(
         ["board".to_owned(), "rim".to_owned()],
@@ -378,7 +402,8 @@ fn commit_planned_claim(bus: &Bus, command: &wire::AdmittedCommand, plan: ClaimP
 /// The competing task is added through `dispatch`, the same door production
 /// adds tasks through, after the claim is decided and before it is written. It
 /// moves no head the command witnessed and does not reseat, so the guard passes
-/// `617` and `621` and this is the comparison left to refuse.
+/// `witnesses_hold` and the residency comparison, and this is the comparison
+/// left to refuse.
 #[test]
 fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
     let (root, bus, epoch, seats) = fixture("claim-plan-heads", 1);
@@ -425,8 +450,8 @@ fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
 ///
 /// Re-seating rewrites the residency head over the same epoch, lane, occupant
 /// and disposition, which is every field `Witness::Residency` pins, so the
-/// command's own witnesses still hold at `617` and the moved head position is
-/// only visible to this comparison.
+/// command's own witnesses still hold in `witnesses_hold` and the moved head
+/// position is only visible to this comparison.
 #[test]
 fn a_reseat_between_the_claim_plan_and_its_commit_refuses_the_claim() {
     let (root, bus, epoch, seats) = fixture("claim-plan-residency", 1);

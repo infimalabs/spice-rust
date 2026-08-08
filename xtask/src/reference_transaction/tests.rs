@@ -207,14 +207,18 @@ impl Fixture {
         fs::read_to_string(self.0.join("transaction")).expect("the hook recorded a queue")
     }
 
+    /// The tip comes from HEAD, which `refused_queue` has just asserted the
+    /// refusal left where it was -- the same value `apply` reads out of the
+    /// reference itself while the transaction is still `prepared`.
     fn refused(&self, arguments: &[&str]) -> WorktreeDamage {
         let recorded = self.refused_queue(arguments);
+        let tip = self.head();
         let updates = parse_updates(&recorded).expect("the recorded queue parses");
         let update = updates
             .iter()
             .rfind(|update| update.reference == "refs/heads/main")
             .expect("the refused queue named the branch");
-        worktree_damage(self.path(), update).expect("damage is read")
+        worktree_damage(self.path(), update, &tip).expect("damage is read")
     }
 
     /// Re-run the native guard against the queue and state a real refused Git
@@ -378,16 +382,33 @@ fn parser_ignores_blank_lines_and_preserves_each_update() {
         updates,
         [
             RefUpdate {
-                old: "old",
                 new: "new",
                 reference: "refs/heads/main",
             },
             RefUpdate {
-                old: "zero",
                 new: "tip",
                 reference: "refs/tags/v1",
             },
         ]
+    );
+}
+
+/// The declared old value is required on the line and dropped from the update.
+///
+/// `git update-ref <reference> <new>` declares no old value, so Git writes the
+/// zero OID into a field a rewind and a branch creation then share. Two queues
+/// differing only there have to parse to the same updates; while the field
+/// survives parsing, something downstream can still reach it.
+#[test]
+fn the_declared_old_value_does_not_survive_parsing() {
+    let real = format!("{:040} new refs/heads/main\n", 1);
+    let zero = format!("{:040} new refs/heads/main\n", 0);
+    let declared = parse_updates(&real).unwrap();
+    let undeclared = parse_updates(&zero).unwrap();
+    assert_eq!(
+        declared, undeclared,
+        "a declared old value reached the parsed update, so a rewind and a \
+         creation can still be told apart by a field git does not fill in"
     );
 }
 
@@ -466,6 +487,23 @@ fn baseline_phrase(reference: &str, commit: &str) -> String {
     format!("resolved to {reference} at {commit}")
 }
 
+/// The one phrase binding the refused branch to the whole list of commits the
+/// guard protected on it, terminator included.
+///
+/// The terminating `.` is load-bearing rather than punctuation carried along,
+/// and it guards the opposite direction from the one that looks obvious.
+/// Naming both commits in order is what catches a list rendered short; the
+/// terminator is what catches a list rendered long, naming commits the guard
+/// never protected, because without it the phrase is only a prefix and any
+/// appended oid satisfies it. Both were measured against the assertion below:
+/// rendering only the first abandoned commit reds it, and appending one the
+/// guard never selected reds it. This mirrors `baseline_phrase` for the same
+/// reason: the message is full of short oids, and a bare search for one of them
+/// says nothing about the field it was printed in.
+fn abandoned_phrase(reference: &str, commits: &str) -> String {
+    format!("commits on current branch {reference}: {commits}.")
+}
+
 /// The hand-built refusal keeps its baseline commit beside its reference.
 ///
 /// The fixture-driven assertions below depend on exactly this adjacency, and a
@@ -480,6 +518,25 @@ fn a_refusal_names_its_baseline_commit_beside_the_reference_it_resolved() {
     assert!(
         message.contains(&baseline_phrase("refs/remotes/origin/main", "0ddba11")),
         "the refusal parted the baseline reference from the commit it stood at: {message}"
+    );
+}
+
+/// The hand-built refusal keeps its abandoned commits beside the branch they
+/// were on, and its own `commits` field is what proves it.
+///
+/// This is the counterpart of the assertion above, and it exists for the same
+/// reason: the fixture-driven assertion below reads this adjacency, so a
+/// rewording that split the list from its branch would leave that one hunting a
+/// phrase no message contains. It also stops `deadbee` standing in for coverage
+/// it does not carry -- the value is hand-built, so it proves the rendering
+/// shape and nothing about which commits the guard selects, which is exactly the
+/// half the fixture-driven test owns.
+#[test]
+fn a_refusal_lists_its_abandoned_commits_beside_the_branch_they_were_on() {
+    let message = refusal(WorktreeDamage::Untouched);
+    assert!(
+        message.contains(&abandoned_phrase("refs/heads/main", "deadbee")),
+        "the refusal parted the abandoned commits from the branch carrying them: {message}"
     );
 }
 
@@ -768,6 +825,48 @@ fn a_refusal_names_the_integration_reference_it_resolved() {
     );
 }
 
+/// The refusal names the commits it actually protected, all of them, read from
+/// the fixture rather than written down here.
+///
+/// Every other assertion in this file reads the branch, the baseline, or the
+/// worktree damage; none reads a rewound commit, so the abandoned list could be
+/// rendered as any constant and the whole package stays green. Measured that
+/// way: replacing the list with a literal leaves `cargo test -p xtask` at 119
+/// passed. So the guard could name a single commit it never protected in place
+/// of every commit it did.
+///
+/// `publish_commit_ahead_of_tip` is what lets the list be named without
+/// ambiguity, and the two inequalities below are controls on the fixture rather
+/// than on the guard: they fail if the arrangement ever stops separating the
+/// baseline from the commits being abandoned, which is the condition that makes
+/// the phrase assertion meaningful.
+#[test]
+fn a_refusal_names_every_commit_it_protected_rather_than_the_baseline() {
+    let fixture = Fixture::history("names-abandoned");
+    fixture.publish_commit_ahead_of_tip();
+    let tip = fixture.expect(&["rev-parse", "--short", "HEAD"]);
+    let parent = fixture.expect(&["rev-parse", "--short", "HEAD~1"]);
+    let baseline = fixture.expect(&["rev-parse", "--short", "refs/remotes/origin/main"]);
+    assert_ne!(
+        tip, baseline,
+        "the fixture stopped standing the baseline apart from the abandoned tip"
+    );
+    assert_ne!(
+        parent, baseline,
+        "the fixture stopped standing the baseline apart from the abandoned parent"
+    );
+
+    let message = refusal_message(&fixture);
+
+    assert!(
+        message.contains(&abandoned_phrase(
+            "refs/heads/main",
+            &format!("{tip}, {parent}")
+        )),
+        "the refusal did not list the commits it protected, newest first: {message}"
+    );
+}
+
 /// The pairing is the only resolution, so a published `origin/HEAD` behind a
 /// branch that pairs with nothing resolves no baseline at all.
 ///
@@ -953,9 +1052,6 @@ fn predecessor_upstream_reference(fixture: &Fixture, current_ref: &str) -> Optio
 /// agree about everything.
 #[test]
 fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
-    /// One row: the scratch repository's label, and the pairing it carries.
-    type Row = (&'static str, fn(&Fixture));
-
     let rows: [Row; 4] = [
         // The configuration a lane actually runs under, where both sides must
         // read past the shadow to the same live reference.
@@ -996,9 +1092,12 @@ fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
              upstreams, so the two systems no longer read the same pairing"
         );
 
-        let our_baseline = publication_baseline(fixture.path(), &current_ref)
+        let our_baseline = match publication(fixture.path(), &current_ref)
             .expect("the baseline resolution reaches an answer")
-            .map(|baseline| (baseline.reference, baseline.commit));
+        {
+            Publication::Published(baseline) => Some((baseline.reference, baseline.commit)),
+            Publication::Untracked | Publication::Unjudgeable { .. } => None,
+        };
         let their_baseline = theirs.and_then(|reference| {
             commit_oid(fixture.path(), &reference)
                 .expect("the transcribed reference resolves or does not")
@@ -1019,42 +1118,131 @@ fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
     );
 }
 
+/// One row: the scratch repository's label, and the pairing it carries.
+type Row = (&'static str, fn(&Fixture));
+
+/// A rewind and an append on the same three-commit history.
+///
+/// The two differ in their new value alone, which since the tip is read from
+/// the reference is the only field either arm consults.
+///
+/// The append advances onto a commit built ahead of the tip rather than
+/// restating the tip itself. An update whose new value *is* the tip reaches it
+/// trivially, and would satisfy a guard that compared the two for equality
+/// instead of asking whether the tip is still reached; the ordinary commit this
+/// guard must not strand advances onto a descendant, so that is what is queued.
+fn rewind_and_append(fixture: &Fixture) -> (String, String) {
+    let tip = fixture.head();
+    let base = fixture.expect(&["rev-parse", "HEAD~2"]);
+    let advanced = fixture.expect(&[
+        "commit-tree",
+        &format!("{tip}^{{tree}}"),
+        "-p",
+        &tip,
+        "-m",
+        "the lane's next commit",
+    ]);
+    (
+        format!("{tip} {base} refs/heads/main\n"),
+        format!("{tip} {advanced} refs/heads/main\n"),
+    )
+}
+
 /// Carrying the reference out of the resolution must not give the guard a
-/// baseline it never resolved. Each arm leaves it inert, and the rewind that
-/// the two tests above refuse is permitted here instead.
+/// baseline it never resolved. A pairing that names no reference at all leaves
+/// the guard inert in both directions, and the rewind that the two tests above
+/// refuse is permitted here instead.
+///
+/// Both directions, because the refusal for an unresolvable upstream is only
+/// worth having if it stays off this state. A guard that refused here would have
+/// collapsed "tracks nothing" into "tracks something unreadable" from the other
+/// side, which is the same conflation read backwards.
 #[test]
-fn a_lane_with_no_resolvable_baseline_permits_the_rewind_it_would_otherwise_refuse() {
-    let unpublished = |label: &str| {
+fn a_pairing_naming_no_reference_stays_inert_for_a_rewind_and_an_append() {
+    let rows: [Row; 2] = [
+        ("inert-no-pairing", |fixture| fixture.add_origin_remote()),
+        ("inert-no-merge", |fixture| {
+            fixture.add_origin_remote();
+            fixture.expect(&["config", "--local", "branch.main.remote", "origin"]);
+        }),
+    ];
+
+    for (label, configure) in rows {
         let fixture = Fixture::history(label);
-        let tip = fixture.head();
-        let base = fixture.expect(&["rev-parse", "HEAD~2"]);
-        (fixture, format!("{tip} {base} refs/heads/main\n"))
-    };
+        configure(&fixture);
+        let (rewind, append) = rewind_and_append(&fixture);
+        apply(fixture.path(), OsStr::new(PREPARED), &rewind)
+            .unwrap_or_else(|error| panic!("{label} tracks no published history: {error}"));
+        apply(fixture.path(), OsStr::new(PREPARED), &append)
+            .unwrap_or_else(|error| panic!("{label} gives up nothing to append: {error}"));
+    }
 
-    let (fixture, queue) = unpublished("inert-no-pairing");
-    fixture.add_origin_remote();
-    apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect("a branch whose pairing names no remote tracks no published history");
+    // Without this the passes above are indistinguishable from a guard that
+    // stopped refusing anything: the same queue, in the same fixture shape,
+    // must still be refused once a baseline exists.
+    let fixture = Fixture::history("inert-control");
+    fixture.publish_current_tip();
+    let (rewind, _) = rewind_and_append(&fixture);
+    apply(fixture.path(), OsStr::new(PREPARED), &rewind)
+        .expect_err("the control must still be refused once the tip is published");
+}
 
-    let (fixture, queue) = unpublished("inert-no-merge");
-    fixture.add_origin_remote();
-    fixture.expect(&["config", "--local", "branch.main.remote", "origin"]);
-    apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect("a pairing naming a remote but no integration branch is inert");
-
-    let (fixture, queue) = unpublished("inert-never-published");
+/// A pairing whose reference resolves to no commit establishes nothing about
+/// published history, so a rewind under it is unknown rather than cleared.
+///
+/// Permitting it would report exactly what this guard reports after checking an
+/// upstream and finding the rewind clear, which is the one answer it must not
+/// give for a question it never asked.
+#[test]
+fn a_rewind_under_an_unresolvable_upstream_is_refused_and_names_its_correction() {
+    let fixture = Fixture::history("unjudgeable-rewind");
     fixture.add_origin_remote();
     fixture.track("origin", "refs/heads/main");
-    apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect("an integration branch never published is inert");
+    let (rewind, _) = rewind_and_append(&fixture);
 
-    // Without this the three passes above are indistinguishable from a guard
-    // that stopped refusing anything: the same queue, in the same fixture
-    // shape, must still be refused once a baseline exists.
-    let (fixture, queue) = unpublished("inert-control");
-    fixture.publish_current_tip();
-    apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect_err("the control must still be refused once the tip is published");
+    let error = apply(fixture.path(), OsStr::new(PREPARED), &rewind)
+        .expect_err("an upstream that resolves to no commit cannot clear a rewind");
+
+    let reported = error.to_string();
+    assert!(
+        reported.contains("refs/remotes/origin/main"),
+        "the refusal must name the reference it could not resolve, or the \
+         operator cannot tell which pairing to correct: {reported}"
+    );
+    assert!(
+        reported.contains("Fetch that remote")
+            && reported.contains("correct the branch's remote and merge pairing"),
+        "the refusal must name both corrections, because an unfetched remote \
+         and a misnamed pairing produce the same unresolvable reference: \
+         {reported}"
+    );
+}
+
+/// A lane whose remote is merely unfetched keeps working.
+///
+/// An append gives up no history whatever the upstream turns out to be, so the
+/// upstream it could not read never mattered to it. The rewind in the same
+/// fixture is the control: without it, this passing append is equally consistent
+/// with a guard that resolved the upstream after all.
+#[test]
+fn an_append_under_an_unresolvable_upstream_is_still_permitted() {
+    let fixture = Fixture::history("unjudgeable-append");
+    fixture.add_origin_remote();
+    fixture.track("origin", "refs/heads/main");
+    let (rewind, append) = rewind_and_append(&fixture);
+
+    apply(fixture.path(), OsStr::new(PREPARED), &append)
+        .expect("an append gives up no history, so its upstream never had to be read");
+
+    // Named, not merely an error: an operational failure to read this fixture
+    // would also be an error here, and would leave the append's pass proving
+    // nothing about which upstream state it ran under.
+    let error = apply(fixture.path(), OsStr::new(PREPARED), &rewind)
+        .expect_err("the same unresolvable upstream must still refuse the rewind");
+    assert!(
+        matches!(error, ReferenceTransactionError::UnjudgeableUpstream { .. }),
+        "the control must be refused for the unresolvable upstream itself: {error}"
+    );
 }
 
 /// Read from a real commit rather than from githooks(5): the transaction this

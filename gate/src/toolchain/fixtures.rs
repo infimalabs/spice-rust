@@ -51,16 +51,17 @@ fn fixture_finding(gate: GateId, suffix: &str) -> ArmFinding {
 
 /// One current-shaped finding for a gate an external tool analyzes.
 ///
-/// The column is chosen per gate because these arms do not agree on having
-/// one, and one shared literal hid that. Each arm below carries the reason its
-/// own producer gives.
+/// The locus is chosen per gate because these arms do not agree on having one,
+/// and one shared literal hid that. Each arm below carries the reason its own
+/// producer gives.
 pub(super) fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
-    let (path, column, detail) = match gate {
-        // The formatter records that a file is not formatted and carries the
-        // earliest differing region as a line, so its analysis reports no
-        // column at all and neither does this.
+    let (path, line, column, detail) = match gate {
+        // The formatter names the file and nothing inside it: the fix is to run
+        // it over the whole file, so its analysis reports neither a line nor a
+        // column and neither does this.
         GateId::Formatters => (
             format!("src/{suffix}.rs"),
+            None,
             None,
             FindingDetail::Formatting {
                 formatter: "rustfmt".to_owned(),
@@ -71,6 +72,7 @@ pub(super) fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding
         // reaching sources outside `app`, which the path below carries.
         GateId::RustTypecheck => (
             format!("xtask/src/{suffix}.rs"),
+            Some(7),
             Some(3),
             FindingDetail::RustTypeOutput {
                 code: "E0425".to_owned(),
@@ -82,6 +84,7 @@ pub(super) fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding
         // is the shape it always produces.
         GateId::CanvasWebTypecheck => (
             format!("app/src/{suffix}.rs"),
+            Some(7),
             Some(3),
             FindingDetail::CanvasWebOutput {
                 code: "E0308".to_owned(),
@@ -94,6 +97,7 @@ pub(super) fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding
         // literal stands in for it until the analysis that parses one lands.
         GateId::PythonTypecheck => (
             format!("python/{suffix}.py"),
+            Some(7),
             Some(3),
             FindingDetail::PythonType {
                 code: "reportAssignmentType".to_owned(),
@@ -104,7 +108,7 @@ pub(super) fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding
     };
     ArmFinding {
         path: Some(path),
-        line: Some(7),
+        line,
         column,
         detail,
     }
@@ -375,10 +379,10 @@ fn external_tool_declarations_are_exact() {
             .iter()
             .map(|tool| (tool.name, tool.exact_version))
             .collect::<Vec<_>>(),
-        [
-            ("cargo", "cargo 1.97.1 (c980f4866 2026-06-30)"),
-            ("rustfmt", "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)"),
-        ]
+        // The arm names its paths to the formatter itself, so Cargo is not one
+        // of its tools: declaring it would claim a version contract over a
+        // program this arm never runs.
+        [("rustfmt", "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)")]
     );
     assert_eq!(
         declaration(GateId::CanvasWebTypecheck)
@@ -714,9 +718,24 @@ fn external_tool_nonpass_fixtures_cover_discovery_and_version_independently() {
     }
 }
 
+/// One arm reporting an absent tool beside a drifted one is refused.
+///
+/// Mixed drift needs an arm declaring two tools before it can be expressed at
+/// all, so the arms are read out of the declarations rather than named here: an
+/// arm that drops to a single tool would otherwise leave this indexing past the
+/// end, or worse, quietly measuring nothing.
 #[test]
 fn external_tool_unavailability_refuses_mixed_version_drift() {
-    for gate in [GateId::Formatters, GateId::CanvasWebTypecheck] {
+    let paired: Vec<GateId> = TOOLCHAIN_ARMS
+        .iter()
+        .filter(|arm| arm.tools.len() > 1)
+        .map(|arm| arm.id)
+        .collect();
+    assert!(
+        !paired.is_empty(),
+        "no toolchain arm declares two tools, so mixed drift is unreachable"
+    );
+    for gate in paired {
         let mut mixed = fixture_observation(gate, ArmOutcome::ToolUnavailable);
         let ToolEvidence::Identified {
             name,

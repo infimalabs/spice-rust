@@ -63,10 +63,11 @@
 //! transaction that holds it can never contain anything this guard may refuse.
 //!
 //! That is why [`apply`] reads its own input before it reads Git. Resolving
-//! `HEAD` and the publication baseline costs up to four subprocesses, and for a
-//! queue naming no branch every one of them was spent inside the shared lock to
-//! reach a conclusion the queue already determined. A queue that names no
-//! `refs/heads/` reference is answered from the queue alone, launching nothing.
+//! `HEAD`, the publication baseline and the tip the branch holds costs several
+//! subprocesses, and for a queue naming no branch every one of them was spent
+//! inside the shared lock to reach a conclusion the queue already determined. A
+//! queue that names no `refs/heads/` reference is answered from the queue alone,
+//! launching nothing.
 //!
 //! # A successful commit can still report skipped cleanup
 //!
@@ -114,8 +115,10 @@ const OPERATIONAL_RECOVERY: &str = concat!(
 ///
 /// # Errors
 ///
-/// Returns [`ReferenceTransactionError::ProtectedHistory`] for a refused update,
-/// a malformed queue, or a failure to read Git.
+/// Returns [`ReferenceTransactionError::ProtectedHistory`] for a rewind that
+/// gives up published commits, [`ReferenceTransactionError::UnjudgeableUpstream`]
+/// for a rewind whose upstream resolves to nothing, or the operational variants
+/// for a malformed queue or a failure to read Git.
 pub fn apply(
     repository: &Path,
     state: &OsStr,
@@ -136,29 +139,98 @@ pub fn apply(
     let Some(current_ref) = git_read(repository, &["symbolic-ref", "--quiet", "HEAD"])? else {
         return Ok(());
     };
-    let Some(baseline) = publication_baseline(repository, &current_ref)? else {
+    match publication(repository, &current_ref)? {
+        Publication::Untracked => Ok(()),
+        Publication::Unjudgeable { reference } => {
+            refuse_unjudgeable_rewind(repository, &current_ref, &reference, &updates)
+        }
+        Publication::Published(baseline) => {
+            refuse_abandoning_rewind(repository, &current_ref, &baseline, &updates)
+        }
+    }
+}
+
+/// The commit the branch holds before this transaction is written.
+///
+/// Read from the reference rather than taken from the queue: see [`RefUpdate`].
+/// Asking the repository is sound because `prepared` is before the write -- the
+/// reference is locked but still holds its pre-transaction value. No tip at all
+/// means the branch is unborn and this queue creates it, which abandons nothing.
+///
+/// Both refusals need it and exactly one of them ever runs, so it is read inside
+/// them rather than before the pairing resolves: a branch that tracks nothing
+/// still never pays for it.
+fn branch_tip(
+    repository: &Path,
+    current_ref: &str,
+) -> Result<Option<String>, ReferenceTransactionError> {
+    commit_oid(repository, current_ref)
+}
+
+/// Refuse a rewind whose declared upstream resolves to no commit.
+///
+/// The append is the reason this reads the queue at all rather than refusing the
+/// branch outright. An append gives up no history whatever the upstream turns out
+/// to be, so a lane whose remote is merely unfetched keeps working; the rewind is
+/// the call that needed the upstream and did not get it.
+fn refuse_unjudgeable_rewind(
+    repository: &Path,
+    current_ref: &str,
+    upstream: &str,
+    updates: &[RefUpdate<'_>],
+) -> Result<(), ReferenceTransactionError> {
+    let Some(tip) = branch_tip(repository, current_ref)? else {
         return Ok(());
     };
-
     for update in updates {
         if update.reference != current_ref {
             continue;
         }
-        let protected = abandoned_upstream_commits(repository, &update, &baseline.commit)?;
-        if !protected.is_empty() {
-            let listed = protected
-                .iter()
-                .map(|commit| short_oid(repository, commit))
-                .collect::<Result<Vec<_>, _>>()?
-                .join(", ");
-            return Err(ReferenceTransactionError::ProtectedHistory {
-                reference: current_ref,
-                commits: listed,
-                baseline: baseline.reference.clone(),
-                baseline_commit: short_oid(repository, &baseline.commit)?,
-                damage: worktree_damage(repository, &update)?,
-            });
+        if rewind(repository, update, &tip)?.is_none() {
+            continue;
         }
+        return Err(ReferenceTransactionError::UnjudgeableUpstream {
+            reference: current_ref.to_owned(),
+            upstream: upstream.to_owned(),
+            damage: worktree_damage(repository, update, &tip)?,
+        });
+    }
+    Ok(())
+}
+
+/// Refuse a rewind that gives up commits the upstream already contains.
+fn refuse_abandoning_rewind(
+    repository: &Path,
+    current_ref: &str,
+    baseline: &Baseline,
+    updates: &[RefUpdate<'_>],
+) -> Result<(), ReferenceTransactionError> {
+    let Some(tip) = branch_tip(repository, current_ref)? else {
+        return Ok(());
+    };
+    for update in updates {
+        if update.reference != current_ref {
+            continue;
+        }
+        let Some(rewind) = rewind(repository, update, &tip)? else {
+            continue;
+        };
+        let protected = abandoned_upstream_commits(repository, &rewind, &tip, &baseline.commit)?;
+        if protected.is_empty() {
+            continue;
+        }
+        let listed = protected
+            .iter()
+            .map(|commit| short_oid(repository, commit))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ");
+        return Err(ReferenceTransactionError::ProtectedHistory {
+            reference: current_ref.to_owned(),
+            commits: listed,
+            baseline: baseline.reference.clone(),
+            baseline_commit: short_oid(repository, &baseline.commit)?,
+            damage: worktree_damage(repository, update, &tip)?,
+        });
     }
     Ok(())
 }
@@ -174,7 +246,26 @@ struct Baseline {
     commit: String,
 }
 
-/// Resolve the commit standing for history this lane has published.
+/// What the branch's own pairing establishes about history this lane published.
+///
+/// Three states, because two of them were one state for as long as the answer
+/// was an `Option` and the guard passed both in silence. They are different
+/// claims. A branch that tracks nothing has no published history to give up, and
+/// passing its rewind is correct. A branch whose pairing names a reference that
+/// resolves to no commit has an upstream nobody fetched, so whether a rewind
+/// gives up published work was never established -- and permitting it reports
+/// exactly what a guard reports after checking and finding the rewind clear.
+/// Collapsing the two spends the guard's silence on both.
+enum Publication {
+    /// The pairing names no reference, so no published history exists to protect.
+    Untracked,
+    /// The pairing names a reference that resolves to no commit.
+    Unjudgeable { reference: String },
+    /// The pairing names a reference standing at a commit.
+    Published(Baseline),
+}
+
+/// Resolve what the branch's pairing establishes about published history.
 ///
 /// This mirrors the predecessor's `_declared_upstream_ref` in
 /// `spice/hooks/refguard.py`: the branch's own pairing names the reference, and
@@ -183,21 +274,30 @@ struct Baseline {
 /// same policy have to answer the same reference, and a backstop reached only
 /// here would be a policy this side invented.
 ///
-/// A reference the pairing names but that resolves to no commit also leaves the
-/// guard inert. The predecessor is stricter and refuses a rewind it cannot
-/// judge; porting that refusal is `EFFORT-1kKpJKBf`, and it is a separate
-/// behaviour from which reference gets resolved.
-fn publication_baseline(
+/// A reference the pairing names but that resolves to no commit is a third
+/// answer rather than a second way of saying the first, which is why this
+/// returns [`Publication`] and not an `Option`.
+///
+/// That naming and that resolution are answered together here, where the
+/// predecessor answers them either side of reading the branch's own tip. The
+/// orders were expected to stop agreeing once the unjudgeable refusal landed,
+/// and they did not: an unborn branch has no tip, and [`branch_tip`] leaves both
+/// refusals inert on it before either can fire, which is the same outcome the
+/// predecessor reaches by returning ahead of this call. What differs is cost
+/// alone -- an unborn branch that does name a pairing resolves the upstream here
+/// before discovering there is no tip to judge -- and that is one subprocess in
+/// a state no lane commits from.
+fn publication(
     repository: &Path,
     current_ref: &str,
-) -> Result<Option<Baseline>, ReferenceTransactionError> {
+) -> Result<Publication, ReferenceTransactionError> {
     let Some(reference) = declared_upstream_reference(repository, current_ref)? else {
-        return Ok(None);
+        return Ok(Publication::Untracked);
     };
     let Some(commit) = commit_oid(repository, &reference)? else {
-        return Ok(None);
+        return Ok(Publication::Unjudgeable { reference });
     };
-    Ok(Some(Baseline { reference, commit }))
+    Ok(Publication::Published(Baseline { reference, commit }))
 }
 
 /// The remote-tracking reference this branch's own pairing names, if it names one.
@@ -258,9 +358,15 @@ fn declared_upstream_reference(
     Ok(Some(format!("{REMOTE_PREFIX}{remote}/{name}")))
 }
 
+/// One line of the hook's queue. The reported old value is deliberately absent.
+///
+/// Git names three fields and [`parse_updates`] still requires all three, but
+/// the first is whatever the caller *declared*, not what the reference holds.
+/// `git update-ref <ref> <new>` declares nothing, so it arrives as the zero OID
+/// and a genuine rewind reads as a branch creation. Carrying the field would
+/// only invite reading it again; the tip is read from the reference instead.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RefUpdate<'a> {
-    old: &'a str,
     new: &'a str,
     reference: &'a str,
 }
@@ -276,7 +382,6 @@ fn parse_updates(input: &str) -> Result<Vec<RefUpdate<'_>>, ReferenceTransaction
             return Err(ReferenceTransactionError::MalformedInput { line: index + 1 });
         }
         updates.push(RefUpdate {
-            old: fields[0],
             new: fields[1],
             reference: fields[2],
         });
@@ -284,32 +389,51 @@ fn parse_updates(input: &str) -> Result<Vec<RefUpdate<'_>>, ReferenceTransaction
     Ok(updates)
 }
 
-fn abandoned_upstream_commits(
+/// The value a rewind puts in place of the branch's tip.
+///
+/// `None` is a deletion. It reaches nothing, so it stays subject to judgement
+/// rather than escaping it, which is why this is not simply the new commit.
+struct Rewind {
+    new: Option<String>,
+}
+
+/// Read an update as a rewind, or `None` when it gives up no history.
+///
+/// One definition serves both refusals. Written twice, an update could be an
+/// append for the upstream that resolved and a rewind for the one that did not,
+/// and the guard's two halves would disagree about the same queue line.
+///
+/// A `new` naming no commit this repository holds is not this guard's to rule
+/// on. Anything still reaching `tip` is an append. The tip is the reference's
+/// own value and never the caller's declared old one: see [`RefUpdate`].
+fn rewind(
     repository: &Path,
     update: &RefUpdate<'_>,
-    upstream: &str,
-) -> Result<Vec<String>, ReferenceTransactionError> {
-    if is_zero_oid(update.old) {
-        return Ok(Vec::new());
-    }
-    let Some(old) = commit_oid(repository, update.old)? else {
-        return Ok(Vec::new());
-    };
+    tip: &str,
+) -> Result<Option<Rewind>, ReferenceTransactionError> {
     let new = if is_zero_oid(update.new) {
         None
     } else {
         let Some(new) = commit_oid(repository, update.new)? else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         Some(new)
     };
     if let Some(new) = new.as_deref()
-        && is_ancestor(repository, &old, new)?
+        && is_ancestor(repository, tip, new)?
     {
-        return Ok(Vec::new());
+        return Ok(None);
     }
+    Ok(Some(Rewind { new }))
+}
 
-    let Some(merge_bases) = git_read(repository, &["merge-base", "--all", &old, upstream])? else {
+fn abandoned_upstream_commits(
+    repository: &Path,
+    rewind: &Rewind,
+    tip: &str,
+    upstream: &str,
+) -> Result<Vec<String>, ReferenceTransactionError> {
+    let Some(merge_bases) = git_read(repository, &["merge-base", "--all", tip, upstream])? else {
         return Ok(Vec::new());
     };
     let mut arguments = vec![
@@ -317,9 +441,9 @@ fn abandoned_upstream_commits(
         format!("--max-count={PROTECTED_COMMIT_LIMIT}"),
     ];
     arguments.extend(merge_bases.lines().map(str::to_owned));
-    if let Some(new) = new {
+    if let Some(new) = &rewind.new {
         arguments.push("--not".to_owned());
-        arguments.push(new);
+        arguments.push(new.clone());
     }
     Ok(git_read_owned(repository, &arguments)?
         .map(|output| output.lines().map(str::to_owned).collect())
@@ -406,11 +530,12 @@ pub enum WorktreeDamage {
 fn worktree_damage(
     repository: &Path,
     update: &RefUpdate<'_>,
+    tip: &str,
 ) -> Result<WorktreeDamage, ReferenceTransactionError> {
     if is_zero_oid(update.new) {
         return Ok(WorktreeDamage::Untouched);
     }
-    if is_ancestor(repository, update.new, update.old)? && worktree_holds(repository, update.new)? {
+    if is_ancestor(repository, update.new, tip)? && worktree_holds(repository, update.new)? {
         return Ok(WorktreeDamage::Rewritten);
     }
     Ok(WorktreeDamage::Untouched)
@@ -495,6 +620,11 @@ pub enum ReferenceTransactionError {
         baseline_commit: String,
         damage: WorktreeDamage,
     },
+    UnjudgeableUpstream {
+        reference: String,
+        upstream: String,
+        damage: WorktreeDamage,
+    },
 }
 
 impl fmt::Display for ReferenceTransactionError {
@@ -546,25 +676,53 @@ impl fmt::Display for ReferenceTransactionError {
                     ),
                     reference, commits, baseline, baseline_commit
                 )?;
-                match damage {
-                    WorktreeDamage::Rewritten => formatter.write_str(concat!(
-                        "This refusal protected the branch, not necessarily the tree: HEAD ",
-                        "was not moved, and the index and worktree match the refused rewind ",
-                        "target. A hard rewind may have written them before any hook could ",
-                        "run, but a soft or mixed rewind can look identical when that content ",
-                        "was already present. Inspect `git status`, `git diff`, and ",
-                        "`git diff --cached` before choosing any recovery; do not use a ",
-                        "destructive reset based only on this diagnostic."
-                    )),
-                    WorktreeDamage::Untouched => formatter.write_str(concat!(
-                        "HEAD was not moved and this command did not write the working ",
-                        "tree, so the files on disk are the ones you already had and there ",
-                        "is nothing here to restore. Do not reset to recover from this ",
-                        "refusal; it would discard work this refusal did not touch."
-                    )),
-                }
+                formatter.write_str(worktree_account(*damage))
+            }
+            Self::UnjudgeableUpstream {
+                reference,
+                upstream,
+                damage,
+            } => {
+                write!(
+                    formatter,
+                    concat!(
+                        "reference-transaction guard cannot establish the upstream of ",
+                        "current branch {}: its pairing names {}, which does not resolve to ",
+                        "a commit, so whether this rewind gives up published work is unknown ",
+                        "rather than cleared. Fetch that remote, or correct the branch's ",
+                        "remote and merge pairing, and run this again. "
+                    ),
+                    reference, upstream
+                )?;
+                formatter.write_str(worktree_account(*damage))
             }
         }
+    }
+}
+
+/// The account of the working tree that a refused rewind owes the operator.
+///
+/// Both refusals abort a rewind at the same point in the transaction, so they
+/// leave the tree in the same state and say so in the same words. Worded twice,
+/// the two could come to disagree about what a refusal does to the files on disk,
+/// and an operator reading one of them would recover from the wrong description.
+const fn worktree_account(damage: WorktreeDamage) -> &'static str {
+    match damage {
+        WorktreeDamage::Rewritten => concat!(
+            "This refusal protected the branch, not necessarily the tree: HEAD ",
+            "was not moved, and the index and worktree match the refused rewind ",
+            "target. A hard rewind may have written them before any hook could ",
+            "run, but a soft or mixed rewind can look identical when that content ",
+            "was already present. Inspect `git status`, `git diff`, and ",
+            "`git diff --cached` before choosing any recovery; do not use a ",
+            "destructive reset based only on this diagnostic."
+        ),
+        WorktreeDamage::Untouched => concat!(
+            "HEAD was not moved and this command did not write the working ",
+            "tree, so the files on disk are the ones you already had and there ",
+            "is nothing here to restore. Do not reset to recover from this ",
+            "refusal; it would discard work this refusal did not touch."
+        ),
     }
 }
 
@@ -574,7 +732,8 @@ impl Error for ReferenceTransactionError {
             Self::GitLaunch { source, .. } => Some(source),
             Self::MalformedInput { .. }
             | Self::NonUtf8Output { .. }
-            | Self::ProtectedHistory { .. } => None,
+            | Self::ProtectedHistory { .. }
+            | Self::UnjudgeableUpstream { .. } => None,
         }
     }
 }

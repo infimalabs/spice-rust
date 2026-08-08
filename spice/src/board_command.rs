@@ -22,8 +22,21 @@ use wire::{
 
 use crate::cli::Contract;
 
+// `mod` rather than `include!`, which reverses the decision EFFORT-1kKrXfRq
+// recorded here. That decision's measurements survive the reversal: a child
+// module does already read its ancestors' private items, so the guard tests
+// below keep calling `claim_plan` and `commit_claim` unchanged, and converting
+// a *test* root would be a rename rather than a split, which is why
+// `wire/tests/` is left alone.
+//
+// What it weighed against conversion was that the formatters gate already
+// reaches `include!` targets with a second pass. That pass is the gate's alone:
+// `cargo fmt --all --check` stays blind, still open as GATE-1kKs5TnZ, and the
+// fragment count kept by hand in that arm's own doc was filed as drifted twice,
+// GATE-1kKs7gfb and GATE-1kKsGmbV. `mod` closes all three by construction
+// instead of by an enumeration something has to keep current.
 mod client;
-pub(crate) use client::*;
+pub(super) use client::*;
 mod client_document;
 use client_document::*;
 mod followup;

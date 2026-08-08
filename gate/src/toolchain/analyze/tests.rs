@@ -580,49 +580,51 @@ fn a_change_path_that_is_not_tree_relative_is_never_selected() {
 }
 
 #[test]
-fn a_reported_region_outside_the_selected_tree_is_not_a_finding() {
+fn a_named_file_outside_the_selected_tree_is_not_a_finding() {
     let root = Path::new("/selected/tree");
-    let printed = format!(
-        "{DIFF_PREFIX}/elsewhere/src/main.rs:4:\n{DIFF_PREFIX}/selected/tree/src/app.rs:9:\n"
-    );
-    let findings = differing_files(root, &printed);
+    let printed = "/elsewhere/src/main.rs\n/selected/tree/src/app.rs\n";
+    let findings = differing_files(root, printed);
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].path.as_deref(), Some("src/app.rs"));
-    assert_eq!(findings[0].line, Some(9));
 }
 
-/// The formatter fixture reports the column this producer reports.
+/// The formatter fixture reports the locus this producer reports.
 ///
 /// Nothing downstream would notice them drifting: this arm refuses
 /// predecessor comparison before any finding equality runs, so a fixture
-/// naming a column would describe a locus the formatter has no way to
-/// report and would never be contradicted. Asking the producer is what
-/// makes the disagreement arrive here instead of nowhere.
+/// naming a line or a column would describe a locus the formatter has no
+/// way to report and would never be contradicted. Asking the producer is
+/// what makes the disagreement arrive here instead of nowhere.
 #[test]
-fn the_formatter_fixture_reports_the_column_this_arm_does() {
+fn the_formatter_fixture_reports_the_locus_this_arm_does() {
     let root = Path::new("/selected/tree");
-    let printed = format!("{DIFF_PREFIX}/selected/tree/src/app.rs:9:\n");
-    let findings = differing_files(root, &printed);
+    let findings = differing_files(root, "/selected/tree/src/app.rs\n");
+    let fixture = fixture_external_finding(GateId::Formatters, "a");
 
     assert_eq!(findings.len(), 1);
     assert_eq!(
-        findings[0].column,
-        fixture_external_finding(GateId::Formatters, "a").column,
-        "the formatter arm and its fixture disagree on the column"
+        (findings[0].line, findings[0].column),
+        (fixture.line, fixture.column),
+        "the formatter arm and its fixture disagree on the locus"
     );
 }
 
-/// Many reported regions in one file are still one unformatted file.
+/// A file named twice is still one unformatted file.
+///
+/// The formatter does emit a repeated name, and every selected path being
+/// named on the command line is why: a file another named file reaches
+/// through `mod` is walked once per named ancestor. Drifting
+/// `spice/src/board_command/tests/subscription.rs` alone on this tree has
+/// rustfmt name it six times, one per ancestor from the crate root down.
+/// Passing that through would earn a duplicate-finding refusal of the whole
+/// arm rather than a report of the files it had correctly found.
 #[test]
-fn repeated_regions_collapse_to_the_earliest_line_of_each_file() {
+fn a_repeated_name_collapses_to_one_finding() {
     let root = Path::new("/selected/tree");
-    let printed = format!(
-        "{DIFF_PREFIX}/selected/tree/src/app.rs:31:\n\
-             {DIFF_PREFIX}/selected/tree/src/app.rs:8:\n"
-    );
-    let findings = differing_files(root, &printed);
+    let printed = "/selected/tree/src/app.rs\n/selected/tree/src/app.rs\n";
+    let findings = differing_files(root, printed);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].line, Some(8));
+    assert_eq!(findings[0].path.as_deref(), Some("src/app.rs"));
 }
 
 /// Every analysis that decodes selected bytes refuses the same read fault.
