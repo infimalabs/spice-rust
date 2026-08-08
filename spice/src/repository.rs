@@ -46,12 +46,42 @@
 //!   and the root `spice.toml` schema stays the predecessor's.
 //! * **Hooks** were separate before the question was asked: the installer owns
 //!   `.spice-install/`, which is not under this root at all.
-//! * **Worktree Git-dir state** does share the `<git-dir>/.spice` anchor, and
-//!   stays disjoint there by name, under point 2 above.
+//! * **Worktree Git-dir state** is not shared, because this port keeps none.
+//!   Every `.spice` here hangs off the Git *common* directory --
+//!   [`Repository::admit_state`], `gate::state::current_state_path` and
+//!   `crate::config::load::locations` all anchor there -- so `<git-dir>/.spice`
+//!   is the predecessor's per-worktree config root alone, and no path in this
+//!   port constructs it.
 //!
-//! `artifacts/tasks/<TASK-ID>/` is the one path both write, and that is the
-//! intent: one board, one task identifier, artifacts filed beneath it. The two
-//! contribute entries; neither rewrites the other's.
+//! Under the shared root, `artifacts/tasks/<TASK-ID>/` is the one path both
+//! write, and that is the intent: one board, one task identifier, artifacts
+//! filed beneath it. The two contribute entries; neither rewrites the other's.
+//!
+//! # The one file both write outside the shared root
+//!
+//! `<git-dir>/agent.gitconfig` is written by both systems, at the per-worktree
+//! Git directory `rev-parse --absolute-git-dir` reports and not under any
+//! `.spice`. [`crate::git_shadow`] publishes it here and the predecessor's
+//! `spice/agent/shadow.py` publishes it there. Neither contributes an entry to
+//! it: each writes the whole file, so the bytes the later run leaves are the
+//! only bytes left.
+//!
+//! That is safe today only because the two generate identical bytes and both
+//! read the file back before writing, so whichever runs second finds its own
+//! content already there and writes nothing. It stays safe only while they stay
+//! agreed on every part of it: the filename, the `--absolute-git-dir` anchor,
+//! the header line, the `[include]` and `[branch]` section order, the tab
+//! indentation and trailing newline, the subsection quoting -- backslash then
+//! quote, in that order -- and the `git config --system --edit` probe under
+//! `GIT_EDITOR=echo` that fills in the include path. Change one of those on one
+//! side and the two overwrite each other on every alternating run, each leaving
+//! a file the other replaces, with nothing anywhere to notice it.
+//!
+//! Policy point 2 and `tests/coexistence.rs` do not reach this file: both are
+//! scoped to `<git-common-dir>/.spice`, and this path is under neither. What
+//! holds it is `tests/git_shadow.rs`, which pins the anchor and the filename
+//! against a linked worktree, where the per-worktree Git directory and the
+//! common one are different paths.
 
 use std::error::Error;
 use std::fmt;
