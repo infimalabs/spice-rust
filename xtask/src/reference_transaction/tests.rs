@@ -207,14 +207,18 @@ impl Fixture {
         fs::read_to_string(self.0.join("transaction")).expect("the hook recorded a queue")
     }
 
+    /// The tip comes from HEAD, which `refused_queue` has just asserted the
+    /// refusal left where it was -- the same value `apply` reads out of the
+    /// reference itself while the transaction is still `prepared`.
     fn refused(&self, arguments: &[&str]) -> WorktreeDamage {
         let recorded = self.refused_queue(arguments);
+        let tip = self.head();
         let updates = parse_updates(&recorded).expect("the recorded queue parses");
         let update = updates
             .iter()
             .rfind(|update| update.reference == "refs/heads/main")
             .expect("the refused queue named the branch");
-        worktree_damage(self.path(), update).expect("damage is read")
+        worktree_damage(self.path(), update, &tip).expect("damage is read")
     }
 
     /// Re-run the native guard against the queue and state a real refused Git
@@ -378,16 +382,33 @@ fn parser_ignores_blank_lines_and_preserves_each_update() {
         updates,
         [
             RefUpdate {
-                old: "old",
                 new: "new",
                 reference: "refs/heads/main",
             },
             RefUpdate {
-                old: "zero",
                 new: "tip",
                 reference: "refs/tags/v1",
             },
         ]
+    );
+}
+
+/// The declared old value is required on the line and dropped from the update.
+///
+/// `git update-ref <reference> <new>` declares no old value, so Git writes the
+/// zero OID into a field a rewind and a branch creation then share. Two queues
+/// differing only there have to parse to the same updates; while the field
+/// survives parsing, something downstream can still reach it.
+#[test]
+fn the_declared_old_value_does_not_survive_parsing() {
+    let real = format!("{:040} new refs/heads/main\n", 1);
+    let zero = format!("{:040} new refs/heads/main\n", 0);
+    let declared = parse_updates(&real).unwrap();
+    let undeclared = parse_updates(&zero).unwrap();
+    assert_eq!(
+        declared, undeclared,
+        "a declared old value reached the parsed update, so a rewind and a \
+         creation can still be told apart by a field git does not fill in"
     );
 }
 

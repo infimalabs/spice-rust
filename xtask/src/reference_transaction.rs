@@ -63,10 +63,11 @@
 //! transaction that holds it can never contain anything this guard may refuse.
 //!
 //! That is why [`apply`] reads its own input before it reads Git. Resolving
-//! `HEAD` and the publication baseline costs up to four subprocesses, and for a
-//! queue naming no branch every one of them was spent inside the shared lock to
-//! reach a conclusion the queue already determined. A queue that names no
-//! `refs/heads/` reference is answered from the queue alone, launching nothing.
+//! `HEAD`, the publication baseline and the tip the branch holds costs several
+//! subprocesses, and for a queue naming no branch every one of them was spent
+//! inside the shared lock to reach a conclusion the queue already determined. A
+//! queue that names no `refs/heads/` reference is answered from the queue alone,
+//! launching nothing.
 //!
 //! # A successful commit can still report skipped cleanup
 //!
@@ -139,12 +140,20 @@ pub fn apply(
     let Some(baseline) = publication_baseline(repository, &current_ref)? else {
         return Ok(());
     };
+    // The tip is read here rather than taken from the queue: see `RefUpdate`.
+    // Asking the repository is sound because `prepared` is before the write --
+    // the reference is locked but still holds its pre-transaction value. No tip
+    // at all means the branch is unborn and this queue creates it, which
+    // abandons nothing.
+    let Some(tip) = commit_oid(repository, &current_ref)? else {
+        return Ok(());
+    };
 
     for update in updates {
         if update.reference != current_ref {
             continue;
         }
-        let protected = abandoned_upstream_commits(repository, &update, &baseline.commit)?;
+        let protected = abandoned_upstream_commits(repository, &update, &tip, &baseline.commit)?;
         if !protected.is_empty() {
             let listed = protected
                 .iter()
@@ -156,7 +165,7 @@ pub fn apply(
                 commits: listed,
                 baseline: baseline.reference.clone(),
                 baseline_commit: short_oid(repository, &baseline.commit)?,
-                damage: worktree_damage(repository, &update)?,
+                damage: worktree_damage(repository, &update, &tip)?,
             });
         }
     }
@@ -187,6 +196,14 @@ struct Baseline {
 /// guard inert. The predecessor is stricter and refuses a rewind it cannot
 /// judge; porting that refusal is `EFFORT-1kKpJKBf`, and it is a separate
 /// behaviour from which reference gets resolved.
+///
+/// That naming and that resolution are answered together here, where the
+/// predecessor answers them either side of reading the branch's own tip. The
+/// orders agree on every outcome today -- both end inert -- and this one pays
+/// for the tip only once a pairing has resolved. `EFFORT-1kKpJKBf` is where they
+/// stop agreeing: the refusal it ports fires on an unresolvable reference and
+/// reports the tip, which by then has to be read before this call rather than
+/// after it.
 fn publication_baseline(
     repository: &Path,
     current_ref: &str,
@@ -258,9 +275,15 @@ fn declared_upstream_reference(
     Ok(Some(format!("{REMOTE_PREFIX}{remote}/{name}")))
 }
 
+/// One line of the hook's queue. The reported old value is deliberately absent.
+///
+/// Git names three fields and [`parse_updates`] still requires all three, but
+/// the first is whatever the caller *declared*, not what the reference holds.
+/// `git update-ref <ref> <new>` declares nothing, so it arrives as the zero OID
+/// and a genuine rewind reads as a branch creation. Carrying the field would
+/// only invite reading it again; the tip is read from the reference instead.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RefUpdate<'a> {
-    old: &'a str,
     new: &'a str,
     reference: &'a str,
 }
@@ -276,7 +299,6 @@ fn parse_updates(input: &str) -> Result<Vec<RefUpdate<'_>>, ReferenceTransaction
             return Err(ReferenceTransactionError::MalformedInput { line: index + 1 });
         }
         updates.push(RefUpdate {
-            old: fields[0],
             new: fields[1],
             reference: fields[2],
         });
@@ -287,14 +309,9 @@ fn parse_updates(input: &str) -> Result<Vec<RefUpdate<'_>>, ReferenceTransaction
 fn abandoned_upstream_commits(
     repository: &Path,
     update: &RefUpdate<'_>,
+    tip: &str,
     upstream: &str,
 ) -> Result<Vec<String>, ReferenceTransactionError> {
-    if is_zero_oid(update.old) {
-        return Ok(Vec::new());
-    }
-    let Some(old) = commit_oid(repository, update.old)? else {
-        return Ok(Vec::new());
-    };
     let new = if is_zero_oid(update.new) {
         None
     } else {
@@ -304,12 +321,12 @@ fn abandoned_upstream_commits(
         Some(new)
     };
     if let Some(new) = new.as_deref()
-        && is_ancestor(repository, &old, new)?
+        && is_ancestor(repository, tip, new)?
     {
         return Ok(Vec::new());
     }
 
-    let Some(merge_bases) = git_read(repository, &["merge-base", "--all", &old, upstream])? else {
+    let Some(merge_bases) = git_read(repository, &["merge-base", "--all", tip, upstream])? else {
         return Ok(Vec::new());
     };
     let mut arguments = vec![
@@ -406,11 +423,12 @@ pub enum WorktreeDamage {
 fn worktree_damage(
     repository: &Path,
     update: &RefUpdate<'_>,
+    tip: &str,
 ) -> Result<WorktreeDamage, ReferenceTransactionError> {
     if is_zero_oid(update.new) {
         return Ok(WorktreeDamage::Untouched);
     }
-    if is_ancestor(repository, update.new, update.old)? && worktree_holds(repository, update.new)? {
+    if is_ancestor(repository, update.new, tip)? && worktree_holds(repository, update.new)? {
         return Ok(WorktreeDamage::Rewritten);
     }
     Ok(WorktreeDamage::Untouched)

@@ -248,6 +248,112 @@ fn a_shadowed_upstream_does_not_publish_a_lanes_local_commits() {
     );
 }
 
+/// What Git writes in the old field of a queue line when nothing was declared.
+///
+/// `git update-ref <reference> <new>` takes an optional old value and declares
+/// none, so the field carries the zero OID whether the update rewinds published
+/// history or creates a branch. Spelled here rather than imported: the guard's
+/// own constant agreeing with itself would prove nothing about what Git sends.
+const UNDECLARED_OLD: &str = "0000000000000000000000000000000000000000";
+
+/// The tip is read from the reference, never from the queue's old field.
+///
+/// The field is whatever the caller declared, and the caller Git runs for
+/// `update-ref` declares nothing. A guard judging it reads every such rewind as
+/// a branch creation and refuses none of them -- which is the branch most likely
+/// to be moved that way left unprotected against the command most likely to move
+/// it.
+#[test]
+fn a_rewind_declaring_no_old_value_is_judged_against_the_reference() {
+    let scratch = Scratch::new();
+    let (base, protected, _local) = repository_history(&scratch);
+
+    // The fixture's premise, stated so it cannot quietly stop holding: the
+    // reference carries published history while the queue says it carries
+    // nothing. If these ever agreed, the zero below would be the truth and
+    // permitting it would be correct.
+    assert_eq!(reference_tip(&scratch, "refs/heads/main"), protected);
+    assert_eq!(rev_parse(&scratch, "@{upstream}^{commit}"), protected);
+
+    let refusal = guard(
+        &scratch,
+        &format!("{UNDECLARED_OLD} {base} refs/heads/main\n"),
+    )
+    .expect_err("a rewind is judged against the tip the reference holds");
+    let refusal = refusal.to_string();
+    assert!(
+        refusal.contains("refused to abandon upstream-merged commits"),
+        "{refusal}"
+    );
+    assert!(
+        refusal.contains(&protected[..7]),
+        "the refusal must name the commit the walk found, so a refusal for some \
+         other reason cannot stand in for one that started at the real tip: \
+         {refusal}"
+    );
+}
+
+/// A creation stays permitted, and is permitted only for having no tip.
+///
+/// Reading the reference must not turn every new branch into a refusal: an
+/// unborn branch has nothing to abandon. The branch is created *behind* the
+/// published baseline rather than at it, which is what `git checkout -b` off an
+/// older commit does and what makes this arm able to fail. Created at the
+/// baseline, a fix that substituted some other tip -- the baseline itself being
+/// the obvious one -- would still permit it as a fast-forward, and the test
+/// would pass without proving the absent tip was what permitted it.
+///
+/// The second half is the other control. It gives that same branch a tip and
+/// re-sends a queue line identical but for the commit; the refusal proves the
+/// permit above came from the absent tip rather than from the guard falling
+/// inert earlier -- an unpaired branch or an unmatched reference would also have
+/// returned quietly.
+#[test]
+fn creating_the_current_branch_is_permitted_only_while_it_has_no_tip() {
+    let scratch = Scratch::new();
+    let (base, protected, _local) = repository_history(&scratch);
+    let branch = "main-created";
+    let unborn = format!("refs/heads/{branch}");
+    git(&scratch, &["symbolic-ref", "HEAD", &unborn]);
+    // Paired, so the guard reaches the judgement rather than falling inert at
+    // the baseline and permitting the creation below for the wrong reason.
+    let remote = format!("branch.{branch}.remote");
+    let merge = format!("branch.{branch}.merge");
+    git(&scratch, &["config", &remote, "origin"]);
+    git(&scratch, &["config", &merge, "refs/heads/main"]);
+
+    assert_eq!(
+        reference_tip(&scratch, &unborn),
+        "",
+        "the branch already exists, so this is a rewind rather than a creation"
+    );
+    guard(&scratch, &format!("{UNDECLARED_OLD} {base} {unborn}\n"))
+        .expect("a branch that holds no tip abandons nothing by being created");
+
+    git(&scratch, &["update-ref", &unborn, &protected]);
+    assert_eq!(reference_tip(&scratch, &unborn), protected);
+    let refusal = guard(&scratch, &format!("{UNDECLARED_OLD} {base} {unborn}\n"))
+        .expect_err("the same branch, now holding published history, is judged");
+    assert!(
+        refusal
+            .to_string()
+            .contains("refused to abandon upstream-merged commits"),
+        "{refusal}"
+    );
+}
+
+/// The commit a reference holds, or the empty string if it holds none.
+///
+/// `rev_parse` cannot answer for an unborn branch: it fails, and the fixture
+/// helper turns a failure into a panic rather than an answer.
+fn reference_tip(scratch: &Scratch, reference: &str) -> String {
+    let arguments = ["for-each-ref", "--format=%(objectname)", reference];
+    String::from_utf8(git(scratch, &arguments).stdout)
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
 /// Put `lane` under the shadow, in the scopes the real shadow writes.
 ///
 /// Measured in a live lane worktree with `git config --show-origin` rather than
