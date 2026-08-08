@@ -131,6 +131,7 @@ pub(crate) struct TokenRecord {
     pub(crate) output: u64,
     pub(crate) reasoning: u64,
     pub(crate) total: u64,
+    pub(crate) model_context_window: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -143,6 +144,7 @@ pub(crate) struct TokenView {
     pub(crate) uncached: u64,
     pub(crate) output: u64,
     pub(crate) reasoning: u64,
+    pub(crate) model_context_window: Option<u64>,
     pub(crate) snapshots: u64,
     pub(crate) first_snapshot: Option<String>,
     pub(crate) last_snapshot: Option<String>,

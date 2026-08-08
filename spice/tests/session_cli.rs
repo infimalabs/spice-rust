@@ -732,6 +732,8 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
     );
     assert_eq!(tokens["usage"].as_array().map(Vec::len), Some(2));
     assert_eq!(tokens["usage"][1]["source"], "TOTAL");
+    assert_eq!(tokens["usage"][0]["model_context_window"], Value::Null);
+    assert_eq!(tokens["usage"][1]["model_context_window"], Value::Null);
 
     let turns = reply_forms(
         &strings(&[
@@ -946,6 +948,49 @@ fn provider_turn_identity_and_final_deduplication_cross_query_projections() {
     assert_codex_turn_and_recall_rows(&codex_path.to_string_lossy());
     assert_claude_identity_rows(&claude_path.to_string_lossy());
 
+    scratch.remove();
+}
+
+#[test]
+fn token_reporting_drops_invalid_time_and_keeps_an_unknown_context_unknown() {
+    let scratch = Scratch::new("token-admission");
+    let path = scratch.path().join("usage.jsonl");
+    let invalid = codex_event(
+        "not-a-timestamp",
+        "response_item",
+        json!({
+            "type": "token_count",
+            "info": {
+                "last_token_usage": {
+                    "input_tokens": 999,
+                    "total_tokens": 999,
+                },
+                "model_context_window": 200_000,
+            },
+        }),
+    );
+    let valid_unknown = codex_event(
+        "2026-01-01T00:00:01Z",
+        "response_item",
+        token_payload(7, 0, 2, 0, 9),
+    );
+    write_jsonl(&path, &[invalid, valid_unknown]);
+
+    let tokens = reply_forms(
+        &strings(&["session", "tokens", &path.to_string_lossy()]),
+        &[],
+        "tokens",
+    );
+
+    assert_eq!(tokens["usage"][0]["input"], 7);
+    assert_eq!(tokens["usage"][0]["snapshots"], 1);
+    assert_eq!(tokens["usage"][0]["model_context_window"], Value::Null);
+    assert_eq!(tokens["residues"][0]["kind"], "timestamp-invalid");
+    assert!(
+        tokens["residues"][0]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("not-a-timestamp"))
+    );
     scratch.remove();
 }
 
