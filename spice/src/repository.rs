@@ -79,9 +79,9 @@
 //!
 //! Policy point 2 and `tests/coexistence.rs` do not reach this file: both are
 //! scoped to `<git-common-dir>/.spice`, and this path is under neither. What
-//! holds it is `tests/git_shadow.rs`, which pins the anchor and the filename
-//! against a linked worktree, where the per-worktree Git directory and the
-//! common one are different paths.
+//! holds it is `tests/git_shadow.rs`, which pins the anchor, the filename and
+//! the header line against a linked worktree, where the per-worktree Git
+//! directory and the common one are different paths.
 
 use std::error::Error;
 use std::fmt;
