@@ -427,8 +427,6 @@ fn finish(
     let end_at = closing.as_ref().map_or(terminal_at, |closing| closing.at);
     let mut segments = Vec::new();
 
-    record_incomplete_boundary(&open.opening_boundary, open.opening, &mut reasons);
-
     if let Some(closing) = &closing {
         let cuts = cuts(&open, closing, evidence, &mut reasons);
         for pair in cuts.windows(2) {
@@ -441,6 +439,12 @@ fn finish(
             ));
         }
     } else {
+        // The cut list is what reads each boundary, and there is none to build
+        // without a closing fact, so the opening bound is recorded here. This
+        // is the only path that reads it directly: once a cut list exists the
+        // opening is its first cut and recording it here as well would leave
+        // one bound checked twice, where severing either check still withholds.
+        record_incomplete_boundary(&open.opening_boundary, open.opening, &mut reasons);
         push_reason(
             &mut reasons,
             EffortUnavailableCode::MissingEnd,
