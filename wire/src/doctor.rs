@@ -55,9 +55,6 @@ pub enum SpiceVariable {
     /// Pin document sealed into the native proof runner as it is built.
     #[serde(rename = "SPICE_NATIVE_PINS")] // env-policy: allow
     NativePins,
-    /// Licence to run the coexistence record without the predecessor checkout.
-    #[serde(rename = "SPICE_PREDECESSOR_OPTIONAL")] // env-policy: allow
-    PredecessorOptional,
     /// Lane identity proving shell interception activated.
     #[serde(rename = "SPICE_PROOF")] // env-policy: allow
     Proof,
@@ -81,7 +78,6 @@ impl SpiceVariable {
         Self::MutationAttempt,
         Self::MutationSeed,
         Self::NativePins,
-        Self::PredecessorOptional,
         Self::Proof,
     ];
 
@@ -114,9 +110,6 @@ impl SpiceVariable {
             Self::MutationAttempt => "SPICE_MUTATION_ATTEMPT", // env-policy: allow
             Self::MutationSeed => "SPICE_MUTATION_SEED", // env-policy: allow
             Self::NativePins => "SPICE_NATIVE_PINS", // env-policy: allow
-            Self::PredecessorOptional => {
-                "SPICE_PREDECESSOR_OPTIONAL" // env-policy: allow
-            }
             Self::Proof => "SPICE_PROOF", // env-policy: allow
         }
     }

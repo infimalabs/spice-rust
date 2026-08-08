@@ -13,10 +13,19 @@
 //! instead -- a predecessor path that ever becomes a real file here would be a
 //! reader resolving a citation against the wrong tree, which is worse than a
 //! citation that plainly does not resolve.
+//!
+//! That half stops there on purpose, and the temptation is to go further:
+//! opening a predecessor checkout would resolve those anchors too. What it buys
+//! is bounded, and what it costs is a suite that runs only where someone laid
+//! that tree out at the path this file guessed, which is a property of one
+//! machine rather than of this repository. The predecessor is a reference to
+//! read while writing the record, not a fixture to build tests on, so nothing
+//! here looks outside this worktree and no variable exists to make it. What the
+//! record says about the predecessor is checked by the person editing it, and
+//! dates from the revision it was written against.
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The record this test keeps honest.
@@ -41,40 +50,6 @@ const SOURCE_SUFFIXES: &[&str] = &[".rs", ".py", ".toml", ".md"];
 /// citation it found as resolved, and "no findings" over two citations reads
 /// exactly like "no findings" over sixty.
 const FLOOR: usize = 10;
-
-/// Seam B's exact predecessor searches, as written in the record.
-const STORE_SEARCHES: &[(&str, &str, Option<&str>)] = &[
-    ("git grep -l spicemaxims", "spicemaxims", None),
-    (
-        "git grep -l spicemaxims -- tests/",
-        "spicemaxims",
-        Some("tests/"),
-    ),
-    ("git grep -l spicejournal", "spicejournal", None),
-];
-
-/// The variable that licenses running without the predecessor tree.
-///
-/// The predecessor is a sibling checkout rather than a submodule, so its absence
-/// is a property of the machine and not of this repository. Skipping on absence
-/// alone made the pin evaporate exactly when it stopped being watched: the skip
-/// was announced with `eprintln!`, libtest prints a passing test's output for
-/// nobody, and no `--nocapture` is passed anywhere under `xtask`, so a run that
-/// checked nothing was character for character a run that checked everything.
-/// Measured before this changed: with the tree absent, a tree-wide count of 7
-/// against a predecessor holding 8 passed green. Absence therefore refuses, and
-/// the skip has to be asked for, which is the asking.
-///
-/// Spelled by the wire vocabulary rather than here, so the name this test reads
-/// and the row Doctor reports for it cannot drift apart.
-const PREDECESSOR_OPTIONAL: &str = wire::SpiceVariable::PredecessorOptional.as_str();
-
-#[derive(Debug, Eq, PartialEq)]
-enum StoreCountCheck {
-    Checked,
-    Skipped(String),
-    Refused(String),
-}
 
 /// One `path#anchor` citation as the record writes it.
 struct Citation {
@@ -198,229 +173,6 @@ fn the_record_cites_no_line_numbers() {
             "a {suffix} line citation must be seen for the record's silence to mean anything"
         );
     }
-}
-
-#[test]
-fn seam_b_store_counts_match_the_predecessor_tree() {
-    let root = repository_root();
-    let text = fs::read_to_string(root.join(RECORD))
-        .unwrap_or_else(|error| panic!("{RECORD} is readable: {error}"));
-    let predecessor = root
-        .parent()
-        .expect("the repository has a parent holding sibling worktrees")
-        .join(PREDECESSOR.trim_end_matches('/'));
-
-    match check_store_counts(&text, &predecessor, predecessor_optional()) {
-        StoreCountCheck::Checked => {}
-        StoreCountCheck::Skipped(reason) => announce(&format!("SKIPPED: {reason}")),
-        StoreCountCheck::Refused(reason) => panic!("{reason}"),
-    }
-}
-
-#[test]
-fn an_absent_predecessor_tree_refuses_rather_than_passing_unchecked() {
-    let root = scratch_root();
-    let absent = root.join("absent-spice-z");
-
-    let StoreCountCheck::Refused(reason) = check_store_counts(&zeroed_table(), &absent, false)
-    else {
-        panic!("an absent predecessor tree must refuse when the skip was not asked for")
-    };
-    assert!(
-        reason.contains(&absent.display().to_string()),
-        "the refusal must name the absent predecessor tree: {reason}"
-    );
-    assert!(
-        reason.contains(PREDECESSOR_OPTIONAL),
-        "the refusal must name the variable that licenses the skip: {reason}"
-    );
-
-    fs::remove_dir_all(&root).expect("the scratch root is removed");
-}
-
-#[test]
-fn an_absent_predecessor_tree_skips_only_when_the_skip_is_asked_for() {
-    let root = scratch_root();
-    let absent = root.join("absent-spice-z");
-
-    let StoreCountCheck::Skipped(reason) = check_store_counts(&zeroed_table(), &absent, true)
-    else {
-        panic!("{PREDECESSOR_OPTIONAL} must turn the refusal into a named skip")
-    };
-    assert!(
-        reason.contains(&absent.display().to_string()),
-        "the skip must name the absent predecessor tree: {reason}"
-    );
-
-    fs::remove_dir_all(&root).expect("the scratch root is removed");
-}
-
-/// The refusal is bound to absence, not printed over every run.
-///
-/// Without this the two tests above pass just as well against a `Refused` that
-/// is returned unconditionally, which would red every machine on earth for a
-/// reason that has nothing to do with the predecessor. The tree here is a real
-/// git repository built to known counts, so "does not refuse" is proven without
-/// borrowing the sibling checkout whose presence is the thing in question.
-#[test]
-fn a_present_predecessor_tree_does_not_refuse() {
-    let root = scratch_root();
-    let tree = seeded_predecessor(&root);
-    let text = "| `git grep -l spicemaxims` | 2 |\n\
-                | `git grep -l spicemaxims -- tests/` | 1 |\n\
-                | `git grep -l spicejournal` | 0 |\n";
-
-    assert_eq!(
-        check_store_counts(text, &tree, false),
-        StoreCountCheck::Checked,
-        "a predecessor tree that is present and agrees must be checked, not refused"
-    );
-
-    fs::remove_dir_all(&root).expect("the scratch root is removed");
-}
-
-/// Whether this run was licensed to proceed without the predecessor tree.
-///
-/// This is the rim: the only place the variable is read, and it hands a typed
-/// bool inward so `check_store_counts` decides from an argument a test can set
-/// either way rather than from whatever the process happened to inherit.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the rim of this test binary, converting the ambient license to a typed argument"
-)]
-fn predecessor_optional() -> bool {
-    std::env::var_os(PREDECESSOR_OPTIONAL).is_some()
-}
-
-/// Say something libtest will not swallow.
-///
-/// `eprintln!` routes through the capture libtest installs and is printed only
-/// for failing tests, which is the wrong half: a skip is only ever reported by a
-/// passing one. Writing the descriptor is not captured, so the notice survives
-/// the runner `cargo xtask verify` uses.
-fn announce(message: &str) {
-    use std::io::Write;
-    let _ = std::io::stderr().write_all(format!("{message}\n").as_bytes());
-}
-
-/// A count table whose figures are all zero, for the paths that never read one.
-fn zeroed_table() -> String {
-    STORE_SEARCHES
-        .iter()
-        .map(|(search, _, _)| format!("| `{search}` | 0 |"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// A git repository standing in for the predecessor, seeded to known counts.
-fn seeded_predecessor(root: &Path) -> PathBuf {
-    let tree = root.join("seeded-predecessor");
-    fs::create_dir(&tree).expect("the seeded predecessor directory is created");
-    fs::create_dir(tree.join("tests")).expect("the seeded predecessor tests directory is created");
-    fs::write(tree.join("notes.py"), "spicemaxims\n").expect("the seeded root file is written");
-    fs::write(tree.join("tests/test_stores.py"), "spicemaxims\n")
-        .expect("the seeded tests file is written");
-    git(&tree, &["init", "--quiet"]);
-    git(&tree, &["add", "--all"]);
-    tree
-}
-
-/// Run one git plumbing command in the seeded tree, or say why it could not.
-fn git(tree: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(tree)
-        .args(args)
-        .output()
-        .unwrap_or_else(|error| panic!("`git {}` launches: {error}", args.join(" ")));
-    assert!(
-        output.status.success(),
-        "`git {}` failed in {}: {}",
-        args.join(" "),
-        tree.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn check_store_counts(text: &str, predecessor: &Path, optional: bool) -> StoreCountCheck {
-    let recorded = STORE_SEARCHES
-        .iter()
-        .map(|(search, _, _)| (*search, recorded_store_count(text, search)))
-        .collect::<Vec<_>>();
-
-    if !predecessor.exists() {
-        let where_it_looked = predecessor.display();
-        if !optional {
-            return StoreCountCheck::Refused(format!(
-                "Seam B's store counts describe the predecessor tree, and there is none at \
-                 {where_it_looked}, so this run can neither confirm nor fault them. Passing here \
-                 would read a drifted figure past in silence, which is the whole defect the \
-                 counts are pinned against. Set {PREDECESSOR_OPTIONAL} to run without them."
-            ));
-        }
-        return StoreCountCheck::Skipped(format!(
-            "Seam B store counts were not checked because the predecessor tree is absent at \
-             {where_it_looked} and {PREDECESSOR_OPTIONAL} is set"
-        ));
-    }
-    assert!(
-        predecessor.is_dir(),
-        "the predecessor tree path is not a directory: {}",
-        predecessor.display()
-    );
-
-    for ((search, needle, scope), (_, expected)) in STORE_SEARCHES.iter().zip(recorded) {
-        let actual = git_grep_file_count(predecessor, needle, *scope);
-        assert_eq!(
-            actual,
-            expected,
-            "Seam B records {expected} files for `{search}` but the predecessor tree at {} has {actual}",
-            predecessor.display()
-        );
-    }
-    StoreCountCheck::Checked
-}
-
-fn recorded_store_count(text: &str, search: &str) -> usize {
-    let prefix = format!("| `{search}` | ");
-    let rows = text
-        .lines()
-        .filter_map(|line| line.strip_prefix(&prefix))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        rows.len(),
-        1,
-        "{RECORD} must contain exactly one count row for `{search}`"
-    );
-    rows[0]
-        .strip_suffix(" |")
-        .unwrap_or_else(|| panic!("{RECORD}'s `{search}` row must end with a table cell"))
-        .parse()
-        .unwrap_or_else(|error| panic!("{RECORD}'s `{search}` count is an integer: {error}"))
-}
-
-fn git_grep_file_count(root: &Path, needle: &str, scope: Option<&str>) -> usize {
-    let mut command = Command::new("git");
-    command.arg("-C").arg(root).args(["grep", "-l", needle]);
-    if let Some(scope) = scope {
-        command.args(["--", scope]);
-    }
-    let output = command
-        .output()
-        .unwrap_or_else(|error| panic!("`git grep` launches for {}: {error}", root.display()));
-    match output.status.code() {
-        Some(0) => {}
-        Some(1) if output.stdout.is_empty() && output.stderr.is_empty() => return 0,
-        status => panic!(
-            "`git grep -l {needle}` refused for {} with {status:?}: {}",
-            root.display(),
-            String::from_utf8_lossy(&output.stderr)
-        ),
-    }
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| panic!("`git grep` paths are UTF-8: {error}"))
-        .lines()
-        .count()
 }
 
 /// Every `path:line` citation the record writes, which must be none.
