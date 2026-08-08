@@ -16,6 +16,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The record this test keeps honest.
@@ -40,6 +41,23 @@ const SOURCE_SUFFIXES: &[&str] = &[".rs", ".py", ".toml", ".md"];
 /// citation it found as resolved, and "no findings" over two citations reads
 /// exactly like "no findings" over sixty.
 const FLOOR: usize = 10;
+
+/// Seam B's exact predecessor searches, as written in the record.
+const STORE_SEARCHES: &[(&str, &str, Option<&str>)] = &[
+    ("git grep -l spicemaxims", "spicemaxims", None),
+    (
+        "git grep -l spicemaxims -- tests/",
+        "spicemaxims",
+        Some("tests/"),
+    ),
+    ("git grep -l spicejournal", "spicejournal", None),
+];
+
+#[derive(Debug, Eq, PartialEq)]
+enum StoreCountCheck {
+    Checked,
+    Skipped(String),
+}
 
 /// One `path#anchor` citation as the record writes it.
 struct Citation {
@@ -163,6 +181,115 @@ fn the_record_cites_no_line_numbers() {
             "a {suffix} line citation must be seen for the record's silence to mean anything"
         );
     }
+}
+
+#[test]
+fn seam_b_store_counts_match_the_predecessor_tree() {
+    let root = repository_root();
+    let text = fs::read_to_string(root.join(RECORD))
+        .unwrap_or_else(|error| panic!("{RECORD} is readable: {error}"));
+    let predecessor = root
+        .parent()
+        .expect("the repository has a parent holding sibling worktrees")
+        .join(PREDECESSOR.trim_end_matches('/'));
+
+    match check_store_counts(&text, &predecessor) {
+        StoreCountCheck::Checked => {}
+        StoreCountCheck::Skipped(reason) => eprintln!("SKIPPED: {reason}"),
+    }
+}
+
+#[test]
+fn an_absent_predecessor_tree_is_an_explicit_store_count_skip() {
+    let root = scratch_root();
+    let absent = root.join("absent-spice-z");
+    let text = STORE_SEARCHES
+        .iter()
+        .map(|(search, _, _)| format!("| `{search}` | 0 |"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let StoreCountCheck::Skipped(reason) = check_store_counts(&text, &absent) else {
+        panic!("an absent predecessor tree must be an explicit skip")
+    };
+    assert!(
+        reason.contains(&absent.display().to_string()),
+        "the skip must name the absent predecessor tree: {reason}"
+    );
+
+    fs::remove_dir_all(&root).expect("the scratch root is removed");
+}
+
+fn check_store_counts(text: &str, predecessor: &Path) -> StoreCountCheck {
+    let recorded = STORE_SEARCHES
+        .iter()
+        .map(|(search, _, _)| (*search, recorded_store_count(text, search)))
+        .collect::<Vec<_>>();
+
+    if !predecessor.exists() {
+        return StoreCountCheck::Skipped(format!(
+            "Seam B store counts were not checked because the predecessor tree is absent at {}",
+            predecessor.display()
+        ));
+    }
+    assert!(
+        predecessor.is_dir(),
+        "the predecessor tree path is not a directory: {}",
+        predecessor.display()
+    );
+
+    for ((search, needle, scope), (_, expected)) in STORE_SEARCHES.iter().zip(recorded) {
+        let actual = git_grep_file_count(predecessor, needle, *scope);
+        assert_eq!(
+            actual,
+            expected,
+            "Seam B records {expected} files for `{search}` but the predecessor tree at {} has {actual}",
+            predecessor.display()
+        );
+    }
+    StoreCountCheck::Checked
+}
+
+fn recorded_store_count(text: &str, search: &str) -> usize {
+    let prefix = format!("| `{search}` | ");
+    let rows = text
+        .lines()
+        .filter_map(|line| line.strip_prefix(&prefix))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        1,
+        "{RECORD} must contain exactly one count row for `{search}`"
+    );
+    rows[0]
+        .strip_suffix(" |")
+        .unwrap_or_else(|| panic!("{RECORD}'s `{search}` row must end with a table cell"))
+        .parse()
+        .unwrap_or_else(|error| panic!("{RECORD}'s `{search}` count is an integer: {error}"))
+}
+
+fn git_grep_file_count(root: &Path, needle: &str, scope: Option<&str>) -> usize {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).args(["grep", "-l", needle]);
+    if let Some(scope) = scope {
+        command.args(["--", scope]);
+    }
+    let output = command
+        .output()
+        .unwrap_or_else(|error| panic!("`git grep` launches for {}: {error}", root.display()));
+    match output.status.code() {
+        Some(0) => {}
+        Some(1) if output.stdout.is_empty() && output.stderr.is_empty() => return 0,
+        status => panic!(
+            "`git grep -l {needle}` refused for {} with {status:?}: {}",
+            root.display(),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    }
+    String::from_utf8(output.stdout)
+        .unwrap_or_else(|error| panic!("`git grep` paths are UTF-8: {error}"))
+        .lines()
+        .count()
 }
 
 /// Every `path:line` citation the record writes, which must be none.
