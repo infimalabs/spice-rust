@@ -397,7 +397,7 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
     assert_eq!(
         fs::read(&native_config).expect("native config rereads"),
         native_before,
-        "agent shadow mutated repository configuration"
+        "Git shadow mutated repository configuration"
     );
 
     drain(&fixture, lane);

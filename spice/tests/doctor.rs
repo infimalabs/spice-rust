@@ -231,7 +231,7 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         dialect::PROJECT_MAX_DEPTH as u64
     );
     // Doctor reports the variables Spice owns, while the tracked vocabulary also
-    // accounts the ones its fixtures and agent shadow use: three local Git
+    // accounts the ones its fixtures and Git shadow use: three local Git
     // names, three Git configuration names, and the hygiene fixture's TMPDIR.
     // The gate's name ledger accounts every name the tree references. That the
     // manifest holds these and nothing besides Doctor's rows is stated once in
