@@ -430,10 +430,18 @@ fn converged_absent_boundaries_are_visible_and_refused_attempts_invent_no_phase(
 /// at fold time, so the withholding cannot be passing because the fixture ran
 /// short of bytes; the only thing missing is the opening claim itself.
 ///
-/// The nil identity the synthesis fills in is observable rather than internal:
-/// it reaches the reader verbatim inside a session-disagreement reason, so the
-/// spelling is pinned here. A change that resolved that nil lane to a real one
-/// would attribute a stranger's transcript to a phase nobody opened.
+/// Of the three nil identity fields the synthesis fills in, only the occupant
+/// reaches a reader, so only the occupant is pinned. It is formatted into a
+/// session-disagreement detail, and substituting a real occupant there reds this
+/// test with that occupant named, so the assertion is bound to the nil spelling
+/// rather than to the reason merely existing.
+///
+/// The nil lane and lineage are deliberately not pinned, because on this path
+/// they are unobservable rather than merely unchecked. `EffortPhaseAnswer` has
+/// no lane or lineage field, and the segments list that would carry them is
+/// empty whenever the opening boundary withholds. Pointing the synthesized lane
+/// at the fixture's own lane leaves this test green, which is the measurement
+/// behind that claim and the reason it is stated instead of asserted.
 ///
 /// This is the complement of
 /// [`converged_absent_boundaries_are_visible_and_refused_attempts_invent_no_phase`],
@@ -470,6 +478,11 @@ fn a_terminal_with_no_opening_claim_is_withheld_and_names_its_nil_identity() {
 
     assert_reason(phase, EffortUnavailableCode::MissingStart);
     assert_reason(phase, EffortUnavailableCode::IncompleteBoundary);
+    assert_eq!(
+        phase.opening_boundary,
+        SourceBoundary::unrecorded(),
+        "the synthesis authors the one unrecorded value, not a variant of its own"
+    );
     assert!(
         boundary_detail(phase).ends_with(SourceBoundary::UNRECORDED),
         "the synthesized opening carries the migration reason, found {:?}",
