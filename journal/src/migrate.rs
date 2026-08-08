@@ -6,6 +6,8 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod residency_lineage;
+
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
 
@@ -166,9 +168,10 @@ fn admit_readable_state(connection: &Connection, state: SchemaState) -> Result<u
 ///
 /// Every step runs inside the caller's exclusive transaction together with the
 /// two version records it advances, so a failure part-way leaves the authority
-/// at the version it started from rather than between two. That is what lets
-/// these steps be additive DDL rather than a copy: the facts are never rewritten
-/// and never move, so a migration cannot lose one.
+/// at the version it started from rather than between two. Additive DDL and
+/// validated content rewrites therefore share one rollback boundary: a rewrite
+/// may change canonical bytes, but it cannot strand only some rows or version
+/// records in the new schema.
 ///
 /// It takes the caller's transaction rather than opening its own, and is visible
 /// to the crate so a test can be that caller: the promise above is a property of
@@ -183,7 +186,7 @@ pub(crate) fn advance(connection: &Connection) -> Result<Option<Migration>, Open
 
     let path = migration_path(from).ok_or(MigrationError::UnknownVersion { found: from })?;
     for step in path {
-        connection.execute_batch(step).map_err(OpenError::Sqlite)?;
+        step.apply(connection)?;
     }
     connection
         .execute(
@@ -206,7 +209,7 @@ pub(crate) fn advance(connection: &Connection) -> Result<Option<Migration>, Open
 /// callers ask it the same way. A version whose first step exists but whose
 /// chain breaks later is not migratable, and admitting it would refuse a
 /// read-only open with an offer to migrate that the write open cannot keep.
-fn migration_path(from: u32) -> Option<Vec<&'static str>> {
+fn migration_path(from: u32) -> Option<Vec<MigrationStep>> {
     (from..SCHEMA_VERSION)
         .map(|version| {
             MIGRATIONS
@@ -321,15 +324,42 @@ impl From<MigrationError> for OpenError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MigrationError {
     MissingSchema,
-    UnversionedAuthority { object_count: u32 },
-    SchemaRowCount { count: u32 },
+    UnversionedAuthority {
+        object_count: u32,
+    },
+    SchemaRowCount {
+        count: u32,
+    },
     MissingSingleton,
-    Unfinalized { from: Option<u32>, to: Option<u32> },
-    UnknownState { state: String },
-    ForwardSchema { found: u32, current: u32 },
-    UnmigratedRead { found: u32, current: u32 },
-    UnknownVersion { found: u32 },
-    VersionDisagreement { row: u32, pragma: u32 },
+    Unfinalized {
+        from: Option<u32>,
+        to: Option<u32>,
+    },
+    UnknownState {
+        state: String,
+    },
+    ForwardSchema {
+        found: u32,
+        current: u32,
+    },
+    UnmigratedRead {
+        found: u32,
+        current: u32,
+    },
+    UnknownVersion {
+        found: u32,
+    },
+    VersionDisagreement {
+        row: u32,
+        pragma: u32,
+    },
+    StoredContent {
+        from: u32,
+        to: u32,
+        table: &'static str,
+        row: String,
+        detail: String,
+    },
 }
 
 impl fmt::Display for MigrationError {
@@ -378,6 +408,16 @@ impl fmt::Display for MigrationError {
                 formatter,
                 "journal schema row names version {row}, but SQLite user_version names {pragma}"
             ),
+            Self::StoredContent {
+                from,
+                to,
+                table,
+                row,
+                detail,
+            } => write!(
+                formatter,
+                "journal schema {from} to {to} migration refuses {table} row {row}: {detail}"
+            ),
         }
     }
 }
@@ -389,7 +429,25 @@ impl Error for MigrationError {}
 /// Indexed by the version the step *leaves*, so `advance` can walk one entry at
 /// a time up to `SCHEMA_VERSION` instead of needing a pair for every reachable
 /// combination. A version absent from this table is refused by name.
-const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATE_1_TO_2_SQL)];
+#[derive(Clone, Copy)]
+enum MigrationStep {
+    Sql(&'static str),
+    Rust(fn(&Connection) -> Result<(), OpenError>),
+}
+
+impl MigrationStep {
+    fn apply(self, connection: &Connection) -> Result<(), OpenError> {
+        match self {
+            Self::Sql(sql) => connection.execute_batch(sql).map_err(OpenError::Sqlite),
+            Self::Rust(migrate) => migrate(connection),
+        }
+    }
+}
+
+const MIGRATIONS: &[(u32, MigrationStep)] = &[
+    (1, MigrationStep::Sql(MIGRATE_1_TO_2_SQL)),
+    (2, MigrationStep::Rust(residency_lineage::migrate)),
+];
 
 /// Schema 1 to 2: the table transcript accounting reads its heads from.
 ///
@@ -524,7 +582,7 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 2, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 3, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 "#;

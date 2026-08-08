@@ -298,7 +298,7 @@ fn a_read_only_open_names_the_write_open_that_would_migrate() {
         error,
         OpenError::Migration(MigrationError::UnmigratedRead {
             found: 1,
-            current: 2
+            current: SCHEMA_VERSION
         })
     ));
     assert!(
@@ -327,16 +327,21 @@ fn prepared_and_forward_schema_states_are_refused_by_name() {
     ));
     assert!(error.to_string().contains("prepared and unfinalized"));
 
-    let forward = schema_fixture(3, "finalized", None, None, None);
+    let forward = schema_fixture(SCHEMA_VERSION + 1, "finalized", None, None, None);
     let error = Journal::from_connection(forward).expect_err("forward schema refuses open");
     assert!(matches!(
         error,
         OpenError::Migration(MigrationError::ForwardSchema {
-            found: 3,
-            current: 2
+            found,
+            current: SCHEMA_VERSION
         })
+        if found == SCHEMA_VERSION + 1
     ));
-    assert!(error.to_string().contains("schema 3"));
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("schema {}", SCHEMA_VERSION + 1))
+    );
 }
 
 #[test]
@@ -404,7 +409,7 @@ fn malformed_schema_identity_is_refused_by_name() {
     let unmigratable = error.to_string();
     assert!(unmigratable.contains("schema 0 has no migration path"));
     assert!(
-        unmigratable.contains("this build steps forward from schema 1"),
+        unmigratable.contains("this build steps forward from schema 1, 2"),
         "the refusal must name the versions that do have a path: {unmigratable}"
     );
     assert!(
@@ -412,7 +417,7 @@ fn malformed_schema_identity_is_refused_by_name() {
         "an unmigratable version must not be answered by starting over: {unmigratable}"
     );
 
-    let disagreement = schema_fixture(2, "finalized", None, None, None);
+    let disagreement = schema_fixture(SCHEMA_VERSION, "finalized", None, None, None);
     disagreement
         .pragma_update(None, "user_version", 0)
         .expect("make pragma disagree with schema row");
@@ -420,13 +425,14 @@ fn malformed_schema_identity_is_refused_by_name() {
         Journal::from_connection(disagreement).expect_err("version disagreement refuses open");
     assert!(matches!(
         error,
-        OpenError::Migration(MigrationError::VersionDisagreement { row: 2, pragma: 0 })
+        OpenError::Migration(MigrationError::VersionDisagreement {
+            row: SCHEMA_VERSION,
+            pragma: 0
+        })
     ));
-    assert!(
-        error
-            .to_string()
-            .contains("row names version 2, but SQLite user_version names 0")
-    );
+    assert!(error.to_string().contains(&format!(
+        "row names version {SCHEMA_VERSION}, but SQLite user_version names 0"
+    )));
 }
 
 #[test]
@@ -486,7 +492,7 @@ fn read_only_admission_refuses_schema_states_without_mutation() {
         ),
         (
             "newer.sqlite3",
-            3,
+            SCHEMA_VERSION + 1,
             "finalized",
             None,
             None,
@@ -572,13 +578,13 @@ fn schema_probe_refuses_unfinalized_and_forward_state_without_changing_the_store
         ),
         (
             "forward",
-            3,
+            SCHEMA_VERSION + 1,
             "finalized",
             None,
             None,
             None,
             MigrationError::ForwardSchema {
-                found: 3,
+                found: SCHEMA_VERSION + 1,
                 current: SCHEMA_VERSION,
             },
         ),

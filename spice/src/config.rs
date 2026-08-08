@@ -35,6 +35,7 @@ pub use task_migration::{
 #[serde(default, deny_unknown_fields)]
 pub struct Root {
     tasks: TaskMetadata,
+    judge: JudgeConfig,
     policy: WorkspacePolicy,
     taste: taste::Config,
     consent: consent::Config,
@@ -55,6 +56,12 @@ impl Root {
     #[must_use]
     pub const fn tasks(&self) -> &TaskMetadata {
         &self.tasks
+    }
+
+    /// Whether this repository opts into independent maxim adjudication.
+    #[must_use]
+    pub const fn judge(&self) -> &JudgeConfig {
+        &self.judge
     }
 
     /// Workspace-owned environment-name policy.
@@ -133,6 +140,22 @@ impl Root {
     #[must_use]
     pub const fn proof(&self) -> &proof::Config {
         &self.proof
+    }
+}
+
+/// Shared maxim-adjudication policy understood by both runtimes.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct JudgeConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+}
+
+impl JudgeConfig {
+    /// The predecessor's optional maxim-adjudication decision.
+    #[must_use]
+    pub const fn enabled(&self) -> Option<bool> {
+        self.enabled
     }
 }
 
@@ -706,6 +729,13 @@ registry! {
         builtin: Some(Builtin::UnsignedInteger(dialect::PROJECT_MAX_DEPTH as u64)),
         layers: TRACKED,
         class: Policy,
+        flag: None,
+    }
+    fixed "judge.enabled" {
+        kind: Boolean,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
         flag: None,
     }
     fixed "policy.env_names" {

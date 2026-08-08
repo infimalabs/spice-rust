@@ -59,7 +59,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 50);
+    assert_eq!(missing.provenance().len(), 51);
     assert!(
         missing
             .provenance()
@@ -590,6 +590,9 @@ stems = ["app", "board"]
 hidden_stems = ["sandbox"]
 project_min_depth = 2
 project_max_depth = 3
+
+[judge]
+enabled = true
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]

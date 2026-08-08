@@ -347,7 +347,9 @@ operator-owned predecessor configuration was applied, and none is proposed.
 3. **A read-only predecessor projection over `spicejournal.sqlite3`**, the only
    port-owned store in a directory the predecessor already uses. Strongest
    available parity evidence short of a cutover; cost is a new reader that must
-   tolerate schema drift, since journal schema 2 has no migration from 1.
+   negotiate schema identity rather than assume a fixed shape. Journal schema 3
+   carries write-open migrations from 1 and 2, while read-only opens deliberately
+   refuse an older schema instead of mutating it.
 4. **Activating the port's hook set in a dedicated worktree**, which
    `xtask/src/hooks.rs#extensions.worktreeConfig` explicitly supports. Highest
    exercise value and highest risk, because `reference-transaction` runs under
