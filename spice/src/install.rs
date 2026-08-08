@@ -972,6 +972,10 @@ fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
 }
 
 /// Installed Spice executable shared by every linked worktree.
+///
+/// Which build that is depends on which lane installed last;
+/// [`Repository::discover`] records what the sharing costs and why the
+/// predecessor's re-exec is not the correction.
 #[must_use]
 pub fn installed_binary(repository: &Repository) -> PathBuf {
     repository.common_dir().join(BINARY_PATH)
