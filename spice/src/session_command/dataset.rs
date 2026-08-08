@@ -5,6 +5,7 @@ use std::path::Path;
 
 use flate2::read::GzDecoder;
 use serde_json::Value;
+use spice::session_meter::ContextSnapshot;
 use wire::Refusal;
 
 use super::model::{
@@ -164,10 +165,21 @@ fn read_events(source: &ResolvedSource) -> Result<(Vec<RawEvent>, Vec<Residue>),
             });
             continue;
         };
+        let Some(timestamp) = spice::session_meter::normalize_timestamp(raw_ts) else {
+            residues.push(Residue {
+                source: source.path.display().to_string(),
+                line,
+                kind: "timestamp-invalid".to_owned(),
+                detail: format!("record timestamp cannot be normalized: {raw_ts}"),
+                recovery: "recover the original timestamp; no substitute ordering key is used"
+                    .to_owned(),
+            });
+            continue;
+        };
         rows.push(RawEvent {
             source: source.path.display().to_string(),
             line,
-            ts: normalize_timestamp(raw_ts),
+            ts: timestamp.to_string(),
             vendor: source.vendor,
             value,
         });
@@ -948,7 +960,10 @@ fn collect_codex_usage(dataset: &mut Dataset, event: &RawEvent, payload: &Value)
     let usage = payload
         .pointer("/info/last_token_usage")
         .unwrap_or(&Value::Null);
-    let record = token_record(&event.source, &event.ts, usage);
+    let context_window = payload
+        .pointer("/info/model_context_window")
+        .and_then(Value::as_u64);
+    let record = token_record(&event.source, &event.ts, usage, context_window);
     if record.total > 0 || record.input > 0 || record.output > 0 {
         dataset.tokens.push(record);
     }
@@ -959,13 +974,25 @@ fn collect_claude_usage(dataset: &mut Dataset, event: &RawEvent) {
         .value
         .pointer("/message/usage")
         .unwrap_or(&Value::Null);
-    let record = token_record(&event.source, &event.ts, usage);
+    let context_window = event
+        .value
+        .pointer("/message/model_context_window")
+        .or_else(|| event.value.get("model_context_window"))
+        .and_then(Value::as_u64);
+    let record = token_record(&event.source, &event.ts, usage, context_window);
     if record.total > 0 || record.input > 0 || record.output > 0 {
         dataset.tokens.push(record);
     }
 }
 
-fn token_record(source: &str, ts: &str, usage: &Value) -> TokenRecord {
+fn token_record(
+    source: &str,
+    ts: &str,
+    usage: &Value,
+    model_context_window: Option<u64>,
+) -> TokenRecord {
+    let context = ContextSnapshot::admit(ts, model_context_window)
+        .expect("every raw event timestamp was admitted before reduction");
     let input = integer(usage, &["input_tokens"]);
     let cached = integer(usage, &["cached_input_tokens", "cache_read_input_tokens"]);
     let output = integer(usage, &["output_tokens"]);
@@ -974,12 +1001,13 @@ fn token_record(source: &str, ts: &str, usage: &Value) -> TokenRecord {
         .max(input.saturating_add(output).saturating_add(reasoning));
     TokenRecord {
         source: source.to_owned(),
-        ts: ts.to_owned(),
+        ts: context.at.to_string(),
         input,
         cached,
         output,
         reasoning,
         total,
+        model_context_window: context.model_context_window,
     }
 }
 
@@ -1105,13 +1133,6 @@ fn sort_dataset(dataset: &mut Dataset) {
     dataset
         .tokens
         .sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
-}
-
-fn normalize_timestamp(raw: &str) -> String {
-    raw.parse::<jiff::Timestamp>()
-        .ok()
-        .and_then(|timestamp| wire::Instant::new(timestamp).ok())
-        .map_or_else(|| raw.to_owned(), |timestamp| timestamp.to_string())
 }
 
 fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Refusal {

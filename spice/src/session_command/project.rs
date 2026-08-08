@@ -755,6 +755,7 @@ fn token_view<'a>(source: &str, records: impl Iterator<Item = &'a TokenRecord>) 
         uncached: input.saturating_sub(cached),
         output: rows.iter().map(|row| row.output).sum(),
         reasoning: rows.iter().map(|row| row.reasoning).sum(),
+        model_context_window: rows.last().and_then(|row| row.model_context_window),
         snapshots: rows.len() as u64,
         first_snapshot: rows.first().map(|row| row.ts.clone()),
         last_snapshot: rows.last().map(|row| row.ts.clone()),
