@@ -312,7 +312,7 @@ fn a_replacement_claim_closes_the_displaced_attempt_and_accounts_the_winner() {
 }
 
 #[test]
-fn legacy_unrecorded_boundaries_are_visible_and_refused_attempts_invent_no_phase() {
+fn converged_absent_boundaries_are_visible_and_refused_attempts_invent_no_phase() {
     let mut refused = Facts::new();
     refused.task();
     refused.lane();
@@ -324,22 +324,94 @@ fn legacy_unrecorded_boundaries_are_visible_and_refused_attempts_invent_no_phase
     );
     assert!(answer.aggregates.is_empty());
 
-    let mut legacy = Facts::new();
-    legacy.task();
-    legacy.lane();
-    legacy.session(occupant_a(), "sonnet", "high");
-    legacy.claim(occupant_a(), SourceBoundary::unrecorded());
-    legacy.done(SourceBoundary::unrecorded());
-    let answer = derive(&legacy.snapshot()).expect("legacy boundary derives");
+    let mut converged = Facts::new();
+    converged.task();
+    converged.lane();
+    converged.session(occupant_a(), "sonnet", "high");
+    converged.claim(occupant_a(), SourceBoundary::unrecorded());
+    converged.done(SourceBoundary::unrecorded());
+    let answer = derive(&converged.snapshot()).expect("converged boundary derives");
     assert_eq!(answer.phases.len(), 1);
     assert_reason(&answer.phases[0], EffortUnavailableCode::IncompleteBoundary);
     assert!(
         reasons(&answer.phases[0])
             .iter()
             .all(|reason| reason.code != EffortUnavailableCode::MissingStart),
-        "legacy decoding keeps the lifecycle while withholding only its number"
+        "a converged absence keeps the lifecycle while withholding only its number"
     );
     assert!(answer.aggregates.is_empty());
+}
+
+/// Usage is attributed only when both bounding facts carry a proven boundary.
+///
+/// The control arm is load-bearing rather than decoration. It holds the same
+/// fixture with both bounds proven and reports a number, so neither withheld
+/// arm below can be passing because the fixture ran short of transcript, a
+/// session declaration, or lineage. Each withheld arm leaves the other bound
+/// proven, so severing the check on one bound reds exactly one of them and the
+/// other bound cannot mask it. The pre-existing converged-absence test cannot
+/// carry this clause because it makes both bounds incomplete at once.
+///
+/// These arms also settle that withholding is read from the recorded boundary
+/// and never from live state. The lane is seated, claimed, and fully accounted
+/// at the moment the fold runs, which the control proves by reporting from it,
+/// so a fold that filled a missing boundary in from current lane membership
+/// would report a number here where both withheld arms require withheld.
+#[test]
+fn either_bound_alone_withholds_a_fully_accounted_interval() {
+    let control = accounted(proven(None), proven(Some(pos(1, 100))));
+    assert_available(&control, 11);
+
+    let unproven_opening = accounted(
+        incomplete("opening streams unnamed"),
+        proven(Some(pos(1, 100))),
+    );
+    assert_reason(&unproven_opening, EffortUnavailableCode::IncompleteBoundary);
+
+    let unproven_closing = accounted(proven(None), incomplete("closing streams unnamed"));
+    assert_reason(&unproven_closing, EffortUnavailableCode::IncompleteBoundary);
+}
+
+/// A withheld interval reports the reason recorded on the boundary itself.
+///
+/// The two arms differ only in the reason they record, and each is reported
+/// verbatim as the tail of the detail rather than replaced by a reason the
+/// fold composed. The arm carrying a reason other than
+/// [`SourceBoundary::UNRECORDED`] is withheld through the same code and the
+/// same path as the migrated one, which is what proves no arm is keyed to the
+/// constant the decode migration itself writes.
+///
+/// A fact stored without the field needs no arm of its own here. Decode
+/// converges that absence onto exactly one value before the fold sees it, so
+/// the fold matches two variants and holds no third; the convergence is pinned
+/// for all four carriers by `wire/tests/source_boundary.rs` and is cited rather
+/// than re-tested.
+#[test]
+fn a_withheld_boundary_reports_whichever_reason_it_recorded() {
+    let authored = "fixture could not name the lane's streams";
+    assert_ne!(
+        authored,
+        SourceBoundary::UNRECORDED,
+        "the authored arm must not be the migration constant"
+    );
+
+    let recorded = accounted(incomplete(authored), proven(Some(pos(1, 100))));
+    assert!(
+        boundary_detail(&recorded).ends_with(authored),
+        "recorded reason is carried verbatim, found {:?}",
+        boundary_detail(&recorded)
+    );
+    assert!(
+        !boundary_detail(&recorded).contains(SourceBoundary::UNRECORDED),
+        "an authored reason is never replaced by the migration constant"
+    );
+
+    let migrated = accounted(SourceBoundary::unrecorded(), proven(Some(pos(1, 100))));
+    assert!(
+        boundary_detail(&migrated).ends_with(SourceBoundary::UNRECORDED),
+        "the migrated reason travels the same path, found {:?}",
+        boundary_detail(&migrated)
+    );
 }
 
 #[test]
@@ -627,6 +699,55 @@ fn proven_head(source: CanonicalUuid, next: TranscriptPosition) -> SourceBoundar
             next,
         }],
     }
+}
+
+/// One fully accounted interval whose only variable is its two boundaries.
+///
+/// The lane is seated, its session declared, and a single batch covers the
+/// whole interval, so with both bounds proven the fold reports a number. Every
+/// caller varies only the boundaries, which is what makes a withheld answer
+/// evidence about the recorded boundary instead of about absent transcript.
+fn accounted(opening: SourceBoundary, closing: SourceBoundary) -> EffortPhaseAnswer {
+    let mut facts = Facts::new();
+    facts.task();
+    facts.lane();
+    facts.session(occupant_a(), "sonnet", "high");
+    facts.claim(occupant_a(), opening);
+    facts.batch(
+        source(),
+        ORIGIN,
+        pos(1, 100),
+        vec![sample(1, 10, 10, 11)],
+        0,
+    );
+    facts.done(closing);
+    let mut answer = derive(&facts.snapshot()).expect("accounted fixture derives");
+    assert_eq!(answer.phases.len(), 1, "the fixture holds one interval");
+    answer.phases.remove(0)
+}
+
+fn incomplete(reason: &str) -> SourceBoundary {
+    SourceBoundary::Incomplete {
+        reason: reason.to_owned(),
+    }
+}
+
+/// The single incomplete-boundary detail a withheld interval reports.
+///
+/// Asserting exactly one also pins that the opening bound is reported once,
+/// where the fold both records it directly and reads it again as the first cut.
+fn boundary_detail(phase: &EffortPhaseAnswer) -> &str {
+    let found = reasons(phase)
+        .iter()
+        .filter(|reason| reason.code == EffortUnavailableCode::IncompleteBoundary)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        found.len(),
+        1,
+        "one incomplete-boundary reason, found {found:?} in {:?}",
+        phase.availability
+    );
+    &found[0].detail
 }
 
 fn assert_available(phase: &EffortPhaseAnswer, input_tokens: u64) {
