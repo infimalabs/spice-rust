@@ -64,11 +64,10 @@ admission = [
 # Every environment name this workspace defines, spelled once.
 #
 # This is the workspace's own vocabulary: the names Spice writes and the names
-# Spice reads back. Gate matches it
-# against the tracked tree in both directions, so a name used without being
-# listed fails, and a name listed after its last use fails too. That is what
-# makes the vocabulary countable rather than a set of literals accumulating
-# across crates.
+# Spice reads back. Gate matches it against the tracked tree in both
+# directions, so a name used without being listed fails, and a name listed
+# after its last use fails too. That is what makes the vocabulary countable
+# rather than a set of literals accumulating across crates.
 #
 # Session forensics reads the live Codex or Claude identity and the selected
 # agent vendor. `steer` owns the four hook/session names. Interception exports
@@ -80,17 +79,23 @@ admission = [
 # isolated copy of the current test process, and fixes `TMPDIR` at private
 # writable scratch so that isolation remains valid on a read-only proof host.
 #
-# Four foreign environment names are admitted here. The installed pre-commit
+# Seven foreign environment names are admitted here. The installed pre-commit
 # hook unsets Git's three local-environment names before it execs verify, and
 # the hooks fixture exports exactly those three to prove the child sees none of
-# them. The hygiene acquisition fixture fixes the fourth, `TMPDIR`, at its own
-# writable scratch. Spice does not own these names, but its fixtures write them.
-# The ledger accounts what the tree references rather than what it invented, so
-# they are counted here. Their access waiver is a separate arm and does not
-# account them; a waived name is still a name, and one written without being
-# counted here is one nobody can find again. Doctor reports only the names Spice
-# owns, so these seven are the difference wire pins between this manifest and
-# SpiceVariable.
+# them. The Git shadow writes three more, and it is production rather than a
+# fixture: it points `GIT_CONFIG_SYSTEM` at the per-worktree config it
+# publishes, counts the command-scope pairs it appends in `GIT_CONFIG_COUNT`,
+# and sets `GIT_EDITOR` to `echo` for the one probe that asks Git to print its
+# own system config path. The hygiene acquisition fixture fixes the seventh,
+# `TMPDIR`, at its own writable scratch. Spice owns none of these names and
+# writes all of them. The ledger accounts what the tree references rather than
+# what it invented, so they are counted here; the shadow's indexed
+# `GIT_CONFIG_KEY_` and `GIT_CONFIG_VALUE_` pairs are not, because a ledger
+# name is a whole name and a trailing underscore is a prefix. Their access
+# waiver is a separate arm and does not account them; a waived name is still a
+# name, and one written without being counted here is one nobody can find
+# again. Doctor reports only the names Spice owns, so these seven are the
+# difference wire pins between this manifest and SpiceVariable.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
