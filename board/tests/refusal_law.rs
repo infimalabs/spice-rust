@@ -200,19 +200,21 @@ fn is_test(preceding: &str) -> bool {
         .any(|line| line == "#[test]")
 }
 
-/// Whether `text` names `refusal` as a path, rather than inside a longer one.
+/// Whether `text` names `refusal` whole, rather than inside a longer name.
 ///
-/// `ClaimRefusal::Inactive` contains `Refusal::Inactive`, and four names are
-/// shared between the two enums, so a plain substring search lets a body that
-/// names only the claim enum answer for the lapse enum of the same name. The
-/// preceding character has to be absent or a non-identifier one, which the real
-/// bindings are: theirs follow `(`, `&` or a space.
+/// A longer name can swallow a shorter one from either end, so both ends are
+/// held to the same rule: the character on each side must be absent or a
+/// non-identifier one. `ClaimRefusal::Inactive` contains `Refusal::Inactive` and
+/// four names are shared between the two enums, which is the left end; a variant
+/// whose name is a prefix of a sibling's contains it too, so `Refusal::Changed`
+/// must not be answered for by `Refusal::ChangedElsewhere`, which is the right.
+/// Neither end costs an honest binding: every real occurrence opens on `(`, `&`
+/// or a space and closes on `(`, `)`, `,` or the end of its line.
 fn names(text: &str, refusal: &str) -> bool {
+    let whole = |letter: char| !letter.is_alphanumeric() && letter != '_';
     text.match_indices(refusal).any(|(at, _)| {
-        text[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|letter| !letter.is_alphanumeric() && letter != '_')
+        text[..at].chars().next_back().is_none_or(whole)
+            && text[at + refusal.len()..].chars().next().is_none_or(whole)
     })
 }
 
@@ -272,9 +274,11 @@ fn law(declared: &str, declaration: &str, control: (&str, &str), suite: &[&str])
         assert!(
             asserts(suite, test, &format!("{declared}::{variant}")),
             "{declared}::{variant} names {test}, which must be a #[test] that \
-             exists and whose body names this variant as {declared}::{variant} \
-             and not inside a longer path; a routine that is no test, or a test \
-             that never mentions the variant, leaves the variant unasserted"
+             exists and whose body writes {declared}::{variant} whole, with a \
+             non-identifier character or nothing on each side of it; a routine \
+             that is no test, a mention buried in a longer name from either \
+             end, or a test that never names the variant at all, leaves the \
+             variant unasserted"
         );
     }
 }
@@ -289,22 +293,25 @@ fn every_lapse_refusal_variant_is_bound_to_a_test_that_asserts_it() {
     );
 }
 
-/// The two counterfeits `asserts` refuses, on text written here rather than found.
+/// The three counterfeits `asserts` refuses, on text written here rather than found.
 ///
 /// Each path is assembled instead of spelled, on the same terms as `arms`: a
 /// literal at arm indentation would be read back out of this file as an arm of
 /// the matches above, binding a variant the compiler never checked.
 ///
 /// Written against `asserts` directly rather than by mutating the real arms,
-/// because both counterfeits have to fail for the same variant that succeeds
-/// when honest, and the suite holds no body that names only the sibling enum.
+/// because every counterfeit has to fail for the same variant that succeeds when
+/// honest, and the suite holds no body naming only a sibling of either kind: no
+/// lapse test names the claim enum, and no variant name is a prefix of another.
 #[test]
 fn only_a_test_naming_that_very_enum_is_credited_with_asserting_a_variant() {
     let lapse = format!("{}::{}", "Refusal", "MissingClaim");
     let sibling = format!("Claim{lapse}");
+    let longer = format!("{lapse}Elsewhere");
     let asserted = format!("#[test]\nfn bound() {{\n    refuses(&{lapse});\n}}\n");
     let production = format!("/// Map one.\nfn bound() {{\n    Err({lapse})\n}}\n");
     let shadowed = format!("#[test]\nfn bound() {{\n    refuses(&{sibling});\n}}\n");
+    let extended = format!("#[test]\nfn bound() {{\n    refuses(&{longer});\n}}\n");
 
     assert!(
         asserts(&[&asserted], "bound", &lapse),
@@ -320,6 +327,12 @@ fn only_a_test_naming_that_very_enum_is_credited_with_asserting_a_variant() {
         !asserts(&[&shadowed], "bound", &lapse),
         "the only mention is {sibling}, which contains {lapse} as a substring \
          and must not satisfy the lapse binding"
+    );
+    assert!(
+        !asserts(&[&extended], "bound", &lapse),
+        "the only mention is {longer}, which contains {lapse} from the other \
+         end, and a variant must not be credited to a sibling that merely \
+         begins with its name"
     );
 }
 
