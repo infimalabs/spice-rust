@@ -873,8 +873,8 @@ fn javascript_unused_scopes_candidates_to_top_level_and_counts_every_reference_f
 /// fixture that was never unformatted in the first place.
 ///
 /// Splitting a module with `include!` is not a hypothetical shape here:
-/// `spice/src/board_command.rs` is eleven of them in a row, and every one of
-/// those files was drifting unread until the arm named its own paths.
+/// `spice/src/board_command.rs:25-32` is eight of them in a row, and every one
+/// of those files was drifting unread until the arm named its own paths.
 #[test]
 fn the_formatter_names_a_file_cargo_fmt_cannot_reach() {
     let repository = including_repository("toolchain-included", UNFORMATTED_INCLUDED);

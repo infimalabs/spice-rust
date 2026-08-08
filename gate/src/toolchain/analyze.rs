@@ -608,9 +608,9 @@ include!("analyze/javascript.rs");
 /// Every selected path is named on the command line rather than left to a
 /// crate-root walk. rustfmt reaches a file by walking the `mod` declarations
 /// down from each crate root, and this repository splits its largest modules
-/// with `include!` instead -- `spice/src/board_command.rs` is eleven of them in
-/// a row -- so an included file is named by a macro and belongs to no module
-/// path. `cargo fmt --all` opens the including file and never the included one,
+/// with `include!` instead -- `spice/src/board_command.rs:25-32` is eight of
+/// them in a row -- so an included file is named by a macro and belongs to no
+/// module path. `cargo fmt --all` opens the including file and never the included one,
 /// which leaves those files counted as selected, measured by every other arm,
 /// and never handed to the formatter at all. Naming the paths is the one way
 /// rustfmt will open them, and it is what makes the arm's own count and its
