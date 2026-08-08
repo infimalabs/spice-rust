@@ -150,14 +150,19 @@ pub(in crate::board_command) fn task_list(
         .filter(|task| list_scope_matches(board, task, options))
         .filter(|task| list_status_matches(task, options))
         .collect::<Vec<_>>();
-    if let Some(limit) = options.limit {
+    let truncation = if let Some(limit) = options.limit {
         rows.sort_by(|left, right| {
             task_newest_position(right)
                 .cmp(&task_newest_position(left))
                 .then_with(|| right.statement.body.handle.cmp(&left.statement.body.handle))
         });
+        let original = rows.len();
         rows.truncate(limit);
-    }
+        let withheld = original - rows.len();
+        (withheld > 0).then_some((limit, original, withheld))
+    } else {
+        None
+    };
 
     let (scope, empty) = if options.all {
         (
@@ -181,6 +186,12 @@ pub(in crate::board_command) fn task_list(
         return format!("{scope}\n{empty}");
     }
     let mut output = scope;
+    if let Some((limit, original, withheld)) = truncation {
+        output.push('\n');
+        output.push_str(&format!(
+            "limited --limit {limit} original {original} withheld {withheld}"
+        ));
+    }
     for task in rows {
         output.push('\n');
         output.push_str(&render_task_list_row(task));

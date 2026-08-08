@@ -265,6 +265,47 @@ fn task_list_preserves_scope_status_project_and_newest_limit_semantics() {
 }
 
 #[test]
+fn shortened_task_list_names_original_and_withheld_row_counts() {
+    let (root, bus, epoch, _) = fixture("task-list-shortened", 0);
+    let (answer, _, _, _) = task_list_fixture(&bus, epoch);
+    let listed = task_list(
+        &answer,
+        &TaskListOptions {
+            all: true,
+            project: None,
+            limit: Some(2),
+            status: None,
+        },
+    );
+
+    assert!(
+        listed
+            .lines()
+            .any(|line| line == "limited --limit 2 original 4 withheld 2"),
+        "{listed}"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn complete_task_list_emits_no_withheld_notice() {
+    let (root, bus, epoch, _) = fixture("task-list-complete", 0);
+    let (answer, _, _, _) = task_list_fixture(&bus, epoch);
+    let listed = task_list(
+        &answer,
+        &TaskListOptions {
+            all: true,
+            project: None,
+            limit: Some(4),
+            status: None,
+        },
+    );
+
+    assert!(!listed.contains("withheld"), "{listed}");
+    clean(&root, bus);
+}
+
+#[test]
 fn default_task_list_selects_each_complete_actor_route_branch_only() {
     let (root, bus, epoch, _) = fixture("task-list-actor-route", 0);
     let public = add_project(
@@ -574,7 +615,11 @@ fn assert_task_list_queries(
     );
     assert_eq!(
         newest_global,
-        "scope global --all\nCLI-list0004 [done] board.test Completed board route"
+        concat!(
+            "scope global --all\n",
+            "limited --limit 1 original 4 withheld 3\n",
+            "CLI-list0004 [done] board.test Completed board route"
+        )
     );
 }
 
