@@ -365,6 +365,12 @@ struct LaneSessionWire {
         deserialize_with = "crate::optional::present"
     )]
     effort: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    git: Option<String>,
     epoch: CanonicalUuid,
     stream: String,
     identity: String,
@@ -380,7 +386,7 @@ impl TryFrom<LaneSessionWire> for LaneSession {
             occupant: wire.occupant,
             worktree: wire.worktree,
             vendor: wire.vendor,
-            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort)?,
+            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort, wire.git)?,
             epoch: wire.epoch,
             stream: wire.stream,
             identity: wire.identity,
@@ -391,7 +397,7 @@ impl TryFrom<LaneSessionWire> for LaneSession {
 
 impl From<LaneSession> for LaneSessionWire {
     fn from(session: LaneSession) -> Self {
-        let (model, effort) = LaneLaunchIdentity::into_parts(session.launch);
+        let (model, effort, git) = LaneLaunchIdentity::into_parts(session.launch);
         Self {
             lane: session.lane,
             occupant: session.occupant,
@@ -399,6 +405,7 @@ impl From<LaneSession> for LaneSessionWire {
             vendor: session.vendor,
             model,
             effort,
+            git,
             epoch: session.epoch,
             stream: session.stream,
             identity: session.identity,

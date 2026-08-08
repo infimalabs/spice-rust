@@ -169,6 +169,7 @@ pub(in crate::resident) struct DeclarationReporter {
     pub(in crate::resident) vendor: wire::Name,
     pub(in crate::resident) model: String,
     pub(in crate::resident) effort: String,
+    pub(in crate::resident) git: String,
     pub(in crate::resident) epoch: CanonicalUuid,
     pub(in crate::resident) stream: vendor::RecordStream,
     pub(in crate::resident) expected: Option<String>,
@@ -260,10 +261,10 @@ impl CaptureReporter for DeclarationReporter {
             occupant: self.occupant,
             worktree: self.worktree.clone(),
             vendor: self.vendor.clone(),
-            launch: Some(wire::body::LaneLaunchIdentity::new(
-                self.model.clone(),
-                self.effort.clone(),
-            )),
+            launch: Some(
+                wire::body::LaneLaunchIdentity::new(self.model.clone(), self.effort.clone())
+                    .with_git(self.git.clone()),
+            ),
             epoch: self.epoch,
             stream: record_stream(self.stream).to_owned(),
             identity: identity.clone(),

@@ -109,7 +109,10 @@ fn initialize_task_git_fixture(fixture: &Fixture) {
     // spelled out, so renaming the stage cannot quietly reintroduce that.
     fs::write(
         fixture.root.join(".gitignore"),
-        format!("vendor-launches\norigin.git\n{}", app_stage_ignore()),
+        format!(
+            "vendor-launches\norigin.git\npeer-worktree\n{}",
+            app_stage_ignore()
+        ),
     )
     .expect("task fixture ignore writes");
     fixture_git(fixture, &["add", ".gitignore", "fake-claude", "spice.toml"]);
@@ -129,6 +132,74 @@ fn establish_task_baseline(fixture: &Fixture) {
         ],
     );
     fixture_git(fixture, &["push", "--set-upstream", "origin", "main"]);
+}
+
+fn peer_commit(fixture: &Fixture, path: &str, contents: &str) -> String {
+    let peer = fixture.root.join("peer-worktree");
+    let clone = Command::new("git")
+        .arg("clone")
+        .arg(fixture.root.join("origin.git"))
+        .arg(&peer)
+        .output()
+        .expect("peer clone launches");
+    assert!(
+        clone.status.success(),
+        "peer clone failed: {}",
+        String::from_utf8_lossy(&clone.stderr)
+    );
+    for arguments in [
+        ["config", "user.name", "Resident Peer Fixture"].as_slice(),
+        ["config", "user.email", "resident-peer@example.test"].as_slice(),
+    ] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&peer)
+            .args(arguments)
+            .output()
+            .expect("peer Git launches");
+        assert!(
+            output.status.success(),
+            "peer git {arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::write(peer.join(path), contents).expect("peer commit candidate writes");
+    for arguments in [
+        ["add", path].as_slice(),
+        ["commit", "-m", "peer advance"].as_slice(),
+        ["push"].as_slice(),
+    ] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&peer)
+            .args(arguments)
+            .output()
+            .expect("peer Git launches");
+        assert!(
+            output.status.success(),
+            "peer git {arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    git_stdout(&peer, &["rev-parse", "HEAD"])
+}
+
+fn git_stdout(root: &Path, arguments: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(arguments)
+        .output()
+        .expect("fixture Git launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    String::from_utf8(output.stdout)
+        .expect("fixture Git output is UTF-8")
+        .trim()
+        .to_owned()
 }
 
 pub(super) fn fixture_git(fixture: &Fixture, arguments: &[&str]) {
@@ -269,6 +340,23 @@ fn assert_session_binding(
         .session
         .as_ref()
         .expect("lane session authority exists");
+    let launch = session
+        .launch
+        .as_ref()
+        .expect("current lane session records its launch identity");
+    assert_eq!(
+        (
+            row.model.as_deref(),
+            row.effort.as_deref(),
+            row.git.as_deref(),
+        ),
+        (
+            Some(launch.model.as_str()),
+            Some(launch.effort.as_str()),
+            launch.git.as_deref(),
+        ),
+        "the safe read publishes the durable launch identity"
+    );
     assert_eq!(
         (
             session.lane,
@@ -671,6 +759,158 @@ fn lane_lifecycle_and_recall_cross_the_resident_in_both_forms() {
     let (added, capability) = seat_and_recall(&fixture);
     resident = drain_and_restart(&fixture, resident, added.lane, capability);
     wake_and_finish(&fixture, resident, added.lane);
+}
+
+fn add_lane_and_assert_git(fixture: &Fixture, expected: &str) -> wire::intent::LaneChangeAnswer {
+    let added = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        fixture,
+        &["lane", "add", "--life", "Drive", "--vendor", "claude"],
+        true,
+        None,
+    ));
+    assert_eq!(added.git.as_deref(), Some(expected));
+    let lanes =
+        reply_body::<wire::intent::LaneAnswer>(&invoke_args(fixture, &["lane"], true, None));
+    assert_eq!(lanes.lanes[0].git.as_deref(), Some(expected));
+    assert_session_binding(fixture, &lanes.lanes[0], lanes.epoch);
+    added
+}
+
+fn stop_resident(fixture: &Fixture, resident: RunningResident) {
+    let lanes =
+        reply_body::<wire::intent::LaneAnswer>(&invoke_args(fixture, &["lane"], true, None));
+    for row in lanes.lanes.iter().filter(|row| row.occupant.is_some()) {
+        let drained = invoke_args(
+            fixture,
+            &["lane", "drain", &row.lane.to_string()],
+            true,
+            None,
+        );
+        assert!(
+            drained.status.success(),
+            "final drain failed: {:?}",
+            drained.stderr
+        );
+    }
+    let down = invoke(fixture, "down");
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
+#[test]
+fn fresh_and_resumed_launches_publish_the_exact_updated_and_current_notes() {
+    let fixture = Fixture::new("launch-git-updated-current");
+    configure_fake_vendor(&fixture);
+    initialize_task_git_fixture(&fixture);
+    establish_task_baseline(&fixture);
+    let baseline = peer_commit(&fixture, "peer.txt", "peer\n");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    let added = add_lane_and_assert_git(&fixture, "updated working tree to the current baseline");
+    assert_eq!(git_stdout(&fixture.root, &["rev-parse", "HEAD"]), baseline);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("peer.txt")).expect("advanced peer file reads"),
+        "peer\n"
+    );
+    let drained = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        &fixture,
+        &["lane", "drain", &added.lane.to_string()],
+        true,
+        None,
+    ));
+    assert_eq!(drained.git, None, "drain is not a launch transition");
+    let woke = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        &fixture,
+        &["lane", "wake", &added.lane.to_string()],
+        true,
+        None,
+    ));
+    assert_eq!(woke.git.as_deref(), Some("current"));
+    let lanes =
+        reply_body::<wire::intent::LaneAnswer>(&invoke_args(&fixture, &["lane"], true, None));
+    assert_eq!(lanes.lanes[0].git.as_deref(), Some("current"));
+    assert_latest_launch_resumed(&fixture);
+    stop_resident(&fixture, resident);
+}
+
+#[test]
+fn dirty_launch_publishes_its_skip_and_retains_uncommitted_work() {
+    let fixture = Fixture::new("launch-git-dirty");
+    configure_fake_vendor(&fixture);
+    initialize_task_git_fixture(&fixture);
+    establish_task_baseline(&fixture);
+    let before = git_stdout(&fixture.root, &["rev-parse", "HEAD"]);
+    fs::write(fixture.root.join("README.md"), "lane edit\n").expect("uncommitted lane work writes");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    add_lane_and_assert_git(&fixture, "skipped:dirty");
+    assert_eq!(git_stdout(&fixture.root, &["rev-parse", "HEAD"]), before);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("README.md")).expect("lane edit reads"),
+        "lane edit\n"
+    );
+    stop_resident(&fixture, resident);
+}
+
+#[test]
+fn divergent_launch_publishes_its_skip_and_retains_both_histories() {
+    let fixture = Fixture::new("launch-git-diverged");
+    configure_fake_vendor(&fixture);
+    initialize_task_git_fixture(&fixture);
+    establish_task_baseline(&fixture);
+    fs::write(fixture.root.join("lane.txt"), "lane\n").expect("lane commit candidate writes");
+    fixture_git(&fixture, &["add", "lane.txt"]);
+    fixture_git(&fixture, &["commit", "-m", "lane commit"]);
+    let lane = git_stdout(&fixture.root, &["rev-parse", "HEAD"]);
+    peer_commit(&fixture, "peer.txt", "peer\n");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    add_lane_and_assert_git(&fixture, "skipped:diverged");
+    assert_eq!(git_stdout(&fixture.root, &["rev-parse", "HEAD"]), lane);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("lane.txt")).expect("lane commit reads"),
+        "lane\n"
+    );
+    assert!(
+        !fixture.root.join("peer.txt").exists(),
+        "divergent launch merged the remote history"
+    );
+    stop_resident(&fixture, resident);
+}
+
+#[test]
+fn unfetchable_launch_publishes_its_skip_and_retains_the_lane_head() {
+    let fixture = Fixture::new("launch-git-unfetchable");
+    configure_fake_vendor(&fixture);
+    initialize_task_git_fixture(&fixture);
+    establish_task_baseline(&fixture);
+    fs::write(fixture.root.join("lane.txt"), "lane\n").expect("lane commit candidate writes");
+    fixture_git(&fixture, &["add", "lane.txt"]);
+    fixture_git(&fixture, &["commit", "-m", "lane commit"]);
+    let before = git_stdout(&fixture.root, &["rev-parse", "HEAD"]);
+    let unreachable = fixture.root.join("no-such-remote.git");
+    fixture_git(
+        &fixture,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            &unreachable.display().to_string(),
+        ],
+    );
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    add_lane_and_assert_git(&fixture, "skipped:fetch-failed");
+    assert_eq!(git_stdout(&fixture.root, &["rev-parse", "HEAD"]), before);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("lane.txt")).expect("lane commit reads"),
+        "lane\n"
+    );
+    stop_resident(&fixture, resident);
 }
 
 #[test]

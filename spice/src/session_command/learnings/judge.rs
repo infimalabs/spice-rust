@@ -18,9 +18,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CRITERION: &str = "The candidate is a durable, repo-general operational fact worth carrying to successor agents. It is reusable across future work in this repository and is not task status, speculation, a secret, one-off implementation trivia, or a statement without reusable operational value.";
 
 #[cfg(target_os = "macos")]
-const DEFAULT_JUDGE: &str = "afm-cli";
+pub(super) const DEFAULT_JUDGE: &str = "afm-cli";
 #[cfg(not(target_os = "macos"))]
-const DEFAULT_JUDGE: &str = "spice-judge";
+pub(super) const DEFAULT_JUDGE: &str = "spice-judge";
 
 pub(super) trait Judge {
     fn judge(&mut self, candidate: &LearningCandidate) -> Result<bool, JudgeError>;

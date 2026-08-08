@@ -70,7 +70,7 @@ pub(super) const GATE_MUTATION_TOOLS: &[ExternalTool] = &[ExternalTool {
     network: ToolNetwork::Permitted,
 }];
 
-pub(super) const TASK_GIT_TOOLS: &[ExternalTool] = &[ExternalTool {
+const TASK_GIT_TOOL: ExternalTool = ExternalTool {
     name: "git",
     owner: "task_git",
     mode: ToolMode::Launch,
@@ -79,7 +79,28 @@ pub(super) const TASK_GIT_TOOLS: &[ExternalTool] = &[ExternalTool {
     bounds: ToolBounds::TaskBoundary,
     cancellation: ToolCancellation::Deadline,
     network: ToolNetwork::Permitted,
-}];
+};
+
+pub(super) const TASK_GIT_TOOLS: &[ExternalTool] = &[TASK_GIT_TOOL];
+
+#[cfg(target_os = "macos")]
+pub(super) const LEARNING_JUDGE_EXECUTABLE: &str = "afm-cli";
+#[cfg(not(target_os = "macos"))]
+pub(super) const LEARNING_JUDGE_EXECUTABLE: &str = "spice-judge";
+
+pub(super) const TASK_DONE_TOOLS: &[ExternalTool] = &[
+    TASK_GIT_TOOL,
+    ExternalTool {
+        name: LEARNING_JUDGE_EXECUTABLE,
+        owner: "session_command::learnings::ProcessJudge",
+        mode: ToolMode::Launch,
+        requirement: ToolRequirement::Optional,
+        source: ToolSource::TaskBoundaryContract,
+        bounds: ToolBounds::TaskBoundary,
+        cancellation: ToolCancellation::Deadline,
+        network: ToolNetwork::Permitted,
+    },
+];
 
 pub(super) const PROOF_TOOLS: &[ExternalTool] = &[
     ExternalTool {

@@ -1194,6 +1194,13 @@ pub struct LaneAnswerRow {
         deserialize_with = "crate::optional::present"
     )]
     pub effort: Option<String>,
+    /// Observable GIT-04 outcome for the declared occupant launch.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git: Option<String>,
     /// Current occupant, absent between seats.
     #[serde(
         default,
@@ -1242,6 +1249,13 @@ pub struct LaneChangeAnswer {
     pub from: String,
     /// Disposition held after the transaction.
     pub to: String,
+    /// GIT-04 outcome for a launch transition; absent for non-launch changes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git: Option<Box<str>>,
 }
 
 /// One bounded continuity event retained in a recall account.

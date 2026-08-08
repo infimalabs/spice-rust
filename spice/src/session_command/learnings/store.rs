@@ -70,7 +70,7 @@ impl LearningStore {
             let fresh = record_for_candidate(candidate, &self.stem, now)?;
             let record = match by_normalized.get(&fresh.normalized_statement) {
                 Some(previous) => LearningRecord {
-                    last_confirmed_at: now.to_owned(),
+                    last_confirmed_at: previous.last_confirmed_at.clone().max(now.to_owned()),
                     confirmation_count: previous
                         .confirmation_count
                         .checked_add(1)

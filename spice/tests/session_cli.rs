@@ -1308,6 +1308,47 @@ fn assert_unavailable_turn_identity(scratch: &Scratch) {
 }
 
 #[test]
+fn recall_and_sweep_deadlines_name_inputs_without_partial_report_data() {
+    let scratch = Scratch::new("deadline");
+    let transcript = scratch.path().join("private-session.jsonl");
+    write_jsonl(&transcript, &codex_rows());
+    let input = transcript.to_string_lossy().into_owned();
+    for argv in [
+        strings(&[
+            "session",
+            "briefing",
+            &input,
+            "--deadline-seconds",
+            "0.000000001",
+        ]),
+        strings(&[
+            "session",
+            "sweep",
+            &input,
+            "--deadline-seconds",
+            "0.000000001",
+        ]),
+    ] {
+        let action = &argv[1];
+        let envelope = refusal(&argv, &[], "session::deadline-exceeded");
+        assert_eq!(
+            envelope["observed"],
+            format!(
+                "action={action} inputs=requested[{:?}] budget=0.000000001s",
+                input
+            )
+        );
+        assert!(
+            !envelope
+                .to_string()
+                .contains("Please implement parity; it must preserve evidence."),
+            "a deadline refusal must not carry partial transcript prose"
+        );
+    }
+    scratch.remove();
+}
+
+#[test]
 fn malformed_truncated_missing_and_unavailable_state_is_accounted_with_recovery() {
     let scratch = Scratch::new("residue");
     let damaged = damaged_fixture(&scratch);
