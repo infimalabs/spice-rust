@@ -53,6 +53,7 @@ import {
   routeCanvasSocket,
 } from "./half-open-socket.mjs";
 import {
+  addLinkedWorktree,
   assertGenerationOnline,
   assertOfflineObserved,
   assertResidentLossObserved,
@@ -62,6 +63,8 @@ import {
   buildResident,
   chooseCanvasView,
   configureFixture,
+  declareVendorModel,
+  importLaneAndFold,
   journalExtent,
   monitorPage,
   reply,
@@ -593,18 +596,29 @@ async function assertAuthoritySurface(page, seeded) {
 // the identity half cannot be moved here; the phase half can, since closing a
 // claim advances its task's flow and a later claim opens the phase it advanced
 // to.
-async function seedProvenEffort(page, fixture, lane, claims) {
-  // Allocation is gated three ways, all of which answer `board::allocator-empty`
-  // -- see the inventory on `assertHeldTaskCount`. Two are satisfied by adding
-  // the task under the lane's own identity with an acceptance. The third is the
-  // lineage's life: `steer` admits only operator-pinned projects, and this
-  // fixture pins none, so the team is driven for exactly as long as the claim
-  // takes and put back afterwards.
+// Run one seeding under a driven lineage and put the lineage back afterwards.
+//
+// Allocation is gated three ways, all of which answer `board::allocator-empty`
+// -- see the inventory on `assertHeldTaskCount`. The gate this owns is the
+// lineage's life: `steer` admits only operator-pinned projects, and this fixture
+// pins none, so the team is driven for exactly as long as the seeding takes.
+// Both effort seedings need that window, and a driven lineage left behind would
+// keep launching stand-ins under later assertions, so it is spelled once here
+// rather than opened and closed by each of them.
+async function driveTeam(page) {
   await chooseCanvasView(page, "Agents");
   const team = page.locator('[data-pane="agent-console"]');
   const lifetime = team.locator('.team-lifetime input[type="range"]');
   await lifetime.fill("1");
   await team.getByRole("button", { name: "Drive", exact: true }).waitFor();
+  return async () => {
+    await lifetime.fill("0");
+    await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  };
+}
+
+async function seedProvenEffort(page, fixture, lane, claims) {
+  const rest = await driveTeam(page);
   // One task, not one per claim. `task next` ranks peer work ahead of the
   // actor's own review only when the review was reached by freeing a claim
   // (`is_self_review` in board/src/next.rs), so a phase this lane completed
@@ -643,9 +657,60 @@ async function seedProvenEffort(page, fixture, lane, claims) {
       "the browser regression read this phase back off the Magnitude pane",
     ]);
   }
-  await lifetime.fill("0");
-  await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  await rest();
   return priced;
+}
+
+// Span one claimed phase across two launch identities.
+//
+// A phase is sized from the occupants that spent it, and `one_identity` refuses
+// to price one whose occupants disagree about what was launched. Reaching that
+// disagreement needs the identity to move without the phase ending, which is why
+// the claim is carried rather than freed: `lane import` records `ClaimCarried`,
+// and `one_identity` reads the successors it must agree with off exactly those
+// carries, so a replacement that records none is priced as one occupant.
+//
+// The session generation is deliberately left where it is. What separates the
+// two occupants here is the configured identity alone, which `declareVendorModel`
+// moves and each launch re-resolves from the worktree it starts in.
+async function seedMixedLaunchEffort(page, fixture, linkedRoot, lane) {
+  const rest = await driveTeam(page);
+  // The proven seeding above drains the eligible pool deliberately, so this one
+  // restocks it. Restocking is safe here and not there: it runs after every
+  // priced phase is closed, so it cannot restore the `todo` work whose absence
+  // is what let a completed phase be handed back and split the aggregate groups.
+  await replyAsLane(fixture, lane, [
+    "task",
+    "add",
+    "Effort mixed launch witness",
+    "--project",
+    "app.browser",
+    "--acceptance",
+    "the fold refuses to price a phase whose occupants disagree on what was launched",
+  ]);
+  const won = await replyAsLane(fixture, lane, ["task", "next"]);
+  assert.ok(won.body.task, `a phase to span identities: ${JSON.stringify(won.body)}`);
+  const seated = await reply(fixture, ["lane"]);
+  const seat = seated.body.lanes.find((row) => row.lane === lane);
+  assert.ok(seat, `the lane to span identities is seated: ${JSON.stringify(seated.body.lanes)}`);
+  await declareVendorModel(fixture, "canvas-successor-model");
+  const successor = await addLinkedWorktree(fixture, linkedRoot, "lane-successor");
+  await importLaneAndFold(fixture, lane, successor);
+  await replyAsLane(fixture, lane, [
+    "task",
+    "done",
+    "--validation",
+    "the browser regression crossed this phase over a rewritten launch identity",
+  ]);
+  // Put the seat back where the rest of the suite measures it. A lane is bound
+  // to a worktree, and later proof finds teams by the worktree they sit in
+  // (`assertPerTeamWatchbands` reads `worktrees[0]`), so a borrowed lane left
+  // elsewhere fails a control that has nothing to do with effort. Returning it
+  // is free of the identity this seeding moved: the claim closed above, so the
+  // occupant this records carries none.
+  await importLaneAndFold(fixture, lane, seat.worktree);
+  await rest();
+  return won.body.task;
 }
 
 /// Drive priced and withheld task effort through the real connection.
@@ -663,6 +728,7 @@ async function assertTaskEffortSurface(page, fixture, seeded) {
   // every priced phase here necessarily wears one launch identity.
   const claims = 4;
   const priced = await seedProvenEffort(page, fixture, seeded.lane, claims);
+  const mixed = await seedMixedLaunchEffort(page, fixture, linkedRoot, seeded.lane);
   await chooseCanvasView(page, "Magnitude");
   const effort = page.locator('[data-pane="effort"]');
   await effort.waitFor();
@@ -715,6 +781,13 @@ async function assertTaskEffortSurface(page, fixture, seeded) {
         magnitude: row.dataset.effortMagnitude,
         continuation: row.dataset.effortContinuation,
       })),
+      withheld: rows("withheld").map((row) => ({
+        task: row.querySelector("td")?.textContent ?? "",
+        reasons: [...row.querySelectorAll("[data-effort-reason]")].map(
+          (tag) => tag.dataset.effortReason,
+        ),
+        counters: row.querySelectorAll("[data-effort-counter]").length,
+      })),
       aggregates: rows("aggregates").map((row) => ({
         identity: row.dataset.effortIdentity,
         measure: row.dataset.effortMeasure,
@@ -725,7 +798,10 @@ async function assertTaskEffortSurface(page, fixture, seeded) {
   });
   // Written before the first assertion, so a run that fails one control still
   // reports the whole surface the rest of them would have been judged against.
-  process.stderr.write(`EFFORT-PROBE ${JSON.stringify(surface)} won=${JSON.stringify(priced)}\n`);
+  process.stderr.write(
+    `EFFORT-PROBE ${JSON.stringify(surface)} won=${JSON.stringify(priced)} `
+      + `mixed=${mixed}\n`,
+  );
   await effort.screenshot({ path: join(artifacts, "canvas-task-effort.png") });
 
   // Control: no sizing reaches an unavailable row.
@@ -812,6 +888,31 @@ at all, but rendered ${JSON.stringify(withheldHeadings)}`,
       `${pair} is summed and averaged separately, so a sum is never read as a mean`,
     );
   }
+
+  // Control: a phase its occupants disagree about is withheld, under that reason.
+  //
+  // Found by handle rather than by sweeping the table for the reason, because
+  // the fixture reaches here already carrying a withheld phase, and a sweep
+  // would be answered by that one no matter what the carried claim did. The
+  // reasons are compared whole for the same reason `mixed-launch` is reachable
+  // at all: `one_identity` is the only refusal the spanned launch earns, so a
+  // row that also carried `missing-end` or `broken-carry` would mean the claim
+  // did not survive the hand-off it was seeded to survive.
+  const spanned = surface.withheld.find((row) => row.task === mixed);
+  assert.ok(
+    spanned,
+    `the phase carried across two launch identities is withheld, but the withheld \
+table holds ${JSON.stringify(surface.withheld)}`,
+  );
+  assert.deepEqual(
+    spanned.reasons,
+    ["mixed-launch"],
+    `${mixed} is withheld for disagreeing about what was launched and nothing else`,
+  );
+  // Asserted on this row rather than only on the table total above, so it stays
+  // a claim about the spanned phase even if the fixture later carries a withheld
+  // phase whose blankness is doing the work.
+  assert.equal(spanned.counters, 0, `no sizing cell reaches ${mixed}`);
 }
 
 async function assertMosaicComposer(page, fixture, seeded) {
