@@ -1,9 +1,11 @@
-fn phase(name: &str) -> wire::Phase {
+use super::*;
+
+pub(super) fn phase(name: &str) -> wire::Phase {
     name.parse()
         .expect("dialect phase is a lower-case wire phase")
 }
 
-fn validated_snapshot(
+pub(super) fn validated_snapshot(
     bus: &Bus,
     principal: wire::Actor,
     projects: &ProjectPolicy,
@@ -90,7 +92,7 @@ fn validated_snapshot(
     })
 }
 
-fn actor_route(
+pub(super) fn actor_route(
     principal: &wire::Actor,
     residency: &wire::ResidencyHead,
 ) -> Result<wire::intent::BoardActorRoute, Outcome<CommandAnswer>> {
@@ -249,14 +251,14 @@ fn required_fact_text<'a>(
         })
 }
 
-fn positioned<T: Clone>(head: &journal::JournalHead<T>) -> Positioned<T> {
+pub(super) fn positioned<T: Clone>(head: &journal::JournalHead<T>) -> Positioned<T> {
     Positioned {
         position: head.position(),
         body: head.body().clone(),
     }
 }
 
-fn task_repository(
+pub(super) fn task_repository(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     resident: &Repository,
@@ -301,7 +303,7 @@ fn task_repository(
     Ok(repository)
 }
 
-fn publish_task_boundary(
+pub(super) fn publish_task_boundary(
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
@@ -326,7 +328,7 @@ fn publish_task_boundary(
     .map_err(task_git_outcome)
 }
 
-fn task_git_outcome(error: spice::task_git::Error) -> Outcome<CommandAnswer> {
+pub(super) fn task_git_outcome(error: spice::task_git::Error) -> Outcome<CommandAnswer> {
     match error.class() {
         spice::task_git::ErrorClass::Refusal => refusal(
             error.reason(),
@@ -337,7 +339,7 @@ fn task_git_outcome(error: spice::task_git::Error) -> Outcome<CommandAnswer> {
     }
 }
 
-fn read_board(
+pub(super) fn read_board(
     bus: &Bus,
     read: &BoardRead,
     principal: wire::Actor,
@@ -375,7 +377,7 @@ fn read_board(
     )
 }
 
-fn read_graph(
+pub(super) fn read_graph(
     bus: &Bus,
     graph: &BoardGraph,
     principal: wire::Actor,
@@ -417,7 +419,7 @@ fn read_graph(
     )
 }
 
-fn read_handout(
+pub(super) fn read_handout(
     bus: &Bus,
     handout: &BoardHandout,
     principal: wire::Actor,
@@ -454,7 +456,7 @@ fn read_handout(
     )
 }
 
-fn read_ledger(
+pub(super) fn read_ledger(
     bus: &Bus,
     ledger: &DocLedger,
     principal: wire::Actor,
@@ -508,7 +510,7 @@ fn join_phases(phases: &[wire::Phase]) -> String {
         .join(", ")
 }
 
-fn request<B>(command: &wire::AdmittedCommand, body: B) -> Command<B> {
+pub(super) fn request<B>(command: &wire::AdmittedCommand, body: B) -> Command<B> {
     Command {
         v: WireVersion::CURRENT,
         id: command.id(),
@@ -519,7 +521,7 @@ fn request<B>(command: &wire::AdmittedCommand, body: B) -> Command<B> {
     }
 }
 
-fn guard(write: &mut JournalWrite, expected: Vec<Witness>) {
+pub(super) fn guard(write: &mut JournalWrite, expected: Vec<Witness>) {
     write.guard(JournalGuard::new(move |read| {
         witnesses_hold(read, &expected)
     }));
@@ -527,17 +529,17 @@ fn guard(write: &mut JournalWrite, expected: Vec<Witness>) {
 
 type AllocationHeads = Vec<(TaskHandle, Seq, Seq, Option<Seq>, Option<Seq>)>;
 
-struct AllocationObservation {
-    heads: AllocationHeads,
-    winner: TaskHandle,
-    actor: Actor,
-    subscription: wire::LineageSubscription,
-    residency_position: Seq,
-    projects: ProjectPolicy,
-    band: u64,
+pub(super) struct AllocationObservation {
+    pub(super) heads: AllocationHeads,
+    pub(super) winner: TaskHandle,
+    pub(super) actor: Actor,
+    pub(super) subscription: wire::LineageSubscription,
+    pub(super) residency_position: Seq,
+    pub(super) projects: ProjectPolicy,
+    pub(super) band: u64,
 }
 
-fn allocation_subscription<'a>(
+pub(super) fn allocation_subscription<'a>(
     residency: &'a wire::ResidencyHead,
     actor: &Actor,
 ) -> Result<&'a wire::LineageSubscription, Outcome<CommandAnswer>> {
@@ -586,7 +588,7 @@ fn allocation_subscription<'a>(
     Ok(subscription)
 }
 
-fn allocation_heads(board: &BoardAnswer) -> AllocationHeads {
+pub(super) fn allocation_heads(board: &BoardAnswer) -> AllocationHeads {
     board
         .tasks
         .iter()
@@ -626,7 +628,7 @@ fn allocation_heads(board: &BoardAnswer) -> AllocationHeads {
 /// `a_winner_that_was_never_the_selection_refuses_the_allocator_write` hands it
 /// an observation by hand, and reds when this comparison is severed while the
 /// other six tests in that file stay green.
-fn guard_allocation(
+pub(super) fn guard_allocation(
     write: &mut JournalWrite,
     expected: Vec<Witness>,
     observed: AllocationObservation,
@@ -691,7 +693,11 @@ fn guard_allocation(
     }));
 }
 
-fn guard_capture(write: &mut JournalWrite, expected: Vec<Witness>, observed: AllocationHeads) {
+pub(super) fn guard_capture(
+    write: &mut JournalWrite,
+    expected: Vec<Witness>,
+    observed: AllocationHeads,
+) {
     write.guard(JournalGuard::new(move |read| {
         witnesses_hold(read, &expected)?;
         let current = read
@@ -830,7 +836,11 @@ fn board_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool
     })
 }
 
-fn committed(bus: &Bus, write: JournalWrite, body: CommandAnswer) -> Outcome<CommandAnswer> {
+pub(super) fn committed(
+    bus: &Bus,
+    write: JournalWrite,
+    body: CommandAnswer,
+) -> Outcome<CommandAnswer> {
     match bus.commit(write) {
         Ok(CommitOutcome::Committed(commit)) => Outcome::Reply(Reply {
             position: ReplyPosition::Committed(SeqRange {
@@ -851,7 +861,7 @@ fn committed(bus: &Bus, write: JournalWrite, body: CommandAnswer) -> Outcome<Com
     }
 }
 
-fn phases(flow: Option<&str>) -> Result<Vec<wire::Phase>, Outcome<CommandAnswer>> {
+pub(super) fn phases(flow: Option<&str>) -> Result<Vec<wire::Phase>, Outcome<CommandAnswer>> {
     let names = flow.map_or_else(
         || vec!["todo", "review"],
         |flow| {
@@ -899,7 +909,7 @@ fn board_barrier_from_read(read: &JournalRead<'_>) -> Result<Digest, GuardError>
     Ok(Digest::compute(Domain::BoardBarrier, &bytes))
 }
 
-fn task_origin(task: &TaskHandle) -> Result<wire::Origin, Outcome<CommandAnswer>> {
+pub(super) fn task_origin(task: &TaskHandle) -> Result<wire::Origin, Outcome<CommandAnswer>> {
     format!("task:{task}").parse().map_err(|error| {
         protocol_fault(
             "task::origin-invalid",
@@ -908,12 +918,12 @@ fn task_origin(task: &TaskHandle) -> Result<wire::Origin, Outcome<CommandAnswer>
     })
 }
 
-fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {
+pub(super) fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {
     Instant::new(jiff::Timestamp::now())
         .map_err(|error| environment_fault("board::clock-invalid", &error.to_string()))
 }
 
-fn instant_after(at: Instant, seconds: i64) -> Result<Instant, Outcome<CommandAnswer>> {
+pub(super) fn instant_after(at: Instant, seconds: i64) -> Result<Instant, Outcome<CommandAnswer>> {
     let timestamp = at
         .get()
         .checked_add(jiff::SignedDuration::from_secs(seconds))
@@ -933,14 +943,18 @@ fn snapshot_reply(cursor: wire::Seq, body: CommandAnswer) -> Outcome<CommandAnsw
     })
 }
 
-fn required(matches: &ArgMatches, name: &str) -> String {
+pub(super) fn required(matches: &ArgMatches, name: &str) -> String {
     matches
         .get_one::<String>(name)
         .expect("generated syntax requires this argument")
         .clone()
 }
 
-fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Outcome<CommandAnswer> {
+pub(super) fn refusal(
+    reason: &str,
+    observed: Option<String>,
+    remedy: &str,
+) -> Outcome<CommandAnswer> {
     Outcome::Refusal(Refusal {
         reason: reason.to_owned(),
         witness: None,
@@ -950,7 +964,7 @@ fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Outcome<Comm
     })
 }
 
-fn store_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
+pub(super) fn store_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     Outcome::Fault(Fault {
         class: FaultClass::Store,
         reason: reason.to_owned(),
@@ -958,7 +972,7 @@ fn store_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     })
 }
 
-fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
+pub(super) fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     Outcome::Fault(Fault {
         class: FaultClass::Environment,
         reason: reason.to_owned(),
@@ -966,7 +980,7 @@ fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     })
 }
 
-fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
+pub(super) fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     Outcome::Fault(Fault {
         class: FaultClass::Protocol,
         reason: reason.to_owned(),

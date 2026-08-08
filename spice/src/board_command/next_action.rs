@@ -1,6 +1,8 @@
+use super::*;
+
 /// One command transition admitted by the task's projected post-transaction state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NextTransition {
+pub(super) enum NextTransition {
     Settled,
     Review,
     Done,
@@ -26,7 +28,7 @@ impl NextTransition {
 /// `post` is the changed task as it will exist after the transaction. Replacing
 /// that handle in the observed entry set makes dependency and possession checks
 /// use one coherent projected board rather than the phase's position in a flow.
-fn next_action(
+pub(super) fn next_action(
     snapshot: &ValidatedSnapshot,
     post: &Entry,
     learn_created_project: bool,
@@ -46,7 +48,7 @@ fn next_action(
         .command(&post.statement().handle)
 }
 
-fn accepted_transition(
+pub(super) fn accepted_transition(
     principal: &Actor,
     residency: &wire::ResidencyHead,
     entries: &[Entry],

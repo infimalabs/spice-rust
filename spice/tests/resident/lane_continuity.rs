@@ -490,7 +490,7 @@ fn configure_vendors(fixture: &Fixture) -> VendorFixture {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_vendor(
+pub(super) fn write_vendor(
     binary: &Path,
     control: &Path,
     pids: &Path,
@@ -533,7 +533,7 @@ fn write_vendor(
         .expect("fake vendor becomes executable");
 }
 
-fn add_lane(fixture: &Fixture, tail: &[&str]) -> wire::intent::LaneChangeAnswer {
+pub(super) fn add_lane(fixture: &Fixture, tail: &[&str]) -> wire::intent::LaneChangeAnswer {
     let mut args = vec!["lane", "add"];
     args.extend_from_slice(tail);
     reply_body(&invoke_operator(fixture, &args, true))
@@ -609,7 +609,7 @@ fn assert_refusal(output: &Output, expected: &str) {
     assert_eq!(refusal.reason, expected);
 }
 
-fn durable_head(fixture: &Fixture) -> wire::ResidencyHead {
+pub(super) fn durable_head(fixture: &Fixture) -> wire::ResidencyHead {
     journal::JournalReader::open(fixture.journal())
         .expect("continuity journal reads")
         .read(|read| read.residency_head())

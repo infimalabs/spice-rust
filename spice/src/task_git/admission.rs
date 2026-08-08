@@ -1,3 +1,5 @@
+use super::*;
+
 /// How long the repository's declared admission command may run.
 ///
 /// This is the cheap load rather than the suite: a command that reads the
@@ -24,7 +26,7 @@ const ADMISSION_OWNER: &str = "task-git-admission";
 /// one manifest carrying that table twice, and the first thing to read it is
 /// whatever the next lane runs. This holds the declared command between the
 /// synthesized tree and the push.
-struct Admission {
+pub(super) struct Admission {
     lane_argv: Vec<String>,
     authored_tree: String,
 }
@@ -35,7 +37,7 @@ impl Admission {
     /// A non-empty command comes from the lane's own checkout, so a baseline
     /// carrying a weaker command cannot relax it. An empty command is retained
     /// as the explicit signal to resolve policy from each integrated tree.
-    fn resolve(repository: &Repository, agent_head: &str) -> Result<Self, Error> {
+    pub(super) fn resolve(repository: &Repository, agent_head: &str) -> Result<Self, Error> {
         let resolved = crate::config::load_repository(repository, &[])
             .map_err(|error| Error::fault("git::admission-unreadable", error.to_string()))?;
         Ok(Self {
@@ -45,7 +47,12 @@ impl Admission {
     }
 
     /// Refuse one integrated commit whose tree the declared command rejects.
-    fn admit(&self, repository: &Repository, integrated: &str, label: &str) -> Result<(), Error> {
+    pub(super) fn admit(
+        &self,
+        repository: &Repository,
+        integrated: &str,
+        label: &str,
+    ) -> Result<(), Error> {
         let root = repository.worktree_root();
         // Bytes identical to the lane's own tree are the ones it already
         // worked, so a completion that merged nothing new is not charged for

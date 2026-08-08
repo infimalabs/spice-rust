@@ -1,3 +1,5 @@
+use super::*;
+
 // Refusal and closed-vocabulary checks that complete the identity-law sweep.
 
 #[test]
@@ -32,7 +34,7 @@ fn a_seq_cannot_encode_a_zero_position() {
 /// variant a sample would skip. Listing them in declared order is what
 /// `ranked_law` wants anyway, so the sweep and the order assertion are the same
 /// list.
-fn cover_vocabularies(covered: &mut BTreeSet<String>) {
+pub(super) fn cover_vocabularies(covered: &mut BTreeSet<String>) {
     ranked_law(covered, "CommandKind", CommandKind::ALL);
     ranked_law(covered, "FactKind", FactKind::ALL);
     ranked_law(covered, "Producer", Producer::ALL);

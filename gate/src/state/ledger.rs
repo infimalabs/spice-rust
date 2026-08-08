@@ -1,3 +1,5 @@
+use super::*;
+
 /// Which predecessor sticky ledger owns an entry.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -10,7 +12,7 @@ pub enum LatchKind {
 }
 
 impl LatchKind {
-    const fn admits(self, key: &StateKey) -> bool {
+    pub(super) const fn admits(self, key: &StateKey) -> bool {
         match self {
             Self::FileLoc | Self::FileBytes | Self::RepoDocChars => key.is_path(),
             Self::ComplexityCcn | Self::ComplexityLength => key.is_function(),
@@ -93,7 +95,7 @@ impl StateKey {
         matches!(self, Self::Function(_))
     }
 
-    fn renamed(&self, path: &str) -> Self {
+    pub(super) fn renamed(&self, path: &str) -> Self {
         match self {
             Self::Function(key) => Self::Function(FunctionKey {
                 path: path.to_owned(),
@@ -110,8 +112,8 @@ impl StateKey {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LatchEntry {
-    kind: LatchKind,
-    key: StateKey,
+    pub(super) kind: LatchKind,
+    pub(super) key: StateKey,
 }
 
 impl LatchEntry {
@@ -168,10 +170,10 @@ impl Error for KeyError {}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerClaim {
-    path: String,
-    actor: String,
-    created_at: f64,
-    expires_at: f64,
+    pub(super) path: String,
+    pub(super) actor: String,
+    pub(super) created_at: f64,
+    pub(super) expires_at: f64,
 }
 
 impl PeerClaim {
@@ -203,9 +205,9 @@ impl PeerClaim {
 /// Complete current Git-common state.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StateLedger {
-    version: u64,
-    latches: Vec<LatchEntry>,
-    claims: Vec<PeerClaim>,
+    pub(super) version: u64,
+    pub(super) latches: Vec<LatchEntry>,
+    pub(super) claims: Vec<PeerClaim>,
 }
 
 impl StateLedger {
@@ -274,7 +276,7 @@ impl RenameMap {
         Ok(Self { paths })
     }
 
-    fn destination<'a>(&'a self, path: &'a str) -> &'a str {
+    pub(super) fn destination<'a>(&'a self, path: &'a str) -> &'a str {
         self.paths.get(path).map_or(path, String::as_str)
     }
 }
@@ -282,11 +284,11 @@ impl RenameMap {
 /// One complete current observation used to reconcile a sticky entry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LatchObservation {
-    entry: LatchEntry,
-    bound: BoundRule,
-    measured: u64,
-    actor_inputs: ActorInputs,
-    variation_percent: u64,
+    pub(super) entry: LatchEntry,
+    pub(super) bound: BoundRule,
+    pub(super) measured: u64,
+    pub(super) actor_inputs: ActorInputs,
+    pub(super) variation_percent: u64,
 }
 
 impl LatchObservation {
@@ -320,8 +322,8 @@ impl LatchObservation {
 /// One latch-qualified decision returned by reconciliation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StateDecision {
-    entry: LatchEntry,
-    bound: BoundDecision,
+    pub(super) entry: LatchEntry,
+    pub(super) bound: BoundDecision,
 }
 
 impl StateDecision {

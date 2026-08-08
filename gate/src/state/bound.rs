@@ -1,3 +1,5 @@
+use super::*;
+
 const COMPLETE_HEADROOM_REDUCTION_PERCENT: i128 = -100;
 const BINARY64_FRACTION_BITS: i32 = 52;
 const PERCENT_DENOMINATOR: u128 = 100;
@@ -419,7 +421,7 @@ pub struct BoundDecision {
     over_limit: bool,
     over_base: bool,
     elastic_breach: bool,
-    latch_transition: LatchTransition,
+    pub(super) latch_transition: LatchTransition,
     actor_inputs: ActorInputs,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor: Option<ActorResolution>,

@@ -1,3 +1,5 @@
+use super::*;
+
 /// One loaded lower-is-better floor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Floor {
@@ -26,7 +28,11 @@ pub struct Baseline {
 }
 
 impl Baseline {
-    fn parse(path: &Path, text: &str, gate_set: &GateSet) -> Result<Self, BaselineError> {
+    pub(super) fn parse(
+        path: &Path,
+        text: &str,
+        gate_set: &GateSet,
+    ) -> Result<Self, BaselineError> {
         let table = parse_baseline_table(path, text)?;
         validate_baseline_version(path, &table)?;
         let rows = baseline_rows(path, &table)?;
@@ -81,7 +87,7 @@ impl Baseline {
         Digest::compute(Domain::GateBaseline, self.render().as_bytes())
     }
 
-    fn ratchet(&self, gate_set: &GateSet) -> Ratchet {
+    pub(super) fn ratchet(&self, gate_set: &GateSet) -> Ratchet {
         let mut text = String::new();
         for declaration in gate_set
             .floors
@@ -96,7 +102,7 @@ impl Baseline {
         Ratchet::parse(&text).expect("validated baseline names render one ratchet spelling")
     }
 
-    fn mutation_floor(&self) -> SurvivorRate {
+    pub(super) fn mutation_floor(&self) -> SurvivorRate {
         SurvivorRate::new(
             self.floor("rust.mutation-survivors")
                 .expect("a loaded baseline carries the mutation floor"),

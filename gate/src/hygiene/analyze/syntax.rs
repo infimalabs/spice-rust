@@ -1,19 +1,21 @@
+use super::*;
+
 #[derive(Clone)]
-struct Module {
-    path: String,
-    name: String,
-    is_package_initializer: bool,
-    is_test: bool,
+pub(super) struct Module {
+    pub(super) path: String,
+    pub(super) name: String,
+    pub(super) is_package_initializer: bool,
+    pub(super) is_test: bool,
     line_starts: Vec<usize>,
-    imports: Vec<ImportRecord>,
-    declarations: Vec<Declaration>,
-    references: Vec<Reference>,
-    tests: Vec<TestCase>,
-    private_couplings: Vec<RawPrivateCoupling>,
+    pub(super) imports: Vec<ImportRecord>,
+    pub(super) declarations: Vec<Declaration>,
+    pub(super) references: Vec<Reference>,
+    pub(super) tests: Vec<TestCase>,
+    pub(super) private_couplings: Vec<RawPrivateCoupling>,
 }
 
 impl Module {
-    fn new(path: String, name: String, is_test: bool, source: &str) -> Self {
+    pub(super) fn new(path: String, name: String, is_test: bool, source: &str) -> Self {
         let is_package_initializer = is_package_initializer_path(&path);
         let mut line_starts = vec![0];
         line_starts.extend(
@@ -43,7 +45,7 @@ impl Module {
             .unwrap_or(u32::MAX)
     }
 
-    fn resolve_reference(
+    pub(super) fn resolve_reference(
         &self,
         reference: &str,
         known: &BTreeSet<String>,
@@ -96,7 +98,7 @@ impl Module {
 }
 
 #[derive(Clone)]
-struct ImportRecord {
+pub(super) struct ImportRecord {
     module: String,
     symbol: Option<String>,
     local: String,
@@ -104,7 +106,7 @@ struct ImportRecord {
 }
 
 impl ImportRecord {
-    fn target_module(&self, known: &BTreeSet<String>) -> Option<String> {
+    pub(super) fn target_module(&self, known: &BTreeSet<String>) -> Option<String> {
         if let Some(symbol) = &self.symbol {
             let candidate = format!("{}.{}", self.module, symbol);
             if known.contains(&candidate) {
@@ -116,55 +118,55 @@ impl ImportRecord {
 }
 
 #[derive(Clone)]
-struct Declaration {
-    name: String,
-    kind: &'static str,
-    line: u32,
-    top_level: bool,
+pub(super) struct Declaration {
+    pub(super) name: String,
+    pub(super) kind: &'static str,
+    pub(super) line: u32,
+    pub(super) top_level: bool,
 }
 
 #[derive(Clone)]
-struct Reference {
-    name: String,
-    owner: Option<String>,
+pub(super) struct Reference {
+    pub(super) name: String,
+    pub(super) owner: Option<String>,
 }
 
 #[derive(Clone)]
-struct TestCase {
-    name: String,
-    line: u32,
-    assertions: u32,
+pub(super) struct TestCase {
+    pub(super) name: String,
+    pub(super) line: u32,
+    pub(super) assertions: u32,
 }
 
 #[derive(Clone)]
-struct RawPrivateCoupling {
-    line: u32,
-    test_name: String,
-    kind: &'static str,
-    target: String,
+pub(super) struct RawPrivateCoupling {
+    pub(super) line: u32,
+    pub(super) test_name: String,
+    pub(super) kind: &'static str,
+    pub(super) target: String,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct PrivateCoupling {
-    path: String,
-    line: u32,
-    test_name: String,
-    kind: &'static str,
-    target: String,
+pub(super) struct PrivateCoupling {
+    pub(super) path: String,
+    pub(super) line: u32,
+    pub(super) test_name: String,
+    pub(super) kind: &'static str,
+    pub(super) target: String,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct ResolvedReference {
-    target_module: String,
-    symbol: String,
-    source_module: String,
-    source_symbol: Option<String>,
-    path: String,
-    from_test: bool,
+pub(super) struct ResolvedReference {
+    pub(super) target_module: String,
+    pub(super) symbol: String,
+    pub(super) source_module: String,
+    pub(super) source_symbol: Option<String>,
+    pub(super) path: String,
+    pub(super) from_test: bool,
 }
 
 impl ResolvedReference {
-    fn matches(&self, module: &str, declaration: &Declaration) -> bool {
+    pub(super) fn matches(&self, module: &str, declaration: &Declaration) -> bool {
         self.target_module == module && self.symbol == declaration.name
     }
 }
@@ -184,7 +186,7 @@ struct Scope {
     assertions: u32,
 }
 
-struct AstCollector<'a> {
+pub(super) struct AstCollector<'a> {
     module: &'a mut Module,
     configuration: &'a HygieneConfiguration,
     scopes: Vec<Scope>,
@@ -192,7 +194,7 @@ struct AstCollector<'a> {
 }
 
 impl<'a> AstCollector<'a> {
-    fn new(module: &'a mut Module, configuration: &'a HygieneConfiguration) -> Self {
+    pub(super) fn new(module: &'a mut Module, configuration: &'a HygieneConfiguration) -> Self {
         Self {
             module,
             configuration,
@@ -450,7 +452,7 @@ fn expression_path(expression: &Expr) -> Option<String> {
     }
 }
 
-fn resolve_relative_module(
+pub(super) fn resolve_relative_module(
     current: &str,
     is_package_initializer: bool,
     level: usize,
@@ -483,7 +485,7 @@ fn is_package_initializer_path(path: &str) -> bool {
     )
 }
 
-fn module_name(path: &str) -> String {
+pub(super) fn module_name(path: &str) -> String {
     let without_extension = path
         .strip_suffix(".pyi")
         .or_else(|| path.strip_suffix(".py"))
@@ -495,11 +497,11 @@ fn module_name(path: &str) -> String {
     components.join(".")
 }
 
-pub(super) fn is_python_path(path: &str) -> bool {
+pub(in crate::hygiene) fn is_python_path(path: &str) -> bool {
     path.ends_with(".py") || path.ends_with(".pyi")
 }
 
-fn path_is_under_roots(path: &str, roots: &[String]) -> bool {
+pub(super) fn path_is_under_roots(path: &str, roots: &[String]) -> bool {
     roots.iter().any(|root| {
         path == root
             || root.strip_suffix('/').is_some_and(|root| {
@@ -523,7 +525,7 @@ fn longest_known_prefix(value: &str, known: &BTreeSet<String>) -> Option<String>
     }
 }
 
-fn has_private_component(target: &str) -> bool {
+pub(super) fn has_private_component(target: &str) -> bool {
     target
         .split('.')
         .any(|part| part.starts_with('_') && !part.starts_with("__"))

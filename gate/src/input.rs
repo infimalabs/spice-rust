@@ -63,8 +63,10 @@ const AWK_PROBE_OUTPUT: &str = "spice-gate-awk-v1";
 const DEFAULT_SKIP: &[&str] = &[".git/", "target/"];
 const RETIRED_FLOORS: &[(&str, u64)] = &[("rust.kill-rate", 1), ("rust.long-lines", 1)];
 
-include!("input/declaration.rs");
-include!("input/baseline.rs");
+mod declaration;
+pub use declaration::*;
+mod baseline;
+pub use baseline::*;
 
 /// Identity of one compiled tool declaration and the executable bytes found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -628,5 +630,6 @@ fn identify_tool(
     })
 }
 
-include!("input/errors.rs");
-include!("input/fixtures.rs");
+mod errors;
+pub use errors::*;
+mod fixtures;

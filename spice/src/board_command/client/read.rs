@@ -1,4 +1,9 @@
-fn client_status(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
+use super::*;
+
+pub(super) fn client_status(
+    repository: &Repository,
+    contract: &Contract,
+) -> Outcome<CommandAnswer> {
     match crate::command_client::execute_typed(
         repository,
         contract,
@@ -25,7 +30,7 @@ fn client_status(repository: &Repository, contract: &Contract) -> Outcome<Comman
     }
 }
 
-fn client_list(
+pub(super) fn client_list(
     repository: &Repository,
     contract: &Contract,
     matches: &ArgMatches,
@@ -60,18 +65,18 @@ fn client_list(
 }
 
 #[derive(Clone, Copy)]
-enum TaskListStatus {
+pub(in crate::board_command) enum TaskListStatus {
     Pending,
     Waiting,
     Completed,
     Deleted,
 }
 
-struct TaskListOptions {
-    all: bool,
-    project: Option<String>,
-    limit: Option<usize>,
-    status: Option<TaskListStatus>,
+pub(in crate::board_command) struct TaskListOptions {
+    pub(in crate::board_command) all: bool,
+    pub(in crate::board_command) project: Option<String>,
+    pub(in crate::board_command) limit: Option<usize>,
+    pub(in crate::board_command) status: Option<TaskListStatus>,
 }
 
 impl TaskListOptions {
@@ -135,7 +140,10 @@ impl TaskListOptions {
     }
 }
 
-fn task_list(board: &BoardAnswer, options: &TaskListOptions) -> String {
+pub(in crate::board_command) fn task_list(
+    board: &BoardAnswer,
+    options: &TaskListOptions,
+) -> String {
     let mut rows = board
         .tasks
         .iter()
@@ -294,7 +302,9 @@ fn actor_route_filter(board: &BoardAnswer) -> String {
     )
 }
 
-fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
+pub(in crate::board_command) fn task_status(
+    board: &BoardAnswer,
+) -> Result<String, Outcome<CommandAnswer>> {
     let entries = actor_entries(board)?;
     let routed = board
         .tasks

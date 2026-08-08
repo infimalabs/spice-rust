@@ -1,3 +1,5 @@
+use super::*;
+
 fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut encoded = String::with_capacity(bytes.len() * 2);
@@ -8,7 +10,7 @@ fn hex(bytes: &[u8]) -> String {
     encoded
 }
 
-fn render_process(rendered: &mut String, prefix: &str, process: &ReportProcess) {
+pub(super) fn render_process(rendered: &mut String, prefix: &str, process: &ReportProcess) {
     match &process.completion {
         ReportCompletion::Exited { code } => {
             let _ = writeln!(rendered, "{prefix} completion exited {}", code_text(*code));
@@ -76,7 +78,7 @@ fn render_stream(rendered: &mut String, prefix: &str, name: &str, stream: &Repor
     }
 }
 
-fn render_outcome(rendered: &mut String, prefix: &str, outcome: &ReportOutcome) {
+pub(super) fn render_outcome(rendered: &mut String, prefix: &str, outcome: &ReportOutcome) {
     match outcome {
         ReportOutcome::Present { bytes } => {
             let _ = writeln!(rendered, "{prefix} outcome present bytes {}", hex(bytes));
@@ -90,7 +92,7 @@ fn render_outcome(rendered: &mut String, prefix: &str, outcome: &ReportOutcome) 
     }
 }
 
-fn render_optional_rate(rendered: &mut String, label: &str, rate: Option<ReportRate>) {
+pub(super) fn render_optional_rate(rendered: &mut String, label: &str, rate: Option<ReportRate>) {
     match rate {
         None => {
             let _ = writeln!(rendered, "{label} none");
@@ -101,7 +103,7 @@ fn render_optional_rate(rendered: &mut String, label: &str, rate: Option<ReportR
     }
 }
 
-fn render_movement(rendered: &mut String, movement: ReportMutationMovement) {
+pub(super) fn render_movement(rendered: &mut String, movement: ReportMutationMovement) {
     match movement {
         ReportMutationMovement::Held { floor } => {
             let _ = writeln!(

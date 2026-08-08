@@ -1,15 +1,17 @@
+use super::*;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawStateReceipt {
-    version: u64,
-    before: Digest,
-    after: Digest,
-    accepted: bool,
+pub(super) struct RawStateReceipt {
+    pub(super) version: u64,
+    pub(super) before: Digest,
+    pub(super) after: Digest,
+    pub(super) accepted: bool,
 }
 
 #[derive(Deserialize)]
-struct VersionEvidence {
-    version: u64,
+pub(super) struct VersionEvidence {
+    pub(super) version: u64,
 }
 
 #[derive(Deserialize)]
@@ -63,7 +65,7 @@ pub struct StateError {
 }
 
 impl StateError {
-    fn current(
+    pub(super) fn current(
         kind: StateErrorKind,
         source_path: &Path,
         message: impl Into<String>,
@@ -129,7 +131,7 @@ impl fmt::Display for StateError {
 
 impl Error for StateError {}
 
-fn decode_current(path: &Path, bytes: &[u8]) -> Result<StateLedger, StateError> {
+pub(super) fn decode_current(path: &Path, bytes: &[u8]) -> Result<StateLedger, StateError> {
     let version: VersionEvidence = wire::decode(bytes).map_err(|error| {
         StateError::current(
             StateErrorKind::Decode,
@@ -179,7 +181,7 @@ fn decode_current(path: &Path, bytes: &[u8]) -> Result<StateLedger, StateError> 
     Ok(ledger)
 }
 
-fn verify_destination_unchanged(
+pub(super) fn verify_destination_unchanged(
     path: &Path,
     before: &StateLedger,
     initially_absent: bool,
@@ -215,7 +217,7 @@ fn verify_destination_unchanged(
     }
 }
 
-fn read_optional(path: &Path, release: &str) -> Result<Option<Vec<u8>>, StateError> {
+pub(super) fn read_optional(path: &Path, release: &str) -> Result<Option<Vec<u8>>, StateError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -392,7 +394,7 @@ pub(crate) fn owning_claim<'a>(claims: &'a [PeerClaim], path: &str) -> Option<&'
         })
 }
 
-fn sort_claims(claims: &mut [PeerClaim]) {
+pub(super) fn sort_claims(claims: &mut [PeerClaim]) {
     claims.sort_by(compare_claims);
 }
 
@@ -404,7 +406,7 @@ fn compare_claims(left: &PeerClaim, right: &PeerClaim) -> Ordering {
         .then_with(|| left.expires_at.total_cmp(&right.expires_at))
 }
 
-fn normalize_repo_path(raw: &str) -> Result<String, String> {
+pub(super) fn normalize_repo_path(raw: &str) -> Result<String, String> {
     let normalized = raw.trim().replace('\\', "/");
     let path = Path::new(&normalized);
     if normalized.is_empty() || path.is_absolute() {

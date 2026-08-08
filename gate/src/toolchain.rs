@@ -1227,4 +1227,6 @@ mod predecessor;
 pub use predecessor::*;
 
 #[cfg(test)]
-include!("toolchain/fixtures.rs");
+mod fixtures;
+#[cfg(test)]
+use fixtures::*;

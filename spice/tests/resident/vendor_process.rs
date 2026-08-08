@@ -1338,4 +1338,6 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
     }
 }
 
-include!("vendor_process/support.rs");
+#[path = "vendor_process/support.rs"]
+mod support;
+use support::*;

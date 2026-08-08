@@ -601,16 +601,17 @@ fn env_sources(root: &Path) -> Result<Vec<String>, String> {
     Ok(sources)
 }
 
-include!("analyze/javascript.rs");
+mod javascript;
+pub(in crate::toolchain) use javascript::*;
 
 /// The formatter invocation for one selected tree, or the refusal to build it.
 ///
 /// Every selected path is named on the command line rather than left to a
 /// crate-root walk. rustfmt reaches a file by walking the `mod` declarations
-/// down from each crate root, and this repository splits its largest modules
-/// with `include!` instead -- `spice/src/board_command.rs` ends with eight of
-/// them in a row -- so an included file is named by a macro and belongs to no
-/// module path. `cargo fmt --all` opens the including file and never the included one,
+/// down from each crate root, and a file reached through `include!` is named by
+/// a macro instead -- `proof/src/container.rs` reaches `container/tests.rs` that
+/// way, one of seven such files left here -- so it belongs to no module path.
+/// `cargo fmt --all` opens the including file and never the included one,
 /// which leaves those files counted as selected, measured by every other arm,
 /// and never handed to the formatter at all. Naming the paths is the one way
 /// rustfmt will open them, and it is what makes the arm's own count and its
@@ -1280,4 +1281,4 @@ fn word_at(text: &str, start: usize, end: usize) -> Option<(u32, String)> {
 }
 
 #[cfg(test)]
-include!("analyze/tests.rs");
+mod tests;

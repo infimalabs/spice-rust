@@ -22,28 +22,33 @@ use wire::{
 
 use crate::cli::Contract;
 
-// These are source inclusions rather than `mod` declarations by decision,
-// measured rather than assumed. `mod` would not cost the tests below their reach: a child module
-// already reads its ancestors' private items, so `claim_plan` and
-// `commit_claim` would stay callable. What the single namespace buys is
-// narrower than it looks, and what converting costs is 126 items promoted to
-// `pub(super)` and 25 fragments opened with `use super::*`, counted across this
-// root, its test fragments, `resident` and `task_git`. What source inclusion
-// costs is that `cargo fmt` walks modules and so exits zero over a drifted fragment;
-// the formatters gate closes exactly that by naming every path it selects on
-// the formatter's own command line, so a fragment is covered for being selected
-// rather than for being reachable: the set the arm counts and the set the
-// formatter opens are one set, and no fragment can drift unseen. The arms that
-// walk the tree reach a fragment by path like any other file.
-// Converting is also not a rename: a crate root resolves child modules against
-// the directory holding the root file, so `mod vocabulary;` in
-// `wire/tests/identity_law.rs` binds the 18-test `wire/tests/vocabulary.rs`
-// rather than the one-test file beside it, with no compiler error.
-include!("board_command/client.rs");
-include!("board_command/client_document.rs");
-include!("board_command/followup.rs");
-include!("board_command/next_action.rs");
-include!("board_command/mutation.rs");
-include!("board_command/progress.rs");
-include!("board_command/read_guard.rs");
-include!("board_command/tests.rs");
+// `mod` rather than `include!`, which reverses the decision EFFORT-1kKrXfRq
+// recorded here. That decision's measurements survive the reversal: a child
+// module does already read its ancestors' private items, so the guard tests
+// below keep calling `claim_plan` and `commit_claim` unchanged, and converting
+// a *test* root would be a rename rather than a split, which is why
+// `wire/tests/` is left alone.
+//
+// What it weighed against conversion was that the formatters gate covers a
+// fragment regardless, by naming every path it selects on the formatter's own
+// command line. That holds, and it is the gate's alone: stock
+// `cargo fmt --all --check` stays blind, still open as GATE-1kKs5TnZ, and the
+// fragment count kept by hand in that arm's own doc was filed as drifted twice,
+// GATE-1kKs7gfb and GATE-1kKsGmbV. `mod` closes all three by construction
+// instead of by an enumeration something has to keep current.
+mod client;
+pub(super) use client::*;
+mod client_document;
+use client_document::*;
+mod followup;
+use followup::*;
+mod next_action;
+use next_action::*;
+mod mutation;
+use mutation::*;
+mod progress;
+use progress::*;
+mod read_guard;
+use read_guard::*;
+#[cfg(test)]
+mod tests;

@@ -1,3 +1,5 @@
+use super::*;
+
 /// Execute one generated board-family CLI leaf.
 pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
     let current = match std::env::current_dir() {
@@ -64,7 +66,8 @@ fn client_board(
     )
 }
 
-include!("client/read.rs");
+mod read;
+pub(super) use read::*;
 
 fn client_graph(
     repository: &Repository,
@@ -766,7 +769,9 @@ where
     crate::command_client::execute_typed(repository, contract, kind, expected, &body)
 }
 
-fn current_board(repository: &Repository) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
+pub(super) fn current_board(
+    repository: &Repository,
+) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["board"]).expect("board read contract is registered");
     match crate::command_client::execute_typed(
         repository,
@@ -788,7 +793,7 @@ fn current_board(repository: &Repository) -> Result<BoardAnswer, Outcome<Command
     }
 }
 
-fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
+pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
     board
         .tasks
         .iter()
@@ -813,7 +818,7 @@ fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswe
         .collect()
 }
 
-fn task_heads<'a>(
+pub(super) fn task_heads<'a>(
     board: &'a BoardAnswer,
     task: &TaskHandle,
 ) -> Result<&'a BoardTask, Outcome<CommandAnswer>> {
@@ -830,14 +835,14 @@ fn task_heads<'a>(
         })
 }
 
-fn statement_witness(heads: &BoardTask) -> Witness {
+pub(super) fn statement_witness(heads: &BoardTask) -> Witness {
     Witness::Task {
         task: heads.statement.body.handle.clone(),
         head: heads.statement.position,
     }
 }
 
-fn workflow_witness(heads: &BoardTask) -> Witness {
+pub(super) fn workflow_witness(heads: &BoardTask) -> Witness {
     Witness::Workflow {
         task: heads.statement.body.handle.clone(),
         head: heads.workflow.position,
@@ -845,14 +850,14 @@ fn workflow_witness(heads: &BoardTask) -> Witness {
     }
 }
 
-fn claim_witness(heads: &BoardTask) -> Witness {
+pub(super) fn claim_witness(heads: &BoardTask) -> Witness {
     Witness::Claim {
         task: heads.statement.body.handle.clone(),
         head: heads.claim.as_ref().map(|head| head.position),
     }
 }
 
-fn deferral_witness(heads: &BoardTask) -> Witness {
+pub(super) fn deferral_witness(heads: &BoardTask) -> Witness {
     Witness::Deferral {
         task: heads.statement.body.handle.clone(),
         head: heads.workflow.position,
@@ -860,7 +865,7 @@ fn deferral_witness(heads: &BoardTask) -> Witness {
     }
 }
 
-fn residency_witness(
+pub(super) fn residency_witness(
     board: &BoardAnswer,
     lane: wire::CanonicalUuid,
     occupant: wire::CanonicalUuid,
@@ -872,7 +877,7 @@ fn residency_witness(
     }
 }
 
-fn actor_seat(
+pub(super) fn actor_seat(
     board: &BoardAnswer,
 ) -> Result<(wire::CanonicalUuid, wire::CanonicalUuid), Outcome<CommandAnswer>> {
     let occupied =
@@ -940,7 +945,7 @@ fn sole_active(board: &BoardAnswer) -> Result<(TaskHandle, &BoardTask), Outcome<
     Ok((heads.statement.body.handle.clone(), heads))
 }
 
-fn progress_witnesses(
+pub(super) fn progress_witnesses(
     board: &BoardAnswer,
     heads: &BoardTask,
     lane: wire::CanonicalUuid,
@@ -994,7 +999,7 @@ fn mint_handle(project: Option<&str>, title: &str) -> TaskHandle {
     mint_handle_at(project, title, jiff::Timestamp::now().as_millisecond())
 }
 
-fn mint_handle_at(project: Option<&str>, title: &str, epoch_millis: i64) -> TaskHandle {
+pub(super) fn mint_handle_at(project: Option<&str>, title: &str, epoch_millis: i64) -> TaskHandle {
     let stem = project
         .and_then(|project| project.rsplit('.').next())
         .map(stem)
@@ -1012,7 +1017,7 @@ fn mint_handle_at(project: Option<&str>, title: &str, epoch_millis: i64) -> Task
         .expect("generated handle uses admitted ASCII components")
 }
 
-fn stem(text: &str) -> String {
+pub(super) fn stem(text: &str) -> String {
     text.bytes()
         .filter(|byte| byte.is_ascii_alphanumeric())
         .map(|byte| char::from(byte.to_ascii_uppercase()))
