@@ -79,6 +79,9 @@ admission = [
 # fixture passes the captured repository and execution-tripwire marker to an
 # isolated copy of the current test process, and fixes `TMPDIR` at private
 # writable scratch so that isolation remains valid on a read-only proof host.
+# The coexistence record's store counts are measured against the predecessor
+# checkout, and the name licensing a run without it makes that skip something
+# asked for rather than something an absent sibling does in silence.
 #
 # Four foreign environment names are admitted here. The installed pre-commit
 # hook unsets Git's three local-environment names before it execs verify, and
@@ -113,6 +116,7 @@ env_names = [
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
+    "SPICE_PREDECESSOR_OPTIONAL",
     "SPICE_PROOF",
     "TMPDIR",
 ]

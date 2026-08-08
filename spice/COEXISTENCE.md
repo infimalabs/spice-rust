@@ -129,7 +129,10 @@ The zero is therefore the predecessor's silence about the port's store and not
 a search that cannot find anything. All three figures are measurements of a
 moving tree rather than constants; `spice/tests/coexistence_record.rs` reads
 them from this table and runs the named searches against the predecessor
-checkout so drift fails. The tree-wide maxim result holds for the bare token and
+checkout so drift fails. A machine without that checkout refuses rather than
+passing unchecked, because a silent skip retires the pin exactly when nobody is
+watching; set `SPICE_PREDECESSOR_OPTIONAL` to run without it and the skip says
+so on every run. The tree-wide maxim result holds for the bare token and
 the full `spicemaxims.sqlite3` filename alike, over the tracked set or over the
 working tree with `__pycache__` excluded. The tests-only result is a defensible
 search for a sentence about what the predecessor asserts, but not the search the
