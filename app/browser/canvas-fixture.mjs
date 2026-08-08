@@ -181,9 +181,9 @@ export async function reply(fixture, args) {
 // Run a fixture command under a seated lane's own identity.
 //
 // A claim records the lane it was won by, read from SPICE_LANE
-// (`ambient_lane_identity`, spice/src/command_client.rs:647), and the watchband
-// joins a task to a member through exactly that edge (`held_task`,
-// app/src/watchband.rs:129). So a claim won by the operator never reaches a
+// (`ambient_lane_identity` in spice/src/command_client.rs), and the watchband
+// joins a task to a member through exactly that edge (`held_task` in
+// app/src/watchband.rs). So a claim won by the operator never reaches a
 // rendered standing, and this is what lets a fixture put a real held handle on
 // a card the browser is looking at.
 export async function replyAsLane(fixture, lane, args) {
@@ -195,7 +195,7 @@ export async function replyAsLane(fixture, lane, args) {
 // Observe the one navigation tab the operator reference qualifies by a count.
 //
 // The reference image shows "Filters 27", and `badge` renders nothing at zero
-// (app/src/watchband.rs:205), so a fixture in which no lane holds a task shows
+// (app/src/watchband.rs), so a fixture in which no lane holds a task shows
 // no badge at all and the count stays unproven no matter how many tabs are
 // clicked. `mode_badge` counts standings carrying a handle, so raising it means
 // really claiming: this takes the badge from absent to 1 and back, and reads
@@ -210,12 +210,13 @@ export async function assertHeldTaskCount(team, fixture, lane) {
   // 1. the board must carry an eligible task, and `task add` without an
   //    `--acceptance` starts in `plan`, which `workable` never selects;
   // 2. the lineage policy must subscribe to the allocator at all, and `steer`
-  //    scopes selection to `Manual` (wire/src/intent.rs:395), which admits only
+  //    scopes selection to `TaskSubscriptionScope::Manual` (wire/src/intent.rs),
+  //    which admits only
   //    operator-pinned projects -- this fixture pins none;
   // 3. under `drive` the scope is `ManualAndAutoProject`, and a project is
   //    learned automatically only from facts a *lane* wrote:
   //    `project_subscription_history` skips `Actor::Operator | Actor::Spice`
-  //    outright (board/src/next.rs:45). A task the operator adds is therefore
+  //    outright (board/src/next.rs). A task the operator adds is therefore
   //    invisible to allocation even while it is otherwise perfectly eligible.
   //
   // So the task is added under the lane's own identity, which both makes it
@@ -234,8 +235,8 @@ export async function assertHeldTaskCount(team, fixture, lane) {
   ]);
   const won = await replyAsLane(fixture, lane, ["task", "next"]);
   // A claim answers with the task and the actor now holding it
-  // (`ClaimAnswer`, wire/src/intent.rs:535), and an actor crosses as text under
-  // a `lane:` prefix (wire/src/envelope.rs:87). Both are read back off the
+  // (`ClaimAnswer` in wire/src/intent.rs), and an actor crosses as text under
+  // a `lane:` prefix (`Actor::LANE` in wire/src/envelope.rs). Both are read back off the
   // render below, so this observation fails if the badge counts a standing the
   // claim never reached rather than passing on any task-shaped spelling.
   assert.equal(won.body.holder, `lane:${lane}`, "the claim binds to the lane that made it");
@@ -645,11 +646,9 @@ export async function chooseCanvasView(page, name) {
   // wait ambiguous: a selector wait that follows an unapplied switch is deaf
   // rather than slow, and both spell the same bare TimeoutError. The two modes
   // confirm differently, but not because the marker stops being rendered: the
-  // mosaic bar at `chrome.rs:141` renders `render_canvas_menu`, which carries
-  // its own Agents pill at `chrome.rs:159` whose selected argument is the
-  // mosaic state, so `aria-current` really is set on it. That pill is never
-  // *visible*, because it sits inside the `<details class="canvas-menu">` this
-  // function has just closed and `waitFor` defaults to the visible state.
+  // mosaic bar (`render_mosaic_command_bar` in app/src/browser/view/chrome.rs)
+  // renders its own Agents pill through `render_pill`, whose selected argument
+  // is the mosaic state, so `aria-current` really is set on it.
   // Confirming on the workspace class instead asks for the state directly
   // rather than for a marker whose visibility is incidental to it.
   const applied =

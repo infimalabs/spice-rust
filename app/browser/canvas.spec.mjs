@@ -766,8 +766,9 @@ async function assertCausalThread(page, linked) {
   // The terminal label is the tail of a walk built one admitted frame at a time,
   // not a value the row count settles. `observe_stream` inserts one CausalLink
   // per admitted frame and the walk stops at `ChainEnd::Dangling(position)` the
-  // moment a position is missing (app/src/state.rs:351), which renders as
-  // `dangling at N` (app/src/browser/view.rs:588). Two rows can be on screen
+  // moment a position is missing (`walk` in app/src/state.rs), which renders as
+  // `dangling at N` (`render_causal_thread` in app/src/browser/view.rs). Two
+  // rows can be on screen
   // while headers below them are still in flight, so the row wait above leaves
   // this field mid-flight: it was observed once reading `dangling at 14` on a
   // tree that re-ran green, and CAUSAL_HEADERS is 1024, so position 14 was never
