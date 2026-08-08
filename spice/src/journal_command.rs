@@ -7,7 +7,7 @@ use crate::cli::Contract;
 use crate::journal_lock::JournalLock;
 use fold::{
     AnswerContent, Cursor, FoldId, Horizon, INVENTORY, Materialization, Reducer, Reduction, Source,
-    Store,
+    Store, TaskEffortReducer, select_task_effort, task_effort_answer,
 };
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
@@ -79,6 +79,64 @@ pub(crate) fn replay(matches: &clap::ArgMatches, contract: &Contract) -> Outcome
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
+}
+
+pub(crate) fn task_effort(
+    matches: &clap::ArgMatches,
+    contract: &Contract,
+) -> Outcome<wire::intent::EffortAnswer> {
+    let read = wire::intent::EffortRead {
+        task: match matches.get_one::<String>("HANDLE") {
+            Some(handle) => match handle.parse() {
+                Ok(handle) => Some(handle),
+                Err(error) => {
+                    return Failure::refusal(
+                        "task::effort-handle-refused",
+                        "one canonical task handle",
+                        error.to_string(),
+                        "pass HANDLE as <UPPER-STEM>-<key>, or omit it to read every task",
+                    )
+                    .outcome();
+                }
+            },
+            None => None,
+        },
+    };
+    match task_effort_inner(&read, contract) {
+        Ok((position, body)) => reply(position, body),
+        Err(failure) => failure.outcome(),
+    }
+}
+
+fn task_effort_inner(
+    read: &wire::intent::EffortRead,
+    contract: &Contract,
+) -> Result<(ReplyPosition, wire::intent::EffortAnswer), Failure> {
+    let state = state()?;
+    let reader = open_reader(&state)?;
+    let (cursor, snapshot) = read_authenticated(&state, &reader, contract, |read| {
+        read.fact_snapshot().map_err(snapshot_failure)
+    })?;
+    let parent = state
+        .folds()
+        .parent()
+        .expect("folds path has a data parent");
+    fs::create_dir_all(parent).map_err(|error| {
+        Failure::environment(
+            "fold::parent-unavailable",
+            format!("{}: {error}", parent.display()),
+        )
+    })?;
+    let mut store = Store::open(state.folds()).map_err(fold_failure)?;
+    let materialization = store
+        .read_or_rebuild_snapshot(&snapshot, &TaskEffortReducer)
+        .map_err(fold_failure)?
+        .materialization;
+    let answer = task_effort_answer(&materialization)
+        .map_err(|error| Failure::store("fold::payload-invalid", error))?;
+    let selected = select_task_effort(answer, read)
+        .map_err(|error| Failure::store("fold::selection-failed", error))?;
+    Ok((ReplyPosition::Snapshot(cursor), selected))
 }
 
 fn backup_inner(output: &Path) -> Result<(SeqRange, JournalBackup), Failure> {
@@ -349,9 +407,15 @@ fn replay_inner(
     })?;
     let mut store = Store::open(path).map_err(fold_failure)?;
     for fold in folds {
-        store
-            .read_or_rebuild_snapshot(&snapshot, &AuthorityReducer { fold: *fold })
-            .map_err(fold_failure)?;
+        if *fold == FoldId::TaskEffort {
+            store
+                .read_or_rebuild_snapshot(&snapshot, &TaskEffortReducer)
+                .map_err(fold_failure)?;
+        } else {
+            store
+                .read_or_rebuild_snapshot(&snapshot, &AuthorityReducer { fold: *fold })
+                .map_err(fold_failure)?;
+        }
     }
     Ok((
         ReplyPosition::Snapshot(cursor),

@@ -271,6 +271,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["journal", "reindex"]
         | ["journal", "verify"]
         | ["fold"]
+        | ["task", "effort"]
         | ["thread"]
         | ["release", "publish"]
         | ["restore", "verify"]

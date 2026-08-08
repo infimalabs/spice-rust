@@ -6,6 +6,7 @@
 //! paraphrase of them.
 
 use serde::{Deserialize, Serialize};
+use wire::intent::{EffortAnswer, EffortRead};
 use wire::manifest::{ReleaseNotesInput, ReleaseTarget};
 use wire::{
     Actor, CanonicalUuid, CanvasBootstrap, Command, Envelope, Fact, FactKind, Fault, FaultClass,
@@ -136,6 +137,73 @@ const PROOF_EVIDENCE: &str = concat!(
     r#""battery":"3333333333333333333333333333333333333333333333333333333333333333","#,
     r#""replay":"4444444444444444444444444444444444444444444444444444444444444444"}"#,
 );
+
+const TASK_EFFORT: &str = r#"{
+  "phases": [{
+    "task": "EFFORT-a1",
+    "phase": "todo",
+    "phase_index": 0,
+    "opening": 10,
+    "closing": 13,
+    "renewals": 1,
+    "opening_boundary": {"proven":{"heads":[]}},
+    "closing_boundary": {"proven":{"heads":[]}},
+    "segments": [{
+      "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
+      "occupant": "018f82d4-6f59-7d06-92e3-bce913116304",
+      "lineage": "018f82d4-6f59-7d06-92e3-bce913116302",
+      "session": "session-1",
+      "source": "018f82d4-6f59-7d06-92e3-bce913116306",
+      "from": {"member":1,"offset":0},
+      "to": {"member":1,"offset":64},
+      "identity": {"vendor":"claude","model":"sonnet","effort":"high"},
+      "usage": {
+        "turns":1,
+        "input_tokens":8,
+        "cached_input_tokens":2,
+        "cache_write_input_tokens":0,
+        "output_tokens":3,
+        "reasoning_output_tokens":1
+      }
+    }],
+    "availability": {
+      "kind": "available",
+      "identity": {"vendor":"claude","model":"sonnet","effort":"high"},
+      "usage": {
+        "turns":1,
+        "input_tokens":8,
+        "cached_input_tokens":2,
+        "cache_write_input_tokens":0,
+        "output_tokens":3,
+        "reasoning_output_tokens":1
+      },
+      "wall_ms": 2000
+    }
+  }],
+  "aggregates": [{
+    "identity": {"vendor":"claude","model":"sonnet","effort":"high"},
+    "phase": "todo",
+    "count": 1,
+    "usage_sum": {
+      "turns":1,
+      "input_tokens":8,
+      "cached_input_tokens":2,
+      "cache_write_input_tokens":0,
+      "output_tokens":3,
+      "reasoning_output_tokens":1
+    },
+    "usage_average": {
+      "turns":1,
+      "input_tokens":8,
+      "cached_input_tokens":2,
+      "cache_write_input_tokens":0,
+      "output_tokens":3,
+      "reasoning_output_tokens":1
+    },
+    "wall_ms_sum": 2000,
+    "wall_ms_average": 2000
+  }]
+}"#;
 
 const DIRECT_PROOF_RESULT: &str = concat!(
     r#"{"kind":"reply","direct":{},"body":{"target":"x86_64-unknown-linux-musl","#,
@@ -888,4 +956,43 @@ fn a_declared_session_requires_one_complete_launch_identity() {
             .expect_err("missing launch identity must fail loudly");
         assert!(error.to_string().contains(field), "{field}: {error}");
     }
+}
+
+#[test]
+fn task_effort_read_and_answer_have_one_strict_current_wire_shape() {
+    let answer = round_trip::<EffortAnswer>(TASK_EFFORT);
+    assert_eq!(answer.phases.len(), 1);
+    assert_eq!(answer.aggregates.len(), 1);
+
+    let all = round_trip::<EffortRead>(r#"{}"#);
+    assert_eq!(all.task, None);
+    let selected = round_trip::<EffortRead>(r#"{"task":"EFFORT-a1"}"#);
+    assert_eq!(
+        selected.task,
+        Some("EFFORT-a1".parse().expect("task handle"))
+    );
+    for invalid in [r#"{"task":null}"#, r#"{"unexpected":true}"#] {
+        assert!(
+            wire::decode::<EffortRead>(invalid.as_bytes()).is_err(),
+            "invalid effort read decoded: {invalid}"
+        );
+    }
+
+    let mut extra: serde_json::Value =
+        serde_json::from_str(TASK_EFFORT).expect("effort fixture is json");
+    extra["phases"][0]["availability"]["unexpected"] = serde_json::Value::Bool(true);
+    let bytes = serde_json::to_vec(&extra).expect("modified fixture encodes");
+    assert!(
+        wire::decode::<EffortAnswer>(&bytes).is_err(),
+        "availability must reject unknown fields"
+    );
+
+    let mut null_session: serde_json::Value =
+        serde_json::from_str(TASK_EFFORT).expect("effort fixture is json");
+    null_session["phases"][0]["segments"][0]["session"] = serde_json::Value::Null;
+    let bytes = serde_json::to_vec(&null_session).expect("modified fixture encodes");
+    assert!(
+        wire::decode::<EffortAnswer>(&bytes).is_err(),
+        "session absence is omission rather than null"
+    );
 }

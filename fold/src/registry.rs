@@ -43,6 +43,22 @@ fold_registry! {
         ];
         beyond: Wait;
     }
+    TaskEffort => "task::effort" {
+        answer: "Closed task-phase effort and reason-coded unavailable evidence.";
+        content: [
+            Facts(Task => "task::*"),
+            Facts(Claim => "claim::*"),
+            Facts(Lane => "lane::*"),
+            Facts(Journal => "journal::*"),
+        ];
+        sources: [
+            Facts(Task => "task::*"),
+            Facts(Claim => "claim::*"),
+            Facts(Lane => "lane::*"),
+            Facts(Journal => "journal::*"),
+        ];
+        beyond: Answer;
+    }
     TasteActive => "taste::active" {
         answer: "Active tastes and evidence ages.";
         content: [Facts(Taste => "taste::*")];

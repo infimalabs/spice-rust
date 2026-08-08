@@ -90,6 +90,7 @@ const EXPECTED_ROWS: &[(&str, &str)] = &[
     ("SteerInbox", "steer::inbox"),
     ("ConsentQueue", "consent::queue"),
     ("LaneCanary", "lane::canary"),
+    ("TaskEffort", "task::effort"),
     ("TasteActive", "taste::active"),
     ("CanvasVerdicts", "canvas::verdicts"),
     ("CanvasMagnitude", "canvas::magnitude"),

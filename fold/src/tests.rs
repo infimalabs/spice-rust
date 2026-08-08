@@ -110,6 +110,7 @@ fn assert_beyond_policies(definitions: &[crate::Definition]) {
             (FoldId::SteerInbox, Beyond::Wait),
             (FoldId::ConsentQueue, Beyond::Wait),
             (FoldId::LaneCanary, Beyond::Wait),
+            (FoldId::TaskEffort, Beyond::Answer),
             (FoldId::TasteActive, Beyond::Answer),
             (FoldId::CanvasVerdicts, Beyond::Answer),
             (FoldId::CanvasMagnitude, Beyond::Answer),
