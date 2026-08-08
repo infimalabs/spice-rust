@@ -499,6 +499,9 @@ fn integrate(
     }
     if is_ancestor(root, upstream_head, agent_head)? {
         if merge_first_parent(root, agent_head)?.as_deref() == Some(upstream_head) {
+            // Already shaped as a landing, so nothing below rebuilds it and this
+            // is the only place its footprint can still be questioned.
+            require_landing_within_footprint(root, label, upstream_head, agent_head, agent_head)?;
             return Ok(agent_head.to_owned());
         }
         return synthesize_and_update(root, agent_head, upstream_head, agent_head, message, label);
@@ -558,6 +561,9 @@ fn synthesize_and_update(
         ));
     }
     let merge_head = created.stdout.trim().to_owned();
+    // Before the branch moves: the commit object is still unreferenced here, so
+    // refusing leaves nothing published and nothing to unwind.
+    require_landing_within_footprint(root, label, first_parent, &merge_head, second_parent)?;
     let expected = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     materialize_and_update(root, &merge_head, &expected, "advance branch to task merge")
         .map_err(|error| with_retry_remedy(error, label))?;
@@ -748,6 +754,8 @@ fn is_push_race(output: &GitOutput) -> bool {
 
 mod admission;
 use admission::*;
+mod landing;
+use landing::require_landing_within_footprint;
 mod launch;
 pub use launch::{LaunchAdvance, LaunchSkip};
 mod transaction;
@@ -757,5 +765,7 @@ use command::*;
 #[cfg(test)]
 #[cfg(unix)]
 mod command_tests;
+#[cfg(test)]
+mod landing_tests;
 #[cfg(test)]
 mod tests;
