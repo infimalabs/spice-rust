@@ -3,6 +3,7 @@
 use super::*;
 
 pub(super) mod chrome;
+mod effort;
 mod lineage_menu;
 
 #[derive(Clone)]
@@ -269,12 +270,27 @@ pub(super) fn render_axis(axis: Axis, render: &CanvasRender<'_>) -> Html {
     }
 }
 
+/// How much exists now: what the work cost, then what consent still allows.
+///
+/// Effort stands first because it is the amount the operator came to read; the
+/// consent budgets are the ceiling standing over the next one. Each section
+/// answers for its own read, so a pane with no effort answer still shows the
+/// budgets rather than replacing the whole axis with one absence.
 pub(super) fn render_magnitude(surface: &SurfaceData) -> Html {
+    html! {
+        <>
+            {effort::render_effort(surface)}
+            {render_consent_budgets(surface)}
+        </>
+    }
+}
+
+fn render_consent_budgets(surface: &SurfaceData) -> Html {
     let Some(consent) = surface.as_ref().and_then(CanvasRuntime::consent) else {
         return empty("No magnitude snapshot is available.");
     };
     html! {
-        <section class="section">
+        <section class="section" data-pane={Pane::ConsentVolume.as_str()}>
             <div class="section-heading">
                 <h2>{"Consent budgets"}</h2>
                 <span class="section-count">{format!("{} rules", consent.budgets.len())}</span>

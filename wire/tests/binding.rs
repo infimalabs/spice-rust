@@ -12,8 +12,8 @@
 use std::collections::BTreeSet;
 
 use wire::intent::{
-    AnswerShape, BoardStatement, BoardTask, BodyShape, CommandAnswer, Intent, Positioned,
-    ProjectVisibility,
+    AnswerShape, BoardStatement, BoardTask, BodyShape, CommandAnswer, EffortUnavailableCode,
+    Intent, Positioned, ProjectVisibility,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LeaseHead, Phase, Seq,
@@ -1067,4 +1067,69 @@ fn lineage_subscription_policies_close_over_the_predecessor_scopes() {
         assert_eq!(policy.scope(), scope);
         assert_eq!(LineageLife::from_wire(policy.as_str()), Some(policy));
     }
+}
+
+/// Every reason code, gathered by exhaustive descent rather than from a list.
+///
+/// A walk over a declared `ALL` would pass forever on a code left out of it,
+/// so the chain is a `match` the compiler refuses while a variant is missing.
+/// That makes the pin below complete by construction rather than by review.
+fn descend_unavailable_codes() -> Vec<EffortUnavailableCode> {
+    use EffortUnavailableCode as Code;
+    std::iter::successors(Some(Code::MissingStart), |code| match code {
+        Code::MissingStart => Some(Code::MissingEnd),
+        Code::MissingEnd => Some(Code::IncompleteBoundary),
+        Code::IncompleteBoundary => Some(Code::TranscriptMissing),
+        Code::TranscriptMissing => Some(Code::SourceGap),
+        Code::SourceGap => Some(Code::SourceReplaced),
+        Code::SourceReplaced => Some(Code::ClaimFreed),
+        Code::ClaimFreed => Some(Code::ClaimLapsed),
+        Code::ClaimLapsed => Some(Code::ClaimStolen),
+        Code::ClaimStolen => Some(Code::TaskDeleted),
+        Code::TaskDeleted => Some(Code::BrokenCarry),
+        Code::BrokenCarry => Some(Code::OccupantDisagreement),
+        Code::OccupantDisagreement => Some(Code::SessionDisagreement),
+        Code::SessionDisagreement => Some(Code::LineageDisagreement),
+        Code::LineageDisagreement => Some(Code::MalformedUsage),
+        Code::MalformedUsage => Some(Code::UntaggedLaunch),
+        Code::UntaggedLaunch => Some(Code::MixedLaunch),
+        Code::MixedLaunch => Some(Code::ArithmeticOverflow),
+        Code::ArithmeticOverflow => None,
+    })
+    .collect()
+}
+
+#[test]
+fn every_unavailable_reason_spells_itself_the_way_it_encodes() {
+    // The Canvas names a withheld phase's reason from `as_str`, while the CLI
+    // and every stored answer carry the encoder's spelling. Comparing the two
+    // per variant is what keeps one reason from having two words: a rename on
+    // either side fails here rather than reaching a surface that says one thing
+    // while the bytes behind it say another.
+    let mut spellings = BTreeSet::new();
+    for code in descend_unavailable_codes() {
+        let spelling = code.as_str();
+        assert_eq!(
+            wire::encode(&code).expect("a reason code encodes"),
+            format!("\"{spelling}\"").as_bytes(),
+            "{spelling} does not encode as it spells itself"
+        );
+        assert_eq!(
+            wire::decode::<EffortUnavailableCode>(format!("\"{spelling}\"").as_bytes())
+                .expect("a reason code decodes from its own spelling"),
+            code,
+            "{spelling} does not decode back to the code that spelled it"
+        );
+        assert!(
+            spelling
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'-'),
+            "{spelling:?} is not lower-case kebab"
+        );
+        assert!(spellings.insert(spelling), "{spelling:?} names two reasons");
+    }
+    assert!(
+        wire::decode::<EffortUnavailableCode>(br#""untagged_launch""#).is_err(),
+        "the vocabulary is closed against a spelling it does not carry"
+    );
 }

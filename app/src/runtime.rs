@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use wire::intent::{
     BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, EffortAnswer,
-    InboxAnswer, LaneAnswer, LaneChangeAnswer, LaneLiveness,
+    EffortIdentity, EffortUsage, InboxAnswer, LaneAnswer, LaneChangeAnswer, LaneLiveness,
 };
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
@@ -327,6 +327,81 @@ pub struct RuntimeEvent {
     detail: String,
 }
 
+/// The Canvas's standing knowledge of claim-to-terminal task effort.
+///
+/// The two arms are exclusive on purpose. Holding the last good answer beside
+/// a failure would let the surface show a total the failing read did not
+/// produce, and a total with no read behind it is exactly the drift this fold
+/// exists to prevent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EffortState {
+    /// The fold the resident produced, for as long as it stands.
+    Answered(EffortAnswer),
+    /// The read produced no fold, and no counter survives it.
+    Withheld(EffortWithheld),
+}
+
+/// Why the last effort read carried no fold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffortWithheld {
+    class: &'static str,
+    reason: String,
+    detail: String,
+}
+
+impl EffortWithheld {
+    /// Which outcome withheld the fold: `refusal` or `fault`.
+    ///
+    /// This is the same word the chronology row carries, read off that row
+    /// rather than decided a second time here.
+    #[must_use]
+    pub const fn class(&self) -> &'static str {
+        self.class
+    }
+
+    /// The server's stated reason.
+    #[must_use]
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    /// The server's remedy or fault detail.
+    #[must_use]
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+/// The exact tuple that makes two effort values comparable, as one string.
+///
+/// All three parts are joined verbatim and none is abbreviated, so two launches
+/// differing in any one of them cannot render the same tag and land in one
+/// group. This is a spelling of the identity the resident already decided, not
+/// a grouping rule of the Canvas's own: nothing here may widen what counts as
+/// the same launch.
+#[must_use]
+pub fn effort_identity_tag(identity: &EffortIdentity) -> String {
+    format!("{}/{}/{}", identity.vendor, identity.model, identity.effort)
+}
+
+/// Whether a proven phase spent nothing at all.
+///
+/// A complete zero is a real answer and must not read as an absent one, so the
+/// surface marks it rather than letting an all-zero row look like a row with
+/// nothing in it. An unreported reasoning counter reports nothing spent and so
+/// does not disturb the reading; every counter that was reported still has to
+/// be zero, and so does the wall time.
+#[must_use]
+pub fn effort_is_zero(usage: &EffortUsage, wall_ms: u64) -> bool {
+    wall_ms == 0
+        && usage.turns == 0
+        && usage.input_tokens == 0
+        && usage.cached_input_tokens == 0
+        && usage.cache_write_input_tokens == 0
+        && usage.output_tokens == 0
+        && matches!(usage.reasoning_output_tokens, None | Some(0))
+}
+
 /// One agent-authored activity retained for a lineage status strip.
 ///
 /// Command outcomes deliberately remain [`RuntimeEvent`]s: they have their own
@@ -426,7 +501,7 @@ pub struct CanvasRuntime {
     inbox: ScopedValue<InboxAnswer>,
     consent: ScopedValue<ConsentQueueAnswer>,
     policy: ScopedValue<ConsentPolicyAnswer>,
-    effort: ScopedValue<EffortAnswer>,
+    effort: ScopedValue<EffortState>,
     fact_pages: Vec<BrowserState<FactRow>>,
     trust_pages: Vec<BrowserState<TrustView>>,
     messages: Vec<AgentMessage>,
@@ -568,14 +643,14 @@ impl CanvasRuntime {
         self.policy.get(&self.principal)
     }
 
-    /// The server's typed effort answer, or `None` while none is held.
+    /// What the Canvas last learned about task effort, or `None` before it asked.
     ///
     /// Nothing here derives a number: the browser renders the counters the
     /// resident's fold produced and withholds a row the fold marked
     /// unavailable, so a Canvas total can never be a second computation of
     /// effort that drifts from the terminal one.
     #[must_use]
-    pub fn effort(&self) -> Option<&EffortAnswer> {
+    pub fn effort(&self) -> Option<&EffortState> {
         self.effort.get(&self.principal)
     }
 
@@ -838,14 +913,36 @@ impl CanvasRuntime {
         });
     }
 
+    /// Retain one task-effort fold, or the reason there is no fold to retain.
+    ///
+    /// A refusal or a fault replaces the held answer rather than standing
+    /// beside it. A total that survived the read which failed is a number the
+    /// operator would read as current, so the counters and the reason they are
+    /// missing are deliberately the same field: there is no state in which both
+    /// are readable at once.
     pub fn apply_effort(&mut self, admitted: &Admitted<Response<EffortAnswer>>) {
-        self.apply_response(admitted, |runtime, answer| {
-            runtime.effort.replace(admitted.scope(), answer.clone());
+        let scope = admitted.scope();
+        let Some(event) = self.apply_response(admitted, |runtime, answer| {
+            runtime
+                .effort
+                .replace(scope, EffortState::Answered(answer.clone()));
             (
                 "Task effort".to_owned(),
                 format!("{} phases", answer.phases.len()),
             )
-        });
+        }) else {
+            return;
+        };
+        if event.class() != "reply" {
+            self.effort.replace(
+                scope,
+                EffortState::Withheld(EffortWithheld {
+                    class: event.class(),
+                    reason: event.title().to_owned(),
+                    detail: event.detail().to_owned(),
+                }),
+            );
+        }
     }
 
     /// Record the resident's authoritative result for one lane seating request.
@@ -897,13 +994,19 @@ impl CanvasRuntime {
         });
     }
 
+    /// Record one response and hand back the chronology row it produced.
+    ///
+    /// The row is returned rather than only pushed because a caller may need
+    /// the failing arms too, and reading them back off the one match here is
+    /// what keeps a second interpretation of the same outcome from existing.
+    /// `None` means the response belonged to another scope and moved nothing.
     fn apply_response<T>(
         &mut self,
         admitted: &Admitted<Response<T>>,
         reply: impl FnOnce(&mut Self, &T) -> (String, String),
-    ) {
+    ) -> Option<RuntimeEvent> {
         if admitted.scope() != self.accepted.scope() {
-            return;
+            return None;
         }
         match &admitted.get().outcome {
             Outcome::Reply(answer) => {
@@ -917,6 +1020,7 @@ impl CanvasRuntime {
                 self.push_event("fault", fault.reason.clone(), fault.detail.clone());
             }
         }
+        self.newest_event().cloned()
     }
 
     fn page<T: Clone>(

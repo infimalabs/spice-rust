@@ -30,7 +30,8 @@ use crate::speech_queue::{
     SpeechRequest,
 };
 use crate::{
-    Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective, stale_reads,
+    Axis, CanvasRuntime, ChainEnd, Pane, Principal, Session, SteerPane, StreamDirective,
+    stale_reads,
 };
 
 mod clock;

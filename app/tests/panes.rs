@@ -688,15 +688,20 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
     }
 
     assert_eq!(operator, 16);
-    assert_eq!(connected, 31);
+    assert_eq!(connected, 32);
     assert_eq!(
         CommandKind::TaskOopsAdd.law().authority,
         Authority::Connected,
         "the exact oops route remains available to authenticated operators and lanes",
     );
     assert_eq!(
+        CommandKind::EffortRead.law().authority,
+        Authority::Connected,
+        "reading what a task cost is an authenticated read, not an operator move",
+    );
+    assert_eq!(
         CommandKind::ALL.len(),
-        47,
+        48,
         "a command joined or left the registry; the counts above are the claim \
          to re-make, not the number to bump"
     );

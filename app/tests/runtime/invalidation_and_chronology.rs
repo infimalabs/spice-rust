@@ -15,17 +15,14 @@ fn envelope(
     })
 }
 
-/// Which cached read each fact invalidates, as `[board, lanes, inbox, consent]`.
-///
-/// This inventory is written out here rather than read back off the mapping it
-/// checks, so deleting an arm fails instead of agreeing with itself. Every
-/// namespace appears twice under different kinds and different producers: a
-/// mapping keyed on one exact kind rather than on the namespace fails on the
-/// sibling instead of passing on the twin. Four kinds from namespaces no read
-/// is drawn from close the other side — a rule that simply refreshed
-/// everything on every fact would pass all the rows above and fail these.
-fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
-    let expires = "2030-04-12T19:44:09.271Z";
+/// The one expiry every timed row in the inventory carries.
+const EXPIRES: &str = "2030-04-12T19:44:09.271Z";
+
+/// One fact, and the cached reads it invalidates.
+type StaleRow = (serde_json::Value, [bool; 5]);
+
+/// Facts from `steer::*`, the namespace only the inbox is drawn from.
+fn steer_rows() -> Vec<StaleRow> {
     vec![
         (
             serde_json::json!({
@@ -34,14 +31,20 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
                 "key": "QmTKOamJ",
                 "lane": LANE,
                 "text": "look at the tile",
-                "expires": expires,
+                "expires": EXPIRES,
             }),
-            [false, false, true, false],
+            [false, false, true, false, false],
         ),
         (
             serde_json::json!({"kind": "steer::canceled", "key": "QmTKOamJ", "lane": LANE}),
-            [false, false, true, false],
+            [false, false, true, false, false],
         ),
+    ]
+}
+
+/// Facts from `lane::*`, which move the roster, the inbox and effort together.
+fn lane_rows() -> Vec<StaleRow> {
+    vec![
         (
             serde_json::json!({
                 "kind": "lane::seated",
@@ -51,7 +54,7 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
                 "life": "continuous",
                 "vendor": "codex",
             }),
-            [false, true, true, false],
+            [false, true, true, false, true],
         ),
         (
             serde_json::json!({
@@ -60,11 +63,19 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
                 "occupant": REQUEST,
                 "code": 0,
             }),
-            [false, true, true, false],
+            [false, true, true, false, true],
         ),
+    ]
+}
+
+/// Facts from `task::*` and `claim::*`, the two namespaces the board is drawn
+/// from. Both move effort as well, because what a task cost is accounted
+/// against the claim that was held while it was spent.
+fn task_and_claim_rows() -> Vec<StaleRow> {
+    vec![
         (
             serde_json::json!({"kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify"}),
-            [true, false, false, false],
+            [true, false, false, false, true],
         ),
         (
             serde_json::json!({
@@ -72,7 +83,7 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
                 "task": "SPICE-aBcD",
                 "validation": "the suite is green",
             }),
-            [true, false, false, false],
+            [true, false, false, false, true],
         ),
         (
             serde_json::json!({
@@ -82,14 +93,20 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
                 "lane": LANE,
                 "occupant": REQUEST,
                 "epoch": EPOCH,
-                "until": expires,
+                "until": EXPIRES,
             }),
-            [true, true, false, false],
+            [true, true, false, false, true],
         ),
         (
             serde_json::json!({"kind": "claim::freed", "task": "SPICE-aBcD", "actor": "operator"}),
-            [true, true, false, false],
+            [true, true, false, false, true],
         ),
+    ]
+}
+
+/// Facts from `consent::*`, the namespace only the consent queue is drawn from.
+fn consent_rows() -> Vec<StaleRow> {
+    vec![
         (
             serde_json::json!({
                 "kind": "consent::asked",
@@ -97,7 +114,7 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
                 "lane": LANE,
                 "operation": "write /etc/hosts",
             }),
-            [false, false, false, true],
+            [false, false, false, true, false],
         ),
         (
             serde_json::json!({
@@ -106,31 +123,106 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
                 "lane": LANE,
                 "rule": "operator",
             }),
-            [false, false, false, true],
+            [false, false, false, true, false],
         ),
+    ]
+}
+
+/// Facts from `journal::*` and `lineage::*`, which no cached read but effort is
+/// drawn from: the first rewrites the accounted transcript the counters come
+/// from, the second re-attributes which lineage owns a source locus. Both move
+/// effort while the board, the roster and the inbox stand, so these rows are
+/// what separate a per-read mapping from one that widens every read together.
+fn journal_and_lineage_rows() -> Vec<StaleRow> {
+    vec![
         (
-            serde_json::json!({"kind": "up::dark", "epoch": EPOCH}),
-            [false, false, false, false],
-        ),
-        (
-            serde_json::json!({"kind": "vendor::armed", "vendor": "codex", "version": "0.1.0"}),
-            [false, false, false, false],
-        ),
-        (
-            serde_json::json!({"kind": "taste::cleared", "taste": "loud", "locus": "app/src"}),
-            [false, false, false, false],
+            serde_json::json!({
+                "kind": "journal::ingested",
+                "lane": LANE,
+                "vendor": "codex",
+                "stream": "transcript",
+                "source": REQUEST,
+                "from": {"member": 0, "offset": 0},
+                "to": {"member": 0, "offset": 4096},
+                "usage": [],
+                "non_usage_records": 3,
+                "residue_records": 0,
+            }),
+            [false, false, false, false, true],
         ),
         (
             serde_json::json!({"kind": "journal::migrated", "from": 1, "to": 2, "epoch": EPOCH}),
-            [false, false, false, false],
+            [false, false, false, false, true],
+        ),
+        (
+            serde_json::json!({
+                "kind": "lineage::configured",
+                "lineage_id": LANE,
+                "member": REQUEST,
+                "from": "steer",
+                "life": "drive",
+            }),
+            [false, false, false, false, true],
+        ),
+        (
+            serde_json::json!({
+                "kind": "lineage::arranged",
+                "from": [{"lineage_id": LANE, "lanes": [LANE]}],
+                "lineages": [{"lineage_id": LANE, "lanes": []}],
+            }),
+            [false, false, false, false, true],
         ),
     ]
+}
+
+/// Facts no cached read is drawn from at all. A rule that simply refreshed
+/// everything on every fact would pass every row above and fail these.
+fn unread_namespace_rows() -> Vec<StaleRow> {
+    vec![
+        (
+            serde_json::json!({"kind": "up::dark", "epoch": EPOCH}),
+            [false, false, false, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "vendor::armed", "vendor": "codex", "version": "0.1.0"}),
+            [false, false, false, false, false],
+        ),
+        (
+            serde_json::json!({"kind": "taste::cleared", "taste": "loud", "locus": "app/src"}),
+            [false, false, false, false, false],
+        ),
+    ]
+}
+
+/// Which cached read each fact invalidates, as
+/// `[board, lanes, inbox, consent, effort]`.
+///
+/// This inventory is written out above rather than read back off the mapping it
+/// checks, so deleting an arm fails instead of agreeing with itself. The groups
+/// are the namespaces the mapping keys on, and every one of them appears twice
+/// under different kinds and different producers: a mapping keyed on one exact
+/// kind rather than on the namespace fails on the sibling instead of passing on
+/// the twin.
+fn staleness_inventory() -> Vec<StaleRow> {
+    steer_rows()
+        .into_iter()
+        .chain(lane_rows())
+        .chain(task_and_claim_rows())
+        .chain(consent_rows())
+        .chain(journal_and_lineage_rows())
+        .chain(unread_namespace_rows())
+        .collect()
 }
 
 #[test]
 fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
     let session = session(OPERATOR, EPOCH);
-    for (fact, expected) in staleness_inventory() {
+    let inventory = staleness_inventory();
+    // The inventory is assembled from one group per namespace, so a dropped
+    // group would take its whole namespace out of this loop while every
+    // surviving row still passed. The count is what makes that a failure.
+    assert_eq!(inventory.len(), 17, "a namespace left the inventory");
+    for (fact, expected) in inventory {
         let kind = fact["kind"]
             .as_str()
             .expect("fixture names its kind")
@@ -138,7 +230,13 @@ fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
         let pushed = fact_frame(envelope(41, "spice", &format!("lane:{LANE}"), &fact));
         let stale = stale_reads(&admitted_stream(&session, &pushed));
         assert_eq!(
-            [stale.board(), stale.lanes(), stale.inbox(), stale.consent()],
+            [
+                stale.board(),
+                stale.lanes(),
+                stale.inbox(),
+                stale.consent(),
+                stale.effort(),
+            ],
             expected,
             "{kind} invalidated the wrong reads"
         );
@@ -179,8 +277,14 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
     let tail = admitted_stream(&session, &packed_frame("facts", &ascending, None, 42));
     let stale = stale_reads(&tail);
     assert_eq!(
-        [stale.board(), stale.lanes(), stale.inbox(), stale.consent()],
-        [true, true, true, false],
+        [
+            stale.board(),
+            stale.lanes(),
+            stale.inbox(),
+            stale.consent(),
+            stale.effort(),
+        ],
+        [true, true, true, false, true],
         "a page widens to the union of its rows and no further"
     );
 
