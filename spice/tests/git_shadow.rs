@@ -7,8 +7,9 @@
 //! `tests/coexistence.rs` reaches it: both are scoped to
 //! `<git-common-dir>/.spice`, and this path is under no `.spice` at all.
 //!
-//! So the anchor, the filename and the header line are held here instead.
-//! Everything runs
+//! So the anchor, filename and complete published bytes are held here instead,
+//! including the section order, indentation, trailing newline and reachable
+//! subsection quoting. Everything runs
 //! against a linked worktree on purpose. In an ordinary checkout
 //! `--absolute-git-dir` and `--git-common-dir` name the same directory, so a
 //! test placed there passes whichever one the code asks for, and the divergence
@@ -143,6 +144,60 @@ fn the_published_shadow_opens_with_the_header_the_predecessor_writes() {
     );
 }
 
+/// A simple branch pins the whole file both implementations overwrite.
+///
+/// The expected bytes are deliberately restated here rather than assembled by
+/// the production module. That makes section reordering, spaces in place of
+/// tabs, or a missing final newline independently observable.
+#[test]
+fn a_simple_branch_publishes_the_predecessors_exact_bytes() {
+    let fixture = Fixture::new("bytes");
+    let repository = Repository::discover(&fixture.linked).expect("linked worktree resolves");
+
+    spice::git_shadow::environment(&repository, fixture.base())
+        .expect("the Git shadow composes over a linked worktree");
+
+    let expected = format!(
+        concat!(
+            "{}\n",
+            "[include]\n",
+            "\tpath = {}\n",
+            "[branch \"lane-bytes\"]\n",
+            "\tmerge = refs/heads/lane-bytes\n",
+        ),
+        SHADOW_HEADER,
+        git_system_config_path(),
+    );
+    assert_eq!(
+        fs::read(fixture.per_worktree_git_dir().join(AGENT_GITCONFIG_NAME))
+            .expect("the published shadow reads back"),
+        expected.as_bytes(),
+        "the port and predecessor would alternate whole-file rewrites",
+    );
+}
+
+/// A Git-valid double quote is escaped in the subsection and nowhere else.
+///
+/// Git refuses backslashes in refnames, so the production comment records that
+/// half of the predecessor-compatible escape pair as defensive. A quote is
+/// valid and reaches the writer through a real branch, making its order here a
+/// load-bearing byte contract.
+#[test]
+fn a_quoted_branch_publishes_the_predecessors_exact_subsection() {
+    let fixture = Fixture::with_branch("quoted", "lane-quo\"te");
+    let repository = Repository::discover(&fixture.linked).expect("linked worktree resolves");
+
+    spice::git_shadow::environment(&repository, fixture.base())
+        .expect("the Git shadow composes over a linked worktree");
+
+    let published = fs::read_to_string(fixture.per_worktree_git_dir().join(AGENT_GITCONFIG_NAME))
+        .expect("the published shadow reads back");
+    assert!(
+        published.contains("[branch \"lane-quo\\\"te\"]\n"),
+        "the reachable subsection quote no longer matches the predecessor: {published:?}",
+    );
+}
+
 /// The `GIT_CONFIG_SYSTEM` value the shadow published.
 fn shadow_path(environment: &Environment) -> &std::ffi::OsStr {
     environment
@@ -162,6 +217,10 @@ struct Fixture {
 
 impl Fixture {
     fn new(label: &str) -> Self {
+        Self::with_branch(label, &format!("lane-{label}"))
+    }
+
+    fn with_branch(label: &str, branch: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "spice-git-shadow-{label}-{}-{}",
@@ -180,7 +239,7 @@ impl Fixture {
         // an uncanonicalized root would never equal the paths it reports.
         let root = fs::canonicalize(&root).expect("canonicalize fixture root");
 
-        let branch = format!("lane-{label}");
+        let branch = branch.to_owned();
         let linked = root.join("lane");
         git(
             &root,
@@ -217,6 +276,26 @@ impl Fixture {
     fn base(&self) -> Environment {
         Environment::new([("PATH", "/usr/bin:/bin")]).expect("fixture environment admits")
     }
+}
+
+/// The system config path resolved by the independently spelled Git probe.
+fn git_system_config_path() -> String {
+    let output = Command::new("/usr/bin/git")
+        .args(["config", "--system", "--edit"])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("GIT_EDITOR", "echo")
+        .output()
+        .expect("the independent system-config probe launches");
+    assert!(
+        output.status.success(),
+        "git config --system --edit failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    String::from_utf8(output.stdout)
+        .expect("the system-config path is text")
+        .trim()
+        .to_owned()
 }
 
 fn git(root: &Path, arguments: &[&str]) {
