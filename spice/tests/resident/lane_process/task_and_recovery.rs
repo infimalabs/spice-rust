@@ -260,9 +260,8 @@ fn missing_and_duplicate_declarations_refuse_and_fully_unwind_lane_add() {
         } else {
             String::new()
         };
-        let script = vendor_prologue(&stopped, &vendor_pid)
-            + &announced
-            + "while :; do sleep 1; done\n";
+        let script =
+            vendor_prologue(&stopped, &vendor_pid) + &announced + "while :; do sleep 1; done\n";
         configure_vendor(&fixture, &script);
         let mut resident = RunningResident::spawn(&fixture);
         resident.assert_ready(&fixture);

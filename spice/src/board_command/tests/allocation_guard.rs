@@ -135,7 +135,8 @@ fn commit_guarded(
         .fact(body::UpSeated { epoch }, FactCause::Root)
         .expect("allocation guard fixture fact builds");
     guard_allocation(&mut write, Vec::new(), observed);
-    bus.commit(write).expect("allocation guard write reaches writer")
+    bus.commit(write)
+        .expect("allocation guard write reaches writer")
 }
 
 fn refusal_reason(outcome: CommitOutcome) -> String {

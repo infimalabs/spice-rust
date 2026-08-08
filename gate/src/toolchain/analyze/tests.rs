@@ -138,16 +138,19 @@ mod tests {
         assert!(analysis.findings.is_empty());
         assert_eq!(analysis.exit_code, None);
         let root = fs::canonicalize(&fixture.root).expect("canonical fixture root");
-        assert_eq!(fixture.log_lines(), [
-            format!(
-                "{}|check --locked --workspace --target wasm32-unknown-unknown",
-                root.display()
-            ),
-            format!(
-                "{}|build index.html --release --locked --filehash=false",
-                root.join("app").display()
-            ),
-        ]);
+        assert_eq!(
+            fixture.log_lines(),
+            [
+                format!(
+                    "{}|check --locked --workspace --target wasm32-unknown-unknown",
+                    root.display()
+                ),
+                format!(
+                    "{}|build index.html --release --locked --filehash=false",
+                    root.join("app").display()
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -243,11 +246,13 @@ mod tests {
         let bounds = canvas_bounds(Duration::from_secs(30));
 
         let (first, second) = thread::scope(|scope| {
-            let other = scope.spawn(|| {
-                fixture.analyze_tree(&second_tree, &second_cargo, &trunk, &bounds)
-            });
+            let other =
+                scope.spawn(|| fixture.analyze_tree(&second_tree, &second_cargo, &trunk, &bounds));
             let mine = fixture.analyze(&first_cargo, &trunk, &bounds);
-            (mine, other.join().expect("the second analysis does not panic"))
+            (
+                mine,
+                other.join().expect("the second analysis does not panic"),
+            )
         });
 
         assert_eq!(first.outcome, ArmOutcome::Passed, "{}", first.reason);
@@ -367,7 +372,12 @@ mod tests {
         fs::set_permissions(&fixture.base, fs::Permissions::from_mode(0o755))
             .expect("restore the fixture directory before anything can panic");
 
-        assert_eq!(analysis.outcome, ArmOutcome::ParseFailure, "{}", analysis.reason);
+        assert_eq!(
+            analysis.outcome,
+            ArmOutcome::ParseFailure,
+            "{}",
+            analysis.reason
+        );
         let workspace = CanvasFixture::workspace_root(&fixture.root);
         assert!(
             analysis.reason.contains(&workspace.display().to_string())
@@ -375,7 +385,10 @@ mod tests {
             "the report names the workspace and what happened to it: {}",
             analysis.reason,
         );
-        assert!(workspace.is_dir(), "the workspace really did survive the run");
+        assert!(
+            workspace.is_dir(),
+            "the workspace really did survive the run"
+        );
     }
 
     #[test]
@@ -407,15 +420,18 @@ mod tests {
 
         assert_eq!(analysis.outcome, ArmOutcome::Findings);
         assert_eq!(analysis.exit_code, None);
-        assert_eq!(analysis.findings, [ArmFinding {
-            path: Some("app/src/lib.rs".to_owned()),
-            line: Some(7),
-            column: Some(9),
-            detail: FindingDetail::CanvasWebOutput {
-                code: "E0308".to_owned(),
-                message: "mismatched types".to_owned(),
-            },
-        }]);
+        assert_eq!(
+            analysis.findings,
+            [ArmFinding {
+                path: Some("app/src/lib.rs".to_owned()),
+                line: Some(7),
+                column: Some(9),
+                detail: FindingDetail::CanvasWebOutput {
+                    code: "E0308".to_owned(),
+                    message: "mismatched types".to_owned(),
+                },
+            }]
+        );
         assert_eq!(fixture.log_lines().len(), 1, "trunk ran after a finding");
     }
 
@@ -508,23 +524,26 @@ mod tests {
 
     #[test]
     fn words_split_on_everything_that_is_not_a_word_character() {
-        assert_eq!(words("a whitelist, and-a blacklist."), [
-            (1, "a".to_owned()),
-            (3, "whitelist".to_owned()),
-            (14, "and".to_owned()),
-            (18, "a".to_owned()),
-            (20, "blacklist".to_owned())
-        ]);
+        assert_eq!(
+            words("a whitelist, and-a blacklist."),
+            [
+                (1, "a".to_owned()),
+                (3, "whitelist".to_owned()),
+                (14, "and".to_owned()),
+                (18, "a".to_owned()),
+                (20, "blacklist".to_owned())
+            ]
+        );
         assert_eq!(words("   "), Vec::<(u32, String)>::new());
     }
 
     /// A column is a character count, not a byte count.
     #[test]
     fn a_word_after_a_multibyte_character_opens_at_a_character_column() {
-        assert_eq!(words("\u{e9}\u{e9} whitelist"), [
-            (1, "\u{e9}\u{e9}".to_owned()),
-            (4, "whitelist".to_owned())
-        ]);
+        assert_eq!(
+            words("\u{e9}\u{e9} whitelist"),
+            [(1, "\u{e9}\u{e9}".to_owned()), (4, "whitelist".to_owned())]
+        );
     }
 
     /// A change path that is not tree-relative would read outside the tree.
@@ -695,10 +714,8 @@ mod tests {
     impl DecodingFixture {
         fn new() -> Self {
             let sequence = NEXT_DECODING_FIXTURE.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "gate-decoding-{}-{sequence}",
-                std::process::id(),
-            ));
+            let root = std::env::temp_dir()
+                .join(format!("gate-decoding-{}-{sequence}", std::process::id(),));
             if root.exists() {
                 fs::remove_dir_all(&root).expect("remove stale decoding fixture");
             }
@@ -767,7 +784,10 @@ mod tests {
 
         /// The sibling directory the arm creates for the tree it is handed.
         fn workspace_root(tree: &Path) -> PathBuf {
-            let mut name = tree.file_name().expect("selected tree is named").to_os_string();
+            let mut name = tree
+                .file_name()
+                .expect("selected tree is named")
+                .to_os_string();
             name.push(".spice-canvas-analysis");
             tree.with_file_name(name)
         }
@@ -788,12 +808,13 @@ mod tests {
         fn script(&self, name: &str, body: &str) -> PathBuf {
             let path = self.root.join(name);
             let log = self.log.to_string_lossy();
-            assert!(!log.contains('\''), "fixture log path cannot be shell quoted");
+            assert!(
+                !log.contains('\''),
+                "fixture log path cannot be shell quoted"
+            );
             fs::write(
                 &path,
-                format!(
-                    "#!/bin/sh\nprintf '%s|%s\\n' \"$(pwd)\" \"$*\" >> '{log}'\n{body}\n"
-                ),
+                format!("#!/bin/sh\nprintf '%s|%s\\n' \"$(pwd)\" \"$*\" >> '{log}'\n{body}\n"),
             )
             .expect("write canvas tool stub");
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
@@ -831,10 +852,7 @@ mod tests {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
                 Err(error) => panic!("read canvas call log: {error}"),
             };
-            text
-                .lines()
-                .map(str::to_owned)
-                .collect()
+            text.lines().map(str::to_owned).collect()
         }
     }
 

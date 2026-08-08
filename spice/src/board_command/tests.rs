@@ -70,8 +70,7 @@ mod tests {
             .parse()
             .expect("resident fixture origin");
         let now = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
-        let mut write =
-            JournalWrite::new(Actor::Spice, origin, now, Producer::ResidentRecognition);
+        let mut write = JournalWrite::new(Actor::Spice, origin, now, Producer::ResidentRecognition);
         let declared = write
             .fact(
                 wire::body::LaneSessionDeclared {
@@ -310,9 +309,7 @@ mod tests {
         origin_thread.presentation_title = "Origin-thread route row".to_owned();
 
         let mut outside = template;
-        outside.statement.body.handle = "CLI-route0004"
-            .parse()
-            .expect("outside fixture handle");
+        outside.statement.body.handle = "CLI-route0004".parse().expect("outside fixture handle");
         outside.statement.body.uuid = uuid(8_004);
         outside.statement.body.project = "agent.someone_else.task".to_owned();
         outside.statement.body.provenance = "task:CLI-route0004"
@@ -321,9 +318,7 @@ mod tests {
         outside.origin_thread = "someone_else".to_owned();
         outside.presentation_title = "Outside route row".to_owned();
 
-        answer
-            .tasks
-            .extend([actor_private, origin_thread, outside]);
+        answer.tasks.extend([actor_private, origin_thread, outside]);
         let listed = task_list(
             &answer,
             &TaskListOptions {
@@ -344,12 +339,15 @@ mod tests {
         )));
         let status = task_status(&answer).expect("planted actor-route rows validate");
         assert!(status.lines().any(|line| line == "ready 3"), "{status}");
-        assert!(status.lines().any(|line| {
-            line == concat!(
-                "filter ( project:agent.operator.task or origin_thread.is:operator or ",
-                "( project:board or project:rim or project:serve or project:task ) )"
-            )
-        }), "{status}");
+        assert!(
+            status.lines().any(|line| {
+                line == concat!(
+                    "filter ( project:agent.operator.task or origin_thread.is:operator or ",
+                    "( project:board or project:rim or project:serve or project:task ) )"
+                )
+            }),
+            "{status}"
+        );
         clean(&root, bus);
     }
 
@@ -675,8 +673,7 @@ mod tests {
         );
         let available = board(&bus, epoch, lane.clone());
         assert_eq!(available.active_public_tasks().count(), 2);
-        let entries = actor_entries(&available)
-            .expect("capture board entries are valid");
+        let entries = actor_entries(&available).expect("capture board entries are valid");
         assert_eq!(
             board::select(
                 &entries,
@@ -685,10 +682,10 @@ mod tests {
                     .expect("fixture lane subscription"),
                 available.allocation_band,
             )
-                .expect("allocator winner")
-                .entry()
-                .statement()
-                .handle,
+            .expect("allocator winner")
+            .entry()
+            .statement()
+            .handle,
             alpha,
         );
         let heads = at(&available, &beta);
@@ -936,14 +933,7 @@ mod tests {
             },
             residency(&held, &seats[0]),
         ];
-        let after = renew_and_assert(
-            &bus,
-            epoch,
-            &lane,
-            &held_task,
-            &before,
-            expected,
-        );
+        let after = renew_and_assert(&bus, epoch, &lane, &held_task, &before, expected);
         assert_reclaim_survives_restart(
             &root,
             bus,

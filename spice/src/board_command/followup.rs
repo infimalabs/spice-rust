@@ -91,9 +91,8 @@ fn plan_followups(
 ) -> Result<Vec<ReviewFollowup>, Outcome<CommandAnswer>> {
     let mut parsed = Vec::new();
     for spec in matches.get_many::<String>("then").into_iter().flatten() {
-        let add = parse_followup(spec).map_err(|error| {
-            refusal("review::followup-invalid", Some(spec.clone()), &error)
-        })?;
+        let add = parse_followup(spec)
+            .map_err(|error| refusal("review::followup-invalid", Some(spec.clone()), &error))?;
         parsed.push(add);
     }
     let minted_at = jiff::Timestamp::now().as_millisecond();
@@ -174,9 +173,10 @@ fn create_followup(
     reviewed: PendingFact,
     projects: &ProjectPolicy,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    let witnessed = command.expected().iter().any(|witness| {
-        matches!(witness, Witness::Absence { task } if *task == followup.task)
-    });
+    let witnessed = command
+        .expected()
+        .iter()
+        .any(|witness| matches!(witness, Witness::Absence { task } if *task == followup.task));
     if !witnessed {
         return Err(protocol_fault(
             "review::followup-witness-invalid",
@@ -261,8 +261,14 @@ mod followup_tests {
         assert!(review_is_clean(""), "an absent finding reviews clean");
         assert!(review_is_clean("   "), "whitespace is an absent finding");
         assert!(review_is_clean("clean"), "the predecessor default is clean");
-        assert!(review_is_clean("Clean"), "letter case cannot move a verdict");
-        assert!(review_is_clean("CLEAN"), "letter case cannot move a verdict");
+        assert!(
+            review_is_clean("Clean"),
+            "letter case cannot move a verdict"
+        );
+        assert!(
+            review_is_clean("CLEAN"),
+            "letter case cannot move a verdict"
+        );
         assert!(review_is_clean("  clean  "), "the predecessor strips first");
     }
 
@@ -305,7 +311,10 @@ mod followup_tests {
     #[test]
     fn a_then_record_without_a_title_is_refused() {
         let error = parse_followup("project=task.cli").expect_err("no title is refused");
-        assert!(error.contains("title"), "the refusal names the field: {error}");
+        assert!(
+            error.contains("title"),
+            "the refusal names the field: {error}"
+        );
     }
 
     #[test]

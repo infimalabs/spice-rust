@@ -84,10 +84,7 @@ mod tests {
 
         let mut empty_camp = current.clone();
         empty_camp.camp = Camp::new([]).expect("the Camp type permits an empty collection");
-        assert!(matches!(
-            readmit(empty_camp),
-            Err(GateSetError::EmptyCamp)
-        ));
+        assert!(matches!(readmit(empty_camp), Err(GateSetError::EmptyCamp)));
 
         let mut duplicate_metric = current.clone();
         duplicate_metric.camp_metrics[1].metric = duplicate_metric.camp_metrics[0].metric.clone();

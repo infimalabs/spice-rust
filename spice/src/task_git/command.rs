@@ -6,26 +6,16 @@ use std::time::Instant;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 
-fn required_read(
-    root: &Path,
-    args: &[&str],
-    action: &str,
-) -> Result<String, Error> {
+fn required_read(root: &Path, args: &[&str], action: &str) -> Result<String, Error> {
     let output = run(root, args)?;
     if output.success() {
         Ok(output.stdout.trim().to_owned())
     } else {
-        Err(Error::fault(
-            "git::command-failed",
-            output.detail(action),
-        ))
+        Err(Error::fault("git::command-failed", output.detail(action)))
     }
 }
 
-fn try_read(
-    root: &Path,
-    args: &[&str],
-) -> Result<Option<String>, Error> {
+fn try_read(root: &Path, args: &[&str]) -> Result<Option<String>, Error> {
     let output = run(root, args)?;
     Ok(output.success().then(|| output.stdout.trim().to_owned()))
 }
@@ -34,19 +24,11 @@ fn run(root: &Path, args: &[&str]) -> Result<GitOutput, Error> {
     run_bounded(root, args, None)
 }
 
-fn run_with_input(
-    root: &Path,
-    args: &[&str],
-    input: &[u8],
-) -> Result<GitOutput, Error> {
+fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<GitOutput, Error> {
     run_bounded(root, args, Some(input))
 }
 
-fn run_bounded(
-    root: &Path,
-    args: &[&str],
-    input: Option<&[u8]>,
-) -> Result<GitOutput, Error> {
+fn run_bounded(root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<GitOutput, Error> {
     run_bounded_observed(root, args, input, None)
 }
 
@@ -74,13 +56,8 @@ fn run_bounded_observed(
             return Err(error);
         }
     };
-    let (status, stdout, stderr) = supervise_git(
-        &mut process,
-        workers,
-        args,
-        limit,
-        descendant_grace_started,
-    )?;
+    let (status, stdout, stderr) =
+        supervise_git(&mut process, workers, args, limit, descendant_grace_started)?;
     Ok(GitOutput {
         status: status.code().unwrap_or(-1),
         stdout: decode_output(stdout, "stdout")?,
@@ -88,11 +65,7 @@ fn run_bounded_observed(
     })
 }
 
-fn spawn_git(
-    root: &Path,
-    args: &[&str],
-    piped_input: bool,
-) -> Result<GitProcess, Error> {
+fn spawn_git(root: &Path, args: &[&str], piped_input: bool) -> Result<GitProcess, Error> {
     let mut command = Command::new("git");
     command
         .arg("-C")
@@ -141,11 +114,7 @@ fn supervise_git(
     let mut status = None;
     loop {
         if status.is_none() {
-            match poll_supervised_exit(
-                process,
-                args,
-                &mut descendant_grace_started,
-            ) {
+            match poll_supervised_exit(process, args, &mut descendant_grace_started) {
                 Ok(Some((exit, drain_started))) => {
                     status = Some(exit);
                     output_drain_started = Some(drain_started);
@@ -257,10 +226,7 @@ fn poll_supervised_exit(
     if let Some(observer) = descendant_grace_started.as_mut() {
         observer();
     }
-    if process.settle(
-        DESCENDANT_EXIT_GRACE,
-        GroupProbeSite::GitExited,
-    )? {
+    if process.settle(DESCENDANT_EXIT_GRACE, GroupProbeSite::GitExited)? {
         return Ok(Some((status, output_drain_started)));
     }
     Err(Error::fault(
@@ -335,9 +301,10 @@ impl GitProcess {
 
     fn poll_exit(&mut self) -> Result<Option<std::process::ExitStatus>, Error> {
         if self.status.is_none() {
-            self.status = self.child.try_wait().map_err(|error| {
-                Error::fault("git::wait-failed", error.to_string())
-            })?;
+            self.status = self
+                .child
+                .try_wait()
+                .map_err(|error| Error::fault("git::wait-failed", error.to_string()))?;
         }
         Ok(self.status)
     }
@@ -348,10 +315,7 @@ impl GitProcess {
         // escalation. Each unreadable observation is re-read once immediately;
         // continued uncertainty spends the remaining grace and proceeds to
         // KILL rather than claiming cleanup already finished.
-        if self.settle(
-            PROCESS_GROUP_GRACE,
-            GroupProbeSite::TermSentBeforeKill,
-        )? {
+        if self.settle(PROCESS_GROUP_GRACE, GroupProbeSite::TermSentBeforeKill)? {
             return Ok(());
         }
         self.signal_group(true)?;
@@ -372,19 +336,11 @@ impl GitProcess {
         }
     }
 
-    fn settle(
-        &mut self,
-        limit: Duration,
-        probe_site: GroupProbeSite,
-    ) -> Result<bool, Error> {
+    fn settle(&mut self, limit: Duration, probe_site: GroupProbeSite) -> Result<bool, Error> {
         let started = Instant::now();
         loop {
             let exited = self.poll_exit()?.is_some();
-            if exited
-                && group_is_settled_against(probe_site, || {
-                    self.group_present(probe_site)
-                })?
-            {
+            if exited && group_is_settled_against(probe_site, || self.group_present(probe_site))? {
                 return Ok(true);
             }
             if started.elapsed() >= limit {
@@ -427,29 +383,22 @@ impl GitProcess {
     }
 
     #[cfg(unix)]
-    fn group_present(
-        &mut self,
-        probe_site: GroupProbeSite,
-    ) -> Result<GroupPresence, Error> {
+    fn group_present(&mut self, probe_site: GroupProbeSite) -> Result<GroupPresence, Error> {
         let group = self.process_group()?;
         Ok((self.group_probe)(probe_site, group))
     }
 
     #[cfg(unix)]
     fn process_group(&self) -> Result<rustix::process::Pid, Error> {
-        let pid = i32::try_from(self.pid).map_err(|error| {
-            Error::fault("git::process-group-invalid", error.to_string())
-        })?;
+        let pid = i32::try_from(self.pid)
+            .map_err(|error| Error::fault("git::process-group-invalid", error.to_string()))?;
         rustix::process::Pid::from_raw(pid).ok_or_else(|| {
             Error::fault("git::process-group-invalid", "Git returned process ID zero")
         })
     }
 
     #[cfg(not(unix))]
-    fn group_present(
-        &mut self,
-        _probe_site: GroupProbeSite,
-    ) -> Result<GroupPresence, Error> {
+    fn group_present(&mut self, _probe_site: GroupProbeSite) -> Result<GroupPresence, Error> {
         Ok(if self.status.is_none() {
             GroupPresence::Present
         } else {
@@ -474,9 +423,7 @@ fn group_is_settled_against(
         GroupProbeSite::TermSentBeforeKill => match presence {
             GroupPresence::Absent => Ok(true),
             GroupPresence::Present => Ok(false),
-            GroupPresence::Indeterminate => {
-                Ok(matches!(observe()?, GroupPresence::Absent))
-            }
+            GroupPresence::Indeterminate => Ok(matches!(observe()?, GroupPresence::Absent)),
         },
         GroupProbeSite::GitExited | GroupProbeSite::KillSent => {
             Ok(!matches!(presence, GroupPresence::Present))
@@ -485,9 +432,7 @@ fn group_is_settled_against(
 }
 
 #[cfg(unix)]
-fn classify_group_probe(
-    result: Result<(), rustix::io::Errno>,
-) -> GroupPresence {
+fn classify_group_probe(result: Result<(), rustix::io::Errno>) -> GroupPresence {
     match result {
         Ok(()) | Err(rustix::io::Errno::PERM) => GroupPresence::Present,
         Err(rustix::io::Errno::SRCH) => GroupPresence::Absent,
@@ -513,16 +458,10 @@ struct CommandWorkers {
 impl CommandWorkers {
     fn start(process: &mut GitProcess, input: Option<&[u8]>) -> Result<Self, Error> {
         let stdout = process.child.stdout.take().ok_or_else(|| {
-            Error::fault(
-                "git::stdout-missing",
-                "Git stdout pipe was unavailable",
-            )
+            Error::fault("git::stdout-missing", "Git stdout pipe was unavailable")
         })?;
         let stderr = process.child.stderr.take().ok_or_else(|| {
-            Error::fault(
-                "git::stderr-missing",
-                "Git stderr pipe was unavailable",
-            )
+            Error::fault("git::stderr-missing", "Git stderr pipe was unavailable")
         })?;
         let stdin = input
             .map(|bytes| {
@@ -532,22 +471,14 @@ impl CommandWorkers {
                     .take()
                     .map(|stdin| (stdin, bytes.to_vec()))
                     .ok_or_else(|| {
-                        Error::fault(
-                            "git::stdin-missing",
-                            "Git stdin pipe was unavailable",
-                        )
+                        Error::fault("git::stdin-missing", "Git stdin pipe was unavailable")
                     })
             })
             .transpose()?;
         let (sender, events) = mpsc::channel();
         let total = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![
-            spawn_reader(
-                stdout,
-                Arc::clone(&total),
-                sender.clone(),
-                true,
-            ),
+            spawn_reader(stdout, Arc::clone(&total), sender.clone(), true),
             spawn_reader(stderr, total, sender.clone(), false),
         ];
         if let Some((stdin, bytes)) = stdin {
@@ -615,9 +546,8 @@ where
     R: std::io::Read + Send + 'static,
 {
     std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            read_bounded(input, &total)
-        }));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read_bounded(input, &total)));
         let event = match result {
             Ok(result) if stdout => WorkerEvent::Stdout(result),
             Ok(result) => WorkerEvent::Stderr(result),
@@ -634,9 +564,8 @@ fn spawn_writer(
     sender: mpsc::Sender<WorkerEvent>,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            stdin.write_all(&input)
-        }));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| stdin.write_all(&input)));
         let event = match result {
             Ok(result) => WorkerEvent::Stdin(result),
             Err(_) => WorkerEvent::Panicked("stdin"),
@@ -657,9 +586,7 @@ fn read_bounded(
     let mut output = Vec::new();
     let mut buffer = [0_u8; 8 * 1024];
     loop {
-        let count = input
-            .read(&mut buffer)
-            .map_err(OutputReadError::Read)?;
+        let count = input.read(&mut buffer).map_err(OutputReadError::Read)?;
         if count == 0 {
             return Ok(output);
         }
@@ -679,25 +606,17 @@ fn output_result(
     match result {
         Ok(bytes) => Ok(bytes),
         Err(OutputReadError::Limit) => Err(Error::fault(
-                "git::output-limit",
-                format!(
-                    "git {} exceeded {} bytes",
-                    args.join(" "),
-                    OUTPUT_LIMIT,
-                ),
-            )),
+            "git::output-limit",
+            format!("git {} exceeded {} bytes", args.join(" "), OUTPUT_LIMIT,),
+        )),
         Err(OutputReadError::Read(error)) => Err(Error::fault(
-                "git::output-read-failed",
-                format!("Git {name}: {error}"),
-            )),
+            "git::output-read-failed",
+            format!("Git {name}: {error}"),
+        )),
     }
 }
 
 fn decode_output(bytes: Vec<u8>, name: &str) -> Result<String, Error> {
-    String::from_utf8(bytes).map_err(|error| {
-        Error::fault(
-            "git::output-not-utf8",
-            format!("Git {name}: {error}"),
-        )
-    })
+    String::from_utf8(bytes)
+        .map_err(|error| Error::fault("git::output-not-utf8", format!("Git {name}: {error}")))
 }

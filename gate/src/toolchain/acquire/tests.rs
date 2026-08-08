@@ -281,16 +281,12 @@ mod tests {
         let fixture = ProbeFixture::new("unreadable");
         let planted = fixture.version_stub(&fixture.rim.join(PROGRAM), RIM_VERSION);
 
-        let evidence = fixture.evidence_with(
-            "",
-            &probe_exit_bounds(),
-            |_| {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "injected executable read refusal",
-                ))
-            },
-        );
+        let evidence = fixture.evidence_with("", &probe_exit_bounds(), |_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "injected executable read refusal",
+            ))
+        });
 
         assert_eq!(
             evidence,

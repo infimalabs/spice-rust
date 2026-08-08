@@ -128,7 +128,9 @@ mod tests {
             ),
             (
                 "verdict",
-                mutate(&value, |value| value["verdict"]["head"] = json!("fedcba9876543210")),
+                mutate(&value, |value| {
+                    value["verdict"]["head"] = json!("fedcba9876543210")
+                }),
             ),
         ] {
             assert!(
@@ -816,10 +818,7 @@ mod tests {
             fs::create_dir_all(root.join("src")).expect("create report fixture tree");
             fs::write(
                 root.join("spice.toml"),
-                format!(
-                    "{}[gate.walk]\nskip = []\n",
-                    crate::NARROWEST_FILE_CLASSES
-                ),
+                format!("{}[gate.walk]\nskip = []\n", crate::NARROWEST_FILE_CLASSES),
             )
             .expect("write report fixture policy");
             fs::write(

@@ -318,13 +318,7 @@ mod tests {
                 1,
                 "app.nested.used",
             ),
-            (
-                "app/nested/__init__.pyi",
-                "app.nested",
-                true,
-                2,
-                "app.used",
-            ),
+            ("app/nested/__init__.pyi", "app.nested", true, 2, "app.used"),
         ] {
             let parsed = Module::new(path.to_owned(), current.to_owned(), false, "");
             assert_eq!(parsed.is_package_initializer, initializer, "{path}");
@@ -347,8 +341,7 @@ mod tests {
         let configuration = HygieneConfiguration::new(["__init__.py"], ["tests"])
             .expect("root-package fixture roots are admitted");
         let jurisdiction = tree.jurisdiction();
-        let (_, corpus, terminal) =
-            Corpus::load(&jurisdiction, &configuration, Instant::now());
+        let (_, corpus, terminal) = Corpus::load(&jurisdiction, &configuration, Instant::now());
         assert!(matches!(terminal, Terminal::Parsed));
         assert!(corpus.edges.contains(&(String::new(), "used".to_owned())));
         assert!(corpus.resolved_references().iter().any(|reference| {
@@ -529,8 +522,7 @@ mod tests {
     fn native_run_derives_all_five_arms_from_multifile_python() {
         let tree = multifile_tree();
         let jurisdiction = tree.jurisdiction();
-        let (_, corpus, terminal) =
-            Corpus::load(&jurisdiction, &configuration(), Instant::now());
+        let (_, corpus, terminal) = Corpus::load(&jurisdiction, &configuration(), Instant::now());
         assert!(matches!(terminal, Terminal::Parsed));
         assert_relative_package_graph(&corpus);
         let report = analyze_hygiene(&jurisdiction, &configuration())

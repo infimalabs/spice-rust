@@ -128,7 +128,10 @@ impl fmt::Display for GateSetError {
             Self::Kill(source) => write!(formatter, "invalid mutation declaration: {source}"),
             Self::EmptyCamp => formatter.write_str("compiled gate set declares no camp bounds"),
             Self::DuplicateMetric { metric } => {
-                write!(formatter, "compiled metric {metric} is declared more than once")
+                write!(
+                    formatter,
+                    "compiled metric {metric} is declared more than once"
+                )
             }
             Self::CampLoci { declared, measured } => write!(
                 formatter,

@@ -64,12 +64,8 @@ fn validated_snapshot(
             lease,
         ));
     }
-    board::project_subscription_history(
-        &mut residency.body,
-        &entries,
-        observed.facts().facts(),
-    )
-    .map_err(|error| store_fault("lineage::subscription-history-invalid", &error))?;
+    board::project_subscription_history(&mut residency.body, &entries, observed.facts().facts())
+        .map_err(|error| store_fault("lineage::subscription-history-invalid", &error))?;
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
     }
@@ -226,14 +222,15 @@ fn required_fact_uuid(
     fact: &wire::Envelope<wire::AnyFact>,
     field: &str,
 ) -> Result<wire::CanonicalUuid, Outcome<CommandAnswer>> {
-    required_fact_text(fact, field)?
-        .parse()
-        .map_err(|error| {
-            protocol_fault(
-                "board::task-origin-fact-invalid",
-                &format!("{} fact field {field} is invalid: {error}", fact.fact.kind()),
-            )
-        })
+    required_fact_text(fact, field)?.parse().map_err(|error| {
+        protocol_fault(
+            "board::task-origin-fact-invalid",
+            &format!(
+                "{} fact field {field} is invalid: {error}",
+                fact.fact.kind()
+            ),
+        )
+    })
 }
 
 fn required_fact_text<'a>(
@@ -291,9 +288,8 @@ fn task_repository(
             "retry through the lane and occupant that currently hold the claim",
         ));
     };
-    let repository = Repository::discover(&row.worktree).map_err(|error| {
-        environment_fault("git::worktree-unresolved", &error.to_string())
-    })?;
+    let repository = Repository::discover(&row.worktree)
+        .map_err(|error| environment_fault("git::worktree-unresolved", &error.to_string()))?;
     if repository.common_dir() != resident.common_dir()
         || repository.worktree_root() != std::path::Path::new(&row.worktree)
     {
@@ -337,9 +333,7 @@ fn task_git_outcome(error: spice::task_git::Error) -> Outcome<CommandAnswer> {
             Some(error.detail().to_owned()),
             error.remedy(),
         ),
-        spice::task_git::ErrorClass::Fault => {
-            environment_fault(error.reason(), error.detail())
-        }
+        spice::task_git::ErrorClass::Fault => environment_fault(error.reason(), error.detail()),
     }
 }
 
@@ -686,7 +680,7 @@ fn guard_allocation(
             &observed.subscription,
             observed.band,
         )
-            .is_some_and(|selected| selected.entry().statement().handle == observed.winner)
+        .is_some_and(|selected| selected.entry().statement().handle == observed.winner)
         {
             Ok(())
         } else {
@@ -697,11 +691,7 @@ fn guard_allocation(
     }));
 }
 
-fn guard_capture(
-    write: &mut JournalWrite,
-    expected: Vec<Witness>,
-    observed: AllocationHeads,
-) {
+fn guard_capture(write: &mut JournalWrite, expected: Vec<Witness>, observed: AllocationHeads) {
     write.guard(JournalGuard::new(move |read| {
         witnesses_hold(read, &expected)?;
         let current = read

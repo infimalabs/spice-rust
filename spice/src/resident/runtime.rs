@@ -112,9 +112,8 @@ impl RuntimePaths {
     fn clear_stale_surfaces(&self) -> CommandResult<()> {
         remove_if_present(&self.canvas)
             .map_err(|error| environment_fault("canvas::stale-discovery", &error.to_string()))?;
-        remove_tree_if_present(&self.lane_canvas).map_err(|error| {
-            environment_fault("canvas::stale-lane-discovery", &error.to_string())
-        })
+        remove_tree_if_present(&self.lane_canvas)
+            .map_err(|error| environment_fault("canvas::stale-lane-discovery", &error.to_string()))
     }
 }
 
@@ -280,7 +279,11 @@ pub(crate) fn up(
 fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
     let host = match leaf.get_one::<String>("host") {
         Some(host) => host.parse::<IpAddr>().map_err(|_| {
-            listen_refusal("resident::host-invalid", "one IP address to listen on", host)
+            listen_refusal(
+                "resident::host-invalid",
+                "one IP address to listen on",
+                host,
+            )
         })?,
         None => DEFAULT_LISTEN.ip(),
     };
@@ -293,10 +296,7 @@ fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
     Ok(SocketAddr::new(host, port))
 }
 
-fn requested_access(
-    leaf: &clap::ArgMatches,
-    listen: SocketAddr,
-) -> CommandResult<CanvasAccess> {
+fn requested_access(leaf: &clap::ArgMatches, listen: SocketAddr) -> CommandResult<CanvasAccess> {
     let token = leaf.get_one::<String>("auth-token").cloned();
     if let Some(token) = token.as_deref()
         && !auth_token_is_valid(token)
@@ -324,9 +324,11 @@ fn requested_access(
             "add --auth-token TOKEN and open the remote URL with #TOKEN",
         ));
     }
-    let policy = token.as_ref().map_or_else(canvas::axum::Access::local, |token| {
-        canvas::axum::Access::authenticated(token.clone())
-    });
+    let policy = token
+        .as_ref()
+        .map_or_else(canvas::axum::Access::local, |token| {
+            canvas::axum::Access::authenticated(token.clone())
+        });
     Ok(CanvasAccess { policy, token })
 }
 
@@ -362,13 +364,7 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
 }
 
 pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
-    up_from_with(
-        current,
-        binding,
-        false,
-        &mut io::sink(),
-        &mut io::sink(),
-    )
+    up_from_with(current, binding, false, &mut io::sink(), &mut io::sink())
 }
 
 fn up_from_with(
@@ -417,13 +413,8 @@ fn up_from_with(
         Ok(bus) => bus,
         Err(error) => return store_fault("bus::start-failed", &error.to_string()),
     };
-    let startup = match commit_startup(
-        &bus,
-        &repository,
-        &startup_surface.trust,
-        epoch,
-        migration,
-    ) {
+    let startup = match commit_startup(&bus, &repository, &startup_surface.trust, epoch, migration)
+    {
         Ok(startup) => startup,
         Err(outcome) => return outcome,
     };
@@ -573,9 +564,7 @@ fn acquire_released_resident(paths: &RuntimePaths) -> CommandResult<Possession> 
         )),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(environment_fault(
             "canvas::deadline-elapsed",
-            &format!(
-                "resident did not release within the {RELEASE_BOUND:?} client bound"
-            ),
+            &format!("resident did not release within the {RELEASE_BOUND:?} client bound"),
         )),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(environment_fault(
             "resident::release-failed",
@@ -654,7 +643,12 @@ pub(super) fn startup_subscriptions(
             ));
         }
     }
-    if indexed.keys().copied().collect::<std::collections::BTreeSet<_>>() != lineage_ids {
+    if indexed
+        .keys()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>()
+        != lineage_ids
+    {
         return Err(store_fault(
             "lineage::subscription-misaligned",
             "the durable task-subscription table does not match the resident lineages",
@@ -691,8 +685,7 @@ where
             || Ok((Vec::new(), Vec::new())),
             |head| {
                 let head = head.into_body();
-                let subscriptions =
-                    startup_subscriptions(&head.lanes, head.subscriptions)?;
+                let subscriptions = startup_subscriptions(&head.lanes, head.subscriptions)?;
                 Ok((head.lanes, subscriptions))
             },
         )?;
@@ -966,7 +959,10 @@ fn announce_canvas(
 }
 
 fn canvas_opening(endpoint: &str, auth_token: Option<&str>) -> String {
-    auth_token.map_or_else(|| endpoint.to_owned(), |token| format!("{endpoint}#{token}"))
+    auth_token.map_or_else(
+        || endpoint.to_owned(),
+        |token| format!("{endpoint}#{token}"),
+    )
 }
 
 fn surface_capabilities(

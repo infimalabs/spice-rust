@@ -116,11 +116,10 @@ fn principal_can_progress(
         })
         .count()
         == 1;
-    sole
-        && current_instant()
-            .ok()
-            .and_then(|at| board::Active::admit(entry, principal, at).ok())
-            .is_some()
+    sole && current_instant()
+        .ok()
+        .and_then(|at| board::Active::admit(entry, principal, at).ok())
+        .is_some()
 }
 
 fn learn_project_created_by_principal(

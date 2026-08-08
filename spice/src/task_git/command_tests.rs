@@ -36,8 +36,8 @@ mod command_tests {
         probe: impl FnMut(GroupProbeSite, rustix::process::Pid) -> GroupPresence + 'static,
     ) -> (GitProcess, CommandWorkers) {
         let mut process = spawn_process("git", &["--version"], true, probe);
-        let workers = CommandWorkers::start(&mut process, None)
-            .expect("start fixture output workers");
+        let workers =
+            CommandWorkers::start(&mut process, None).expect("start fixture output workers");
         (process, workers)
     }
 
@@ -63,7 +63,10 @@ mod command_tests {
         let unread_sites = Arc::new(Mutex::new(Vec::new()));
         let observed = Arc::clone(&unread_sites);
         let (mut process, workers) = supervised_process(move |site, _| {
-            observed.lock().expect("probe log is not poisoned").push(site);
+            observed
+                .lock()
+                .expect("probe log is not poisoned")
+                .push(site);
             GroupPresence::Indeterminate
         });
 
@@ -85,7 +88,10 @@ mod command_tests {
         let live_sites = Arc::new(Mutex::new(Vec::new()));
         let observed = Arc::clone(&live_sites);
         let (mut process, workers) = supervised_process(move |site, _| {
-            observed.lock().expect("probe log is not poisoned").push(site);
+            observed
+                .lock()
+                .expect("probe log is not poisoned")
+                .push(site);
             match site {
                 GroupProbeSite::GitExited => GroupPresence::Present,
                 GroupProbeSite::TermSentBeforeKill | GroupProbeSite::KillSent => {
@@ -114,11 +120,7 @@ mod command_tests {
 
     #[test]
     fn an_unreadable_pre_kill_probe_rechecks_an_already_absent_group() {
-        let mut answers = [
-            GroupPresence::Indeterminate,
-            GroupPresence::Absent,
-        ]
-        .into_iter();
+        let mut answers = [GroupPresence::Indeterminate, GroupPresence::Absent].into_iter();
 
         assert!(
             group_is_settled_against(GroupProbeSite::TermSentBeforeKill, || {
@@ -139,10 +141,9 @@ mod command_tests {
         for second in [GroupPresence::Present, GroupPresence::Indeterminate] {
             let mut answers = [GroupPresence::Indeterminate, second].into_iter();
             assert!(
-                !group_is_settled_against(
-                    GroupProbeSite::TermSentBeforeKill,
-                    || Ok(answers.next().expect("the bounded probe has an answer")),
-                )
+                !group_is_settled_against(GroupProbeSite::TermSentBeforeKill, || Ok(answers
+                    .next()
+                    .expect("the bounded probe has an answer")),)
                 .expect("fixture observations are readable"),
                 "an unreadable group skipped KILL without observed absence",
             );
@@ -159,7 +160,10 @@ mod command_tests {
         let sites = Arc::new(Mutex::new(Vec::new()));
         let observed = Arc::clone(&sites);
         let mut process = spawn_process("/bin/sleep", &["30"], false, move |site, _| {
-            observed.lock().expect("probe log is not poisoned").push(site);
+            observed
+                .lock()
+                .expect("probe log is not poisoned")
+                .push(site);
             GroupPresence::Indeterminate
         });
 
