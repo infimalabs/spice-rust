@@ -79,9 +79,13 @@
 //!
 //! Policy point 2 and `tests/coexistence.rs` do not reach this file: both are
 //! scoped to `<git-common-dir>/.spice`, and this path is under neither. What
-//! holds it is `tests/git_shadow.rs`, which pins the anchor, the filename and
-//! the header line against a linked worktree, where the per-worktree Git
-//! directory and the common one are different paths.
+//! holds it is `tests/git_shadow.rs`, which pins the anchor and filename against
+//! a linked worktree, where the per-worktree Git directory and the common one
+//! are different paths. It also pins the complete bytes for a simple branch --
+//! header, section order, tab indentation and trailing newline -- plus the
+//! reachable double-quote subsection escaping. Git refuses backslashes in a
+//! refname, so that first escape replacement is recorded at the writer as a
+//! defensive predecessor-compatible arm rather than covered by a forged branch.
 
 use std::error::Error;
 use std::fmt;
