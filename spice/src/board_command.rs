@@ -29,8 +29,9 @@ use crate::cli::Contract;
 // a *test* root would be a rename rather than a split, which is why
 // `wire/tests/` is left alone.
 //
-// What it weighed against conversion was that the formatters gate already
-// reaches `include!` targets with a second pass. That pass is the gate's alone:
+// What it weighed against conversion was that the formatters gate covers a
+// fragment regardless, by naming every path it selects on the formatter's own
+// command line. That holds, and it is the gate's alone: stock
 // `cargo fmt --all --check` stays blind, still open as GATE-1kKs5TnZ, and the
 // fragment count kept by hand in that arm's own doc was filed as drifted twice,
 // GATE-1kKs7gfb and GATE-1kKsGmbV. `mod` closes all three by construction

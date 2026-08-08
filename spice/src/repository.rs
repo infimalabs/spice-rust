@@ -411,6 +411,28 @@ impl Repository {
     /// loading beside it. One installed binary is shared by every worktree
     /// on purpose, and a caller-supplied start is what keeps the worktree
     /// it acts on unambiguous.
+    ///
+    /// Unambiguous is not current, and only the first of those is settled
+    /// here. The start fixes which worktree is acted on; nothing fixes which
+    /// build acts. [`crate::install::installed_binary`] resolves one file
+    /// under the common directory that every linked worktree shares, and
+    /// `INSTALL.md` requires it to hash equal to the installing lane's own
+    /// `target/debug/spice`, so the code running here is whichever lane
+    /// installed last. The predecessor bounds that same mismatch to one
+    /// subcommand family, re-execing only when `argv[:1] == ["dev"]`; one
+    /// shared binary is bounded to nothing and serves every verb.
+    ///
+    /// Its remedy still does not transfer. Exec-ing this lane's own
+    /// `target/debug/spice` would fix the build to this checkout, but only
+    /// as far as its last `cargo build`, trading a shared binary whose
+    /// contents were digest-checked at install for a private one that
+    /// silently lags its own source. That is not the correction to reach for.
+    ///
+    /// The hazard above is the state after the first install, not today's.
+    /// Today the worktrees on this machine share one common directory and it
+    /// holds no `.spice-install` at all, so no lane has installed, and
+    /// `core.hooksPath` still names the predecessor's scripts. Nothing
+    /// diverges yet; the divergence begins at the first install.
     pub fn discover(start: impl AsRef<Path>) -> Result<Self, ResolveError> {
         let requested = start.as_ref();
         let start = fs::canonicalize(requested)

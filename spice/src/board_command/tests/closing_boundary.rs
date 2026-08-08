@@ -111,7 +111,7 @@ fn proven_with_seeded_head(lane: CanonicalUuid) -> serde_json::Value {
     })
 }
 
-/// Pins the closing boundary on `TaskDone` at `progress.rs:270`.
+/// Pins the closing boundary on the `TaskDone` fact `append_done` writes.
 #[test]
 fn a_completed_task_records_an_explicit_proven_closing_boundary() {
     let (_root, bus, epoch, seats) = fixture("closing-boundary-done", 1);
@@ -135,7 +135,7 @@ fn a_completed_task_records_an_explicit_proven_closing_boundary() {
     );
 }
 
-/// Pins the closing boundary on `TaskReviewed` at `progress.rs:571`.
+/// Pins the closing boundary on the `TaskReviewed` fact `task_review` writes.
 ///
 /// The review is issued by a second lane, because a review routes to a peer,
 /// and the boundary recorded is the reviewing lane's own. That last property is
