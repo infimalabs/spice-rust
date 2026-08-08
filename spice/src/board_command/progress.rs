@@ -247,12 +247,7 @@ fn task_done(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(
-        bus,
-        command.actor().clone(),
-        projects,
-        allocation,
-    ) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -260,52 +255,28 @@ fn task_done(
         Ok(entry) => entry,
         Err(outcome) => return outcome,
     };
-    let (at, lane, transition) = match done_transition(
-        entry,
-        command,
-    ) {
+    let (at, lane, transition) = match done_transition(entry, command) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
     let source = match bus.source_boundary(&lane) {
         Ok(source) => source,
         Err(error) => {
-            return store_fault(
-                "task::boundary-unreadable",
-                &error.to_string(),
-            );
+            return store_fault("task::boundary-unreadable", &error.to_string());
         }
     };
     let origin = match task_origin(&done.task) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let git = match publish_task_boundary(
-        repository,
-        &snapshot,
-        command,
-        entry,
-    ) {
+    let git = match publish_task_boundary(repository, &snapshot, command, entry) {
         Ok(git) => git,
         Err(outcome) => return outcome,
     };
     let next = projected_done_next_action(&snapshot, entry, &transition, projects);
-    let mut write = JournalWrite::new(
-        command.actor().clone(),
-        origin,
-        at,
-        Producer::CommandDoor,
-    );
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
-    let answer = match append_done(
-        &mut write,
-        done,
-        entry,
-        &transition,
-        git,
-        source,
-        next,
-    ) {
+    let answer = match append_done(&mut write, done, entry, &transition, git, source, next) {
         Ok(answer) => answer,
         Err(outcome) => return outcome,
     };
@@ -314,10 +285,7 @@ fn task_done(
         command.epoch(),
         answer.clone(),
     ) {
-        return store_fault(
-            "task::done-receipt",
-            &error.to_string(),
-        );
+        return store_fault("task::done-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
 }
@@ -347,12 +315,7 @@ fn done_transition(
     command: &wire::AdmittedCommand,
 ) -> Result<(Instant, wire::CanonicalUuid, board::Transition), Outcome<CommandAnswer>> {
     let at = current_instant()?;
-    let active = board::Active::admit(
-        entry,
-        command.actor(),
-        at,
-    )
-    .map_err(|error| {
+    let active = board::Active::admit(entry, command.actor(), at).map_err(|error| {
         refusal(
             "claim::active-refused",
             Some(error.to_string()),
@@ -379,9 +342,7 @@ fn done_transition(
         .position(|phase| phase == &entry.workflow().phase)
         .expect("validated workflow contains its phase");
     let transition = match entry.workflow().flow.get(current + 1) {
-        Some(next) => {
-            board::Transition::advance(entry, &active, next.clone())
-        }
+        Some(next) => board::Transition::advance(entry, &active, next.clone()),
         None => board::Transition::complete(entry, &active, at),
     }
     .map_err(|error| {
@@ -413,9 +374,7 @@ fn append_done(
             },
             FactCause::Root,
         )
-        .map_err(|error| {
-            store_fault("task::done-build", &error.to_string())
-        })?;
+        .map_err(|error| store_fault("task::done-build", &error.to_string()))?;
     let workflow_fact = match transition.kind() {
         board::TransitionKind::Advance { to, .. } => write
             .fact(
@@ -425,30 +384,20 @@ fn append_done(
                 },
                 FactCause::Pending(completed),
             )
-            .map_err(|error| {
-                store_fault(
-                    "task::phase-build",
-                    &error.to_string(),
-                )
-            })?,
+            .map_err(|error| store_fault("task::phase-build", &error.to_string()))?,
         board::TransitionKind::Complete { .. } => completed,
     };
     let workflow = transition.next().clone();
-    write.workflow_head(
-        done.task.clone(),
-        workflow_fact,
-        move |_| workflow,
-    );
+    write.workflow_head(done.task.clone(), workflow_fact, move |_| workflow);
     let mut claim = entry
         .claim()
         .expect("Active proof requires a claim head")
         .clone();
     claim.disposition = ClaimDisposition::Freed;
-    write.claim_head(
-        done.task.clone(),
-        completed,
-        move |fact| ClaimHead { fact, ..claim },
-    );
+    write.claim_head(done.task.clone(), completed, move |fact| ClaimHead {
+        fact,
+        ..claim
+    });
     Ok(wire::intent::TaskAnswer {
         task: done.task.clone(),
         status: transition.next().status.clone(),
@@ -734,9 +683,10 @@ fn require_doc_barrier(
     snapshot: &ValidatedSnapshot,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let barrier = board_barrier(&snapshot.answer);
-    let preview = command.expected().iter().any(
-        |witness| matches!(witness, Witness::Preview { digest } if digest == &apply.preview),
-    );
+    let preview = command
+        .expected()
+        .iter()
+        .any(|witness| matches!(witness, Witness::Preview { digest } if digest == &apply.preview));
     let board = command.expected().iter().any(|witness| {
         matches!(
             witness,

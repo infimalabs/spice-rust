@@ -49,16 +49,17 @@ fn fixture_finding(gate: GateId, suffix: &str) -> ArmFinding {
 
 /// One current-shaped finding for a gate an external tool analyzes.
 ///
-/// The column is chosen per gate because these arms do not agree on having
-/// one, and one shared literal hid that. Each arm below carries the reason its
-/// own producer gives.
+/// The locus is chosen per gate because these arms do not agree on having one,
+/// and one shared literal hid that. Each arm below carries the reason its own
+/// producer gives.
 fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
-    let (path, column, detail) = match gate {
-        // The formatter records that a file is not formatted and carries the
-        // earliest differing region as a line, so its analysis reports no
-        // column at all and neither does this.
+    let (path, line, column, detail) = match gate {
+        // The formatter names the file and nothing inside it: the fix is to run
+        // it over the whole file, so its analysis reports neither a line nor a
+        // column and neither does this.
         GateId::Formatters => (
             format!("src/{suffix}.rs"),
+            None,
             None,
             FindingDetail::Formatting {
                 formatter: "rustfmt".to_owned(),
@@ -69,6 +70,7 @@ fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
         // reaching sources outside `app`, which the path below carries.
         GateId::RustTypecheck => (
             format!("xtask/src/{suffix}.rs"),
+            Some(7),
             Some(3),
             FindingDetail::RustTypeOutput {
                 code: "E0425".to_owned(),
@@ -80,6 +82,7 @@ fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
         // is the shape it always produces.
         GateId::CanvasWebTypecheck => (
             format!("app/src/{suffix}.rs"),
+            Some(7),
             Some(3),
             FindingDetail::CanvasWebOutput {
                 code: "E0308".to_owned(),
@@ -92,6 +95,7 @@ fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
         // literal stands in for it until the analysis that parses one lands.
         GateId::PythonTypecheck => (
             format!("python/{suffix}.py"),
+            Some(7),
             Some(3),
             FindingDetail::PythonType {
                 code: "reportAssignmentType".to_owned(),
@@ -102,7 +106,7 @@ fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
     };
     ArmFinding {
         path: Some(path),
-        line: Some(7),
+        line,
         column,
         detail,
     }
@@ -373,13 +377,10 @@ fn external_tool_declarations_are_exact() {
             .iter()
             .map(|tool| (tool.name, tool.exact_version))
             .collect::<Vec<_>>(),
-        [
-            ("cargo", "cargo 1.97.1 (c980f4866 2026-06-30)"),
-            (
-                "rustfmt",
-                "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)"
-            ),
-        ]
+        // The arm names its paths to the formatter itself, so Cargo is not one
+        // of its tools: declaring it would claim a version contract over a
+        // program this arm never runs.
+        [("rustfmt", "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)")]
     );
     assert_eq!(
         declaration(GateId::CanvasWebTypecheck)
@@ -489,7 +490,10 @@ fn packaged_environment_jurisdiction_matches_release_0_31_0() {
             "CLAUDE_CODE_SESSION_ID", // env-policy: allow
         ]
     );
-    assert_eq!(PACKAGED_ENV_PROFILE.self_path_suffix, "studies/envpolicy.py");
+    assert_eq!(
+        PACKAGED_ENV_PROFILE.self_path_suffix,
+        "studies/envpolicy.py"
+    );
     const { assert!(PACKAGED_ENV_PROFILE.access_gate) };
     assert!(PACKAGED_ENV_PROFILE.declared_names.is_empty());
     assert_eq!(PACKAGED_ENV_PROFILE.baseline, None);
@@ -595,7 +599,12 @@ fn pass_and_finding_fixtures_cover_every_arm_and_are_deterministic() {
                 measurement.timing.is_some(),
                 measurement.gate_id == GateId::RustTypecheck
             );
-            assert!(measurement.findings.windows(2).all(|pair| pair[0] < pair[1]));
+            assert!(
+                measurement
+                    .findings
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1])
+            );
         }
     }
 }
@@ -653,7 +662,10 @@ fn external_tool_nonpass_fixtures_cover_discovery_and_version_independently() {
     ];
     for gate in external {
         let mut unavailable = fixture_observation(gate, ArmOutcome::ToolUnavailable);
-        let first = unavailable.tools.first_mut().expect("declared external tool");
+        let first = unavailable
+            .tools
+            .first_mut()
+            .expect("declared external tool");
         let ToolEvidence::Identified {
             name,
             requested_program,
@@ -672,10 +684,7 @@ fn external_tool_nonpass_fixtures_cover_discovery_and_version_independently() {
             .iter()
             .find(|measurement| measurement.gate_id == gate)
             .expect("unavailable fixture");
-        assert_eq!(
-            unavailable_measurement.outcome,
-            ArmOutcome::ToolUnavailable
-        );
+        assert_eq!(unavailable_measurement.outcome, ArmOutcome::ToolUnavailable);
         assert!(unavailable_measurement.outcome.is_failure());
         assert!(
             unavailable_measurement
@@ -707,9 +716,24 @@ fn external_tool_nonpass_fixtures_cover_discovery_and_version_independently() {
     }
 }
 
+/// One arm reporting an absent tool beside a drifted one is refused.
+///
+/// Mixed drift needs an arm declaring two tools before it can be expressed at
+/// all, so the arms are read out of the declarations rather than named here: an
+/// arm that drops to a single tool would otherwise leave this indexing past the
+/// end, or worse, quietly measuring nothing.
 #[test]
 fn external_tool_unavailability_refuses_mixed_version_drift() {
-    for gate in [GateId::Formatters, GateId::CanvasWebTypecheck] {
+    let paired: Vec<GateId> = TOOLCHAIN_ARMS
+        .iter()
+        .filter(|arm| arm.tools.len() > 1)
+        .map(|arm| arm.id)
+        .collect();
+    assert!(
+        !paired.is_empty(),
+        "no toolchain arm declares two tools, so mixed drift is unreachable"
+    );
+    for gate in paired {
         let mut mixed = fixture_observation(gate, ArmOutcome::ToolUnavailable);
         let ToolEvidence::Identified {
             name,
@@ -910,8 +934,7 @@ fn structured_finding_identity_refuses_missing_loci_and_inconsistent_detail() {
     ));
 
     let mut empty_ledger = fixture_observation(GateId::EnvNameLedger, ArmOutcome::Findings);
-    let FindingDetail::EnvironmentLedger { references, .. } =
-        &mut empty_ledger.findings[0].detail
+    let FindingDetail::EnvironmentLedger { references, .. } = &mut empty_ledger.findings[0].detail
     else {
         panic!("ledger fixture has ledger detail");
     };
@@ -925,8 +948,7 @@ fn structured_finding_identity_refuses_missing_loci_and_inconsistent_detail() {
     ));
 
     let mut bad_javascript = fixture_observation(GateId::JavascriptUnused, ArmOutcome::Findings);
-    let FindingDetail::JavascriptUnused { reason, .. } =
-        &mut bad_javascript.findings[0].detail
+    let FindingDetail::JavascriptUnused { reason, .. } = &mut bad_javascript.findings[0].detail
     else {
         panic!("JavaScript fixture has JavaScript detail");
     };
@@ -1000,9 +1022,7 @@ fn predecessor_fixture_matrix_compares_scanners_and_refuses_changed_executors() 
             let comparison = compare_predecessor(&predecessor, current)
                 .expect("fixture predecessor comparison is well formed");
             match current.gate_id {
-                GateId::Formatters
-                | GateId::CanvasWebTypecheck
-                | GateId::PythonTypecheck => {
+                GateId::Formatters | GateId::CanvasWebTypecheck | GateId::PythonTypecheck => {
                     let PredecessorComparison::Refused(refusal) = comparison else {
                         panic!("changed executor must carry a refusal");
                     };
@@ -1264,12 +1284,14 @@ fn packaged_environment_evidence_covers_csharp_typescript_and_shell() {
             sources
                 .iter()
                 .enumerate()
-                .map(|(index, (path, source))| PredecessorFinding::EnvironmentAccess {
-                    path: (*path).to_owned(),
-                    line: (index + 1) as u32,
-                    name: "SPICE_HOOKS".to_owned(), // env-policy: allow
-                    source: (*source).to_owned(),
-                })
+                .map(
+                    |(index, (path, source))| PredecessorFinding::EnvironmentAccess {
+                        path: (*path).to_owned(),
+                        line: (index + 1) as u32,
+                        name: "SPICE_HOOKS".to_owned(), // env-policy: allow
+                        source: (*source).to_owned(),
+                    },
+                )
                 .collect(),
         ),
     };

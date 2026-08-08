@@ -464,11 +464,7 @@ impl PendingState {
                 "repair the Git-common state directory and retry the accepted run",
             )
         })?;
-        verify_destination_unchanged(
-            &self.destination,
-            &self.before,
-            self.initially_absent,
-        )?;
+        verify_destination_unchanged(&self.destination, &self.before, self.initially_absent)?;
         if let Some(bytes) = bytes {
             atomic::Destination::new(&self.destination)
                 .map_err(|error| {

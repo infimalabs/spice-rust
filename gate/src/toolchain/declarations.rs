@@ -167,22 +167,13 @@ pub const PACKAGED_JAVASCRIPT_EXEMPTIONS: &[(&str, &str, &str)] = &[(
 )];
 /// Release-packaged JavaScript test root used for test-only classification.
 pub const PACKAGED_TEST_PATHS: &[&str] = &["tests"];
-const FORMATTER_TOOLS: &[ToolRequirement] = &[
-    ToolRequirement {
-        name: "cargo",
-        program: "cargo",
-        version_argv: &["--version"],
-        exact_version: "cargo 1.97.1 (c980f4866 2026-06-30)",
-        role: "workspace formatter driver",
-    },
-    ToolRequirement {
-        name: "rustfmt",
-        program: "rustfmt",
-        version_argv: &["--version"],
-        exact_version: "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)",
-        role: "Rust formatter",
-    },
-];
+const FORMATTER_TOOLS: &[ToolRequirement] = &[ToolRequirement {
+    name: "rustfmt",
+    program: "rustfmt",
+    version_argv: &["--version"],
+    exact_version: "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)",
+    role: "Rust formatter",
+}];
 const RUST_TYPECHECK_TOOLS: &[ToolRequirement] = &[ToolRequirement {
     name: "cargo",
     program: "cargo",
@@ -231,7 +222,9 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
             field: "toolchain.channel + toolchain.components[rustfmt]",
         },
         tools: FORMATTER_TOOLS,
-        analysis: &["cargo fmt --all -- --check"],
+        analysis: &[
+            "rustfmt --edition <workspace edition> --check --files-with-diff <every **/*.rs>",
+        ],
     },
     ToolchainDeclaration {
         id: GateId::LocalPaths,

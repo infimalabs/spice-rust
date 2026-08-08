@@ -356,7 +356,7 @@ fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
         formatting,
         &[ArmFinding {
             path: Some(SOURCE.to_owned()),
-            line: Some(1),
+            line: None,
             column: None,
             detail: FindingDetail::Formatting {
                 formatter: "rustfmt".to_owned(),

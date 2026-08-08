@@ -165,24 +165,29 @@ fn client_reclaim(
         let (task, heads) = match matches.get_one::<String>("HANDLE") {
             Some(written) => {
                 let task = written.parse::<TaskHandle>().map_err(|error| {
-                    refusal("task::handle-invalid", Some(written.clone()), &error.to_string())
+                    refusal(
+                        "task::handle-invalid",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    )
                 })?;
                 let heads = task_heads(&board, &task)?;
                 (task, heads)
             }
             None => sole_active(&board)?,
         };
-        let seconds = matches
-            .get_one::<String>("lease-seconds")
-            .map_or(Ok(60 * 60), |written| {
-                written.parse::<u64>().map_err(|error| {
-                    refusal(
-                        "claim::lease-seconds-invalid",
-                        Some(written.clone()),
-                        &error.to_string(),
-                    )
-                })
-            })?;
+        let seconds =
+            matches
+                .get_one::<String>("lease-seconds")
+                .map_or(Ok(60 * 60), |written| {
+                    written.parse::<u64>().map_err(|error| {
+                        refusal(
+                            "claim::lease-seconds-invalid",
+                            Some(written.clone()),
+                            &error.to_string(),
+                        )
+                    })
+                })?;
         if seconds == 0 {
             return Err(refusal(
                 "claim::lease-seconds-zero",
@@ -321,8 +326,8 @@ fn client_capture(
                 .get_one::<String>("title")
                 .cloned()
                 .unwrap_or(candidate.subject);
-            let add_contract = crate::cli::contract(&["task", "add"])
-                .expect("task add contract is registered");
+            let add_contract =
+                crate::cli::contract(&["task", "add"]).expect("task add contract is registered");
             match submit_add(
                 repository,
                 add_contract,
@@ -986,11 +991,7 @@ fn progress_witnesses(
 }
 
 fn mint_handle(project: Option<&str>, title: &str) -> TaskHandle {
-    mint_handle_at(
-        project,
-        title,
-        jiff::Timestamp::now().as_millisecond(),
-    )
+    mint_handle_at(project, title, jiff::Timestamp::now().as_millisecond())
 }
 
 fn mint_handle_at(project: Option<&str>, title: &str, epoch_millis: i64) -> TaskHandle {
@@ -1080,9 +1081,7 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::ClaimWin(win) => {
             claim_win(bus, command, win, repository, projects, allocation)
         }
-        wire::intent::Intent::ClaimRenew(renew)
-            if command.kind() == CommandKind::ClaimRenew =>
-        {
+        wire::intent::Intent::ClaimRenew(renew) if command.kind() == CommandKind::ClaimRenew => {
             claim_reclaim(bus, command, renew, projects, allocation)
         }
         wire::intent::Intent::TaskDone(done) => {

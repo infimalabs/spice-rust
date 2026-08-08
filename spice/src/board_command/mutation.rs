@@ -39,7 +39,15 @@ fn task_add(
             );
         }
     };
-    create_task(bus, command, add, project, add.clone(), projects, allocation)
+    create_task(
+        bus,
+        command,
+        add,
+        project,
+        add.clone(),
+        projects,
+        allocation,
+    )
 }
 
 fn task_oops_add(
@@ -204,9 +212,7 @@ fn prepare_task(
         deferral: None,
         completion: None,
     };
-    if let Err(error) =
-        Entry::new(statement.clone(), workflow.clone(), None, None, projects)
-    {
+    if let Err(error) = Entry::new(statement.clone(), workflow.clone(), None, None, projects) {
         return Err(refusal(
             "task::add-refused",
             Some(error.to_string()),
@@ -895,12 +901,7 @@ fn claim_plan(
     allocation: &board::NextConfig,
 ) -> Result<ClaimPlan, Outcome<CommandAnswer>> {
     let possession = possession_rule(win)?;
-    let snapshot = validated_snapshot(
-        bus,
-        command.actor().clone(),
-        projects,
-        allocation,
-    )?;
+    let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
     let selected = claim_selection(&snapshot, command, possession)?.clone();
     let grant = claim_grant(bus, command, repository, &snapshot, possession)?;
     let next = projected_claim_next_action(
@@ -949,12 +950,7 @@ fn claim_grant(
 ) -> Result<ClaimGrant, Outcome<CommandAnswer>> {
     let (lane, occupant) = claim_residency(command)?;
     let (at, expiry, maximum) = claim_deadlines()?;
-    let git = claim_git_boundary(
-        repository,
-        snapshot,
-        command,
-        possession.captures(),
-    )?;
+    let git = claim_git_boundary(repository, snapshot, command, possession.captures())?;
     let source = claim_source_boundary(bus, &lane)?;
     Ok(ClaimGrant {
         lane,
@@ -1044,10 +1040,7 @@ fn commit_claim(
         command.epoch(),
         answer.clone(),
     ) {
-        return store_fault(
-            "claim::win-receipt",
-            &error.to_string(),
-        );
+        return store_fault("claim::win-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Claim(answer))
 }
@@ -1114,9 +1107,7 @@ impl Possession {
     }
 }
 
-fn possession_rule(
-    win: &ClaimWin,
-) -> Result<Possession, Outcome<CommandAnswer>> {
+fn possession_rule(win: &ClaimWin) -> Result<Possession, Outcome<CommandAnswer>> {
     match win.rule.as_str() {
         "next" => Ok(Possession::Next),
         "capture" => Ok(Possession::Capture),
@@ -1135,10 +1126,8 @@ fn claim_selection<'a>(
     possession: Possession,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
     if !possession.captures() {
-        let subscription = allocation_subscription(
-            &snapshot.answer.residency.body,
-            command.actor(),
-        )?;
+        let subscription =
+            allocation_subscription(&snapshot.answer.residency.body, command.actor())?;
         let selected = board::select(
             &snapshot.entries,
             command.actor(),
@@ -1150,10 +1139,7 @@ fn claim_selection<'a>(
             refusal(
                 "board::allocator-empty",
                 None,
-                concat!(
-                    "add or wake eligible work before ",
-                    "requesting task next",
-                ),
+                concat!("add or wake eligible work before ", "requesting task next",),
             )
         })?;
         let witnessed = command
@@ -1172,7 +1158,10 @@ fn claim_selection<'a>(
         if witnessed != &selected.statement().handle {
             return Err(refusal(
                 "board::witness-moved",
-                Some(format!("witnessed {witnessed}; selected {}", selected.statement().handle)),
+                Some(format!(
+                    "witnessed {witnessed}; selected {}",
+                    selected.statement().handle
+                )),
                 "read the current board subscription and retry task next",
             ));
         }
@@ -1204,20 +1193,12 @@ fn claim_selection<'a>(
         })?;
     let (admitted, reason, remedy) = match possession {
         Possession::Steal => (
-            board::stealable_entry(
-                &snapshot.entries,
-                entry,
-                command.actor(),
-            ),
+            board::stealable_entry(&snapshot.entries, entry, command.actor()),
             "claim::steal-ineligible",
             "steal only a ready, pending task",
         ),
         _ => (
-            board::eligible_entry(
-                &snapshot.entries,
-                entry,
-                command.actor(),
-            ),
+            board::eligible_entry(&snapshot.entries, entry, command.actor()),
             "claim::capture-ineligible",
             "capture only an unclaimed, ready, pending task",
         ),
@@ -1231,10 +1212,7 @@ fn claim_selection<'a>(
 
 fn claim_residency(
     command: &wire::AdmittedCommand,
-) -> Result<
-    (wire::CanonicalUuid, wire::CanonicalUuid),
-    Outcome<CommandAnswer>,
-> {
+) -> Result<(wire::CanonicalUuid, wire::CanonicalUuid), Outcome<CommandAnswer>> {
     let seat = command
         .expected()
         .iter()
@@ -1243,9 +1221,7 @@ fn claim_residency(
                 lane,
                 occupant,
                 epoch,
-            } if *epoch == command.epoch() => {
-                Some((*lane, *occupant))
-            }
+            } if *epoch == command.epoch() => Some((*lane, *occupant)),
             _ => None,
         })
         .ok_or_else(|| {
@@ -1269,8 +1245,7 @@ fn claim_residency(
     Ok(seat)
 }
 
-fn claim_deadlines(
-) -> Result<(Instant, Instant, Instant), Outcome<CommandAnswer>> {
+fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswer>> {
     let at = current_instant()?;
     let expiry = instant_after(at, 15 * 60)?;
     let maximum = instant_after(at, 60 * 60)?;
@@ -1288,8 +1263,7 @@ fn claim_git_boundary(
     };
     let lane = task_repository(snapshot, command, resident)?;
     let result = if capture {
-        spice::task_git::capture(&lane)
-            .map(|capture| capture.boundary)
+        spice::task_git::capture(&lane).map(|capture| capture.boundary)
     } else {
         spice::task_git::prepare_claim(&lane)
     };
@@ -1306,9 +1280,8 @@ fn claim_source_boundary(
     bus: &Bus,
     lane: &wire::CanonicalUuid,
 ) -> Result<body::SourceBoundary, Outcome<CommandAnswer>> {
-    bus.source_boundary(lane).map_err(|error| {
-        store_fault("claim::boundary-unreadable", &error.to_string())
-    })
+    bus.source_boundary(lane)
+        .map_err(|error| store_fault("claim::boundary-unreadable", &error.to_string()))
 }
 
 fn guard_claim(

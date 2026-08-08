@@ -144,7 +144,7 @@ impl Analysis {
 pub(super) fn before_tools(declaration: ToolchainDeclaration, root: &Path) -> Option<Analysis> {
     match declaration.id {
         GateId::Formatters => match rust_sources(root) {
-            Ok(0) => Some(Analysis::not_applicable(declaration)),
+            Ok(sources) if sources.is_empty() => Some(Analysis::not_applicable(declaration)),
             Ok(_) => None,
             Err(reason) => Some(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
         },
@@ -275,8 +275,15 @@ const TRUNK_BUILD_ARGUMENTS: &[&str] = &[
     "--filehash=false",
 ];
 
-/// The line prefix `cargo fmt --check` writes before each differing region.
-const DIFF_PREFIX: &str = "Diff in ";
+/// The flag that makes the formatter name differing files instead of diffing.
+///
+/// A diff carries every differing region, so its volume grows with how far the
+/// tree has drifted while the capture reading it stays bounded. A tree drifted
+/// far enough truncates that capture, and the arm then refuses that it could
+/// not read its own output rather than naming one file, which loses the report
+/// exactly when there is most to report. A list costs one line per file, so the
+/// worst tree is as reportable as the best one.
+const FILES_WITH_DIFF: &str = "--files-with-diff";
 
 /// Whether one selected-tree path sits under an excluded build directory.
 fn built(path: &str) -> bool {
@@ -596,11 +603,55 @@ fn env_sources(root: &Path) -> Result<Vec<String>, String> {
 
 include!("analyze/javascript.rs");
 
+/// The formatter invocation for one selected tree, or the refusal to build it.
+///
+/// Every selected path is named on the command line rather than left to a
+/// crate-root walk. `cargo fmt --all` reaches a file only through the `mod`
+/// declarations that lead to it, so a file composed in with `include!` is
+/// counted as selected, measured by every other arm, and never handed to the
+/// formatter at all. Naming the paths is what makes the arm's own count and its
+/// coverage the same set.
+fn formatter_invocation(
+    root: &Path,
+    sources: &[String],
+    programs: &BTreeMap<&str, &str>,
+) -> Result<(Argv, Environment), Analysis> {
+    let Some(program) = programs.get(FORMATTER) else {
+        return Err(Analysis::terminal(
+            ArmOutcome::ToolUnavailable,
+            format!("formatters declares no {FORMATTER} to invoke the check through"),
+        ));
+    };
+    let edition = match workspace_edition(root) {
+        Ok(edition) => edition,
+        Err(reason) => return Err(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
+    };
+    let arguments: Vec<String> = [
+        "--edition".to_owned(),
+        edition,
+        "--check".to_owned(),
+        FILES_WITH_DIFF.to_owned(),
+    ]
+    .into_iter()
+    .chain(sources.iter().cloned())
+    .collect();
+    let Ok(argv) = Argv::new(program, arguments.iter().map(OsStr::new)) else {
+        return Err(Analysis::terminal(
+            ArmOutcome::ParseFailure,
+            format!("{FORMATTER} argument vector was refused"),
+        ));
+    };
+    match tool_environment("formatters", &[*program]) {
+        Ok(environment) => Ok((argv, environment)),
+        Err(reason) => Err(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
+    }
+}
+
 /// Run the declared formatter check over the complete selected tree.
 ///
-/// One finding per differing file, carrying the first region the formatter
-/// reported, because [`FindingDetail::Formatting`] records that the file is not
-/// canonical and no single region is more the cause than any other.
+/// One finding per differing file and no locus within it, because
+/// [`FindingDetail::Formatting`] records that the file is not canonical and no
+/// single region is more the cause than any other.
 pub(super) fn formatters(
     declaration: ToolchainDeclaration,
     root: &Path,
@@ -611,26 +662,12 @@ pub(super) fn formatters(
         Ok(sources) => sources,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    if sources == 0 {
+    if sources.is_empty() {
         return Analysis::not_applicable(declaration);
     }
-    let Some(program) = programs.get(CARGO) else {
-        return Analysis::terminal(
-            ArmOutcome::ToolUnavailable,
-            format!("formatters declares no {CARGO} to invoke the check through"),
-        );
-    };
-
-    let arguments = ["fmt", "--all", "--", "--check"];
-    let Ok(argv) = Argv::new(program, arguments.iter().map(OsStr::new)) else {
-        return Analysis::terminal(
-            ArmOutcome::ParseFailure,
-            format!("{CARGO} argument vector was refused"),
-        );
-    };
-    let environment = match tool_environment("formatters", &[*program]) {
-        Ok(environment) => environment,
-        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    let (argv, environment) = match formatter_invocation(root, &sources, programs) {
+        Ok(invocation) => invocation,
+        Err(analysis) => return analysis,
     };
     let mut spec = bounds.spec(argv, root);
     spec.environment = environment;
@@ -639,7 +676,7 @@ pub(super) fn formatters(
         Err(error) => {
             return Analysis::terminal(
                 ArmOutcome::ParseFailure,
-                format!("{CARGO} fmt did not start: {error}"),
+                format!("{FORMATTER} did not start: {error}"),
             );
         }
     };
@@ -648,7 +685,7 @@ pub(super) fn formatters(
         Err(error) => {
             return Analysis::terminal(
                 ArmOutcome::ParseFailure,
-                format!("{CARGO} fmt could not be waited on: {error}"),
+                format!("{FORMATTER} could not be waited on: {error}"),
             );
         }
     };
@@ -657,26 +694,26 @@ pub(super) fn formatters(
         Completion::TimedOut(_) => {
             return Analysis::terminal(
                 ArmOutcome::Timeout,
-                format!("{CARGO} fmt outlived the bounds it was given"),
+                format!("{FORMATTER} outlived the bounds it was given"),
             );
         }
         Completion::Cancelled(_) => {
             return Analysis::terminal(
                 ArmOutcome::ParseFailure,
-                format!("{CARGO} fmt was cancelled before it reported"),
+                format!("{FORMATTER} was cancelled before it reported"),
             );
         }
     };
     let Some(stdout) = outcome.stdout() else {
         return Analysis::terminal(
             ArmOutcome::ParseFailure,
-            format!("{CARGO} fmt captured no stdout to read"),
+            format!("{FORMATTER} captured no stdout to read"),
         );
     };
     if stdout.truncated() || !stdout.complete() {
         return Analysis::terminal(
             ArmOutcome::ParseFailure,
-            format!("{CARGO} fmt output was truncated before it could be read"),
+            format!("{FORMATTER} output was truncated before it could be read"),
         );
     }
 
@@ -686,15 +723,15 @@ pub(super) fn formatters(
         let Some(code) = status.code() else {
             return Analysis::terminal(
                 ArmOutcome::ParseFailure,
-                format!("{CARGO} fmt was signalled without naming a differing file"),
+                format!("{FORMATTER} was signalled without naming a differing file"),
             );
         };
         return Analysis::refused(
-            format!("{CARGO} fmt refused with {code} and named no differing file"),
+            format!("{FORMATTER} refused with {code} and named no differing file"),
             code,
         );
     }
-    Analysis::scanned(declaration.id, sources, findings)
+    Analysis::scanned(declaration.id, sources.len(), findings)
 }
 
 /// Run the declared canvas checks in order and stop at the first non-clean one.
@@ -975,34 +1012,21 @@ fn canvas_locus(root: &Path, cwd: &Path, location: &str) -> Option<(String, u32,
     super::valid_relative_path(&path).then_some((path, line, column))
 }
 
-/// One finding per file `cargo fmt --check` reported a differing region in.
+/// One finding per file the formatter named as differing from canonical form.
+///
+/// The file is the whole locus a formatting refusal has: the fix is to run the
+/// formatter over it, and no region within it is more the cause than another.
 fn differing_files(root: &Path, printed: &str) -> Vec<ArmFinding> {
     let roots = reported_roots(root);
-    let mut first: BTreeMap<String, u32> = BTreeMap::new();
-    for line in printed.lines() {
-        let Some(rest) = line.strip_prefix(DIFF_PREFIX) else {
-            continue;
-        };
-        let located = rest.trim_end_matches(':');
-        let Some((path, number)) = located.rsplit_once(':') else {
-            continue;
-        };
-        let Ok(number) = number.parse::<u32>() else {
-            continue;
-        };
-        let Some(relative) = relative_to(&roots, path) else {
-            continue;
-        };
-        first
-            .entry(relative)
-            .and_modify(|earliest| *earliest = (*earliest).min(number.max(1)))
-            .or_insert_with(|| number.max(1));
-    }
-    first
+    let named: BTreeSet<String> = printed
+        .lines()
+        .filter_map(|line| relative_to(&roots, line.trim_end()))
+        .collect();
+    named
         .into_iter()
-        .map(|(path, line)| ArmFinding {
+        .map(|path| ArmFinding {
             path: Some(path),
-            line: Some(line),
+            line: None,
             column: None,
             detail: FindingDetail::Formatting {
                 formatter: FORMATTER.to_owned(),
@@ -1038,14 +1062,61 @@ fn relative_to(roots: &[PathBuf], reported: &str) -> Option<String> {
 }
 
 /// Count the selected Rust sources the formatter check applies to.
-fn rust_sources(root: &Path) -> Result<usize, String> {
+fn rust_sources(root: &Path) -> Result<Vec<String>, String> {
     let walked = Jurisdiction::walk(root, &Ignore::default())
         .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
     Ok(walked
         .measurable()
         .filter(|entry| !built(entry.path()))
         .filter(|entry| extension(entry.path()).is_some_and(|found| found == RUST_EXTENSION))
-        .count())
+        .map(|entry| entry.path().to_owned())
+        .collect())
+}
+
+/// The edition the root manifest pins, which the formatter must be told.
+///
+/// `cargo fmt` reads the edition out of the manifest before it invokes the
+/// formatter. Handing the formatter its paths directly skips that read, and the
+/// formatter's own default is the 2015 edition, so an unread edition would
+/// measure every selected file against a grammar this workspace does not use.
+/// Refusing is the alternative to guessing one.
+///
+/// Both spellings are read because a root manifest carries the edition in
+/// either: a workspace declares one its members inherit, and a single-package
+/// repository declares its own. The workspace default is preferred because it
+/// is the one that governs more than the root package.
+///
+/// What this cannot see is a member overriding the inherited edition, which
+/// would be measured against the root's grammar instead of its own. This
+/// repository has no such member and its own arm would report the drift, so the
+/// bound is stated rather than guarded.
+///
+/// The refusal is flattened onto one line because a TOML error prints a
+/// multiline snippet and the executor refuses to publish a multiline reason at
+/// all, so an unflattened diagnosis would be replaced by the refusal to carry
+/// it rather than reaching the reader.
+fn workspace_edition(root: &Path) -> Result<String, String> {
+    let manifest = root.join("Cargo.toml");
+    let text = fs::read_to_string(&manifest)
+        .map_err(|error| format!("the root manifest could not be read: {error}"))?;
+    let document: toml::Value = toml::from_str(&text).map_err(|error| {
+        format!(
+            "the root manifest is not valid TOML: {}",
+            error.to_string().replace('\n', " ")
+        )
+    })?;
+    let workspace = document
+        .get("workspace")
+        .and_then(|workspace| workspace.get("package"));
+    [workspace, document.get("package")]
+        .into_iter()
+        .flatten()
+        .find_map(|table| table.get("edition").and_then(toml::Value::as_str))
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            "the root manifest declares neither workspace.package.edition nor package.edition"
+                .to_owned()
+        })
 }
 
 /// Whether the selected tree satisfies the Python declaration's applicability.

@@ -4,7 +4,9 @@ mod tests {
 
     /// The one-based character column one needle occupies in one fixture line.
     fn column_at(line: &str, needle: &str) -> u32 {
-        let start = line.find(needle).expect("the fixture line names the needle");
+        let start = line
+            .find(needle)
+            .expect("the fixture line names the needle");
         u32::try_from(line[..start].chars().count() + 1).expect("a fixture column fits")
     }
 
@@ -15,7 +17,10 @@ mod tests {
     /// module rather than by dropping the pattern. This forces every table.
     #[test]
     fn every_packaged_spelling_compiles_in_this_engine() {
-        assert!(!watchlist().is_empty(), "the packaged watchlist is not empty");
+        assert!(
+            !watchlist().is_empty(),
+            "the packaged watchlist is not empty"
+        );
         assert!(
             declared_names().is_empty(),
             "release 0.31.0 declares no environment names"
@@ -25,7 +30,10 @@ mod tests {
         assert_eq!(context().as_str(), CONTEXT_TEMPLATE);
         assert_eq!(destructured().as_str(), DESTRUCTURED_TEMPLATE);
         for (family, patterns) in access_gate() {
-            assert!(!patterns.is_empty(), "{family} declares an idiom to gate on");
+            assert!(
+                !patterns.is_empty(),
+                "{family} declares an idiom to gate on"
+            );
         }
         for (family, patterns) in access_names() {
             assert!(!patterns.is_empty(), "{family} reads a name off its access");
@@ -242,7 +250,10 @@ mod tests {
         let contextual = references(None, "environ.update({\"SPICE_HOOKS\": \"1\"})");
         assert!(contextual.contains("SPICE_HOOKS"));
         assert_eq!(
-            references(Some("javascript"), "const { ONE, TWO: two, ...rest } = process.env;"),
+            references(
+                Some("javascript"),
+                "const { ONE, TWO: two, ...rest } = process.env;"
+            ),
             BTreeSet::from(["ONE".to_owned(), "TWO".to_owned()])
         );
         assert!(
@@ -258,9 +269,8 @@ mod tests {
         // constructs them so the repository ledger does not consume its fixture.
         const FIXTURE: &str = concat!("SPICE", "_123"); // env-policy: not-an-env SPICE_123
         const ACCESS: &str = concat!("SPICE", "_REAL"); // env-policy: not-an-env SPICE_REAL
-        let fixture = format!(
-            "let invalid = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {FIXTURE}"
-        );
+        let fixture =
+            format!("let invalid = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {FIXTURE}");
         assert!(references(None, &fixture).is_empty());
         assert!(
             references(None, &format!("let invalid = \"{FIXTURE}\";")).contains(FIXTURE),
@@ -269,9 +279,7 @@ mod tests {
         assert!(
             references(
                 Some("python"),
-                &format!(
-                    "os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}"
-                )
+                &format!("os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}")
             )
             .contains(ACCESS),
             "the marker cannot suppress a name grounded by an access idiom"
@@ -294,9 +302,7 @@ mod tests {
         const OTHER: &str = concat!("SPICE", "_OTHER"); // env-policy: not-an-env SPICE_OTHER
         for line in [
             format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER}"),
-            format!(
-                "let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {OTHER}"
-            ),
+            format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {OTHER}"),
         ] {
             assert!(references(None, &line).contains(FIXTURE));
         }
@@ -316,11 +322,8 @@ mod tests {
     #[test]
     fn a_wrapped_rust_concat_is_reassembled_and_exactly_exempted() {
         const PREFIX: &str = "SPICE";
-        const SUFFIX: &str = "_SPLIT_LANE";
-        const NAME: &str = concat!(
-            "SPICE",
-            "_SPLIT_LANE",
-        ); // env-policy: not-an-env SPICE_SPLIT_LANE
+        const SUFFIX: &str = "_SPLIT";
+        const NAME: &str = concat!("SPICE", "_SPLIT"); // env-policy: not-an-env SPICE_SPLIT
         let source = format!(
             concat!(
                 "let value = std::env::var(concat!(\n",

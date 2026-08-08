@@ -12,11 +12,8 @@ fn materialize_and_update(
             target: target.to_owned(),
         },
     )?;
-    let materialized = run(
-        root,
-        &["read-tree", "--reset", "-u", target],
-    )
-    .map_err(|error| restore_move_failure(root, error))?;
+    let materialized = run(root, &["read-tree", "--reset", "-u", target])
+        .map_err(|error| restore_move_failure(root, error))?;
     if !materialized.success() {
         let detail = materialized.detail(action);
         recover_pending(root)?;
@@ -28,25 +25,17 @@ fn materialize_and_update(
         "resolve HEAD ref",
     )
     .map_err(|error| restore_move_failure(root, error))?;
-    let updated = run(
-        root,
-        &["update-ref", &reference, target, expected],
-    )
-    .map_err(|error| restore_move_failure(root, error))?;
-    let current = required_read(
-        root,
-        &["rev-parse", "HEAD"],
-        "read updated HEAD",
-    )
-    .map_err(|error| restore_move_failure(root, error))?;
+    let updated = run(root, &["update-ref", &reference, target, expected])
+        .map_err(|error| restore_move_failure(root, error))?;
+    let current = required_read(root, &["rev-parse", "HEAD"], "read updated HEAD")
+        .map_err(|error| restore_move_failure(root, error))?;
     if updated.success() || current == target {
         remove_marker(&marker)?;
         return Ok(());
     }
     let detail = updated.detail(action);
     recover_pending(root)?;
-    let combined = format!("{}\n{}", updated.stdout, updated.stderr)
-        .to_ascii_lowercase();
+    let combined = format!("{}\n{}", updated.stdout, updated.stderr).to_ascii_lowercase();
     let reason = if combined.contains("cannot lock ref")
         && combined.contains(" is at ")
         && combined.contains(" but expected ")
@@ -90,14 +79,7 @@ fn materialize_conflict(
             previous,
         },
     )?;
-    let result = install_conflict(
-        root,
-        merged_tree,
-        records,
-        agent,
-        upstream,
-        message,
-    );
+    let result = install_conflict(root, merged_tree, records, agent, upstream, message);
     if let Err(error) = result {
         recover_pending(root)?;
         return Err(error);
@@ -117,8 +99,7 @@ fn install_conflict(
         .iter()
         .map(|record| parse_conflict_record(record))
         .collect::<Result<Vec<_>, _>>()?;
-    let materialized =
-        run(root, &["read-tree", "--reset", "-u", merged_tree])?;
+    let materialized = run(root, &["read-tree", "--reset", "-u", merged_tree])?;
     if !materialized.success() {
         return Err(Error::fault(
             "git::conflict-materialize-failed",
@@ -130,16 +111,11 @@ fn install_conflict(
         .map(|(_, path)| path.as_str())
         .collect::<std::collections::BTreeSet<_>>();
     for path in paths {
-        let removed = run(
-            root,
-            &["update-index", "--force-remove", "--", path],
-        )?;
+        let removed = run(root, &["update-index", "--force-remove", "--", path])?;
         if !removed.success() {
             return Err(Error::fault(
                 "git::conflict-index-failed",
-                removed.detail(&format!(
-                    "prepare conflict index for {path}"
-                )),
+                removed.detail(&format!("prepare conflict index for {path}")),
             ));
         }
     }
@@ -164,16 +140,13 @@ fn install_conflict(
     write_git_state(root, "MERGE_HEAD", &format!("{upstream}\n"))
 }
 
-fn parse_conflict_record(
-    record: &str,
-) -> Result<(String, String), Error> {
-    let (metadata, path) =
-        record.split_once('\t').ok_or_else(|| {
-            Error::fault(
-                "git::conflict-record-invalid",
-                format!("malformed record {record:?}"),
-            )
-        })?;
+fn parse_conflict_record(record: &str) -> Result<(String, String), Error> {
+    let (metadata, path) = record.split_once('\t').ok_or_else(|| {
+        Error::fault(
+            "git::conflict-record-invalid",
+            format!("malformed record {record:?}"),
+        )
+    })?;
     if metadata.split_whitespace().count() != 3 || path.is_empty() {
         return Err(Error::fault(
             "git::conflict-record-invalid",
@@ -186,36 +159,34 @@ fn parse_conflict_record(
 fn conflict_error(label: &str, upstream: &str) -> Error {
     Error::refusal(
         "git::recoverable-conflict",
-        format!(concat!(
-            "task {label} overlaps baseline {upstream}; Git is ",
-            "paused with MERGE_HEAD and complete index stages",
-        ), label = label, upstream = upstream),
-        format!(concat!(
-            "resolve every conflicted path, git add the ",
-            "resolution, commit while MERGE_HEAD exists, then ",
-            "retry task completion for {label}",
-        ), label = label),
+        format!(
+            concat!(
+                "task {label} overlaps baseline {upstream}; Git is ",
+                "paused with MERGE_HEAD and complete index stages",
+            ),
+            label = label,
+            upstream = upstream
+        ),
+        format!(
+            concat!(
+                "resolve every conflicted path, git add the ",
+                "resolution, commit while MERGE_HEAD exists, then ",
+                "retry task completion for {label}",
+            ),
+            label = label
+        ),
     )
 }
 
-fn require_no_open_merge(
-    root: &Path,
-    label: &str,
-) -> Result<(), Error> {
-    if let Some(upstream) =
-        try_read(root, &["rev-parse", "--verify", "MERGE_HEAD"])?
-    {
+fn require_no_open_merge(root: &Path, label: &str) -> Result<(), Error> {
+    if let Some(upstream) = try_read(root, &["rev-parse", "--verify", "MERGE_HEAD"])? {
         return Err(conflict_error(label, &upstream));
     }
     Ok(())
 }
 
 fn require_clean(root: &Path, action: &str) -> Result<(), Error> {
-    let status = required_read(
-        root,
-        &["status", "--porcelain"],
-        "inspect worktree",
-    )?;
+    let status = required_read(root, &["status", "--porcelain"], "inspect worktree")?;
     if status.is_empty() {
         Ok(())
     } else {
@@ -227,15 +198,8 @@ fn require_clean(root: &Path, action: &str) -> Result<(), Error> {
     }
 }
 
-fn is_ancestor(
-    root: &Path,
-    ancestor: &str,
-    descendant: &str,
-) -> Result<bool, Error> {
-    let output = run(
-        root,
-        &["merge-base", "--is-ancestor", ancestor, descendant],
-    )?;
+fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool, Error> {
+    let output = run(root, &["merge-base", "--is-ancestor", ancestor, descendant])?;
     match output.status {
         0 => Ok(true),
         1 => Ok(false),
@@ -246,10 +210,7 @@ fn is_ancestor(
     }
 }
 
-fn merge_first_parent(
-    root: &Path,
-    commit: &str,
-) -> Result<Option<String>, Error> {
+fn merge_first_parent(root: &Path, commit: &str) -> Result<Option<String>, Error> {
     let line = required_read(
         root,
         &["rev-list", "--parents", "-n", "1", commit],
@@ -264,10 +225,7 @@ fn recovered_lane_head(
     head: &str,
     meta: Metadata<'_>,
 ) -> Result<Option<String>, Error> {
-    let Some(message) = try_read(
-        root,
-        &["show", "-s", "--format=%B", head],
-    )? else {
+    let Some(message) = try_read(root, &["show", "-s", "--format=%B", head])? else {
         return Ok(None);
     };
     let fields = message
@@ -284,8 +242,7 @@ fn recovered_lane_head(
     if !matches {
         return Ok(None);
     }
-    Ok(is_ancestor(root, &candidate, head)?
-        .then_some(candidate))
+    Ok(is_ancestor(root, &candidate, head)?.then_some(candidate))
 }
 
 fn compose_message(meta: Metadata<'_>, agent_head: &str) -> String {
@@ -327,9 +284,7 @@ fn recover_pending(root: &Path) -> Result<(), Error> {
     let marker = transaction_path(root)?;
     let bytes = match fs::read(&marker) {
         Ok(bytes) => bytes,
-        Err(error)
-            if error.kind() == std::io::ErrorKind::NotFound =>
-        {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(());
         }
         Err(error) => {
@@ -340,17 +295,14 @@ fn recover_pending(root: &Path) -> Result<(), Error> {
             ));
         }
     };
-    let pending: Pending =
-        serde_json::from_slice(&bytes).map_err(|error| {
-            Error::fault(
-                "git::transaction-invalid",
-                format!("{}: {error}", marker.display()),
-            )
-        })?;
+    let pending: Pending = serde_json::from_slice(&bytes).map_err(|error| {
+        Error::fault(
+            "git::transaction-invalid",
+            format!("{}: {error}", marker.display()),
+        )
+    })?;
     match pending {
-        Pending::Move { expected, target } => {
-            recover_move(root, &expected, &target)?
-        }
+        Pending::Move { expected, target } => recover_move(root, &expected, &target)?,
         Pending::Conflict {
             agent,
             upstream,
@@ -360,19 +312,10 @@ fn recover_pending(root: &Path) -> Result<(), Error> {
     remove_marker(&marker)
 }
 
-fn recover_move(
-    root: &Path,
-    expected: &str,
-    target: &str,
-) -> Result<(), Error> {
-    let current = required_read(
-        root,
-        &["rev-parse", "HEAD"],
-        "recover task Git transaction",
-    )?;
+fn recover_move(root: &Path, expected: &str, target: &str) -> Result<(), Error> {
+    let current = required_read(root, &["rev-parse", "HEAD"], "recover task Git transaction")?;
     let restore = if current == target { target } else { &current };
-    let restored =
-        run(root, &["read-tree", "--reset", "-u", restore])?;
+    let restored = run(root, &["read-tree", "--reset", "-u", restore])?;
     if !restored.success() {
         return Err(Error::fault(
             "git::transaction-recovery-failed",
@@ -406,29 +349,24 @@ fn recover_conflict(
     upstream: &str,
     previous: &BTreeMap<String, Option<String>>,
 ) -> Result<(), Error> {
-    if try_read(root, &["rev-parse", "--verify", "MERGE_HEAD"])?
-        .as_deref()
-        == Some(upstream)
-    {
+    if try_read(root, &["rev-parse", "--verify", "MERGE_HEAD"])?.as_deref() == Some(upstream) {
         return Ok(());
     }
-    let current = required_read(
-        root,
-        &["rev-parse", "HEAD"],
-        "recover conflict transaction",
-    )?;
+    let current = required_read(root, &["rev-parse", "HEAD"], "recover conflict transaction")?;
     if current != agent {
-        if is_ancestor(root, agent, &current)?
-            && is_ancestor(root, upstream, &current)?
-        {
+        if is_ancestor(root, agent, &current)? && is_ancestor(root, upstream, &current)? {
             return Ok(());
         }
         return Err(Error::refusal(
             "git::transaction-head-moved",
-            format!(concat!(
-                "conflict recovery expected {agent}, but HEAD ",
-                "is {current}",
-            ), agent = agent, current = current),
+            format!(
+                concat!(
+                    "conflict recovery expected {agent}, but HEAD ",
+                    "is {current}",
+                ),
+                agent = agent,
+                current = current
+            ),
             concat!(
                 "inspect the current HEAD before retrying the ",
                 "task boundary",
@@ -445,27 +383,16 @@ fn recover_conflict(
     restore_merge_state(root, previous)
 }
 
-fn snapshot_merge_state(
-    root: &Path,
-) -> Result<BTreeMap<String, Option<String>>, Error> {
+fn snapshot_merge_state(root: &Path) -> Result<BTreeMap<String, Option<String>>, Error> {
     MERGE_STATE_FILES
         .iter()
         .map(|name| {
             let path = git_state_path(root, name)?;
             let content = match fs::read_to_string(&path) {
                 Ok(content) => Some(content),
-                Err(error)
-                    if error.kind()
-                        == std::io::ErrorKind::NotFound =>
-                {
-                    None
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => {
-                    return Err(filesystem_fault(
-                        "snapshot Git state",
-                        &path,
-                        error,
-                    ));
+                    return Err(filesystem_fault("snapshot Git state", &path, error));
                 }
             };
             Ok(((*name).to_owned(), content))
@@ -480,26 +407,13 @@ fn restore_merge_state(
     for name in MERGE_STATE_FILES {
         let path = git_state_path(root, name)?;
         match previous.get(*name).and_then(Option::as_ref) {
-            Some(content) => {
-                fs::write(&path, content).map_err(|error| {
-                    filesystem_fault(
-                        "restore Git state",
-                        &path,
-                        error,
-                    )
-                })?
-            }
+            Some(content) => fs::write(&path, content)
+                .map_err(|error| filesystem_fault("restore Git state", &path, error))?,
             None => match fs::remove_file(&path) {
                 Ok(()) => {}
-                Err(error)
-                    if error.kind()
-                        == std::io::ErrorKind::NotFound => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
-                    return Err(filesystem_fault(
-                        "clear partial Git state",
-                        &path,
-                        error,
-                    ));
+                    return Err(filesystem_fault("clear partial Git state", &path, error));
                 }
             },
         }
@@ -507,15 +421,9 @@ fn restore_merge_state(
     Ok(())
 }
 
-fn write_git_state(
-    root: &Path,
-    name: &str,
-    content: &str,
-) -> Result<(), Error> {
+fn write_git_state(root: &Path, name: &str, content: &str) -> Result<(), Error> {
     let path = git_state_path(root, name)?;
-    fs::write(&path, content).map_err(|error| {
-        filesystem_fault("write Git state", &path, error)
-    })
+    fs::write(&path, content).map_err(|error| filesystem_fault("write Git state", &path, error))
 }
 
 fn git_state_path(root: &Path, name: &str) -> Result<PathBuf, Error> {
@@ -536,51 +444,29 @@ fn transaction_path(root: &Path) -> Result<PathBuf, Error> {
     git_state_path(root, TRANSACTION_FILE)
 }
 
-fn write_pending(
-    path: &Path,
-    pending: &Pending,
-) -> Result<(), Error> {
+fn write_pending(path: &Path, pending: &Pending) -> Result<(), Error> {
     let bytes = serde_json::to_vec(pending).map_err(|error| {
         Error::fault(
             "git::transaction-invalid",
             format!("encode transaction: {error}"),
         )
     })?;
-    let temporary =
-        path.with_extension(format!("tmp-{}", std::process::id()));
-    fs::write(&temporary, bytes).map_err(|error| {
-        filesystem_fault(
-            "stage task Git transaction",
-            &temporary,
-            error,
-        )
-    })?;
-    fs::rename(&temporary, path).map_err(|error| {
-        filesystem_fault("publish task Git transaction", path, error)
-    })
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    fs::write(&temporary, bytes)
+        .map_err(|error| filesystem_fault("stage task Git transaction", &temporary, error))?;
+    fs::rename(&temporary, path)
+        .map_err(|error| filesystem_fault("publish task Git transaction", path, error))
 }
 
 fn remove_marker(path: &Path) -> Result<(), Error> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
-        Err(error)
-            if error.kind() == std::io::ErrorKind::NotFound =>
-        {
-            Ok(())
-        }
-        Err(error) => Err(filesystem_fault(
-            "retire task Git transaction",
-            path,
-            error,
-        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(filesystem_fault("retire task Git transaction", path, error)),
     }
 }
 
-fn filesystem_fault(
-    action: &str,
-    path: &Path,
-    error: std::io::Error,
-) -> Error {
+fn filesystem_fault(action: &str, path: &Path, error: std::io::Error) -> Error {
     Error::fault(
         "git::transaction-filesystem",
         format!("could not {action} at {}: {error}", path.display()),

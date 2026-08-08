@@ -62,11 +62,7 @@ fn every_crossing_type_obeys_the_identity_law() {
 fn cover_doctor_vocabularies(covered: &mut BTreeSet<String>) {
     spelling_law(covered, "SpiceVariable", SpiceVariable::ALL);
     spelling_law(covered, "DoctorToolMode", DoctorToolMode::ALL);
-    ranked_law(
-        covered,
-        "DoctorToolRequirement",
-        DoctorToolRequirement::ALL,
-    );
+    ranked_law(covered, "DoctorToolRequirement", DoctorToolRequirement::ALL);
     ranked_law(covered, "DoctorToolSource", DoctorToolSource::ALL);
     ranked_law(covered, "DoctorToolBounds", DoctorToolBounds::ALL);
     spelling_law(
@@ -833,11 +829,7 @@ fn stream_boundary_samples(
     ]
 }
 
-fn opaque_stream_envelope(
-    position: u64,
-    cause: Option<u64>,
-    validation: &str,
-) -> StreamFact {
+fn opaque_stream_envelope(position: u64, cause: Option<u64>, validation: &str) -> StreamFact {
     let typed = Envelope {
         v: WireVersion::CURRENT,
         seq: seq(position),

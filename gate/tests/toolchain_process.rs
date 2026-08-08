@@ -2,25 +2,29 @@ use gate::{ArmOutcome, GateId, measure_toolchain};
 
 mod support;
 
+use support::git_commit;
 use support::toolchain::{
     acquired, arm, canvas_nonzero_directory, scanning_repository, toolchain_directory,
 };
-use support::{contract_repository, git_commit};
 
 /// A refusal the formatter cannot explain is retained with the code it gave.
 ///
 /// [`measure_toolchain`] admits an exit code only beside `NonzeroAnalysis` and
 /// demands one there, so an analysis that reports the outcome without the code
-/// is refused at admission rather than at the call. The captured tree here has
-/// Rust sources and no manifest, which is a refusal about the tree rather than
-/// about any one file, so the formatter names no differing file.
+/// is refused at admission rather than at the call. The captured tree here
+/// carries a source the formatter cannot parse, which it reports on its error
+/// stream, so it exits nonzero having named no differing file at all.
 ///
 /// The code ships twice, once as a field and once inside the sentence, and both
 /// spellings are held to each other. A reader shown a sentence naming one code
 /// beside a field carrying another has been handed an invented number.
 #[test]
 fn a_formatter_refusal_naming_no_file_carries_the_code_it_refused_with() {
-    let repository = contract_repository("toolchain-unreadable");
+    let repository = scanning_repository(
+        "toolchain-unparsable",
+        "fn main( {\n",
+        "Every sentence here is ordinary.\n",
+    );
     let observations = acquired(
         &repository,
         Some(toolchain_directory().into_os_string()),
