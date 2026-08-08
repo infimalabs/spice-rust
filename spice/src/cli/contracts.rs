@@ -526,7 +526,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Command,
         [TaskDone, TaskPhased],
         [Resident, LaneCapability, Toolful],
-        TASK_GIT_TOOLS,
+        TASK_DONE_TOOLS,
         Reply,
         "board::task_done"
     ),

@@ -18,10 +18,12 @@ use syntax::{is_optional, syntax_tokens};
 pub use tools::ExternalTool;
 use tools::{
     CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NO_TOOLS, PROOF_TOOLS,
-    TASK_GIT_TOOLS,
+    TASK_DONE_TOOLS, TASK_GIT_TOOLS,
 };
 #[cfg(test)]
-use tools::{ToolBounds, ToolCancellation, ToolNetwork, posture_violations};
+use tools::{
+    LEARNING_JUDGE_EXECUTABLE, ToolBounds, ToolCancellation, ToolNetwork, posture_violations,
+};
 
 /// The renderer flag, spelled once so its registration and its reader cannot
 /// drift into naming two different arguments that merely agree today.
