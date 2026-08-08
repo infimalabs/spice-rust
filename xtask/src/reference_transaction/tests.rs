@@ -1052,9 +1052,6 @@ fn predecessor_upstream_reference(fixture: &Fixture, current_ref: &str) -> Optio
 /// agree about everything.
 #[test]
 fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
-    /// One row: the scratch repository's label, and the pairing it carries.
-    type Row = (&'static str, fn(&Fixture));
-
     let rows: [Row; 4] = [
         // The configuration a lane actually runs under, where both sides must
         // read past the shadow to the same live reference.
@@ -1095,9 +1092,12 @@ fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
              upstreams, so the two systems no longer read the same pairing"
         );
 
-        let our_baseline = publication_baseline(fixture.path(), &current_ref)
+        let our_baseline = match publication(fixture.path(), &current_ref)
             .expect("the baseline resolution reaches an answer")
-            .map(|baseline| (baseline.reference, baseline.commit));
+        {
+            Publication::Published(baseline) => Some((baseline.reference, baseline.commit)),
+            Publication::Untracked | Publication::Unjudgeable { .. } => None,
+        };
         let their_baseline = theirs.and_then(|reference| {
             commit_oid(fixture.path(), &reference)
                 .expect("the transcribed reference resolves or does not")
@@ -1118,42 +1118,131 @@ fn the_baseline_resolved_here_is_the_baseline_the_predecessor_resolves() {
     );
 }
 
+/// One row: the scratch repository's label, and the pairing it carries.
+type Row = (&'static str, fn(&Fixture));
+
+/// A rewind and an append on the same three-commit history.
+///
+/// The two differ in their new value alone, which since the tip is read from
+/// the reference is the only field either arm consults.
+///
+/// The append advances onto a commit built ahead of the tip rather than
+/// restating the tip itself. An update whose new value *is* the tip reaches it
+/// trivially, and would satisfy a guard that compared the two for equality
+/// instead of asking whether the tip is still reached; the ordinary commit this
+/// guard must not strand advances onto a descendant, so that is what is queued.
+fn rewind_and_append(fixture: &Fixture) -> (String, String) {
+    let tip = fixture.head();
+    let base = fixture.expect(&["rev-parse", "HEAD~2"]);
+    let advanced = fixture.expect(&[
+        "commit-tree",
+        &format!("{tip}^{{tree}}"),
+        "-p",
+        &tip,
+        "-m",
+        "the lane's next commit",
+    ]);
+    (
+        format!("{tip} {base} refs/heads/main\n"),
+        format!("{tip} {advanced} refs/heads/main\n"),
+    )
+}
+
 /// Carrying the reference out of the resolution must not give the guard a
-/// baseline it never resolved. Each arm leaves it inert, and the rewind that
-/// the two tests above refuse is permitted here instead.
+/// baseline it never resolved. A pairing that names no reference at all leaves
+/// the guard inert in both directions, and the rewind that the two tests above
+/// refuse is permitted here instead.
+///
+/// Both directions, because the refusal for an unresolvable upstream is only
+/// worth having if it stays off this state. A guard that refused here would have
+/// collapsed "tracks nothing" into "tracks something unreadable" from the other
+/// side, which is the same conflation read backwards.
 #[test]
-fn a_lane_with_no_resolvable_baseline_permits_the_rewind_it_would_otherwise_refuse() {
-    let unpublished = |label: &str| {
+fn a_pairing_naming_no_reference_stays_inert_for_a_rewind_and_an_append() {
+    let rows: [Row; 2] = [
+        ("inert-no-pairing", |fixture| fixture.add_origin_remote()),
+        ("inert-no-merge", |fixture| {
+            fixture.add_origin_remote();
+            fixture.expect(&["config", "--local", "branch.main.remote", "origin"]);
+        }),
+    ];
+
+    for (label, configure) in rows {
         let fixture = Fixture::history(label);
-        let tip = fixture.head();
-        let base = fixture.expect(&["rev-parse", "HEAD~2"]);
-        (fixture, format!("{tip} {base} refs/heads/main\n"))
-    };
+        configure(&fixture);
+        let (rewind, append) = rewind_and_append(&fixture);
+        apply(fixture.path(), OsStr::new(PREPARED), &rewind)
+            .unwrap_or_else(|error| panic!("{label} tracks no published history: {error}"));
+        apply(fixture.path(), OsStr::new(PREPARED), &append)
+            .unwrap_or_else(|error| panic!("{label} gives up nothing to append: {error}"));
+    }
 
-    let (fixture, queue) = unpublished("inert-no-pairing");
-    fixture.add_origin_remote();
-    apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect("a branch whose pairing names no remote tracks no published history");
+    // Without this the passes above are indistinguishable from a guard that
+    // stopped refusing anything: the same queue, in the same fixture shape,
+    // must still be refused once a baseline exists.
+    let fixture = Fixture::history("inert-control");
+    fixture.publish_current_tip();
+    let (rewind, _) = rewind_and_append(&fixture);
+    apply(fixture.path(), OsStr::new(PREPARED), &rewind)
+        .expect_err("the control must still be refused once the tip is published");
+}
 
-    let (fixture, queue) = unpublished("inert-no-merge");
-    fixture.add_origin_remote();
-    fixture.expect(&["config", "--local", "branch.main.remote", "origin"]);
-    apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect("a pairing naming a remote but no integration branch is inert");
-
-    let (fixture, queue) = unpublished("inert-never-published");
+/// A pairing whose reference resolves to no commit establishes nothing about
+/// published history, so a rewind under it is unknown rather than cleared.
+///
+/// Permitting it would report exactly what this guard reports after checking an
+/// upstream and finding the rewind clear, which is the one answer it must not
+/// give for a question it never asked.
+#[test]
+fn a_rewind_under_an_unresolvable_upstream_is_refused_and_names_its_correction() {
+    let fixture = Fixture::history("unjudgeable-rewind");
     fixture.add_origin_remote();
     fixture.track("origin", "refs/heads/main");
-    apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect("an integration branch never published is inert");
+    let (rewind, _) = rewind_and_append(&fixture);
 
-    // Without this the three passes above are indistinguishable from a guard
-    // that stopped refusing anything: the same queue, in the same fixture
-    // shape, must still be refused once a baseline exists.
-    let (fixture, queue) = unpublished("inert-control");
-    fixture.publish_current_tip();
-    apply(fixture.path(), OsStr::new(PREPARED), &queue)
-        .expect_err("the control must still be refused once the tip is published");
+    let error = apply(fixture.path(), OsStr::new(PREPARED), &rewind)
+        .expect_err("an upstream that resolves to no commit cannot clear a rewind");
+
+    let reported = error.to_string();
+    assert!(
+        reported.contains("refs/remotes/origin/main"),
+        "the refusal must name the reference it could not resolve, or the \
+         operator cannot tell which pairing to correct: {reported}"
+    );
+    assert!(
+        reported.contains("Fetch that remote")
+            && reported.contains("correct the branch's remote and merge pairing"),
+        "the refusal must name both corrections, because an unfetched remote \
+         and a misnamed pairing produce the same unresolvable reference: \
+         {reported}"
+    );
+}
+
+/// A lane whose remote is merely unfetched keeps working.
+///
+/// An append gives up no history whatever the upstream turns out to be, so the
+/// upstream it could not read never mattered to it. The rewind in the same
+/// fixture is the control: without it, this passing append is equally consistent
+/// with a guard that resolved the upstream after all.
+#[test]
+fn an_append_under_an_unresolvable_upstream_is_still_permitted() {
+    let fixture = Fixture::history("unjudgeable-append");
+    fixture.add_origin_remote();
+    fixture.track("origin", "refs/heads/main");
+    let (rewind, append) = rewind_and_append(&fixture);
+
+    apply(fixture.path(), OsStr::new(PREPARED), &append)
+        .expect("an append gives up no history, so its upstream never had to be read");
+
+    // Named, not merely an error: an operational failure to read this fixture
+    // would also be an error here, and would leave the append's pass proving
+    // nothing about which upstream state it ran under.
+    let error = apply(fixture.path(), OsStr::new(PREPARED), &rewind)
+        .expect_err("the same unresolvable upstream must still refuse the rewind");
+    assert!(
+        matches!(error, ReferenceTransactionError::UnjudgeableUpstream { .. }),
+        "the control must be refused for the unresolvable upstream itself: {error}"
+    );
 }
 
 /// Read from a real commit rather than from githooks(5): the transaction this
