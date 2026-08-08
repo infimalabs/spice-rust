@@ -34,7 +34,7 @@ struct EnvironmentPolicy {
 ///
 /// The installed pre-commit hook unsets Git's local environment before it execs
 /// verify, and the hooks fixture proves it by exporting exactly those three and
-/// asserting the child sees none of them. The agent shadow owns three more Git
+/// asserting the child sees none of them. The Git shadow owns three more Git
 /// configuration references, and the hygiene acquisition fixture fixes
 /// `TMPDIR` at private writable scratch. Those references oblige the ledger to
 /// account all seven names. They are named here rather than added to
