@@ -466,6 +466,23 @@ fn baseline_phrase(reference: &str, commit: &str) -> String {
     format!("resolved to {reference} at {commit}")
 }
 
+/// The one phrase binding the refused branch to the whole list of commits the
+/// guard protected on it, terminator included.
+///
+/// The terminating `.` is load-bearing rather than punctuation carried along,
+/// and it guards the opposite direction from the one that looks obvious.
+/// Naming both commits in order is what catches a list rendered short; the
+/// terminator is what catches a list rendered long, naming commits the guard
+/// never protected, because without it the phrase is only a prefix and any
+/// appended oid satisfies it. Both were measured against the assertion below:
+/// rendering only the first abandoned commit reds it, and appending one the
+/// guard never selected reds it. This mirrors `baseline_phrase` for the same
+/// reason: the message is full of short oids, and a bare search for one of them
+/// says nothing about the field it was printed in.
+fn abandoned_phrase(reference: &str, commits: &str) -> String {
+    format!("commits on current branch {reference}: {commits}.")
+}
+
 /// The hand-built refusal keeps its baseline commit beside its reference.
 ///
 /// The fixture-driven assertions below depend on exactly this adjacency, and a
@@ -480,6 +497,25 @@ fn a_refusal_names_its_baseline_commit_beside_the_reference_it_resolved() {
     assert!(
         message.contains(&baseline_phrase("refs/remotes/origin/main", "0ddba11")),
         "the refusal parted the baseline reference from the commit it stood at: {message}"
+    );
+}
+
+/// The hand-built refusal keeps its abandoned commits beside the branch they
+/// were on, and its own `commits` field is what proves it.
+///
+/// This is the counterpart of the assertion above, and it exists for the same
+/// reason: the fixture-driven assertion below reads this adjacency, so a
+/// rewording that split the list from its branch would leave that one hunting a
+/// phrase no message contains. It also stops `deadbee` standing in for coverage
+/// it does not carry -- the value is hand-built, so it proves the rendering
+/// shape and nothing about which commits the guard selects, which is exactly the
+/// half the fixture-driven test owns.
+#[test]
+fn a_refusal_lists_its_abandoned_commits_beside_the_branch_they_were_on() {
+    let message = refusal(WorktreeDamage::Untouched);
+    assert!(
+        message.contains(&abandoned_phrase("refs/heads/main", "deadbee")),
+        "the refusal parted the abandoned commits from the branch carrying them: {message}"
     );
 }
 
@@ -765,6 +801,48 @@ fn a_refusal_names_the_integration_reference_it_resolved() {
     assert!(
         message.contains(&baseline_phrase("refs/remotes/origin/main", &published)),
         "the refusal named a reference without the commit it stood at: {message}"
+    );
+}
+
+/// The refusal names the commits it actually protected, all of them, read from
+/// the fixture rather than written down here.
+///
+/// Every other assertion in this file reads the branch, the baseline, or the
+/// worktree damage; none reads a rewound commit, so the abandoned list could be
+/// rendered as any constant and the whole package stays green. Measured that
+/// way: replacing the list with a literal leaves `cargo test -p xtask` at 119
+/// passed. So the guard could name a single commit it never protected in place
+/// of every commit it did.
+///
+/// `publish_commit_ahead_of_tip` is what lets the list be named without
+/// ambiguity, and the two inequalities below are controls on the fixture rather
+/// than on the guard: they fail if the arrangement ever stops separating the
+/// baseline from the commits being abandoned, which is the condition that makes
+/// the phrase assertion meaningful.
+#[test]
+fn a_refusal_names_every_commit_it_protected_rather_than_the_baseline() {
+    let fixture = Fixture::history("names-abandoned");
+    fixture.publish_commit_ahead_of_tip();
+    let tip = fixture.expect(&["rev-parse", "--short", "HEAD"]);
+    let parent = fixture.expect(&["rev-parse", "--short", "HEAD~1"]);
+    let baseline = fixture.expect(&["rev-parse", "--short", "refs/remotes/origin/main"]);
+    assert_ne!(
+        tip, baseline,
+        "the fixture stopped standing the baseline apart from the abandoned tip"
+    );
+    assert_ne!(
+        parent, baseline,
+        "the fixture stopped standing the baseline apart from the abandoned parent"
+    );
+
+    let message = refusal_message(&fixture);
+
+    assert!(
+        message.contains(&abandoned_phrase(
+            "refs/heads/main",
+            &format!("{tip}, {parent}")
+        )),
+        "the refusal did not list the commits it protected, newest first: {message}"
     );
 }
 
