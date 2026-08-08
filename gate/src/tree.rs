@@ -6,12 +6,21 @@
 //! checks before a private read-only root is returned to the caller, named
 //! together with the repository it was taken from so that an arm which must
 //! observe that repository cannot be pointed at a different one.
+//!
+//! Each materialization is a real directory of real bytes below the temporary
+//! directory, and a run that unwinds removes its own. A run that is *killed*
+//! unwinds nothing, so every workspace is held under the advisory lock the
+//! crate's `held_root` module supplies, for exactly as long as it is live. That
+//! lock is what lets a later run tell a killed run's wreckage from a tree a live
+//! gate is measuring, and reclaim only the first.
 
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use sill::{Acquisition, LockFile, Possession};
 
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
@@ -21,6 +30,7 @@ mod source;
 #[cfg(test)]
 mod tests;
 
+use crate::held_root::{self, HeldRootRemoval};
 pub use error::TreeError;
 use source::{IndexSeal, RevisionSeal};
 
@@ -102,11 +112,16 @@ impl Selector {
 }
 
 /// One private materialization owned for the duration of a gate run.
+///
+/// The possession is kept in an [`Option`] so [`Drop`] can take it: the removal
+/// this tree owes runs while its lock is still held, which is the invariant
+/// `held_root::remove_held_root` carries in its signature.
 #[derive(Debug)]
 pub struct SelectedTree {
     workspace: PathBuf,
     root: PathBuf,
     repository: PathBuf,
+    possession: Option<Possession>,
 }
 
 impl SelectedTree {
@@ -131,33 +146,45 @@ impl SelectedTree {
 
 impl Drop for SelectedTree {
     fn drop(&mut self) {
-        make_removable(&self.workspace);
-        let _ = fs::remove_dir_all(&self.workspace);
+        if let Some(possession) = self.possession.take() {
+            let _ = release_workspace(&self.workspace, &possession);
+        }
     }
 }
+
+/// How gate tree selection names itself in a refusal, and names its locks.
+const WORKSPACE_LABEL: &str = "gate tree workspace";
+const WORKSPACE_LOCK: &str = "gate-tree-workspace";
+
+/// The prefix every gate tree workspace name begins with.
+const WORKSPACE_PREFIX: &str = "spice-gate-tree-";
 
 #[derive(Debug)]
 struct BuildRoot {
     workspace: PathBuf,
     root: PathBuf,
-    finished: bool,
+    possession: Option<Possession>,
 }
 
 impl BuildRoot {
     fn create() -> Result<Self, TreeError> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let temporary = std::env::temp_dir();
+        reclaim_abandoned(&temporary);
         for _ in 0..128 {
             let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
             let workspace =
-                temporary.join(format!("spice-gate-tree-{}-{nonce}", std::process::id()));
+                temporary.join(format!("{WORKSPACE_PREFIX}{}-{nonce}", std::process::id()));
+            let Some(possession) = possess_workspace(&workspace) else {
+                continue;
+            };
             match create_private_workspace(&workspace) {
                 Ok(()) => {
                     let root = workspace.join("root");
                     let build = Self {
                         workspace,
                         root,
-                        finished: false,
+                        possession: Some(possession),
                     };
                     private_directory(&build.workspace)?;
                     fs::create_dir(&build.root).map_err(|source| {
@@ -186,14 +213,131 @@ impl BuildRoot {
         ))
     }
 
+    /// Hand the workspace, and the lock that guards it, to the selected tree.
+    ///
+    /// Taking the possession is what stops this build root's own [`Drop`] from
+    /// removing a workspace the caller is about to be handed: a build root that
+    /// has been finished no longer possesses anything to remove.
     fn finish(&mut self, repository: &Path) -> SelectedTree {
-        self.finished = true;
         SelectedTree {
             workspace: self.workspace.clone(),
             root: self.root.clone(),
             repository: repository.to_path_buf(),
+            possession: self.possession.take(),
         }
     }
+}
+
+/// Take one workspace name's lock, and clear anything a dead run left under it.
+///
+/// `None` means "mint another name": either a live run holds this one, or what
+/// it left behind could not be removed. Both are answered by moving to the next
+/// nonce, which is what this loop did for a colliding name before any lock
+/// existed.
+fn possess_workspace(workspace: &Path) -> Option<Possession> {
+    let lock = workspace_lock(workspace).ok()?;
+    let Ok(Acquisition::Acquired(possession)) = lock.try_acquire() else {
+        return None;
+    };
+    match reclaim_workspace(workspace, &possession) {
+        HeldRootRemoval::Removed => Some(possession),
+        HeldRootRemoval::Failed(_) => None,
+    }
+}
+
+/// The lock guarding one gate tree workspace, as every reclaim resolves it.
+fn workspace_lock(workspace: &Path) -> Result<LockFile, String> {
+    held_root::held_root_lock(workspace, WORKSPACE_LOCK, WORKSPACE_LABEL)
+}
+
+/// Remove every gate tree workspace no live run holds.
+///
+/// A workspace name carries the identifier of the process that minted it, so no
+/// other *live* run ever resolves the same one, and a run that unwinds removes
+/// its own. A dead run's identifier is eventually reissued, which is why
+/// [`possess_workspace`] reclaims a minted name before building under it rather
+/// than trusting that a fresh nonce means a fresh directory.
+///
+/// A run that is killed unwinds nothing, and what it leaves is a directory
+/// indistinguishable, by looking at it, from one a live gate is measuring out of
+/// right now. The lock beside each workspace is what separates them: a lock no
+/// one holds is a workspace whose owner is dead.
+///
+/// Only a workspace with a lock file already beside it is considered, and that
+/// restriction is load bearing rather than an optimization. A gate built before
+/// this mechanism minted workspaces under the same prefix and took no lock at
+/// all, so an unlocked directory is not evidence of a dead owner; on a machine
+/// where several checkouts share one temporary directory it is most likely a
+/// live run of an older build, and removing it would delete the tree that run
+/// is measuring. Those are left for an operator, and every workspace this build
+/// mints is reclaimable because it is locked before it exists.
+fn reclaim_abandoned(temporary: &Path) {
+    let Ok(listing) = fs::read_dir(temporary) else {
+        return;
+    };
+    let candidates: Vec<PathBuf> = listing
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| is_workspace_directory(path))
+        .collect();
+    for workspace in candidates {
+        let Ok(lock) = workspace_lock(&workspace) else {
+            continue;
+        };
+        // Acquiring creates the lock file, so a workspace that never had one is
+        // asked about rather than locked into existence.
+        if !lock.path().try_exists().unwrap_or(false) {
+            continue;
+        }
+        if let Ok(Acquisition::Acquired(possession)) = lock.try_acquire() {
+            let _ = release_workspace(&workspace, &possession);
+        }
+    }
+}
+
+/// Whether this path is a directory named as a gate tree workspace.
+///
+/// The lock file beside a workspace shares its prefix, so the kind is checked
+/// rather than assumed, and it is checked without following a symlink: a link
+/// planted under this name would otherwise be dereferenced by the very call
+/// deciding whether to remove it.
+fn is_workspace_directory(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.starts_with(WORKSPACE_PREFIX)
+        && fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
+}
+
+/// Remove one workspace whose lock this caller possesses.
+///
+/// A materialized tree is sealed read-only, and a sealed directory cannot be
+/// read in order to remove what is under it, so the seal is lifted first.
+/// Lifting it is safe only because the possession already proves that no live
+/// run is measuring this tree.
+fn reclaim_workspace(workspace: &Path, possession: &Possession) -> HeldRootRemoval {
+    make_removable(workspace);
+    held_root::remove_held_root(workspace, possession)
+}
+
+/// Remove one workspace and then the lock that guarded it.
+///
+/// The lock is kept beside the workspace rather than inside it so that removing
+/// the workspace cannot remove the evidence that it was held. That evidence has
+/// nothing left to describe once the workspace is gone, and a workspace name
+/// carries a fresh nonce per run, so a lock retained for every run ever made
+/// would accumulate exactly what this reclaim exists to prevent.
+///
+/// The order is what keeps that safe. The lock is unlinked last, and only on a
+/// removal that succeeded, so this never leaves a workspace standing with no
+/// lock beside it -- which is the one state [`reclaim_abandoned`] declines to
+/// act on, and so the one state a workspace could never be reclaimed from.
+fn release_workspace(workspace: &Path, possession: &Possession) -> HeldRootRemoval {
+    let removal = reclaim_workspace(workspace, possession);
+    if matches!(removal, HeldRootRemoval::Removed) {
+        let _ = fs::remove_file(possession.lock().path());
+    }
+    removal
 }
 
 fn create_private_workspace(path: &Path) -> io::Result<()> {
@@ -210,11 +354,9 @@ fn create_private_workspace(path: &Path) -> io::Result<()> {
 
 impl Drop for BuildRoot {
     fn drop(&mut self) {
-        if self.finished {
-            return;
+        if let Some(possession) = self.possession.take() {
+            let _ = release_workspace(&self.workspace, &possession);
         }
-        make_removable(&self.workspace);
-        let _ = fs::remove_dir_all(&self.workspace);
     }
 }
 
