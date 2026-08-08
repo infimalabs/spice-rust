@@ -739,6 +739,7 @@ fn proof(expected: Option<&str>) -> Proof {
             vendor: "claude".parse().expect("fixture vendor"),
             model: "sonnet".into(),
             effort: "high".into(),
+            git: "current".into(),
             epoch: uuid(2),
             stream: vendor::RecordStream::Stdout,
             expected: expected.map(str::to_owned),
@@ -1032,12 +1033,13 @@ fn proven(fixture: &Fixture) -> ProvenOccupant {
     ProvenOccupant {
         occupant: fixture.successor,
         group: 42,
+        git: "current".into(),
         session: wire::LaneSession {
             lane: fixture.lane,
             occupant: fixture.successor,
             worktree: SUCCESSOR.into(),
             vendor: "claude".parse().expect("fixture vendor"),
-            launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
+            launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high").with_git("current")),
             epoch: fixture.new_epoch,
             stream: "stdout".into(),
             identity: "successor-session".into(),
@@ -1132,6 +1134,7 @@ fn import_moves_seat_lineage_session_and_claim_into_the_successor_worktree() {
         lane: fixture.lane,
         from: context.row.worktree.clone(),
         to: context.worktree.clone(),
+        git: Some("current".into()),
     };
     let proposal = propose_import(
         &admitted(&fixture, &request),

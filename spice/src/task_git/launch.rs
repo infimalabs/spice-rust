@@ -10,9 +10,9 @@
 //! advance is a decision, so it is named rather than left as an anonymous
 //! no-op: why a lane is still on an old commit should be answerable from what
 //! this boundary returned instead of inferred from where the lane sits. No
-//! caller publishes these notes yet, because the resident has no launch-time
-//! report to publish them in; naming them is what makes that a later wiring
-//! change rather than a redesign.
+//! The resident publishes the exact note in the launch transition and records
+//! it with the durable session identity, so a lane that stayed on an old commit
+//! says why both immediately and on later reads.
 
 use std::fmt;
 use std::path::Path;

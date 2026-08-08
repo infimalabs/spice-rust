@@ -66,6 +66,11 @@ fn answer_at(
                     .as_ref()
                     .and_then(|session| session.launch.as_ref())
                     .map(|launch| launch.effort.clone()),
+                git: row
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.launch.as_ref())
+                    .and_then(|launch| launch.git.clone()),
                 occupant: row.occupant,
                 lineage: row.lineage.clone(),
                 session: row.session.as_ref().map(|session| session.identity.clone()),
@@ -393,7 +398,9 @@ mod tests {
                 occupant: uuid(2),
                 worktree: "/worktrees/main-a".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
-                launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
+                launch: Some(
+                    wire::body::LaneLaunchIdentity::new("sonnet", "high").with_git("current"),
+                ),
                 epoch: uuid(4),
                 stream: "stdout".to_owned(),
                 identity: "private-session".to_owned(),
@@ -489,6 +496,7 @@ mod tests {
         assert!(answer.lanes[0].bound);
         assert_eq!(answer.lanes[0].model.as_deref(), Some("sonnet"));
         assert_eq!(answer.lanes[0].effort.as_deref(), Some("high"));
+        assert_eq!(answer.lanes[0].git.as_deref(), Some("current"));
         assert_eq!(answer.lanes[0].session.as_deref(), Some("private-session"));
         assert!(!encoded.contains(&capability));
         assert!(!encoded.contains("capabilities"));
@@ -514,6 +522,7 @@ mod tests {
 
         assert_eq!(answer.lanes[0].model, None);
         assert_eq!(answer.lanes[0].effort, None);
+        assert_eq!(answer.lanes[0].git, None);
         assert_eq!(answer.lanes[0].session.as_deref(), Some("private-session"));
     }
 

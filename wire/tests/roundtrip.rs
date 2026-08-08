@@ -920,7 +920,11 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         .expect("the pre-extension declaration enters the current unrecorded state");
     assert_eq!(unrecorded.launch, None);
     let normalized = serde_json::to_value(unrecorded).expect("the current state encodes");
-    assert!(normalized.get("model").is_none() && normalized.get("effort").is_none());
+    assert!(
+        normalized.get("model").is_none()
+            && normalized.get("effort").is_none()
+            && normalized.get("git").is_none()
+    );
 
     let complete = serde_json::json!({
         "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -929,6 +933,7 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         "vendor": "claude",
         "model": "sonnet",
         "effort": "high",
+        "git": "current",
         "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c4",
         "stream": "stdout",
         "identity": "session-a",
@@ -941,8 +946,26 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         .expect("the recorded declaration shape decodes");
     let launch = recorded.launch.expect("the complete pair is recorded");
     assert_eq!(
-        (launch.model.as_str(), launch.effort.as_str()),
-        ("sonnet", "high")
+        (
+            launch.model.as_str(),
+            launch.effort.as_str(),
+            launch.git.as_deref(),
+        ),
+        ("sonnet", "high", Some("current"))
+    );
+
+    let mut pre_note = complete.clone();
+    pre_note
+        .as_object_mut()
+        .expect("fixture is an object")
+        .remove("git");
+    let bytes = serde_json::to_vec(&pre_note).expect("fixture encodes");
+    let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
+        .expect("a declaration recorded before launch notes still decodes");
+    assert_eq!(
+        recorded.launch.expect("launch identity remains").git,
+        None,
+        "compatibility does not invent a launch outcome"
     );
 
     for field in ["model", "effort"] {

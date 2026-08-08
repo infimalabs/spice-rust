@@ -178,6 +178,7 @@ pub(super) fn restore_seats(
             },
             Arc::clone(capture),
         )?;
+        let git = launch.git;
         let session_proof = launch.session;
         let group = seats
             .seat_observed(row.lane, occupant, launch.spec, launch.observation)
@@ -194,6 +195,7 @@ pub(super) fn restore_seats(
             occupant,
             group,
             session,
+            git,
         };
         if let Err(outcome) = commit_restored(bus, epoch, &row, &proven) {
             stop_lane(seats, row.lane);
@@ -247,6 +249,7 @@ pub(super) fn seat(
         lane: request.lane,
         from: "absent".to_owned(),
         to: OCCUPIED.to_owned(),
+        git: Some(prepared.proven.git.clone().into_boxed_str()),
     };
     let proposal = propose_seat(command, request, &observed, epoch, &prepared);
     let proposal = match proposal {
@@ -491,6 +494,7 @@ struct ProvenOccupant {
     occupant: CanonicalUuid,
     group: u32,
     session: wire::LaneSession,
+    git: String,
 }
 
 fn prepare_seat(
@@ -531,6 +535,7 @@ fn prepare_seat(
         remove_seat_surface(paths, runtime, request.lane, capability);
         typed_outcome(outcome)
     })?;
+    let git = launch.git;
     let session_proof = launch.session;
     let group = seats
         .seat_observed(request.lane, occupant, launch.spec, launch.observation)
@@ -550,6 +555,7 @@ fn prepare_seat(
             occupant,
             group,
             session,
+            git,
         },
     })
 }
@@ -887,6 +893,7 @@ fn drain(
         lane: request.lane,
         from: OCCUPIED.to_owned(),
         to: VACANT.to_owned(),
+        git: None,
     };
     let proposal = match propose_drain(
         command,
@@ -966,6 +973,7 @@ fn wake(
         Ok(launch) => launch,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let git = launch.git;
     let session_proof = launch.session;
     let group = match seats.seat_observed(request.lane, occupant, launch.spec, launch.observation) {
         Ok(occupant) => occupant.group(),
@@ -982,11 +990,13 @@ fn wake(
         occupant,
         group,
         session,
+        git,
     };
     let answer = LaneChangeAnswer {
         lane: request.lane,
         from: row.disposition.clone(),
         to: OCCUPIED.to_owned(),
+        git: Some(proven.git.clone().into_boxed_str()),
     };
     let proposal = propose_wake(command, request, &observed, epoch, &proven, answer.clone());
     let proposal = match proposal {
