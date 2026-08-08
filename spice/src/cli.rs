@@ -135,6 +135,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::BoardGraph
         | CommandKind::BoardHandout
         | CommandKind::DocLedger
+        | CommandKind::EffortRead
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TaskEdit

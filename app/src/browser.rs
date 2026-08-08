@@ -14,8 +14,9 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, LaneArrange, LaneRead, LaneSeat, LineageArrange,
-    LineageArrangement, LineageConfigure, LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, EffortRead, LaneArrange, LaneRead, LaneSeat,
+    LineageArrange, LineageArrangement, LineageConfigure, LineageLife, SteerInbox, SteerSend,
+    TaskAnswer, TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
@@ -403,6 +404,7 @@ enum PendingKind {
     },
     Consent,
     Policy,
+    Effort,
     LaneSeat,
     LineageConfigure(CanonicalUuid),
     /// A team arrangement in flight.

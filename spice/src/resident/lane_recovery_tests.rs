@@ -401,6 +401,7 @@ fn runtime_paths(fixture: &Fixture, common: std::path::PathBuf) -> RuntimePaths 
         runtime: fixture.root.join("runtime"),
         data: fixture.root.join("data"),
         journal: fixture.root.join("authority.sqlite3"),
+        folds: fixture.root.join("folds.sqlite3"),
         resident: fixture.root.join("resident"),
         canvas: fixture.root.join("canvas"),
         lane_canvas: fixture.root.join("lane-canvas"),

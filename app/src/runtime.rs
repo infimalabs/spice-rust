@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 
 use wire::intent::{
-    BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, InboxAnswer,
-    LaneAnswer, LaneChangeAnswer, LaneLiveness,
+    BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, EffortAnswer,
+    InboxAnswer, LaneAnswer, LaneChangeAnswer, LaneLiveness,
 };
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
@@ -426,6 +426,7 @@ pub struct CanvasRuntime {
     inbox: ScopedValue<InboxAnswer>,
     consent: ScopedValue<ConsentQueueAnswer>,
     policy: ScopedValue<ConsentPolicyAnswer>,
+    effort: ScopedValue<EffortAnswer>,
     fact_pages: Vec<BrowserState<FactRow>>,
     trust_pages: Vec<BrowserState<TrustView>>,
     messages: Vec<AgentMessage>,
@@ -453,6 +454,7 @@ impl CanvasRuntime {
             inbox: ScopedValue::new(accepted),
             consent: ScopedValue::new(accepted),
             policy: ScopedValue::new(accepted),
+            effort: ScopedValue::new(accepted),
             fact_pages: Vec::new(),
             trust_pages: Vec::new(),
             messages: Vec::new(),
@@ -564,6 +566,17 @@ impl CanvasRuntime {
     #[must_use]
     pub fn policy(&self) -> Option<&ConsentPolicyAnswer> {
         self.policy.get(&self.principal)
+    }
+
+    /// The server's typed effort answer, or `None` while none is held.
+    ///
+    /// Nothing here derives a number: the browser renders the counters the
+    /// resident's fold produced and withholds a row the fold marked
+    /// unavailable, so a Canvas total can never be a second computation of
+    /// effort that drifts from the terminal one.
+    #[must_use]
+    pub fn effort(&self) -> Option<&EffortAnswer> {
+        self.effort.get(&self.principal)
     }
 
     #[must_use]
@@ -825,6 +838,16 @@ impl CanvasRuntime {
         });
     }
 
+    pub fn apply_effort(&mut self, admitted: &Admitted<Response<EffortAnswer>>) {
+        self.apply_response(admitted, |runtime, answer| {
+            runtime.effort.replace(admitted.scope(), answer.clone());
+            (
+                "Task effort".to_owned(),
+                format!("{} phases", answer.phases.len()),
+            )
+        });
+    }
+
     /// Record the resident's authoritative result for one lane seating request.
     pub fn apply_lane_change(&mut self, admitted: &Admitted<Response<LaneChangeAnswer>>) {
         self.apply_response(admitted, |_runtime, answer| {
@@ -1044,8 +1067,9 @@ fn continuation<T>(
 /// two events old — worse than showing nothing, because the staleness is
 /// invisible.
 ///
-/// This lives beside [`CanvasRuntime::apply_board`], [`CanvasRuntime::apply_lanes`]
-/// and [`CanvasRuntime::apply_inbox`] — the three reads it names — rather than
+/// This lives beside [`CanvasRuntime::apply_board`], [`CanvasRuntime::apply_lanes`],
+/// [`CanvasRuntime::apply_inbox`], [`CanvasRuntime::apply_consent`] and
+/// [`CanvasRuntime::apply_effort`] — one field per read it names — rather than
 /// in the socket loop that acts on it, so it can be tested off `wasm32`.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stale {
@@ -1053,6 +1077,7 @@ pub struct Stale {
     lanes: bool,
     inbox: bool,
     consent: bool,
+    effort: bool,
 }
 
 impl Stale {
@@ -1079,14 +1104,27 @@ impl Stale {
             Some(("lane", _)) => {
                 self.lanes = true;
                 self.inbox = true;
+                self.effort = true;
             }
-            Some(("task", _)) => self.board = true,
+            Some(("task", _)) => {
+                self.board = true;
+                self.effort = true;
+            }
             // A claim binds a task to a lane, so both sides of that join move.
             Some(("claim", _)) => {
                 self.board = true;
                 self.lanes = true;
+                self.effort = true;
             }
             Some(("consent", _)) => self.consent = true,
+            // Effort is a fold over the journal itself, so the two namespaces
+            // no cached view answers still move it. `journal::ingested` is the
+            // transcript accounting the usage counters are read from, and the
+            // rest of that namespace -- migrated, restored -- rewrites the fact
+            // stream the fold replays. `lineage::*` re-attributes which lineage
+            // owns a source locus, which changes whose segment a phase credits
+            // without touching the board, the roster or the inbox.
+            Some(("journal" | "lineage", _)) => self.effort = true,
             _ => {}
         }
     }
@@ -1115,10 +1153,16 @@ impl Stale {
         self.consent
     }
 
+    /// Whether the task-effort read went stale.
+    #[must_use]
+    pub const fn effort(self) -> bool {
+        self.effort
+    }
+
     /// Whether anything needs re-reading at all.
     #[must_use]
     pub const fn any(self) -> bool {
-        self.board || self.lanes || self.inbox || self.consent
+        self.board || self.lanes || self.inbox || self.consent || self.effort
     }
 }
 
