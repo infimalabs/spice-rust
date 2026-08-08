@@ -65,6 +65,7 @@ import {
   journalExtent,
   monitorPage,
   reply,
+  replyAsLane,
   seedAuthority,
   startResident,
   stopResident,
@@ -578,6 +579,241 @@ async function assertAuthoritySurface(page, seeded) {
   assert.match(trustText, /granted/);
 }
 
+// Carry claims to a terminal so the fold has phases it can price.
+//
+// The fixture's own seeding never closes a claim, so without this the effort
+// surface only ever shows phases it withheld -- and "no sizing reaches a
+// withheld row" is satisfied for free by a surface that shows no sizing at all.
+// The proven rows this creates are what make the controls below cost something.
+//
+// Several claims are carried rather than one because aggregates are grouped on
+// the exact `(launch identity, phase)` pair, and one group would be satisfied
+// by a key that had dropped either half. Every lane in this fixture launches
+// from one `[vendor.claude]` section and there is no per-lane model override, so
+// the identity half cannot be moved here; the phase half can, since closing a
+// claim advances its task's flow and a later claim opens the phase it advanced
+// to.
+async function seedProvenEffort(page, fixture, lane, claims) {
+  // Allocation is gated three ways, all of which answer `board::allocator-empty`
+  // -- see the inventory on `assertHeldTaskCount`. Two are satisfied by adding
+  // the task under the lane's own identity with an acceptance. The third is the
+  // lineage's life: `steer` admits only operator-pinned projects, and this
+  // fixture pins none, so the team is driven for exactly as long as the claim
+  // takes and put back afterwards.
+  await chooseCanvasView(page, "Agents");
+  const team = page.locator('[data-pane="agent-console"]');
+  const lifetime = team.locator('.team-lifetime input[type="range"]');
+  await lifetime.fill("1");
+  await team.getByRole("button", { name: "Drive", exact: true }).waitFor();
+  // One task, not one per claim. `task next` ranks peer work ahead of the
+  // actor's own review only when the review was reached by freeing a claim
+  // (`is_self_review` in board/src/next.rs), so a phase this lane completed
+  // competes as ordinary peer work -- but only once nothing in `todo` outranks
+  // it. Adding a task per turn would restock that pool every time and hand back
+  // `todo` forever, which is what leaves the aggregates in a single group.
+  await replyAsLane(fixture, lane, [
+    "task",
+    "add",
+    "Effort proven witness",
+    "--project",
+    "app.browser",
+    "--acceptance",
+    "the fold prices this phase from the transcript it was spent in",
+  ]);
+  const priced = [];
+  for (let attempt = 0; attempt < claims; attempt += 1) {
+    // The allocator chooses which eligible task to hand over, and by this point
+    // the fixture has freed others that are eligible too. So the handle is read
+    // back off the claim rather than assumed to be the one just added.
+    const won = await replyAsLane(fixture, lane, ["task", "next"]);
+    assert.ok(
+      won.body.task,
+      `the allocator answered with a task handle: ${JSON.stringify(won.body)}`,
+    );
+    priced.push(won.body);
+    // `task done` names no handle: it closes the claim the actor holds, which is
+    // the one just won above. It is the terminal for whichever phase that claim
+    // opened -- `TaskDone` and `TaskPhased` together -- so a review phase closes
+    // through exactly this call and needs no branch on which phase was handed
+    // over, which the allocator's answer does not carry.
+    await replyAsLane(fixture, lane, [
+      "task",
+      "done",
+      "--validation",
+      "the browser regression read this phase back off the Magnitude pane",
+    ]);
+  }
+  await lifetime.fill("0");
+  await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  return priced;
+}
+
+/// Drive priced and withheld task effort through the real connection.
+///
+/// The fixture reaches this helper already carrying a phase the fold refuses to
+/// size -- a claim it opened and freed, which the surface shows under
+/// `missing-end` and `claim-freed`. `seedProvenEffort` adds the other side, so
+/// both tables stand at once and each control below has a leg that would notice
+/// if the surface simply stopped rendering.
+async function assertTaskEffortSurface(page, fixture, seeded) {
+  // Enough turns for the `todo` work the fixture already carries to drain far
+  // enough that a phase this lane completed outranks what is left, which is the
+  // only axis of the grouping key this fixture can move: one `[vendor.claude]`
+  // section launches every lane and there is no per-lane model override, so
+  // every priced phase here necessarily wears one launch identity.
+  const claims = 4;
+  const priced = await seedProvenEffort(page, fixture, seeded.lane, claims);
+  await chooseCanvasView(page, "Magnitude");
+  const effort = page.locator('[data-pane="effort"]');
+  await effort.waitFor();
+  // Wait for the closes to arrive as rendered rows rather than for a duration:
+  // `task done` returns before the fact has crossed the socket and been folded.
+  // Both tables are waited for together because the controls below are a
+  // partition, and a pane caught with only one side built would satisfy the
+  // withheld half of that partition for the wrong reason.
+  // The condition waited on is the one the controls need rather than a row
+  // count, so a surface that priced every phase under one key fails as a stated
+  // shortfall below instead of as a wait that timed out for no stated reason.
+  try {
+    await page.waitForFunction(
+      (want) => {
+        const pane = document.querySelector('[data-pane="effort"]');
+        const rows = (name) => [
+          ...(pane?.querySelectorAll(`[data-effort-table="${name}"] tbody tr`) ?? []),
+        ];
+        const keys = new Set(
+          rows("proven").map(
+            (row) => `${row.dataset.effortIdentity} in ${row.querySelector(".tag")?.textContent}`,
+          ),
+        );
+        return keys.size >= want && rows("withheld").length >= 1;
+      },
+      2,
+      { timeout: 20_000 },
+    );
+  } catch (error) {
+    process.stderr.write(`EFFORT-PROBE-HTML ${await effort.innerHTML()}\n`);
+    throw error;
+  }
+  // One snapshot rather than a read per assertion: any fact invalidates the
+  // effort read, so separate round trips can straddle a refresh and compare a
+  // heading from one render against a row from the next.
+  const surface = await effort.evaluate((pane) => {
+    const table = (name) => pane.querySelector(`[data-effort-table="${name}"]`);
+    const headings = (name) =>
+      [...(table(name)?.querySelectorAll("thead th") ?? [])].map((cell) => cell.textContent);
+    const counters = (name) => table(name)?.querySelectorAll("[data-effort-counter]").length ?? 0;
+    const rows = (name) => [...(table(name)?.querySelectorAll("tbody tr") ?? [])];
+    return {
+      provenHeadings: headings("proven"),
+      withheldHeadings: headings("withheld"),
+      provenCounters: counters("proven"),
+      withheldCounters: counters("withheld"),
+      proven: rows("proven").map((row) => ({
+        identity: row.dataset.effortIdentity,
+        phase: row.querySelector(".tag")?.textContent ?? "",
+        magnitude: row.dataset.effortMagnitude,
+        continuation: row.dataset.effortContinuation,
+      })),
+      aggregates: rows("aggregates").map((row) => ({
+        identity: row.dataset.effortIdentity,
+        measure: row.dataset.effortMeasure,
+        phase: row.querySelector(".tag")?.textContent ?? "",
+        count: Number(row.querySelector('[data-effort-counter="count"]')?.textContent),
+      })),
+    };
+  });
+  // Written before the first assertion, so a run that fails one control still
+  // reports the whole surface the rest of them would have been judged against.
+  process.stderr.write(`EFFORT-PROBE ${JSON.stringify(surface)} won=${JSON.stringify(priced)}\n`);
+  await effort.screenshot({ path: join(artifacts, "canvas-task-effort.png") });
+
+  // Control: no sizing reaches an unavailable row.
+  //
+  // Checked on which elements exist, not on which characters appear -- the
+  // reason details legitimately carry sequence numbers ("phase opened at 55"),
+  // so a digit sweep over the text would either fail on those or be relaxed
+  // until it proved nothing. `counter()` marks every cell that carries a
+  // magnitude, which makes this a question the DOM answers exactly.
+  const { provenHeadings, withheldHeadings } = surface;
+  assert.deepEqual(
+    withheldHeadings,
+    ["Task", "Phase", "Launch", "Withheld because"],
+    `the withheld table names its phase and its reasons, and has no sizing column \
+at all, but rendered ${JSON.stringify(withheldHeadings)}`,
+  );
+  for (const sizing of [
+    "Turns",
+    "Renewals",
+    "Wall",
+    "Input",
+    "Cached",
+    "Cache write",
+    "Output",
+    "Reasoning",
+  ]) {
+    assert.ok(provenHeadings.includes(sizing), `the proven table sizes ${sizing}`);
+    assert.ok(!withheldHeadings.includes(sizing), `no withheld row can carry ${sizing}`);
+  }
+  assert.equal(
+    surface.withheldCounters,
+    0,
+    "an unavailable phase carries no token count, duration, average or total",
+  );
+  assert.ok(
+    surface.provenCounters > 0,
+    "the surface renders sizing somewhere, so the count above is a partition and not a blank pane",
+  );
+
+  // Control: aggregates group on the exact launch identity and phase.
+  const provenRows = surface.proven;
+  const aggregateRows = surface.aggregates;
+  for (const row of [...provenRows, ...aggregateRows]) {
+    assert.deepEqual(
+      row.identity?.split("/").filter((part) => part !== "").length,
+      3,
+      `every priced row wears a whole vendor/model/effort tuple, not a prefix of one: ${row.identity}`,
+    );
+  }
+  const key = (row) => `${row.identity} in ${row.phase}`;
+  const provenGroups = new Map();
+  for (const row of provenRows) {
+    provenGroups.set(key(row), (provenGroups.get(key(row)) ?? 0) + 1);
+  }
+  // A key that had dropped either half would put these rows in one group.
+  assert.ok(
+    provenGroups.size > 1,
+    `the seeding priced more than one grouping key: ${JSON.stringify([...provenGroups])}`,
+  );
+  const aggregateGroups = new Map();
+  for (const row of aggregateRows) {
+    const measures = aggregateGroups.get(key(row)) ?? [];
+    measures.push(row.measure);
+    aggregateGroups.set(key(row), measures);
+    // Counted against the priced rows alone, which is also what holds the
+    // withheld phase out: the surface carries more phases than these counts
+    // total, so an aggregate that admitted an unsized phase would overshoot
+    // rather than merely report a number nothing else disagrees with.
+    assert.equal(
+      row.count,
+      provenGroups.get(key(row)),
+      `the ${row.measure} for ${key(row)} counts that pair's phases and no others`,
+    );
+  }
+  assert.deepEqual(
+    [...aggregateGroups.keys()].sort(),
+    [...provenGroups.keys()].sort(),
+    "aggregates and priced rows agree on which exact pairs exist",
+  );
+  for (const [pair, measures] of aggregateGroups) {
+    assert.deepEqual(
+      measures.sort(),
+      ["average", "total"],
+      `${pair} is summed and averaged separately, so a sum is never read as a mean`,
+    );
+  }
+}
+
 async function assertMosaicComposer(page, fixture, seeded) {
   await chooseCanvasView(page, "Agents");
   const team = page.locator('[data-pane="agent-console"]');
@@ -996,6 +1232,10 @@ try {
   await lightPage.locator(".event.refusal").waitFor({ timeout: 10_000 });
   const beforeReconnect = await journalExtent(fixture);
   await assertPackedHistory(lightPage, fixture, beforeReconnect);
+  // Effort runs after the extent-sensitive history checks: closing a claim
+  // appends facts, and a helper that pinned an extent before this point would
+  // be reading a journal this one had already moved.
+  await assertTaskEffortSurface(lightPage, fixture, seeded);
 
   const dark = await browser.newContext({
     colorScheme: "dark",
