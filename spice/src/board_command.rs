@@ -22,14 +22,14 @@ use wire::{
 
 use crate::cli::Contract;
 
-// These are `include!` rather than `mod` by decision, measured rather than
-// assumed. `mod` would not cost the tests below their reach: a child module
+// These are source inclusions rather than `mod` declarations by decision,
+// measured rather than assumed. `mod` would not cost the tests below their reach: a child module
 // already reads its ancestors' private items, so `claim_plan` and
 // `commit_claim` would stay callable. What the single namespace buys is
 // narrower than it looks, and what converting costs is 126 items promoted to
 // `pub(super)` and 25 fragments opened with `use super::*`, counted across this
-// root, its test fragments, `resident` and `task_git`. What `include!` costs is
-// that `cargo fmt` walks modules and so exits zero over a drifted fragment;
+// root, its test fragments, `resident` and `task_git`. What source inclusion
+// costs is that `cargo fmt` walks modules and so exits zero over a drifted fragment;
 // the formatters gate closes exactly that by naming every path it selects on
 // the formatter's own command line, so a fragment is covered for being selected
 // rather than for being reachable: the set the arm counts and the set the
