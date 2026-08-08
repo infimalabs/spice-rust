@@ -176,7 +176,9 @@ Both write the whole file and neither contributes an entry; it is the only
 shared path outside any `.spice`. Closed under EFFORT-1kKp195G in `a263f4e3`:
 the decision record in `spice/src/repository.rs#agent.gitconfig` names it, and
 `spice/tests/git_shadow.rs` pins the anchor and filename against a linked
-worktree, where `--absolute-git-dir` and `--git-common-dir` differ.
+worktree, where `--absolute-git-dir` and `--git-common-dir` differ. The header
+line is pinned there too, under NAMING-1kKw6pv0: it reads as prose and says
+`agent`, so a naming sweep reaches it before it reaches anything that fails.
 
 ## Seam D -- the port's own spice.toml is read by the predecessor
 

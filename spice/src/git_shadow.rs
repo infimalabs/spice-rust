@@ -157,6 +157,16 @@ fn git_read(
     Ok((!value.is_empty()).then(|| value.to_owned()))
 }
 
+/// Writes the whole shadow, or leaves the identical file already there.
+///
+/// The header says `agent` deliberately. It is not this port's name for the
+/// mechanism -- [`crate::repository`] calls that the Git shadow throughout --
+/// but the first line of a file the predecessor's `spice/agent/shadow.py` also
+/// writes whole. Both read back before writing, so the two only stay out of
+/// each other's way while the bytes match exactly; rewording this line on one
+/// side makes them overwrite each other on every alternating run, and nothing
+/// in the running system notices. `tests/git_shadow.rs` pins it so a sweep
+/// that reaches the word reds instead of shipping.
 fn publish_shadow(git_dir: &Path, branch: &str, system_config: &str) -> Result<PathBuf, Error> {
     let path = git_dir.join(AGENT_GITCONFIG_NAME);
     let subsection = branch.replace('\\', "\\\\").replace('"', "\\\"");

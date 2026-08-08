@@ -368,7 +368,7 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
     assert_eq!(
         Path::new(&capture.environment["GIT_CONFIG_SYSTEM"]),
         fs::canonicalize(fixture.root.join(".git/agent.gitconfig"))
-            .expect("agent Git shadow canonicalizes")
+            .expect("the agent.gitconfig path canonicalizes")
     );
     assert_eq!(
         fixture_git_stdout_with_environment(
