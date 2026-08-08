@@ -263,7 +263,7 @@ fn workspace_lock(workspace: &Path) -> Result<LockFile, String> {
 /// right now. The lock beside each workspace is what separates them: a lock no
 /// one holds is a workspace whose owner is dead.
 ///
-/// Only a workspace with a lock file already beside it is considered, and that
+/// Only a workspace with a lock file already beside it is removed, and that
 /// restriction is load bearing rather than an optimization. A gate built before
 /// this mechanism minted workspaces under the same prefix and took no lock at
 /// all, so an unlocked directory is not evidence of a dead owner; on a machine
@@ -271,17 +271,22 @@ fn workspace_lock(workspace: &Path) -> Result<LockFile, String> {
 /// live run of an older build, and removing it would delete the tree that run
 /// is measuring. Those are left for an operator, and every workspace this build
 /// mints is reclaimable because it is locked before it exists.
+///
+/// A lock whose workspace is absent is considered separately. That shape can
+/// be residue from a run killed after removing its workspace, but it is also the
+/// shape of a live run between locking a fresh name and creating its directory.
+/// The lock is therefore unlinked only while this sweep possesses it and a
+/// second absence check proves that no directory appeared during acquisition.
 fn reclaim_abandoned(temporary: &Path) {
     let Ok(listing) = fs::read_dir(temporary) else {
         return;
     };
-    let candidates: Vec<PathBuf> = listing
-        .flatten()
-        .map(|entry| entry.path())
+    let candidates: Vec<PathBuf> = listing.flatten().map(|entry| entry.path()).collect();
+    for workspace in candidates
+        .iter()
         .filter(|path| is_workspace_directory(path))
-        .collect();
-    for workspace in candidates {
-        let Ok(lock) = workspace_lock(&workspace) else {
+    {
+        let Ok(lock) = workspace_lock(workspace) else {
             continue;
         };
         // Acquiring creates the lock file, so a workspace that never had one is
@@ -290,9 +295,49 @@ fn reclaim_abandoned(temporary: &Path) {
             continue;
         }
         if let Ok(Acquisition::Acquired(possession)) = lock.try_acquire() {
-            let _ = release_workspace(&workspace, &possession);
+            let _ = release_workspace(workspace, &possession);
         }
     }
+    for lock_path in candidates {
+        reclaim_parentless_lock(&lock_path);
+    }
+}
+
+/// Remove one gate tree lock that has no workspace and no live holder.
+fn reclaim_parentless_lock(lock_path: &Path) {
+    let Some(workspace) = workspace_named_by_lock(lock_path) else {
+        return;
+    };
+    if !matches!(workspace.try_exists(), Ok(false)) || !is_workspace_lock_file(lock_path) {
+        return;
+    }
+    let Ok(lock) = workspace_lock(&workspace) else {
+        return;
+    };
+    if lock.path() != lock_path {
+        return;
+    }
+    let Ok(Acquisition::Acquired(possession)) = lock.try_acquire() else {
+        return;
+    };
+    if matches!(workspace.try_exists(), Ok(false)) {
+        let _ = fs::remove_file(possession.lock().path());
+    }
+}
+
+/// Resolve the workspace named by one regular gate tree lock candidate.
+fn workspace_named_by_lock(lock_path: &Path) -> Option<PathBuf> {
+    let name = lock_path.file_name()?.to_str()?;
+    let workspace = name.strip_suffix(".lock")?;
+    workspace
+        .starts_with(WORKSPACE_PREFIX)
+        .then(|| lock_path.with_file_name(workspace))
+}
+
+/// Whether this path is a regular gate tree lock, without following a link.
+fn is_workspace_lock_file(path: &Path) -> bool {
+    workspace_named_by_lock(path).is_some()
+        && fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file())
 }
 
 /// Whether this path is a directory named as a gate tree workspace.
