@@ -52,7 +52,7 @@ pub(crate) fn run(
     let result = if matches!(action, "briefing" | "sweep") {
         deadline_build(matches, path, action, environment)
     } else {
-        build(matches, path, environment)
+        build(matches, path, action, environment)
     };
     outcome(result)
 }
@@ -67,26 +67,60 @@ fn outcome(result: Result<Report, Refusal>) -> Outcome<Report> {
     }
 }
 
+struct DeadlineContext {
+    action: String,
+    requested: Vec<String>,
+    budget: std::time::Duration,
+}
+
+enum DeadlineEvent<T> {
+    Resolved(Vec<String>),
+    Complete(Result<T, Refusal>, std::time::Instant),
+}
+
 fn deadline_build(
     matches: &ArgMatches,
     path: &[&str],
     action: &str,
     environment: &Environment,
 ) -> Result<Report, Refusal> {
-    let duration = deadline_duration(matches, action)?;
+    let context = DeadlineContext {
+        action: action.to_owned(),
+        requested: requested_inputs(matches, environment),
+        budget: deadline_duration(matches, action)?,
+    };
+    let started = std::time::Instant::now();
     let owned_matches = matches.clone();
     let owned_path = path
         .iter()
         .map(|part| (*part).to_owned())
         .collect::<Vec<_>>();
+    let owned_action = action.to_owned();
     let owned_environment = environment.clone();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    run_deadline(&context, started, move |sender| {
+        deadline_worker(
+            owned_matches,
+            owned_path,
+            owned_action,
+            owned_environment,
+            sender,
+        );
+    })
+}
+
+fn run_deadline<T, F>(
+    context: &DeadlineContext,
+    started: std::time::Instant,
+    worker: F,
+) -> Result<T, Refusal>
+where
+    T: Send + 'static,
+    F: FnOnce(std::sync::mpsc::Sender<DeadlineEvent<T>>) + Send + 'static,
+{
+    let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::Builder::new()
-        .name(format!("spice-session-{action}-deadline"))
-        .spawn(move || {
-            let path = owned_path.iter().map(String::as_str).collect::<Vec<_>>();
-            let _ = sender.send(build(&owned_matches, &path, &owned_environment));
-        })
+        .name(format!("spice-session-{}-deadline", context.action))
+        .spawn(move || worker(sender))
         .map_err(|error| {
             refusal(
                 "session::deadline-worker-unavailable",
@@ -94,31 +128,134 @@ fn deadline_build(
                 "restore process thread capacity and retry the same immutable inputs",
             )
         })?;
-    match receiver.recv_timeout(duration) {
-        Ok(result) => result,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(refusal(
-            "session::deadline-exceeded",
-            Some(format!(
-                "{action} end-to-end render exceeded {}s",
-                duration.as_secs_f64()
-            )),
-            "increase --deadline-seconds or narrow the immutable transcript inputs and filters",
-        )),
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(refusal(
-            "session::deadline-worker-interrupted",
-            Some(action.to_owned()),
-            "retry the same immutable inputs; if interruption repeats, preserve the \
-             transcript and inspect the process fault",
-        )),
+    wait_for_deadline(context, started, receiver)
+}
+
+fn deadline_worker(
+    matches: ArgMatches,
+    path: Vec<String>,
+    action: String,
+    environment: Environment,
+    sender: std::sync::mpsc::Sender<DeadlineEvent<Report>>,
+) {
+    let files = project::values(&matches, "FILES");
+    let sources = match source::resolve_inputs(&files, &environment) {
+        Ok(sources) => sources,
+        Err(error) => {
+            let _ = sender.send(DeadlineEvent::Complete(
+                Err(error),
+                std::time::Instant::now(),
+            ));
+            return;
+        }
+    };
+    let resolved = sources
+        .iter()
+        .map(|source| source.path.display().to_string())
+        .collect();
+    if sender.send(DeadlineEvent::Resolved(resolved)).is_err() {
+        return;
     }
+    let path = path.iter().map(String::as_str).collect::<Vec<_>>();
+    let result = build_resolved(&matches, &path, &action, sources);
+    let _ = sender.send(DeadlineEvent::Complete(result, std::time::Instant::now()));
+}
+
+fn wait_for_deadline<T>(
+    context: &DeadlineContext,
+    started: std::time::Instant,
+    receiver: std::sync::mpsc::Receiver<DeadlineEvent<T>>,
+) -> Result<T, Refusal> {
+    let mut resolved = None;
+    loop {
+        let remaining = context.budget.saturating_sub(started.elapsed());
+        match receiver.recv_timeout(remaining) {
+            Ok(DeadlineEvent::Resolved(inputs)) => resolved = Some(inputs),
+            Ok(DeadlineEvent::Complete(result, finished))
+                if finished.saturating_duration_since(started) <= context.budget =>
+            {
+                return result;
+            }
+            Ok(DeadlineEvent::Complete(_, _)) => {
+                return Err(deadline_exceeded(context, resolved.as_deref()));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                return Err(deadline_exceeded(context, resolved.as_deref()));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(refusal(
+                    "session::deadline-worker-interrupted",
+                    Some(context.action.clone()),
+                    "retry the same immutable inputs; if interruption repeats, preserve the \
+                     transcript and inspect the process fault",
+                ));
+            }
+        }
+    }
+}
+
+fn deadline_exceeded(context: &DeadlineContext, resolved: Option<&[String]>) -> Refusal {
+    let (state, inputs) = resolved.map_or(("requested", context.requested.as_slice()), |inputs| {
+        ("resolved", inputs)
+    });
+    refusal(
+        "session::deadline-exceeded",
+        Some(format!(
+            "action={} inputs={state}{} budget={}",
+            context.action,
+            input_list(inputs),
+            duration_label(context.budget)
+        )),
+        "increase --deadline-seconds or narrow the immutable transcript inputs and filters",
+    )
+}
+
+fn requested_inputs(matches: &ArgMatches, environment: &Environment) -> Vec<String> {
+    let files = project::values(matches, "FILES");
+    if !files.is_empty() {
+        return files;
+    }
+    for (variable, value) in [
+        ("CODEX_THREAD_ID", environment.codex_thread.as_ref()), // env-policy: allow
+        (
+            "CLAUDE_CODE_SESSION_ID", // env-policy: allow
+            environment.claude_session.as_ref(),
+        ),
+    ] {
+        if let Some(value) = value {
+            return vec![format!("{variable}={}", value.to_string_lossy())];
+        }
+    }
+    vec!["working-directory transcript discovery".to_owned()]
+}
+
+fn input_list(inputs: &[String]) -> String {
+    let rendered = inputs
+        .iter()
+        .map(|input| format!("{input:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{rendered}]")
+}
+
+fn duration_label(duration: std::time::Duration) -> String {
+    if duration.subsec_nanos() == 0 {
+        return format!("{}s", duration.as_secs());
+    }
+    let fraction = format!("{:09}", duration.subsec_nanos());
+    format!(
+        "{}.{fraction}s",
+        duration.as_secs(),
+        fraction = fraction.trim_end_matches('0')
+    )
 }
 
 fn build(
     matches: &ArgMatches,
     path: &[&str],
+    action: &str,
     environment: &Environment,
 ) -> Result<Report, Refusal> {
-    let action = path.get(1).copied().unwrap_or("briefing");
     if action == "thread" {
         let raw = matches
             .get_one::<String>("THREAD_ID")
@@ -142,6 +279,15 @@ fn build(
 
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
+    build_resolved(matches, path, action, sources)
+}
+
+fn build_resolved(
+    matches: &ArgMatches,
+    path: &[&str],
+    action: &str,
+    sources: Vec<source::ResolvedSource>,
+) -> Result<Report, Refusal> {
     let data = dataset::load(&sources)?;
     let filters = project::Filters::from_matches(matches)?;
     match action {
@@ -170,7 +316,15 @@ fn deadline_duration(matches: &ArgMatches, action: &str) -> Result<std::time::Du
         .try_get_one::<String>("deadline-seconds")
         .ok()
         .flatten()
-        .map_or("30", String::as_str);
+        .map(String::as_str);
+    deadline_duration_value(value, action)
+}
+
+fn deadline_duration_value(
+    value: Option<&str>,
+    action: &str,
+) -> Result<std::time::Duration, Refusal> {
+    let value = value.unwrap_or("30");
     let seconds = value.parse::<f64>().map_err(|_| {
         refusal(
             "session::deadline-invalid",
@@ -201,5 +355,91 @@ fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Refusal {
         expected: Some("one registered read-only transcript query".to_owned()),
         observed,
         remedy: remedy.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context(action: &str, requested: &[&str], budget: std::time::Duration) -> DeadlineContext {
+        DeadlineContext {
+            action: action.to_owned(),
+            requested: requested.iter().map(|input| (*input).to_owned()).collect(),
+            budget,
+        }
+    }
+
+    fn timeout(context: &DeadlineContext, resolved: Option<&[&str]>) -> Refusal {
+        let resolved = resolved.map(|inputs| {
+            inputs
+                .iter()
+                .map(|input| (*input).to_owned())
+                .collect::<Vec<_>>()
+        });
+        let (release, held) = std::sync::mpsc::channel();
+        let result = run_deadline(
+            context,
+            std::time::Instant::now(),
+            move |sender: std::sync::mpsc::Sender<DeadlineEvent<Report>>| {
+                if let Some(resolved) = resolved {
+                    sender
+                        .send(DeadlineEvent::Resolved(resolved))
+                        .expect("the resolved-input event reaches the deadline receiver");
+                }
+                held.recv()
+                    .expect("the test releases its held worker after the deadline");
+            },
+        );
+        release
+            .send(())
+            .expect("the timed-out test worker remains held until release");
+        result.expect_err("an open worker with no complete event exceeds its budget")
+    }
+
+    #[test]
+    fn source_discovery_and_report_construction_share_one_deadline() {
+        let budget = std::time::Duration::from_millis(1);
+        let discovering = context("sweep", &["thread-identity"], budget);
+        let discovery_refusal = timeout(&discovering, None);
+        assert_eq!(discovery_refusal.reason, "session::deadline-exceeded");
+        assert_eq!(
+            discovery_refusal.observed.as_deref(),
+            Some("action=sweep inputs=requested[\"thread-identity\"] budget=0.001s")
+        );
+
+        let rendering = context("briefing", &["input.jsonl"], budget);
+        let render_refusal = timeout(&rendering, Some(&["/canonical/input.jsonl"]));
+        assert_eq!(render_refusal.reason, "session::deadline-exceeded");
+        assert_eq!(
+            render_refusal.observed.as_deref(),
+            Some("action=briefing inputs=resolved[\"/canonical/input.jsonl\"] budget=0.001s")
+        );
+    }
+
+    #[test]
+    fn default_and_explicit_deadline_witnesses_are_canonical() {
+        let default = deadline_duration_value(None, "briefing").expect("default is valid");
+        let explicit = deadline_duration_value(Some("1.2500"), "sweep").expect("explicit is valid");
+        assert_eq!(duration_label(default), "30s");
+        assert_eq!(duration_label(explicit), "1.25s");
+    }
+
+    #[test]
+    fn a_deadline_refusal_carries_source_identity_but_no_partial_report_data() {
+        let context = context(
+            "briefing",
+            &["private-thread-identity"],
+            std::time::Duration::from_millis(1),
+        );
+        let refusal = timeout(&context, Some(&["/private/session.jsonl"]));
+        let observed = refusal.observed.expect("the deadline carries its witness");
+        assert!(observed.contains("/private/session.jsonl"));
+        assert!(!observed.contains("verbatim transcript secret"));
+        assert_eq!(refusal.witness.as_deref(), Some("session-query"));
+        assert_eq!(
+            refusal.expected.as_deref(),
+            Some("one registered read-only transcript query")
+        );
     }
 }
