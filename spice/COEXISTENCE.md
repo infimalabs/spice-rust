@@ -116,13 +116,20 @@ across a full install, upgrade, allocation, steering and shutdown.
 The reciprocal is absent **for stores specifically**, and that scope is
 load-bearing: nothing in the predecessor tree asserts anything about
 `spicejournal.sqlite3`, which is unreferenced anywhere in that tree rather than
-merely in its `.py` files. Checked non-vacuously -- the same tree-wide search
-over `spicemaxims` returns eight files, so the absence is the predecessor's
-silence about the port's store and not a search that cannot find anything. Eight
-is the whole tree with `__pycache__` excluded, measured on the bare token and on
-the full `spicemaxims.sqlite3` filename alike; three is the count under `tests/`
-alone, which is a defensible search for a sentence about what the predecessor
-asserts but is not the search this sentence describes. This is not a
+merely in its `.py` files. Checked non-vacuously by re-running that same
+tree-wide search against a store the predecessor does own: `git grep -l
+spicemaxims` over the predecessor tree returns eight files where `git grep -l
+spicejournal` returns none. So the absence is the predecessor's silence about
+the port's store and not a search that cannot find anything.
+
+Both figures are measurements of a moving tree rather than constants, and the
+search is spelled out so the next reader re-runs it instead of inheriting it.
+Eight is tree-wide and holds for the bare token and the full
+`spicemaxims.sqlite3` filename alike, over the tracked set or over the working
+tree with `__pycache__` excluded. Three is the count under `tests/` alone: a
+defensible search for a sentence about what the predecessor asserts, but not the
+search this sentence describes, and an earlier generation of this record quoted
+it under this sentence. This is not a
 general claim that the predecessor tests nothing about the port. It does, about
 configuration vocabulary, which is Seam F.
 
