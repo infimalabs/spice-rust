@@ -417,6 +417,77 @@ fn converged_absent_boundaries_are_visible_and_refused_attempts_invent_no_phase(
     assert!(answer.aggregates.is_empty());
 }
 
+/// A terminal fact whose phase no claim ever opened is withheld, not invented.
+///
+/// The fold cannot drop the fact, because a completed task is a lifecycle event
+/// a reader must still see, so `close_terminal` synthesizes the missing opening
+/// through `OpenPhase::missing`. That synthesis is the only place the fold
+/// authors a boundary instead of reading one, and it authors the unrecorded
+/// value, so the interval withholds through the same incomplete-boundary path a
+/// genuinely unproven bound takes rather than through an arm of its own.
+///
+/// The transcript batch is load-bearing. It leaves the interval fully accounted
+/// at fold time, so the withholding cannot be passing because the fixture ran
+/// short of bytes; the only thing missing is the opening claim itself.
+///
+/// The nil identity the synthesis fills in is observable rather than internal:
+/// it reaches the reader verbatim inside a session-disagreement reason, so the
+/// spelling is pinned here. A change that resolved that nil lane to a real one
+/// would attribute a stranger's transcript to a phase nobody opened.
+///
+/// This is the complement of
+/// [`converged_absent_boundaries_are_visible_and_refused_attempts_invent_no_phase`],
+/// which pins that a claimed phase carrying converged boundaries reports no
+/// missing start. Here the start is genuinely missing and must be named.
+#[test]
+fn a_terminal_with_no_opening_claim_is_withheld_and_names_its_nil_identity() {
+    let mut orphan = Facts::new();
+    orphan.task();
+    orphan.lane();
+    orphan.session(occupant_a(), "sonnet", "high");
+    orphan.batch(
+        source(),
+        ORIGIN,
+        pos(1, 100),
+        vec![sample(1, 10, 10, 11)],
+        0,
+    );
+    orphan.done(proven(Some(pos(1, 100))));
+
+    let answer = derive(&orphan.snapshot()).expect("orphan terminal derives");
+    assert_eq!(
+        answer.phases.len(),
+        1,
+        "the terminal still authors exactly one phase"
+    );
+    let phase = &answer.phases[0];
+    assert!(
+        matches!(phase.availability, EffortAvailability::Unavailable { .. }),
+        "an interval nobody opened carries no number, found {:?}",
+        phase.availability
+    );
+    assert!(answer.aggregates.is_empty());
+
+    assert_reason(phase, EffortUnavailableCode::MissingStart);
+    assert_reason(phase, EffortUnavailableCode::IncompleteBoundary);
+    assert!(
+        boundary_detail(phase).ends_with(SourceBoundary::UNRECORDED),
+        "the synthesized opening carries the migration reason, found {:?}",
+        boundary_detail(phase)
+    );
+
+    let nil = "00000000-0000-0000-0000-000000000000";
+    let session = reasons(phase)
+        .iter()
+        .find(|reason| reason.code == EffortUnavailableCode::SessionDisagreement)
+        .expect("the synthesized occupant declared no session");
+    assert!(
+        session.detail.contains(nil),
+        "the nil occupant reaches the reader verbatim, found {:?}",
+        session.detail
+    );
+}
+
 /// Usage is attributed only when both bounding facts carry a proven boundary.
 ///
 /// The control arm is load-bearing rather than decoration. It holds the same
