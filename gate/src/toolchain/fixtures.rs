@@ -1,3 +1,5 @@
+use super::*;
+
 use crate::manifest::PREDECESSOR_GATE_RELEASE;
 
 fn exact_tools(gate: GateId) -> Vec<ToolEvidence> {
@@ -52,7 +54,7 @@ fn fixture_finding(gate: GateId, suffix: &str) -> ArmFinding {
 /// The locus is chosen per gate because these arms do not agree on having one,
 /// and one shared literal hid that. Each arm below carries the reason its own
 /// producer gives.
-fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
+pub(super) fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
     let (path, line, column, detail) = match gate {
         // The formatter names the file and nothing inside it: the fix is to run
         // it over the whole file, so its analysis reports neither a line nor a

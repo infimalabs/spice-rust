@@ -1,7 +1,9 @@
+use super::*;
+
 #[derive(Default)]
-struct Corpus {
+pub(super) struct Corpus {
     modules: BTreeMap<String, Module>,
-    edges: BTreeSet<(String, String)>,
+    pub(super) edges: BTreeSet<(String, String)>,
     production_roots: BTreeSet<String>,
     test_modules: BTreeSet<String>,
     production_reachable: BTreeSet<String>,
@@ -9,7 +11,7 @@ struct Corpus {
 }
 
 impl Corpus {
-    fn load(
+    pub(super) fn load(
         jurisdiction: &Jurisdiction,
         configuration: &HygieneConfiguration,
         started: Instant,
@@ -134,7 +136,7 @@ impl Corpus {
         self.test_reachable = reachable(&self.test_modules, &self.edges);
     }
 
-    fn applicable(&self, gate: GateId) -> bool {
+    pub(super) fn applicable(&self, gate: GateId) -> bool {
         let graph = !self.modules.is_empty()
             && !self.production_roots.is_empty()
             && !self.test_modules.is_empty();
@@ -151,7 +153,7 @@ impl Corpus {
         }
     }
 
-    fn traversal_evidence(
+    pub(super) fn traversal_evidence(
         &self,
         traversal: HygieneTraversal,
         configuration: &HygieneConfiguration,
@@ -237,7 +239,11 @@ impl Corpus {
         }
     }
 
-    fn findings(&self, gate: GateId, configuration: &HygieneConfiguration) -> Vec<HygieneFinding> {
+    pub(super) fn findings(
+        &self,
+        gate: GateId,
+        configuration: &HygieneConfiguration,
+    ) -> Vec<HygieneFinding> {
         match gate {
             GateId::Reachability => self.reachability_findings(),
             GateId::SymbolReachability => self.symbol_reachability_findings(),
@@ -476,7 +482,7 @@ impl Corpus {
             .collect()
     }
 
-    fn resolved_references(&self) -> Vec<ResolvedReference> {
+    pub(super) fn resolved_references(&self) -> Vec<ResolvedReference> {
         let known: BTreeSet<_> = self.modules.keys().cloned().collect();
         let declarations: BTreeSet<_> = self
             .declarations()

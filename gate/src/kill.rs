@@ -59,7 +59,8 @@ const ATTEMPT_ARGUMENTS: [&str; 10] = [
     "--cargo-test-arg=--all-targets",
 ];
 
-include!("kill/profile.rs");
+mod profile;
+pub use profile::*;
 
 /// One exact rational survivor rate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

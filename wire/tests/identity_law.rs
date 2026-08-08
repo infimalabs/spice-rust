@@ -63,7 +63,14 @@ use wire::{
     ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
 };
 
-include!("identity_law/laws.rs");
-include!("identity_law/crossing.rs");
-include!("identity_law/audit.rs");
-include!("identity_law/vocabulary.rs");
+#[path = "identity_law/laws.rs"]
+mod laws;
+use laws::*;
+#[path = "identity_law/audit.rs"]
+mod audit;
+#[path = "identity_law/crossing.rs"]
+mod crossing;
+use audit::*;
+#[path = "identity_law/vocabulary.rs"]
+mod vocabulary;
+use vocabulary::*;

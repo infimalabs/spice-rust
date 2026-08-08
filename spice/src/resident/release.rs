@@ -1,4 +1,6 @@
-fn dispatch_release_publish(
+use super::*;
+
+pub(super) fn dispatch_release_publish(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
@@ -209,7 +211,7 @@ fn release_refusal(reason: &str, observed: &str) -> Outcome<CommandAnswer> {
     })
 }
 
-fn dispatch_up_change(
+pub(super) fn dispatch_up_change(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
@@ -283,14 +285,18 @@ fn dispatch_up_change(
     }
 }
 
-fn write(actor: Actor, epoch: CanonicalUuid, producer: Producer) -> CommandResult<JournalWrite> {
+pub(super) fn write(
+    actor: Actor,
+    epoch: CanonicalUuid,
+    producer: Producer,
+) -> CommandResult<JournalWrite> {
     let origin = format!("resident:{epoch}")
         .parse::<wire::Origin>()
         .map_err(|error| store_fault("resident::origin-invalid", &error.to_string()))?;
     write_at_origin(actor, origin, producer)
 }
 
-fn write_at_origin(
+pub(super) fn write_at_origin(
     actor: Actor,
     origin: wire::Origin,
     producer: Producer,
@@ -300,7 +306,7 @@ fn write_at_origin(
     Ok(JournalWrite::new(actor, origin, at, producer))
 }
 
-fn commit(bus: &Bus, write: JournalWrite) -> CommandResult<JournalCommit> {
+pub(super) fn commit(bus: &Bus, write: JournalWrite) -> CommandResult<JournalCommit> {
     match bus
         .commit(write)
         .map_err(|error| store_fault("bus::commit-failed", &error.to_string()))?
@@ -317,7 +323,7 @@ fn commit(bus: &Bus, write: JournalWrite) -> CommandResult<JournalCommit> {
     }
 }
 
-fn decode_dark_outcome(outcome: Outcome<CommandAnswer>) -> Outcome<()> {
+pub(super) fn decode_dark_outcome(outcome: Outcome<CommandAnswer>) -> Outcome<()> {
     match outcome {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::State(StateAnswer {
@@ -337,7 +343,9 @@ fn decode_dark_outcome(outcome: Outcome<CommandAnswer>) -> Outcome<()> {
     }
 }
 
-fn server_outcome(served: Result<Result<(), io::Error>, tokio::task::JoinError>) -> Outcome<()> {
+pub(super) fn server_outcome(
+    served: Result<Result<(), io::Error>, tokio::task::JoinError>,
+) -> Outcome<()> {
     match served {
         Ok(Ok(())) => environment_fault("canvas::stopped", "canvas server stopped early"),
         Ok(Err(error)) => environment_fault("canvas::serve-failed", &error.to_string()),
@@ -345,11 +353,11 @@ fn server_outcome(served: Result<Result<(), io::Error>, tokio::task::JoinError>)
     }
 }
 
-fn remove_if_present(path: &Path) -> io::Result<()> {
+pub(super) fn remove_if_present(path: &Path) -> io::Result<()> {
     ignore_absent(fs::remove_file(path))
 }
 
-fn remove_tree_if_present(path: &Path) -> io::Result<()> {
+pub(super) fn remove_tree_if_present(path: &Path) -> io::Result<()> {
     ignore_absent(fs::remove_dir_all(path))
 }
 
@@ -361,7 +369,7 @@ fn ignore_absent(result: io::Result<()>) -> io::Result<()> {
     }
 }
 
-fn committed_reply(first: u64, last: u64) -> Outcome<()> {
+pub(super) fn committed_reply(first: u64, last: u64) -> Outcome<()> {
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {
             first: seq(first),
@@ -371,11 +379,11 @@ fn committed_reply(first: u64, last: u64) -> Outcome<()> {
     })
 }
 
-fn seq(value: u64) -> Seq {
+pub(super) fn seq(value: u64) -> Seq {
     Seq::new(value).expect("journal commits always have non-zero positions")
 }
 
-fn new_uuid() -> CanonicalUuid {
+pub(super) fn new_uuid() -> CanonicalUuid {
     CanonicalUuid::new(uuid::Uuid::new_v4())
 }
 
@@ -383,19 +391,19 @@ fn protocol_fault(reason: &str, detail: &str) -> Outcome<()> {
     fault(FaultClass::Protocol, reason, detail)
 }
 
-fn typed_protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
+pub(super) fn typed_protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     fault(FaultClass::Protocol, reason, detail)
 }
 
-fn store_fault(reason: &str, detail: &str) -> Outcome<()> {
+pub(super) fn store_fault(reason: &str, detail: &str) -> Outcome<()> {
     fault(FaultClass::Store, reason, detail)
 }
 
-fn typed_store_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
+pub(super) fn typed_store_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     fault(FaultClass::Store, reason, detail)
 }
 
-fn typed_outcome(outcome: Outcome<()>) -> Outcome<CommandAnswer> {
+pub(super) fn typed_outcome(outcome: Outcome<()>) -> Outcome<CommandAnswer> {
     match outcome {
         Outcome::Reply(_) => unreachable!("unit command failures never carry replies"),
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
@@ -403,7 +411,7 @@ fn typed_outcome(outcome: Outcome<()>) -> Outcome<CommandAnswer> {
     }
 }
 
-fn environment_fault(reason: &str, detail: &str) -> Outcome<()> {
+pub(super) fn environment_fault(reason: &str, detail: &str) -> Outcome<()> {
     fault(FaultClass::Environment, reason, detail)
 }
 

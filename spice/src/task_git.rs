@@ -726,10 +726,14 @@ fn is_push_race(output: &GitOutput) -> bool {
             && detail.contains("failed to update ref"))
 }
 
-include!("task_git/admission.rs");
-include!("task_git/transaction.rs");
-include!("task_git/command.rs");
+mod admission;
+use admission::*;
+mod transaction;
+use transaction::*;
+mod command;
+use command::*;
 #[cfg(test)]
-include!("task_git/command_tests.rs");
+#[cfg(unix)]
+mod command_tests;
 #[cfg(test)]
-include!("task_git/tests.rs");
+mod tests;

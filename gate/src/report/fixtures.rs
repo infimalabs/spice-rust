@@ -1,4 +1,7 @@
 #[cfg(test)]
+use super::*;
+
+#[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::PathBuf;

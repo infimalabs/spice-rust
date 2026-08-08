@@ -1,3 +1,5 @@
+use super::*;
+
 // Hidden-visibility board tests, split from the sibling module by the law
 // they share: authoritative hidden evidence never crosses into any public
 // presentation, while the actor who owns it still reads it in full.
@@ -460,7 +462,10 @@ fn assert_forged_hidden_route_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &Ac
     }
 }
 
-fn seed_edit_tasks(bus: &Bus, epoch: CanonicalUuid) -> (TaskHandle, TaskHandle, TaskHandle) {
+pub(super) fn seed_edit_tasks(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+) -> (TaskHandle, TaskHandle, TaskHandle) {
     let alpha = add(
         bus,
         epoch,
@@ -500,7 +505,7 @@ fn seed_edit_tasks(bus: &Bus, epoch: CanonicalUuid) -> (TaskHandle, TaskHandle, 
     (alpha, beta, oops)
 }
 
-fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha: &TaskHandle) {
+pub(super) fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha: &TaskHandle) {
     let before_defer = board(bus, epoch, Actor::Operator);
     let alpha_before = at(&before_defer, alpha).clone();
     let until = instant_after(current_instant().expect("clock"), 300).expect("future instant");
@@ -552,7 +557,12 @@ fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha: &TaskHand
     ));
 }
 
-fn add_dependency(bus: &Bus, epoch: CanonicalUuid, alpha: &TaskHandle, beta: &TaskHandle) {
+pub(super) fn add_dependency(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    alpha: &TaskHandle,
+    beta: &TaskHandle,
+) {
     let before_edge = board(bus, epoch, Actor::Operator);
     let alpha_heads = at(&before_edge, alpha);
     let beta_heads = at(&before_edge, beta);
@@ -578,7 +588,7 @@ fn add_dependency(bus: &Bus, epoch: CanonicalUuid, alpha: &TaskHandle, beta: &Ta
     ));
 }
 
-fn assert_graph_handout_and_ledger(
+pub(super) fn assert_graph_handout_and_ledger(
     bus: &Bus,
     epoch: CanonicalUuid,
     alpha: &TaskHandle,
@@ -632,7 +642,12 @@ fn graph(bus: &Bus, epoch: CanonicalUuid) -> Outcome<CommandAnswer> {
     )
 }
 
-fn assert_ledger_contains(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle, expected: &str) {
+pub(super) fn assert_ledger_contains(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    task: &TaskHandle,
+    expected: &str,
+) {
     let ledger = issue(
         bus,
         epoch,
@@ -650,7 +665,7 @@ fn assert_ledger_contains(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle, ex
     ));
 }
 
-fn assert_render_form_parity(graph: &Outcome<CommandAnswer>) {
+pub(super) fn assert_render_form_parity(graph: &Outcome<CommandAnswer>) {
     let text = crate::render::render(graph, crate::render::Form::Text).expect("graph text renders");
     let json = crate::render::render(graph, crate::render::Form::Json).expect("graph JSON renders");
     let text_body = wire::intent::AnswerShape::Text
@@ -668,7 +683,7 @@ fn assert_render_form_parity(graph: &Outcome<CommandAnswer>) {
     );
 }
 
-fn assert_oops_note_exists(bus: &Bus, oops: &TaskHandle) {
+pub(super) fn assert_oops_note_exists(bus: &Bus, oops: &TaskHandle) {
     let facts = bus.fact_snapshot().expect("fixture facts read");
     assert!(facts.facts().iter().any(|fact| {
         fact.fact.kind() == wire::FactKind::TaskNoted

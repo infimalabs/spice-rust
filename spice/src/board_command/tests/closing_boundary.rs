@@ -1,3 +1,5 @@
+use super::*;
+
 // A closing boundary is written by the transaction that advances the phase,
 // and until these tests existed nothing read it back: recording the migrated
 // unrecorded value at both sites left the whole package green. The two facts

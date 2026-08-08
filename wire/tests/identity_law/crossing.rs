@@ -1,3 +1,5 @@
+use super::*;
+
 // Executable samples covering every custom wire-crossing identity.
 
 fn at(text: &str) -> Instant {

@@ -1,4 +1,6 @@
-fn renew_and_assert(
+use super::*;
+
+pub(super) fn renew_and_assert(
     bus: &Bus,
     epoch: CanonicalUuid,
     lane: &Actor,
@@ -53,7 +55,7 @@ fn renew_and_assert(
     after
 }
 
-fn assert_reclaim_survives_restart(
+pub(super) fn assert_reclaim_survives_restart(
     root: &Path,
     bus: Bus,
     epoch: CanonicalUuid,

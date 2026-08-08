@@ -1,4 +1,6 @@
-fn materialize_and_update(
+use super::*;
+
+pub(super) fn materialize_and_update(
     root: &Path,
     target: &str,
     expected: &str,
@@ -61,7 +63,7 @@ fn restore_move_failure(root: &Path, error: Error) -> Error {
     }
 }
 
-fn materialize_conflict(
+pub(super) fn materialize_conflict(
     root: &Path,
     merged_tree: &str,
     records: &[String],
@@ -156,7 +158,7 @@ fn parse_conflict_record(record: &str) -> Result<(String, String), Error> {
     Ok((metadata.to_owned(), path.to_owned()))
 }
 
-fn conflict_error(label: &str, upstream: &str) -> Error {
+pub(super) fn conflict_error(label: &str, upstream: &str) -> Error {
     Error::refusal(
         "git::recoverable-conflict",
         format!(
@@ -178,14 +180,14 @@ fn conflict_error(label: &str, upstream: &str) -> Error {
     )
 }
 
-fn require_no_open_merge(root: &Path, label: &str) -> Result<(), Error> {
+pub(super) fn require_no_open_merge(root: &Path, label: &str) -> Result<(), Error> {
     if let Some(upstream) = try_read(root, &["rev-parse", "--verify", "MERGE_HEAD"])? {
         return Err(conflict_error(label, &upstream));
     }
     Ok(())
 }
 
-fn require_clean(root: &Path, action: &str) -> Result<(), Error> {
+pub(super) fn require_clean(root: &Path, action: &str) -> Result<(), Error> {
     let status = required_read(root, &["status", "--porcelain"], "inspect worktree")?;
     if status.is_empty() {
         Ok(())
@@ -198,7 +200,7 @@ fn require_clean(root: &Path, action: &str) -> Result<(), Error> {
     }
 }
 
-fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool, Error> {
+pub(super) fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool, Error> {
     let output = run(root, &["merge-base", "--is-ancestor", ancestor, descendant])?;
     match output.status {
         0 => Ok(true),
@@ -210,7 +212,7 @@ fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool, Er
     }
 }
 
-fn merge_first_parent(root: &Path, commit: &str) -> Result<Option<String>, Error> {
+pub(super) fn merge_first_parent(root: &Path, commit: &str) -> Result<Option<String>, Error> {
     let line = required_read(
         root,
         &["rev-list", "--parents", "-n", "1", commit],
@@ -220,7 +222,7 @@ fn merge_first_parent(root: &Path, commit: &str) -> Result<Option<String>, Error
     Ok((parents.len() >= 2).then(|| parents[0].to_owned()))
 }
 
-fn recovered_lane_head(
+pub(super) fn recovered_lane_head(
     root: &Path,
     head: &str,
     meta: Metadata<'_>,
@@ -245,7 +247,7 @@ fn recovered_lane_head(
     Ok(is_ancestor(root, &candidate, head)?.then_some(candidate))
 }
 
-fn compose_message(meta: Metadata<'_>, agent_head: &str) -> String {
+pub(super) fn compose_message(meta: Metadata<'_>, agent_head: &str) -> String {
     let stem = meta.project.split('.').next().unwrap_or(meta.project);
     let prefix = if stem.is_empty() {
         String::new()
@@ -280,7 +282,7 @@ fn compose_message(meta: Metadata<'_>, agent_head: &str) -> String {
     format!("{prefix}{title} {}{phase}\n\n{trailers}", meta.label)
 }
 
-fn recover_pending(root: &Path) -> Result<(), Error> {
+pub(super) fn recover_pending(root: &Path) -> Result<(), Error> {
     let marker = transaction_path(root)?;
     let bytes = match fs::read(&marker) {
         Ok(bytes) => bytes,
@@ -426,7 +428,7 @@ fn write_git_state(root: &Path, name: &str, content: &str) -> Result<(), Error> 
     fs::write(&path, content).map_err(|error| filesystem_fault("write Git state", &path, error))
 }
 
-fn git_state_path(root: &Path, name: &str) -> Result<PathBuf, Error> {
+pub(super) fn git_state_path(root: &Path, name: &str) -> Result<PathBuf, Error> {
     let written = required_read(
         root,
         &["rev-parse", "--git-path", name],
@@ -440,11 +442,11 @@ fn git_state_path(root: &Path, name: &str) -> Result<PathBuf, Error> {
     })
 }
 
-fn transaction_path(root: &Path) -> Result<PathBuf, Error> {
+pub(super) fn transaction_path(root: &Path) -> Result<PathBuf, Error> {
     git_state_path(root, TRANSACTION_FILE)
 }
 
-fn write_pending(path: &Path, pending: &Pending) -> Result<(), Error> {
+pub(super) fn write_pending(path: &Path, pending: &Pending) -> Result<(), Error> {
     let bytes = serde_json::to_vec(pending).map_err(|error| {
         Error::fault(
             "git::transaction-invalid",

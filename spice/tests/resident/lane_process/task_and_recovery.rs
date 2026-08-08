@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn typed_task_commands_retain_the_ambient_lane_principal() {
     let fixture = Fixture::new("lane-task-principal");

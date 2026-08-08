@@ -1,19 +1,21 @@
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
-static NEXT_COMMAND: AtomicU64 = AtomicU64::new(100);
+use super::*;
+
+pub(super) static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
+pub(super) static NEXT_COMMAND: AtomicU64 = AtomicU64::new(100);
 
 #[derive(Clone, Debug)]
-struct Seat {
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
+pub(super) struct Seat {
+    pub(super) lane: CanonicalUuid,
+    pub(super) occupant: CanonicalUuid,
 }
 
-fn uuid(value: u64) -> CanonicalUuid {
+pub(super) fn uuid(value: u64) -> CanonicalUuid {
     format!("018f82d4-6f59-7d06-92e3-{value:012x}")
         .parse()
         .expect("fixture UUID is canonical")
 }
 
-fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, CanonicalUuid, Vec<Seat>) {
+pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, CanonicalUuid, Vec<Seat>) {
     let number = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
         "spice-board-command-{name}-{}-{number}",
@@ -77,7 +79,7 @@ fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, CanonicalUuid, Vec<S
     (root, bus, epoch, seats)
 }
 
-fn issue<B: Serialize>(
+pub(super) fn issue<B: Serialize>(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
@@ -89,7 +91,7 @@ fn issue<B: Serialize>(
     dispatch(bus, &command).expect("board command owns fixture kind")
 }
 
-fn issue_with_allocation<B: Serialize>(
+pub(super) fn issue_with_allocation<B: Serialize>(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
@@ -110,7 +112,7 @@ fn issue_with_allocation<B: Serialize>(
         .expect("board command owns fixture kind")
 }
 
-fn fixture_command<B: Serialize>(
+pub(super) fn fixture_command<B: Serialize>(
     epoch: CanonicalUuid,
     actor: Actor,
     kind: CommandKind,
@@ -133,7 +135,7 @@ fn fixture_command<B: Serialize>(
     .expect("fixture command admits")
 }
 
-fn assert_committed(outcome: Outcome<CommandAnswer>) -> CommandAnswer {
+pub(super) fn assert_committed(outcome: Outcome<CommandAnswer>) -> CommandAnswer {
     let Outcome::Reply(Reply {
         position: ReplyPosition::Committed(_),
         body,
@@ -144,7 +146,7 @@ fn assert_committed(outcome: Outcome<CommandAnswer>) -> CommandAnswer {
     body
 }
 
-fn board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswer {
+pub(super) fn board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswer {
     let outcome = issue(
         bus,
         epoch,
@@ -164,7 +166,7 @@ fn board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswer {
     *answer
 }
 
-fn board_with_allocation(
+pub(super) fn board_with_allocation(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
@@ -190,7 +192,7 @@ fn board_with_allocation(
     *answer
 }
 
-fn add(
+pub(super) fn add(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
@@ -201,7 +203,7 @@ fn add(
     add_project(bus, epoch, actor, task, title, "board.test", flow)
 }
 
-fn add_project(
+pub(super) fn add_project(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
@@ -217,7 +219,7 @@ fn add_project(
     clippy::too_many_arguments,
     reason = "task fixtures retain the command's authored fields"
 )]
-fn add_project_with_acceptance(
+pub(super) fn add_project_with_acceptance(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
