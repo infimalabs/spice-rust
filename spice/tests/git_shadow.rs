@@ -9,11 +9,10 @@
 //!
 //! So the anchor, filename and complete published bytes are held here instead,
 //! including the section order, indentation, trailing newline and reachable
-//! subsection quoting. Everything runs
-//! against a linked worktree on purpose. In an ordinary checkout
-//! `--absolute-git-dir` and `--git-common-dir` name the same directory, so a
-//! test placed there passes whichever one the code asks for, and the divergence
-//! this file exists to catch would be invisible.
+//! subsection quoting. Everything runs against a linked worktree on purpose.
+//! In an ordinary checkout `--absolute-git-dir` and `--git-common-dir` name the
+//! same directory, so a test placed there passes whichever one the code asks
+//! for, and the divergence this file exists to catch would be invisible.
 
 use std::fs;
 use std::path::{Path, PathBuf};
