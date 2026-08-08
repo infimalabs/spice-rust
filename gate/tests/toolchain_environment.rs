@@ -1,6 +1,6 @@
 use gate::{
     ArmFinding, ArmOutcome, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind, FindingDetail, GateId,
-    SourceLocus, TOOLCHAIN_ARMS, measure_toolchain,
+    PACKAGED_ENV_PROFILE, SourceLocus, TOOLCHAIN_ARMS, measure_toolchain,
 };
 
 mod support;
@@ -155,6 +155,11 @@ fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
 /// unaccounted. The refusal reason prints the marker syntax so an author seeing
 /// only the hook output can distinguish the two cases without reading this
 /// scanner.
+///
+/// It must print the marker the installed pre-commit hook reads as well. This
+/// arm's marker is a current-port assertion the hook has never heard of, so a
+/// refusal naming only that one sends an author to a commit the hook refuses on
+/// the same lines, demanding a spelling this arm never mentioned.
 #[test]
 fn the_ledger_refusal_names_the_literal_escape_without_hiding_an_access() {
     // These become exact literals only inside the isolated repository written
@@ -197,6 +202,14 @@ fn the_ledger_refusal_names_the_literal_escape_without_hiding_an_access() {
             .reason
             .contains(&format!("`{ENV_NAME_LITERAL_MARKER} NAME`")),
         "the refusal did not name the literal escape: {}",
+        observation.reason
+    );
+    assert!(
+        observation
+            .reason
+            .contains(PACKAGED_ENV_PROFILE.allow_marker),
+        "the refusal recommended a marker only this arm reads without naming the one \
+         the commit hook requires: {}",
         observation.reason
     );
     let names: Vec<&str> = observation
