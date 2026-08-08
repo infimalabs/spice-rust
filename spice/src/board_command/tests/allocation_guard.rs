@@ -4,18 +4,26 @@
 // reds only the tests that read it. Measured by severing each in turn, over all
 // seven tests here:
 //
+// Sites here are named rather than numbered: a line number retargets silently
+// whenever anything above it moves, while a name that goes stale stops
+// resolving instead of resolving to something else. In order,
+// `guard_allocation` runs `witnesses_hold`, then refuses with
+// `allocator subscription head changed`, `allocator head set changed`, and
+// `allocator winner changed`. Each of those three strings is asserted below, so
+// renaming one reds a test here rather than quietly orphaning a citation.
+//
 // | Severed in `guard_allocation` | Reds | Stays green |
 // | --- | --- | --- |
-// | witnesses, `read_guard.rs:617` | `a_moved_witness_...` | other 6 |
-// | residency, `read_guard.rs:621` | `..._residency_head_moved_...`, `a_reseat_between_...` | other 5 |
-// | head set, `read_guard.rs:639` | `..._task_added_after_...`, `a_task_added_between_...` | other 5 |
-// | winner, `read_guard.rs:665` | `..._winner_that_was_never_...` | other 6 |
+// | `witnesses_hold` | `a_moved_witness_...` | other 6 |
+// | residency | `..._residency_head_moved_...`, `a_reseat_between_...` | other 5 |
+// | head set | `..._task_added_after_...`, `a_task_added_between_...` | other 5 |
+// | winner | `..._winner_that_was_never_...` | other 6 |
 //
 // The last row is why no `..._between_the_claim_plan_...` test claims the
 // winner comparison. `AllocationHeads` is a tuple of journal positions, so an
 // unmoved head set means identical entries and -- `board::select` reading no
-// clock -- an identical winner, and `639` refuses ahead of it either way. Only
-// a hand-built observation reaches `665`.
+// clock -- an identical winner, and the head-set comparison refuses ahead of it
+// either way. Only a hand-built observation reaches the winner comparison.
 //
 // One more severing separates the two kinds of test here. Making `commit_claim`
 // re-read the board instead of consuming the snapshot its plan decided against
@@ -172,7 +180,7 @@ fn an_unmoved_observation_lets_the_allocator_write_commit() {
     );
 }
 
-/// Pins the head-set comparison at `read_guard.rs:639` on its own.
+/// Pins the head-set comparison in `read_guard.rs` on its own.
 ///
 /// A task added after the observation moves the head set without moving the
 /// residency head, so the residency comparison ahead of it passes and this is
@@ -210,7 +218,7 @@ fn a_task_added_after_the_observation_refuses_the_allocator_write() {
     );
 }
 
-/// Pins the residency comparison at `read_guard.rs:621` on its own.
+/// Pins the residency comparison in `read_guard.rs` on its own.
 ///
 /// Re-seating moves the residency head and touches no task head, so the two
 /// comparisons after it would both pass and this one has to refuse.
@@ -246,7 +254,7 @@ fn a_residency_head_moved_after_the_observation_refuses_the_allocator_write() {
     );
 }
 
-/// Pins the winner comparison at `read_guard.rs:665` on its own.
+/// Pins the winner comparison in `read_guard.rs` on its own.
 ///
 /// Nothing moves here, because nothing that moves can reach this comparison.
 /// `AllocationHeads` is a tuple of journal positions, so an unmoved head set
@@ -291,7 +299,7 @@ fn a_winner_that_was_never_the_selection_refuses_the_allocator_write() {
 // Every refusal below is asserted by its exact reason rather than by refusing
 // at all. `committed` flattens every guard refusal to the single outer reason
 // `board::witness-moved` and carries the comparison that actually refused in
-// `observed`, and the client's own witnesses are checked at `read_guard.rs:617`
+// `observed`, and the client's own witnesses are checked by `witnesses_hold`
 // ahead of all three comparisons, so a bare "it refused" assertion would pass
 // without the guard ever reaching an allocator comparison.
 
@@ -363,7 +371,7 @@ fn commit_planned_claim(bus: &Bus, command: &wire::AdmittedCommand, plan: ClaimP
     ))
 }
 
-/// Reaches the head-set comparison at `read_guard.rs:639` through the claim path.
+/// Reaches the head-set comparison in `read_guard.rs` through the claim path.
 ///
 /// The competing task is added through `dispatch`, the same door production
 /// adds tasks through, after the claim is decided and before it is written. It
@@ -411,7 +419,7 @@ fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
     clean(&root, bus);
 }
 
-/// Reaches the residency comparison at `read_guard.rs:621` through the claim path.
+/// Reaches the residency comparison in `read_guard.rs` through the claim path.
 ///
 /// Re-seating rewrites the residency head over the same epoch, lane, occupant
 /// and disposition, which is every field `Witness::Residency` pins, so the
@@ -456,7 +464,7 @@ fn a_reseat_between_the_claim_plan_and_its_commit_refuses_the_claim() {
 
 /// Pins the premise the two assertions above depend on.
 ///
-/// `witnesses_hold` at `read_guard.rs:617` runs before every allocator
+/// `witnesses_hold` in `read_guard.rs` runs before every allocator
 /// comparison, so a claim whose own witnessed head moved refuses there and
 /// never reaches one. Both scenarios above would still "refuse" if they landed
 /// here instead, which is why neither of them settles for that.
