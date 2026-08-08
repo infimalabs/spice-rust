@@ -375,10 +375,7 @@ fn external_tool_declarations_are_exact() {
             .collect::<Vec<_>>(),
         [
             ("cargo", "cargo 1.97.1 (c980f4866 2026-06-30)"),
-            (
-                "rustfmt",
-                "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)"
-            ),
+            ("rustfmt", "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)"),
         ]
     );
     assert_eq!(
@@ -489,7 +486,10 @@ fn packaged_environment_jurisdiction_matches_release_0_31_0() {
             "CLAUDE_CODE_SESSION_ID", // env-policy: allow
         ]
     );
-    assert_eq!(PACKAGED_ENV_PROFILE.self_path_suffix, "studies/envpolicy.py");
+    assert_eq!(
+        PACKAGED_ENV_PROFILE.self_path_suffix,
+        "studies/envpolicy.py"
+    );
     const { assert!(PACKAGED_ENV_PROFILE.access_gate) };
     assert!(PACKAGED_ENV_PROFILE.declared_names.is_empty());
     assert_eq!(PACKAGED_ENV_PROFILE.baseline, None);
@@ -595,7 +595,12 @@ fn pass_and_finding_fixtures_cover_every_arm_and_are_deterministic() {
                 measurement.timing.is_some(),
                 measurement.gate_id == GateId::RustTypecheck
             );
-            assert!(measurement.findings.windows(2).all(|pair| pair[0] < pair[1]));
+            assert!(
+                measurement
+                    .findings
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1])
+            );
         }
     }
 }
@@ -653,7 +658,10 @@ fn external_tool_nonpass_fixtures_cover_discovery_and_version_independently() {
     ];
     for gate in external {
         let mut unavailable = fixture_observation(gate, ArmOutcome::ToolUnavailable);
-        let first = unavailable.tools.first_mut().expect("declared external tool");
+        let first = unavailable
+            .tools
+            .first_mut()
+            .expect("declared external tool");
         let ToolEvidence::Identified {
             name,
             requested_program,
@@ -672,10 +680,7 @@ fn external_tool_nonpass_fixtures_cover_discovery_and_version_independently() {
             .iter()
             .find(|measurement| measurement.gate_id == gate)
             .expect("unavailable fixture");
-        assert_eq!(
-            unavailable_measurement.outcome,
-            ArmOutcome::ToolUnavailable
-        );
+        assert_eq!(unavailable_measurement.outcome, ArmOutcome::ToolUnavailable);
         assert!(unavailable_measurement.outcome.is_failure());
         assert!(
             unavailable_measurement
@@ -910,8 +915,7 @@ fn structured_finding_identity_refuses_missing_loci_and_inconsistent_detail() {
     ));
 
     let mut empty_ledger = fixture_observation(GateId::EnvNameLedger, ArmOutcome::Findings);
-    let FindingDetail::EnvironmentLedger { references, .. } =
-        &mut empty_ledger.findings[0].detail
+    let FindingDetail::EnvironmentLedger { references, .. } = &mut empty_ledger.findings[0].detail
     else {
         panic!("ledger fixture has ledger detail");
     };
@@ -925,8 +929,7 @@ fn structured_finding_identity_refuses_missing_loci_and_inconsistent_detail() {
     ));
 
     let mut bad_javascript = fixture_observation(GateId::JavascriptUnused, ArmOutcome::Findings);
-    let FindingDetail::JavascriptUnused { reason, .. } =
-        &mut bad_javascript.findings[0].detail
+    let FindingDetail::JavascriptUnused { reason, .. } = &mut bad_javascript.findings[0].detail
     else {
         panic!("JavaScript fixture has JavaScript detail");
     };
@@ -1000,9 +1003,7 @@ fn predecessor_fixture_matrix_compares_scanners_and_refuses_changed_executors() 
             let comparison = compare_predecessor(&predecessor, current)
                 .expect("fixture predecessor comparison is well formed");
             match current.gate_id {
-                GateId::Formatters
-                | GateId::CanvasWebTypecheck
-                | GateId::PythonTypecheck => {
+                GateId::Formatters | GateId::CanvasWebTypecheck | GateId::PythonTypecheck => {
                     let PredecessorComparison::Refused(refusal) = comparison else {
                         panic!("changed executor must carry a refusal");
                     };
@@ -1264,12 +1265,14 @@ fn packaged_environment_evidence_covers_csharp_typescript_and_shell() {
             sources
                 .iter()
                 .enumerate()
-                .map(|(index, (path, source))| PredecessorFinding::EnvironmentAccess {
-                    path: (*path).to_owned(),
-                    line: (index + 1) as u32,
-                    name: "SPICE_HOOKS".to_owned(), // env-policy: allow
-                    source: (*source).to_owned(),
-                })
+                .map(
+                    |(index, (path, source))| PredecessorFinding::EnvironmentAccess {
+                        path: (*path).to_owned(),
+                        line: (index + 1) as u32,
+                        name: "SPICE_HOOKS".to_owned(), // env-policy: allow
+                        source: (*source).to_owned(),
+                    },
+                )
                 .collect(),
         ),
     };

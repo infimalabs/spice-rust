@@ -35,30 +35,17 @@ impl Admission {
     /// A non-empty command comes from the lane's own checkout, so a baseline
     /// carrying a weaker command cannot relax it. An empty command is retained
     /// as the explicit signal to resolve policy from each integrated tree.
-    fn resolve(
-        repository: &Repository,
-        agent_head: &str,
-    ) -> Result<Self, Error> {
+    fn resolve(repository: &Repository, agent_head: &str) -> Result<Self, Error> {
         let resolved = crate::config::load_repository(repository, &[])
-            .map_err(|error| {
-                Error::fault("git::admission-unreadable", error.to_string())
-        })?;
+            .map_err(|error| Error::fault("git::admission-unreadable", error.to_string()))?;
         Ok(Self {
             lane_argv: resolved.root().policy().admission().to_vec(),
-            authored_tree: tree_of(
-                repository.worktree_root(),
-                agent_head,
-            )?,
+            authored_tree: tree_of(repository.worktree_root(), agent_head)?,
         })
     }
 
     /// Refuse one integrated commit whose tree the declared command rejects.
-    fn admit(
-        &self,
-        repository: &Repository,
-        integrated: &str,
-        label: &str,
-    ) -> Result<(), Error> {
+    fn admit(&self, repository: &Repository, integrated: &str, label: &str) -> Result<(), Error> {
         let root = repository.worktree_root();
         // Bytes identical to the lane's own tree are the ones it already
         // worked, so a completion that merged nothing new is not charged for
@@ -97,17 +84,12 @@ impl Admission {
     /// including every race retry. An empty lane declaration defers to the
     /// currently materialized integrated tree, so a baseline that introduces
     /// admission cannot arrive together with an unreadable tree unchecked.
-    fn selected_command(
-        &self,
-        repository: &Repository,
-    ) -> Result<Vec<String>, Error> {
+    fn selected_command(&self, repository: &Repository) -> Result<Vec<String>, Error> {
         if !self.lane_argv.is_empty() {
             return Ok(self.lane_argv.clone());
         }
         let resolved = crate::config::load_repository(repository, &[])
-            .map_err(|error| {
-                Error::fault("git::admission-unreadable", error.to_string())
-            })?;
+            .map_err(|error| Error::fault("git::admission-unreadable", error.to_string()))?;
         Ok(resolved.root().policy().admission().to_vec())
     }
 }
@@ -152,18 +134,11 @@ fn tree_of(root: &Path, commit: &str) -> Result<String, Error> {
 }
 
 /// Run the declared command over the checkout at `root`.
-fn run_admission(
-    root: &Path,
-    argv: &[String],
-) -> Result<AdmissionOutput, Error> {
+fn run_admission(root: &Path, argv: &[String]) -> Result<AdmissionOutput, Error> {
     let outcome = sill::spawn(admission_spec(root, argv)?)
-        .map_err(|error| {
-            Error::fault("git::admission-launch-failed", error.to_string())
-        })?
+        .map_err(|error| Error::fault("git::admission-launch-failed", error.to_string()))?
         .wait()
-        .map_err(|error| {
-            Error::fault("git::admission-lost", error.to_string())
-        })?;
+        .map_err(|error| Error::fault("git::admission-lost", error.to_string()))?;
     let status = match outcome.completion() {
         sill::Completion::Exited(status) => status.code().unwrap_or(-1),
         sill::Completion::TimedOut(_) => {

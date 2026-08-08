@@ -85,7 +85,10 @@ fn seed_transcript(bus: &Bus, lane: CanonicalUuid) {
         .fact(batch, FactCause::Root)
         .expect("fixture ingestion fact builds");
     write.transcript_source_head(pending, move |_seq| head);
-    match bus.commit(write).expect("fixture transcript reaches writer") {
+    match bus
+        .commit(write)
+        .expect("fixture transcript reaches writer")
+    {
         CommitOutcome::Committed(_) => {}
         outcome => panic!("fixture transcript did not commit: {outcome:?}"),
     }

@@ -30,8 +30,7 @@ pub(super) fn configure_subscription(
         .parse()
         .expect("fixture resident origin");
     let at = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
-    let mut write =
-        JournalWrite::new(Actor::Operator, origin, at, Producer::ResidentRecognition);
+    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::ResidentRecognition);
     let configured = write
         .fact(
             wire::body::LineageConfigured {
@@ -49,7 +48,10 @@ pub(super) fn configure_subscription(
         )
         .expect("fixture subscription fact builds");
     write.residency_head(configured, move |_| next);
-    match bus.commit(write).expect("subscription change reaches writer") {
+    match bus
+        .commit(write)
+        .expect("subscription change reaches writer")
+    {
         CommitOutcome::Committed(_) => {}
         outcome => panic!("subscription change did not commit: {outcome:?}"),
     }
@@ -89,12 +91,7 @@ struct ScopedTasks {
     unrelated: TaskHandle,
 }
 
-fn seed_scoped_tasks(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seat: &Seat,
-    lane: &Actor,
-) -> ScopedTasks {
+fn seed_scoped_tasks(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, lane: &Actor) -> ScopedTasks {
     let manual = add_project(
         bus,
         epoch,
@@ -158,12 +155,7 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
     } = seed_scoped_tasks(&bus, epoch, seat, &lane);
 
     let steer = board(&bus, epoch, lane.clone());
-    assert_scope(
-        &steer,
-        &lane,
-        wire::intent::LineageLife::Steer,
-        &[&manual],
-    );
+    assert_scope(&steer, &lane, wire::intent::LineageLife::Steer, &[&manual]);
     let steer_subscription = allocation_subscription(&steer.residency.body, &lane)
         .expect("steer subscription remains durable");
     assert_eq!(
@@ -227,7 +219,8 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
         &[&learned, &manual, &unrelated],
     );
 
-    bus.verify().expect("scoped authority verifies before restart");
+    bus.verify()
+        .expect("scoped authority verifies before restart");
     bus.shutdown().expect("scoped fixture bus stops");
     let reopened =
         journal::Journal::open(root.join("authority.sqlite3")).expect("scoped journal reopens");

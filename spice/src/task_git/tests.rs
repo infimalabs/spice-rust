@@ -30,8 +30,7 @@ mod tests {
 
     impl Drop for Scratch {
         fn drop(&mut self) {
-            fs::remove_dir_all(&self.0)
-                .expect("remove task Git scratch");
+            fs::remove_dir_all(&self.0).expect("remove task Git scratch");
         }
     }
 
@@ -50,23 +49,16 @@ mod tests {
                 &["init", "--bare", "-b", "main", path(&remote)],
             );
             let agent = scratch.path().join("agent");
-            git(
-                scratch.path(),
-                &["init", "-b", "main", path(&agent)],
-            );
+            git(scratch.path(), &["init", "-b", "main", path(&agent)]);
             identity(&agent);
-            fs::write(agent.join("README.md"), "base\n")
-                .expect("write base");
+            fs::write(agent.join("README.md"), "base\n").expect("write base");
             git(&agent, &["add", "README.md"]);
             git(&agent, &["commit", "-m", "base"]);
             git(&agent, &["remote", "add", "origin", path(&remote)]);
             git(&agent, &["push", "-u", "origin", "main"]);
             git(&agent, &["remote", "set-head", "origin", "--auto"]);
             let peer = scratch.path().join("peer");
-            git(
-                scratch.path(),
-                &["clone", path(&remote), path(&peer)],
-            );
+            git(scratch.path(), &["clone", path(&remote), path(&peer)]);
             identity(&peer);
             Self {
                 _scratch: scratch,
@@ -76,21 +68,18 @@ mod tests {
         }
 
         fn repository(&self) -> Repository {
-            Repository::discover(&self.agent)
-                .expect("discover agent repository")
+            Repository::discover(&self.agent).expect("discover agent repository")
         }
 
         fn agent_commit(&self, name: &str, content: &str) -> String {
-            fs::write(self.agent.join(name), content)
-                .expect("write agent path");
+            fs::write(self.agent.join(name), content).expect("write agent path");
             git(&self.agent, &["add", name]);
             git(&self.agent, &["commit", "-m", "agent work"]);
             stdout(&self.agent, &["rev-parse", "HEAD"])
         }
 
         fn peer_commit(&self, name: &str, content: &str) -> String {
-            fs::write(self.peer.join(name), content)
-                .expect("write peer path");
+            fs::write(self.peer.join(name), content).expect("write peer path");
             git(&self.peer, &["add", name]);
             git(&self.peer, &["commit", "-m", "peer work"]);
             git(&self.peer, &["push", "origin", "main"]);
@@ -114,35 +103,22 @@ mod tests {
         let agent = fixture.agent_commit("agent.txt", "agent\n");
         let upstream = fixture.peer_commit("peer.txt", "peer\n");
 
-        let result = publish(&fixture.repository(), metadata())
-            .expect("publish task work");
+        let result = publish(&fixture.repository(), metadata()).expect("publish task work");
 
         assert_eq!(result.head, agent);
-        assert_eq!(
-            result.upstream_head.as_deref(),
-            Some(upstream.as_str())
-        );
+        assert_eq!(result.upstream_head.as_deref(), Some(upstream.as_str()));
         assert_eq!(
             parents(&fixture.agent, &result.integrated),
             vec![upstream, agent]
         );
         assert_eq!(
-            stdout(
-                &fixture.agent,
-                &["ls-remote", "origin", "refs/heads/main"]
-            )
-            .split_whitespace()
-            .next(),
+            stdout(&fixture.agent, &["ls-remote", "origin", "refs/heads/main"])
+                .split_whitespace()
+                .next(),
             Some(result.integrated.as_str())
         );
-        assert_eq!(
-            stdout(&fixture.agent, &["status", "--porcelain"]),
-            ""
-        );
-        assert_eq!(
-            stdout(&fixture.agent, &["show", "HEAD:peer.txt"]),
-            "peer"
-        );
+        assert_eq!(stdout(&fixture.agent, &["status", "--porcelain"]), "");
+        assert_eq!(stdout(&fixture.agent, &["show", "HEAD:peer.txt"]), "peer");
     }
 
     #[test]
@@ -150,11 +126,10 @@ mod tests {
         let fixture = Fixture::new("published-retry");
         let agent = fixture.agent_commit("agent.txt", "agent\n");
         let upstream = fixture.peer_commit("peer.txt", "peer\n");
-        let first = publish(&fixture.repository(), metadata())
-            .expect("first publication");
+        let first = publish(&fixture.repository(), metadata()).expect("first publication");
 
-        let retried = publish(&fixture.repository(), metadata())
-            .expect("retry published task transition");
+        let retried =
+            publish(&fixture.repository(), metadata()).expect("retry published task transition");
 
         assert_eq!(retried.head, agent);
         assert_eq!(retried.integrated, first.integrated);
@@ -165,25 +140,19 @@ mod tests {
     }
 
     #[test]
-    fn capture_preserves_loose_head_and_claim_preparation_refuses_it()
-    {
+    fn capture_preserves_loose_head_and_claim_preparation_refuses_it() {
         let fixture = Fixture::new("capture");
         let loose = fixture.agent_commit("loose.txt", "loose\n");
 
-        let refusal = prepare_claim(&fixture.repository())
-            .expect_err("loose claim refused");
-        let captured = capture(&fixture.repository())
-            .expect("capture loose commit");
+        let refusal = prepare_claim(&fixture.repository()).expect_err("loose claim refused");
+        let captured = capture(&fixture.repository()).expect("capture loose commit");
 
         assert_eq!(refusal.reason(), "git::claim-loose-commits");
         assert_eq!(captured.boundary.head, loose);
         assert_eq!(captured.boundary.integrated, loose);
         assert_eq!(captured.boundary.local_commits, 1);
         assert_eq!(captured.subject, "agent work");
-        assert_eq!(
-            stdout(&fixture.agent, &["rev-parse", "HEAD"]),
-            loose
-        );
+        assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), loose);
     }
 
     #[test]
@@ -192,14 +161,12 @@ mod tests {
         let first = fixture.agent_commit("first.txt", "first\n");
         let second = fixture.agent_commit("second.txt", "second\n");
 
-        let refusal =
-            prepare_free(&fixture.repository(), "CLAIM-1kFixture")
-                .expect_err("release refused while commits are loose");
+        let refusal = prepare_free(&fixture.repository(), "CLAIM-1kFixture")
+            .expect_err("release refused while commits are loose");
 
         assert_eq!(refusal.reason(), "git::free-loose-commits");
         for commit in [&first, &second] {
-            let short =
-                stdout(&fixture.agent, &["rev-parse", "--short", commit]);
+            let short = stdout(&fixture.agent, &["rev-parse", "--short", commit]);
             assert!(
                 refusal.detail().contains(&short),
                 "{} omits {short}",
@@ -219,8 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn claim_ignores_release_payloads_but_refuses_other_untracked_files()
-    {
+    fn claim_ignores_release_payloads_but_refuses_other_untracked_files() {
         let fixture = Fixture::new("release-output");
         fs::write(
             fixture.agent.join(".gitignore"),
@@ -241,8 +207,7 @@ mod tests {
         fs::write(&object, "object\n").expect("write staged object");
         fs::write(&target, "payload\n").expect("write staged target");
 
-        prepare_claim(&fixture.repository())
-            .expect("release payloads do not block task next");
+        prepare_claim(&fixture.repository()).expect("release payloads do not block task next");
 
         fs::write(fixture.agent.join("LATER.md"), "unrelated\n")
             .expect("write unrelated untracked file");
@@ -268,37 +233,25 @@ mod tests {
     #[test]
     fn conflict_leaves_complete_recoverable_merge_state() {
         let fixture = Fixture::new("conflict");
-        fs::write(fixture.agent.join("README.md"), "agent\n")
-            .expect("write agent conflict");
+        fs::write(fixture.agent.join("README.md"), "agent\n").expect("write agent conflict");
         git(&fixture.agent, &["add", "README.md"]);
         git(&fixture.agent, &["commit", "-m", "agent conflict"]);
         let agent = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
-        fs::write(fixture.peer.join("README.md"), "peer\n")
-            .expect("write peer conflict");
+        fs::write(fixture.peer.join("README.md"), "peer\n").expect("write peer conflict");
         git(&fixture.peer, &["add", "README.md"]);
         git(&fixture.peer, &["commit", "-m", "peer conflict"]);
         git(&fixture.peer, &["push", "origin", "main"]);
         let upstream = stdout(&fixture.peer, &["rev-parse", "HEAD"]);
 
-        let error = publish(&fixture.repository(), metadata())
-            .expect_err("conflict refuses");
+        let error = publish(&fixture.repository(), metadata()).expect_err("conflict refuses");
 
         assert_eq!(error.reason(), "git::recoverable-conflict");
+        assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), agent);
         assert_eq!(
-            stdout(&fixture.agent, &["rev-parse", "HEAD"]),
-            agent
-        );
-        assert_eq!(
-            stdout(
-                &fixture.agent,
-                &["rev-parse", "--verify", "MERGE_HEAD"]
-            ),
+            stdout(&fixture.agent, &["rev-parse", "--verify", "MERGE_HEAD"]),
             upstream
         );
-        assert!(
-            stdout(&fixture.agent, &["status", "--short"])
-                .starts_with("UU README.md")
-        );
+        assert!(stdout(&fixture.agent, &["status", "--short"]).starts_with("UU README.md"));
         assert!(
             fixture
                 .agent
@@ -316,26 +269,21 @@ mod tests {
     #[test]
     fn resolved_conflict_retry_preserves_the_resolution_commit() {
         let fixture = Fixture::new("conflict-retry");
-        fs::write(fixture.agent.join("README.md"), "agent\n")
-            .expect("write agent conflict");
+        fs::write(fixture.agent.join("README.md"), "agent\n").expect("write agent conflict");
         git(&fixture.agent, &["add", "README.md"]);
         git(&fixture.agent, &["commit", "-m", "agent conflict"]);
         let agent = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
-        fs::write(fixture.peer.join("README.md"), "peer\n")
-            .expect("write peer conflict");
+        fs::write(fixture.peer.join("README.md"), "peer\n").expect("write peer conflict");
         git(&fixture.peer, &["add", "README.md"]);
         git(&fixture.peer, &["commit", "-m", "peer conflict"]);
         git(&fixture.peer, &["push", "origin", "main"]);
         let upstream = stdout(&fixture.peer, &["rev-parse", "HEAD"]);
-        publish(&fixture.repository(), metadata())
-            .expect_err("conflict refuses");
-        fs::write(fixture.agent.join("README.md"), "resolved\n")
-            .expect("write resolution");
+        publish(&fixture.repository(), metadata()).expect_err("conflict refuses");
+        fs::write(fixture.agent.join("README.md"), "resolved\n").expect("write resolution");
         git(&fixture.agent, &["add", "README.md"]);
         git(&fixture.agent, &["commit", "--no-edit"]);
         let resolved = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
-        let marker = transaction_path(&fixture.agent)
-            .expect("transaction path");
+        let marker = transaction_path(&fixture.agent).expect("transaction path");
         write_pending(
             &marker,
             &Pending::Conflict {
@@ -345,11 +293,10 @@ mod tests {
             },
         )
         .expect("retain post-conflict crash marker");
-        recover_pending(&fixture.agent)
-            .expect("recognize committed resolution");
+        recover_pending(&fixture.agent).expect("recognize committed resolution");
 
-        let retried = publish(&fixture.repository(), metadata())
-            .expect("publish resolved conflict");
+        let retried =
+            publish(&fixture.repository(), metadata()).expect("publish resolved conflict");
 
         assert_eq!(retried.head, resolved);
         assert_eq!(
@@ -368,11 +315,8 @@ mod tests {
         let agent = fixture.agent_commit("agent.txt", "agent\n");
         let upstream = fixture.peer_commit("peer.txt", "peer\n");
         git(&fixture.agent, &["fetch", "origin"]);
-        let hook = git_state_path(
-            &fixture.agent,
-            "hooks/reference-transaction",
-        )
-        .expect("reference hook path");
+        let hook = git_state_path(&fixture.agent, "hooks/reference-transaction")
+            .expect("reference hook path");
         fs::write(
             &hook,
             concat!(
@@ -384,11 +328,9 @@ mod tests {
             ),
         )
         .expect("write rejecting hook");
-        let mut permissions =
-            fs::metadata(&hook).expect("hook metadata").permissions();
+        let mut permissions = fs::metadata(&hook).expect("hook metadata").permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&hook, permissions)
-            .expect("make hook executable");
+        fs::set_permissions(&hook, permissions).expect("make hook executable");
 
         let message = compose_message(metadata(), &agent);
         let error = integrate(
@@ -401,14 +343,8 @@ mod tests {
         .expect_err("hook refuses");
 
         assert_eq!(error.reason(), "git::ref-update-refused");
-        assert_eq!(
-            stdout(&fixture.agent, &["rev-parse", "HEAD"]),
-            agent
-        );
-        assert_eq!(
-            stdout(&fixture.agent, &["status", "--porcelain"]),
-            ""
-        );
+        assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), agent);
+        assert_eq!(stdout(&fixture.agent, &["status", "--porcelain"]), "");
         assert!(!fixture.agent.join("peer.txt").exists());
         assert!(
             !transaction_path(&fixture.agent)
@@ -433,11 +369,8 @@ mod tests {
         let fixture = Fixture::new("hook-exiting");
         let head = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
         let descendant_pid = fixture.agent.join(".git/hook-exiting-pid");
-        let hook = git_state_path(
-            &fixture.agent,
-            "hooks/reference-transaction",
-        )
-        .expect("reference hook path");
+        let hook = git_state_path(&fixture.agent, "hooks/reference-transaction")
+            .expect("reference hook path");
         let script = format!(
             concat!(
                 "#!/bin/sh\n",
@@ -455,8 +388,7 @@ mod tests {
             pid = path(&descendant_pid),
         );
         fs::write(&hook, script).expect("write exiting hook");
-        let mut permissions =
-            fs::metadata(&hook).expect("hook metadata").permissions();
+        let mut permissions = fs::metadata(&hook).expect("hook metadata").permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&hook, permissions).expect("make hook executable");
 
@@ -483,11 +415,8 @@ mod tests {
         let fixture = Fixture::new("hook-descendant");
         let head = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
         let descendant_pid = fixture.agent.join(".git/hook-descendant-pid");
-        let hook = git_state_path(
-            &fixture.agent,
-            "hooks/reference-transaction",
-        )
-        .expect("reference hook path");
+        let hook = git_state_path(&fixture.agent, "hooks/reference-transaction")
+            .expect("reference hook path");
         let script = format!(
             concat!(
                 "#!/bin/sh\n",
@@ -504,8 +433,7 @@ mod tests {
             pid = path(&descendant_pid),
         );
         fs::write(&hook, script).expect("write descendant hook");
-        let mut permissions =
-            fs::metadata(&hook).expect("hook metadata").permissions();
+        let mut permissions = fs::metadata(&hook).expect("hook metadata").permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&hook, permissions).expect("make hook executable");
 
@@ -532,8 +460,7 @@ mod tests {
             .trim()
             .parse::<i32>()
             .expect("descendant pid is numeric");
-        let pid = rustix::process::Pid::from_raw(pid)
-            .expect("descendant pid is positive");
+        let pid = rustix::process::Pid::from_raw(pid).expect("descendant pid is positive");
         assert_eq!(
             rustix::process::test_kill_process(pid),
             Err(rustix::io::Errno::SRCH),
@@ -550,8 +477,7 @@ mod tests {
             &fixture.agent,
             &["update-ref", "refs/heads/main", &expected, &target],
         );
-        let marker = transaction_path(&fixture.agent)
-            .expect("transaction path");
+        let marker = transaction_path(&fixture.agent).expect("transaction path");
         write_pending(
             &marker,
             &Pending::Move {
@@ -562,13 +488,9 @@ mod tests {
         .expect("write interrupted transaction");
         git(&fixture.agent, &["read-tree", "--reset", "-u", &target]);
 
-        recover_pending(&fixture.agent)
-            .expect("repair pre-CAS crash");
+        recover_pending(&fixture.agent).expect("repair pre-CAS crash");
 
-        assert_eq!(
-            stdout(&fixture.agent, &["rev-parse", "HEAD"]),
-            expected
-        );
+        assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), expected);
         assert!(!fixture.agent.join("target.txt").exists());
         write_pending(
             &marker,
@@ -583,22 +505,14 @@ mod tests {
             &["update-ref", "refs/heads/main", &target, &expected],
         );
 
-        recover_pending(&fixture.agent)
-            .expect("repair post-CAS crash");
+        recover_pending(&fixture.agent).expect("repair post-CAS crash");
 
+        assert_eq!(stdout(&fixture.agent, &["rev-parse", "HEAD"]), target);
         assert_eq!(
-            stdout(&fixture.agent, &["rev-parse", "HEAD"]),
-            target
-        );
-        assert_eq!(
-            fs::read_to_string(fixture.agent.join("target.txt"))
-                .expect("read target"),
+            fs::read_to_string(fixture.agent.join("target.txt")).expect("read target"),
             "target\n"
         );
-        assert_eq!(
-            stdout(&fixture.agent, &["status", "--porcelain"]),
-            ""
-        );
+        assert_eq!(stdout(&fixture.agent, &["status", "--porcelain"]), "");
     }
 
     #[test]
@@ -627,14 +541,11 @@ mod tests {
             peer = path(&fixture.peer),
         );
         fs::write(&hook, script).expect("write racing pre-push hook");
-        let mut permissions =
-            fs::metadata(&hook).expect("hook metadata").permissions();
+        let mut permissions = fs::metadata(&hook).expect("hook metadata").permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&hook, permissions)
-            .expect("make hook executable");
+        fs::set_permissions(&hook, permissions).expect("make hook executable");
 
-        let error = publish(&fixture.repository(), metadata())
-            .expect_err("race bound refuses");
+        let error = publish(&fixture.repository(), metadata()).expect_err("race bound refuses");
 
         assert_eq!(
             error.reason(),
@@ -650,20 +561,11 @@ mod tests {
         );
         let current = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
         assert_eq!(
-            stdout(
-                &fixture.agent,
-                &["show", &format!("{current}:agent.txt")]
-            ),
+            stdout(&fixture.agent, &["show", &format!("{current}:agent.txt")]),
             "agent"
         );
-        assert!(
-            is_ancestor(&fixture.agent, &agent, &current)
-                .expect("agent ancestry")
-        );
-        assert_eq!(
-            stdout(&fixture.agent, &["status", "--porcelain"]),
-            ""
-        );
+        assert!(is_ancestor(&fixture.agent, &agent, &current).expect("agent ancestry"));
+        assert_eq!(stdout(&fixture.agent, &["status", "--porcelain"]), "");
     }
 
     /// A manifest neither side of the landing merge is wrong about.
@@ -765,24 +667,15 @@ mod tests {
     }
 
     /// A repository whose baseline already carries a readable manifest.
-    fn manifest_fixture_with_admission(
-        name: &str,
-        admission: bool,
-    ) -> Fixture {
+    fn manifest_fixture_with_admission(name: &str, admission: bool) -> Fixture {
         let fixture = Fixture::new(name);
-        fs::create_dir(fixture.agent.join("src"))
-            .expect("create fixture package source");
-        fs::write(fixture.agent.join("src/lib.rs"), "")
-            .expect("write fixture package source");
-        fs::write(fixture.agent.join("Cargo.toml"), MANIFEST_BASE)
-            .expect("write fixture manifest");
+        fs::create_dir(fixture.agent.join("src")).expect("create fixture package source");
+        fs::write(fixture.agent.join("src/lib.rs"), "").expect("write fixture package source");
+        fs::write(fixture.agent.join("Cargo.toml"), MANIFEST_BASE).expect("write fixture manifest");
         let mut tracked = vec!["add", "src/lib.rs", "Cargo.toml"];
         if admission {
-            fs::write(
-                fixture.agent.join("spice.toml"),
-                admission_document(),
-            )
-            .expect("write fixture admission policy");
+            fs::write(fixture.agent.join("spice.toml"), admission_document())
+                .expect("write fixture admission policy");
             tracked.push("spice.toml");
         }
         git(&fixture.agent, &tracked);
@@ -815,8 +708,7 @@ mod tests {
     fn a_clean_merge_that_duplicates_a_manifest_table_is_refused() {
         let fixture = manifest_fixture("duplicate-table");
         fixture.agent_commit("Cargo.toml", MANIFEST_APPENDED);
-        let upstream =
-            fixture.peer_commit("Cargo.toml", MANIFEST_RELOCATED);
+        let upstream = fixture.peer_commit("Cargo.toml", MANIFEST_RELOCATED);
 
         let error = publish(&fixture.repository(), metadata())
             .expect_err("a manifest that cannot be read refuses");
@@ -844,33 +736,23 @@ mod tests {
     fn an_ungated_baseline_commit_refuses_a_lane_that_only_moved_a_document() {
         let fixture = manifest_fixture("ungated-baseline");
         let agent = fixture.agent_commit("NOTES.md", "lane work\n");
-        let upstream =
-            fixture.peer_commit("Cargo.toml", MANIFEST_DUPLICATED);
+        let upstream = fixture.peer_commit("Cargo.toml", MANIFEST_DUPLICATED);
 
-        let error = publish(&fixture.repository(), metadata())
-            .expect_err("an unreadable baseline refuses");
+        let error =
+            publish(&fixture.repository(), metadata()).expect_err("an unreadable baseline refuses");
 
         assert_eq!(error.reason(), "git::admission-failed");
         assert_eq!(remote_head(&fixture), upstream);
         // The integrated state is recoverable rather than discarded: the merge
         // is checked out, carries both sides, and names its second parent.
-        assert_eq!(
-            parents(&fixture.agent, "HEAD"),
-            vec![upstream, agent]
-        );
-        assert_eq!(
-            stdout(&fixture.agent, &["status", "--porcelain"]),
-            ""
-        );
+        assert_eq!(parents(&fixture.agent, "HEAD"), vec![upstream, agent]);
+        assert_eq!(stdout(&fixture.agent, &["status", "--porcelain"]), "");
     }
 
     /// A command introduced by the integrated baseline governs that tree.
     #[test]
     fn an_ungated_baseline_can_introduce_the_command_that_refuses_it() {
-        let fixture = manifest_fixture_with_admission(
-            "baseline-introduces-admission",
-            false,
-        );
+        let fixture = manifest_fixture_with_admission("baseline-introduces-admission", false);
         let agent = fixture.agent_commit("NOTES.md", "lane work\n");
         fs::write(fixture.peer.join("spice.toml"), admission_document())
             .expect("write baseline admission policy");
@@ -898,8 +780,7 @@ mod tests {
     fn an_ungated_baseline_cannot_remove_the_lanes_admission() {
         let fixture = manifest_fixture("baseline-removes-admission");
         fixture.agent_commit("NOTES.md", "lane work\n");
-        fs::remove_file(fixture.peer.join("spice.toml"))
-            .expect("remove baseline admission policy");
+        fs::remove_file(fixture.peer.join("spice.toml")).expect("remove baseline admission policy");
         fs::write(fixture.peer.join("Cargo.toml"), MANIFEST_DUPLICATED)
             .expect("write unreadable baseline manifest");
         git(&fixture.peer, &["add", "--all"]);
@@ -922,17 +803,11 @@ mod tests {
     #[test]
     fn a_real_conflict_keeps_its_recoverable_merge_path_under_admission() {
         let fixture = manifest_fixture("conflict-under-admission");
-        fixture.agent_commit(
-            "Cargo.toml",
-            &MANIFEST_BASE.replace("0.0.0", "0.1.0"),
-        );
-        fixture.peer_commit(
-            "Cargo.toml",
-            &MANIFEST_BASE.replace("0.0.0", "0.2.0"),
-        );
+        fixture.agent_commit("Cargo.toml", &MANIFEST_BASE.replace("0.0.0", "0.1.0"));
+        fixture.peer_commit("Cargo.toml", &MANIFEST_BASE.replace("0.0.0", "0.2.0"));
 
-        let error = publish(&fixture.repository(), metadata())
-            .expect_err("a conflicted manifest refuses");
+        let error =
+            publish(&fixture.repository(), metadata()).expect_err("a conflicted manifest refuses");
 
         assert_eq!(error.reason(), "git::recoverable-conflict");
         assert!(
@@ -953,11 +828,10 @@ mod tests {
     #[test]
     fn a_tree_the_lane_authored_publishes_without_running_the_command() {
         let fixture = manifest_fixture("authored-tree");
-        let agent = fixture
-            .agent_commit("Cargo.toml", MANIFEST_DUPLICATED);
+        let agent = fixture.agent_commit("Cargo.toml", MANIFEST_DUPLICATED);
 
-        let result = publish(&fixture.repository(), metadata())
-            .expect("an unmerged lane tree publishes");
+        let result =
+            publish(&fixture.repository(), metadata()).expect("an unmerged lane tree publishes");
 
         assert_eq!(result.head, agent);
         assert_eq!(remote_head(&fixture), result.integrated);
@@ -971,15 +845,12 @@ mod tests {
     /// inside the retry, so both policy selection and admission must repeat.
     #[test]
     fn a_tree_built_by_losing_the_publication_race_is_refused() {
-        let fixture =
-            manifest_fixture_with_admission("race-admission", false);
+        let fixture = manifest_fixture_with_admission("race-admission", false);
         fixture.agent_commit("NOTES.md", "lane work\n");
         let broken = fixture.agent.join(".git/broken-manifest");
-        fs::write(&broken, MANIFEST_DUPLICATED)
-            .expect("write raced manifest");
+        fs::write(&broken, MANIFEST_DUPLICATED).expect("write raced manifest");
         let policy = fixture.agent.join(".git/raced-policy");
-        fs::write(&policy, admission_document())
-            .expect("write raced admission policy");
+        fs::write(&policy, admission_document()).expect("write raced admission policy");
         let counter = fixture.agent.join(".git/race-count");
         let hook = fixture.agent.join(".git/hooks/pre-push");
         let script = format!(
@@ -1000,11 +871,9 @@ mod tests {
             policy = path(&policy),
         );
         fs::write(&hook, script).expect("write racing pre-push hook");
-        let mut permissions =
-            fs::metadata(&hook).expect("hook metadata").permissions();
+        let mut permissions = fs::metadata(&hook).expect("hook metadata").permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&hook, permissions)
-            .expect("make hook executable");
+        fs::set_permissions(&hook, permissions).expect("make hook executable");
 
         let error = publish(&fixture.repository(), metadata())
             .expect_err("a raced manifest that cannot be read refuses");

@@ -283,7 +283,6 @@ fn dispatch_up_change(
     }
 }
 
-
 fn write(actor: Actor, epoch: CanonicalUuid, producer: Producer) -> CommandResult<JournalWrite> {
     let origin = format!("resident:{epoch}")
         .parse::<wire::Origin>()

@@ -146,13 +146,7 @@ fn task_list(board: &BoardAnswer, options: &TaskListOptions) -> String {
         rows.sort_by(|left, right| {
             task_newest_position(right)
                 .cmp(&task_newest_position(left))
-                .then_with(|| {
-                    right
-                        .statement
-                        .body
-                        .handle
-                        .cmp(&left.statement.body.handle)
-                })
+                .then_with(|| right.statement.body.handle.cmp(&left.statement.body.handle))
         });
         rows.truncate(limit);
     }
@@ -234,9 +228,10 @@ fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
         None => {
             pending
                 || waiting
-                    && task.claim.as_ref().is_some_and(|claim| {
-                        claim.body.disposition == ClaimDisposition::Active
-                    })
+                    && task
+                        .claim
+                        .as_ref()
+                        .is_some_and(|claim| claim.body.disposition == ClaimDisposition::Active)
         }
     }
 }
@@ -331,7 +326,10 @@ fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
                     .claim()
                     .is_some_and(|claim| claim.actor == board.principal)
         })
-        .map_or_else(|| "-".to_owned(), |entry| entry.statement().handle.to_string());
+        .map_or_else(
+            || "-".to_owned(),
+            |entry| entry.statement().handle.to_string(),
+        );
     let active_count = rows.iter().copied().filter(active).count();
     let review = rows
         .iter()

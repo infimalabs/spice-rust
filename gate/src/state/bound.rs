@@ -364,9 +364,7 @@ fn predecessor_truncated_percentage(scaled: i128) -> Result<i128, BoundError> {
     let twice_remainder = remainder
         .checked_mul(2)
         .ok_or(BoundError::VariationOverflow)?;
-    if twice_remainder > denominator
-        || (twice_remainder == denominator && significand % 2 == 1)
-    {
+    if twice_remainder > denominator || (twice_remainder == denominator && significand % 2 == 1) {
         significand += 1;
     }
     if significand == 1_u128 << (BINARY64_FRACTION_BITS + 1) {
@@ -390,10 +388,10 @@ fn predecessor_truncated_percentage(scaled: i128) -> Result<i128, BoundError> {
 }
 
 fn binary_exponent(numerator: u128, denominator: u128) -> i32 {
-    let numerator_bits = i32::try_from(u128::BITS - numerator.leading_zeros())
-        .expect("u128 bit width fits i32");
-    let denominator_bits = i32::try_from(u128::BITS - denominator.leading_zeros())
-        .expect("u128 bit width fits i32");
+    let numerator_bits =
+        i32::try_from(u128::BITS - numerator.leading_zeros()).expect("u128 bit width fits i32");
+    let denominator_bits =
+        i32::try_from(u128::BITS - denominator.leading_zeros()).expect("u128 bit width fits i32");
     let mut exponent = numerator_bits - denominator_bits;
     let below_binade = if exponent >= 0 {
         numerator < denominator << u32::try_from(exponent).expect("non-negative exponent")

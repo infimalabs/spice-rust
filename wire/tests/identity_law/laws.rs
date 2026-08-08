@@ -1,4 +1,3 @@
-
 // Generic identity, hash, spelling, and rank laws shared by this fixture.
 
 /// Row used by the packed frames.
@@ -401,22 +400,49 @@ fn a_taste_reminder_fact_carries_no_more_than_its_bytes() {
     let other = uuid("018f82d4-6f59-7d06-92e3-bce9131163c4");
     let samples = [
         base.clone(),
-        body::TasteReminded { directive: other, ..base.clone() },
-        body::TasteReminded { key: "taste-hedging-2".to_owned(), ..base.clone() },
-        body::TasteReminded { lane: other, ..base.clone() },
-        body::TasteReminded { taste: "padding".to_owned(), ..base.clone() },
+        body::TasteReminded {
+            directive: other,
+            ..base.clone()
+        },
+        body::TasteReminded {
+            key: "taste-hedging-2".to_owned(),
+            ..base.clone()
+        },
+        body::TasteReminded {
+            lane: other,
+            ..base.clone()
+        },
+        body::TasteReminded {
+            taste: "padding".to_owned(),
+            ..base.clone()
+        },
         body::TasteReminded {
             content: Digest::compute(Domain::TasteProse, b"it is the case that"),
             ..base.clone()
         },
-        body::TasteReminded { occupant: other, ..base.clone() },
-        body::TasteReminded { compaction: 7, ..base.clone() },
         body::TasteReminded {
-            locus: body::TranscriptLocus { column: 20, ..base.locus },
+            occupant: other,
             ..base.clone()
         },
-        body::TasteReminded { text: "cut the hedge".to_owned(), ..base.clone() },
-        body::TasteReminded { expires: instant("2030-04-12T18:44:09.272Z"), ..base.clone() },
+        body::TasteReminded {
+            compaction: 7,
+            ..base.clone()
+        },
+        body::TasteReminded {
+            locus: body::TranscriptLocus {
+                column: 20,
+                ..base.locus
+            },
+            ..base.clone()
+        },
+        body::TasteReminded {
+            text: "cut the hedge".to_owned(),
+            ..base.clone()
+        },
+        body::TasteReminded {
+            expires: instant("2030-04-12T18:44:09.272Z"),
+            ..base.clone()
+        },
     ]
     .map(Fact::new);
 

@@ -128,6 +128,9 @@ fn ingest_lane_transcript(
     match lane::ingest::ingest(journal, ingestion) {
         Ok(lane::ingest::Ingested::Accounted { applied, .. }) => Ok(Some(applied)),
         Ok(lane::ingest::Ingested::Unchanged) => Ok(None),
-        Err(error) => Err(format!("lane {} transcript not accounted: {error}", row.lane)),
+        Err(error) => Err(format!(
+            "lane {} transcript not accounted: {error}",
+            row.lane
+        )),
     }
 }

@@ -194,12 +194,8 @@ struct KillBoundsDeclaration {
 
 impl KillBoundsDeclaration {
     fn current() -> Result<Self, RateError> {
-        let deadlines = Deadlines::new(
-            MUTATION_RUNTIME,
-            MUTATION_OUTPUT_DRAIN,
-            MUTATION_REAP,
-        )
-        .map_err(RateError::Spec)?;
+        let deadlines = Deadlines::new(MUTATION_RUNTIME, MUTATION_OUTPUT_DRAIN, MUTATION_REAP)
+            .map_err(RateError::Spec)?;
         Ok(Self {
             deadlines,
             grace: MUTATION_GRACE,
@@ -258,10 +254,7 @@ impl KillDeclaration {
             ("CARGO_INCREMENTAL", "0".to_owned()),
             ("CC", "/usr/bin/cc".to_owned()),
             ("HOME", env!("HOME").to_owned()),
-            (
-                "PATH",
-                format!("{}:/usr/bin:/bin", cargo_bin.display()),
-            ),
+            ("PATH", format!("{}:/usr/bin:/bin", cargo_bin.display())),
             ("RUSTFLAGS", "-C linker=/usr/bin/cc".to_owned()),
             ("RUSTC_WORKSPACE_WRAPPER", String::new()),
             ("RUSTC_WRAPPER", String::new()),
@@ -273,11 +266,7 @@ impl KillDeclaration {
             PINNED_CARGO_MUTANTS,
             environment,
         )?;
-        let battery = MutationBattery::new(
-            MUTATION_TARGETS,
-            MUTATION_ATTEMPTS,
-            MUTATION_SEED,
-        )?;
+        let battery = MutationBattery::new(MUTATION_TARGETS, MUTATION_ATTEMPTS, MUTATION_SEED)?;
         Ok(Self {
             tool,
             battery,
@@ -465,12 +454,7 @@ impl GateSet {
             declaration.render(&mut rendered);
         }
         for bound in self.camp.bounds() {
-            let _ = writeln!(
-                rendered,
-                "camp {} limit {}",
-                bound.name(),
-                bound.limit()
-            );
+            let _ = writeln!(rendered, "camp {} limit {}", bound.name(), bound.limit());
             for locus in bound.loci() {
                 let _ = writeln!(rendered, "camp {} locus {locus}", bound.name());
             }

@@ -305,14 +305,15 @@ fn validate_gate_findings(
 ) -> Result<(), &'static str> {
     let mut measurements = measurements.iter().peekable();
     for finding in findings {
-        if measurements.peek().is_some_and(|measurement| {
-            measurement.metric.as_str() < finding.metric.as_str()
-        }) {
+        if measurements
+            .peek()
+            .is_some_and(|measurement| measurement.metric.as_str() < finding.metric.as_str())
+        {
             return Err("a completed measurement has no finding");
         }
-        let matching = measurements.peek().is_some_and(|measurement| {
-            measurement.metric.as_str() == finding.metric.as_str()
-        });
+        let matching = measurements
+            .peek()
+            .is_some_and(|measurement| measurement.metric.as_str() == finding.metric.as_str());
         if matches!(finding.movement, Movement::Retired { .. }) {
             if matching {
                 return Err("a retired finding still has a completed measurement");
@@ -354,13 +355,12 @@ fn gate_tightening(
     findings: &[Finding],
     long_lines: &[LongLineFinding],
 ) -> Result<Option<Vec<ReportFloor>>, &'static str> {
-    let derived = if long_lines.is_empty()
-        && findings.iter().all(|finding| finding.movement.passes())
-    {
-        Standing::Clean
-    } else {
-        Standing::Refused
-    };
+    let derived =
+        if long_lines.is_empty() && findings.iter().all(|finding| finding.movement.passes()) {
+            Standing::Clean
+        } else {
+            Standing::Refused
+        };
     if standing != derived {
         return Err("standing is not derived from every ordered finding");
     }

@@ -23,8 +23,7 @@ mod tests {
                 release: "current".to_owned(),
                 layer: "compiled".to_owned(),
                 document: "<compiled-gate-battery>".to_owned(),
-                field: "gate::hygiene::HygieneJurisdiction::applicability"
-                    .to_owned(),
+                field: "gate::hygiene::HygieneJurisdiction::applicability".to_owned(),
             },
         }
     }
@@ -34,10 +33,7 @@ mod tests {
         AnalysisEvidence::Analyzer(AnalyzerEvidence::Identified {
             name: arm.analyzer.evidence_name().to_owned(),
             requested: arm.analyzer.component().to_owned(),
-            resolved: format!(
-                "compiled:hermetic:{}.rlib",
-                arm.analyzer.evidence_name()
-            ),
+            resolved: format!("compiled:hermetic:{}.rlib", arm.analyzer.evidence_name()),
             declared_version: NATIVE_ANALYZER_VERSION.to_owned(),
             observed_version: NATIVE_ANALYZER_VERSION.to_owned(),
             digest: format!("sha256:{:02x}", gate as u8),
@@ -134,8 +130,7 @@ mod tests {
         for traversal in declaration_for(gate).traversals {
             let item = match traversal {
                 HygieneTraversal::ImportGraph => graph(),
-                HygieneTraversal::SymbolGraph
-                | HygieneTraversal::PythonDeclarations => symbols(),
+                HygieneTraversal::SymbolGraph | HygieneTraversal::PythonDeclarations => symbols(),
                 HygieneTraversal::TestAssertions => tests(),
                 HygieneTraversal::PrivateBoundaries => boundaries(),
             };
@@ -157,10 +152,7 @@ mod tests {
                 detail: HygieneFindingDetail::ModuleReachability {
                     provider: "python".to_owned(),
                     subject: "spice.test_support".to_owned(),
-                    imported_by: vec![
-                        "test_cli.py".to_owned(),
-                        "test_hooks.py".to_owned(),
-                    ],
+                    imported_by: vec!["test_cli.py".to_owned(), "test_hooks.py".to_owned()],
                 },
             },
             GateId::SymbolReachability => HygieneFinding {
@@ -214,10 +206,7 @@ mod tests {
                 detail: HygieneFindingDetail::ModuleReachability {
                     provider: "python".to_owned(),
                     subject: "spice.test_support".to_owned(),
-                    imported_by: vec![
-                        "test_cli.py".to_owned(),
-                        "test_hooks.py".to_owned(),
-                    ],
+                    imported_by: vec!["test_cli.py".to_owned(), "test_hooks.py".to_owned()],
                 },
             },
             GateId::SymbolReachability => HygieneFinding {
@@ -285,30 +274,22 @@ mod tests {
                     reason: "generated fixture tree".to_owned(),
                 })]
             }
-            HygieneOutcome::Unavailable => vec![AnalysisEvidence::Analyzer(
-                AnalyzerEvidence::Unavailable {
-                    name: declaration_for(gate)
-                        .analyzer
-                        .evidence_name()
-                        .to_owned(),
-                    requested: declaration_for(gate)
-                        .analyzer
-                        .component()
-                        .to_owned(),
-                },
-            )],
+            HygieneOutcome::Unavailable => {
+                vec![AnalysisEvidence::Analyzer(AnalyzerEvidence::Unavailable {
+                    name: declaration_for(gate).analyzer.evidence_name().to_owned(),
+                    requested: declaration_for(gate).analyzer.component().to_owned(),
+                })]
+            }
             HygieneOutcome::Unsupported => {
                 let arm = declaration_for(gate);
-                vec![AnalysisEvidence::Analyzer(
-                    AnalyzerEvidence::Identified {
-                        name: arm.analyzer.evidence_name().to_owned(),
-                        requested: arm.analyzer.component().to_owned(),
-                        resolved: "compiled:fixture".to_owned(),
-                        declared_version: NATIVE_ANALYZER_VERSION.to_owned(),
-                        observed_version: "spice-gate-hygiene-v0".to_owned(),
-                        digest: "sha256:old".to_owned(),
-                    },
-                )]
+                vec![AnalysisEvidence::Analyzer(AnalyzerEvidence::Identified {
+                    name: arm.analyzer.evidence_name().to_owned(),
+                    requested: arm.analyzer.component().to_owned(),
+                    resolved: "compiled:fixture".to_owned(),
+                    declared_version: NATIVE_ANALYZER_VERSION.to_owned(),
+                    observed_version: "spice-gate-hygiene-v0".to_owned(),
+                    digest: "sha256:old".to_owned(),
+                })]
             }
             HygieneOutcome::Unmeasured => {
                 vec![AnalysisEvidence::Measurement {
@@ -345,10 +326,7 @@ mod tests {
         }
     }
 
-    fn report_with(
-        target: GateId,
-        outcome: HygieneOutcome,
-    ) -> HygieneReport {
+    fn report_with(target: GateId, outcome: HygieneOutcome) -> HygieneReport {
         measure_hygiene(HYGIENE_ARMS.into_iter().map(|arm| {
             observation(
                 arm.id,
@@ -373,12 +351,18 @@ mod tests {
     #[test]
     fn graph_evidence_ranked_against_its_own_order_or_at_zero_is_refused() {
         for (label, edit) in [
-            ("narrowest first", (|reach| reach.reverse()) as fn(&mut Vec<ModuleReach>)),
-            ("tied rows out of path order", |reach: &mut Vec<ModuleReach>| {
-                reach[0].reached_by = reach[1].reached_by;
-                reach[0].imported_by = reach[1].imported_by;
-                reach.swap(0, 1);
-            }),
+            (
+                "narrowest first",
+                (|reach| reach.reverse()) as fn(&mut Vec<ModuleReach>),
+            ),
+            (
+                "tied rows out of path order",
+                |reach: &mut Vec<ModuleReach>| {
+                    reach[0].reached_by = reach[1].reached_by;
+                    reach[0].imported_by = reach[1].imported_by;
+                    reach.swap(0, 1);
+                },
+            ),
             ("reached by nothing", |reach: &mut Vec<ModuleReach>| {
                 reach[1].reached_by = 0;
                 reach[1].imported_by = 0;
@@ -450,9 +434,10 @@ mod tests {
         let ids: Vec<_> = HYGIENE_ARMS.iter().map(|arm| arm.id()).collect();
         assert_eq!(ids, GateId::ALL[22..]);
         for arm in HYGIENE_ARMS {
-            assert!(arm
-                .native_component()
-                .starts_with("gate::hygiene::HygieneAnalyzer::"));
+            assert!(
+                arm.native_component()
+                    .starts_with("gate::hygiene::HygieneAnalyzer::")
+            );
             assert!(!arm.analyzer().evidence_name().is_empty());
             assert!(!arm.jurisdiction().roots().is_empty());
             assert!(!arm.jurisdiction().includes().is_empty());
@@ -488,7 +473,10 @@ mod tests {
                     measured.outcome.satisfies_gate(),
                     outcome == HygieneOutcome::Passed
                 );
-                assert_eq!(measured.findings.is_empty(), outcome == HygieneOutcome::Passed);
+                assert_eq!(
+                    measured.findings.is_empty(),
+                    outcome == HygieneOutcome::Passed
+                );
                 assert!(has_applicable_language(&measured.evidence));
                 assert!(has_native_analyzer(arm, &measured.evidence));
                 assert!(has_completed_deadline(&measured.evidence));
@@ -502,10 +490,7 @@ mod tests {
 
     #[test]
     fn graph_symbol_and_policy_fixture_identities_are_multifile() {
-        let reachability = report_with(
-            GateId::Reachability,
-            HygieneOutcome::Findings,
-        );
+        let reachability = report_with(GateId::Reachability, HygieneOutcome::Findings);
         let arm = &reachability.arms[0];
         let graph = arm.evidence.iter().find_map(|item| match item {
             AnalysisEvidence::GraphConstruction {
@@ -579,16 +564,14 @@ mod tests {
                     measured.outcome.satisfies_gate(),
                     matches!(
                         outcome,
-                        HygieneOutcome::NotApplicable
-                            | HygieneOutcome::Excluded
+                        HygieneOutcome::NotApplicable | HygieneOutcome::Excluded
                     )
                 );
                 assert_eq!(
                     measured.outcome.is_skip(),
                     matches!(
                         outcome,
-                        HygieneOutcome::NotApplicable
-                            | HygieneOutcome::Excluded
+                        HygieneOutcome::NotApplicable | HygieneOutcome::Excluded
                     )
                 );
                 assert!(!measured.reason.is_empty());
@@ -638,9 +621,9 @@ mod tests {
             .into_iter()
             .map(|arm| observation(arm.id, HygieneOutcome::Passed))
             .collect();
-        observations[0].evidence.retain(|item| {
-            !matches!(item, AnalysisEvidence::GraphConstruction { .. })
-        });
+        observations[0]
+            .evidence
+            .retain(|item| !matches!(item, AnalysisEvidence::GraphConstruction { .. }));
         assert!(matches!(
             measure_hygiene(observations),
             Err(HygieneError::InvalidEvidence {
@@ -667,12 +650,15 @@ mod tests {
             .into_iter()
             .map(|arm| observation(arm.id, HygieneOutcome::Passed))
             .collect();
-        let analyzer = unresolved[0].evidence.iter_mut().find_map(|item| match item {
-            AnalysisEvidence::Analyzer(AnalyzerEvidence::Identified { resolved, .. }) => {
-                Some(resolved)
-            }
-            _ => None,
-        });
+        let analyzer = unresolved[0]
+            .evidence
+            .iter_mut()
+            .find_map(|item| match item {
+                AnalysisEvidence::Analyzer(AnalyzerEvidence::Identified { resolved, .. }) => {
+                    Some(resolved)
+                }
+                _ => None,
+            });
         analyzer.expect("native analyzer evidence").clear();
         assert!(matches!(
             measure_hygiene(unresolved),
@@ -708,15 +694,20 @@ mod tests {
             .collect();
         let late = suppression("tests/test_ignored.py");
         let early = suppression("app/_ignored.py");
-        unordered[0].evidence.push(AnalysisEvidence::PathSuppression {
-            suppressed: vec![late.clone(), early.clone(), late.clone()],
-        });
+        unordered[0]
+            .evidence
+            .push(AnalysisEvidence::PathSuppression {
+                suppressed: vec![late.clone(), early.clone(), late.clone()],
+            });
         let measured = measure_hygiene(unordered).expect("complete suppressions are admissible");
         assert_eq!(
-            measured.arms[0].evidence.iter().find_map(|item| match item {
-                AnalysisEvidence::PathSuppression { suppressed } => Some(suppressed.as_slice()),
-                _ => None,
-            }),
+            measured.arms[0]
+                .evidence
+                .iter()
+                .find_map(|item| match item {
+                    AnalysisEvidence::PathSuppression { suppressed } => Some(suppressed.as_slice()),
+                    _ => None,
+                }),
             Some([early, late].as_slice()),
             "retained suppressions are one canonical set however they arrived"
         );
@@ -743,7 +734,6 @@ mod tests {
             },
         }
     }
-
 
     #[test]
     fn external_provider_findings_require_exact_identity_evidence() {
@@ -783,18 +773,17 @@ mod tests {
             .iter_mut()
             .find(|item| item.gate_id == gate)
             .expect("reachability observation");
-        target.evidence.push(AnalysisEvidence::Analyzer(
-            AnalyzerEvidence::Identified {
+        target
+            .evidence
+            .push(AnalysisEvidence::Analyzer(AnalyzerEvidence::Identified {
                 name: "rust-provider".to_owned(),
                 requested: "reach-rs".to_owned(),
                 resolved: "/tools/reach-rs".to_owned(),
                 declared_version: "reach-rs 2.4.0".to_owned(),
                 observed_version: "reach-rs 2.4.0".to_owned(),
                 digest: "sha256:provider".to_owned(),
-            },
-        ));
-        let report = measure_hygiene(observations)
-            .expect("exact provider identity is admissible");
+            }));
+        let report = measure_hygiene(observations).expect("exact provider identity is admissible");
         assert!(report.arms[0].has_external_provider());
     }
 
@@ -813,9 +802,7 @@ mod tests {
                     result: if outcome == HygieneOutcome::Passed {
                         PredecessorResult::Passed
                     } else {
-                        PredecessorResult::Findings(vec![
-                            predecessor_finding(gate),
-                        ])
+                        PredecessorResult::Findings(vec![predecessor_finding(gate)])
                     },
                 };
                 assert_eq!(
@@ -835,21 +822,19 @@ mod tests {
                 .find(|item| item.gate_id == gate)
                 .expect("configured debt fixture");
             target.findings = vec![finding(gate)];
-            let decision = target.evidence.iter_mut().find_map(|item| {
-                match item {
-                    AnalysisEvidence::PolicyDecision {
-                        limit, observed, ..
-                    } => Some((limit, observed)),
-                    _ => None,
-                }
+            let decision = target.evidence.iter_mut().find_map(|item| match item {
+                AnalysisEvidence::PolicyDecision {
+                    limit, observed, ..
+                } => Some((limit, observed)),
+                _ => None,
             });
             let Some((limit, observed)) = decision else {
                 panic!("policy decision evidence");
             };
             *limit = 1;
             *observed = 1;
-            let report = measure_hygiene(observations)
-                .expect("configured debt admits one retained finding");
+            let report =
+                measure_hygiene(observations).expect("configured debt admits one retained finding");
             let current = report
                 .arms
                 .iter()
@@ -866,14 +851,10 @@ mod tests {
             assert_eq!(current.findings, vec![finding(gate)]);
         }
 
-        let current = report_with(
-            GateId::Reachability,
-            HygieneOutcome::Findings,
-        );
+        let current = report_with(GateId::Reachability, HygieneOutcome::Findings);
         let mut provider_finding = predecessor_finding(GateId::Reachability);
-        let HygieneFindingDetail::ModuleReachability {
-            provider, ..
-        } = &mut provider_finding.detail
+        let HygieneFindingDetail::ModuleReachability { provider, .. } =
+            &mut provider_finding.detail
         else {
             panic!("reachability fixture type");
         };
@@ -929,10 +910,7 @@ mod tests {
             }
         }
 
-        for outcome in [
-            HygieneOutcome::NotApplicable,
-            HygieneOutcome::Excluded,
-        ] {
+        for outcome in [HygieneOutcome::NotApplicable, HygieneOutcome::Excluded] {
             let report = report_with(GateId::Reachability, outcome);
             let predecessor = PredecessorObservation {
                 gate_name: "reachability".to_owned(),

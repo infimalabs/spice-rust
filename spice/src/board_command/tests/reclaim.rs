@@ -43,12 +43,13 @@ fn renew_and_assert(
         ),
         Outcome::Refusal(Refusal { ref reason, .. }) if reason == "board::witness-moved"
     ));
-    assert!(bus
-        .fact_snapshot()
-        .expect("reclaim facts read")
-        .facts()
-        .iter()
-        .any(|fact| fact.fact.kind() == wire::FactKind::ClaimRenewed));
+    assert!(
+        bus.fact_snapshot()
+            .expect("reclaim facts read")
+            .facts()
+            .iter()
+            .any(|fact| fact.fact.kind() == wire::FactKind::ClaimRenewed)
+    );
     after
 }
 
