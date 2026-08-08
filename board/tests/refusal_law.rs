@@ -12,6 +12,12 @@
 //! test exists and does name it, so pointing a new variant at some existing test
 //! is not a way through either.
 //!
+//! What the text check settles and what it leaves open is stated on `asserts`
+//! rather than promised here: it holds the target to a `#[test]` naming that
+//! exact path, and it does not read the mention. A variant named in a comment
+//! passes. The law narrows where an unasserted variant can hide; it is not a
+//! proof that the value was compared against anything.
+//!
 //! The enumeration is recovered from this file's own arms rather than kept as a
 //! second list beside them. A second list would not be forced to grow: a variant
 //! plus its arm compiles, and a hand-kept array of seventeen would stay at
@@ -144,22 +150,69 @@ fn arms(declared: &str) -> Vec<(String, String)> {
     found
 }
 
-/// Whether `test` is declared somewhere in `suite` and names `refusal` in its body.
+/// Whether `test` is a `#[test]` in `suite` whose body names `refusal`.
 ///
 /// The body ends at the first closing brace in the column the routine itself
 /// begins in -- column zero in the suite, column four inside the in-file test
 /// module -- so a match found past the end of one test is not credited to it. Any
 /// shallower rule cuts the body short: these tests close a loop or an array of
 /// cases partway through, and the refusal they name can be the one after it.
+///
+/// What this does not do is read the mention. A variant named in a comment, or
+/// constructed and never compared, satisfies it, so the arms above are worth
+/// reading rather than trusted. The bound is deliberate: telling an assertion
+/// from a mention means parsing the test, and a parse that got it wrong would
+/// fail closed on honest bindings. The two ways a mention can be counterfeit
+/// without any parse are refused here instead.
 fn asserts(suite: &[&str], test: &str, refusal: &str) -> bool {
     suite.iter().any(|source| {
         let Some(start) = source.find(&format!("fn {test}(")) else {
             return false;
         };
         let opened = source[..start].rfind('\n').map_or(0, |line| line + 1);
+        if !is_test(&source[..opened]) {
+            return false;
+        }
         let closing = format!("\n{}}}\n", " ".repeat(start - opened));
         let body = &source[start..];
-        body[..body.find(&closing).unwrap_or(body.len())].contains(refusal)
+        names(&body[..body.find(&closing).unwrap_or(body.len())], refusal)
+    })
+}
+
+/// Whether the routine following `preceding` carries the `#[test]` attribute.
+///
+/// `LAPSE_SUITE` has to include the declaring module, because `Changed` is
+/// asserted only in that module's own test block. The side effect is that every
+/// production function in it became an eligible target, and one of them,
+/// `map_commit_error`, names the very variant it maps. Binding `Changed` to that
+/// function satisfied a law whose diagnostic promised a test.
+///
+/// The walk goes back over the attributes, doc lines and blank lines that may
+/// stand between `#[test]` and the `fn`, and stops at the first line that is
+/// none of those -- the brace closing whatever came before -- so the attribute
+/// found belongs to this routine and not to the one above it.
+fn is_test(preceding: &str) -> bool {
+    preceding
+        .lines()
+        .rev()
+        .map(str::trim)
+        .take_while(|line| line.is_empty() || line.starts_with('#') || line.starts_with("//"))
+        .any(|line| line == "#[test]")
+}
+
+/// Whether `text` names `refusal` as a path, rather than inside a longer one.
+///
+/// `ClaimRefusal::Inactive` contains `Refusal::Inactive`, and four names are
+/// shared between the two enums, so a plain substring search lets a body that
+/// names only the claim enum answer for the lapse enum of the same name. The
+/// preceding character has to be absent or a non-identifier one, which the real
+/// bindings are: theirs follow `(`, `&` or a space.
+fn names(text: &str, refusal: &str) -> bool {
+    text.match_indices(refusal).any(|(at, _)| {
+        text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|letter| !letter.is_alphanumeric() && letter != '_')
     })
 }
 
@@ -218,9 +271,10 @@ fn law(declared: &str, declaration: &str, control: (&str, &str), suite: &[&str])
     for (variant, test) in &bound {
         assert!(
             asserts(suite, test, &format!("{declared}::{variant}")),
-            "{declared}::{variant} names {test}, which must be a test that exists \
-             and that names this variant; naming a test that asserts something \
-             else leaves the variant unasserted"
+            "{declared}::{variant} names {test}, which must be a #[test] that \
+             exists and whose body names this variant as {declared}::{variant} \
+             and not inside a longer path; a routine that is no test, or a test \
+             that never mentions the variant, leaves the variant unasserted"
         );
     }
 }
@@ -232,6 +286,40 @@ fn every_lapse_refusal_variant_is_bound_to_a_test_that_asserts_it() {
         LAPSE_DECLARATION,
         ("MissingClaim", lapse_covering_test(&Refusal::MissingClaim)),
         &LAPSE_SUITE,
+    );
+}
+
+/// The two counterfeits `asserts` refuses, on text written here rather than found.
+///
+/// Each path is assembled instead of spelled, on the same terms as `arms`: a
+/// literal at arm indentation would be read back out of this file as an arm of
+/// the matches above, binding a variant the compiler never checked.
+///
+/// Written against `asserts` directly rather than by mutating the real arms,
+/// because both counterfeits have to fail for the same variant that succeeds
+/// when honest, and the suite holds no body that names only the sibling enum.
+#[test]
+fn only_a_test_naming_that_very_enum_is_credited_with_asserting_a_variant() {
+    let lapse = format!("{}::{}", "Refusal", "MissingClaim");
+    let sibling = format!("Claim{lapse}");
+    let asserted = format!("#[test]\nfn bound() {{\n    refuses(&{lapse});\n}}\n");
+    let production = format!("/// Map one.\nfn bound() {{\n    Err({lapse})\n}}\n");
+    let shadowed = format!("#[test]\nfn bound() {{\n    refuses(&{sibling});\n}}\n");
+
+    assert!(
+        asserts(&[&asserted], "bound", &lapse),
+        "a test whose body names {lapse} is the honest case, and refusing it \
+         would make the two refusals below vacuous"
+    );
+    assert!(
+        !asserts(&[&production], "bound", &lapse),
+        "{lapse} is named by a routine carrying no #[test], which is how a \
+         production function in the declaring module answered for a variant"
+    );
+    assert!(
+        !asserts(&[&shadowed], "bound", &lapse),
+        "the only mention is {sibling}, which contains {lapse} as a substring \
+         and must not satisfy the lapse binding"
     );
 }
 
