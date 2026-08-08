@@ -592,18 +592,92 @@ fn client_done(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    mutate_from_board(repository, contract, |board| {
-        let (task, heads) = sole_active(&board)?;
-        let (lane, occupant) = actor_seat(&board)?;
-        let validation = matches
-            .get_one::<String>("validation")
-            .cloned()
-            .unwrap_or_else(|| "completed by the authenticated lane".to_owned());
-        Ok((
-            CommandKind::TaskDone,
-            progress_witnesses(&board, heads, lane, occupant, false)?,
-            serde_json::to_value(TaskDone { task, validation }).expect("typed intent encodes"),
-        ))
+    let board = match current_board(repository) {
+        Ok(board) => board,
+        Err(outcome) => return outcome,
+    };
+    let (task, heads) = match sole_active(&board) {
+        Ok(active) => active,
+        Err(outcome) => return outcome,
+    };
+    let (lane, occupant) = match actor_seat(&board) {
+        Ok(seat) => seat,
+        Err(outcome) => return outcome,
+    };
+    let context = completion_learning_context(&board, heads, &task, lane, occupant);
+    let expected = match progress_witnesses(&board, heads, lane, occupant, false) {
+        Ok(expected) => expected,
+        Err(outcome) => return outcome,
+    };
+    let validation = matches
+        .get_one::<String>("validation")
+        .cloned()
+        .unwrap_or_else(|| "completed by the authenticated lane".to_owned());
+    let body = serde_json::to_value(TaskDone { task, validation }).expect("typed intent encodes");
+    let mut outcome = crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::TaskDone,
+        expected,
+        &body,
+    );
+    if let Outcome::Reply(reply) = &mut outcome
+        && let CommandAnswer::Task(answer) = &mut reply.body
+    {
+        let learning = match context {
+            Ok(mut context) => match wire::Instant::new(jiff::Timestamp::now()) {
+                Ok(done_at) => {
+                    context.done_at = done_at.to_string();
+                    crate::session_command::learnings::best_effort(
+                        repository,
+                        &crate::session_environment(),
+                        context,
+                    )
+                }
+                Err(error) => crate::session_command::learnings::unavailable(
+                    "completion_clock_invalid",
+                    &error.to_string(),
+                ),
+            },
+            Err(detail) => {
+                crate::session_command::learnings::unavailable("missing_claim_metadata", &detail)
+            }
+        };
+        answer.learning = Some(Box::new(learning));
+    }
+    outcome
+}
+
+fn completion_learning_context(
+    board: &BoardAnswer,
+    heads: &BoardTask,
+    task: &TaskHandle,
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+) -> Result<crate::session_command::learnings::CompletionContext, String> {
+    let lease = heads
+        .lease
+        .as_ref()
+        .ok_or_else(|| "active claim has no lease start".to_owned())?;
+    let seat = board
+        .residency
+        .body
+        .lanes
+        .iter()
+        .find(|seat| seat.lane == lane && seat.occupant == Some(occupant))
+        .ok_or_else(|| "active claim has no exact occupied lane session".to_owned())?;
+    let session = seat
+        .session
+        .as_ref()
+        .ok_or_else(|| "active lane has no vendor session identity".to_owned())?;
+    Ok(crate::session_command::learnings::CompletionContext {
+        source_task: task.to_string(),
+        project_stem: crate::session_command::learnings::project_stem(
+            &heads.statement.body.project,
+        )?,
+        claim_started_at: lease.body.start.to_string(),
+        done_at: String::new(),
+        thread_id: session.identity.clone(),
     })
 }
 

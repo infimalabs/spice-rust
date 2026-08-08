@@ -7,6 +7,7 @@ use clap::ArgMatches;
 use wire::{Outcome, Refusal, Reply, ReplyPosition};
 
 mod dataset;
+pub(crate) mod learnings;
 mod model;
 mod project;
 mod source;

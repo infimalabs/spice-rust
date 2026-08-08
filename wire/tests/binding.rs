@@ -368,7 +368,15 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     (AnswerShape::Text, r#"{ "text": "graph dependencies\n" }"#),
     (
         AnswerShape::Task,
-        r#"{ "task": "SPICE-aBcD", "status": "done" }"#,
+        r#"{
+  "task": "SPICE-aBcD",
+  "status": "done",
+  "learning": {
+    "stored": 1,
+    "candidates": 2,
+    "skipped": ["rejected"]
+  }
+}"#,
     ),
     (
         AnswerShape::Claim,

@@ -817,7 +817,7 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn session_environment() -> session_command::Environment {
+pub(crate) fn session_environment() -> session_command::Environment {
     session_command::Environment::new(
         bootstrap_environment("CODEX_THREAD_ID"), // env-policy: allow
         bootstrap_environment("CLAUDE_CODE_SESSION_ID"), // env-policy: allow
