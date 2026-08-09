@@ -1447,11 +1447,13 @@ pub struct PublishedTarget {
     pub receipt: Digest,
 }
 
-/// The sealed release manifest digest, and each target entry's artifact digest, published.
+/// The sealed release manifest, notes, and each target artifact digest published.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleasePublished {
     /// Sealed release manifest digest.
     pub manifest: Digest,
+    /// Identity of the exact curated release-note bytes published.
+    pub notes: Digest,
     /// Each target entry published under its detached proof receipt.
     pub targets: Vec<PublishedTarget>,
 }

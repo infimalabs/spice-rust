@@ -82,7 +82,7 @@ pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, FoldReport, FoldState, JournalBackup,
     JournalReindex, JournalReport, JournalRestore, JournalVerification, Outcome, ProofEvidence,
-    Refusal, ReleaseNotes, ReleaseNotesTarget, ReleasePlan, Reply, ReplyPosition, Response,
+    Refusal, ReleaseNotes, ReleaseNotesEntry, ReleasePlan, Reply, ReplyPosition, Response,
     RestoreVerification, SeqRange, SeqRangeError, ThreadReport, Version,
 };
 pub use stream::{
