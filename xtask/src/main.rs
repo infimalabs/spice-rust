@@ -63,9 +63,7 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
             run_gate(arguments.next(), &mut output)
         }
-        Some(value) if value == OsStr::new("app") && arguments.len() == 0 => {
-            xtask::app(&release_environment(), &mut output).map_err(Into::into)
-        }
+        Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), &mut output),
         Some(value) if value == OsStr::new("activate-hooks") && arguments.len() == 0 => {
             run_activate_hooks(&mut output)
         }
@@ -139,6 +137,20 @@ fn run_verify_action(action: &OsStr, output: &mut impl io::Write) -> ExitCode {
         Err(error) => {
             eprintln!("{error}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+    match arguments.as_slice() {
+        [] => xtask::app(&release_environment(), output).map_err(Into::into),
+        [flag, publish_root] if flag == OsStr::new(gate::VERIFIER_APP_PUBLISH_FLAG) => {
+            xtask::app_to(&release_environment(), Path::new(publish_root), output)
+                .map_err(Into::into)
+        }
+        _ => {
+            eprintln!("{}", help());
+            Err(usage_error().into())
         }
     }
 }

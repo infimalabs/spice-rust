@@ -102,7 +102,7 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
         "a forbidden program crossed the verifier rim: {}",
         programs.forbidden_marker.display()
     );
-    assert_full_verifier_action_trace(&programs, &output);
+    assert_full_verifier_action_trace(&programs, &fixture.repository, &output);
 
     assert_bounded_refusal(&output, &refused_result);
     assert_eq!(selected_result.gate_id(), GateId::EnvNameLedger);
@@ -118,9 +118,10 @@ struct FullVerifierPrograms {
 
 fn assert_full_verifier_action_trace(
     programs: &FullVerifierPrograms,
+    repository: &Path,
     output: &std::process::Output,
 ) {
-    assert_workspace_test_execution(&programs.cargo_log, output);
+    assert_workspace_test_execution(&programs.cargo_log, repository, output);
     let browser = fs::read_to_string(&programs.browser_log).expect("read verifier browser action");
     assert!(
         browser.starts_with("run test:canvas -- --spice-coverage-receipt "),
@@ -257,7 +258,18 @@ fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path) {
     );
 }
 
-fn assert_workspace_test_execution(cargo_log: &Path, output: &std::process::Output) {
+fn assert_workspace_test_execution(
+    cargo_log: &Path,
+    repository: &Path,
+    output: &std::process::Output,
+) {
+    let app_action = format!(
+        "xtask app --spice-verifier-publish-root {}",
+        repository
+            .canonicalize()
+            .expect("canonical verifier repository")
+            .display()
+    );
     assert_eq!(
         fs::read_to_string(cargo_log)
             .expect("read verifier Cargo actions")
@@ -269,7 +281,7 @@ fn assert_workspace_test_execution(cargo_log: &Path, output: &std::process::Outp
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
-            "xtask app",
+            app_action.as_str(),
             "test --locked --package verify-process-fixture-id --lib",
             "doc --locked --workspace --lib --bins --no-deps",
             "test --locked --workspace --doc",
@@ -709,6 +721,14 @@ fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
         .copied()
         .filter(|action| *action != "--version")
         .collect::<Vec<_>>();
+    let app_action = format!(
+        "xtask app --spice-verifier-publish-root {}",
+        fixture
+            .repository
+            .canonicalize()
+            .expect("canonical verifier repository")
+            .display()
+    );
     assert_eq!(
         chain.get(..4),
         Some(
@@ -716,7 +736,7 @@ fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
                 "clippy --locked --workspace --all-targets -- -D warnings",
                 "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
                 "check --locked --workspace --target wasm32-unknown-unknown",
-                "xtask app",
+                app_action.as_str(),
             ][..]
         )
     );
@@ -725,7 +745,7 @@ fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
-            "xtask app",
+            app_action.as_str(),
             "metadata --locked --format-version 1 --no-deps",
         ]
         .contains(action)),

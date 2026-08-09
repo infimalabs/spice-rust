@@ -261,7 +261,10 @@ fn stale_verifier_evidence_runs_both_real_compiler_arms() {
         crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
     )
     .expect("capture compiler fixture");
-    let (native, evidence) = stale_compiler_evidence(&capture);
+    let (native, mut evidence) = compiler_evidence(&capture, Vec::new());
+    for item in &mut evidence {
+        item.corrupt_source_for_test();
+    }
 
     fs::write(
         repository.join("src/lib.rs"),
@@ -271,17 +274,58 @@ fn stale_verifier_evidence_runs_both_real_compiler_arms() {
     fixture_git(&repository, &["add", "src/lib.rs"]);
     let drifted = native
         .run(crate::VerifierCompilerStage::NativeClippy)
-        .expect("drifted compiler still provides ordinary verifier feedback");
+        .expect("retained selected compiler still provides verifier feedback");
     assert!(drifted.success());
     assert!(
-        drifted.into_evidence().is_none(),
-        "a compiler run against a later index minted evidence for the retained capture"
+        drifted.into_evidence().is_some(),
+        "a later live index changed compilation of the retained immutable selection"
     );
     fs::remove_file(&cargo_log).expect("clear verifier Cargo trace");
 
     capture
-        .execute_with_verifier_evidence(&evidence)
+        .execute_with_verifier_evidence(&evidence, Vec::new())
         .expect("invalid evidence falls through to a complete battery");
+    assert_fallback_compiler_trace(&cargo_log, &trunk_log);
+}
+
+#[test]
+fn rustflags_drift_across_prepared_captures_runs_both_real_compiler_arms() {
+    let fixture = Fixture::new();
+    let repository = compiler_fixture_repository(&fixture);
+    let (programs, cargo_log, trunk_log) = install_compiler_programs(&fixture);
+    let capture = |actor: &str| {
+        crate::BatteryCapture::capture(
+            &repository,
+            &crate::Selector::staged(),
+            crate::ClaimCapture::Idle,
+            acting(actor),
+            crate::RimCapture::new(
+                &repository,
+                Some(OsString::from(programs.as_os_str())),
+                Vec::new(),
+            )
+            .expect("absolute compiler rim"),
+            crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
+        )
+        .expect("capture compiler fixture")
+    };
+    let producer = capture("compiler-producer");
+    let producer_environment = vec![(
+        OsString::from("RUSTFLAGS"),
+        OsString::from("--cfg=producer"),
+    )];
+    let (_, evidence) = compiler_evidence(&producer, producer_environment);
+    fs::remove_file(&cargo_log).expect("clear producer Cargo trace");
+    let mut consumer = capture("compiler-consumer");
+    let consumer_environment = vec![(
+        OsString::from("RUSTFLAGS"),
+        OsString::from("--cfg=consumer"),
+    )];
+
+    consumer
+        .execute_with_verifier_evidence(&evidence, consumer_environment)
+        .expect("environment-mismatched evidence falls through to the battery");
+
     assert_fallback_compiler_trace(&cargo_log, &trunk_log);
 }
 
@@ -346,17 +390,18 @@ fn install_compiler_programs(fixture: &Fixture) -> (PathBuf, PathBuf, PathBuf) {
     (programs, cargo_log, trunk_log)
 }
 
-fn stale_compiler_evidence(
+fn compiler_evidence(
     capture: &crate::BatteryCapture<'_>,
+    environment: Vec<(OsString, OsString)>,
 ) -> (
     crate::VerifierCompilerContract,
     Vec<crate::VerifierCompilerEvidence>,
 ) {
     let native = capture
-        .verifier_compiler_contract(GateId::RustTypecheck, Vec::new())
+        .verifier_compiler_contract(GateId::RustTypecheck, environment.clone())
         .expect("native verifier contract");
     let canvas = capture
-        .verifier_compiler_contract(GateId::CanvasWebTypecheck, Vec::new())
+        .verifier_compiler_contract(GateId::CanvasWebTypecheck, environment)
         .expect("canvas verifier contract");
     let mut processes = Vec::new();
     for (contract, stages) in [
@@ -378,13 +423,10 @@ fn stale_compiler_evidence(
             processes.push(run.into_evidence().expect("clean successful process token"));
         }
     }
-    let mut evidence = vec![
+    let evidence = vec![
         native.complete(&processes).expect("native evidence"),
         canvas.complete(&processes).expect("canvas evidence"),
     ];
-    for item in &mut evidence {
-        item.corrupt_source_for_test();
-    }
     (native, evidence)
 }
 

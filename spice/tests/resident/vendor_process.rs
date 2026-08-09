@@ -1,5 +1,6 @@
 use super::*;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 
 #[cfg(unix)]
@@ -872,6 +873,120 @@ fn stop_coexisting_appliance(
     let down = operator_with_path(fixture, installed_binary, empty_path, &["down"], true);
     assert!(down.status.success(), "down failed: {:?}", down.stderr);
     assert!(resident.wait().status.success(), "resident failed");
+}
+
+/// Creating a PID file is not the same event as publishing a PID through it.
+#[test]
+fn a_created_pid_file_is_not_complete_until_its_bytes_land() {
+    let fixture = Fixture::new("vendor-child-pid-publication");
+    let pid_file = fixture.cleanup.join("child.pid");
+
+    fs::write(&pid_file, []).expect("empty child pid file creates");
+    assert!(pid_file.is_file(), "the old readiness predicate is true");
+    assert_eq!(
+        fs::read_to_string(&pid_file).expect("empty child pid file reads"),
+        "",
+        "the control did not expose the create-before-write window"
+    );
+    assert_eq!(
+        recorded_pid(&pid_file),
+        None,
+        "an empty pid file was treated as a complete publication"
+    );
+
+    let expected = std::process::id();
+    fs::write(&pid_file, format!("{expected}\n")).expect("complete child pid writes");
+    assert_eq!(recorded_pid(&pid_file), Some(expected));
+}
+
+/// The fixture wrapper owns its child all the way through signal teardown.
+///
+/// Resident termination reaches the whole process group, so the ordinary drain
+/// battery can leave a broken wrapper looking correct until the child's orphaned
+/// zombie survives long enough for the post-drain identity probe to see it. This
+/// probe removes that timing variable: TERM reaches only the wrapper, and the
+/// wrapper is collected before the child identity is inspected. The child can
+/// be gone at that late probe only when the wrapper trap terminated and reaped
+/// it before reporting its own exit.
+#[test]
+fn fixture_vendor_reaps_its_child_before_the_wrapper_exits() {
+    let fixture = Fixture::new("vendor-child-reap");
+    let capture_dir = fixture.cleanup.join("launch-captures");
+    fs::create_dir_all(&capture_dir).expect("capture directory");
+    let index = fixture.cleanup.join("launch-index");
+    let binary = fixture.cleanup.join("fixture-claude");
+    write_vendor(&binary, &capture_dir, &index, Dialect::Claude);
+
+    let mut vendor = Command::new(&binary)
+        .current_dir(&fixture.root)
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("fixture vendor launches");
+    let child_pid_file =
+        capture_dir.join(format!("{}-{}.child", Dialect::Claude.name(), vendor.id()));
+    // Creation makes the path watchable but does not make its bytes complete.
+    // The second wait arms that file before reading it, so either the PID is
+    // already complete or its finishing write produces the next wakeup.
+    match readiness::wait_until_ready(
+        &mut vendor,
+        &capture_dir,
+        readiness::ARRIVAL_HORIZON,
+        "fixture vendor child pid file",
+        || child_pid_file.is_file(),
+    ) {
+        Readiness::Ready => {}
+        Readiness::Exited => panic!("fixture vendor exited before creating its child pid file"),
+    }
+
+    let child_pid = Cell::new(None);
+    match readiness::wait_until_ready(
+        &mut vendor,
+        &child_pid_file,
+        readiness::ARRIVAL_HORIZON,
+        "fixture vendor child pid write",
+        || {
+            if let Some(pid) = recorded_pid(&child_pid_file) {
+                child_pid.set(Some(pid));
+                true
+            } else {
+                false
+            }
+        },
+    ) {
+        Readiness::Ready => {}
+        Readiness::Exited => panic!("fixture vendor exited before completing its child pid write"),
+    }
+
+    let child = child_pid
+        .get()
+        .expect("fixture child readiness carries a parsed pid");
+    let terminated = Command::new("kill")
+        .args(["-TERM", &vendor.id().to_string()])
+        .output()
+        .expect("fixture wrapper termination launches");
+    assert!(
+        terminated.status.success(),
+        "fixture wrapper termination failed: {:?}",
+        terminated.stderr
+    );
+    assert!(
+        vendor.wait().expect("fixture wrapper reaps").success(),
+        "fixture wrapper did not choose a successful exit"
+    );
+
+    let child_survived = process_alive(child);
+    if child_survived {
+        let cleanup = Command::new("kill")
+            .args(["-KILL", &child.to_string()])
+            .output()
+            .expect("surviving fixture child cleanup launches");
+        assert!(
+            cleanup.status.success(),
+            "surviving fixture child cleanup failed: {:?}",
+            cleanup.stderr
+        );
+    }
+    assert!(!child_survived, "fixture child survived wrapper exit");
 }
 
 #[test]

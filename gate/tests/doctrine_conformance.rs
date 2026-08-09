@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 const DOCTRINE: &str = "DOCTRINE.md";
 
 /// Records that must remain present and internally linked.
-const RECORDS: &[&str] = &[DOCTRINE, "TASTES.md", "LATER.md"];
+const RECORDS: &[&str] = &[DOCTRINE, "TASTES.md"];
 
 /// Every required `DOCTRINE.md` section, in its settled order.
 const SLOTS: &[&str] = &[

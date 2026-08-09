@@ -9,7 +9,6 @@ mod tests {
         Success,
         Exit(i32),
         Launch,
-        EvidenceRefused,
     }
 
     /// The report a current entry point produces, so the order test can pin
@@ -195,9 +194,6 @@ mod tests {
                 code: Some(code),
             }))),
             Outcome::Launch => Err(RunError::Launch(io::Error::other(launch_detail.to_owned()))),
-            Outcome::EvidenceRefused => Err(RunError::EvidenceRefused(
-                "fixture selected tree differs from the verifier worktree".to_owned(),
-            )),
         }
     }
 
@@ -646,30 +642,6 @@ mod tests {
         assert!(!calls.contains(&VERIFY_ACTIONS[2].label()));
         assert!(!calls.contains(&landing::LABEL));
         assert_calls_are_unique(&calls);
-    }
-
-    #[test]
-    fn compiler_evidence_refusal_is_primary_action_failure_not_cleanup() {
-        let runner = runner([Outcome::Success, Outcome::EvidenceRefused, Outcome::Success]);
-        let mut output = Vec::new();
-
-        let error = verify_with(&runner, &mut output).expect_err("evidence refusal surfaces");
-
-        assert!(matches!(error, VerifyError::EvidenceRefused { .. }));
-        assert!(
-            error
-                .to_string()
-                .contains("fixture selected tree differs from the verifier worktree")
-        );
-        let calls = runner.calls();
-        assert!(calls.contains(&VERIFY_ACTIONS[2].label()));
-        assert!(!calls.contains(&VERIFY_ACTIONS[3].label()));
-        assert!(!calls.contains(&landing::LABEL));
-        assert_calls_are_unique(&calls);
-        let output = String::from_utf8(output).expect("lifecycle output is UTF-8");
-        assert!(output.contains("disposition=refused"));
-        assert!(output.contains("primary_ordinal=3 interrupted=false cleanup_faults=0"));
-        assert!(!output.contains("scheduler=cleanup-fault"));
     }
 
     #[test]

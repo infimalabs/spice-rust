@@ -209,6 +209,8 @@ mod tests {
         let no_pressure = Budget::from_observation(FIXTURE_CPU_COUNT, Some(0));
         let one_peer = Budget::from_observation(FIXTURE_CPU_COUNT, Some(1));
         let pressure = Budget::from_observation(FIXTURE_CPU_COUNT, Some(8));
+        let one_peer_twelve_cpus = Budget::from_observation(12, Some(1));
+        let three_peers = Budget::from_observation(12, Some(3));
         let two_cpus = Budget::from_observation(2, Some(0));
         let one_free_cpu = Budget::from_observation(2, Some(1));
         let saturated_cpu = Budget::from_observation(1, Some(4));
@@ -223,7 +225,11 @@ mod tests {
         assert_eq!(unknown.cargo_jobs, 1);
         assert_eq!(no_pressure.workspace_workers, 4);
         assert_eq!(one_peer.workspace_workers, 4);
-        assert_eq!(pressure.workspace_workers, 4);
+        assert_eq!(pressure.workspace_workers, 1);
+        assert_eq!(one_peer_twelve_cpus.cargo_jobs, 4);
+        assert_eq!(one_peer_twelve_cpus.workspace_workers, 3);
+        assert_eq!(three_peers.cargo_jobs, 3);
+        assert_eq!(three_peers.workspace_workers, 2);
         assert_eq!(two_cpus.workspace_workers, 1);
         assert_eq!(one_free_cpu.workspace_workers, 1);
         assert_eq!(saturated_cpu.workspace_workers, 1);

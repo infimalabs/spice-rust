@@ -79,6 +79,7 @@ impl ProbeFixture {
             .expect("the fixture rim directory is absolute"),
             baselines: None,
             identity: None,
+            verifier_environment: &[],
             verifier_evidence: &[],
         };
         probe_with(&requirement(), &source, bounds, read_program)

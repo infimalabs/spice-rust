@@ -86,8 +86,10 @@ impl Budget {
         let participants = active + workers;
         let cargo_jobs = (cpus / participants.max(1)).max(1);
         let sibling_reserve = cargo_jobs.saturating_mul(workers.saturating_sub(1));
+        let workspace_job_cap = cargo_jobs.saturating_sub(1).max(1);
         let workspace_workers = cpu_slots
             .saturating_sub(sibling_reserve)
+            .min(workspace_job_cap)
             .clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP);
         Self {
             workers,
@@ -579,13 +581,6 @@ fn execute_process(
 ) -> ActionCompletion {
     match run {
         Err(RunError::Launch(source)) => failure(launch_error(source), Disposition::LaunchError),
-        Err(RunError::EvidenceRefused(detail)) => failure(
-            VerifyError::EvidenceRefused {
-                label: label.to_owned(),
-                detail,
-            },
-            Disposition::Refused,
-        ),
         Err(RunError::Cleanup(detail)) => failure(
             VerifyError::Cleanup {
                 label: label.to_owned(),
@@ -633,13 +628,6 @@ fn execute_browser(run: Result<BrowserRun, RunError>) -> ActionCompletion {
         Err(RunError::Launch(source)) => failure(
             VerifyError::BrowserLaunch { source },
             Disposition::LaunchError,
-        ),
-        Err(RunError::EvidenceRefused(detail)) => failure(
-            VerifyError::EvidenceRefused {
-                label: BROWSER_LABEL.to_owned(),
-                detail,
-            },
-            Disposition::Refused,
         ),
         Err(RunError::Cleanup(detail)) => failure(
             VerifyError::Cleanup {
@@ -702,13 +690,6 @@ fn execute_battery(run: Result<BatteryRun, RunError>) -> ActionCompletion {
         Err(RunError::Launch(source)) => failure(
             VerifyError::Battery(source.to_string()),
             Disposition::LaunchError,
-        ),
-        Err(RunError::EvidenceRefused(detail)) => failure(
-            VerifyError::EvidenceRefused {
-                label: BATTERY_LABEL.to_owned(),
-                detail,
-            },
-            Disposition::Refused,
         ),
         Err(RunError::Cleanup(detail)) => failure(
             VerifyError::Cleanup {

@@ -25,7 +25,7 @@ mod verify_timing;
 mod workspace_tests;
 
 use app::WASM_TARGET;
-pub use app::{AppBuildError, app};
+pub use app::{AppBuildError, app, app_to};
 pub use build_cache::{
     BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheReport, BuildCacheRequest,
     BuildCacheRootReport, build_cache, collect_build_cache_at, parse_byte_quantity,
@@ -329,11 +329,6 @@ impl ProcessOutput {
 #[derive(Debug)]
 enum RunError {
     Launch(io::Error),
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "compiler evidence supervision is native-only")
-    )]
-    EvidenceRefused(String),
     Cleanup(String),
 }
 
@@ -470,13 +465,12 @@ impl SystemRunner {
             .iter()
             .any(|contract| contract.gate_id() == gate_id)
         {
-            let battery = state.battery.as_ref().ok_or_else(|| {
+            let battery = state.battery.as_mut().ok_or_else(|| {
                 RunError::Cleanup("full verifier compiler evidence has no prepared battery".into())
             })?;
             let contract = battery
-                .verifier_compiler_contract(gate_id)
+                .verifier_compiler_contract(gate_id, cargo_jobs)
                 .map_err(|error| RunError::Launch(io::Error::other(error.to_string())))?;
-            let contract = contract.with_cargo_jobs(cargo_jobs);
             state.compiler_contracts.push(contract);
         }
         state
@@ -499,12 +493,6 @@ impl SystemRunner {
         let run = contract
             .run_supervised(stage, cancellation.clone())
             .map_err(RunError::Launch)?;
-        if let Some(reason) = run.evidence_refusal() {
-            return Err(RunError::EvidenceRefused(format!(
-                "{} compiler evidence refused: {reason}",
-                contract.gate_id().as_str()
-            )));
-        }
         let cancelled = run.cancelled();
         let timed_out = run.timed_out();
         let output = ProcessOutput {
@@ -890,10 +878,6 @@ pub enum VerifyError {
         label: String,
         code: Option<i32>,
     },
-    EvidenceRefused {
-        label: String,
-        detail: String,
-    },
     Cleanup {
         label: String,
         detail: String,
@@ -973,9 +957,6 @@ impl fmt::Display for VerifyError {
             Self::ScopedExit { label, code: None } => {
                 write!(formatter, "[verify] failed: {label} (terminated by signal)")
             }
-            Self::EvidenceRefused { label, detail } => {
-                write!(formatter, "[verify] evidence refused: {label} ({detail})")
-            }
             Self::Cleanup { label, detail } => {
                 write!(formatter, "[verify] cleanup failed: {label} ({detail})")
             }
@@ -1014,7 +995,6 @@ impl std::error::Error for VerifyError {
             | Self::BrowserIncomplete
             | Self::Exit { .. }
             | Self::ScopedExit { .. }
-            | Self::EvidenceRefused { .. }
             | Self::Cleanup { .. }
             | Self::Cancelled { .. }
             | Self::TimedOut { .. }

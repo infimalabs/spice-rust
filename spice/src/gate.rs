@@ -21,6 +21,7 @@ use crate::repository::{Repository, StateError};
 
 const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
+const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 
 /// One staged battery capture retained across the full verifier's actions.
 ///
@@ -30,6 +31,7 @@ const PROCESS_PATH: &str = concat!("PA", "TH");
 pub struct PreparedBattery {
     capture: BatteryCapture<'static>,
     verifier_environment: Vec<(OsString, OsString)>,
+    cargo_jobs: Option<usize>,
 }
 
 impl PreparedBattery {
@@ -37,11 +39,39 @@ impl PreparedBattery {
     ///
     /// # Errors
     ///
-    /// Refuses a foreign arm or unavailable/drifted declared tool.
+    /// Refuses a foreign arm, an unavailable/drifted declared tool, or a Cargo
+    /// job cap that differs from the first contract minted by this capture.
     pub fn verifier_compiler_contract(
-        &self,
+        &mut self,
         gate_id: GateId,
+        cargo_jobs: usize,
     ) -> Result<VerifierCompilerContract, RunError> {
+        let cargo_jobs = cargo_jobs.max(1);
+        match self.cargo_jobs {
+            Some(bound) if bound != cargo_jobs => {
+                return Err(RunError::refusal(
+                    "gate::verifier-budget-refused",
+                    format!(
+                        concat!(
+                            "full verifier Cargo job cap changed from {} to {} ",
+                            "after capture"
+                        ),
+                        bound, cargo_jobs
+                    ),
+                ));
+            }
+            Some(_) => {}
+            None => {
+                self.verifier_environment
+                    .retain(|(name, _)| name != CARGO_BUILD_JOBS);
+                self.verifier_environment.push((
+                    OsString::from(CARGO_BUILD_JOBS),
+                    OsString::from(cargo_jobs.to_string()),
+                ));
+                self.verifier_environment.sort();
+                self.cargo_jobs = Some(cargo_jobs);
+            }
+        }
         self.capture
             .verifier_compiler_contract(gate_id, self.verifier_environment.clone())
             .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
@@ -57,7 +87,7 @@ impl PreparedBattery {
         evidence: &[VerifierCompilerEvidence],
     ) -> Result<BatteryReport, RunError> {
         self.capture
-            .execute_with_verifier_evidence(evidence)
+            .execute_with_verifier_evidence(evidence, self.verifier_environment.clone())
             .map_err(|error| RunError::refusal("gate::battery-refused", error))
     }
 }
@@ -72,6 +102,7 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery, RunError> {
     capture(selector, None, None).map(|capture| PreparedBattery {
         capture,
         verifier_environment,
+        cargo_jobs: None,
     })
 }
 
@@ -80,7 +111,9 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery, RunError> {
     reason = "the canonical gate command rim owns full-verifier environment acquisition"
 )]
 fn verifier_environment() -> Vec<(OsString, OsString)> {
-    env::vars_os().collect()
+    let mut environment = env::vars_os().collect::<Vec<_>>();
+    environment.sort();
+    environment
 }
 
 /// Execute the canonical battery over one selected source.

@@ -141,6 +141,9 @@ pub use state::{
     PeerClaim, PendingState, RenameMap, StateDecision, StateError, StateErrorKind, StateKey,
     StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
 };
+/// Private `cargo xtask app` argument used by the native full verifier to
+/// publish a selected-source app build into its live worktree.
+pub const VERIFIER_APP_PUBLISH_FLAG: &str = "--spice-verifier-publish-root";
 #[cfg(not(target_arch = "wasm32"))]
 pub use structural::{
     StructuralCapture, StructuralMatch, StructuralPattern, StructuralScanError, scan_structural,
