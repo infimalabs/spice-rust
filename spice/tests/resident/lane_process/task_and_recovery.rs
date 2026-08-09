@@ -205,7 +205,7 @@ fn resident_capture_is_byte_exact_and_listenable_through_terminal_residue() {
 
     let tape_root = fixture
         .root
-        .join(".git/.spice/tape")
+        .join(".git/.spice-rs/tape")
         .join(added.lane.to_string())
         .join("claude");
     let tape = tape::Tape::open_existing(&tape_root).expect("resident transcript tape opens");
@@ -220,7 +220,7 @@ fn resident_capture_is_byte_exact_and_listenable_through_terminal_residue() {
     );
 
     let replay = listen::retro(
-        fixture.root.join(".git/.spice/tape"),
+        fixture.root.join(".git/.spice-rs/tape"),
         listen::RetroSelector::Lane(added.lane.to_string()),
         &[
             ("claude", listen::Dialect::Claude),
@@ -351,7 +351,7 @@ fn mismatched_resume_and_moved_tape_refuse_without_advancing_the_vacant_lane() {
 
     let tape = fixture
         .root
-        .join(".git/.spice/tape")
+        .join(".git/.spice-rs/tape")
         .join(added.lane.to_string())
         .join("claude");
     fs::rename(&tape, tape.with_extension("moved")).expect("fixture tape moves");

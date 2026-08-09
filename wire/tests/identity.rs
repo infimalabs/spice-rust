@@ -77,6 +77,8 @@ const fn position(domain: Domain) -> usize {
         | Domain::DistSourceCommit => early_position(domain),
         Domain::DistReleaseManifest
         | Domain::DistReleaseNotes
+        | Domain::DistReleaseNotesContent
+        | Domain::DistReleasePackage
         | Domain::DistReleasePlan
         | Domain::ProofBattery
         | Domain::ProofReplayV3
@@ -132,39 +134,41 @@ const fn middle_position(domain: Domain) -> usize {
     match domain {
         Domain::DistReleaseManifest => 15,
         Domain::DistReleaseNotes => 16,
-        Domain::DistReleasePlan => 17,
-        Domain::ProofBattery => 18,
-        Domain::ProofReplayV3 => 19,
-        Domain::ProofReceiptV3 => 20,
-        Domain::ProofNativeRunner => 21,
-        Domain::ProofNativeClosureFile => 22,
-        Domain::ProofNativeClosure => 23,
-        Domain::GateFile => 24,
-        Domain::GateTree => 25,
-        Domain::GateSet => 26,
-        Domain::GatePolicy => 27,
-        Domain::GateBounds => 28,
-        Domain::GateBaseline => 29,
+        Domain::DistReleaseNotesContent => 17,
+        Domain::DistReleasePackage => 18,
+        Domain::DistReleasePlan => 19,
+        Domain::ProofBattery => 20,
+        Domain::ProofReplayV3 => 21,
+        Domain::ProofReceiptV3 => 22,
+        Domain::ProofNativeRunner => 23,
+        Domain::ProofNativeClosureFile => 24,
+        Domain::ProofNativeClosure => 25,
+        Domain::GateFile => 26,
+        Domain::GateTree => 27,
+        Domain::GateSet => 28,
+        Domain::GatePolicy => 29,
+        Domain::GateBounds => 30,
+        Domain::GateBaseline => 31,
         _ => panic!("domain position partition is closed"),
     }
 }
 
 const fn late_position(domain: Domain) -> usize {
     match domain {
-        Domain::GateTool => 30,
-        Domain::GateInventory => 31,
-        Domain::GateMeasurement => 32,
-        Domain::GateReceipt => 33,
-        Domain::GateStateLedger => 34,
-        Domain::GateStateReceipt => 35,
-        Domain::ConfigExecutableSurface => 36,
-        Domain::TaskArtifactPayload => 37,
-        Domain::TaskArtifactStore => 38,
-        Domain::GateBatteryManifest => 39,
-        Domain::GateBatteryReport => 40,
-        Domain::GateBatteryReceipt => 41,
-        Domain::GateConfiguration => 42,
-        Domain::TasteProse => 43,
+        Domain::GateTool => 32,
+        Domain::GateInventory => 33,
+        Domain::GateMeasurement => 34,
+        Domain::GateReceipt => 35,
+        Domain::GateStateLedger => 36,
+        Domain::GateStateReceipt => 37,
+        Domain::ConfigExecutableSurface => 38,
+        Domain::TaskArtifactPayload => 39,
+        Domain::TaskArtifactStore => 40,
+        Domain::GateBatteryManifest => 41,
+        Domain::GateBatteryReport => 42,
+        Domain::GateBatteryReceipt => 43,
+        Domain::GateConfiguration => 44,
+        Domain::TasteProse => 45,
         _ => panic!("domain position partition is closed"),
     }
 }
@@ -181,7 +185,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 44] = [
+const DOMAINS: [Domain; 46] = [
     Domain::BoardDocument,
     Domain::BoardTaskIdentity,
     Domain::BoardBarrier,
@@ -199,6 +203,8 @@ const DOMAINS: [Domain; 44] = [
     Domain::DistSourceCommit,
     Domain::DistReleaseManifest,
     Domain::DistReleaseNotes,
+    Domain::DistReleaseNotesContent,
+    Domain::DistReleasePackage,
     Domain::DistReleasePlan,
     Domain::ProofBattery,
     Domain::ProofReplayV3,
@@ -294,6 +300,8 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.dist.source-commit.v1",
             "spice.dist.release-manifest.v1",
             "spice.dist.release-notes.v1",
+            "spice.dist.release-notes-content.v1",
+            "spice.dist.release-package.v1",
             "spice.dist.release-plan.v1",
             "spice.proof.battery.v1",
             "spice.proof.replay.v3",

@@ -844,6 +844,8 @@ pub struct ReleasePublish {
     pub key: Digest,
     /// Digest of the canonical target manifest.
     pub manifest: Digest,
+    /// Identity of the exact curated release-note bytes in the approved plan.
+    pub notes: Digest,
 }
 
 /// Drive the resident to the requested lifecycle state.

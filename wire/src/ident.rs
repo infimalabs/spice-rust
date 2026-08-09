@@ -105,6 +105,10 @@ pub enum Domain {
     DistReleaseManifest,
     /// The complete deterministic release-note input document.
     DistReleaseNotes,
+    /// The exact operator-facing release-note bytes shipped with one package.
+    DistReleaseNotesContent,
+    /// One complete externally installable release package index.
+    DistReleasePackage,
     /// One operator-previewed publication of an exact sealed manifest.
     DistReleasePlan,
     /// The ordered command inventory one sealed proof replay consumes.
@@ -185,6 +189,8 @@ impl Domain {
             | Self::DistSourceCommit
             | Self::DistReleaseManifest
             | Self::DistReleaseNotes
+            | Self::DistReleaseNotesContent
+            | Self::DistReleasePackage
             | Self::DistReleasePlan
             | Self::TasteProse => self.product_tag(),
             Self::ProofBattery
@@ -234,6 +240,8 @@ impl Domain {
             Self::DistSourceCommit => "spice.dist.source-commit.v1",
             Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
             Self::DistReleaseNotes => "spice.dist.release-notes.v1",
+            Self::DistReleaseNotesContent => "spice.dist.release-notes-content.v1",
+            Self::DistReleasePackage => "spice.dist.release-package.v1",
             Self::DistReleasePlan => "spice.dist.release-plan.v1",
             Self::TasteProse => "spice.taste.prose.v1",
             _ => panic!("digest-domain tag partition is closed"),

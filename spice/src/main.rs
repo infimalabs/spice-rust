@@ -43,6 +43,8 @@ mod lock_command;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod release_history;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
@@ -98,7 +100,7 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
             reason: "repository::state-path-refused".to_owned(),
             witness: Some("repository-state-root".to_owned()),
             expected: Some(
-                "real fixed components beneath the canonical Git-common .spice directory"
+                "real fixed components beneath the canonical Git-common .spice-rs directory"
                     .to_owned(),
             ),
             observed: Some(error.to_string()),
@@ -245,7 +247,7 @@ fn dispatch_native_repository_queries(
         ["task", "effort"] => deliver(&journal_command::task_effort(leaf, contract), form),
         ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
         ["version"] => deliver(&version_outcome(), form),
-        ["release", "notes"] => deliver(&release_command::notes(leaf), form),
+        ["release", "notes"] => deliver_release_notes(&release_command::notes(leaf), form),
         _ => {}
     }
 }
@@ -345,7 +347,7 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
         ),
         ["release", "notes"] => (
             "release::target-unsupported",
-            "reading the explicit release notes INPUT file is unavailable on wasm32",
+            "immutable Git history inspection for release notes is unavailable on wasm32",
         ),
         ["install"] => (
             "install::target-unsupported",
@@ -807,6 +809,23 @@ fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code
             terminate(&fault);
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_release_notes(outcome: &Outcome<wire::ReleaseNotes>, form: Form) -> ! {
+    if form == Form::Text
+        && let Outcome::Reply(reply) = outcome
+    {
+        let mut document = reply.body.document.as_bytes().to_vec();
+        if !document.ends_with(b"\n") {
+            document.push(b'\n');
+        }
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(&document);
+        let _ = stdout.flush();
+        terminate_code(REPLY_EXIT);
+    }
+    deliver(outcome, form)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
