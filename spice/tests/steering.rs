@@ -19,6 +19,7 @@ mod staged_app;
 
 use readiness::Readiness;
 
+const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
 const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
 const SESSION_RECORD: &str =
@@ -473,15 +474,15 @@ fn acknowledgment_paths(
         Some("bind the exact command family")
     );
 
-    let hook = invoke_as_lane(fixture, &lane, &["hook", "codex"], false);
+    let codex = invoke_as_lane(fixture, &lane, &["hook", "codex"], false);
     assert!(
-        hook.status.success(),
+        codex.status.success(),
         "hook inbox failed: {:?}",
-        hook.stderr
+        codex.stderr
     );
-    assert!(hook.stderr.is_empty(), "hook inbox spoke on stderr");
+    assert!(codex.stderr.is_empty(), "hook inbox spoke on stderr");
     let hook: serde_json::Value =
-        wire::decode(&hook.stdout).expect("hook inbox speaks one Codex hook document");
+        wire::decode(&codex.stdout).expect("hook inbox speaks one Codex hook document");
     assert_eq!(hook["hookSpecificOutput"]["hookEventName"], "PostToolUse");
     let additional_context = hook["hookSpecificOutput"]["additionalContext"]
         .as_str()
@@ -489,6 +490,7 @@ fn acknowledgment_paths(
     assert!(additional_context.contains(&sent.key));
     assert!(additional_context.contains(direction));
     assert!(additional_context.contains("ack <key>"));
+    hook_harness_paths(fixture, &lane, &codex.stdout);
 
     let other = lanes.other.to_string();
     record_reply(
@@ -530,6 +532,40 @@ fn acknowledgment_paths(
         },
         sent.key,
     )
+}
+
+/// Both admitted harnesses, and one that is not, over the same pending inbox.
+///
+/// The two admitted spellings take byte-identical documents today, so the only
+/// thing the operand decides is whether the command runs at all. Pinning the
+/// equality is what will notice the day one harness needs its own shape, and
+/// pinning the refusal is what keeps an unrecognised harness from being handed
+/// a document written for someone else.
+fn hook_harness_paths(fixture: &Fixture, lane: &str, codex: &[u8]) {
+    let claude = invoke_as_lane(fixture, lane, &["hook", "claude"], false);
+    assert!(
+        claude.status.success(),
+        "claude hook inbox failed: {:?}",
+        claude.stderr
+    );
+    assert!(
+        claude.stderr.is_empty(),
+        "claude hook inbox spoke on stderr"
+    );
+    assert_eq!(
+        claude.stdout, codex,
+        "the admitted harnesses no longer take one document"
+    );
+
+    let unsupported = invoke_as_lane(fixture, lane, &["hook", "nushell"], false);
+    assert_eq!(unsupported.status.code(), Some(FAULT_EXIT));
+    assert!(
+        unsupported.stdout.is_empty(),
+        "an unadmitted harness still took a document"
+    );
+    let text = std::str::from_utf8(&unsupported.stderr).expect("text fault is UTF-8");
+    assert!(text.contains("unsupported hook harness"), "{text:?}");
+    assert!(text.contains("nushell"), "{text:?}");
 }
 
 fn decline_path(fixture: &Fixture, lane: wire::CanonicalUuid) -> ExpectedRecognition {

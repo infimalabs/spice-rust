@@ -1,7 +1,7 @@
 use super::*;
 
 const RECALL_LIMIT: usize = 16;
-const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
+pub(super) const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
 const SESSION_RECORD: &str =
     r#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
 const MISMATCHED_SESSION_RECORD: &str = concat!(
@@ -75,7 +75,7 @@ pub(super) fn configure_fake_vendor(fixture: &Fixture) {
     );
 }
 
-fn configure_successor_worktree(fixture: &Fixture) -> PathBuf {
+pub(super) fn configure_successor_worktree(fixture: &Fixture) -> PathBuf {
     let common = fixture
         .runtime
         .parent()

@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 atomic = { path = "../atomic" }
-canvas = { path = "../canvas" }
 dist = { path = "../dist" }
 gate = { path = "../gate" }
 proof = { path = "../proof" }

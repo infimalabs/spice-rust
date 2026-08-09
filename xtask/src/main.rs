@@ -79,6 +79,8 @@ fn main() -> ExitCode {
                         .map_err(Into::into)
                 })
         }
+        // The refresh drives `spice::install`, which is gated off the wasm
+        // target the workspace check compiles this binary for.
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("install") => {
             drop(output);

@@ -50,7 +50,7 @@ impl Fixture {
         let identity = "00000000-0000-4000-8000-000000000000"
             .parse::<wire::CanonicalUuid>()
             .expect("the fixture identity is canonical");
-        let discovery = canvas::Discovery {
+        let discovery = spice::canvas::Discovery {
             endpoint: endpoint.to_owned(),
             capability: identity,
             epoch: identity,

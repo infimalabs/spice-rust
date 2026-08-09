@@ -28,6 +28,7 @@ pub(super) enum Disposition {
     Exit(Option<i32>),
     LaunchError,
     Error,
+    RenderError,
     Refused,
     Incomplete,
 }
@@ -46,6 +47,7 @@ impl fmt::Display for Disposition {
             Self::Exit(None) => formatter.write_str("signal"),
             Self::LaunchError => formatter.write_str("launch-error"),
             Self::Error => formatter.write_str("error"),
+            Self::RenderError => formatter.write_str("render-error"),
             Self::Refused => formatter.write_str("refused"),
             Self::Incomplete => formatter.write_str("incomplete"),
         }
@@ -137,7 +139,20 @@ where
             panic::resume_unwind(payload);
         }
     };
-    let conclusion = finish(outcome, output)?;
+    let conclusion = match finish(outcome, output) {
+        Ok(conclusion) => conclusion,
+        Err(error) => {
+            // The action's rendering failure remains authoritative even when
+            // its best-effort terminal record meets the same broken sink.
+            let _ = write_terminal(
+                output,
+                stage,
+                waiter.elapsed(),
+                &Disposition::RenderError.to_string(),
+            );
+            return Err(error);
+        }
+    };
     write_terminal(
         output,
         stage,
