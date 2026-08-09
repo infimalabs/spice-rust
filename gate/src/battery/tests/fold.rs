@@ -30,12 +30,33 @@ fn refusal_fold_lists_only_non_admitting_arms_in_canonical_order() {
         .iter()
         .filter(|result| !result.state().admits())
         .collect();
+    let finding_arms = refusing
+        .iter()
+        .filter(|result| result.state() == BatteryState::Failed)
+        .count();
+    let summary_start = text
+        .rfind("battery refusal summary:")
+        .expect("refusal fold carries a terminal summary");
+    let metric_findings = text[..summary_start].matches("finding gate=").count();
+    let summary = format!(
+        concat!(
+            "battery refusal summary: total_arms={} admitted_arms={} ",
+            "finding_arms={} cannot_run_arms={} metric_findings={} ",
+            "omitted_arms=0 omitted_findings=0\n"
+        ),
+        report.results().len(),
+        report.results().len() - refusing.len(),
+        finding_arms,
+        refusing.len() - finding_arms,
+        metric_findings,
+    );
     assert!(
-        text.starts_with(&format!(
-            "non-authoritative battery refusal fold: {} non-admitting arms\n",
-            refusing.len()
-        )),
-        "fold states exactly how many canonical arms refused"
+        text.ends_with(&summary),
+        "the board is followed by its score: {text}"
+    );
+    assert!(
+        text.starts_with("arm position="),
+        "refusal evidence must lead its summary: {text}"
     );
     let mut cursor = 0;
     for result in &refusing {
