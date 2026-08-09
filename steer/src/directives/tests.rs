@@ -1,16 +1,15 @@
-use super::{LADDER, Ledger, Refusal, Steering};
+use super::{Ledger, Refusal, Steering};
 use crate::ack::keys::Key;
 use crate::ack::scan::Standing;
 use wire::body::{
-    AcknowledgmentMiss, DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed,
-    SteerMissed, SteerRecovered, SteerResent, SteerSent, TasteReminded, TranscriptLocus,
+    AcknowledgmentMiss, DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined,
+    SteerEscalated, SteerLapsed, SteerMissed, SteerRecovered, SteerSent, SteeringStage,
+    TasteReminded, TranscriptLocus,
 };
 use wire::{CanonicalUuid, Disposition, Instant};
 
 const ROOT: &str = "1kJK6N3R";
 const SECOND: &str = "1kJK6M0V";
-const THIRD: &str = "1kJK7Sqy";
-const FOURTH: &str = "1kJK8KcW";
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
 const ELSEWHERE: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
 const EXPIRES: &str = "2026-08-01T07:07:19.000Z";
@@ -25,7 +24,7 @@ fn a_sent_directive_stands_pending_until_something_retires_it() {
     assert_eq!(pending[0].key(), &key(ROOT));
     assert_eq!(pending[0].text(), "hold the line");
     assert_eq!(pending[0].control(), Some("drive-drain-queue"));
-    assert_eq!(pending[0].escalation(), 0);
+    assert_eq!(pending[0].stage(), SteeringStage::Published);
     assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Live));
 }
 
@@ -134,113 +133,153 @@ fn taste_bytes(seq: u64, kind: &str) -> String {
     )
 }
 
-/// A ladder is one directive said again, so the lane is asked once.
+/// Escalation changes presentation without multiplying identity or pending rows.
 #[test]
-fn a_resend_climbs_one_rung_and_leaves_the_lineage_pending_once() {
+fn an_escalation_retains_one_stable_pending_directive() {
     let mut ledger = Ledger::new();
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
     ledger
-        .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-        .expect("resent");
+        .absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Reminded,
+        )))
+        .expect("reminded");
 
     let pending = ledger.pending(lane());
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].key(), &key(SECOND));
-    assert_eq!(pending[0].escalation(), 1);
-    assert_eq!(pending[0].ancestor(), Some(&key(ROOT)));
+    assert_eq!(pending[0].key(), &key(ROOT));
+    assert_eq!(pending[0].directive(), directive(ROOT));
+    assert_eq!(pending[0].stage(), SteeringStage::Reminded);
     assert_eq!(pending[0].text(), "hold the line");
-    assert_eq!(ledger.lineage(&key(ROOT)).len(), 2);
+    assert_eq!(ledger.directives().len(), 1);
 }
 
 #[test]
-fn a_resend_that_skips_or_repeats_a_rung_is_refused() {
+fn an_escalation_that_skips_or_repeats_a_stage_is_refused() {
     let mut ledger = Ledger::new();
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
 
     assert_eq!(
-        ledger.absorb(Steering::Resent(&resent(SECOND, ROOT, 2))),
-        Err(Refusal::Rung {
-            key: key(SECOND),
-            expected: 1,
-            observed: 2,
+        ledger.absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Escalated,
+        ))),
+        Err(Refusal::Stage {
+            key: key(ROOT),
+            expected: SteeringStage::Reminded,
+            observed: SteeringStage::Escalated,
         })
     );
+    ledger
+        .absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Reminded,
+        )))
+        .expect("first stage");
     assert_eq!(
-        ledger.absorb(Steering::Resent(&resent(SECOND, ROOT, 0))),
-        Err(Refusal::Rung {
-            key: key(SECOND),
-            expected: 1,
-            observed: 0,
+        ledger.absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Reminded,
+        ))),
+        Err(Refusal::Stage {
+            key: key(ROOT),
+            expected: SteeringStage::Escalated,
+            observed: SteeringStage::Reminded,
         })
     );
 }
 
-/// Past the top rung the ladder stops rather than escalating forever.
+/// Past overdue, presentation stops changing and expiry remains separate.
 #[test]
-fn an_exhausted_ladder_is_refused() {
+fn an_overdue_directive_refuses_another_escalation() {
     let mut ledger = Ledger::new();
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-    let rungs = [SECOND, THIRD, FOURTH];
-    for (index, minted) in rungs.iter().enumerate() {
-        let below = if index == 0 { ROOT } else { rungs[index - 1] };
-        let climbed = u32::try_from(index + 1).expect("rung fits");
+    for stage in [
+        SteeringStage::Reminded,
+        SteeringStage::Escalated,
+        SteeringStage::Overdue,
+    ] {
         ledger
-            .absorb(Steering::Resent(&resent(minted, below, climbed)))
-            .expect("rung within the ladder");
+            .absorb(Steering::Escalated(&escalated(ROOT, stage)))
+            .expect("ordered stage");
     }
 
-    let over = "1kJK8yRS";
     assert_eq!(
-        ledger.absorb(Steering::Resent(&resent(over, FOURTH, LADDER + 1))),
-        Err(Refusal::Exhausted {
-            key: key(over),
-            ladder: LADDER,
-        })
+        ledger.absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Overdue,
+        ))),
+        Err(Refusal::FinalStage { key: key(ROOT) })
     );
 }
 
 #[test]
-fn a_resend_addressing_another_lane_is_refused() {
+fn an_escalation_addressing_another_lane_is_refused() {
     let mut ledger = Ledger::new();
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
 
-    let mut wandered = resent(SECOND, ROOT, 1);
+    let mut wandered = escalated(ROOT, SteeringStage::Reminded);
     wandered.lane = elsewhere();
     assert_eq!(
-        ledger.absorb(Steering::Resent(&wandered)),
+        ledger.absorb(Steering::Escalated(&wandered)),
         Err(Refusal::Lane {
-            key: key(SECOND),
+            key: key(ROOT),
             expected: lane(),
             observed: elsewhere(),
         })
     );
 }
 
-/// Acknowledging the rung the lane was first asked at answers the ladder
-/// climbed above it, which is what stops later escalation.
 #[test]
-fn acknowledging_any_live_rung_retires_the_whole_lineage() {
+fn an_escalation_cannot_precede_its_original_publication() {
+    let mut ledger = Ledger::new();
+    let published: Instant = "2026-08-01T06:00:15.000Z"
+        .parse()
+        .expect("publication instant");
+    let observed: Instant = "2026-08-01T06:00:14.000Z"
+        .parse()
+        .expect("transition instant");
+    ledger
+        .absorb_recorded(Steering::Sent(&sent(ROOT)), Some(published))
+        .expect("sent");
+    let before = ledger.clone();
+
+    assert_eq!(
+        ledger.absorb_recorded(
+            Steering::Escalated(&escalated(ROOT, SteeringStage::Reminded)),
+            Some(observed),
+        ),
+        Err(Refusal::Chronology {
+            key: key(ROOT),
+            previous: published,
+            observed,
+        })
+    );
+    assert_eq!(ledger, before);
+}
+
+/// Acknowledgment retires the same root after presentation changes.
+#[test]
+fn acknowledging_an_escalated_directive_retires_the_stable_root() {
     let mut ledger = Ledger::new();
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
     ledger
-        .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-        .expect("resent");
+        .absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Reminded,
+        )))
+        .expect("reminded");
     ledger
         .absorb(Steering::Acked(&acked(ROOT)))
-        .expect("acked at the first rung");
+        .expect("the stable directive is acknowledged");
 
-    for rung in [ROOT, SECOND] {
-        assert_eq!(
-            ledger.disposition(&key(rung)),
-            Some(Disposition::Acked),
-            "{rung} did not retire with its lineage"
-        );
-    }
+    assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Acked));
+    assert_eq!(ledger.directives().len(), 1);
     assert!(ledger.pending(lane()).is_empty());
 }
 
 #[test]
-fn a_retired_lineage_refuses_a_second_disposition() {
+fn a_retired_directive_refuses_a_second_disposition() {
     let mut ledger = Ledger::new();
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
     ledger.absorb(Steering::Acked(&acked(ROOT))).expect("acked");
@@ -253,7 +292,10 @@ fn a_retired_lineage_refuses_a_second_disposition() {
         })
     );
     assert_eq!(
-        ledger.absorb(Steering::Resent(&resent(SECOND, ROOT, 1))),
+        ledger.absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Reminded,
+        ))),
         Err(Refusal::Retired {
             key: key(ROOT),
             disposition: Disposition::Acked,
@@ -298,7 +340,7 @@ fn an_acknowledgment_binds_the_directive_identity_and_lane() {
 }
 
 #[test]
-fn an_operator_cancel_retires_a_live_lineage() {
+fn an_operator_cancel_retires_a_live_directive() {
     let mut ledger = Ledger::new();
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
     ledger
@@ -313,7 +355,7 @@ fn an_operator_cancel_retires_a_live_lineage() {
 }
 
 #[test]
-fn a_lapse_must_name_the_expiry_the_lineage_carries() {
+fn a_lapse_must_name_the_expiry_the_directive_carries() {
     let mut ledger = Ledger::new();
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
 
@@ -347,11 +389,14 @@ fn recovery_restores_only_the_exact_lapsed_directive_without_losing_payload() {
     let original = sent(ROOT);
     ledger.absorb(Steering::Sent(&original)).expect("sent");
     ledger
-        .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-        .expect("resent");
+        .absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Reminded,
+        )))
+        .expect("reminded");
     ledger
         .absorb(Steering::Lapsed(&SteerLapsed {
-            key: SECOND.to_owned(),
+            key: ROOT.to_owned(),
             lane: lane(),
             expires: expires(),
         }))
@@ -360,44 +405,52 @@ fn recovery_restores_only_the_exact_lapsed_directive_without_losing_payload() {
         .parse()
         .expect("recovery instant");
     let recovered = SteerRecovered {
-        directive: directive(SECOND),
-        key: SECOND.to_owned(),
+        directive: directive(ROOT),
+        key: ROOT.to_owned(),
         lane: lane(),
         lapsed_at: expires(),
         expires: recovered_expiry,
     };
+
+    let mut unbounded = recovered.clone();
+    unbounded.expires = expires();
+    let before = ledger.clone();
+    assert_eq!(
+        ledger.absorb(Steering::Recovered(&unbounded)),
+        Err(Refusal::RecoveryExpiry {
+            key: key(ROOT),
+            lapsed_at: expires(),
+            expires: expires(),
+        })
+    );
+    assert_eq!(ledger, before);
 
     ledger
         .absorb(Steering::Recovered(&recovered))
         .expect("exact lapsed directive recovers");
 
     let restored = ledger
-        .directive(directive(SECOND))
+        .directive(directive(ROOT))
         .expect("recovered directive retains identity");
     assert_eq!(restored.text(), original.text);
     assert_eq!(restored.control(), original.control.as_deref());
     assert_eq!(restored.attachments(), original.attachments);
     assert_eq!(restored.expires(), recovered_expiry);
+    assert_eq!(restored.stage(), SteeringStage::Reminded);
     assert_eq!(restored.disposition(), Disposition::Live);
     assert_eq!(ledger.pending(lane()), vec![restored]);
-    for member in ledger.lineage(&key(SECOND)) {
-        assert_eq!(member.disposition(), Disposition::Live);
-        assert_eq!(member.expires(), recovered_expiry);
-    }
     assert_eq!(
         ledger.absorb(Steering::Recovered(&recovered)),
         Err(Refusal::Retired {
-            key: key(SECOND),
+            key: key(ROOT),
             disposition: Disposition::Live,
         }),
         "the same failed directive cannot be recovered twice",
     );
     ledger
-        .absorb(Steering::Acked(&acked(SECOND)))
-        .expect("the recovered lineage can retire normally");
-    for member in ledger.lineage(&key(SECOND)) {
-        assert_eq!(member.disposition(), Disposition::Acked);
-    }
+        .absorb(Steering::Acked(&acked(ROOT)))
+        .expect("the recovered directive can retire normally");
+    assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Acked));
 }
 
 /// A missed acknowledgment is a diagnostic, never a retirement. Its key is
@@ -439,12 +492,12 @@ fn a_key_that_is_not_spelled_as_one_names_the_field() {
     );
 
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
-    let mut wandering = resent(SECOND, ROOT, 1);
-    wandering.ancestor = "nope".to_owned();
+    let mut wandering = escalated(ROOT, SteeringStage::Reminded);
+    wandering.key = "nope".to_owned();
     assert_eq!(
-        ledger.absorb(Steering::Resent(&wandering)),
+        ledger.absorb(Steering::Escalated(&wandering)),
         Err(Refusal::Malformed {
-            field: "ancestor",
+            field: "key",
             text: "nope".to_owned(),
         })
     );
@@ -469,7 +522,7 @@ fn a_refused_fact_leaves_standing_untouched() {
 
     for refused in [
         Steering::Sent(&sent(ROOT)),
-        Steering::Resent(&resent(SECOND, ROOT, 2)),
+        Steering::Escalated(&escalated(ROOT, SteeringStage::Escalated)),
         Steering::Acked(&acked(SECOND)),
     ] {
         assert!(ledger.absorb(refused).is_err(), "fact was admitted");
@@ -496,13 +549,12 @@ fn a_taste_reminder_stands_as_one_live_directive_carrying_only_prose() {
     assert_eq!(pending[0].text(), "polling is not a completion event");
     assert_eq!(pending[0].control(), None);
     assert!(pending[0].attachments().is_empty());
-    assert_eq!(pending[0].escalation(), 0);
-    assert_eq!(pending[0].ancestor(), None);
+    assert_eq!(pending[0].stage(), SteeringStage::Published);
     assert_eq!(pending[0].expires(), expires());
     assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Live));
 }
 
-/// Both ways a lineage opens answer to the same two laws, in both orders.
+/// Both publication paths answer to the same two laws, in both orders.
 ///
 /// The refusals are checked across origins rather than each kind against
 /// itself, because that is the pair a shared admission exists to stop: a
@@ -556,55 +608,46 @@ fn a_send_cannot_reopen_a_key_or_identity_a_reminder_holds() {
     assert_eq!(ledger, before, "a refused send altered standing");
 }
 
-/// A reminder is answerable, and answering it once ends the whole ladder.
-///
-/// The lineage is climbed before the answer so the proof covers the case a
-/// reminder makes newly reachable: an escalation standing above a rung no
-/// operator sent. If only the top rung retired, the reminder below it would
-/// stay live and the lane would be asked the same thing forever.
+/// A reminder is ordinary steering and retains its key as urgency changes.
 #[test]
-fn acknowledging_a_reminder_retires_the_lineage_climbed_above_it() {
+fn acknowledging_an_escalated_reminder_retires_its_stable_key() {
     let mut ledger = Ledger::new();
     ledger
         .absorb(Steering::Reminded(&reminded(ROOT)))
         .expect("reminded");
     ledger
-        .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-        .expect("resent");
+        .absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Reminded,
+        )))
+        .expect("presentation reminded");
     ledger
         .absorb(Steering::Acked(&acked(ROOT)))
         .expect("acked at the reminder itself");
 
-    for rung in [ROOT, SECOND] {
-        assert_eq!(
-            ledger.disposition(&key(rung)),
-            Some(Disposition::Acked),
-            "{rung} did not retire with its reminder lineage"
-        );
-    }
+    assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Acked));
+    assert_eq!(ledger.directives().len(), 1);
     assert!(ledger.pending(lane()).is_empty());
 }
 
 #[test]
-fn declining_a_reminder_retires_the_lineage_climbed_above_it() {
+fn declining_an_escalated_reminder_retires_its_stable_key() {
     let mut ledger = Ledger::new();
     ledger
         .absorb(Steering::Reminded(&reminded(ROOT)))
         .expect("reminded");
     ledger
-        .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-        .expect("resent");
+        .absorb(Steering::Escalated(&escalated(
+            ROOT,
+            SteeringStage::Reminded,
+        )))
+        .expect("presentation reminded");
     ledger
-        .absorb(Steering::Declined(&declined(SECOND)))
-        .expect("declined at the rung above");
+        .absorb(Steering::Declined(&declined(ROOT)))
+        .expect("declined");
 
-    for rung in [ROOT, SECOND] {
-        assert_eq!(
-            ledger.disposition(&key(rung)),
-            Some(Disposition::Declined),
-            "{rung} did not retire with its reminder lineage"
-        );
-    }
+    assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Declined));
+    assert_eq!(ledger.directives().len(), 1);
     assert!(ledger.pending(lane()).is_empty());
 }
 
@@ -710,11 +753,12 @@ fn replaying_the_same_facts_produces_the_same_standing() {
         let mut ledger = Ledger::new();
         ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
         ledger
-            .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
-            .expect("resent");
-        ledger
-            .absorb(Steering::Acked(&acked(SECOND)))
-            .expect("acked");
+            .absorb(Steering::Escalated(&escalated(
+                ROOT,
+                SteeringStage::Reminded,
+            )))
+            .expect("reminded");
+        ledger.absorb(Steering::Acked(&acked(ROOT))).expect("acked");
         ledger
     };
 
@@ -781,13 +825,12 @@ fn prose() -> wire::Digest {
     wire::Digest::compute(wire::Domain::TasteProse, b"we will poll until it settles")
 }
 
-fn resent(key: &str, ancestor: &str, escalation: u32) -> SteerResent {
-    SteerResent {
+fn escalated(key: &str, stage: SteeringStage) -> SteerEscalated {
+    SteerEscalated {
         directive: directive(key),
         key: key.to_owned(),
-        ancestor: ancestor.to_owned(),
         lane: lane(),
-        escalation,
+        stage,
     }
 }
 

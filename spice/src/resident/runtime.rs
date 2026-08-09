@@ -806,7 +806,7 @@ async fn run_surface(
     let residency = current_residency(bus, epoch)?;
     let capabilities = surface_capabilities(operator, residency.body())?;
     let timer_commits = bus.reader().subscribe();
-    let timers = timers::Runtime::start(config.projects.clone())?;
+    let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
     // Settled before the listener exists, so a app stage that cannot supply
     // the whole app stops the resident with its own name rather than turning
     // into a page the operator has to diagnose from the browser.
@@ -906,7 +906,7 @@ async fn run_surface(
         records,
         failures,
         progress,
-        timers.drive(bus, timer_commits),
+        timers.drive(bus, timer_commits, paths),
     )
     .await
 }

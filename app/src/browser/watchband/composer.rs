@@ -205,10 +205,23 @@ pub(super) fn render_directive_card(
         }),
     };
     let authored = directive.authored.get().as_millisecond();
-    let chronology = format!(
-        "authored {}; expires {}",
-        directive.authored, directive.expires
-    );
+    let audit = directive
+        .escalations
+        .iter()
+        .map(|transition| format!("{} {}", transition.stage, transition.at))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let chronology = if audit.is_empty() {
+        format!(
+            "stage {}; authored {}; expires {}",
+            directive.stage, directive.authored, directive.expires
+        )
+    } else {
+        format!(
+            "stage {}; authored {}; transitions [{}]; expires {}",
+            directive.stage, directive.authored, audit, directive.expires
+        )
+    };
     let unlinked_attachments = directive
         .attachments
         .iter()
@@ -220,6 +233,7 @@ pub(super) fn render_directive_card(
             id={source_id.clone()}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             data-directive={directive.directive.to_string()}
+            data-directive-stage={directive.stage.to_string()}
             data-card-kind="directive"
             data-mosaic-card-key={source_id}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
@@ -252,7 +266,9 @@ pub(super) fn render_directive_card(
                 </div>
             }
             <footer class="message-meta">
-                <span class="message-key">{directive.key.clone()}</span>
+                <span class="message-key">
+                    {format!("{} · {}", directive.key, directive.stage)}
+                </span>
                 <Age {authored} class="message-age" title={chronology} />
                 <span class="message-author">{correspondent.name.clone()}</span>
                 {view::chrome::render_card_actions(&directive.text, &correspondent)}

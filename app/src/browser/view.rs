@@ -569,7 +569,10 @@ fn render_pending_direction(directives: &[&wire::intent::PendingDirective]) -> H
                 <div class="event-list">{for directives.iter().map(|directive| html! {
                     <article class="event">
                         <strong>
-                            {format!("{} / {}", directive.key, directive.expires)}
+                            {format!(
+                                "{} / {} / {}",
+                                directive.key, directive.stage, directive.expires
+                            )}
                         </strong>
                         <p>{directive.text.clone()}</p>
                     </article>
