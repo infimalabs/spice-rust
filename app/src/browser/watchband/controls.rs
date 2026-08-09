@@ -235,6 +235,17 @@ impl LineageControls {
     /// Reconcile a lane table. Ordinary reads cannot overtake an in-flight
     /// selection; the command's own authoritative reply can.
     fn sync_lanes(&mut self, answer: &wire::intent::LaneAnswer, settle: bool) {
+        // A lineage that left the authoritative subscription set is gone, not
+        // hidden. Drop its browser-local controls before deciding whether a
+        // newly seated first lineage should inherit the empty surface.
+        let live_lineages = answer
+            .subscriptions
+            .iter()
+            .map(|subscription| subscription.lineage_id)
+            .collect::<BTreeSet<_>>();
+        self.lineages
+            .retain(|lineage, _| live_lineages.contains(lineage));
+
         // A seat submitted from the empty Info view must keep that view when
         // its first real surface arrives. The resident's authoritative
         // subscription order resolves the transition: its first lineage

@@ -1278,7 +1278,7 @@ try {
     linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
     owner = ownFixture({ fixture, linkedRoot });
     await mkdir(artifacts, { recursive: true });
-    const worktrees = await configureFixture(fixture, linkedRoot, 5, { noCardMember: 5 });
+    const worktrees = await configureFixture(fixture, linkedRoot, 6, { noCardMember: 5 });
     resident = owner.ownResident(await startResident(fixture));
     const seeded = await seedAuthority(fixture);
     browser = await launchBrowser();
@@ -1399,7 +1399,7 @@ try {
       });
       await run.scenario("team-lifecycle", async () => {
         configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
-        await assertTeamArrangement(lightPage, fixture, artifacts);
+        await assertTeamArrangement(lightPage, fixture, worktrees, artifacts);
         lightMonitor.assertClean();
         darkMonitor.assertClean();
         await dark.close();

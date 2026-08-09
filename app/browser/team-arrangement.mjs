@@ -117,7 +117,7 @@ function dragTeam(page, gesture) {
 }
 
 /// Dragging a team reorders teams; dropping on an edge joins them.
-export async function assertTeamArrangement(page, fixture, artifacts) {
+export async function assertTeamArrangement(page, fixture, worktrees, artifacts) {
   const agents = page.locator('[data-pane="agent-console"]');
   await agents.getByRole("tab", { name: /^Compose/ }).first().click();
   const seated = durableTeams((await reply(fixture, ["lane"])).body.lanes);
@@ -216,6 +216,21 @@ export async function assertTeamArrangement(page, fixture, artifacts) {
     "both lineage tails wait behind the committed head",
   );
 
+  const primarySurface = agents.locator(
+    `.team-surface[data-lineage-id="${primary.lineage}"]`,
+  );
+  const secondarySurface = agents.locator(
+    `.team-surface[data-lineage-id="${secondary.lineage}"]`,
+  );
+  const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
+  await primarySurface.getByRole("tab", { name: /^Filters/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Metrics/ }).click();
+  assert.deepEqual(
+    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
+    ["Filters", "Metrics"],
+    "the teams hold distinct views immediately before one lineage retires",
+  );
+
   const gathered = await dragTeam(page, {
     dragged: secondary.lineage,
     target: primary.lineage,
@@ -238,10 +253,33 @@ export async function assertTeamArrangement(page, fixture, artifacts) {
     [primary.lineage],
     "the emptied team keeps no task policy of its own",
   );
+  assert.equal(
+    await selectedMode(primarySurface),
+    "Filters",
+    "retiring a sibling preserves the surviving team's selected view",
+  );
+  await primarySurface.getByRole("tab", { name: /^Compose/ }).click();
   assert.deepEqual(
     await renderedTeams(agents),
     [{ lineage: primary.lineage, lanes: [...primary.lanes, ...secondary.lanes] }],
     "the canvas draws one team whose first composer never moved",
+  );
+  await primarySurface.getByRole("tab", { name: /^Filters/ }).click();
+
+  await reply(fixture, [
+    "lane", "add", worktrees[5],
+    "--lineage", secondary.lineage,
+    "--life", "Drive",
+    "--vendor", "claude",
+  ]);
+  const recreatedSurface = agents.locator(
+    `.team-surface[data-lineage-id="${secondary.lineage}"]`,
+  );
+  await recreatedSurface.waitFor({ timeout: TRANSITION_MS });
+  assert.deepEqual(
+    [await selectedMode(primarySurface), await selectedMode(recreatedSurface)],
+    ["Filters", "Compose"],
+    "a recreated lineage starts clean instead of reviving its retired view state",
   );
   await page.evaluate(() => {
     const utterance = window.__speechUtterances.at(-1);

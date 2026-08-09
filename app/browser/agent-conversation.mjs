@@ -130,6 +130,19 @@ export async function seatAgentTeam(page, fixture, worktrees, assertInvalidVendo
   const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === teamWorktrees[0]);
   assert.ok(host, "the Canvas seat control creates the lineage host");
   assert.equal(host.lane, teamLaneIds[0], "the fixture fixes the lineage host accent slot");
+  const hostSurface = console.locator(
+    `.team-surface[data-lineage-id="${host.lineage_id}"]`,
+  );
+  assert.equal(
+    await hostSurface.locator(".team-pane").getAttribute("data-team-mode"),
+    "Info",
+    "the first seated lineage inherits the empty Canvas Info selection",
+  );
+  assert.equal(
+    await hostSurface.locator(".team-detail-card").count(),
+    1,
+    "the inherited Info surface keeps the first seat details visible",
+  );
   for (const [index, worktree] of teamWorktrees.slice(1).entries()) {
     await console.getByLabel("Name").fill(agentNames[index + 1]);
     await console.getByLabel("Worktree").fill(worktree);
