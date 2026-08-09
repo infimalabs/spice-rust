@@ -167,6 +167,13 @@ fn disagreeing_paths(
 mod tests {
     use super::*;
 
+    use std::io;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// How many names one fixture tries before giving up on an exclusive root.
+    const SCRATCH_ATTEMPTS: usize = 100;
+
     fn repository_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -174,28 +181,64 @@ mod tests {
             .to_path_buf()
     }
 
-    fn source_tree() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "spice-xtask-app-source-snapshot-{}",
-            std::process::id()
-        ));
-        if root.exists() {
-            fs::remove_dir_all(&root).expect("remove stale source fixture");
+    /// A planted source closure this fixture is the only holder of.
+    struct SourceTree(PathBuf);
+
+    impl SourceTree {
+        /// One scratch root on a name nothing else already holds.
+        ///
+        /// `create_dir` refuses a directory that exists rather than opening it,
+        /// so retrying under a fresh name is what makes the root exclusive: this
+        /// run only ever owns a name its own `create_dir` succeeded on. The name
+        /// carries the clock rather than the process id because ids are reused
+        /// across the lanes sharing this temporary directory and the clock is
+        /// not, so a peer's live fixture is never named the same as this one.
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            for _ in 0..SCRATCH_ATTEMPTS {
+                let stamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("the clock reads after the epoch")
+                    .as_nanos();
+                let root = std::env::temp_dir().join(format!(
+                    "spice-xtask-app-source-snapshot-{stamp}-{}",
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
+                match fs::create_dir(&root) {
+                    Ok(()) => return Self::planted(root),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => panic!("exclusive scratch root is created: {error}"),
+                }
+            }
+            panic!("no exclusive scratch root was available in {SCRATCH_ATTEMPTS} attempts");
         }
-        fs::create_dir_all(&root).expect("create source fixture");
-        for relative in SOURCE_FILES {
-            let path = root.join(relative);
-            fs::create_dir_all(path.parent().expect("source file has a parent"))
-                .expect("create source-file parent");
-            fs::write(path, relative).expect("write source-file fixture");
+
+        /// The declared source closure, planted under a root this run owns.
+        fn planted(root: PathBuf) -> Self {
+            for relative in SOURCE_FILES {
+                let path = root.join(relative);
+                fs::create_dir_all(path.parent().expect("source file has a parent"))
+                    .expect("create source-file parent");
+                fs::write(path, relative).expect("write source-file fixture");
+            }
+            for directory in SOURCE_DIRECTORIES {
+                let path = root.join(directory).join("lib.rs");
+                fs::create_dir_all(path.parent().expect("source module has a parent"))
+                    .expect("create source-module parent");
+                fs::write(path, directory).expect("write source-module fixture");
+            }
+            Self(root)
         }
-        for directory in SOURCE_DIRECTORIES {
-            let path = root.join(directory).join("lib.rs");
-            fs::create_dir_all(path.parent().expect("source module has a parent"))
-                .expect("create source-module parent");
-            fs::write(path, directory).expect("write source-module fixture");
+    }
+
+    impl Drop for SourceTree {
+        fn drop(&mut self) {
+            // A root that outlives its test is a name the next run can collide
+            // with, so remove it even where a panic is unwinding through here.
+            // Removal is allowed to fail rather than replace the failure the
+            // test is already carrying with one about its own cleanup.
+            let _ = fs::remove_dir_all(&self.0);
         }
-        root
     }
 
     #[test]
@@ -225,29 +268,29 @@ mod tests {
 
     #[test]
     fn untracked_source_arrival_and_movement_change_the_identity() {
-        let root = source_tree();
-        let before = SourceSnapshot::capture(&root).expect("capture fixture sources");
+        let tree = SourceTree::new();
+        let root = &tree.0;
+        let before = SourceSnapshot::capture(root).expect("capture fixture sources");
         let untracked = root.join("app/src/worktree_only.rs");
         fs::write(&untracked, "first worktree-only source").expect("write worktree-only source");
 
         let error = before
-            .verify_unchanged(&root)
+            .verify_unchanged(root)
             .expect_err("an arriving source must move the identity");
         assert!(
             error.to_string().contains("app/src/worktree_only.rs"),
             "the arriving source was not named: {error}"
         );
 
-        let captured = SourceSnapshot::capture(&root).expect("capture worktree-only source");
+        let captured = SourceSnapshot::capture(root).expect("capture worktree-only source");
         fs::write(untracked, "different worktree-only source").expect("move worktree-only source");
         let error = captured
-            .verify_unchanged(&root)
+            .verify_unchanged(root)
             .expect_err("a changed source must move the identity");
         assert!(
             error.to_string().contains("app/src/worktree_only.rs"),
             "the changed source was not named: {error}"
         );
-        fs::remove_dir_all(root).expect("remove source fixture");
     }
 
     #[test]
