@@ -67,6 +67,76 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
 }
 
 #[test]
+fn no_planned_operation_escapes_the_common_directory() {
+    let scratch = Scratch::new("scope");
+    let repository = scratch.repository();
+    let binary = scratch.binary(&[0x5a; 64]);
+
+    // Read the contract directly, so the assertion below is reachable even
+    // for an asset whose worktree-scoped destination cannot be planned at all.
+    for asset in [
+        Asset::Exclusions,
+        Asset::GitPreCommit,
+        Asset::GitCommitMessage,
+        Asset::GitReferenceTransaction,
+        Asset::HookEntry,
+        Asset::HookStatic,
+        Asset::Skill,
+        Asset::Binary,
+    ] {
+        assert_eq!(
+            asset_contract(asset).0,
+            Location::CommonGit,
+            "{asset:?} is contracted against a worktree, which a \
+             common-directory-scoped record cannot rediscover"
+        );
+    }
+
+    let derived = plan(&repository, Some(&binary)).expect("derive install plan");
+
+    // A plan holding no operations would satisfy the sweep below vacuously.
+    assert!(
+        derived.operations().len() >= 7,
+        "the scope sweep needs the whole asset inventory; found {}",
+        derived.operations().len()
+    );
+    for operation in derived.operations() {
+        assert_eq!(
+            operation.location(),
+            Location::CommonGit,
+            "{:?} resolves against a worktree, which a common-directory-scoped \
+             record cannot rediscover",
+            operation.asset()
+        );
+    }
+}
+
+#[test]
+fn a_worktree_scoped_identity_is_refused() {
+    let scratch = Scratch::new("identity");
+    let repository = scratch.repository();
+    let binary = scratch.binary(&[0x5a; 64]);
+    let mut derived = plan(&repository, Some(&binary)).expect("derive install plan");
+
+    // Without this the refusal below could come from an already-invalid plan.
+    derived.validate().expect("the derived plan validates as built");
+
+    derived.repository.worktree = Some(repository.worktree_root().to_path_buf());
+    let error = derived
+        .validate()
+        .expect_err("a worktree-scoped identity is refused");
+
+    assert!(
+        matches!(
+            &error,
+            InstallError::InvalidRecord(detail)
+                if detail.contains("not common-directory scoped")
+        ),
+        "{error}"
+    );
+}
+
+#[test]
 fn apply_is_idempotent_and_unapply_is_exact() {
     let scratch = Scratch::new("round-trip");
     let repository = scratch.repository();
