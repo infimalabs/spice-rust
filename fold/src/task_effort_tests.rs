@@ -1,5 +1,4 @@
 use super::*;
-use wire::Name;
 
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116301";
 const LINEAGE_A: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
@@ -973,7 +972,7 @@ fn phase(value: &str) -> Phase {
     value.parse().expect("fixture phase")
 }
 
-fn vendor() -> Name {
+fn vendor() -> wire::Name {
     "claude".parse().expect("fixture vendor")
 }
 

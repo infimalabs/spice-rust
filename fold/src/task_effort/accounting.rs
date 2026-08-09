@@ -1,3 +1,5 @@
+//! Evidence traversal, phase state, and usage arithmetic for task-effort reduction.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use wire::body::{self, SourceBoundary, TranscriptPosition};

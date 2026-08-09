@@ -895,9 +895,11 @@ impl Aggregate {
     }
 }
 
+// Keep evidence traversal and usage arithmetic below the reducer orchestration seam.
 #[path = "task_effort/accounting.rs"]
 mod accounting;
 use accounting::*;
+
 #[cfg(test)]
 #[path = "task_effort_tests.rs"]
 mod tests;
