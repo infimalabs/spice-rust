@@ -110,7 +110,11 @@ cargo xtask verify
 ```
 
 The command discovers the repository from the current directory and runs the
-one canonical verifier; there is no wrapper or second suite.
+one canonical verifier; there is no wrapper or second suite. Its workspace Rust
+tests are metadata-sorted into deterministic chunks of at most 12 targets and
+run in at most four owned process groups. Every shard prints its package and
+target inventory before launch, reports progress every 30 seconds, and has a
+hard 180-second deadline that terminates and reaps the complete process group.
 
 For fast feedback while changing one Cargo package, scope the formatter,
 Clippy, all-target tests, and doctests to that package:
