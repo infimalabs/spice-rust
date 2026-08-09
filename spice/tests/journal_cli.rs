@@ -36,7 +36,7 @@ impl Fixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        let data = root.join(".git/.spice/data");
+        let data = root.join(".git/.spice-rs/data");
         let authority = data.join("spicejournal.sqlite3");
         let folds = data.join("spicefolds.sqlite3");
         let bundle = root.join("operator-backup");
@@ -110,7 +110,7 @@ impl RunningResident {
             .spawn()
             .expect("launch foreground resident");
         let mut resident = Self { child: Some(child) };
-        let canvas = fixture.root.join(".git/.spice/canvas");
+        let canvas = fixture.root.join(".git/.spice-rs/canvas");
         let watched = canvas.parent().expect("canvas has runtime parent");
         fs::create_dir_all(watched).expect("runtime directory");
         match readiness::wait_until_ready(
@@ -149,7 +149,7 @@ impl RunningResident {
         let mut child = self.child.take().expect("resident child");
         child.kill().expect("terminate damaged resident");
         child.wait().expect("reap damaged resident");
-        let canvas = fixture.root.join(".git/.spice/canvas");
+        let canvas = fixture.root.join(".git/.spice-rs/canvas");
         if canvas.exists() {
             fs::remove_file(canvas).expect("remove interrupted discovery");
         }
@@ -483,7 +483,7 @@ fn active_writer_refuses_maintenance_in_a_typed_envelope() {
     let fixture = Fixture::new();
     let lock = LockFile::new(
         LockName::new("resident").expect("resident lock name"),
-        fixture.root.join(".git/.spice/resident"),
+        fixture.root.join(".git/.spice-rs/resident"),
     );
     let Acquisition::Acquired(_held) = lock.try_acquire().expect("acquire writer fixture") else {
         panic!("writer fixture lock was unexpectedly held")

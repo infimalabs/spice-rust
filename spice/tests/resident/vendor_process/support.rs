@@ -1,5 +1,7 @@
 use super::*;
 
+use std::ffi::OsString;
+
 pub(super) fn configure(fixture: &Fixture) -> Rig {
     let common = fixture
         .runtime
@@ -276,7 +278,13 @@ pub(super) fn assert_launches_with_executable(
                 .expect("selected vendor launch was captured"),
         );
         assert_eq!(capture.cwd, row.worktree);
-        assert_environment(&capture.environment, *dialect, *lane, expected_path);
+        assert_environment(
+            &capture.environment,
+            *dialect,
+            *lane,
+            executable,
+            expected_path,
+        );
         assert_eq!(
             capture.argv,
             expected_argv(rig, *dialect, *lane, &row.worktree, resumed, executable)
@@ -398,6 +406,7 @@ fn assert_environment(
     captured: &BTreeMap<String, String>,
     dialect: Dialect,
     lane: wire::CanonicalUuid,
+    executable: &Path,
     expected_path: Option<&Path>,
 ) {
     let mut observed = captured.clone();
@@ -412,7 +421,7 @@ fn assert_environment(
             .remove("GIT_CONFIG_SYSTEM")
             .expect("Git shadow names its system config");
         assert!(
-            system.ends_with("/agent.gitconfig"),
+            system.ends_with("/spice-rs-agent.gitconfig"),
             "unexpected Git shadow path: {system}"
         );
         for index in 0..count {
@@ -429,7 +438,7 @@ fn assert_environment(
     } else {
         assert!(!observed.contains_key("GIT_CONFIG_SYSTEM"));
     }
-    let mut expected = ["HOME", "PATH", "SHELL", "TMPDIR", "USER"]
+    let mut expected = ["HOME", "SHELL", "TMPDIR", "USER"]
         .into_iter()
         .filter_map(|name| {
             std::env::var(name)
@@ -437,9 +446,26 @@ fn assert_environment(
                 .map(|value| (name.to_owned(), value))
         })
         .collect::<BTreeMap<_, _>>();
-    if let Some(path) = expected_path {
-        expected.insert("PATH".to_owned(), path.display().to_string());
+    let mut search = vec![
+        executable
+            .parent()
+            .expect("fixture executable has a parent")
+            .to_path_buf(),
+    ];
+    if let Some(path) = expected_path
+        .map(Path::as_os_str)
+        .map(OsString::from)
+        .or_else(|| std::env::var_os("PATH"))
+    {
+        search.extend(std::env::split_paths(&path));
     }
+    expected.insert(
+        "PATH".to_owned(),
+        std::env::join_paths(search)
+            .expect("fixture launch PATH joins")
+            .into_string()
+            .expect("fixture launch PATH is UTF-8"),
+    );
     expected.insert(spice::agent_launch::SPICE_LANE.to_owned(), lane.to_string());
     if dialect == Dialect::Claude {
         expected.insert(
@@ -656,4 +682,67 @@ pub(super) fn native_git_command(root: &Path, arguments: &[&str]) -> Command {
             .env_remove(format!("GIT_CONFIG_VALUE_{index}"));
     }
     command
+}
+
+pub(super) fn native_resident_path(
+    fixture: &Fixture,
+    predecessor: &Path,
+) -> (PathBuf, [PathBuf; 2]) {
+    let path = fixture.cleanup.join("native-path");
+    fs::create_dir(&path).expect("native resident PATH creates");
+    let tools = [ambient_executable("git"), ambient_executable("sleep")];
+    for (name, source) in [
+        ("git", tools[0].as_path()),
+        ("sleep", tools[1].as_path()),
+        ("spice", predecessor),
+    ] {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(source, path.join(name)).expect("native resident tool links");
+        #[cfg(not(unix))]
+        fs::copy(source, path.join(name)).expect("native resident tool copies");
+    }
+    let mut entries = fs::read_dir(&path)
+        .expect("native resident PATH reads")
+        .map(|entry| {
+            entry
+                .expect("native resident PATH entry reads")
+                .file_name()
+                .into_string()
+                .expect("native resident tool name is UTF-8")
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    assert_eq!(entries, ["git", "sleep", "spice"]);
+    assert!(
+        entries
+            .iter()
+            .all(|name| !name.starts_with("python") && name != "task")
+    );
+    (path, tools)
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the process fixture resolves ambient native tools at its binary rim"
+)]
+pub(super) fn ambient_executable(name: &str) -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").expect("fixture PATH exists"))
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| panic!("fixture requires native executable {name:?}"))
+}
+
+pub(super) fn fixture_git_output(root: &Path, arguments: &[&str]) -> String {
+    let output = native_git_command(root, arguments)
+        .output()
+        .expect("fixture Git query launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    String::from_utf8(output.stdout)
+        .expect("fixture Git query is UTF-8")
+        .trim()
+        .to_owned()
 }

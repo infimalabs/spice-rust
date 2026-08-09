@@ -52,7 +52,7 @@ impl Fixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        let runtime = root.join(".git/.spice");
+        let runtime = root.join(".git/.spice-rs");
         fs::create_dir_all(root.join(".git")).expect("fixture git directory");
         let fixture = Self {
             cleanup: root.clone(),
@@ -79,7 +79,7 @@ impl Fixture {
         fs::write(git.join("commondir"), "../..\n").expect("linked common pointer");
         let fixture = Self {
             root,
-            runtime: common.join(".spice"),
+            runtime: common.join(".spice-rs"),
             cleanup,
         };
         fixture.install_app();

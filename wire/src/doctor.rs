@@ -410,7 +410,7 @@ mod tests {
             r#","locations":{"working":"/repo","repository":"/repo""#,
             r#","repository_common":"/repo/.git""#,
             r#","tracked_configuration":"/repo/spice.toml""#,
-            r#","local_configuration":"/repo/.git/.spice/config.toml"}"#,
+            r#","local_configuration":"/repo/.git/.spice-rs/config.toml"}"#,
             r#","environment":[{"variable":"SPICE_HOOKS""#, // env-policy: allow
             r#","observation":{"status":"ready"}}]"#,
             r#","configuration":null"#,
