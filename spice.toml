@@ -83,7 +83,7 @@ admission = [
 # isolated copy of the current test process, and fixes `TMPDIR` at private
 # writable scratch so that isolation remains valid on a read-only proof host.
 #
-# Seven foreign environment names are admitted here. The installed pre-commit
+# Eight foreign environment names are admitted here. The installed pre-commit
 # hook unsets Git's three local-environment names before it execs verify, and
 # the hooks fixture exports exactly those three to prove the child sees none of
 # them. The Git shadow writes three more, and it is production rather than a
@@ -91,9 +91,11 @@ admission = [
 # publishes, counts the command-scope pairs it appends in `GIT_CONFIG_COUNT`,
 # and sets `GIT_EDITOR` to `echo` for the one probe that asks Git to print its
 # own system config path. The hygiene acquisition fixture fixes the seventh,
-# `TMPDIR`, at its own writable scratch. Spice owns none of these names and
-# writes all of them. The ledger accounts what the tree references rather than
-# what it invented, so they are counted here; the shadow's indexed
+# `TMPDIR`, at its own writable scratch. The verifier writes the eighth to pass
+# the Canvas battery its binary inside that family's isolated Cargo root. Spice
+# owns none of these names and writes all of them. The ledger accounts what the
+# tree references rather than what it invented, so they are counted here; the
+# shadow's indexed
 # `GIT_CONFIG_KEY_` and `GIT_CONFIG_VALUE_` pairs are not, because a ledger
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
@@ -111,6 +113,7 @@ env_names = [
     "GIT_WORK_TREE",
     "SPICE_AGENT_VENDOR",
     "SPICE_APP_SOURCE_IDENTITY",
+    "SPICE_CANVAS_BINARY",
     "SPICE_HOOKS",
     "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
     "SPICE_HYGIENE_INTERPRETER_MARKER",

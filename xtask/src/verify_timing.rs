@@ -1,4 +1,4 @@
-//! Bounded lifecycle observation for serial verifier actions.
+//! Bounded lifecycle records for serial and dependency-scheduled actions.
 
 use std::fmt;
 use std::io::{self, Write};
@@ -12,7 +12,7 @@ const ATTENTION_THRESHOLD: Duration = Duration::from_secs(60);
 const WARNING_THRESHOLD: Duration = Duration::from_secs(120);
 const CRITICAL_THRESHOLD: Duration = Duration::from_secs(180);
 
-/// One verifier action's stable identity and position in its serial route.
+/// One verifier action's stable identity and position in its report route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct Stage<'a> {
     pub(super) ordinal: usize,
@@ -31,6 +31,10 @@ pub(super) enum Disposition {
     RenderError,
     Refused,
     Incomplete,
+    Cancelled,
+    TimedOut,
+    CleanupError,
+    Panic,
 }
 
 impl Disposition {
@@ -50,6 +54,10 @@ impl fmt::Display for Disposition {
             Self::RenderError => formatter.write_str("render-error"),
             Self::Refused => formatter.write_str("refused"),
             Self::Incomplete => formatter.write_str("incomplete"),
+            Self::Cancelled => formatter.write_str("cancelled"),
+            Self::TimedOut => formatter.write_str("timed-out"),
+            Self::CleanupError => formatter.write_str("cleanup-error"),
+            Self::Panic => formatter.write_str("panic"),
         }
     }
 }
@@ -163,7 +171,7 @@ where
     conclusion.result
 }
 
-fn write_start(output: &mut impl Write, stage: Stage<'_>) -> io::Result<()> {
+pub(super) fn write_start(output: &mut impl Write, stage: Stage<'_>) -> io::Result<()> {
     writeln!(
         output,
         concat!(
@@ -175,7 +183,11 @@ fn write_start(output: &mut impl Write, stage: Stage<'_>) -> io::Result<()> {
     output.flush()
 }
 
-fn write_progress(output: &mut impl Write, stage: Stage<'_>, elapsed: Duration) -> io::Result<()> {
+pub(super) fn write_progress(
+    output: &mut impl Write,
+    stage: Stage<'_>,
+    elapsed: Duration,
+) -> io::Result<()> {
     writeln!(
         output,
         concat!(
@@ -193,7 +205,7 @@ fn write_progress(output: &mut impl Write, stage: Stage<'_>, elapsed: Duration) 
     output.flush()
 }
 
-fn write_terminal(
+pub(super) fn write_terminal(
     output: &mut impl Write,
     stage: Stage<'_>,
     elapsed: Duration,

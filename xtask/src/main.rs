@@ -9,7 +9,8 @@ use sill::Deadlines;
 
 const USAGE_EXIT: u8 = 2;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <help|verify [--package PACKAGE]|gate ARM|app|activate-hooks|",
+    "usage: cargo xtask <help|verify [--package PACKAGE]|verify-action battery|",
+    "gate ARM|app|activate-hooks|",
     "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "stage-target TARGET|",
@@ -18,7 +19,16 @@ const USAGE: &str = concat!(
 
 fn help() -> String {
     let arms = gate::GateId::ALL.map(gate::GateId::as_str).join("\n  ");
-    format!("{USAGE}\n\ngate ARM accepts:\n  {arms}")
+    format!(
+        concat!(
+            "{usage}\n\n",
+            "verify-action battery is the scheduler-owned child action; ",
+            "it is not a completion verifier.\n\n",
+            "gate ARM accepts:\n  {arms}"
+        ),
+        usage = USAGE,
+        arms = arms,
+    )
 }
 
 fn main() -> ExitCode {
@@ -28,25 +38,15 @@ fn main() -> ExitCode {
     let mut output = io::stdout().lock();
     // Dispatch only current spellings; removed command names have no alias arm.
     let result: Result<(), Box<dyn std::error::Error>> = match command.as_deref() {
+        Some(value) if value == OsStr::new("verify-action") && arguments.len() == 1 => {
+            let action = arguments.next().expect("one verifier action was admitted");
+            return run_verify_action(&action, &mut output);
+        }
         Some(value) if value == OsStr::new("help") && arguments.len() == 0 => {
             writeln!(output, "{}", help()).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("verify") => {
-            let arguments = arguments.collect::<Vec<_>>();
-            match arguments.as_slice() {
-                [] => xtask::verify(&mut output).map_err(Into::into),
-                [option, package] if option == OsStr::new("--package") => {
-                    let Some(package) = package.to_str() else {
-                        eprintln!("{}", help());
-                        return ExitCode::from(USAGE_EXIT);
-                    };
-                    xtask::verify_package(package, &mut output).map_err(Into::into)
-                }
-                _ => {
-                    eprintln!("{}", help());
-                    return ExitCode::from(USAGE_EXIT);
-                }
-            }
+            return run_verify(arguments.collect(), &mut output);
         }
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
             let arm = arguments.next().expect("one gate arm was admitted");
@@ -132,8 +132,45 @@ fn main() -> ExitCode {
             return ExitCode::from(USAGE_EXIT);
         }
     };
+    result_exit(result)
+}
+
+fn result_exit(result: Result<(), Box<dyn std::error::Error>>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> ExitCode {
+    let result = match arguments.as_slice() {
+        [] => xtask::verify(output).map_err(Into::into),
+        [option, package] if option == OsStr::new("--package") => {
+            let Some(package) = package.to_str() else {
+                eprintln!("{}", help());
+                return ExitCode::from(USAGE_EXIT);
+            };
+            xtask::verify_package(package, output).map_err(Into::into)
+        }
+        _ => {
+            eprintln!("{}", help());
+            return ExitCode::from(USAGE_EXIT);
+        }
+    };
+    result_exit(result)
+}
+
+fn run_verify_action(action: &OsStr, output: &mut impl io::Write) -> ExitCode {
+    if action != OsStr::new("battery") {
+        eprintln!("{}", help());
+        return ExitCode::from(USAGE_EXIT);
+    }
+    match xtask::verify_battery_child(output) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::from(xtask::VERIFY_ACTION_REFUSAL_EXIT),
         Err(error) => {
             eprintln!("{error}");
             ExitCode::FAILURE
@@ -311,4 +348,16 @@ fn run_reference_transaction(state: &OsStr) -> Result<(), Box<dyn std::error::Er
     }
     let repository = env::current_dir()?;
     xtask::reference_transaction(&repository, state, &input).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::help;
+
+    #[test]
+    fn help_exposes_the_one_scheduler_owned_battery_action() {
+        let help = help();
+        assert!(help.contains("verify-action battery"));
+        assert!(help.contains("not a completion verifier"));
+    }
 }

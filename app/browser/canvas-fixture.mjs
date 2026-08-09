@@ -47,7 +47,8 @@ export const VENDOR_PID_LEDGER = ".spice-vendor-pids";
 const execute = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
-const binary = join(root, "target/debug/spice");
+const isolatedBinary = process.env.SPICE_CANVAS_BINARY; // env-policy: allow
+const binary = isolatedBinary ?? join(root, "target/debug/spice");
 
 export async function buildResident() {
   try {

@@ -419,10 +419,14 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
     assert!(output.status.success(), "{}", streams(&output));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("cargo xtask <help|verify [--package PACKAGE]|gate ARM|"),
+        stdout.contains(concat!(
+            "cargo xtask <help|verify [--package PACKAGE]|",
+            "verify-action battery|gate ARM|"
+        )),
         "{}",
         streams(&output)
     );
+    assert!(stdout.contains("not a completion verifier"));
     for gate_id in GateId::ALL {
         assert!(
             stdout
@@ -452,7 +456,7 @@ fn unknown_gate_arm_points_to_the_canonical_inventory() {
 }
 
 #[test]
-fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() {
+fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
     let fixture = Fixture::new();
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create process fixture directory");
@@ -481,19 +485,45 @@ fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() 
         "{}",
         streams(&output)
     );
+    let cargo_actions = fs::read_to_string(cargo_log).expect("read verifier Cargo actions");
+    let cargo_actions = cargo_actions.lines().collect::<Vec<_>>();
+    let chain = cargo_actions
+        .iter()
+        .copied()
+        .filter(|action| *action != "--version")
+        .collect::<Vec<_>>();
     assert_eq!(
-        fs::read_to_string(cargo_log)
-            .expect("read verifier Cargo actions")
-            .lines()
-            .collect::<Vec<_>>(),
-        [
+        chain.get(..3),
+        Some(
+            &[
+                "clippy --locked --workspace --all-targets -- -D warnings",
+                "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+                "check --locked --workspace --target wasm32-unknown-unknown",
+            ][..]
+        )
+    );
+    assert!(
+        chain.iter().all(|action| [
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
+            "test --locked --workspace --all-targets",
+            "doc --locked --workspace --lib --bins --no-deps",
+            "test --locked --workspace --doc",
         ]
+        .contains(action)),
+        "unexpected Cargo action under browser refusal: {cargo_actions:?}",
+    );
+    let mut unique_chain = chain.clone();
+    unique_chain.sort_unstable();
+    unique_chain.dedup();
+    assert_eq!(
+        unique_chain.len(),
+        chain.len(),
+        "duplicate Cargo action: {chain:?}"
     );
     assert!(
-        !String::from_utf8_lossy(&output.stdout).contains("canonical Rust gate battery"),
+        !String::from_utf8_lossy(&output.stdout).contains("ordinal=11/11"),
         "{}",
         streams(&output)
     );
@@ -513,6 +543,11 @@ fn verifier_wasm_clippy_rejects_a_lint_hidden_from_the_native_target() {
             concat!(
                 "#!/bin/sh\n",
                 "printf '%s\\n' \"$*\" >> '{cargo_log}'\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  {path_name}=${{{path_name}#*:}}\n",
+                "  export {path_name}\n",
+                "  exec cargo \"$@\"\n",
+                "fi\n",
                 "if [ \"$*\" = \"clippy --locked -p app --target ",
                 "wasm32-unknown-unknown -- -D warnings\" ]; then\n",
                 "  {path_name}=${{{path_name}#*:}}\n",
@@ -548,19 +583,37 @@ fn verifier_wasm_clippy_rejects_a_lint_hidden_from_the_native_target() {
 
     assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("variable does not need to be mutable"),
+        String::from_utf8_lossy(&output.stdout).contains("variable does not need to be mutable"),
         "{}",
         streams(&output),
     );
+    let cargo_actions = fs::read_to_string(cargo_log).expect("read wasm lint Cargo actions");
+    let cargo_actions = cargo_actions.lines().collect::<Vec<_>>();
     assert_eq!(
-        fs::read_to_string(cargo_log)
-            .expect("read wasm lint Cargo actions")
-            .lines()
+        cargo_actions
+            .iter()
+            .copied()
+            .filter(|action| action.starts_with("clippy "))
             .collect::<Vec<_>>(),
         [
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
         ],
+    );
+    assert!(
+        cargo_actions
+            .iter()
+            .all(|action| *action == "--version" || action.starts_with("clippy ")),
+        "unexpected Cargo action while the battery ran concurrently: {cargo_actions:?}",
+    );
+    assert!(
+        cargo_actions
+            .iter()
+            .copied()
+            .filter(|action| *action == "--version")
+            .count()
+            <= 1,
+        "the concurrent battery repeated its Cargo probe: {cargo_actions:?}",
     );
 }
 

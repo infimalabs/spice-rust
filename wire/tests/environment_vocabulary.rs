@@ -36,23 +36,25 @@ struct EnvironmentPolicy {
 /// verify, and the hooks fixture proves it by exporting exactly those three and
 /// asserting the child sees none of them. The Git shadow owns three more Git
 /// configuration references, and the hygiene acquisition fixture fixes
-/// `TMPDIR` at private writable scratch. Those references oblige the ledger to
-/// account all seven names. They are named here rather than added to
-/// [`SpiceVariable`], because Doctor reports the variables Spice owns and a row
-/// for one of these would claim ownership Spice does not have.
+/// `TMPDIR` at private writable scratch. The verifier passes Canvas its binary
+/// inside an isolated build root. Those references oblige the ledger to account
+/// all eight names. They are named here rather than added to [`SpiceVariable`],
+/// because Doctor reports the variables Spice owns and a row for one of these
+/// would claim ownership Spice does not have.
 ///
 /// Membership turns on ownership alone, never on when a name is read. A build
 /// stamp Spice owns still gets a row: `SPICE_NATIVE_PINS` is sealed into the
 /// proof runner by `option_env!` and has always been reported, and
 /// `SPICE_APP_SOURCE_IDENTITY` is the same construction one target over.
 const FOREIGN_TRACKED_NAMES: &[&str] = &[
-    "GIT_CONFIG_COUNT",  // env-policy: allow
-    "GIT_CONFIG_SYSTEM", // env-policy: allow
-    "GIT_DIR",           // env-policy: allow
-    "GIT_EDITOR",        // env-policy: allow
-    "GIT_INDEX_FILE",    // env-policy: allow
-    "GIT_WORK_TREE",     // env-policy: allow
-    "TMPDIR",            // env-policy: allow
+    "GIT_CONFIG_COUNT",    // env-policy: allow
+    "GIT_CONFIG_SYSTEM",   // env-policy: allow
+    "GIT_DIR",             // env-policy: allow
+    "GIT_EDITOR",          // env-policy: allow
+    "GIT_INDEX_FILE",      // env-policy: allow
+    "GIT_WORK_TREE",       // env-policy: allow
+    "SPICE_CANVAS_BINARY", // env-policy: allow
+    "TMPDIR",              // env-policy: allow
 ];
 
 /// The tracked vocabulary is Doctor's rows plus the names Spice does not own.

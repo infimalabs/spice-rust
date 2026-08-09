@@ -89,12 +89,28 @@ formatting, Clippy, native and browser-target builds, deterministic app
 verification, workspace tests, doctests, the machine-readable
 contract-landing check. The checked gate manifest maps each of the 25 retired
 standard policy checks to one compiled gate arm, and workspace tests exercise
-the exact mapping and production executor. Verification emits flushed start
-and terminal lifecycle records for every child-process and in-process action,
+the exact mapping and production executor.
+
+Verification uses an explicit dependency graph. The warm Cargo chain remains
+serial in its build root, while the separately rooted Canvas battery and the
+selected-snapshot gate analysis may overlap their declared prerequisites. The
+scheduler has a hard ceiling of three actions. It counts peer Cargo processes,
+reduces that ceiling from three to two to one as peer pressure rises, and sets
+the local worker count no higher than the logical CPUs left after those peers.
+One worker remains the progress floor when peers already saturate that budget.
+The scheduler sets `CARGO_BUILD_JOBS` to the logical-CPU budget divided across
+the peer and local participants; an unavailable peer probe fails closed to one
+worker and one Cargo job.
+
+Every external action runs in a new process group under bounded output,
+runtime, termination, and reap deadlines. The first failure or an operator
+interrupt cancels and reaps every running sibling before verification returns;
+contract landing cannot start afterward. Verification emits flushed start and
+terminal lifecycle records for every child-process and in-process action,
 including its exact identity, monotonic elapsed time, responsible family, and
-exit disposition. A still-running action reports every 30 seconds; the records
-mark the 60-, 120-, and 180-second operator policy bands without advancing to a
-later action. The native commit-msg hook preserves the current fixed
+exit disposition. A still-running action reports every 30 seconds; terminal
+records and cleanup faults are rendered in stable action order even when work
+finishes out of order. The native commit-msg hook preserves the current fixed
 message-hygiene law and additionally requires every committed `Spice-Origin`
 line to use the exact v1 grammar. The native reference-transaction hook refuses
 a current-branch update that would abandon commits already merged into its
@@ -111,6 +127,10 @@ cargo xtask verify
 
 The command discovers the repository from the current directory and runs the
 one canonical verifier; there is no wrapper or second suite.
+
+`cargo xtask verify-action battery` is the visible, scheduler-owned child
+surface for the canonical gate action. It is not a completion verifier and has
+no legacy alias; ordinary callers use `cargo xtask verify`.
 
 For fast feedback while changing one Cargo package, scope the formatter,
 Clippy, all-target tests, and doctests to that package:
