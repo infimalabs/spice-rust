@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use flate2::read::GzDecoder;
@@ -15,6 +15,7 @@ use super::model::{
 use super::source::ResolvedSource;
 
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
+const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
 const UNPARSEABLE_INTENT: &str = "unparseable compaction summary intent";
 const HYPHEN_BYTE: u8 = 45;
 const UNDERSCORE_BYTE: u8 = 95;
@@ -35,12 +36,24 @@ struct Marker {
     summary: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompactionHorizon {
+    pub(crate) start: Option<String>,
+}
+
 pub(crate) fn load(sources: &[ResolvedSource]) -> Result<Dataset, Refusal> {
+    load_since(sources, None)
+}
+
+pub(crate) fn load_since(
+    sources: &[ResolvedSource],
+    start: Option<&str>,
+) -> Result<Dataset, Refusal> {
     let mut dataset = Dataset::default();
     let mut events = Vec::new();
     for source in sources {
         let source_name = source.path.display().to_string();
-        let (mut rows, mut residues) = read_events(source)?;
+        let (mut rows, mut residues) = read_events(source, start)?;
         let vendor = detected_vendor(source.vendor, &rows);
         for row in &mut rows {
             if row.vendor == Vendor::Unknown {
@@ -86,20 +99,54 @@ pub(crate) fn load(sources: &[ResolvedSource]) -> Result<Dataset, Refusal> {
     Ok(dataset)
 }
 
-fn read_events(source: &ResolvedSource) -> Result<(Vec<RawEvent>, Vec<Residue>), Refusal> {
-    let file = File::open(&source.path).map_err(|error| {
-        refusal(
-            "session::transcript-unreadable",
-            Some(format!("{}: {error}", source.path.display())),
-            "restore read access to the transcript and retry",
-        )
-    })?;
-    let compressed = source.path.to_string_lossy().ends_with(".gz");
+pub(crate) fn recent_compaction_horizon(
+    sources: &[ResolvedSource],
+    count: usize,
+    end: Option<&str>,
+) -> Result<CompactionHorizon, Refusal> {
+    let mut markers = Vec::new();
+    for source in sources {
+        markers.extend(read_recent_compaction_markers(source, count, end)?);
+    }
+    markers.sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
+    let first = markers.len().saturating_sub(count);
+    let selected = markers.into_iter().skip(first).collect::<Vec<_>>();
+    Ok(CompactionHorizon {
+        start: selected.first().map(|marker| marker.ts.clone()),
+    })
+}
+
+fn read_events(
+    source: &ResolvedSource,
+    start: Option<&str>,
+) -> Result<(Vec<RawEvent>, Vec<Residue>), Refusal> {
+    let file = open_transcript(source)?;
+    let compressed = compressed(&source.path);
     let mut reader: Box<dyn BufRead> = if compressed {
         Box::new(BufReader::new(GzDecoder::new(file)))
     } else {
+        let mut file = file;
+        if let Some(start) = start {
+            let offset = start_offset_after_prior_timestamp(&source.path, start)?;
+            file.seek(SeekFrom::Start(offset)).map_err(|error| {
+                refusal(
+                    "session::transcript-unreadable",
+                    Some(format!("{}: {error}", source.path.display())),
+                    "restore read access to the transcript and retry",
+                )
+            })?;
+        }
         Box::new(BufReader::new(file))
     };
+    read_events_from_reader(source, start, &mut reader)
+}
+
+fn read_events_from_reader(
+    source: &ResolvedSource,
+    start: Option<&str>,
+    reader: &mut dyn BufRead,
+) -> Result<(Vec<RawEvent>, Vec<Residue>), Refusal> {
+    let source_name = source.path.display().to_string();
     let mut rows = Vec::new();
     let mut residues = Vec::new();
     let mut buffer = Vec::new();
@@ -126,7 +173,7 @@ fn read_events(source: &ResolvedSource) -> Result<(Vec<RawEvent>, Vec<Residue>),
         }
         if buffer.len() > MAX_LINE_BYTES {
             residues.push(Residue {
-                source: source.path.display().to_string(),
+                source: source_name.clone(),
                 line,
                 kind: "oversized-line".to_owned(),
                 detail: format!("JSONL record exceeds {MAX_LINE_BYTES} bytes"),
@@ -139,7 +186,7 @@ fn read_events(source: &ResolvedSource) -> Result<(Vec<RawEvent>, Vec<Residue>),
             Ok(value) => value,
             Err(error) => {
                 residues.push(Residue {
-                    source: source.path.display().to_string(),
+                    source: source_name.clone(),
                     line,
                     kind: if terminated {
                         "malformed-json"
@@ -157,7 +204,7 @@ fn read_events(source: &ResolvedSource) -> Result<(Vec<RawEvent>, Vec<Residue>),
         };
         let Some(raw_ts) = value.get("timestamp").and_then(Value::as_str) else {
             residues.push(Residue {
-                source: source.path.display().to_string(),
+                source: source_name.clone(),
                 line,
                 kind: "timestamp-missing".to_owned(),
                 detail: "record has no string timestamp".to_owned(),
@@ -167,7 +214,7 @@ fn read_events(source: &ResolvedSource) -> Result<(Vec<RawEvent>, Vec<Residue>),
         };
         let Some(timestamp) = spice::session_meter::normalize_timestamp(raw_ts) else {
             residues.push(Residue {
-                source: source.path.display().to_string(),
+                source: source_name.clone(),
                 line,
                 kind: "timestamp-invalid".to_owned(),
                 detail: format!("record timestamp cannot be normalized: {raw_ts}"),
@@ -176,15 +223,261 @@ fn read_events(source: &ResolvedSource) -> Result<(Vec<RawEvent>, Vec<Residue>),
             });
             continue;
         };
+        let timestamp = timestamp.to_string();
+        if start.is_some_and(|start| timestamp.as_str() < start) {
+            continue;
+        }
         rows.push(RawEvent {
-            source: source.path.display().to_string(),
+            source: source_name.clone(),
             line,
-            ts: timestamp.to_string(),
+            ts: timestamp,
             vendor: source.vendor,
             value,
         });
     }
     Ok((rows, residues))
+}
+
+fn open_transcript(source: &ResolvedSource) -> Result<File, Refusal> {
+    File::open(&source.path).map_err(|error| {
+        refusal(
+            "session::transcript-unreadable",
+            Some(format!("{}: {error}", source.path.display())),
+            "restore read access to the transcript and retry",
+        )
+    })
+}
+
+fn compressed(path: &Path) -> bool {
+    path.to_string_lossy().ends_with(".gz")
+}
+
+fn read_recent_compaction_markers(
+    source: &ResolvedSource,
+    count: usize,
+    end: Option<&str>,
+) -> Result<Vec<Marker>, Refusal> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if compressed(&source.path) {
+        return read_recent_compaction_markers_forward(source, count, end);
+    }
+    let source_name = source.path.display().to_string();
+    let mut markers = Vec::new();
+    reverse_lines(&source.path, |line, _, _| {
+        if let Some(marker) = marker_from_line(&source_name, line)
+            && end.is_none_or(|end| marker.ts.as_str() <= end)
+        {
+            markers.push(marker);
+            if markers.len() == count {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    })?;
+    markers.reverse();
+    Ok(markers)
+}
+
+fn read_recent_compaction_markers_forward(
+    source: &ResolvedSource,
+    count: usize,
+    end: Option<&str>,
+) -> Result<Vec<Marker>, Refusal> {
+    let source_name = source.path.display().to_string();
+    let file = open_transcript(source)?;
+    let mut reader: Box<dyn BufRead> = if compressed(&source.path) {
+        Box::new(BufReader::new(GzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    let mut markers = Vec::new();
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        let read = reader.read_until(b'\n', &mut buffer).map_err(|error| {
+            refusal(
+                "session::transcript-unreadable",
+                Some(format!("{}: {error}", source.path.display())),
+                "restore read access to the transcript and retry",
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        while matches!(buffer.last(), Some(b'\n' | b'\r')) {
+            buffer.pop();
+        }
+        if let Some(marker) = marker_from_line(&source_name, &buffer)
+            && end.is_none_or(|end| marker.ts.as_str() <= end)
+        {
+            markers.push(marker);
+            trim_oldest(&mut markers, count);
+        }
+    }
+    Ok(markers)
+}
+
+fn start_offset_after_prior_timestamp(path: &Path, start: &str) -> Result<u64, Refusal> {
+    let mut offset = 0_u64;
+    reverse_lines(path, |line, _, next| {
+        if let Some(ts) = timestamp_from_line(line)
+            && ts.as_str() < start
+        {
+            offset = next;
+            return Ok(false);
+        }
+        Ok(true)
+    })?;
+    Ok(offset)
+}
+
+fn reverse_lines<F>(path: &Path, mut visit: F) -> Result<(), Refusal>
+where
+    F: FnMut(&[u8], u64, u64) -> Result<bool, Refusal>,
+{
+    let mut file = File::open(path).map_err(|error| {
+        refusal(
+            "session::transcript-unreadable",
+            Some(format!("{}: {error}", path.display())),
+            "restore read access to the transcript and retry",
+        )
+    })?;
+    let mut position = file
+        .metadata()
+        .map_err(|error| {
+            refusal(
+                "session::transcript-unreadable",
+                Some(format!("{}: {error}", path.display())),
+                "restore read access to the transcript and retry",
+            )
+        })?
+        .len();
+    let mut carry = Vec::new();
+    while position > 0 {
+        let read = position.min(BACKWARD_CHUNK_BYTES);
+        position -= read;
+        file.seek(SeekFrom::Start(position)).map_err(|error| {
+            refusal(
+                "session::transcript-unreadable",
+                Some(format!("{}: {error}", path.display())),
+                "restore read access to the transcript and retry",
+            )
+        })?;
+        let mut block = vec![0_u8; read as usize];
+        file.read_exact(&mut block).map_err(|error| {
+            refusal(
+                "session::transcript-unreadable",
+                Some(format!("{}: {error}", path.display())),
+                "restore read access to the transcript and retry",
+            )
+        })?;
+        block.extend_from_slice(&carry);
+        let parse_start = if position == 0 {
+            0
+        } else if let Some(split) = block.iter().position(|byte| *byte == b'\n') {
+            carry = block[..split].to_vec();
+            split + 1
+        } else {
+            carry = block;
+            continue;
+        };
+        let mut ranges = Vec::new();
+        let mut line_start = parse_start;
+        for index in parse_start..block.len() {
+            if block[index] == b'\n' {
+                ranges.push((line_start, index, index + 1));
+                line_start = index + 1;
+            }
+        }
+        if line_start < block.len() {
+            ranges.push((line_start, block.len(), block.len()));
+        }
+        for (start, mut end, next) in ranges.into_iter().rev() {
+            while end > start && block[end - 1] == b'\r' {
+                end -= 1;
+            }
+            if start == end {
+                continue;
+            }
+            if !visit(
+                &block[start..end],
+                position.saturating_add(start as u64),
+                position.saturating_add(next as u64),
+            )? {
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn marker_from_line(source: &str, line: &[u8]) -> Option<Marker> {
+    if line.len() > MAX_LINE_BYTES {
+        return None;
+    }
+    let value = serde_json::from_slice::<Value>(line).ok()?;
+    let ts = timestamp_from_value(&value)?;
+    marker_from_value(source, &ts, &value)
+}
+
+fn timestamp_from_line(line: &[u8]) -> Option<String> {
+    if line.len() > MAX_LINE_BYTES {
+        return None;
+    }
+    serde_json::from_slice::<Value>(line)
+        .ok()
+        .and_then(|value| timestamp_from_value(&value))
+}
+
+fn timestamp_from_value(value: &Value) -> Option<String> {
+    value
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(spice::session_meter::normalize_timestamp)
+        .map(|timestamp| timestamp.to_string())
+}
+
+fn marker_from_value(source: &str, ts: &str, value: &Value) -> Option<Marker> {
+    let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
+    let payload_kind = value
+        .get("payload")
+        .and_then(|payload| payload.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    match (kind, payload_kind) {
+        ("compacted", _) => Some(Marker {
+            source: source.to_owned(),
+            ts: ts.to_owned(),
+            summary: String::new(),
+        }),
+        ("summary", _) => Some(Marker {
+            source: source.to_owned(),
+            ts: ts.to_owned(),
+            summary: value
+                .get("summary")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        }),
+        ("system", _)
+            if value.get("subtype").and_then(Value::as_str) == Some("compact_boundary") =>
+        {
+            Some(Marker {
+                source: source.to_owned(),
+                ts: ts.to_owned(),
+                summary: String::new(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn trim_oldest<T>(rows: &mut Vec<T>, count: usize) {
+    if rows.len() > count {
+        rows.drain(..rows.len() - count);
+    }
 }
 
 fn read_residue(path: &Path, line: u64, error: &io::Error) -> Residue {
