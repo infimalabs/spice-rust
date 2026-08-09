@@ -119,7 +119,9 @@ fn a_worktree_scoped_identity_is_refused() {
     let mut derived = plan(&repository, Some(&binary)).expect("derive install plan");
 
     // Without this the refusal below could come from an already-invalid plan.
-    derived.validate().expect("the derived plan validates as built");
+    derived
+        .validate()
+        .expect("the derived plan validates as built");
 
     derived.repository.worktree = Some(repository.worktree_root().to_path_buf());
     let error = derived
