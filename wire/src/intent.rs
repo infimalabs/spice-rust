@@ -589,6 +589,14 @@ pub struct SteerInbox {
     pub lane: Option<CanonicalUuid>,
 }
 
+/// Rebuild one lane's disposable steering delivery from durable authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteerRepair {
+    /// Lane whose current journal-derived rendering is republished.
+    pub lane: CanonicalUuid,
+}
+
 /// Name one directive and nothing else.
 ///
 /// Resending and cancelling both identify a directive without adding to it.
@@ -988,6 +996,42 @@ pub struct DirectiveAnswer {
     pub key: String,
     /// Its disposition after the transaction.
     pub disposition: Disposition,
+    /// Current standing of the disposable inbox delivery after the command.
+    #[serde(default, skip_serializing_if = "DeliveryStanding::is_unknown")]
+    pub delivery: Box<DeliveryStanding>,
+}
+
+/// Observable standing of one journal-to-inbox fold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "standing", rename_all = "lowercase", deny_unknown_fields)]
+pub enum DeliveryStanding {
+    /// No admitted progress record exists for this lane yet.
+    #[default]
+    Unknown,
+    /// The rendering at `source` was durably published.
+    Published {
+        /// Journal horizon from which the rendering was derived.
+        source: Seq,
+    },
+    /// Publication failed and the exact current work is parked for repair.
+    Parked {
+        /// Journal horizon from which the failed rendering was derived.
+        source: Seq,
+        /// Pending steering keys the failed rendering would have carried.
+        keys: Vec<String>,
+        /// Publication failure retained verbatim for diagnosis.
+        failure: String,
+        /// Exact operator command that retries from current authority.
+        repair: String,
+    },
+}
+
+impl DeliveryStanding {
+    /// True only before an observable fold record has been consulted.
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown)
+    }
 }
 
 /// One pending directive returned by an inbox read.
@@ -1043,6 +1087,9 @@ pub struct LaneInbox {
     pub occupant: Option<CanonicalUuid>,
     /// Pending directives in journal order.
     pub pending: Vec<PendingDirective>,
+    /// Current durable progress or degradation record for the lane rendering.
+    #[serde(default, skip_serializing_if = "DeliveryStanding::is_unknown")]
+    pub delivery: DeliveryStanding,
 }
 
 /// Snapshot-positioned steering inbox answer.
@@ -1053,6 +1100,16 @@ pub struct InboxAnswer {
     pub epoch: CanonicalUuid,
     /// Visible lanes in canonical lane order.
     pub lanes: Vec<LaneInbox>,
+}
+
+/// Result of explicitly repairing one lane's inbox fold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryAnswer {
+    /// Lane whose rendering was rebuilt.
+    pub lane: CanonicalUuid,
+    /// Standing recorded only after publication or parking completed.
+    pub delivery: Box<DeliveryStanding>,
 }
 
 /// The answer a consent decision returns.

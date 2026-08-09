@@ -309,6 +309,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["steer", "cancel"]
         | ["steer", "resend"]
         | ["steer", "recover"]
+        | ["steer", "repair"]
         | ["ack"]
         | ["inbox"] => deliver(
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),

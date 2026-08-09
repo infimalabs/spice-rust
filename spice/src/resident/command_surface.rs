@@ -130,9 +130,12 @@ impl<'a> Surface<'a> {
 
     fn dispatch_controls(&self, command: &wire::AdmittedCommand) -> Option<Outcome<CommandAnswer>> {
         match (command.kind(), command.body()) {
-            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
-                Some(steering::inbox(self.bus, self.epoch, command, inbox))
-            }
+            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => Some(steering::inbox(
+                self.bus, self.paths, self.epoch, command, inbox,
+            )),
+            (CommandKind::SteerRepair, Intent::SteerRepair(repair)) => Some(steering::repair(
+                self.bus, self.paths, self.epoch, command, repair,
+            )),
             (CommandKind::SteerSend, Intent::SteerSend(send)) => Some(steering::send(
                 self.bus,
                 self.paths,

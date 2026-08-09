@@ -82,6 +82,8 @@ pub(crate) enum SelectedCommand<'a> {
     SteerRecover { directive: CanonicalUuid },
     /// The authenticated principal reads visible pending direction.
     SteerInbox { lane: Option<CanonicalUuid> },
+    /// The operator rebuilds one lane's disposable inbox fold.
+    SteerRepair { lane: CanonicalUuid },
     /// The authenticated lane retires one live key.
     SteerAck {
         key: &'a steer::Key,
