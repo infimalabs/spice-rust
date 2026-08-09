@@ -10,6 +10,68 @@ const REPRESENTATIVE_ARMS: [(GateId, ArmFamily); 4] = [
 ];
 
 #[test]
+fn focused_reports_distinguish_clean_findings_and_executor_failure() {
+    let fixture = Fixture::new();
+    let inputs = fixture.inputs();
+    let gate_id = GateId::FileShape;
+    let mut clean_executor = RecordingExecutor::all_passed(&fixture.source);
+    let clean =
+        run_focused_arm(&inputs, &mut clean_executor, gate_id).expect("execute clean focused arm");
+
+    assert_eq!(clean_executor.calls, [gate_id]);
+    assert!(clean.admits());
+    assert!(clean.findings().is_empty());
+    let bytes = clean.encode().expect("encode focused report");
+    assert_eq!(
+        FocusedArmReport::decode(&bytes).expect("decode canonical focused report"),
+        clean
+    );
+
+    let mut findings_executor = RecordingExecutor::nonpassing(&fixture.source);
+    let findings = run_focused_arm(&inputs, &mut findings_executor, gate_id)
+        .expect("execute non-admitting focused arm");
+    assert_eq!(findings_executor.calls, [gate_id]);
+    assert!(!findings.admits());
+    assert!(!findings.findings().is_empty());
+
+    let mut refused_executor = RecordingExecutor::all_passed(&fixture.source);
+    refused_executor.refusal = Some(clean.result().position());
+    let refused = run_focused_arm(&inputs, &mut refused_executor, gate_id)
+        .expect("executor refusal is retained as a focused result");
+    assert_eq!(refused.result().state(), BatteryState::Failed);
+    assert!(matches!(
+        refused.result().evidence(),
+        ArmEvidence::ExecutorFailure { .. }
+    ));
+    assert_eq!(refused.findings().len(), 1);
+}
+
+#[test]
+fn focused_report_decode_rejects_mismatched_or_repositioned_evidence() {
+    let fixture = Fixture::new();
+    let inputs = fixture.inputs();
+    let mut executor = RecordingExecutor::all_passed(&fixture.source);
+    let report =
+        run_focused_arm(&inputs, &mut executor, GateId::FileShape).expect("execute focused arm");
+    let value = serde_json::to_value(report).expect("focused report JSON");
+
+    for candidate in [
+        mutate(&value, |candidate| {
+            candidate["result"]["gate_id"] = serde_json::json!(GateId::PlanPhase);
+        }),
+        mutate(&value, |candidate| {
+            candidate["result"]["position"] = serde_json::json!(usize::MAX);
+        }),
+        mutate(&value, |candidate| {
+            candidate["context"]["source"] = serde_json::json!(fixture_baseline("foreign"));
+        }),
+    ] {
+        let bytes = serde_json::to_vec(&candidate).expect("encode forged focused report");
+        FocusedArmReport::decode(&bytes).expect_err("forged focused report must be refused");
+    }
+}
+
+#[test]
 fn selected_production_arms_execute_alone_and_match_their_full_rows() {
     let fixture = Fixture::new();
     let repository = production_repository(&fixture.root);

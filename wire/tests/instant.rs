@@ -5,6 +5,11 @@ use std::cmp::Ordering;
 use wire::{IdentError, Instant};
 
 #[test]
+fn unix_epoch_has_the_canonical_wire_spelling() {
+    assert_eq!(Instant::UNIX_EPOCH.to_string(), "1970-01-01T00:00:00.000Z");
+}
+
+#[test]
 fn only_millisecond_utc_instants_are_admitted() {
     let canonical = "2030-04-12T18:44:09.271Z";
     let parsed: Instant = canonical.parse().expect("canonical instant");

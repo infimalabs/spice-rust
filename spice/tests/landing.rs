@@ -65,7 +65,7 @@ const CASES: &[Case] = &[
     case("restore verify", &["restore", "verify", "missing"]),
     case("gate", &["gate"]),
     case("gate camp", &["gate", "camp"]),
-    case("gate findings", &["gate", "findings"]),
+    case("gate findings", &["gate", "findings", "file-shape"]),
     case("gate kill", &["gate", "kill"]),
     case("gate pre-commit", &["gate", "pre-commit"]),
     case("gate receipt", &["gate", "receipt"]),

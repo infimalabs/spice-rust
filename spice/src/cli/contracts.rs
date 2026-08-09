@@ -308,7 +308,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["gate", "findings"],
-        "gate findings [--at REV]",
+        "gate findings INSTRUMENT [--at REV]",
         OperatorOrLane,
         Command,
         [GateFindingsFiled, TaskAdded, TaskDeferred],

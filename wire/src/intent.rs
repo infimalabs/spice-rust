@@ -25,8 +25,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::body::{
-    ConsentQueueCause, DirectiveAttachment, Severity, SourceBoundary, TranscriptLocus,
-    TranscriptPosition,
+    ConsentQueueCause, DirectiveAttachment, SourceBoundary, TranscriptLocus, TranscriptPosition,
 };
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
@@ -99,28 +98,10 @@ pub struct TaskOopsAdd {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GateFindings {
-    /// Digest of the complete typed battery report that produced these rows.
+    /// Digest of the canonical focused report bytes.
     pub report: Digest,
-    /// Findings projected from that report, in gate order.
-    pub findings: Vec<GateFindingWork>,
-}
-
-/// One gate finding ready to become deferred board work.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GateFindingWork {
-    /// Stable gate-side finding identity.
-    pub identity: Digest,
-    /// Finding severity.
-    pub severity: Severity,
-    /// Evidence locus the finding cites.
-    pub locus: String,
-    /// Board task title.
-    pub title: String,
-    /// Board task description.
-    pub description: String,
-    /// Criteria that decide whether the filed task is done.
-    pub acceptance: Vec<String>,
+    /// Canonical focused report JSON admitted by Gate before folding.
+    pub evidence: String,
 }
 
 /// Replace an unsettled task statement.

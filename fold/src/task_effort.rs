@@ -330,7 +330,7 @@ fn close_remaining(
     let terminal_at = facts
         .facts()
         .last()
-        .map_or_else(epoch, |envelope| envelope.at);
+        .map_or(Instant::UNIX_EPOCH, |envelope| envelope.at);
     for state in tasks.values_mut() {
         if let Some(open) = state.open.take() {
             phases.push(finish(
@@ -1491,12 +1491,6 @@ fn reason(code: EffortUnavailableCode, detail: impl Into<String>) -> EffortUnava
         code,
         detail: detail.into(),
     }
-}
-
-fn epoch() -> Instant {
-    "1970-01-01T00:00:00.000Z"
-        .parse()
-        .expect("epoch spelling is canonical")
 }
 
 #[cfg(test)]
