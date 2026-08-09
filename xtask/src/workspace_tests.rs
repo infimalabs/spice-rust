@@ -342,6 +342,16 @@ struct Coordinator<'a, W> {
     total: usize,
 }
 
+impl<W> Drop for Coordinator<'_, W> {
+    fn drop(&mut self) {
+        self.pending.clear();
+        self.cancellation.cancel();
+        for active in std::mem::take(&mut self.active).into_values() {
+            let _ = active.thread.join();
+        }
+    }
+}
+
 impl<'a, W: Write> Coordinator<'a, W> {
     fn new(
         shards: Vec<PackageInventory>,
@@ -572,7 +582,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
         self.cancellation.cancel();
     }
 
-    fn finish(self) -> Result<(), WorkspaceTestError> {
+    fn finish(mut self) -> Result<(), WorkspaceTestError> {
         let slowest = self.results.iter().max_by_key(|result| result.elapsed);
         let (slowest_package, slowest_elapsed) = slowest.map_or(("none", 0), |result| {
             (result.package.as_str(), result.elapsed.as_millis())
@@ -596,7 +606,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
         )
         .map_err(output_error)?;
         self.output.flush().map_err(output_error)?;
-        match self.failure {
+        match self.failure.take() {
             Some(detail) => Err(WorkspaceTestError::new(detail)),
             None if self.pending.is_empty() && self.results.len() == self.total => Ok(()),
             None => Err(WorkspaceTestError::new(format!(
