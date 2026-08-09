@@ -874,6 +874,83 @@ fn stop_coexisting_appliance(
     assert!(resident.wait().status.success(), "resident failed");
 }
 
+/// The fixture wrapper owns its child all the way through signal teardown.
+///
+/// Resident termination reaches the whole process group, so the ordinary drain
+/// battery can leave a broken wrapper looking correct until the child's orphaned
+/// zombie survives long enough for the post-drain identity probe to see it. This
+/// probe removes that timing variable: TERM reaches only the wrapper, and the
+/// wrapper is collected before the child identity is inspected. The child can
+/// be gone at that late probe only when the wrapper trap terminated and reaped
+/// it before reporting its own exit.
+#[test]
+fn fixture_vendor_reaps_its_child_before_the_wrapper_exits() {
+    let fixture = Fixture::new("vendor-child-reap");
+    let capture_dir = fixture.cleanup.join("launch-captures");
+    fs::create_dir_all(&capture_dir).expect("capture directory");
+    let index = fixture.cleanup.join("launch-index");
+    let binary = fixture.cleanup.join("fixture-claude");
+    write_vendor(&binary, &capture_dir, &index, Dialect::Claude);
+
+    let mut vendor = Command::new(&binary)
+        .current_dir(&fixture.root)
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("fixture vendor launches");
+    match readiness::wait_until_ready(
+        &mut vendor,
+        &capture_dir,
+        readiness::ARRIVAL_HORIZON,
+        "fixture vendor child capture",
+        || {
+            fs::read_to_string(&index)
+                .ok()
+                .and_then(|contents| contents.lines().next().map(PathBuf::from))
+                .is_some_and(|launch| launch.with_extension("child").is_file())
+        },
+    ) {
+        Readiness::Ready => {}
+        Readiness::Exited => panic!("fixture vendor exited before capturing its child"),
+    }
+
+    let launch = captures(&index, Dialect::Claude)
+        .into_iter()
+        .next()
+        .expect("fixture vendor launch was indexed");
+    let child = fs::read_to_string(launch.with_extension("child"))
+        .expect("fixture child pid reads")
+        .trim()
+        .parse::<u32>()
+        .expect("fixture child pid parses");
+    let terminated = Command::new("kill")
+        .args(["-TERM", &vendor.id().to_string()])
+        .output()
+        .expect("fixture wrapper termination launches");
+    assert!(
+        terminated.status.success(),
+        "fixture wrapper termination failed: {:?}",
+        terminated.stderr
+    );
+    assert!(
+        vendor.wait().expect("fixture wrapper reaps").success(),
+        "fixture wrapper did not choose a successful exit"
+    );
+
+    let child_survived = process_alive(child);
+    if child_survived {
+        let cleanup = Command::new("kill")
+            .args(["-KILL", &child.to_string()])
+            .output()
+            .expect("surviving fixture child cleanup launches");
+        assert!(
+            cleanup.status.success(),
+            "surviving fixture child cleanup failed: {:?}",
+            cleanup.stderr
+        );
+    }
+    assert!(!child_survived, "fixture child survived wrapper exit");
+}
+
 #[test]
 fn cross_vendor_options_refuse_with_exact_paths_before_any_process_capture() {
     for (dialect, path) in [
