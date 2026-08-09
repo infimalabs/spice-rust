@@ -47,8 +47,8 @@ export const VENDOR_PID_LEDGER = ".spice-vendor-pids";
 const execute = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
-const isolatedBinary = process.env.SPICE_CANVAS_BINARY; // env-policy: allow
-const binary = isolatedBinary ?? join(root, "target/debug/spice");
+const prebuiltBinary = process.env.SPICE_CANVAS_BINARY; // env-policy: allow
+const binary = prebuiltBinary ?? join(root, "target/debug/spice");
 
 export async function buildResident({ app = true } = {}) {
   try {
@@ -58,10 +58,12 @@ export async function buildResident({ app = true } = {}) {
         maxBuffer: 32 * 1024 * 1024,
       });
     }
-    await execute("cargo", ["build", "-p", "spice", "--bin", "spice"], {
-      cwd: root,
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    if (!prebuiltBinary) {
+      await execute("cargo", ["build", "-p", "spice", "--bin", "spice"], {
+        cwd: root,
+        maxBuffer: 16 * 1024 * 1024,
+      });
+    }
   } catch (error) {
     const stdout = error?.stdout ?? "<none>";
     const stderr = error?.stderr ?? "<none>";

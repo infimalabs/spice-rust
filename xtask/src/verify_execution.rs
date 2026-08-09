@@ -27,9 +27,10 @@ use super::{
 /// The explicit full-verifier dependency graph, indexed by report ordinal.
 ///
 /// The compiler-evidence chain is serial and retains its warm build root. Once
-/// the prebuilt app exists, Canvas and the sharded workspace tests may overlap.
-/// Documentation follows the test coordinator, the evidence-consuming battery
-/// waits for both branches, and entry-point audit and landing remain barriers.
+/// the prebuilt app and native resident exist, Canvas performs no Cargo work
+/// and may overlap the sharded workspace tests. Documentation follows the test
+/// coordinator, the evidence-consuming battery waits for both branches, and
+/// entry-point audit and landing remain barriers.
 const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[],
     &[0],
@@ -38,15 +39,22 @@ const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[3],
     &[4],
     &[5],
-    &[5],
-    &[7],
+    &[6],
+    &[6],
     &[8],
-    &[2, 4, 5, 6, 9],
-    &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    &[9],
+    &[2, 4, 5, 6, 7, 10],
+    &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
 ];
 
 /// Three is the fleet-safe ceiling for independently ready outer actions.
 const MAX_CONCURRENT_ACTIONS: usize = 3;
+/// Stop launching and cancel owned process groups at three minutes. The two
+/// remaining minutes cover an already-running in-process terminal action plus
+/// Sill's bounded grace, drain, and reap windows; five minutes is never usable
+/// work time, and reaching the fourth minute is exceptional cleanup headroom.
+const FULL_VERIFIER_RUNTIME: Duration = Duration::from_secs(3 * 60);
+const FULL_VERIFIER_LABEL: &str = "full verifier five-minute deadline (three-minute work cutoff)";
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const SCHEDULER_POLL: Duration = Duration::from_millis(50);
 const PROCESS_RUNTIME: Duration = Duration::from_secs(30 * 60);
@@ -134,6 +142,7 @@ struct WorkerCompletion {
 struct GraphRun {
     nodes: Vec<NodeState>,
     output_fault: Option<io::Error>,
+    deadline_exceeded: bool,
 }
 
 struct Failures {
@@ -172,6 +181,24 @@ fn verify_with_control<R: Runner>(
     cancellation: CancellationToken,
     interrupted: Arc<AtomicBool>,
 ) -> Result<(), VerifyError> {
+    verify_with_deadline(
+        runner,
+        output,
+        budget,
+        cancellation,
+        interrupted,
+        FULL_VERIFIER_RUNTIME,
+    )
+}
+
+fn verify_with_deadline<R: Runner>(
+    runner: &R,
+    output: &mut impl Write,
+    budget: Budget,
+    cancellation: CancellationToken,
+    interrupted: Arc<AtomicBool>,
+    runtime: Duration,
+) -> Result<(), VerifyError> {
     debug_assert_eq!(VERIFY_ACTIONS.len(), PREREQUISITES.len());
     let active = budget
         .active_cargo_jobs
@@ -180,13 +207,14 @@ fn verify_with_control<R: Runner>(
         output,
         concat!(
             "[verify] scheduler workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} workspace_workers={} action_count={}"
+            "active_peer_cargo_jobs={} workspace_workers={} action_count={} deadline_ms={}"
         ),
         budget.workers,
         budget.cargo_jobs,
         active,
         budget.workspace_workers,
         VERIFY_ACTIONS.len(),
+        runtime.as_millis(),
     )
     .map_err(VerifyError::Output)?;
     output.flush().map_err(VerifyError::Output)?;
@@ -194,7 +222,8 @@ fn verify_with_control<R: Runner>(
     let GraphRun {
         mut nodes,
         output_fault,
-    } = schedule_graph(runner, output, budget, &cancellation);
+        deadline_exceeded,
+    } = schedule_graph(runner, output, budget, &cancellation, runtime);
     if let Some(error) = output_fault {
         return Err(VerifyError::Output(error));
     }
@@ -205,18 +234,24 @@ fn verify_with_control<R: Runner>(
     } = render_completions(&mut nodes, output)?;
 
     if interrupted.load(Ordering::Acquire) {
-        write_failure_summary(output, None, &cleanup, true)?;
+        write_failure_summary(output, "operator", &cleanup, true)?;
         return Err(VerifyError::Interrupted);
     }
     substantive.sort_by_key(|(index, _)| *index);
     cleanup.sort_by_key(|(index, _)| *index);
     if let Some((primary_index, primary)) = substantive.into_iter().next() {
-        write_failure_summary(output, Some(primary_index), &cleanup, false)?;
+        write_failure_summary(output, &(primary_index + 1).to_string(), &cleanup, false)?;
         return Err(primary);
+    }
+    if deadline_exceeded {
+        write_failure_summary(output, "deadline", &cleanup, false)?;
+        return Err(VerifyError::TimedOut {
+            label: FULL_VERIFIER_LABEL.to_owned(),
+        });
     }
     if !cleanup.is_empty() {
         let (primary_index, primary) = cleanup.remove(0);
-        write_failure_summary(output, Some(primary_index), &cleanup, false)?;
+        write_failure_summary(output, &(primary_index + 1).to_string(), &cleanup, false)?;
         return Err(primary);
     }
     if cancellation.is_cancelled() {
@@ -230,6 +265,7 @@ fn schedule_graph<R: Runner>(
     output: &mut impl Write,
     budget: Budget,
     cancellation: &CancellationToken,
+    runtime: Duration,
 ) -> GraphRun {
     let (sender, receiver) = mpsc::channel::<WorkerCompletion>();
     let mut nodes = (0..VERIFY_ACTIONS.len())
@@ -238,9 +274,16 @@ fn schedule_graph<R: Runner>(
     let mut running = 0usize;
     let mut failure_seen = false;
     let mut output_fault = None;
+    let mut deadline_exceeded = false;
+    let verifier_started = Instant::now();
 
     thread::scope(|scope| {
         loop {
+            if !failure_seen && verifier_started.elapsed() >= runtime {
+                deadline_exceeded = true;
+                failure_seen = true;
+                cancellation.cancel();
+            }
             if !failure_seen && !cancellation.is_cancelled() {
                 start_ready_actions(
                     scope,
@@ -281,6 +324,7 @@ fn schedule_graph<R: Runner>(
     GraphRun {
         nodes,
         output_fault,
+        deadline_exceeded,
     }
 }
 
@@ -761,7 +805,7 @@ fn process_bytes(output: &ProcessOutput) -> Vec<u8> {
 
 fn write_failure_summary(
     output: &mut impl Write,
-    primary: Option<usize>,
+    primary: &str,
     cleanup: &[(usize, VerifyError)],
     interrupted: bool,
 ) -> Result<(), VerifyError> {
@@ -778,7 +822,7 @@ fn write_failure_summary(
     writeln!(
         output,
         "[verify] scheduler=failed primary_ordinal={} interrupted={} cleanup_faults={}",
-        primary.map_or_else(|| "operator".to_owned(), |index| (index + 1).to_string()),
+        primary,
         interrupted,
         cleanup.len(),
     )

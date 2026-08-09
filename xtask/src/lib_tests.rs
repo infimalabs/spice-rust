@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 12] = [
+        const GUARDED_ACTIONS: [Action; 13] = [
             Action::EntryPoint,
             Action::Format,
             Action::Command(Step::cargo(
@@ -370,6 +370,10 @@ mod tests {
             Action::Command(Step::cargo(
                 "cargo xtask app (canvas compiler evidence)",
                 &["xtask", "app"],
+            )),
+            Action::Command(Step::cargo(
+                "cargo build --locked -p spice --bin spice (canvas resident)",
+                &["build", "--locked", "-p", "spice", "--bin", "spice"],
             )),
             Action::Browser,
             Action::WorkspaceTests,
@@ -448,18 +452,20 @@ mod tests {
     }
 
     /// BROWSER-1kKSWhZk removed one former surface, so real Chromium guards
-    /// the final production edge immediately after the prebuilt app action.
+    /// the final production edge after the app and native resident are built.
     #[test]
-    fn verifier_makes_the_real_browser_guard_mandatory_after_the_prebuilt_app() {
+    fn verifier_builds_one_resident_before_the_real_browser_guard() {
         let browser = VERIFY_ACTIONS
             .iter()
             .position(|action| *action == Action::Browser)
             .expect("the verifier has a browser action");
 
-        assert_eq!(browser, 6);
+        assert_eq!(browser, 7);
         let predecessor = VERIFY_ACTIONS[browser - 1];
-        assert!(matches!(predecessor, Action::Command(step) if step.label == CANVAS_APP_LABEL));
-        let wasm_predecessor = VERIFY_ACTIONS[browser - 2];
+        assert!(matches!(predecessor, Action::Command(step) if step.label == RESIDENT_BUILD_LABEL));
+        let app_predecessor = VERIFY_ACTIONS[browser - 2];
+        assert!(matches!(app_predecessor, Action::Command(step) if step.label == CANVAS_APP_LABEL));
+        let wasm_predecessor = VERIFY_ACTIONS[browser - 3];
         let is_wasm = match wasm_predecessor {
             Action::Command(step) => step.arguments.contains(&WASM_TARGET),
             _ => false,
@@ -610,7 +616,7 @@ mod tests {
         assert_eq!(output.matches("stage=terminal").count(), 1);
         assert!(output.contains("disposition=error"));
         assert!(output.contains(&format!("identity={ENTRY_POINT_LABEL:?}")));
-        assert!(!output.contains("ordinal=2/12"));
+        assert!(!output.contains("ordinal=2/13"));
     }
 
     #[test]
@@ -678,9 +684,9 @@ mod tests {
         assert_calls_are_unique(&calls);
         let output = String::from_utf8(output).expect("fixture diagnostic is UTF-8");
         assert!(output.contains("bounded battery refusal\n"));
-        assert!(output.contains(concat!("stage=terminal ordinal=11/12", " elapsed_ms=")));
+        assert!(output.contains(concat!("stage=terminal ordinal=12/13", " elapsed_ms=")));
         assert!(output.contains("disposition=refused family=in-process:gate-battery"));
-        assert!(!output.contains("ordinal=12/12"));
+        assert!(!output.contains("ordinal=13/13"));
     }
 
     #[test]
@@ -696,7 +702,7 @@ mod tests {
         assert!(matches!(error, VerifyError::Battery(_)));
         let output = String::from_utf8(output).expect("fixture output is UTF-8");
         assert!(output.contains("disposition=error family=in-process:gate-battery"));
-        assert!(output.contains("primary_ordinal=11 interrupted=false cleanup_faults=0"));
+        assert!(output.contains("primary_ordinal=12 interrupted=false cleanup_faults=0"));
         assert!(!output.contains("scheduler=cleanup-fault"));
     }
 
@@ -721,7 +727,7 @@ mod tests {
         let output = String::from_utf8(output.accepted).expect("lifecycle output is UTF-8");
         let terminal = output
             .lines()
-            .filter(|line| line.contains("stage=terminal ordinal=11/12"))
+            .filter(|line| line.contains("stage=terminal ordinal=12/13"))
             .collect::<Vec<_>>();
         assert_eq!(
             terminal.len(),
@@ -729,7 +735,7 @@ mod tests {
             "failed action has one terminal: {output}"
         );
         assert!(terminal[0].contains("disposition=render-error"));
-        assert!(!output.contains("ordinal=12/12"));
+        assert!(!output.contains("ordinal=13/13"));
     }
 
     #[test]
@@ -753,8 +759,8 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(action, Action::Command(_)))
                 .count(),
-            6,
-            "exactly six declared Cargo commands precede compiled landing"
+            7,
+            "exactly seven declared Cargo commands precede compiled landing"
         );
         assert_eq!(
             VERIFY_ACTIONS

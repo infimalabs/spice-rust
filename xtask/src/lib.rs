@@ -95,7 +95,7 @@ pub fn reference_transaction(
 /// `PATH` repeats policy after the Rust-owned checks finish. Execution order is
 /// constrained by the explicit graph in `verify_execution`, not this report
 /// order.
-const VERIFY_ACTIONS: [Action; 12] = [
+const VERIFY_ACTIONS: [Action; 13] = [
     Action::EntryPoint,
     Action::Format,
     Action::Command(Step::cargo(
@@ -129,6 +129,10 @@ const VERIFY_ACTIONS: [Action; 12] = [
         &["check", "--locked", "--workspace", "--target", WASM_TARGET],
     )),
     Action::Command(Step::cargo(CANVAS_APP_LABEL, &["xtask", "app"])),
+    Action::Command(Step::cargo(
+        RESIDENT_BUILD_LABEL,
+        &["build", "--locked", "-p", "spice", "--bin", "spice"],
+    )),
     Action::Browser,
     Action::WorkspaceTests,
     Action::Command(Step::cargo(
@@ -195,6 +199,7 @@ const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
 /// Exit spelling for a completed verifier action that refused publication.
 pub const VERIFY_ACTION_REFUSAL_EXIT: u8 = 3;
 const CANVAS_APP_LABEL: &str = "cargo xtask app (canvas compiler evidence)";
+const RESIDENT_BUILD_LABEL: &str = "cargo build --locked -p spice --bin spice (canvas resident)";
 const WORKSPACE_TEST_CONCURRENCY_CAP: usize = 4;
 const WORKSPACE_TEST_LABEL: &str =
     "deterministic sharded cargo test --locked --workspace --all-targets";

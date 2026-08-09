@@ -1,6 +1,7 @@
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    use std::hint::black_box;
     use std::path::PathBuf;
     use std::process::Command;
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -13,12 +14,20 @@ mod tests {
         CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, PREREQUISITES, ProcessOutput, RunError,
         Runner, Status, VERIFY_ACTIONS, VerifyError, count_peer_cargo, execute_action, ready_nodes,
         run_process, success, verify_package_with_control, verify_with_control,
+        verify_with_deadline,
     };
     use crate::verify_timing::Disposition;
     use crate::{ScopedCommand, Step, landing};
 
     const FIXTURE_CPU_COUNT: usize = 16;
     const PERCENT_SCALE: u64 = 100;
+    const CPU_PERCENT_SCALE: f64 = 100.0;
+    const BENCHMARK_CPU_ITERATIONS: u64 = 10_000_000;
+    const BENCHMARK_MARKER: &str = "verifier-benchmark wall_nanos=";
+    const SERIAL_BENCHMARK_TEST: &str =
+        "verify_execution::tests::warm_serial_full_verifier_benchmark_fixture";
+    const CONCURRENT_BENCHMARK_TEST: &str =
+        "verify_execution::tests::warm_concurrent_full_verifier_benchmark_fixture";
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     struct TimedRunner {
@@ -26,7 +35,7 @@ mod tests {
         calls: Mutex<Vec<&'static str>>,
         active: AtomicUsize,
         peak: AtomicUsize,
-        work_micros: AtomicU64,
+        cpu_iterations: u64,
     }
 
     impl TimedRunner {
@@ -34,17 +43,17 @@ mod tests {
             let mut delays = BTreeMap::new();
             delays.insert(ENTRY_POINT_LABEL, Duration::from_millis(5));
             delays.insert(FORMAT_LABEL, Duration::from_millis(5));
-            for action in &VERIFY_ACTIONS[2..=5] {
+            for action in &VERIFY_ACTIONS[2..=6] {
                 delays.insert(action.label(), Duration::from_millis(10));
             }
-            delays.insert(BROWSER_LABEL, Duration::from_millis(200));
-            delays.insert(VERIFY_ACTIONS[7].label(), Duration::from_millis(200));
-            for action in &VERIFY_ACTIONS[8..=9] {
+            delays.insert(BROWSER_LABEL, Duration::from_millis(400));
+            delays.insert(VERIFY_ACTIONS[8].label(), Duration::from_millis(400));
+            for action in &VERIFY_ACTIONS[9..=10] {
                 delays.insert(action.label(), Duration::from_millis(10));
             }
             delays.insert(BATTERY_LABEL, Duration::from_millis(10));
             delays.insert(landing::LABEL, Duration::from_millis(5));
-            Self::new(delays)
+            Self::new(delays, BENCHMARK_CPU_ITERATIONS)
         }
 
         fn uniform(delay: Duration) -> Self {
@@ -53,16 +62,17 @@ mod tests {
                     .iter()
                     .map(|action| (action.label(), delay))
                     .collect(),
+                0,
             )
         }
 
-        fn new(delays: BTreeMap<&'static str, Duration>) -> Self {
+        fn new(delays: BTreeMap<&'static str, Duration>, cpu_iterations: u64) -> Self {
             Self {
                 delays,
                 calls: Mutex::new(Vec::new()),
                 active: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
-                work_micros: AtomicU64::new(0),
+                cpu_iterations,
             }
         }
 
@@ -75,18 +85,14 @@ mod tests {
                 .get(label)
                 .copied()
                 .unwrap_or_else(|| panic!("timed fixture omitted action {label:?}"));
-            self.work_micros
-                .fetch_add(delay.as_micros() as u64, Ordering::AcqRel);
-            let started = Instant::now();
-            while started.elapsed() < delay {
-                if cancellation.is_some_and(CancellationToken::is_cancelled) {
-                    self.active.fetch_sub(1, Ordering::AcqRel);
-                    return false;
-                }
-                thread::sleep(Duration::from_millis(1));
+            let mut value = u64::try_from(label.len()).expect("small fixture label");
+            for index in 0..self.cpu_iterations {
+                value = value.rotate_left(7).wrapping_add(index ^ 0x9e37_79b9);
             }
+            black_box(value);
+            thread::sleep(delay);
             self.active.fetch_sub(1, Ordering::AcqRel);
-            true
+            !cancellation.is_some_and(CancellationToken::is_cancelled)
         }
 
         fn calls(&self) -> Vec<&'static str> {
@@ -175,7 +181,7 @@ mod tests {
         }
         assert_eq!(
             PREREQUISITES.last(),
-            Some(&&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10][..])
+            Some(&&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11][..])
         );
     }
 
@@ -189,19 +195,19 @@ mod tests {
         nodes[0] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [1]);
 
-        for index in 1..=5 {
+        for index in 1..=6 {
             assert_eq!(ready_nodes(&nodes), [index]);
             nodes[index] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         }
-        assert_eq!(ready_nodes(&nodes), [6, 7]);
-        nodes[6] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
-        assert_eq!(ready_nodes(&nodes), [7]);
-        for index in 7..=9 {
+        assert_eq!(ready_nodes(&nodes), [7, 8]);
+        nodes[7] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [8]);
+        for index in 8..=10 {
             nodes[index] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
             assert_eq!(ready_nodes(&nodes), [index + 1]);
         }
-        nodes[10] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
-        assert_eq!(ready_nodes(&nodes), [11]);
+        nodes[11] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [12]);
     }
 
     #[test]
@@ -267,8 +273,32 @@ mod tests {
         assert!(
             String::from_utf8(output)
                 .expect("scheduler output is UTF-8")
-                .contains("scheduler workers=1 cargo_jobs=1 active_peer_cargo_jobs=8")
+                .contains(concat!(
+                    "scheduler workers=1 cargo_jobs=1 active_peer_cargo_jobs=8 ",
+                    "workspace_workers=1 action_count=13 deadline_ms=180000"
+                ))
         );
+    }
+
+    #[test]
+    fn end_to_end_deadline_cancels_the_graph_before_another_action_starts() {
+        let runner = TimedRunner::uniform(Duration::from_millis(10));
+        let mut output = Vec::new();
+        let error = verify_with_deadline(
+            &runner,
+            &mut output,
+            Budget::fixture(1, 1, 0),
+            CancellationToken::new(),
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_millis(1),
+        )
+        .expect_err("the complete verifier deadline refuses further work");
+
+        assert!(matches!(error, VerifyError::TimedOut { .. }));
+        assert_eq!(runner.calls(), [ENTRY_POINT_LABEL]);
+        let output = String::from_utf8(output).expect("deadline output is UTF-8");
+        assert!(output.contains("deadline_ms=1"));
+        assert!(output.contains("primary_ordinal=deadline"));
     }
 
     #[test]
@@ -306,50 +336,153 @@ mod tests {
 
     #[test]
     fn controlled_warm_benchmark_cuts_wall_time_without_more_cpu_work() {
-        let serial = TimedRunner::benchmark();
-        let serial_started = Instant::now();
-        let serial_cancellation = CancellationToken::new();
-        for action in VERIFY_ACTIONS {
-            execute_action(
-                &serial,
-                action,
-                &serial_cancellation,
-                Budget::fixture(3, 2, 0),
-            )
-            .result
-            .expect("serial fixture action succeeds");
-        }
-        let serial_wall = serial_started.elapsed();
-
-        let concurrent = TimedRunner::benchmark();
-        let concurrent_started = Instant::now();
-        verify_with_control(
-            &concurrent,
-            &mut Vec::new(),
-            Budget::fixture(3, 2, 0),
-            CancellationToken::new(),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .expect("concurrent warm fixture succeeds");
-        let concurrent_wall = concurrent_started.elapsed();
+        let serial = benchmark_process(SERIAL_BENCHMARK_TEST);
+        let concurrent = benchmark_process(CONCURRENT_BENCHMARK_TEST);
+        println!(
+            concat!(
+                "[verify-benchmark] serial_wall_ns={} concurrent_wall_ns={} ",
+                "serial_cpu_seconds={:.3} concurrent_cpu_seconds={:.3}"
+            ),
+            serial.wall_nanos, concurrent.wall_nanos, serial.cpu_seconds, concurrent.cpu_seconds,
+        );
 
         assert!(
-            concurrent_wall.as_nanos() * u128::from(PERCENT_SCALE) <= serial_wall.as_nanos() * 75,
+            concurrent.wall_nanos * u128::from(PERCENT_SCALE) <= serial.wall_nanos * 75,
             concat!(
                 "warm scheduler reduction was below 25%: ",
-                "serial={serial_wall:?} concurrent={concurrent_wall:?}"
+                "serial_ns={serial_wall} concurrent_ns={concurrent_wall}"
             ),
-            serial_wall = serial_wall,
-            concurrent_wall = concurrent_wall,
+            serial_wall = serial.wall_nanos,
+            concurrent_wall = concurrent.wall_nanos,
         );
-        let serial_cpu = serial.work_micros.load(Ordering::Acquire);
-        let concurrent_cpu = concurrent.work_micros.load(Ordering::Acquire);
         assert!(
-            concurrent_cpu * PERCENT_SCALE <= serial_cpu * 115,
-            "fixture CPU work grew over 15%: serial={serial_cpu} concurrent={concurrent_cpu}"
+            concurrent.cpu_seconds * CPU_PERCENT_SCALE <= serial.cpu_seconds * 115.0,
+            "measured process CPU grew over 15%: serial={:.3}s concurrent={:.3}s",
+            serial.cpu_seconds,
+            concurrent.cpu_seconds,
         );
-        assert_exactly_once(&serial.calls());
-        assert_exactly_once(&concurrent.calls());
+    }
+
+    #[test]
+    #[ignore = "launched exactly by the measured parent benchmark"]
+    fn warm_serial_full_verifier_benchmark_fixture() {
+        emit_benchmark(BenchmarkMode::Serial);
+    }
+
+    #[test]
+    #[ignore = "launched exactly by the measured parent benchmark"]
+    fn warm_concurrent_full_verifier_benchmark_fixture() {
+        emit_benchmark(BenchmarkMode::Concurrent);
+    }
+
+    #[derive(Clone, Copy)]
+    enum BenchmarkMode {
+        Serial,
+        Concurrent,
+    }
+
+    struct BenchmarkMeasurement {
+        wall_nanos: u128,
+        cpu_seconds: f64,
+    }
+
+    fn emit_benchmark(mode: BenchmarkMode) {
+        let measured = TimedRunner::benchmark();
+        let started = Instant::now();
+        run_benchmark_route(&measured, mode);
+        let wall_nanos = started.elapsed().as_nanos();
+        assert_exactly_once(&measured.calls());
+        println!("{BENCHMARK_MARKER}{wall_nanos}");
+    }
+
+    fn run_benchmark_route(runner: &TimedRunner, mode: BenchmarkMode) {
+        match mode {
+            BenchmarkMode::Serial => {
+                let cancellation = CancellationToken::new();
+                for action in VERIFY_ACTIONS {
+                    execute_action(runner, action, &cancellation, Budget::fixture(3, 2, 0))
+                        .result
+                        .expect("serial fixture action succeeds");
+                }
+            }
+            BenchmarkMode::Concurrent => verify_with_control(
+                runner,
+                &mut Vec::new(),
+                Budget::fixture(3, 2, 0),
+                CancellationToken::new(),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .expect("concurrent fixture action graph succeeds"),
+        }
+    }
+
+    fn benchmark_process(test: &str) -> BenchmarkMeasurement {
+        let executable = std::env::current_exe().expect("resolve the xtask unit-test process");
+        let arguments = benchmark_arguments(test);
+        let warm = Command::new(&executable)
+            .args(arguments)
+            .output()
+            .expect("launch one exact warm benchmark fixture");
+        assert!(
+            warm.status.success(),
+            "warm benchmark fixture {test} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&warm.stdout),
+            String::from_utf8_lossy(&warm.stderr),
+        );
+        let output = Command::new("/usr/bin/time")
+            .args(["-p"])
+            .arg(executable)
+            .args(arguments)
+            .output()
+            .expect("launch one exact benchmark fixture through the process CPU meter");
+        assert!(
+            output.status.success(),
+            "benchmark fixture {test} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let stdout = String::from_utf8(output.stdout).expect("benchmark stdout is UTF-8");
+        let wall_nanos = stdout
+            .lines()
+            .find_map(|line| {
+                line.find(BENCHMARK_MARKER).and_then(|offset| {
+                    line[offset + BENCHMARK_MARKER.len()..]
+                        .trim()
+                        .parse::<u128>()
+                        .ok()
+                })
+            })
+            .unwrap_or_else(|| panic!("benchmark emitted no wall measurement: {stdout}"));
+        let stderr = String::from_utf8(output.stderr).expect("benchmark stderr is UTF-8");
+        let user = time_value(&stderr, "user ");
+        let system = time_value(&stderr, "sys ");
+        let cpu_seconds = user + system;
+        assert!(
+            cpu_seconds > 0.0,
+            "benchmark measured no process CPU: {stderr}"
+        );
+        BenchmarkMeasurement {
+            wall_nanos,
+            cpu_seconds,
+        }
+    }
+
+    fn benchmark_arguments(test: &str) -> [&str; 5] {
+        [
+            "--ignored",
+            "--exact",
+            test,
+            "--nocapture",
+            "--test-threads=1",
+        ]
+    }
+
+    fn time_value(output: &str, label: &str) -> f64 {
+        output
+            .lines()
+            .rev()
+            .find_map(|line| line.strip_prefix(label)?.parse::<f64>().ok())
+            .unwrap_or_else(|| panic!("/usr/bin/time emitted no {label:?} value: {output}"))
     }
 
     #[cfg(unix)]
@@ -413,7 +546,7 @@ mod tests {
         }
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains("disposition=cancelled"));
-        assert!(output.contains("primary_ordinal=7 interrupted=false"));
+        assert!(output.contains("primary_ordinal=8 interrupted=false"));
         fs::remove_file(&fixture.pid_file).expect("remove failure fixture pid file");
     }
 
@@ -434,8 +567,8 @@ mod tests {
 
         assert!(matches!(error, VerifyError::BrowserIncomplete));
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
-        assert!(output.contains("scheduler=cleanup-fault ordinal=8"));
-        assert!(output.contains("primary_ordinal=7 interrupted=false cleanup_faults=1"));
+        assert!(output.contains("scheduler=cleanup-fault ordinal=9"));
+        assert!(output.contains("primary_ordinal=8 interrupted=false cleanup_faults=1"));
     }
 
     #[test]
