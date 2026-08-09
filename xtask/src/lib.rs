@@ -785,6 +785,21 @@ pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), Ga
 /// Returns the deterministic primary failure after cancelling and reaping any
 /// running siblings. No action starts before all declared prerequisites admit.
 pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
+    verify_execution::verify_supervised(output)
+}
+
+/// Run the inner full-verifier process owned by [`verify`].
+///
+/// This is public only so the native command binary can expose its unadvertised
+/// child-process entry point. Callers use [`verify`], which owns the hard outer
+/// process boundary.
+///
+/// # Errors
+///
+/// Returns the deterministic inner verifier failure after cancelling and
+/// reaping its running action groups.
+#[doc(hidden)]
+pub fn verify_child(output: &mut impl Write) -> Result<(), VerifyError> {
     verify_execution::verify_system(output)
 }
 
@@ -897,6 +912,10 @@ pub enum VerifyError {
         label: &'static str,
         detail: String,
     },
+    Supervised {
+        code: Option<i32>,
+        detail: String,
+    },
     InterruptInstall(io::Error),
     Interrupted,
 }
@@ -970,6 +989,11 @@ impl fmt::Display for VerifyError {
             Self::WorkerPanic { label, detail } => {
                 write!(formatter, "[verify] action panicked: {label} ({detail})")
             }
+            Self::Supervised { code, detail } if detail.is_empty() => match code {
+                Some(code) => write!(formatter, "[verify] inner verifier failed (exit {code})"),
+                None => formatter.write_str("[verify] inner verifier terminated by signal"),
+            },
+            Self::Supervised { detail, .. } => formatter.write_str(detail),
             Self::InterruptInstall(source) => {
                 write!(
                     formatter,
@@ -1004,6 +1028,7 @@ impl std::error::Error for VerifyError {
             | Self::Cancelled { .. }
             | Self::TimedOut { .. }
             | Self::WorkerPanic { .. }
+            | Self::Supervised { .. }
             | Self::Interrupted => None,
         }
     }

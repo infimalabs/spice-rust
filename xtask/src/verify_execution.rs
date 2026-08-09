@@ -54,7 +54,13 @@ const MAX_CONCURRENT_ACTIONS: usize = 3;
 /// Sill's bounded grace, drain, and reap windows; five minutes is never usable
 /// work time, and reaching the fourth minute is exceptional cleanup headroom.
 const FULL_VERIFIER_RUNTIME: Duration = Duration::from_secs(3 * 60);
+const FULL_VERIFIER_HARD_RUNTIME: Duration = Duration::from_secs(5 * 60);
 const FULL_VERIFIER_LABEL: &str = "full verifier five-minute deadline (three-minute work cutoff)";
+const FULL_VERIFIER_CHILD_COMMAND: &str = "__verify-system";
+/// The outer child gets longer than one inner action's complete cancellation
+/// path: two seconds of grace, ten to reap, and thirty to drain. A remaining
+/// in-process worker is then killed with the child process boundary.
+const FULL_VERIFIER_TERMINATION_GRACE: Duration = Duration::from_secs(75);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const SCHEDULER_POLL: Duration = Duration::from_millis(50);
 const PROCESS_RUNTIME: Duration = Duration::from_secs(30 * 60);
@@ -62,6 +68,38 @@ const OUTPUT_DRAIN: Duration = Duration::from_secs(30);
 const REAP_DEADLINE: Duration = Duration::from_secs(10);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 const OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
+const FULL_VERIFIER_OUTPUT_LIMIT: usize = OUTPUT_LIMIT * VERIFY_ACTIONS.len() * 2;
+
+#[derive(Clone, Copy)]
+struct ProcessBounds {
+    runtime: Duration,
+    output_drain: Duration,
+    reap: Duration,
+    grace: Duration,
+    output_limit: usize,
+}
+
+const ACTION_PROCESS_BOUNDS: ProcessBounds = ProcessBounds {
+    runtime: PROCESS_RUNTIME,
+    output_drain: OUTPUT_DRAIN,
+    reap: REAP_DEADLINE,
+    grace: TERMINATION_GRACE,
+    output_limit: OUTPUT_LIMIT,
+};
+const FULL_VERIFIER_PROCESS_BOUNDS: ProcessBounds = ProcessBounds {
+    runtime: FULL_VERIFIER_RUNTIME,
+    output_drain: OUTPUT_DRAIN,
+    reap: REAP_DEADLINE,
+    grace: FULL_VERIFIER_TERMINATION_GRACE,
+    output_limit: FULL_VERIFIER_OUTPUT_LIMIT,
+};
+const _: () = assert!(
+    FULL_VERIFIER_PROCESS_BOUNDS.runtime.as_secs()
+        + FULL_VERIFIER_PROCESS_BOUNDS.grace.as_secs()
+        + FULL_VERIFIER_PROCESS_BOUNDS.reap.as_secs()
+        + FULL_VERIFIER_PROCESS_BOUNDS.output_drain.as_secs()
+        < FULL_VERIFIER_HARD_RUNTIME.as_secs()
+);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Budget {
@@ -162,6 +200,75 @@ pub(super) fn verify_with<R: Runner>(
         CancellationToken::new(),
         Arc::new(AtomicBool::new(false)),
     )
+}
+
+pub(super) fn verify_supervised(output: &mut impl Write) -> Result<(), VerifyError> {
+    let cancellation = CancellationToken::new();
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))?;
+    let executable = std::env::current_exe().map_err(|source| VerifyError::Launch {
+        label: FULL_VERIFIER_LABEL,
+        source,
+    })?;
+    let run = run_bounded_process(
+        FULL_VERIFIER_LABEL,
+        executable,
+        [OsString::from(FULL_VERIFIER_CHILD_COMMAND)],
+        &cancellation,
+        None,
+        &[],
+        FULL_VERIFIER_PROCESS_BOUNDS,
+    );
+    let result = render_supervised_verifier(run, output, interrupted.load(Ordering::Acquire));
+    drop(signal_guard);
+    result
+}
+
+fn render_supervised_verifier(
+    run: Result<CommandRun, RunError>,
+    output: &mut impl Write,
+    interrupted: bool,
+) -> Result<(), VerifyError> {
+    let run = run.map_err(|error| match error {
+        RunError::Launch(source) => VerifyError::Launch {
+            label: FULL_VERIFIER_LABEL,
+            source,
+        },
+        RunError::Cleanup(detail) => VerifyError::Cleanup {
+            label: FULL_VERIFIER_LABEL.to_owned(),
+            detail,
+        },
+    })?;
+    let child = match run {
+        CommandRun::Exited(child) => child,
+        CommandRun::Cancelled(child) => {
+            output
+                .write_all(&child.stdout)
+                .map_err(VerifyError::Output)?;
+            return Err(VerifyError::Interrupted);
+        }
+        CommandRun::TimedOut(child) => {
+            output
+                .write_all(&child.stdout)
+                .map_err(VerifyError::Output)?;
+            return Err(VerifyError::TimedOut {
+                label: FULL_VERIFIER_LABEL.to_owned(),
+            });
+        }
+    };
+    output
+        .write_all(&child.stdout)
+        .map_err(VerifyError::Output)?;
+    if interrupted {
+        return Err(VerifyError::Interrupted);
+    }
+    if child.status.success {
+        return Ok(());
+    }
+    Err(VerifyError::Supervised {
+        code: child.status.code,
+        detail: String::from_utf8_lossy(&child.stderr).trim_end().to_owned(),
+    })
 }
 
 pub(super) fn verify_system(output: &mut impl Write) -> Result<(), VerifyError> {
@@ -986,15 +1093,42 @@ where
     S: Into<OsString>,
     P: Into<OsString>,
 {
+    run_bounded_process(
+        label,
+        program,
+        arguments,
+        cancellation,
+        Some(cargo_jobs),
+        overrides,
+        ACTION_PROCESS_BOUNDS,
+    )
+}
+
+fn run_bounded_process<I, S, P>(
+    label: &str,
+    program: P,
+    arguments: I,
+    cancellation: &CancellationToken,
+    cargo_jobs: Option<usize>,
+    overrides: &[(&str, &OsStr)],
+    bounds: ProcessBounds,
+) -> Result<CommandRun, RunError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+    P: Into<OsString>,
+{
     let mut environment = ambient_environment()?
         .entries()
         .iter()
         .cloned()
         .collect::<BTreeMap<_, _>>();
-    environment.insert(
-        OsString::from("CARGO_BUILD_JOBS"),
-        OsString::from(cargo_jobs.to_string()),
-    );
+    if let Some(cargo_jobs) = cargo_jobs {
+        environment.insert(
+            OsString::from("CARGO_BUILD_JOBS"),
+            OsString::from(cargo_jobs.to_string()),
+        );
+    }
     for (key, value) in overrides {
         environment.insert(OsString::from(key), (*value).to_owned());
     }
@@ -1005,7 +1139,7 @@ where
         ))
     })?;
     let deadlines =
-        Deadlines::new(PROCESS_RUNTIME, OUTPUT_DRAIN, REAP_DEADLINE).map_err(|error| {
+        Deadlines::new(bounds.runtime, bounds.output_drain, bounds.reap).map_err(|error| {
             RunError::Launch(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 error.to_string(),
@@ -1037,14 +1171,14 @@ where
         output: SillOutput::new(
             StdinPolicy::Null,
             StreamPolicy::Capture {
-                limit: OUTPUT_LIMIT,
+                limit: bounds.output_limit,
             },
             StreamPolicy::Capture {
-                limit: OUTPUT_LIMIT,
+                limit: bounds.output_limit,
             },
         ),
         redaction: Redaction::None,
-        grace: TERMINATION_GRACE,
+        grace: bounds.grace,
     };
     let running = sill::spawn(spec).map_err(RunError::Launch)?;
     let outcome = running

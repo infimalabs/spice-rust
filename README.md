@@ -113,10 +113,15 @@ gives the workspace-test coordinator the remaining logical-CPU slots, capped
 at four, and fixes each shard to one Cargo job. Package or target count
 therefore cannot create an unbounded process or CPU fan-out.
 
-The complete verifier stops new work and cancels process groups at three
-minutes. Its hard five-minute wall envelope includes an already-running
-in-process terminal action plus bounded sibling termination and reap; reaching
-the fourth minute is exceptional recovery headroom, never a routine budget.
+The complete verifier runs inside one supervised child process. At three
+minutes the supervisor sends termination; the child's signal bridge stops new
+work and cancels and reaps every independently grouped action. The supervisor
+allows 75 seconds for that orderly cleanup before killing any non-cooperative
+in-process remainder, then reserves ten seconds to reap and 30 seconds to drain
+output. The resulting worst case is 295 seconds, so entry-point audit, battery,
+landing, sibling termination, reap, and output drain all remain inside the hard
+five-minute wall envelope. Reaching the fourth minute is exceptional recovery
+headroom, never a routine budget.
 
 Every external action runs in a new process group under bounded output,
 runtime, termination, and reap deadlines. The first failure or an operator

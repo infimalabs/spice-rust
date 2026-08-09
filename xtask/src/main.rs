@@ -51,6 +51,9 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("verify") => {
             run_verify(arguments.collect(), &mut output)
         }
+        Some(value) if value == OsStr::new("__verify-system") && arguments.len() == 0 => {
+            xtask::verify_child(&mut output).map_err(Into::into)
+        }
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("__workspace-tests") && arguments.len() == 1 => {
             workspace_tests(
