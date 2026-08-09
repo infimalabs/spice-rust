@@ -905,6 +905,7 @@ fn add_doc_task(
     write.task_head(added, move |position| TaskHead {
         handle: statement_task,
         uuid: identity,
+        queue_origin: position,
         title: spec.title,
         description: None,
         acceptance: Vec::new(),

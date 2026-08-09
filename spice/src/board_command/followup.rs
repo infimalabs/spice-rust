@@ -199,6 +199,7 @@ fn create_followup(
     let statement = TaskHead {
         handle: followup.task.clone(),
         uuid: identity,
+        queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: followup.add.title.clone(),
         description: followup.add.description.clone(),
         acceptance: followup.add.acceptance.clone(),
@@ -243,6 +244,7 @@ fn create_followup(
         )
         .map_err(|error| store_fault("review::followup-build", &error.to_string()))?;
     write.task_head(added, move |position| TaskHead {
+        queue_origin: position,
         revision: position,
         ..statement
     });

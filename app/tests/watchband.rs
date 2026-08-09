@@ -111,6 +111,7 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
             "body": {
                 "handle": handle,
                 "uuid": TASK_UUID,
+                "queue_origin": 1,
                 "project": "canvas.fidelity",
                 "tags": [],
                 "dependencies": [],
@@ -132,6 +133,11 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
             "body": {
                 "actor": "operator",
                 "fact": fact,
+                "claimed": fact,
+                "cell": {
+                    "project": "canvas.fidelity",
+                    "phase": phase,
+                },
                 "lane": lane,
                 "occupant": OCCUPANT,
                 "epoch": EPOCH,

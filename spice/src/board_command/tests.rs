@@ -727,6 +727,7 @@ fn capture_claims_one_exact_eligible_non_allocator_task() {
             allocation_subscription(&available.residency.body, &lane)
                 .expect("fixture lane subscription"),
             available.allocation_band,
+            available.recent_cell.as_ref(),
         )
         .expect("allocator winner")
         .entry()

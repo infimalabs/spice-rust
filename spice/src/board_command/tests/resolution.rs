@@ -47,25 +47,31 @@ fn one_captured_band_drives_board_answer_server_selection_and_guard_replay() {
     let entries = actor_entries(&available).expect("configured board projects to entries");
     let subscription = allocation_subscription(&available.residency.body, &lane)
         .expect("fixture lane has one allocation subscription");
-    let selected = board::select(&entries, &lane, subscription, available.allocation_band)
-        .expect("configured client preselection has work");
-    assert_eq!(selected.entry().statement().handle, higher);
+    let selected = board::select(
+        &entries,
+        &lane,
+        subscription,
+        available.allocation_band,
+        available.recent_cell.as_ref(),
+    )
+    .expect("configured client preselection has work");
+    assert_eq!(selected.entry().statement().handle, lower);
 
     assert_committed(issue_with_allocation(
         &bus,
         epoch,
         lane.clone(),
         CommandKind::ClaimWin,
-        claim_expected(&available, &higher, &seats[0]),
+        claim_expected(&available, &lower, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
         },
         &allocation,
     ));
     let held = board_with_allocation(&bus, epoch, lane, &allocation);
-    assert!(at(&held, &lower).claim.is_none());
+    assert!(at(&held, &higher).claim.is_none());
     assert_eq!(
-        at(&held, &higher)
+        at(&held, &lower)
             .claim
             .as_ref()
             .expect("server and guard accepted the configured winner")

@@ -153,7 +153,9 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
     journal
         .connection
         .execute_batch(
-            "UPDATE journal_schema SET version = 2 WHERE singleton = 1;
+            "DELETE FROM lease_heads;
+             DELETE FROM claim_heads;
+             UPDATE journal_schema SET version = 2 WHERE singleton = 1;
              PRAGMA user_version = 2;",
         )
         .expect("downgrade lineage fixture to schema 2");
