@@ -135,8 +135,11 @@ cargo xtask install --port PORT
 
 That builds the current tree, republishes the executable, and restarts the
 resident on the endpoint the running one had published. `--host` and `--port`
-override that endpoint, `--release` installs the release profile, and
-`--no-resident` refreshes the executable without starting anything.
+each override their own half of that endpoint and are honoured whether or not
+anything was published, so the first refresh of a repository still lands where
+it was told rather than on the default. `--release` installs the release
+profile, and `--no-resident` refreshes the executable without starting
+anything.
 
 The preview and apply above cannot express an upgrade. A completed receipt pins
 the executable bytes it installed, so once the tree is rebuilt both `install`
@@ -149,7 +152,10 @@ The previous executable is copied to `target/spice-develop/spice.rollback`
 before anything moves and reinstalled if the install or the readiness wait
 fails; the reported failure is the one that forced the restore, not the
 restore. The restarted resident logs to `target/spice-develop/resident.log`,
-and readiness means it published a discovery it also answers on.
+and readiness means it published a discovery it also answers on. A start that
+never got there reports that log's last line, because the refusal explaining it
+— `canvas::bind-failed` for a taken port — is written by the resident and
+nowhere else.
 
 `.spice-install` lives under the Git common directory, so an upgrade is
 repository-wide: every linked worktree sees the new executable at once, and the

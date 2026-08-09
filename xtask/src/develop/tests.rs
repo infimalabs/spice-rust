@@ -107,6 +107,45 @@ fn a_published_endpoint_is_ready_only_once_it_answers() {
     );
 }
 
+/// A failed start reports the resident's own last diagnostic, not just a status.
+///
+/// `canvas::bind-failed` and its kin are written only to the resident's log, so
+/// a refresh that printed the exit status alone would name a number whose reason
+/// it never surfaced.
+#[test]
+fn a_failed_start_reports_the_residents_own_last_diagnostic() {
+    let fixture = Fixture::new("residentlog");
+    let repository = fixture.repository();
+    let log = workspace(&repository)
+        .expect("the scratch workspace is created")
+        .join(RESIDENT_LOG);
+
+    let mut empty = Vec::new();
+    report_resident_log(&repository, &mut empty);
+    assert!(
+        String::from_utf8_lossy(&empty).contains("recorded nothing"),
+        "an absent resident log was reported as a diagnostic: {}",
+        String::from_utf8_lossy(&empty)
+    );
+
+    fs::write(
+        &log,
+        "starting\nspice: canvas::bind-failed; listening on 127.0.0.1:8768 failed\n\n",
+    )
+    .expect("the scratch resident log is written");
+    let mut reported = Vec::new();
+    report_resident_log(&repository, &mut reported);
+    let reported = String::from_utf8_lossy(&reported).into_owned();
+    assert!(
+        reported.contains("canvas::bind-failed; listening on 127.0.0.1:8768 failed"),
+        "the resident's own diagnostic was not surfaced: {reported}"
+    );
+    assert!(
+        reported.contains(&log.display().to_string()),
+        "the report did not name the log it read: {reported}"
+    );
+}
+
 /// A resident that dies during startup is reported as an exit, not a timeout.
 #[test]
 fn a_resident_that_exits_before_readiness_is_reported_as_an_exit() {
@@ -277,7 +316,7 @@ fn an_explicit_endpoint_overrides_the_published_one() {
     let default = RefreshRequest::default();
     assert_eq!(
         requested_endpoint(&default, published),
-        Some(("127.0.0.1".to_owned(), 8765))
+        (Some("127.0.0.1".to_owned()), Some(8765))
     );
 
     let ported = RefreshRequest {
@@ -286,7 +325,7 @@ fn an_explicit_endpoint_overrides_the_published_one() {
     };
     assert_eq!(
         requested_endpoint(&ported, published),
-        Some(("127.0.0.1".to_owned(), 8767))
+        (Some("127.0.0.1".to_owned()), Some(8767))
     );
 
     let hosted = RefreshRequest {
@@ -295,7 +334,7 @@ fn an_explicit_endpoint_overrides_the_published_one() {
     };
     assert_eq!(
         requested_endpoint(&hosted, published),
-        Some(("0.0.0.0".to_owned(), 8765))
+        (Some("0.0.0.0".to_owned()), Some(8765))
     );
 }
 
@@ -303,15 +342,36 @@ fn an_explicit_endpoint_overrides_the_published_one() {
 /// its own endpoint rather than being pinned to a guess.
 #[test]
 fn an_unpublished_endpoint_with_no_override_is_left_unbound() {
-    assert_eq!(requested_endpoint(&RefreshRequest::default(), None), None);
+    assert_eq!(
+        requested_endpoint(&RefreshRequest::default(), None),
+        (None, None)
+    );
+}
 
+/// An explicitly named port survives having no published endpoint to pair with.
+///
+/// Requiring a host too would drop the operator's port and leave `up` on its own
+/// default, which is the endpoint this repository reserves for the predecessor:
+/// the first refresh of a repository is exactly when nothing is published yet.
+#[test]
+fn an_explicit_endpoint_survives_an_unpublished_counterpart() {
     let ported = RefreshRequest {
         port: Some(8767),
         ..RefreshRequest::default()
     };
     assert_eq!(
         requested_endpoint(&ported, None),
-        None,
-        "a port with no host bound an invented host"
+        (None, Some(8767)),
+        "an explicitly named port was dropped for want of a host"
+    );
+
+    let hosted = RefreshRequest {
+        host: Some("127.0.0.1".to_owned()),
+        ..RefreshRequest::default()
+    };
+    assert_eq!(
+        requested_endpoint(&hosted, None),
+        (Some("127.0.0.1".to_owned()), None),
+        "an explicitly named host was dropped for want of a port"
     );
 }

@@ -84,7 +84,7 @@ pub fn refresh(
     };
     writeln!(output, "installed {} plan={digest}", installed.display())?;
 
-    let bound = endpoint.as_ref().map(|(host, port)| (host.as_str(), *port));
+    let bound = (endpoint.0.as_deref(), endpoint.1);
     let endpoint = match restart(&repository, &installed, bound, request, output) {
         Ok(endpoint) => endpoint,
         Err(error) => return Err(restore(&repository, rollback.as_deref(), output, error)),
@@ -217,15 +217,23 @@ fn read_endpoint(repository: &Repository) -> Option<String> {
     Some(discovery.endpoint)
 }
 
-/// Endpoint the restarted resident should bind, honouring explicit overrides.
-fn requested_endpoint(request: &RefreshRequest, published: Option<&str>) -> Option<(String, u16)> {
+/// Host and port the restarted resident should bind, each honoured on its own.
+///
+/// `up` accepts `--host` and `--port` independently, so an operator who names
+/// one gets it whether or not a resident had published the other. Dropping an
+/// explicit port for want of a host would instead leave `up` on its own default
+/// endpoint, which this repository documents as the predecessor's.
+fn requested_endpoint(
+    request: &RefreshRequest,
+    published: Option<&str>,
+) -> (Option<String>, Option<u16>) {
     let published = published.and_then(endpoint_parts);
     let host = request
         .host
         .clone()
-        .or_else(|| published.as_ref().map(|(host, _)| host.clone()))?;
-    let port = request.port.or_else(|| published.map(|(_, port)| port))?;
-    Some((host, port))
+        .or_else(|| published.as_ref().map(|(host, _)| host.clone()));
+    let port = request.port.or_else(|| published.map(|(_, port)| port));
+    (host, port)
 }
 
 /// Split a published origin into the host and port `up` accepts.
@@ -248,9 +256,13 @@ fn stop(
     // A published discovery outlives the process that wrote it, so `down`
     // failing is not itself a refusal: what matters is that nothing is still
     // answering on the endpoint by the time the executable is replaced.
+    // `down` answers its own reply on standard output, which is this command's
+    // progress stream and not a result the developer asked for. Diagnostics
+    // stay inherited so a refusal is still legible.
     Command::new(installed)
         .arg("down")
         .current_dir(repository.worktree_root())
+        .stdout(Stdio::null())
         .status()?;
     let deadline = Instant::now() + SHUTDOWN_HORIZON;
     while read_endpoint(repository).is_some_and(|endpoint| listening(&endpoint)) {
@@ -266,7 +278,7 @@ fn stop(
 fn restart(
     repository: &Repository,
     installed: &Path,
-    endpoint: Option<(&str, u16)>,
+    endpoint: (Option<&str>, Option<u16>),
     request: &RefreshRequest,
     output: &mut impl Write,
 ) -> Result<Option<String>, RefreshError> {
@@ -276,8 +288,12 @@ fn restart(
     let log = fs::File::create(workspace(repository)?.join(RESIDENT_LOG))?;
     let mut command = Command::new(installed);
     command.arg("up");
-    if let Some((host, port)) = endpoint {
-        command.args(["--host", host, "--port", &port.to_string()]);
+    let (host, port) = endpoint;
+    if let Some(host) = host {
+        command.args(["--host", host]);
+    }
+    if let Some(port) = port {
+        command.args(["--port", &port.to_string()]);
     }
     let mut child = command
         .current_dir(repository.worktree_root())
@@ -293,9 +309,33 @@ fn restart(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
+            report_resident_log(repository, output);
             Err(error)
         }
     }
+}
+
+/// Surface the resident's own diagnostic for a start that did not come up.
+///
+/// The refusal that explains the failure is written by the resident, into the
+/// log this command redirected it to; the refresh itself can only observe an
+/// exit status or a horizon. Reporting the status alone leaves the developer
+/// holding a number whose reason is one file away and unnamed.
+fn report_resident_log(repository: &Repository, output: &mut impl Write) {
+    let Ok(workspace) = workspace(repository) else {
+        return;
+    };
+    let log = workspace.join(RESIDENT_LOG);
+    let last = fs::read_to_string(&log).ok().and_then(|text| {
+        text.lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .map(str::to_owned)
+    });
+    let _ = match last {
+        Some(line) => writeln!(output, "resident log {}: {line}", log.display()),
+        None => writeln!(output, "resident log {} recorded nothing", log.display()),
+    };
 }
 
 /// Wait for the resident to publish a discovery it also answers on.
