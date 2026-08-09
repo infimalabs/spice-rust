@@ -864,7 +864,7 @@ fn a_complete_packed_answer_omits_the_overflow_marker() {
 #[test]
 fn a_fold_backed_answer_wears_its_provenance() {
     let derived = wire::Derived {
-        fold: "steer::inbox".parse().expect("fold name"),
+        fold: "task::effort".parse().expect("fold name"),
         r#gen: 7,
         cursor: seq(48213),
         packed: Packed::<Row> {

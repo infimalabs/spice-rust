@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 atomic = { path = "../atomic" }
-fold = { path = "../fold" }
 journal = { path = "../journal" }
 serde = { version = "1.0.229", features = ["derive"] }
 sill = { path = "../sill" }
