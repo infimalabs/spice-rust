@@ -81,13 +81,13 @@ precedes the command rather than something the command performs.
 
 ```sh
 cargo xtask app
-"$SPICE_BIN" up --port PORT
+"$SPICE_BIN" up
 ```
 
-Name a port. The default `127.0.0.1:8765` is held by the predecessor's serve
-resident, and that default binds or refuses — there is no fallback resolver, by
-intent, because the operator's browser holds the URL. `--port 0` takes any free
-port, at the cost of a URL that changes on every start.
+The default `127.0.0.1:8767` avoids the predecessor serve resident's ports. It
+binds or refuses — there is no fallback resolver, by intent, because the
+operator's browser holds the URL. Name `--port PORT` to override it; `--port 0`
+takes any free port, at the cost of a URL that changes on every start.
 
 `cargo xtask app` publishes one immutable generation into this worktree's
 ignored `dist/stage-app`, and the resident refuses to start without a complete

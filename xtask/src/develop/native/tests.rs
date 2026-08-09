@@ -707,20 +707,20 @@ fn a_published_origin_splits_into_a_host_and_port() {
 /// resolves the other from what the resident had published.
 #[test]
 fn an_explicit_endpoint_overrides_the_published_one() {
-    let published = Some("http://127.0.0.1:8765");
+    let published = Some("http://127.0.0.1:8767");
     let default = RefreshRequest::default();
     assert_eq!(
         requested_endpoint(&default, published),
-        (Some("127.0.0.1".to_owned()), Some(8765))
+        (Some("127.0.0.1".to_owned()), Some(8767))
     );
 
     let ported = RefreshRequest {
-        port: Some(8767),
+        port: Some(8768),
         ..RefreshRequest::default()
     };
     assert_eq!(
         requested_endpoint(&ported, published),
-        (Some("127.0.0.1".to_owned()), Some(8767))
+        (Some("127.0.0.1".to_owned()), Some(8768))
     );
 
     let hosted = RefreshRequest {
@@ -729,7 +729,7 @@ fn an_explicit_endpoint_overrides_the_published_one() {
     };
     assert_eq!(
         requested_endpoint(&hosted, published),
-        (Some("0.0.0.0".to_owned()), Some(8765))
+        (Some("0.0.0.0".to_owned()), Some(8767))
     );
 }
 
@@ -746,17 +746,17 @@ fn an_unpublished_endpoint_with_no_override_is_left_unbound() {
 /// An explicitly named port survives having no published endpoint to pair with.
 ///
 /// Requiring a host too would drop the operator's port and leave `up` on its own
-/// default, which is the endpoint this repository reserves for the predecessor:
-/// the first refresh of a repository is exactly when nothing is published yet.
+/// default. The first refresh of a repository is exactly when nothing is
+/// published yet, so the explicit half must survive on its own.
 #[test]
 fn an_explicit_endpoint_survives_an_unpublished_counterpart() {
     let ported = RefreshRequest {
-        port: Some(8767),
+        port: Some(8768),
         ..RefreshRequest::default()
     };
     assert_eq!(
         requested_endpoint(&ported, None),
-        (None, Some(8767)),
+        (None, Some(8768)),
         "an explicitly named port was dropped for want of a host"
     );
 
