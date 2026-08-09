@@ -114,7 +114,7 @@ impl Analysis {
     }
 
     /// Attach the bounded process duration observed by a compiled runner.
-    fn timed(mut self, timing: ArmTiming) -> Self {
+    pub(super) fn timed(mut self, timing: ArmTiming) -> Self {
         self.timing = Some(timing);
         self
     }

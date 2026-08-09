@@ -19,6 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const worker = join(here, "canvas.spec.mjs");
 const COVERAGE_FLAG = "--spice-coverage-receipt";
+const PREBUILT_APP_FLAG = "--spice-prebuilt-app";
 const COVERAGE_RECEIPT = "BROWSER-1kKSWhZk browser coverage complete\n";
 const SHARD_TIMEOUT_MS = 120_000;
 const COORDINATOR_TIMEOUT_MS = 180_000;
@@ -183,9 +184,12 @@ async function runShard(shard) {
 async function coordinate() {
   assertShardInventory();
   assertShardMutationGuard();
-  const receipt = coveragePath(process.argv.slice(2));
+  const arguments_ = process.argv.slice(2);
+  const prebuiltApp = arguments_.at(-1) === PREBUILT_APP_FLAG;
+  if (prebuiltApp) arguments_.pop();
+  const receipt = coveragePath(arguments_);
   const started = Date.now();
-  await buildResident();
+  await buildResident({ app: !prebuiltApp });
   const buildElapsedMs = Date.now() - started;
   assert.ok(buildElapsedMs < COORDINATOR_TIMEOUT_MS, "Canvas build leaves time for its shards");
   let peak = 0;

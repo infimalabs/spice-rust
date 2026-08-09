@@ -228,10 +228,17 @@ mod declarations;
 #[cfg(not(target_arch = "wasm32"))]
 mod environment;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use acquire::acquire_toolchain_arm;
+mod verifier_evidence;
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use acquire::{acquire_toolchain_arm, acquire_verifier_tools};
 pub use declarations::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub use verifier_evidence::{
+    VerifierCompilerContract, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
+    VerifierCompilerRun, VerifierCompilerStage,
+};
 
 /// Extensions selected by the compiled prose scanner, without their leading dot.
 ///
