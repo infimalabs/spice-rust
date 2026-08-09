@@ -114,6 +114,17 @@ pub enum Asset {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Location {
+    /// Retired: no operation resolves here, and none can.
+    ///
+    /// An install identifies its repository by common directory alone, which
+    /// [`RepositoryIdentity::capture`] enforces by capturing no worktree at
+    /// all. A worktree-relative destination is therefore unresolvable from the
+    /// record that owns it: one record serves every linked worktree, so the
+    /// root this variant names is whichever worktree happened to run install
+    /// rather than a place the record can rediscover later. Reaching every
+    /// worktree is what `info/exclude` is for, and it lives under
+    /// [`Self::CommonGit`] precisely because that is the scope an install may
+    /// write.
     Worktree,
     CommonGit,
 }
