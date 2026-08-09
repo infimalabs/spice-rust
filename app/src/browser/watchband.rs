@@ -1152,8 +1152,10 @@ fn render_composer_heading(
 }
 
 fn close_agent_action_menu(event: &MouseEvent) {
+    // Yew delegates listeners from the app root, so `current_target` cannot
+    // locate the details element. The actual click target remains inside it.
     if let Some(menu) = event
-        .current_target()
+        .target()
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
         .and_then(|target| target.closest(".agent-action-menu").ok().flatten())
     {
