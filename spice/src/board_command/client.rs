@@ -1151,6 +1151,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskOopsAdd(add) => {
             task_oops_add(bus, command, add, projects, allocation)
         }
+        wire::intent::Intent::GateFindings(findings) => {
+            gate_findings(bus, command, findings, projects, allocation)
+        }
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects, allocation),
         wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, projects, allocation),
         wire::intent::Intent::TaskDelete(delete) => {

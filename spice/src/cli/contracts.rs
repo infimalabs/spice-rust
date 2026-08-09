@@ -307,6 +307,17 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "gate::run"
     ),
     row!(
+        ["gate", "findings"],
+        "gate findings [--at REV]",
+        OperatorOrLane,
+        Command,
+        [GateFindingsFiled, TaskAdded, TaskDeferred],
+        [Resident, Toolful],
+        GATE_POLICY_TOOLS,
+        Reply,
+        "gate::findings"
+    ),
+    row!(
         ["gate", "camp"],
         "gate camp",
         Local,

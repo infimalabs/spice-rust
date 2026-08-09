@@ -182,6 +182,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["doctor"] => deliver(&doctor_outcome(), form),
         ["demo"] => deliver(&demo_command::run(leaf), form),
         ["gate"] => deliver(&gate_command::run(leaf), form),
+        ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "pre-commit"] => deliver(&gate_command::pre_commit(), form),
