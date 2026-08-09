@@ -128,6 +128,16 @@ fn assert_full_verifier_action_trace(
         "unexpected browser action: {browser:?}"
     );
     assert!(browser.contains("--spice-prebuilt-app"));
+    assert!(
+        browser.contains(&format!(
+            "binary={}/target/debug/spice\n",
+            repository
+                .canonicalize()
+                .expect("canonical browser repository")
+                .display()
+        )),
+        "browser action did not consume the prerequisite resident binary: {browser}"
+    );
     let compiler_actions =
         fs::read_to_string(&programs.cargo_log).expect("read compiler process trace");
     assert_eq!(
@@ -200,6 +210,7 @@ fn install_full_verifier_programs(fixture: &Fixture) -> FullVerifierPrograms {
             concat!(
                 "#!/bin/sh\n",
                 "printf '%s\\n' \"$*\" > '{}'\n",
+                "printf 'binary=%s\\n' \"$SPICE_CANVAS_BINARY\" >> '{}'\n",
                 "while [ \"$#\" -gt 0 ]; do\n",
                 "  if [ \"$1\" = \"--spice-coverage-receipt\" ]; then\n",
                 "    shift\n",
@@ -210,6 +221,7 @@ fn install_full_verifier_programs(fixture: &Fixture) -> FullVerifierPrograms {
                 "done\n",
                 "exit 96\n",
             ),
+            browser_log.display(),
             browser_log.display(),
         ),
     );
@@ -275,13 +287,14 @@ fn assert_workspace_test_execution(
             .expect("read verifier Cargo actions")
             .lines()
             .filter(|line| *line != "--version")
-            .take(7)
+            .take(8)
             .collect::<Vec<_>>(),
         [
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
             app_action.as_str(),
+            "build --locked -p spice --bin spice",
             "test --locked --package verify-process-fixture-id --lib",
             "doc --locked --workspace --lib --bins --no-deps",
             "test --locked --workspace --doc",
@@ -730,13 +743,14 @@ fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
             .display()
     );
     assert_eq!(
-        chain.get(..4),
+        chain.get(..5),
         Some(
             &[
                 "clippy --locked --workspace --all-targets -- -D warnings",
                 "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
                 "check --locked --workspace --target wasm32-unknown-unknown",
                 app_action.as_str(),
+                "build --locked -p spice --bin spice",
             ][..]
         )
     );
@@ -746,6 +760,7 @@ fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
             app_action.as_str(),
+            "build --locked -p spice --bin spice",
             "metadata --locked --format-version 1 --no-deps",
         ]
         .contains(action)),
@@ -760,7 +775,7 @@ fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
         "duplicate Cargo action: {chain:?}"
     );
     assert!(
-        !String::from_utf8_lossy(&output.stdout).contains("ordinal=12/12"),
+        !String::from_utf8_lossy(&output.stdout).contains("ordinal=13/13"),
         "{}",
         streams(&output)
     );

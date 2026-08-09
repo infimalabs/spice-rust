@@ -93,11 +93,13 @@ the exact mapping and production executor.
 
 Verification uses an explicit dependency graph. The warm compiler-evidence
 chain remains serial through native Clippy, Wasm Clippy, the Wasm workspace
-check, and the prebuilt Canvas app. Browser verification and deterministic
-workspace tests then fork. Documentation and doctests follow the workspace
-tests and may continue while the browser branch runs; the canonical battery
-waits for both branches and consumes the compiler evidence before contract
-landing crosses the final barrier.
+check, the prebuilt Canvas app, and one native resident build. Browser
+verification consumes that exact resident through `SPICE_CANVAS_BINARY`, so it
+performs no Cargo build while deterministic workspace tests run. The browser
+and workspace branches then fork. Documentation and doctests follow the
+workspace tests and may continue while the browser branch runs; the canonical
+battery waits for both branches and consumes the compiler evidence before
+contract landing crosses the final barrier.
 
 The outer scheduler has a hard ceiling of three actions. It counts peer Cargo
 processes, reduces that ceiling from three to two to one as peer pressure
@@ -110,6 +112,11 @@ reserving every possible concurrent outer sibling's Cargo grant, the scheduler
 gives the workspace-test coordinator the remaining logical-CPU slots, capped
 at four, and fixes each shard to one Cargo job. Package or target count
 therefore cannot create an unbounded process or CPU fan-out.
+
+The complete verifier stops new work and cancels process groups at three
+minutes. Its hard five-minute wall envelope includes an already-running
+in-process terminal action plus bounded sibling termination and reap; reaching
+the fourth minute is exceptional recovery headroom, never a routine budget.
 
 Every external action runs in a new process group under bounded output,
 runtime, termination, and reap deadlines. The first failure or an operator
