@@ -115,6 +115,10 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (CommandKind::SteerInbox, r#"{}"#),
     (
+        CommandKind::SteerRepair,
+        r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2" }"#,
+    ),
+    (
         CommandKind::SteerResend,
         r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
     ),
@@ -395,6 +399,19 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
   "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
   "key": "1kJJP87B",
   "disposition": "acked"
+}"#,
+    ),
+    (
+        AnswerShape::Delivery,
+        r#"{
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "delivery": {
+    "standing": "parked",
+    "source": 41,
+    "keys": ["1kJJP87B"],
+    "failure": "steer::inbox-unwritable: inbox directory blocked",
+    "repair": "spice steer repair 018f82d4-6f59-7d06-92e3-bce9131163c2"
+  }
 }"#,
     ),
     (
@@ -1009,6 +1026,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::DocApply,
     BodyShape::SteerSend,
     BodyShape::SteerInbox,
+    BodyShape::SteerRepair,
     BodyShape::DirectiveRef,
     BodyShape::SteerDispose,
     BodyShape::ConsentDecide,
@@ -1036,6 +1054,7 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Claim,
     AnswerShape::Doc,
     AnswerShape::Directive,
+    AnswerShape::Delivery,
     AnswerShape::Inbox,
     AnswerShape::Consent,
     AnswerShape::ConsentQueue,

@@ -105,7 +105,10 @@ impl<'a> Surface<'a> {
                 lane_surface::recall(self.bus, self.paths, self.epoch, seats, command, recall)
             }
             (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
-                steering::inbox(self.bus, self.epoch, command, inbox)
+                steering::inbox(self.bus, self.paths, self.epoch, command, inbox)
+            }
+            (CommandKind::SteerRepair, Intent::SteerRepair(repair)) => {
+                steering::repair(self.bus, self.paths, self.epoch, command, repair)
             }
             (CommandKind::SteerSend, Intent::SteerSend(send)) => steering::send(
                 self.bus,

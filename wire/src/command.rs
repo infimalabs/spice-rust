@@ -79,6 +79,8 @@ pub enum CommandKind {
     SteerSend,
     /// Read pending direction visible to the authenticated principal.
     SteerInbox,
+    /// Rebuild one lane's inbox fold from current journal authority.
+    SteerRepair,
     /// Send the same intent again with lineage and escalation carried.
     SteerResend,
     /// Retire a live directive with a typed disposition.
@@ -349,6 +351,12 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
+    /// Operator-owned repair of a disposable rendering from durable authority.
+    pub const REPAIR: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
     /// Exact directive disposition; resend also names the preceding directive
     /// in its lineage.
     pub const RESEND: Self = Self {
@@ -505,6 +513,7 @@ impl CommandKind {
         Self::DocApply,
         Self::SteerSend,
         Self::SteerInbox,
+        Self::SteerRepair,
         Self::SteerResend,
         Self::SteerDispose,
         Self::SteerCancel,
@@ -563,6 +572,7 @@ impl CommandKind {
             | Self::DocApply
             | Self::SteerSend
             | Self::SteerInbox
+            | Self::SteerRepair
             | Self::SteerResend
             | Self::SteerDispose
             | Self::SteerCancel
@@ -622,6 +632,7 @@ impl CommandKind {
             Self::DocApply => "doc::apply",
             Self::SteerSend => "steer::send",
             Self::SteerInbox => "steer::inbox",
+            Self::SteerRepair => "steer::repair",
             Self::SteerResend => "steer::resend",
             Self::SteerDispose => "steer::dispose",
             Self::SteerCancel => "steer::cancel",
@@ -689,6 +700,7 @@ impl CommandKind {
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
             Self::SteerInbox => Law::READ,
+            Self::SteerRepair => Law::REPAIR,
             Self::SteerResend => Law::RESEND,
             Self::SteerDispose => Law::DISPOSE,
             Self::SteerCancel => Law::CANCEL,

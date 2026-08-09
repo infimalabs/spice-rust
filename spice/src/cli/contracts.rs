@@ -765,6 +765,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "steer::recover"
     ),
     row!(
+        ["steer", "repair"],
+        "steer repair LANE",
+        Operator,
+        Recovery => Snapshot,
+        [],
+        [Resident, OperatorCapability],
+        Reply,
+        "steer::repair"
+    ),
+    row!(
         ["inbox"],
         "inbox [LANE]",
         OperatorOrLane,
