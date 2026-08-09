@@ -13,6 +13,9 @@ pub trait Reducer {
     /// Fold this reducer owns.
     fn fold(&self) -> FoldId;
 
+    /// Exact registered sources this implementation accounts for.
+    fn sources(&self) -> &'static [crate::Source];
+
     /// Version of the reducer semantics stored beside its output.
     fn version(&self) -> u32;
 
@@ -43,11 +46,11 @@ impl Reduction {
 
     /// A reduction whose completeness trails the facts it applied.
     ///
-    /// Folds declare inputs the journal does not carry — a bounded ring, a
-    /// tape, a config digest, another fold. When one of those lags, the reducer
+    /// A reducer whose admitted native source can prove only an earlier extent
     /// still applies every fact it was handed, so the cursor keeps up while the
-    /// answer is only settled through an earlier position. Readers meet that gap
-    /// through [`Store::read`] and the fold's [`Beyond`] policy.
+    /// answer is settled through an earlier position. Readers meet that gap
+    /// through [`Store::read`] and the fold's [`Beyond`] policy; it can never be
+    /// mistaken for a current empty answer.
     ///
     /// [`Beyond`]: crate::Beyond
     pub fn bounded(
@@ -216,6 +219,11 @@ impl Store {
         reducer: &R,
     ) -> Result<ReadOutcome, StoreError> {
         let fold = reducer.fold();
+        if reducer.sources() != INVENTORY.definition(fold).sources {
+            return Err(StoreError::Refused(Refusal::ReducerSourcesMismatch {
+                fold,
+            }));
+        }
         if reducer.version() == 0 {
             return Err(StoreError::Refused(Refusal::ZeroReducerVersion { fold }));
         }
@@ -291,9 +299,9 @@ impl Store {
 
 /// Freshness asks whether authority was kept up with, which the cursor answers.
 ///
-/// A fold that trails on a declared input it does not own — a bounded ring, a
-/// tape, another fold — applies every fact it is handed and still reports a
-/// [`Horizon`] short of its [`Cursor`]. Keying freshness on the horizon would
+/// A fold whose native source cannot prove the full requested extent applies
+/// every fact it is handed and still reports a [`Horizon`] short of its
+/// [`Cursor`]. Keying freshness on the horizon would
 /// call that generation stale forever and rebuild it on every read, without the
 /// rebuild ever being able to close the gap. Readers learn about the gap through
 /// [`Horizon::availability`] instead.
@@ -560,6 +568,8 @@ fn admit_version(connection: &Connection, current: u32) -> Result<(), StoreError
 /// A generation publication refusal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Refusal {
+    /// A reducer does not account for the exact sources its registry row declares.
+    ReducerSourcesMismatch { fold: FoldId },
     /// A reduction claimed to be complete past the last fact it applied.
     HorizonPastCursor { cursor: Cursor, horizon: Horizon },
     /// A reduction left facts of its own snapshot unapplied.

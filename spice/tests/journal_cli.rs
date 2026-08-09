@@ -7,6 +7,7 @@ use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use sill::{Acquisition, LockFile, LockName};
+use wire::intent::EffortAnswer;
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest};
 use wire::{
     Actor, AnyFact, Envelope, FactKind, FoldReport, JournalBackup, JournalReindex, JournalReport,
@@ -265,10 +266,10 @@ fn assert_journal_thread_and_fold(fixture: &Fixture) {
         "read-only fold report created a store"
     );
     let first = fixture
-        .reply::<FoldReport>(&["journal", "replay", "canvas::flow"])
+        .reply::<FoldReport>(&["journal", "replay", "task::effort"])
         .body;
     let second = fixture
-        .reply::<FoldReport>(&["journal", "replay", "canvas::flow"])
+        .reply::<FoldReport>(&["journal", "replay", "task::effort"])
         .body;
     assert_eq!(
         second, first,
@@ -281,19 +282,25 @@ fn assert_journal_thread_and_fold(fixture: &Fixture) {
         fold_bytes,
         "read-only fold report changed the materialization store"
     );
-    let flow = first
+    let effort = first
         .folds
         .iter()
-        .find(|fold| fold.fold == "canvas::flow")
-        .expect("canvas flow state");
-    assert_eq!(flow.generation, Some(1));
-    assert_eq!(flow.cursor, Some(position));
-    assert!(!flow.sources.is_empty(), "fold provenance is explicit");
+        .find(|fold| fold.fold == "task::effort")
+        .expect("task effort state");
+    assert_eq!(effort.generation, Some(1));
+    assert_eq!(effort.cursor, Some(position));
+    assert_eq!(effort.horizon, Some(position));
     assert_eq!(
-        flow.payload.as_ref().expect("flow payload")["facts"]
-            .as_array()
-            .map(Vec::len),
-        Some(2)
+        effort.sources,
+        ["task::*", "claim::*", "lane::*", "lineage::*", "journal::*"]
+    );
+    let replay_answer: EffortAnswer =
+        serde_json::from_value(effort.payload.clone().expect("typed task effort payload"))
+            .expect("replay payload decodes as task effort");
+    let live_answer = fixture.reply::<EffortAnswer>(&["task", "effort"]).body;
+    assert_eq!(
+        replay_answer, live_answer,
+        "journal replay and the live CLI/Canvas resident surface use the same typed materialization"
     );
 }
 
@@ -509,7 +516,7 @@ fn resident_reads_require_authentication_without_mutating_authority() {
     for arguments in [
         &["journal"][..],
         &["journal", "verify"][..],
-        &["journal", "replay", "canvas::flow"][..],
+        &["journal", "replay", "task::effort"][..],
         &["fold"][..],
         &["thread", "2"][..],
     ] {
