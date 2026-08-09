@@ -10,6 +10,9 @@ use wire::{CanonicalUuid, Disposition, Fault, FaultClass, Outcome, Refusal};
 
 use crate::command_client::{SelectedCommand, execute_steering};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(serde::Serialize)]
 struct HookOutput {
     #[serde(rename = "hookSpecificOutput")]
@@ -87,93 +90,95 @@ pub(crate) fn run(
         Ok(state) => state,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
-    let (selected, lane_context) = match contract.path {
+    // `SelectedCommand::SteerAck` borrows its key, so the key is parsed here
+    // and outlives the selection that names it.
+    let key = match acknowledgment_key(matches, contract) {
+        Ok(key) => key,
+        Err(outcome) => return outcome,
+    };
+    let (selected, lane_context) = match select(matches, contract, lane_environment, key.as_ref()) {
+        Ok(selection) => selection,
+        Err(outcome) => return outcome,
+    };
+    execute_steering(state.canvas(), contract, selected, lane_context)
+}
+
+/// Parse the key `ack` borrows, and nothing at all for every other contract.
+fn acknowledgment_key(
+    matches: &ArgMatches,
+    contract: &crate::cli::Contract,
+) -> Result<Option<steer::Key>, Outcome<CommandAnswer>> {
+    if !matches!(contract.path, ["ack"]) {
+        return Ok(None);
+    }
+    let text = matches
+        .get_one::<String>("KEY")
+        .expect("clap requires an acknowledgment key");
+    text.parse::<steer::Key>()
+        .map(Some)
+        .map_err(|error| refusal("steer::key-invalid", Some(text.clone()), &error.to_string()))
+}
+
+/// Choose the command one steering contract names, with its lane context.
+///
+/// Every arm answers the same pair [`run`] would have built inline, so the
+/// operand refusals each path can raise stay in their original order.
+fn select<'a>(
+    matches: &'a ArgMatches,
+    contract: &crate::cli::Contract,
+    lane_environment: Option<OsString>,
+    key: Option<&'a steer::Key>,
+) -> Result<(SelectedCommand<'a>, Option<CanonicalUuid>), Outcome<CommandAnswer>> {
+    match contract.path {
         ["steer"] => {
-            let lane = match uuid_operand(matches, "LANE", "steer::lane-invalid") {
-                Ok(lane) => lane,
-                Err(outcome) => return outcome,
-            };
+            let lane = uuid_operand(matches, "LANE", "steer::lane-invalid")?;
             let message = matches
                 .get_one::<String>("TEXT")
                 .expect("clap requires steering text");
-            (SelectedCommand::SteerSend { lane, message }, None)
+            Ok((SelectedCommand::SteerSend { lane, message }, None))
         }
         ["steer", "cancel"] => {
-            let directive = match uuid_operand(matches, "ID", "steer::directive-invalid") {
-                Ok(directive) => directive,
-                Err(outcome) => return outcome,
-            };
-            (SelectedCommand::SteerCancel { directive }, None)
+            let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;
+            Ok((SelectedCommand::SteerCancel { directive }, None))
         }
         ["steer", "recover"] => {
-            let directive = match uuid_operand(matches, "ID", "steer::directive-invalid") {
-                Ok(directive) => directive,
-                Err(outcome) => return outcome,
-            };
-            (SelectedCommand::SteerRecover { directive }, None)
+            let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;
+            Ok((SelectedCommand::SteerRecover { directive }, None))
         }
         ["inbox"] => {
-            let lane = match optional_uuid_operand(matches, "LANE", "steer::lane-invalid") {
-                Ok(lane) => lane,
-                Err(outcome) => return outcome,
-            };
-            let lane_context = match lane_context(lane_environment) {
-                Ok(lane) => lane,
-                Err(outcome) => return outcome,
-            };
-            (SelectedCommand::SteerInbox { lane }, lane_context)
+            let lane = optional_uuid_operand(matches, "LANE", "steer::lane-invalid")?;
+            Ok((
+                SelectedCommand::SteerInbox { lane },
+                lane_context(lane_environment)?,
+            ))
         }
         ["hook"] => {
-            let lane_context = match lane_context(lane_environment) {
-                Ok(Some(lane)) => Some(lane),
-                Ok(None) => {
-                    return refusal(
-                        "steer::lane-context-absent",
-                        None,
-                        "hook requires the SPICE_LANE identity of an activated lane shell",
-                    );
-                }
-                Err(outcome) => return outcome,
+            let Some(lane) = lane_context(lane_environment)? else {
+                return Err(refusal(
+                    "steer::lane-context-absent",
+                    None,
+                    "hook requires the SPICE_LANE identity of an activated lane shell",
+                ));
             };
-            (SelectedCommand::SteerInbox { lane: None }, lane_context)
+            Ok((SelectedCommand::SteerInbox { lane: None }, Some(lane)))
         }
         ["ack"] => {
-            let text = matches
-                .get_one::<String>("KEY")
-                .expect("clap requires an acknowledgment key");
-            let key = match text.parse::<steer::Key>() {
-                Ok(key) => key,
-                Err(error) => {
-                    return refusal("steer::key-invalid", Some(text.clone()), &error.to_string());
-                }
-            };
+            let key = key.expect("the ack contract parsed its key above");
             let disposition = if matches.get_flag("decline") {
                 Disposition::Declined
             } else {
                 Disposition::Acked
             };
-            let lane_context = match lane_context(lane_environment) {
-                Ok(lane) => lane,
-                Err(outcome) => return outcome,
-            };
-            return execute_steering(
-                state.canvas(),
-                contract,
-                SelectedCommand::SteerAck {
-                    key: &key,
-                    disposition,
-                },
-                lane_context,
-            );
+            Ok((
+                SelectedCommand::SteerAck { key, disposition },
+                lane_context(lane_environment)?,
+            ))
         }
-        _ => {
-            return environment_fault(
-                "steer::dispatch-invalid",
-                "the steering adapter received another CLI contract",
-            );
-        }
-    };
-    execute_steering(state.canvas(), contract, selected, lane_context)
+        _ => Err(environment_fault(
+            "steer::dispatch-invalid",
+            "the steering adapter received another CLI contract",
+        )),
+    }
 }
 
 fn lane_context(value: Option<OsString>) -> Result<Option<CanonicalUuid>, Outcome<CommandAnswer>> {
