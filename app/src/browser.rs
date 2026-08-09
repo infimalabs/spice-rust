@@ -43,7 +43,7 @@ use clock::WallClock;
 use connection::{request_external_speech, run_surface};
 use view::{CanvasRender, render_canvas};
 use watchband::ComposerAction;
-use watchband::{ComposerDrafts, LineageControlAction, LineageControls, LineageMode};
+use watchband::{ComposerDrafts, LineageControlAction, LineageControls};
 
 /// Source identity injected by `cargo xtask app` and verified before publish.
 const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY") {
@@ -448,7 +448,6 @@ fn canvas_app() -> Html {
     let surface = use_state(SurfaceData::default);
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
-    let lineage_mode = use_state(|| LineageMode::Compose);
     let lineage_controls = use_reducer(LineageControls::default);
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let submission_status = use_state(SubmissionStatus::default);
@@ -512,7 +511,6 @@ fn canvas_app() -> Html {
         surface: &surface,
         axis: &axis,
         mosaic: &mosaic,
-        lineage_mode: &lineage_mode,
         lineage_controls: &lineage_controls,
         composer_drafts: &composer_drafts,
         submissions: &submissions,

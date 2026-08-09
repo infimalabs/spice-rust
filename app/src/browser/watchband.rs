@@ -69,8 +69,9 @@ fn carries_lineage(transfer: &web_sys::DataTransfer) -> bool {
 }
 
 /// The four one-click views of one live team.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum LineageMode {
+    #[default]
     Compose,
     Filters,
     Metrics,
@@ -100,7 +101,6 @@ pub(super) fn render_lineage(
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
-    mode: &UseStateHandle<LineageMode>,
     lineage_controls: &UseReducerHandle<LineageControls>,
     controls: &view::AgentControls,
 ) -> Html {
@@ -138,7 +138,7 @@ pub(super) fn render_lineage(
     let can_arrange_lineages = runtime.offers(CommandKind::LineageArrange);
     let topology = watchband::topology(&lanes.lanes);
     if lanes.lanes.is_empty() {
-        return render_empty_fleet(runtime, lanes.epoch, mode, controls);
+        return render_empty_fleet(runtime, lanes.epoch, lineage_controls, controls);
     }
     let render = FleetRender {
         runtime,
@@ -155,7 +155,7 @@ pub(super) fn render_lineage(
         lineage_controls,
         controls,
     };
-    render_populated_fleet(&lanes.lanes, &standings, mode, &render)
+    render_populated_fleet(&lanes.lanes, &standings, &render)
 }
 
 struct FleetRender<'a> {
@@ -177,7 +177,7 @@ struct FleetRender<'a> {
 fn render_empty_fleet(
     runtime: &CanvasRuntime,
     epoch: CanonicalUuid,
-    mode: &UseStateHandle<LineageMode>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
     controls: &view::AgentControls,
 ) -> Html {
     let empty_lineage = crate::runtime::LaneRow {
@@ -185,17 +185,25 @@ fn render_empty_fleet(
         subscription: wire::intent::LineageLife::Steer,
         members: Vec::new(),
     };
+    let mode = lineage_controls.empty_mode();
     html! {
         <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic">
             <section class="team-surface" data-lineage-weight="1">
-                {render_lineage_toolbar(mode, &empty_lineage, &[], false)}
-                <div class="team-pane" data-team-mode={(**mode).label()}>
-                    {match **mode {
+                {render_lineage_toolbar(
+                    mode,
+                    None,
+                    lineage_controls,
+                    &empty_lineage,
+                    &[],
+                    false,
+                )}
+                <div class="team-pane" data-team-mode={mode.label()}>
+                    {match mode {
                         LineageMode::Compose => {
                             empty("No agents are assigned. Open Info to add one.")
                         }
                         LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => {
-                            render_details(runtime, &empty_lineage, &[], **mode, controls)
+                            render_details(runtime, &empty_lineage, &[], mode, controls)
                         }
                     }}
                 </div>
@@ -207,7 +215,6 @@ fn render_empty_fleet(
 fn render_populated_fleet(
     lanes: &[crate::runtime::LaneRow],
     standings: &[watchband::Standing],
-    mode: &UseStateHandle<LineageMode>,
     render: &FleetRender<'_>,
 ) -> Html {
     html! {
@@ -218,6 +225,9 @@ fn render_populated_fleet(
                     .filter(|standing| standing.lineage_id == lineage.lane)
                     .cloned()
                     .collect::<Vec<_>>();
+                let mode = render.lineage_controls
+                    .current(lineage.lane, lineage.subscription)
+                    .mode;
                 html! {
                     <section
                         class="team-surface"
@@ -233,12 +243,14 @@ fn render_populated_fleet(
                     >
                         {render_lineage_toolbar(
                             mode,
+                            Some(lineage.lane),
+                            render.lineage_controls,
                             lineage,
                             &lineage_standings,
                             render.can_arrange_lineages,
                         )}
-                        <div class="team-pane" data-team-mode={(**mode).label()}>
-                            {match **mode {
+                        <div class="team-pane" data-team-mode={mode.label()}>
+                            {match mode {
                                 LineageMode::Compose => render_compose(
                                     render.runtime,
                                     lineage,
@@ -264,7 +276,7 @@ fn render_populated_fleet(
                                             render.runtime,
                                             lineage,
                                             &lineage_standings,
-                                            **mode,
+                                            mode,
                                             render.controls,
                                         )}
                                     </>
@@ -382,7 +394,9 @@ fn lineage_drop(
 }
 
 fn render_lineage_toolbar(
-    mode: &UseStateHandle<LineageMode>,
+    mode: LineageMode,
+    mode_lineage: Option<CanonicalUuid>,
+    lineage_controls: &UseReducerHandle<LineageControls>,
     lineage: &crate::runtime::LaneRow,
     standings: &[Standing],
     can_arrange: bool,
@@ -411,8 +425,9 @@ fn render_lineage_toolbar(
             </span>
             <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
                 {for LineageMode::ALL.map(|candidate| {
-                    let selected = candidate == **mode;
-                    let choose = mode.clone();
+                    let selected = candidate == mode;
+                    let choose = lineage_controls.clone();
+                    let lineage = mode_lineage;
                     let badge = mode_badge(candidate, standings);
                     html! {
                         <button
@@ -420,7 +435,12 @@ fn render_lineage_toolbar(
                             role="tab"
                             class={classes!("team-mode", selected.then_some("selected"))}
                             aria-selected={selected.to_string()}
-                            onclick={Callback::from(move |_| choose.set(candidate))}
+                            onclick={Callback::from(move |_| {
+                                choose.dispatch(LineageControlAction::SetMode {
+                                    lineage,
+                                    mode: candidate,
+                                });
+                            })}
                         >
                             <span>{candidate.label()}</span>
                             if let Some(badge) = badge {
@@ -436,8 +456,14 @@ fn render_lineage_toolbar(
                 aria-label="Team and agent details"
                 title="Team and agent details"
                 onclick={{
-                    let mode = mode.clone();
-                    Callback::from(move |_| mode.set(LineageMode::Info))
+                    let choose = lineage_controls.clone();
+                    let lineage = mode_lineage;
+                    Callback::from(move |_| {
+                        choose.dispatch(LineageControlAction::SetMode {
+                            lineage,
+                            mode: LineageMode::Info,
+                        });
+                    })
                 }}
             ><span aria-hidden="true">{"☰"}</span></button>
         </header>

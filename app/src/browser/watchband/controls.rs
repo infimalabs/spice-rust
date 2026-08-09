@@ -88,6 +88,7 @@ impl LineageSpeech {
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct LineageControl {
+    pub(super) mode: LineageMode,
     pub(super) speech: LineageSpeech,
     pub(super) life: LineageLife,
     pub(super) pending_life: bool,
@@ -98,6 +99,7 @@ pub(super) struct LineageControl {
 impl Default for LineageControl {
     fn default() -> Self {
         Self {
+            mode: LineageMode::Compose,
             speech: LineageSpeech::Speak,
             life: LineageLife::Steer,
             pending_life: false,
@@ -109,9 +111,16 @@ impl Default for LineageControl {
 
 /// Per-team control state retained across Mosaic redraws.
 #[derive(Clone, Default, PartialEq, Eq)]
-pub(crate) struct LineageControls(BTreeMap<CanonicalUuid, LineageControl>);
+pub(crate) struct LineageControls {
+    lineages: BTreeMap<CanonicalUuid, LineageControl>,
+    empty_mode: LineageMode,
+}
 
 pub(crate) enum LineageControlAction {
+    SetMode {
+        lineage: Option<CanonicalUuid>,
+        mode: LineageMode,
+    },
     SetSpeech {
         lineage: CanonicalUuid,
         authoritative_life: wire::intent::LineageLife,
@@ -138,6 +147,7 @@ impl Reducible for LineageControls {
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         let mut next = (*self).clone();
         match action {
+            LineageControlAction::SetMode { lineage, mode } => next.set_mode(lineage, mode),
             LineageControlAction::SetSpeech {
                 lineage,
                 authoritative_life,
@@ -165,7 +175,7 @@ impl LineageControls {
         lineage: CanonicalUuid,
         authoritative_life: wire::intent::LineageLife,
     ) -> LineageControl {
-        self.0
+        self.lineages
             .get(&lineage)
             .cloned()
             .unwrap_or_else(|| LineageControl {
@@ -175,13 +185,25 @@ impl LineageControls {
             })
     }
 
+    pub(super) const fn empty_mode(&self) -> LineageMode {
+        self.empty_mode
+    }
+
+    fn set_mode(&mut self, lineage: Option<CanonicalUuid>, mode: LineageMode) {
+        if let Some(lineage) = lineage {
+            self.lineages.entry(lineage).or_default().mode = mode;
+        } else {
+            self.empty_mode = mode;
+        }
+    }
+
     fn set_speech(
         &mut self,
         lineage: CanonicalUuid,
         authoritative_life: wire::intent::LineageLife,
         speech: LineageSpeech,
     ) {
-        self.0
+        self.lineages
             .entry(lineage)
             .or_insert_with(|| LineageControl {
                 life: authoritative_life.into(),
@@ -197,11 +219,14 @@ impl LineageControls {
         authoritative_life: wire::intent::LineageLife,
         life: LineageLife,
     ) {
-        let state = self.0.entry(lineage).or_insert_with(|| LineageControl {
-            life: authoritative_life.into(),
-            authoritative_life: authoritative_life.into(),
-            ..LineageControl::default()
-        });
+        let state = self
+            .lineages
+            .entry(lineage)
+            .or_insert_with(|| LineageControl {
+                life: authoritative_life.into(),
+                authoritative_life: authoritative_life.into(),
+                ..LineageControl::default()
+            });
         state.life = life;
         state.pending_life = true;
         state.issue = None;
@@ -210,10 +235,25 @@ impl LineageControls {
     /// Reconcile a lane table. Ordinary reads cannot overtake an in-flight
     /// selection; the command's own authoritative reply can.
     fn sync_lanes(&mut self, answer: &wire::intent::LaneAnswer, settle: bool) {
+        // A seat submitted from the empty Info view must keep that view when
+        // its first real surface arrives. The resident's authoritative
+        // subscription order resolves the transition: its first lineage
+        // inherits the empty selection exactly once, and every sibling keeps
+        // the explicit Compose default.
+        if self.lineages.is_empty()
+            && self.empty_mode != LineageMode::Compose
+            && let Some(subscription) = answer.subscriptions.first()
+        {
+            self.lineages
+                .entry(subscription.lineage_id)
+                .or_default()
+                .mode = self.empty_mode;
+            self.empty_mode = LineageMode::Compose;
+        }
         for subscription in &answer.subscriptions {
             let lineage = subscription.lineage_id;
             let life = subscription.policy.into();
-            let state = self.0.entry(lineage).or_default();
+            let state = self.lineages.entry(lineage).or_default();
             state.authoritative_life = life;
             if settle || !state.pending_life {
                 state.life = life;
@@ -226,7 +266,7 @@ impl LineageControls {
     }
 
     fn settle_issue(&mut self, lineage: CanonicalUuid, issue: String) {
-        let state = self.0.entry(lineage).or_default();
+        let state = self.lineages.entry(lineage).or_default();
         state.life = state.authoritative_life;
         state.pending_life = false;
         state.issue = Some(issue);
