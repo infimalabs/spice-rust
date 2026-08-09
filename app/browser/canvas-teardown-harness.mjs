@@ -15,7 +15,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { configureFixture, reply, startResident } from "./canvas-fixture.mjs";
+import { launchBrowser } from "./headless-launch.mjs";
 import { ownFixture, recordedVendorPids } from "./canvas-lifecycle.mjs";
+import { descendantPids } from "./canvas-shards.mjs";
 
 /// How the run ends, chosen by the parent to cover every teardown path.
 ///
@@ -57,6 +59,7 @@ const heartbeat = setInterval(() => {
   if (process.ppid === 1) endIdleWait();
 }, 1_000);
 
+let browser;
 try {
   const worktrees = await configureFixture(fixture, linkedRoot, 1);
   owner.ownResident(await startResident(fixture));
@@ -83,6 +86,17 @@ try {
     await new Promise((wake) => setTimeout(wake, 50));
   }
   assert.ok(vendors.length > 0, "the fixture launched at least one vendor stand-in");
+  const beforeBrowser = new Set(descendantPids());
+  browser = await launchBrowser();
+  await new Promise((wake) => setTimeout(wake, 100));
+  const firstBrowserSnapshot = new Set(
+    descendantPids().filter((pid) => !beforeBrowser.has(pid)),
+  );
+  await new Promise((wake) => setTimeout(wake, 500));
+  const browsers = descendantPids().filter(
+    (pid) => firstBrowserSnapshot.has(pid) && !beforeBrowser.has(pid),
+  );
+  assert.ok(browsers.length > 0, "the fixture launched at least one browser descendant");
   // The resident is named alongside its occupants because it is the other half
   // of what leaks. A parent that only knew the stand-in pids could watch every
   // one of them go and still have left a `spice up` behind.
@@ -93,6 +107,7 @@ try {
     fixture,
     linkedRoot,
     resident,
+    browsers,
     vendors,
   });
   if (mode === "mute") {
@@ -113,5 +128,9 @@ try {
   await new Promise((resolve) => { endIdleWait = resolve; });
 } finally {
   clearInterval(heartbeat);
-  await owner.cleanup();
+  try {
+    if (browser) await browser.close();
+  } finally {
+    await owner.cleanup();
+  }
 }

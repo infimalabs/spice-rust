@@ -4,10 +4,10 @@
 // its symptom is not a wrong answer but a process that is still there after the
 // answer was given. Asserting on it needs a fixture that really launched a
 // vendor and a run that really ended, so every scenario below drives the real
-// fixture in a child process (`canvas-teardown-harness.mjs`) and then ends that
-// child one of the three ways a run actually ends badly: interrupted, failed,
-// and never ready. The third is the one this file used to leak from itself --
-// a launch that gives up has a live child nobody downstream ever receives.
+// fixture in a child process (`canvas-teardown-harness.mjs`) and then covers
+// both catchable signals, a deadline, an assertion failure, failed readiness,
+// and parent death. Failed readiness is the path this file used to leak from
+// itself: a launch that gives up has a live child nobody downstream receives.
 //
 // Every scenario watches the *exact* pids the stand-ins enrolled for themselves.
 // Nothing here searches for processes by name. That is not only a safety rule
@@ -121,11 +121,12 @@ async function launchHarness(mode, throughIntermediate = false) {
   try {
     const ready = await Promise.race([announced, failedEarly, timeout]);
     assert.ok(Number.isInteger(ready.harness), "the harness announces its own pid");
+    assert.ok(ready.browsers.length > 0, "the harness announces its browser descendants");
     assert.ok(ready.vendors.length > 0, "the harness announces the stand-ins it launched");
     assert.deepEqual(
-      ready.vendors.filter((pid) => !alive(pid)),
+      [...ready.browsers, ...ready.vendors].filter((pid) => !alive(pid)),
       [],
-      "every announced stand-in is running before the run is ended",
+      "every announced browser and stand-in is running before the run is ended",
     );
     return { child, ready, diagnostics: () => diagnostics };
   } catch (failure) {
@@ -208,7 +209,7 @@ function signal(target, name) {
 /// its occupants per red run, on a machine where eleven worktrees run batteries
 /// at once. Never raises, because the failure being reported is the scenario's.
 async function reapResidue(ready) {
-  const reported = [ready.harness, ready.resident, ...ready.vendors];
+  const reported = [ready.harness, ready.resident, ...ready.browsers, ...ready.vendors];
   const owned = reported.filter((pid) => Number.isInteger(pid) && pid > 1);
   for (const name of ["SIGTERM", "SIGKILL"]) {
     const living = owned.filter(alive);
@@ -237,30 +238,27 @@ async function assertGone(path, message) {
   assert.equal(code, "ENOENT", message);
 }
 
-/// A run stopped by a catchable signal still reaps, and still reports stopping.
-///
-/// SIGINT stands for the whole class the fixture promises to survive. It is the
-/// one an operator actually sends, and before this it did nothing but kill the
-/// spec: the `finally` never ran, so the resident and every stand-in under it
-/// were left behind with no owner and reparented to pid 1.
-async function assertInterruptedRunReaps() {
+/// A signalled or deadline-stopped run still reaps and still reports stopping.
+async function assertTerminatedRunReaps(signalName, reason, delayMs = 0) {
   const { child, ready, diagnostics } = await launchHarness("idle");
-  child.kill("SIGINT");
+  if (delayMs > 0) await new Promise((wake) => setTimeout(wake, delayMs));
+  child.kill(signalName);
   const [code, ended] = await exits(child);
   try {
-    const living = await survivors(ready.vendors, REAP_MS);
+    const owned = [ready.resident, ...ready.browsers, ...ready.vendors];
+    const living = await survivors(owned, REAP_MS);
     assert.deepEqual(
       living,
       [],
-      `an interrupted fixture reaps every stand-in it launched: ${diagnostics()}`,
+      `a ${reason} fixture reaps its resident, browser, and vendors: ${diagnostics()}`,
     );
     // The interruption must survive its own cleanup. A teardown that swallowed
     // the signal and exited 0 would leave a caller -- a shell, a CI runner, the
     // verifier -- believing an interrupted run had succeeded.
-    assert.equal(
-      ended,
-      "SIGINT",
-      `an interrupted run still terminates by its signal, not code ${code}`,
+    const conventionalCode = signalName === "SIGINT" ? 130 : 143;
+    assert.ok(
+      ended === signalName || (ended === null && code === conventionalCode),
+      `a ${reason} run reports ${signalName}, not signal ${ended} code ${code}`,
     );
     await assertGone(ready.fixture, "the fixture directory is removed");
     await assertGone(ready.linkedRoot, "the linked worktree root is removed");
@@ -278,11 +276,11 @@ async function assertFailedRunReaps() {
   const { child, ready, diagnostics } = await launchHarness("fail");
   const [code, ended] = await exits(child);
   try {
-    const living = await survivors(ready.vendors, REAP_MS);
+    const living = await survivors([ready.resident, ...ready.browsers, ...ready.vendors], REAP_MS);
     assert.deepEqual(
       living,
       [],
-      `a failed fixture reaps every stand-in it launched: ${diagnostics()}`,
+      `a failed fixture reaps its resident, browser, and vendors: ${diagnostics()}`,
     );
     assert.equal(ended, null, "a failed run ends by its own exit rather than a signal");
     assert.notEqual(code, 0, "a failed run keeps reporting failure after cleaning up");
@@ -342,7 +340,9 @@ async function assertFailedLaunchReaps() {
   );
   const ready = JSON.parse(announcement);
   try {
-    const living = await survivors([ready.resident, ...ready.vendors], REAP_MS);
+    const living = await survivors(
+      [ready.resident, ...ready.browsers, ...ready.vendors], REAP_MS,
+    );
     assert.deepEqual(
       living,
       [],
@@ -370,7 +370,7 @@ async function assertParentDeathReaps() {
       "SIGKILL",
       `the intermediate parent is killed rather than exiting with code ${code}`,
     );
-    const owned = [ready.harness, ready.resident, ...ready.vendors];
+    const owned = [ready.harness, ready.resident, ...ready.browsers, ...ready.vendors];
     const living = await survivors(owned, REAP_MS);
     assert.deepEqual(
       living,
@@ -386,7 +386,9 @@ async function assertParentDeathReaps() {
 
 /// Prove the fixture owns its processes across every way a run ends badly.
 export async function assertFixtureTeardownReaps() {
-  await assertInterruptedRunReaps();
+  await assertTerminatedRunReaps("SIGINT", "SIGINT-interrupted");
+  await assertTerminatedRunReaps("SIGTERM", "SIGTERM-interrupted");
+  await assertTerminatedRunReaps("SIGTERM", "timed-out", 25);
   await assertFailedRunReaps();
   await assertFailedLaunchReaps();
   await assertParentDeathReaps();
