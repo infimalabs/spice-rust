@@ -1,4 +1,7 @@
 //! Steering command transitions and transcript-backed disposition.
+//!
+//! Every transition in this module addresses the original directive. Delivery
+//! repair remains a projection concern and never mints a replacement identity.
 
 use super::*;
 
