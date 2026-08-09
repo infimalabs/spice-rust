@@ -403,7 +403,7 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   );
   await primarySpeech.fill("0");
 
-  await assertAgentRenewalRequest(primarySurface, fixture);
+  await assertAgentRenewalRequest(page, primarySurface, fixture);
 
   const policyMessage = "drain lifetime is task policy, not occupant teardown";
   await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);

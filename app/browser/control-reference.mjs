@@ -359,7 +359,7 @@ async function assertReportedTaskChip(surface) {
 /// The operator agent card carries its own control: renewing this agent has to
 /// name both the action and the request it sends, stay on the exact agent lane
 /// it was drawn for, and reach the resident rather than only the message list.
-export async function assertAgentRenewalRequest(surface, fixture) {
+export async function assertAgentRenewalRequest(page, surface, fixture) {
   const renewalRequest = "Renew your current task lease now.";
   const menu = surface
     .locator(
@@ -421,13 +421,14 @@ export async function assertAgentRenewalRequest(surface, fixture) {
   );
   await focus.click();
   assert.equal(await menu.getAttribute("open"), null, "focusing the editor closes its overlay");
-  assert.equal(
-    await textbox.evaluate(async (textarea) => {
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      return document.activeElement === textarea;
-    }),
-    true,
+  const textboxId = await textbox.getAttribute("id");
+  assert.ok(textboxId, "the primary message editor has a stable focus target");
+  await waitForPageFunction(
+    page,
     "the focus action returns interaction to this agent's message editor",
+    TRANSITION_MS,
+    (id) => document.activeElement?.id === id,
+    textboxId,
   );
 
   await trigger.click();
