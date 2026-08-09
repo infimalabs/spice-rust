@@ -75,8 +75,8 @@ contracts require it.
 are durable before semantic recognition; a target manifest exists before
 proof names an artifact; receipts exist before a finding is presented as
 settled. Release one carries only evidence needed by a shipped story. A
-possible surface without present evidence belongs in `LATER.md` with one
-observable trigger, never as dormant configuration, schema, or code.
+possible surface without present evidence stays absent until one observable
+trigger arrives, never as dormant configuration, schema, or code.
 
 ## The decision records
 
@@ -116,7 +116,7 @@ This boundary states what the machine can honestly enforce. Processes sharing
 an unrestricted user can inspect one another's files and memory through the
 ordinary operating environment, so stronger claims would turn token names
 into security theater. A second Unix identity running a lane is the evidence
-trigger for adversarial isolation in `LATER.md`.
+trigger that would reopen adversarial isolation.
 
 The resolution deletes ambient actor claims, caller-selected authority,
 bearer strings treated as a user boundary, and policy paths that imply one
