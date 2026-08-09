@@ -71,7 +71,7 @@ const CASES: &[Case] = &[
     case("gate receipt", &["gate", "receipt"]),
     case("proof", &["proof"]),
     case("proof replay", &["proof", "replay"]),
-    case("release notes", &["release", "notes", "missing"]),
+    case("release notes", &["release", "notes"]),
     case("up", &["up"]),
     case("down", &["down"]),
     case("board", &["board"]),

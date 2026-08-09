@@ -379,7 +379,7 @@ impl Fixture {
         let invocations = root.join("battery-invocations");
         let refuse_marker = root.join("refuse-battery");
         let python_marker = root.join("python-started");
-        fs::create_dir_all(repository.join(".git/.spice")).expect("create fixture repository");
+        fs::create_dir_all(repository.join(".git/.spice-rs")).expect("create fixture repository");
         fs::create_dir_all(&tools).expect("create fixture tools");
 
         let target = proof::compiled_target().expect("fixture runs only on a proof release target");
@@ -414,7 +414,7 @@ impl Fixture {
     }
 
     fn proof_root(&self) -> PathBuf {
-        self.repository.join(".git/.spice/proof")
+        self.repository.join(".git/.spice-rs/proof")
     }
 
     fn receipt_path(&self) -> PathBuf {
@@ -453,7 +453,7 @@ impl Fixture {
             toml::Value::String(container.display().to_string()),
             toml::Value::String(runner.display().to_string())
         );
-        fs::write(self.repository.join(".git/.spice/config.toml"), config)
+        fs::write(self.repository.join(".git/.spice-rs/config.toml"), config)
             .expect("write local proof configuration");
     }
 
@@ -507,11 +507,11 @@ impl Fixture {
     fn assert_daemonless(&self) {
         assert!(!self.python_marker.exists(), "no Python shim was started");
         for path in [
-            ".git/.spice/data",
-            ".git/.spice/resident",
-            ".git/.spice/canvas",
-            ".git/.spice/degraded",
-            ".git/.spice/tape",
+            ".git/.spice-rs/data",
+            ".git/.spice-rs/resident",
+            ".git/.spice-rs/canvas",
+            ".git/.spice-rs/degraded",
+            ".git/.spice-rs/tape",
         ] {
             assert!(
                 !self.repository.join(path).exists(),

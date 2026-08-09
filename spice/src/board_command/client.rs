@@ -133,6 +133,7 @@ fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandA
             &board.principal,
             subscription,
             board.allocation_band,
+            board.recent_cell.as_ref(),
         )
         .ok_or_else(|| {
             refusal(

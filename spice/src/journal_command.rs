@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::cli::Contract;
 use crate::journal_lock::JournalLock;
 use fold::{
-    AnswerContent, Cursor, FoldId, Horizon, INVENTORY, Materialization, Reducer, Reduction, Source,
-    Store, TaskEffortReducer, select_task_effort, task_effort_answer,
+    FoldId, INVENTORY, Materialization, Source, Store, TaskEffortReducer, select_task_effort,
+    task_effort_answer,
 };
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
@@ -407,15 +407,7 @@ fn replay_inner(
     })?;
     let mut store = Store::open(path).map_err(fold_failure)?;
     for fold in folds {
-        if *fold == FoldId::TaskEffort {
-            store
-                .read_or_rebuild_snapshot(&snapshot, &TaskEffortReducer)
-                .map_err(fold_failure)?;
-        } else {
-            store
-                .read_or_rebuild_snapshot(&snapshot, &AuthorityReducer { fold: *fold })
-                .map_err(fold_failure)?;
-        }
+        rebuild_registered_fold(&mut store, &snapshot, *fold)?;
     }
     Ok((
         ReplyPosition::Snapshot(cursor),
@@ -425,60 +417,23 @@ fn replay_inner(
     ))
 }
 
-struct AuthorityReducer {
+/// Exhaustive typed replay dispatch for the closed fold inventory.
+///
+/// Adding a registry row without its operational reducer makes this match fail
+/// to compile. There is deliberately no generic fact-bag branch.
+fn rebuild_registered_fold(
+    store: &mut Store,
+    snapshot: &journal::FactSnapshot,
     fold: FoldId,
-}
-
-impl Reducer for AuthorityReducer {
-    fn fold(&self) -> FoldId {
-        self.fold
-    }
-
-    fn version(&self) -> u32 {
-        1
-    }
-
-    fn rebuild(&self, facts: &journal::FactSnapshot) -> Result<Reduction, String> {
-        let definition = INVENTORY.definition(self.fold);
-        let selected = facts
-            .facts()
-            .iter()
-            .filter(|envelope| {
-                definition
-                    .answer_content
-                    .iter()
-                    .any(|content| match content {
-                        AnswerContent::Fact(kind) => *kind == envelope.fact.kind(),
-                        AnswerContent::Facts(plane) => plane.contains(envelope.fact.kind()),
-                        AnswerContent::Head(_) => false,
-                    })
-            })
-            .collect::<Vec<_>>();
-        let payload = serde_json::json!({
-            "answer": definition.answer,
-            "sources": definition
-                .sources
-                .iter()
-                .copied()
-                .map(Source::provenance)
-                .collect::<Vec<_>>(),
-            "facts": selected,
-        });
-        if definition
-            .sources
-            .iter()
-            .all(|source| matches!(source, Source::Fact(_) | Source::Facts(_)))
-        {
-            Ok(Reduction::complete(facts, payload))
-        } else {
-            Reduction::bounded(
-                facts.horizon().map_or_else(Cursor::empty, Cursor::at),
-                Horizon::empty(),
-                payload,
-            )
-            .map_err(|error| format!("{error:?}"))
+) -> Result<(), Failure> {
+    match fold {
+        FoldId::TaskEffort => {
+            store
+                .read_or_rebuild_snapshot(snapshot, &TaskEffortReducer)
+                .map_err(fold_failure)?;
         }
     }
+    Ok(())
 }
 
 fn current_fold_states(store: &Store, authority: Seq) -> Result<Vec<FoldState>, Failure> {
@@ -514,9 +469,7 @@ fn missing_fold_states() -> Vec<FoldState> {
 
 fn fold_state(fold: FoldId, materialization: Option<&Materialization>) -> FoldState {
     let definition = INVENTORY.definition(fold);
-    let recovery = definition
-        .recovery_command()
-        .expect("the release-one fold inventory assigns replay recovery");
+    let recovery = definition.recovery_command();
     FoldState {
         fold: fold.as_str().to_owned(),
         generation: materialization.map(|state| state.generation),
@@ -677,7 +630,7 @@ fn state_failure(error: StateError) -> Failure {
         | StateError::NotRegularFile { .. }
         | StateError::RetiredState { .. } => Failure::refusal(
             "repository::state-path-refused",
-            "real fixed components beneath the canonical Git-common .spice directory",
+            "real fixed components beneath the canonical Git-common .spice-rs directory",
             error.to_string(),
             format!(
                 "follow the named archive/remove action or repair the malformed state component at {}",

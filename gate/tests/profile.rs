@@ -45,7 +45,7 @@ fn production_contract_distinguishes_clean_and_camped_complete_populations() {
     assert_eq!(report.distributions[0].near, 3);
     assert_eq!(tracked_bytes(&camped), camped_before);
     assert!(
-        !camped.path(".spice").exists(),
+        !camped.path(".spice-rs").exists(),
         "the profiles wrote a journal"
     );
 }

@@ -3,17 +3,22 @@ use super::*;
 /// The one logical stream a lane's selected capture writes.
 const INGEST_STREAM: &str = "session";
 
-/// Decoder dialect owned by one vendor, absent when the vendor has none.
+/// Declared value owned by one vendor, absent when the registry has none.
 ///
 /// The map is closed and shared: a vendor that can be launched is a vendor
 /// whose transcript can be read, so the launch door and the ingestion door must
 /// never disagree about which spellings those are.
-pub(super) fn ingest_dialect(vendor: &wire::Name) -> Option<listen::Dialect> {
-    match vendor.as_str() {
-        "claude" => Some(listen::Dialect::Claude),
-        "codex" => Some(listen::Dialect::Codex),
-        _ => None,
-    }
+pub(super) fn ingest_vendor(vendor: &wire::Name) -> Option<&'static spice::extension::Vendor> {
+    let registry = spice::extension::registry()
+        .expect("compiled extension declarations are validated by the test gate");
+    ingest_vendor_from(&registry, vendor)
+}
+
+fn ingest_vendor_from(
+    registry: &spice::extension::Registry<'_>,
+    vendor: &wire::Name,
+) -> Option<&'static spice::extension::Vendor> {
+    registry.vendor(vendor.as_str())
 }
 
 /// Account every complete record the named lanes' tapes have gained.
@@ -103,7 +108,7 @@ fn ingest_lane_transcript(
     row: &wire::LaneResidency,
     at: Instant,
 ) -> Result<Option<journal::Applied>, String> {
-    let Some(dialect) = ingest_dialect(&row.vendor) else {
+    let Some(vendor) = ingest_vendor(&row.vendor) else {
         return Err(format!(
             "lane {} transcript not accounted: vendor {} has no decoder dialect",
             row.lane,
@@ -122,7 +127,7 @@ fn ingest_lane_transcript(
         vendor: row.vendor.clone(),
         stream: INGEST_STREAM.to_owned(),
         root,
-        dialect,
+        dialect: vendor.dialect(),
         actor: Actor::Spice,
         origin,
         at,
@@ -134,5 +139,44 @@ fn ingest_lane_transcript(
             "lane {} transcript not accounted: {error}",
             row.lane
         )),
+    }
+}
+
+#[cfg(test)]
+mod extension_tests {
+    use super::*;
+
+    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
+    const FIXTURE_VENDOR: spice::extension::Vendor =
+        spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration);
+    const FIXTURE_DECLARATIONS: &[spice::extension::Declaration] =
+        &[spice::extension::Declaration {
+            namespace: spice::extension::Namespace::Vendor,
+            name: "fixture",
+            provider: "fixture",
+            value: spice::extension::Value::Vendor(&FIXTURE_VENDOR),
+        }];
+
+    fn fixture_configuration(root: &spice::config::Root) -> vendor::LaunchValues<'_> {
+        let configured = root.vendor().codex();
+        vendor::LaunchValues {
+            binary: configured.binary().as_str(),
+            model: configured.model(),
+            effort: configured.effort(),
+            personality: configured.personality(),
+            fast_mode: Some(configured.fast_mode()),
+            auto_compact_window_tokens: None,
+        }
+    }
+
+    #[test]
+    fn a_third_declaration_reaches_live_ingest_without_another_mode_arm() {
+        let registry = spice::extension::Registry::discover(FIXTURE_DECLARATIONS)
+            .expect("third declaration is coherent");
+        let name = "fixture".parse().expect("fixture vendor name");
+        let selected = ingest_vendor_from(&registry, &name).expect("third declaration resolves");
+
+        assert_eq!(selected.name(), "fixture");
+        assert_eq!(selected.dialect(), listen::Dialect::Codex);
     }
 }

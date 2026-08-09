@@ -103,6 +103,8 @@ pub struct BoardStatement {
     pub handle: crate::TaskHandle,
     /// Stable task identity.
     pub uuid: crate::CanonicalUuid,
+    /// Fact that first placed this task in the queue.
+    pub queue_origin: crate::Seq,
     /// Longer authored context.
     #[serde(
         default,
@@ -130,6 +132,7 @@ impl From<&crate::TaskHead> for BoardStatement {
         Self {
             handle: statement.handle.clone(),
             uuid: statement.uuid,
+            queue_origin: statement.queue_origin,
             description: statement.description.clone(),
             acceptance: statement.acceptance.clone(),
             project: statement.project.clone(),
@@ -148,6 +151,7 @@ impl BoardStatement {
         crate::TaskHead {
             handle: self.handle.clone(),
             uuid: self.uuid,
+            queue_origin: self.queue_origin,
             title: title.to_owned(),
             description: self.description.clone(),
             acceptance: self.acceptance.clone(),
@@ -287,6 +291,13 @@ pub struct BoardAnswer {
     pub actor_route: BoardActorRoute,
     /// Urgency distance the resident captured as one equivalent allocation band.
     pub allocation_band: u64,
+    /// Principal's most recently claimed allocator cell, when history has one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub recent_cell: Option<crate::ClaimCell>,
     /// Complete current task evidence bundles in ascending handle order.
     pub tasks: Vec<BoardTask>,
     /// Current resident and lane head used by possession witnesses.

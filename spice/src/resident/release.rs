@@ -62,14 +62,25 @@ fn prepare_release_publish(
 ) -> Result<PreparedReleasePublish, Outcome<CommandAnswer>> {
     let app = crate::release_command::app_digest(&paths.worktree)
         .map_err(|error| release_refusal("release::app-stage-refused", &error))?;
-    let release = crate::release_command::admit_stage(&paths.stage, &app)
+    let release = crate::release_command::admit_stage(&paths.stage, &app, &publish.notes)
         .map_err(|error| release_refusal("release::manifest-refused", &error.to_string()))?;
-    if publish.key != *release.key() || publish.manifest != *release.manifest() {
+    if publish.key != *release.key()
+        || publish.manifest != *release.manifest()
+        || publish.notes != *release.notes()
+    {
         return Err(Outcome::Refusal(Refusal {
             reason: "release::plan-moved".to_owned(),
             witness: Some("publication-plan".to_owned()),
-            expected: Some(format!("{}:{}", release.key(), release.manifest())),
-            observed: Some(format!("{}:{}", publish.key, publish.manifest)),
+            expected: Some(format!(
+                "{}:{}:{}",
+                release.key(),
+                release.manifest(),
+                release.notes()
+            )),
+            observed: Some(format!(
+                "{}:{}:{}",
+                publish.key, publish.manifest, publish.notes
+            )),
             remedy: "preview the current sealed manifest and apply its exact key".to_owned(),
         }));
     }
@@ -116,12 +127,13 @@ fn propose_release_publish(
     )
     .map_err(typed_outcome)?;
     let guarded_release = release.clone();
+    let guarded_notes = release.notes().clone();
     let guarded_stage = paths.stage.clone();
     let guarded_worktree = paths.worktree.clone();
     proposal.guard(JournalGuard::new(move |read| {
         let app = crate::release_command::app_digest(&guarded_worktree)
             .map_err(|_| GuardError::refused("release::app-stage-moved"))?;
-        let current = crate::release_command::admit_stage(&guarded_stage, &app)
+        let current = crate::release_command::admit_stage(&guarded_stage, &app, &guarded_notes)
             .map_err(|_| GuardError::refused("release::manifest-moved"))?;
         if current != guarded_release {
             return Err(GuardError::refused("release::manifest-moved"));

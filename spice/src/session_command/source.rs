@@ -37,6 +37,16 @@ pub(crate) fn resolve_thread(
     value: &str,
     environment: &Environment,
 ) -> Result<ResolvedSource, Refusal> {
+    let registry = spice::extension::registry()
+        .expect("compiled extension declarations are validated by the test gate");
+    resolve_thread_from_registry(value, environment, &registry)
+}
+
+fn resolve_thread_from_registry(
+    value: &str,
+    environment: &Environment,
+    registry: &spice::extension::Registry<'_>,
+) -> Result<ResolvedSource, Refusal> {
     let thread = canonical_thread(value).ok_or_else(|| {
         refusal(
             "session::thread-invalid",
@@ -44,16 +54,14 @@ pub(crate) fn resolve_thread(
             "pass one dashed or dashless hexadecimal UUID thread identity",
         )
     })?;
-    let preferred = preferred_vendor(environment);
-    let vendors = match preferred {
-        Vendor::Claude => [Vendor::Claude, Vendor::Codex],
-        _ => [Vendor::Codex, Vendor::Claude],
-    };
+    let preferred = preferred_vendor(environment, registry);
+    let mut vendors = registry.vendors();
+    vendors.sort_by_key(|vendor| vendor.name() != preferred.name());
     let mut failures = Vec::new();
     for vendor in vendors {
         match find_thread(&thread, vendor, environment) {
             Ok(path) => {
-                return admit(path, vendor, Some(thread));
+                return admit(path, Vendor::from_vendor(vendor), Some(thread));
             }
             Err(detail) => failures.push(detail),
         }
@@ -69,35 +77,29 @@ pub(crate) fn resolve_thread(
 }
 
 fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Refusal> {
-    for (variable, raw, vendor) in [
-        (
-            "CODEX_THREAD_ID", // env-policy: allow
-            environment.codex_thread.as_ref(),
-            Vendor::Codex,
-        ),
-        (
-            "CLAUDE_CODE_SESSION_ID", // env-policy: allow
-            environment.claude_session.as_ref(),
-            Vendor::Claude,
-        ),
-    ] {
-        if let Some(raw) = raw {
+    for vendor_environment in &environment.vendors {
+        if let Some(raw) = &vendor_environment.identity {
             let value = raw.to_string_lossy();
             let thread = canonical_thread(&value).ok_or_else(|| {
                 refusal(
                     "session::ambient-thread-invalid",
-                    Some(variable.to_owned()),
+                    Some(vendor_environment.vendor.thread_id_environment().to_owned()),
                     "repair the live vendor thread identity or pass an explicit transcript path",
                 )
             })?;
-            let path = find_thread(&thread, vendor, environment).map_err(|detail| {
-                refusal(
-                    "session::ambient-transcript-unresolved",
-                    Some(thread.clone()),
-                    &format!("pass the transcript path explicitly; {detail}"),
-                )
-            })?;
-            return Ok(vec![admit(path, vendor, Some(thread))?]);
+            let path =
+                find_thread(&thread, vendor_environment.vendor, environment).map_err(|detail| {
+                    refusal(
+                        "session::ambient-transcript-unresolved",
+                        Some(thread.clone()),
+                        &format!("pass the transcript path explicitly; {detail}"),
+                    )
+                })?;
+            return Ok(vec![admit(
+                path,
+                Vendor::from_vendor(vendor_environment.vendor),
+                Some(thread),
+            )?]);
         }
     }
 
@@ -203,42 +205,62 @@ fn deduplicate(values: Vec<ResolvedSource>) -> Result<Vec<ResolvedSource>, Refus
     Ok(rows)
 }
 
-fn preferred_vendor(environment: &Environment) -> Vendor {
-    match environment
+fn preferred_vendor(
+    environment: &Environment,
+    registry: &spice::extension::Registry<'_>,
+) -> &'static spice::extension::Vendor {
+    let configured = environment
         .preferred_vendor
         .as_deref()
         .map(|value| value.to_string_lossy())
-        .as_deref()
-    {
-        Some("claude") => Vendor::Claude,
-        Some("codex") => Vendor::Codex,
-        _ if environment.claude_session.is_some() => Vendor::Claude,
-        _ => Vendor::Codex,
-    }
+        .and_then(|name| registry.vendor(name.as_ref()));
+    configured
+        .or_else(|| {
+            environment
+                .vendors
+                .iter()
+                .find(|row| row.identity.is_some())
+                .map(|row| row.vendor)
+        })
+        .or_else(|| registry.vendor("codex"))
+        .or_else(|| registry.vendors().into_iter().next())
+        .expect("thread resolution requires at least one declared vendor")
 }
 
-fn find_thread(thread: &str, vendor: Vendor, environment: &Environment) -> Result<PathBuf, String> {
-    match vendor {
-        Vendor::Codex => find_codex_thread(thread, environment),
-        Vendor::Claude => find_claude_thread(thread, environment),
-        Vendor::Unknown => Err("unknown vendor cannot own a thread".to_owned()),
-    }
-}
-
-fn find_codex_thread(thread: &str, environment: &Environment) -> Result<PathBuf, String> {
-    let root = environment_root(environment.codex_home.as_deref(), environment, ".codex")?;
-    let state = root.join("state_5.sqlite");
+fn find_thread(
+    thread: &str,
+    vendor: &'static spice::extension::Vendor,
+    environment: &Environment,
+) -> Result<PathBuf, String> {
+    let vendor_environment = environment
+        .vendors
+        .iter()
+        .find(|row| row.vendor == vendor)
+        .ok_or_else(|| format!("vendor {} has no captured environment", vendor.name()))?;
+    let layout = vendor.transcript_layout();
+    let root = environment_root(
+        vendor_environment.home.as_deref(),
+        environment,
+        layout.default_home,
+    )?;
     let mut state_failure = None;
-    if state.is_file() {
-        match codex_state_path(&state, thread) {
-            Ok(Some(path)) if path.is_file() => return Ok(path),
-            Ok(_) => {}
-            Err(error) => state_failure = Some(format!("{}: {error}", state.display())),
+    if let Some(vendor::TranscriptIndex::CodexStateV5 { file }) = layout.state_index {
+        let state = root.join(file);
+        if state.is_file() {
+            match codex_state_path(&state, thread) {
+                Ok(Some(path)) if path.is_file() => return Ok(path),
+                Ok(_) => {}
+                Err(error) => state_failure = Some(format!("{}: {error}", state.display())),
+            }
+        } else {
+            state_failure = Some(format!(
+                "missing {} state database {}",
+                vendor.label(),
+                state.display()
+            ));
         }
-    } else {
-        state_failure = Some(format!("missing Codex state database {}", state.display()));
     }
-    match find_named_transcript(&root.join("sessions"), thread) {
+    match find_named_transcript(&root.join(layout.sessions_directory), thread) {
         Ok(Some(path)) => return Ok(path),
         Ok(None) => {}
         Err(error) => {
@@ -249,7 +271,11 @@ fn find_codex_thread(thread: &str, environment: &Environment) -> Result<PathBuf,
         }
     }
     Err(state_failure.unwrap_or_else(|| {
-        format!("Codex thread {thread} is absent from state and session storage")
+        format!(
+            "{} thread {thread} is absent beneath {}",
+            vendor.name(),
+            root.join(layout.sessions_directory).display()
+        )
     }))
 }
 
@@ -273,19 +299,6 @@ fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, Strin
         .map(PathBuf::from)
         .map_err(|error| error.to_string())?;
     Ok(Some(path))
-}
-
-fn find_claude_thread(thread: &str, environment: &Environment) -> Result<PathBuf, String> {
-    let root = environment_root(environment.claude_home.as_deref(), environment, ".claude")?;
-    let projects = root.join("projects");
-    find_named_transcript(&projects, thread)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| {
-            format!(
-                "Claude thread {thread} is absent beneath {}",
-                projects.display()
-            )
-        })
 }
 
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -463,11 +476,34 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
     use super::{
-        Environment, SEARCH_DEPTH, find_claude_thread, find_codex_thread, find_named_transcript,
+        Environment, SEARCH_DEPTH, find_named_transcript, find_thread, resolve_thread_from_registry,
     };
+    use crate::session_command::VendorEnvironment;
 
     const THREAD: &str = "0123456789abcdef0123456789abcdef";
+    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
+    const FIXTURE_VENDOR: spice::extension::Vendor =
+        spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration);
+    const FIXTURE_DECLARATIONS: &[spice::extension::Declaration] =
+        &[spice::extension::Declaration {
+            namespace: spice::extension::Namespace::Vendor,
+            name: "fixture",
+            provider: "fixture",
+            value: spice::extension::Value::Vendor(&FIXTURE_VENDOR),
+        }];
     static FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    fn fixture_configuration(root: &spice::config::Root) -> vendor::LaunchValues<'_> {
+        let configured = root.vendor().codex();
+        vendor::LaunchValues {
+            binary: configured.binary().as_str(),
+            model: configured.model(),
+            effort: configured.effort(),
+            personality: configured.personality(),
+            fast_mode: Some(configured.fast_mode()),
+            auto_compact_window_tokens: None,
+        }
+    }
 
     struct Scratch(PathBuf);
 
@@ -495,22 +531,24 @@ mod tests {
 
     fn claude_environment(home: &Path) -> Environment {
         Environment {
-            codex_thread: None,
-            claude_session: None,
+            vendors: vec![VendorEnvironment {
+                vendor: &spice::extension::CLAUDE,
+                identity: None,
+                home: Some(home.to_path_buf()),
+            }],
             preferred_vendor: None,
-            codex_home: None,
-            claude_home: Some(home.to_path_buf()),
             home: None,
         }
     }
 
     fn codex_environment(home: &Path) -> Environment {
         Environment {
-            codex_thread: None,
-            claude_session: None,
+            vendors: vec![VendorEnvironment {
+                vendor: &spice::extension::CODEX,
+                identity: None,
+                home: Some(home.to_path_buf()),
+            }],
             preferred_vendor: None,
-            codex_home: Some(home.to_path_buf()),
-            claude_home: None,
             home: None,
         }
     }
@@ -530,7 +568,11 @@ mod tests {
         fs::set_permissions(&denied, blocked).expect("deny fixture branch reads");
 
         let read_result = fs::read_dir(&denied);
-        let lookup = find_claude_thread(THREAD, &claude_environment(scratch.path()));
+        let lookup = find_thread(
+            THREAD,
+            &spice::extension::CLAUDE,
+            &claude_environment(scratch.path()),
+        );
         fs::set_permissions(&denied, original).expect("restore fixture permissions");
         let read_error = read_result
             .expect_err("fixture must force a real read_dir failure")
@@ -553,8 +595,12 @@ mod tests {
         fs::write(directory.join(format!("thread-{THREAD}.jsonl")), b"\n")
             .expect("deep transcript exists");
 
-        let error = find_claude_thread(THREAD, &claude_environment(scratch.path()))
-            .expect_err("a bounded-out hit cannot become absence");
+        let error = find_thread(
+            THREAD,
+            &spice::extension::CLAUDE,
+            &claude_environment(scratch.path()),
+        )
+        .expect_err("a bounded-out hit cannot become absence");
 
         assert!(
             error.contains(&format!("search depth {SEARCH_DEPTH} was reached")),
@@ -574,8 +620,12 @@ mod tests {
         }
         fs::create_dir_all(&directory).expect("deep Codex session branch exists");
 
-        let error = find_codex_thread(THREAD, &codex_environment(scratch.path()))
-            .expect_err("Codex cannot erase either failed lookup path");
+        let error = find_thread(
+            THREAD,
+            &spice::extension::CODEX,
+            &codex_environment(scratch.path()),
+        )
+        .expect_err("Codex cannot erase either failed lookup path");
 
         assert!(
             error.contains(&scratch.path().join("state_5.sqlite").display().to_string()),
@@ -602,6 +652,35 @@ mod tests {
         assert_eq!(
             find_named_transcript(&root, THREAD).expect("complete matching walk"),
             Some(newest)
+        );
+    }
+
+    #[test]
+    fn a_third_declaration_reaches_session_discovery_without_another_mode_arm() {
+        let scratch = Scratch::new("third-declaration");
+        let sessions = scratch.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("fixture sessions exist");
+        let transcript = sessions.join(format!("rollout-{THREAD}.jsonl"));
+        fs::write(&transcript, b"\n").expect("fixture transcript exists");
+        let environment = Environment {
+            vendors: vec![VendorEnvironment {
+                vendor: &FIXTURE_VENDOR,
+                identity: None,
+                home: Some(scratch.path().to_path_buf()),
+            }],
+            preferred_vendor: Some(std::ffi::OsString::from("fixture")),
+            home: None,
+        };
+        let registry = spice::extension::Registry::discover(FIXTURE_DECLARATIONS)
+            .expect("third declaration is coherent");
+
+        let resolved = resolve_thread_from_registry(THREAD, &environment, &registry)
+            .expect("third declaration resolves its transcript");
+        assert_eq!(resolved.vendor, super::Vendor::Codex);
+        assert_eq!(resolved.thread.as_deref(), Some(THREAD));
+        assert_eq!(
+            resolved.path,
+            transcript.canonicalize().expect("fixture path")
         );
     }
 }

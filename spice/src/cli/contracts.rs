@@ -391,7 +391,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["release", "notes"],
-        "release notes INPUT",
+        "release notes [--release-commit REV]",
         Local,
         None,
         [],
@@ -987,7 +987,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["release", "publish"],
-        "release publish [--apply=<digest>]",
+        "release publish [--notes-file FILE] [--release-commit REV] [--apply=<digest>]",
         Operator,
         Command,
         [ReleasePublished],

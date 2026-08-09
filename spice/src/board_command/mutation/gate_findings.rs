@@ -313,6 +313,7 @@ fn write_gate_finding_task(
     let statement = TaskHead {
         handle: task.clone(),
         uuid,
+        queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: finding.title.clone(),
         description: Some(description),
         acceptance: finding.acceptance.clone(),
@@ -323,6 +324,7 @@ fn write_gate_finding_task(
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
     write.task_head(added, move |position| TaskHead {
+        queue_origin: position,
         revision: position,
         ..statement
     });

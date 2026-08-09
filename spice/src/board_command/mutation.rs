@@ -152,6 +152,7 @@ fn create_task<B: serde::Serialize>(
     };
     let statement = prepared.statement;
     write.task_head(added, move |position| TaskHead {
+        queue_origin: position,
         revision: position,
         ..statement
     });
@@ -207,6 +208,7 @@ fn prepare_task(
     let statement = TaskHead {
         handle: task.clone(),
         uuid: command.id(),
+        queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: add.title.clone(),
         description: add.description.clone(),
         acceptance: add.acceptance.clone(),
