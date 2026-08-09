@@ -84,9 +84,7 @@ fn prepare_loaded(
         admit_digest(&plan, expected)?;
         return Ok((InstallRecord::new(plan)?, Some(loaded.generation), true));
     }
-    if record.status == InstallStatus::Complete
-        && verify_binary_context(&record.plan, spice_binary).is_err()
-    {
+    if record.status == InstallStatus::Complete && rebuilt_binary(&record.plan, spice_binary)? {
         // The refresh transaction: one record swap from the complete install to
         // the plan that supersedes it, then in-place replacement of each
         // destination. Nothing is reversed, so nothing is ever absent.
