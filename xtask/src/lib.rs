@@ -19,9 +19,10 @@ mod landing;
 mod proof_image;
 mod reference_transaction;
 mod release;
+mod verify_execution;
+mod verify_timing;
 
 use app::WASM_TARGET;
-
 pub use app::{AppBuildError, app};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 #[cfg(not(target_arch = "wasm32"))]
@@ -261,6 +262,17 @@ impl Action {
             Self::Landing => landing::LABEL,
         }
     }
+
+    const fn family(self) -> &'static str {
+        match self {
+            Self::EntryPoint => "in-process:entry-point-audit",
+            Self::Format => "child-process:rustfmt",
+            Self::Command(_) => "child-process:cargo",
+            Self::Browser => "child-process:npm",
+            Self::Battery => "in-process:gate-battery",
+            Self::Landing => "in-process:contract-landing",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -446,7 +458,7 @@ pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), Ga
 /// Returns the first output, launch, or command failure and does not start any
 /// subsequent command.
 pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
-    verify_with(&mut SystemRunner, output)
+    verify_execution::verify_with(&mut SystemRunner, output)
 }
 
 /// Run lint, test, and documentation feedback for one Cargo package.
@@ -462,7 +474,7 @@ pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
 /// Returns an invalid package name or the first output, launch, or command
 /// failure.
 pub fn verify_package(package: &str, output: &mut impl Write) -> Result<(), VerifyError> {
-    verify_package_with(package, &mut SystemRunner, output)
+    verify_execution::verify_package_with(package, &mut SystemRunner, output)
 }
 
 /// One selected gate-arm command failure.
@@ -501,146 +513,6 @@ impl std::error::Error for GateArmError {
             Self::Refused(_) | Self::Unavailable => None,
         }
     }
-}
-
-fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(), VerifyError> {
-    for action in VERIFY_ACTIONS {
-        writeln!(output, "[verify] {}", action.label()).map_err(VerifyError::Output)?;
-        match action {
-            Action::EntryPoint => {
-                let report = runner.entry_point().map_err(VerifyError::EntryPoint)?;
-                output
-                    .write_all(report.as_bytes())
-                    .map_err(VerifyError::Output)?;
-            }
-            Action::Format => {
-                let status = runner.format().map_err(|source| VerifyError::Launch {
-                    label: FORMAT_LABEL,
-                    source,
-                })?;
-                if !status.success {
-                    return Err(VerifyError::Exit {
-                        label: FORMAT_LABEL,
-                        code: status.code,
-                    });
-                }
-            }
-            Action::Command(step) => {
-                let status = runner.run(step).map_err(|source| VerifyError::Launch {
-                    label: step.label,
-                    source,
-                })?;
-                if !status.success {
-                    return Err(VerifyError::Exit {
-                        label: step.label,
-                        code: status.code,
-                    });
-                }
-            }
-            Action::Browser => {
-                let run = runner
-                    .browser()
-                    .map_err(|source| VerifyError::BrowserLaunch { source })?;
-                if !run.status.success {
-                    return Err(VerifyError::BrowserExit {
-                        code: run.status.code,
-                    });
-                }
-                if !run.completed {
-                    return Err(VerifyError::BrowserIncomplete);
-                }
-            }
-            Action::Battery => {
-                let run = runner.battery().map_err(VerifyError::Battery)?;
-                match run {
-                    BatteryRun::Admitted(document) => {
-                        output.write_all(&document).map_err(VerifyError::Output)?;
-                        writeln!(output).map_err(VerifyError::Output)?;
-                    }
-                    BatteryRun::Refused(diagnostic) => {
-                        output.write_all(&diagnostic).map_err(VerifyError::Output)?;
-                        return Err(VerifyError::BatteryRefused);
-                    }
-                }
-            }
-            Action::Landing => {
-                let report = runner
-                    .landing()
-                    .map_err(|source| VerifyError::Landing(source.to_string()))?;
-                serde_json::to_writer(&mut *output, &report).map_err(VerifyError::Encode)?;
-                writeln!(output).map_err(VerifyError::Output)?;
-                if !report.admitted() {
-                    return Err(VerifyError::LandingRefused);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn verify_package_with<R: Runner>(
-    package: &str,
-    runner: &mut R,
-    output: &mut impl Write,
-) -> Result<(), VerifyError> {
-    if !valid_package_name(package) {
-        return Err(VerifyError::Package(package.to_owned()));
-    }
-
-    let skipped_actions = VERIFY_ACTIONS
-        .iter()
-        .filter(|action| !matches!(action, Action::EntryPoint))
-        .map(|action| action.label())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let skipped_arms = gate::GateId::ALL
-        .into_iter()
-        .map(|gate_id| gate_id.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    writeln!(
-        output,
-        concat!(
-            "[verify] scoped package {}; feedback only: ",
-            "run `cargo xtask verify` before task completion"
-        ),
-        package
-    )
-    .map_err(VerifyError::Output)?;
-    writeln!(
-        output,
-        "[verify] scoped full actions skipped: {skipped_actions}"
-    )
-    .map_err(VerifyError::Output)?;
-    writeln!(output, "[verify] scoped gate arms run: none").map_err(VerifyError::Output)?;
-    writeln!(output, "[verify] scoped gate arms skipped: {skipped_arms}")
-        .map_err(VerifyError::Output)?;
-
-    writeln!(output, "[verify] {ENTRY_POINT_LABEL}").map_err(VerifyError::Output)?;
-    let report = runner.entry_point().map_err(VerifyError::EntryPoint)?;
-    output
-        .write_all(report.as_bytes())
-        .map_err(VerifyError::Output)?;
-
-    for command in SCOPED_COMMANDS {
-        let label = command.label(package);
-        writeln!(output, "[verify] {label}").map_err(VerifyError::Output)?;
-        let status =
-            runner
-                .run_scoped(command, package)
-                .map_err(|source| VerifyError::ScopedLaunch {
-                    label: label.clone(),
-                    source,
-                })?;
-        if !status.success {
-            return Err(VerifyError::ScopedExit {
-                label,
-                code: status.code,
-            });
-        }
-    }
-
-    Ok(())
 }
 
 fn valid_package_name(package: &str) -> bool {
@@ -684,6 +556,12 @@ pub enum VerifyError {
         label: String,
         code: Option<i32>,
     },
+}
+
+impl From<io::Error> for VerifyError {
+    fn from(source: io::Error) -> Self {
+        Self::Output(source)
+    }
 }
 
 impl fmt::Display for VerifyError {
@@ -772,6 +650,7 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::*;
+    use crate::verify_execution::{verify_package_with, verify_with};
 
     enum Outcome {
         Success,
@@ -890,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn success_runs_every_step_in_order_and_prints_exact_labels() {
+    fn success_runs_every_step_in_order_and_prints_exact_lifecycle_records() {
         let mut runner = runner(successful_commands());
         let mut output = Vec::new();
 
@@ -900,20 +779,44 @@ mod tests {
         let output = String::from_utf8(output).expect("labels are UTF-8");
         let report =
             serde_json::to_string(&landing::fixture_report(true)).expect("fixture report encodes");
-        let expected = VERIFY_ACTIONS
-            .into_iter()
-            .map(|action| match action {
-                Action::Command(step) => format!("[verify] {}\n", step.label),
-                Action::Format => format!("[verify] {FORMAT_LABEL}\n"),
-                Action::EntryPoint => {
-                    format!("[verify] {ENTRY_POINT_LABEL}\n{ENTRY_POINT_FIXTURE}")
-                }
-                Action::Browser => format!("[verify] {BROWSER_LABEL}\n"),
-                Action::Battery => format!("[verify] {BATTERY_LABEL}\n{{\"admitted\":true}}\n"),
-                Action::Landing => format!("[verify] {}\n{report}\n", landing::LABEL),
-            })
-            .collect::<String>();
-        assert_eq!(output, expected);
+        assert_eq!(output.matches("stage=start").count(), VERIFY_ACTIONS.len());
+        assert_eq!(
+            output.matches("stage=terminal").count(),
+            VERIFY_ACTIONS.len()
+        );
+        assert!(!output.contains("stage=progress"));
+
+        let mut prior_terminal = 0;
+        for (index, action) in VERIFY_ACTIONS.into_iter().enumerate() {
+            let ordinal = format!("ordinal={}/{}", index + 1, VERIFY_ACTIONS.len());
+            let identity = format!("identity={:?}", action.label());
+            let start = output
+                .lines()
+                .position(|line| {
+                    line.contains("stage=start")
+                        && line.contains(&ordinal)
+                        && line.contains(&identity)
+                        && line.contains(&format!("family={}", action.family()))
+                })
+                .expect("action has one exact start record");
+            let terminal = output
+                .lines()
+                .position(|line| {
+                    line.contains("stage=terminal")
+                        && line.contains(&ordinal)
+                        && line.contains(&identity)
+                })
+                .expect("action has one exact terminal record");
+            assert!(
+                start >= prior_terminal,
+                "action starts after its predecessor"
+            );
+            assert!(terminal > start, "action terminates after it starts");
+            prior_terminal = terminal;
+        }
+        assert!(output.contains(ENTRY_POINT_FIXTURE));
+        assert!(output.contains("{\"admitted\":true}\n"));
+        assert!(output.contains(&format!("{report}\n")));
     }
 
     #[test]
@@ -954,6 +857,8 @@ mod tests {
         assert!(output.contains(&format!(
             "[verify] scoped gate arms skipped: {skipped_arms}\n"
         )));
+        assert_eq!(output.matches("stage=start").count(), 4);
+        assert_eq!(output.matches("stage=terminal").count(), 4);
         assert!(!runner.calls.contains(&BROWSER_LABEL));
         assert!(!runner.calls.contains(&BATTERY_LABEL));
         assert!(!runner.calls.contains(&landing::LABEL));
@@ -1265,10 +1170,12 @@ mod tests {
             "[verify] published guard is not this build's"
         );
         assert_eq!(runner.calls, labels()[..1]);
-        assert_eq!(
-            String::from_utf8(output).expect("labels are UTF-8"),
-            format!("[verify] {ENTRY_POINT_LABEL}\n")
-        );
+        let output = String::from_utf8(output).expect("labels are UTF-8");
+        assert_eq!(output.matches("stage=start").count(), 1);
+        assert_eq!(output.matches("stage=terminal").count(), 1);
+        assert!(output.contains("disposition=error"));
+        assert!(output.contains(&format!("identity={ENTRY_POINT_LABEL:?}")));
+        assert!(!output.contains("ordinal=2/11"));
     }
 
     #[test]
@@ -1317,11 +1224,11 @@ mod tests {
 
         assert!(matches!(error, VerifyError::BatteryRefused));
         assert_eq!(runner.calls, labels()[..labels().len() - 1]);
-        assert!(
-            String::from_utf8(output)
-                .expect("fixture diagnostic is UTF-8")
-                .ends_with("bounded battery refusal\n")
-        );
+        let output = String::from_utf8(output).expect("fixture diagnostic is UTF-8");
+        assert!(output.contains("bounded battery refusal\n"));
+        assert!(output.contains(concat!("stage=terminal ordinal=10/11", " elapsed_ms=")));
+        assert!(output.contains("disposition=refused family=in-process:gate-battery"));
+        assert!(!output.contains("ordinal=11/11"));
     }
 
     #[test]
