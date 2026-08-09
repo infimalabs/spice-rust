@@ -595,9 +595,7 @@ pub fn plan(
             verify_progress(repository, &record)?;
             return build_plan(repository, spice_binary);
         }
-        if record.status == InstallStatus::Complete
-            && verify_binary_context(&record.plan, spice_binary).is_err()
-        {
+        if record.status == InstallStatus::Complete && rebuilt_binary(&record.plan, spice_binary)? {
             // A rebuilt executable over a complete install is a refresh, not a
             // conflict. Proving the installed tree intact first is what lets
             // the derived plan treat every destination as replaceable in place.
@@ -829,14 +827,33 @@ fn read_binary(path: &Path) -> Result<Vec<u8>, InstallError> {
     Ok(bytes)
 }
 
+/// Whether `spice_binary` rebuilds the executable `plan` already published.
+///
+/// Only a differing image of an executable the plan owns is a refresh. A caller
+/// that supplies no binary for a plan that published one — or one for a plan
+/// that did not — disagrees about the install's shape rather than its build,
+/// and that stays [`InstallError::BinaryContextChanged`]. Refreshing it instead
+/// would derive a plan missing the very operation that owns the published
+/// executable, leaving a file on disk with no reversal to withdraw it.
+fn rebuilt_binary(plan: &InstallPlan, spice_binary: Option<&Path>) -> Result<bool, InstallError> {
+    let (Some(planned), Some(path)) = (binary_operation(plan), spice_binary) else {
+        return Ok(false);
+    };
+    let bytes = read_binary(path)?;
+    Ok(GeneratedImage::new(EXECUTABLE_MODE, &bytes) != planned.generated)
+}
+
+fn binary_operation(plan: &InstallPlan) -> Option<&Operation> {
+    plan.operations
+        .iter()
+        .find(|operation| operation.asset == Asset::Binary)
+}
+
 fn verify_binary_context(
     plan: &InstallPlan,
     spice_binary: Option<&Path>,
 ) -> Result<(), InstallError> {
-    let planned = plan
-        .operations
-        .iter()
-        .find(|operation| operation.asset == Asset::Binary);
+    let planned = binary_operation(plan);
     match (planned, spice_binary) {
         (None, None) => Ok(()),
         (Some(operation), Some(path)) => {

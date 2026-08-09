@@ -417,6 +417,42 @@ fn refresh_publishes_the_rebuilt_executable_without_withdrawing_anything() {
     );
 }
 
+/// A refresh is a rebuilt executable, never a differently shaped install.
+///
+/// Deriving one from a plan that drops the binary would publish a plan with no
+/// operation owning the installed executable, so reversing it later would leave
+/// that file behind. Both directions of the disagreement stay refusals, because
+/// neither says anything about which build the destination holds.
+#[test]
+fn a_complete_install_refuses_a_plan_that_adds_or_drops_the_executable() {
+    let dropped = Scratch::new("refresh-drops-binary");
+    let repository = dropped.repository();
+    let binary = dropped.binary(b"old binary bytes");
+    let installed = plan(&repository, Some(&binary)).unwrap().digest().unwrap();
+    apply(&repository, Some(&binary), &installed).unwrap();
+
+    let error = plan(&repository, None).expect_err("a plan without the installed executable");
+    assert!(
+        matches!(error, InstallError::BinaryContextChanged),
+        "{error:?}"
+    );
+    assert!(repository.common_dir().join(BINARY_PATH).is_file());
+
+    let added = Scratch::new("refresh-adds-binary");
+    let repository = added.repository();
+    let installed = plan(&repository, None).unwrap().digest().unwrap();
+    apply(&repository, None, &installed).unwrap();
+    let binary = added.binary(b"new binary bytes");
+
+    let error =
+        plan(&repository, Some(&binary)).expect_err("a plan adding an executable to an install");
+    assert!(
+        matches!(error, InstallError::BinaryContextChanged),
+        "{error:?}"
+    );
+    assert!(!repository.common_dir().join(BINARY_PATH).exists());
+}
+
 #[test]
 fn reversing_before_reinstalling_withdraws_what_a_refresh_keeps() {
     let scratch = Scratch::new("refresh-control");
