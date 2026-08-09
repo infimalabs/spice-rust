@@ -336,9 +336,9 @@ fn the_one_command_refresh_applies_a_bare_plan_without_withdrawing_anything() {
             (absences, images)
         })
     };
-    wait_for_image(&first_seen, "first installed image");
+    wait_until_image_is_observed(&first_seen, "first installed image");
     let second_digest = refresh_install(&repository, &second).expect("refresh applies");
-    wait_for_image(&second_seen, "refreshed installed image");
+    wait_until_image_is_observed(&second_seen, "refreshed installed image");
     stop.store(true, Ordering::Relaxed);
     let (absences, images) = reader.join().expect("the reading thread joins");
 
@@ -366,7 +366,7 @@ fn the_one_command_refresh_applies_a_bare_plan_without_withdrawing_anything() {
     );
 }
 
-fn wait_for_image(observed: &AtomicBool, label: &str) {
+fn wait_until_image_is_observed(observed: &AtomicBool, label: &str) {
     let started = Instant::now();
     while !observed.load(Ordering::Relaxed) && started.elapsed() < Duration::from_secs(5) {
         thread::sleep(Duration::from_millis(1));
