@@ -24,7 +24,7 @@ impl Scratch {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed),
         ));
-        fs::create_dir_all(path.join(".git/.spice/data")).expect("create repository fixture");
+        fs::create_dir_all(path.join(".git/.spice-rs/data")).expect("create repository fixture");
         Self(path)
     }
 
@@ -37,7 +37,8 @@ impl Scratch {
     }
 
     fn local(&self, text: &str) {
-        fs::write(self.0.join(".git/.spice/config.toml"), text).expect("write local configuration");
+        fs::write(self.0.join(".git/.spice-rs/config.toml"), text)
+            .expect("write local configuration");
     }
 }
 
@@ -129,7 +130,7 @@ fn healthy_fixture() -> HealthyFixture {
     repository.tracked("[lane]\nlease = \"20m\"\n");
     let journal = repository
         .path()
-        .join(".git/.spice/data/spicejournal.sqlite3");
+        .join(".git/.spice-rs/data/spicejournal.sqlite3");
     fs::write(&journal, b"not an opened journal\n").expect("write authority sentinel");
 
     let bin = repository.path().join("fixture-bin");
@@ -307,7 +308,7 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
     assert_eq!(
         report.locations.local_configuration,
         canonical
-            .join(".git/.spice/config.toml")
+            .join(".git/.spice-rs/config.toml")
             .display()
             .to_string()
     );
@@ -514,7 +515,7 @@ fn malformed_and_unknown_configuration_are_typed_refusals_from_both_exact_paths(
             "local-syntax",
             "",
             "[listen]\nwindow = [\n",
-            ".spice/config.toml",
+            ".spice-rs/config.toml",
         ),
         ("unknown", "[unknown]\nvalue = 1\n", "", "unknown"),
     ] {

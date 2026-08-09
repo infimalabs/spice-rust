@@ -380,7 +380,7 @@ fn assert_session_binding(
     let tape = tape::Tape::open_existing(
         fixture
             .root
-            .join(".git/.spice/tape")
+            .join(".git/.spice-rs/tape")
             .join(row.lane.to_string())
             .join(row.vendor.as_str()),
     )
@@ -415,7 +415,7 @@ fn seed_occupied_lane(
     let tape = tape::Tape::open(
         fixture
             .root
-            .join(".git/.spice/tape")
+            .join(".git/.spice-rs/tape")
             .join(lane.to_string())
             .join("claude"),
     )

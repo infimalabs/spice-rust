@@ -1068,14 +1068,14 @@ fn cover_restore_reply_frames(covered: &mut BTreeSet<String>) {
         &[
             JournalRestore {
                 plan: digest("1"),
-                destination: "/repo/.git/.spice/data/spicejournal.sqlite3".to_owned(),
+                destination: "/repo/.git/.spice-rs/data/spicejournal.sqlite3".to_owned(),
                 previous: None,
                 verification: restore_verification("2", 0),
                 applied: false,
             },
             JournalRestore {
                 plan: digest("3"),
-                destination: "/repo/.git/.spice/data/spicejournal.sqlite3".to_owned(),
+                destination: "/repo/.git/.spice-rs/data/spicejournal.sqlite3".to_owned(),
                 previous: Some(digest("4")),
                 verification: restore_verification("5", 19),
                 applied: true,
