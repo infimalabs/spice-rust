@@ -17,7 +17,6 @@ use sill::{
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
 };
 
-const CONCURRENCY_CAP: usize = 4;
 const TARGETS_PER_SHARD: usize = 12;
 const SHARD_DEADLINE: Duration = Duration::from_secs(180);
 const COORDINATOR_DEADLINE: Duration = Duration::from_secs(180);
@@ -62,7 +61,12 @@ impl std::error::Error for WorkspaceTestError {}
 /// # Errors
 ///
 /// Returns metadata, partition, launch, supervision, timeout, or test failures.
-pub fn run(environment: Environment, output: &mut impl Write) -> Result<(), WorkspaceTestError> {
+pub fn run(
+    environment: Environment,
+    concurrency: usize,
+    output: &mut impl Write,
+) -> Result<(), WorkspaceTestError> {
+    let policy = RunPolicy::production(concurrency)?;
     let root = env::current_dir().map_err(|error| {
         WorkspaceTestError::new(format!("working directory unavailable: {error}"))
     })?;
@@ -74,7 +78,7 @@ pub fn run(environment: Environment, output: &mut impl Write) -> Result<(), Work
         root,
         environment,
         OsString::from("cargo"),
-        RunPolicy::production(),
+        policy,
         output,
     )
     .run()
@@ -291,7 +295,7 @@ fn count_differences<T: Ord + fmt::Debug>(
         .collect()
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct RunPolicy {
     concurrency: usize,
     shard_deadline: Duration,
@@ -303,16 +307,23 @@ struct RunPolicy {
 }
 
 impl RunPolicy {
-    const fn production() -> Self {
-        Self {
-            concurrency: CONCURRENCY_CAP,
+    fn production(concurrency: usize) -> Result<Self, WorkspaceTestError> {
+        if !(1..=crate::WORKSPACE_TEST_CONCURRENCY_CAP).contains(&concurrency) {
+            return Err(WorkspaceTestError::new(format!(
+                "workspace test concurrency must be between 1 and {}, \
+                 got {concurrency}",
+                crate::WORKSPACE_TEST_CONCURRENCY_CAP,
+            )));
+        }
+        Ok(Self {
+            concurrency,
             shard_deadline: SHARD_DEADLINE,
             coordinator_deadline: COORDINATOR_DEADLINE,
             progress_interval: PROGRESS_INTERVAL,
             output_drain: OUTPUT_DRAIN_DEADLINE,
             reap: REAP_DEADLINE,
             grace: TERMINATION_GRACE,
-        }
+        })
     }
 }
 

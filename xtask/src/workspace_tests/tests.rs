@@ -7,6 +7,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::*;
 
 #[test]
+fn production_policy_uses_only_the_scheduler_granted_shard_workers() {
+    assert_eq!(
+        RunPolicy::production(2)
+            .expect("bounded scheduler grant admits")
+            .concurrency,
+        2
+    );
+    for concurrency in [0, crate::WORKSPACE_TEST_CONCURRENCY_CAP + 1] {
+        let error = RunPolicy::production(concurrency)
+            .expect_err("out-of-contract scheduler grant refuses")
+            .to_string();
+        assert!(error.contains("must be between 1 and 4"), "{error}");
+    }
+}
+
+#[test]
 fn partition_validation_names_omitted_and_duplicated_packages_and_targets() {
     let inventory = fixture_inventory();
     let exact = partition(&inventory);
