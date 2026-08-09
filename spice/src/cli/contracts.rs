@@ -696,7 +696,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["lane", "add"],
         "lane add [WORKTREE] [--lineage ID] [--name DISPLAY] \
-         [--life Steer|Drive|Drain] [--vendor NAME]",
+         [--life Steer|Drive|Drain] [--vendor NAME] [--resume SESSION]",
         Operator,
         Command,
         [LaneSeated, LaneSessionDeclared, LaneStarted],
@@ -768,6 +768,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         ["inbox"],
         "inbox [LANE]",
         OperatorOrLane,
+        Read,
+        [],
+        [Resident],
+        Reply,
+        "steer::inbox"
+    ),
+    row!(
+        ["hook"],
+        "hook HARNESS",
+        Lane,
         Read,
         [],
         [Resident],

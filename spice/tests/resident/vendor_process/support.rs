@@ -478,7 +478,7 @@ fn expected_claude_argv(
     prompt: &str,
 ) -> Vec<String> {
     let executable = executable.display().to_string();
-    let hook = format!("{} inbox", shell_word(&executable));
+    let hook = format!("{} hook claude", shell_word(&executable));
     let mcp = format!(
         r#"{{"mcpServers":{{"spice":{{"command":{},"args":["mcp"]}}}}}}"#,
         json_string(&executable),
@@ -536,10 +536,10 @@ fn expected_codex_argv(
     prompt: &str,
 ) -> Vec<String> {
     let executable = executable.display().to_string();
-    let hook = format!("{} inbox", shell_word(&executable));
+    let hook = format!("{} hook codex", shell_word(&executable));
     let hook_override = format!(
         concat!(
-            r#"hooks.PostToolUse=[{{matcher="^(Bash|apply_patch|Edit|Write|mcp__.*)$","#,
+            r#"hooks.PostToolUse=[{{matcher="*","#,
             r#"hooks=[{{type="command",command={},timeout=30,"#,
             r#"statusMessage="Checking spice steering"}}]}}]"#,
         ),

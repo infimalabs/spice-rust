@@ -1,6 +1,7 @@
 //! CLI acquisition for the resident steering command family.
 
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 use clap::ArgMatches;
 use spice::repository::Repository;
@@ -8,6 +9,66 @@ use wire::intent::CommandAnswer;
 use wire::{CanonicalUuid, Disposition, Fault, FaultClass, Outcome, Refusal};
 
 use crate::command_client::{SelectedCommand, execute_steering};
+
+#[derive(serde::Serialize)]
+struct HookOutput {
+    #[serde(rename = "hookSpecificOutput")]
+    hook_specific_output: HookSpecificOutput,
+}
+
+#[derive(serde::Serialize)]
+struct HookSpecificOutput {
+    #[serde(rename = "hookEventName")]
+    hook_event_name: &'static str,
+    #[serde(rename = "additionalContext")]
+    additional_context: String,
+}
+
+pub(crate) fn hook_document(
+    answer: &CommandAnswer,
+    harness: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    if !matches!(harness, "claude" | "codex") {
+        return Err(format!(
+            "unsupported hook harness {harness:?}; expected claude or codex"
+        ));
+    }
+    let CommandAnswer::Inbox(inbox) = answer else {
+        return Err("inbox hook received a non-inbox command answer".to_owned());
+    };
+    if inbox.lanes.iter().all(|lane| lane.pending.is_empty()) {
+        return Ok(None);
+    }
+    let executable = std::env::current_exe()
+        .map(PathBuf::into_os_string)
+        .map_err(|error| format!("inbox hook executable unavailable: {error}"))?;
+    let executable = executable.to_string_lossy();
+    let mut context = format!(
+        concat!(
+            "Rust Spice steering is pending. Address every key immediately before other work. ",
+            "Begin assistant prose with `ACK <key>:` or `NACK <key>:`, then retire it after ",
+            "that prose with `{} ack <key>` or `{} ack <key> --decline`."
+        ),
+        executable, executable,
+    );
+    for lane in &inbox.lanes {
+        for directive in &lane.pending {
+            context.push_str(&format!(
+                "\n\nlane={} key={}\n{}",
+                lane.lane, directive.key, directive.text
+            ));
+        }
+    }
+    let mut document = wire::encode(&HookOutput {
+        hook_specific_output: HookSpecificOutput {
+            hook_event_name: "PostToolUse",
+            additional_context: context,
+        },
+    })
+    .map_err(|error| error.to_string())?;
+    document.push(b'\n');
+    Ok(Some(document))
+}
 
 pub(crate) fn run(
     matches: &ArgMatches,
@@ -61,6 +122,20 @@ pub(crate) fn run(
                 Err(outcome) => return outcome,
             };
             (SelectedCommand::SteerInbox { lane }, lane_context)
+        }
+        ["hook"] => {
+            let lane_context = match lane_context(lane_environment) {
+                Ok(Some(lane)) => Some(lane),
+                Ok(None) => {
+                    return refusal(
+                        "steer::lane-context-absent",
+                        None,
+                        "hook requires the SPICE_LANE identity of an activated lane shell",
+                    );
+                }
+                Err(outcome) => return outcome,
+            };
+            (SelectedCommand::SteerInbox { lane: None }, lane_context)
         }
         ["ack"] => {
             let text = matches
