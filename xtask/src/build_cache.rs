@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::error::Error;
-use std::ffi::{CString, OsStr};
+use std::ffi::OsStr;
 use std::fmt;
 use std::fs::{self, Metadata};
 use std::io::{self, Write};
@@ -852,6 +852,7 @@ fn physical_bytes(metadata: &Metadata) -> u64 {
 
 #[cfg(unix)]
 fn filesystem_available_bytes(path: &Path) -> Result<u64, BuildCacheError> {
+    use std::ffi::CString;
     use std::mem::MaybeUninit;
     use std::os::unix::ffi::OsStrExt as _;
 
