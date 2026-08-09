@@ -10,6 +10,7 @@ use sill::Deadlines;
 const USAGE_EXIT: u8 = 2;
 const USAGE: &str = concat!(
     "usage: cargo xtask <help|verify [--package PACKAGE]|gate ARM|app|activate-hooks|",
+    "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "stage-target TARGET|",
     "commit-msg MESSAGE_FILE|reference-transaction STATE>"
@@ -78,6 +79,10 @@ fn main() -> ExitCode {
                         .map_err(Into::into)
                 })
         }
+        Some(value) if value == OsStr::new("install") => {
+            drop(output);
+            return run_install(arguments.collect());
+        }
         Some(value) if value == OsStr::new("proof-image") => {
             drop(output);
             return run_proof_image(arguments.collect());
@@ -131,6 +136,40 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_install(arguments: Vec<OsString>) -> ExitCode {
+    let Some(request) = install_request(&arguments) else {
+        eprintln!("{}", help());
+        return ExitCode::from(USAGE_EXIT);
+    };
+    let mut output = io::stdout().lock();
+    match xtask::refresh(&request, &mut output) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Read one `cargo xtask install` invocation, or refuse the whole spelling.
+fn install_request(arguments: &[OsString]) -> Option<xtask::RefreshRequest> {
+    let mut request = xtask::RefreshRequest {
+        restart: true,
+        ..xtask::RefreshRequest::default()
+    };
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.to_str()? {
+            "--release" => request.release = true,
+            "--no-resident" => request.restart = false,
+            "--host" => request.host = Some(arguments.next()?.to_str()?.to_owned()),
+            "--port" => request.port = Some(arguments.next()?.to_str()?.parse().ok()?),
+            _ => return None,
+        }
+    }
+    Some(request)
 }
 
 fn run_proof_image(arguments: Vec<OsString>) -> ExitCode {

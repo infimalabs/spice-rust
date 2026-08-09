@@ -129,11 +129,35 @@ else.
 
 ## Upgrade
 
-Rebuild, preview, and apply as above; an apply is refused unless its digest
-matches the plan just previewed. Re-run `cargo xtask activate-hooks` when the
-hook assets or the verifier guard change — `cargo xtask verify` refuses while
-the published copy is not the running build's, and names the command. An
-upgrade stops nothing outside this appliance.
+```sh
+cargo xtask install --port PORT
+```
+
+That builds the current tree, republishes the executable, and restarts the
+resident on the endpoint the running one had published. `--host` and `--port`
+override that endpoint, `--release` installs the release profile, and
+`--no-resident` refreshes the executable without starting anything.
+
+The preview and apply above cannot express an upgrade. A completed receipt pins
+the executable bytes it installed, so once the tree is rebuilt both `install`
+and `install --apply` answer `install::input-refused` with `Spice executable
+selection differs from the recorded plan`. The preview refuses too, which
+leaves no digest to apply. The command withdraws the recorded plan, derives a
+fresh one over the new binary, and applies that.
+
+The previous executable is copied to `target/spice-develop/spice.rollback`
+before anything moves and reinstalled if the install or the readiness wait
+fails; the reported failure is the one that forced the restore, not the
+restore. The restarted resident logs to `target/spice-develop/resident.log`,
+and readiness means it published a discovery it also answers on.
+
+`.spice-install` lives under the Git common directory, so an upgrade is
+repository-wide: every linked worktree sees the new executable at once, and the
+hooks are withdrawn for as long as the plan is being replaced. Re-run
+`cargo xtask activate-hooks` when the hook assets or the verifier guard change
+— `cargo xtask verify` refuses while the published copy is not the running
+build's, and names the command. An upgrade stops nothing outside this
+appliance.
 
 ## The independence proof
 
