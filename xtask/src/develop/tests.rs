@@ -40,6 +40,91 @@ impl Fixture {
         }
         path
     }
+
+    /// Publish a discovery naming `endpoint`, the way a resident would.
+    fn publish(&self, endpoint: &str) {
+        let identity = "00000000-0000-4000-8000-000000000000"
+            .parse::<wire::CanonicalUuid>()
+            .expect("the fixture identity is canonical");
+        let discovery = canvas::Discovery {
+            endpoint: endpoint.to_owned(),
+            capability: identity,
+            epoch: identity,
+        };
+        let state = self
+            .repository()
+            .admit_state()
+            .expect("scratch repository state is admitted");
+        if let Some(parent) = state.canvas().parent() {
+            fs::create_dir_all(parent).expect("scratch discovery parent is created");
+        }
+        discovery
+            .publish(state.canvas())
+            .expect("scratch discovery publishes");
+    }
+}
+
+/// A process that stays alive until the test drops it.
+fn standing_child() -> std::process::Child {
+    Command::new("sleep")
+        .arg("30")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("a standing child launches")
+}
+
+/// Readiness is the published endpoint answering, not the record existing.
+///
+/// The record is written before anything binds, so a readiness check that
+/// trusted it would pass here against a port nothing is listening on.
+#[test]
+fn a_published_endpoint_is_ready_only_once_it_answers() {
+    let fixture = Fixture::new("ready");
+    let repository = fixture.repository();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a scratch port binds");
+    let bound = listener.local_addr().expect("the scratch port is named");
+    let mut child = standing_child();
+
+    fixture.publish(&format!("http://127.0.0.1:{}", bound.port()));
+    let answered = ready(&repository, &mut child, Duration::from_secs(5));
+    let _ = child.kill();
+    let _ = child.wait();
+    assert_eq!(
+        answered.expect("a listening endpoint is ready"),
+        format!("http://127.0.0.1:{}", bound.port())
+    );
+
+    drop(listener);
+    let mut child = standing_child();
+    let closed = ready(&repository, &mut child, Duration::from_millis(300));
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        matches!(closed, Err(RefreshError::ResidentUnready)),
+        "the same record was ready with nothing listening: {closed:?}"
+    );
+}
+
+/// A resident that dies during startup is reported as an exit, not a timeout.
+#[test]
+fn a_resident_that_exits_before_readiness_is_reported_as_an_exit() {
+    let fixture = Fixture::new("exited");
+    let repository = fixture.repository();
+    let mut child = Command::new("sh")
+        .args(["-c", "exit 9"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("a failing child launches");
+
+    let exited = ready(&repository, &mut child, Duration::from_secs(5));
+    assert!(
+        matches!(exited, Err(RefreshError::ResidentExited(Some(9)))),
+        "an early resident exit was not reported with its status: {exited:?}"
+    );
 }
 
 /// The refusal `cargo xtask install` exists to answer, and the refresh that

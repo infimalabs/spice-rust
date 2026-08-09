@@ -285,7 +285,7 @@ fn restart(
         .stdout(log.try_clone()?)
         .stderr(log)
         .spawn()?;
-    match ready(repository, &mut child) {
+    match ready(repository, &mut child, READINESS_HORIZON) {
         Ok(endpoint) => {
             writeln!(output, "resident ready at {endpoint}")?;
             Ok(Some(endpoint))
@@ -299,8 +299,16 @@ fn restart(
 }
 
 /// Wait for the resident to publish a discovery it also answers on.
-fn ready(repository: &Repository, child: &mut std::process::Child) -> Result<String, RefreshError> {
-    let deadline = Instant::now() + READINESS_HORIZON;
+///
+/// A published discovery outlives the process that wrote it, so the record
+/// alone is not readiness: the endpoint it names has to accept a connection,
+/// and the resident has to still be running when it does.
+fn ready(
+    repository: &Repository,
+    child: &mut std::process::Child,
+    horizon: Duration,
+) -> Result<String, RefreshError> {
+    let deadline = Instant::now() + horizon;
     loop {
         if let Some(status) = child.try_wait()? {
             return Err(RefreshError::ResidentExited(status.code()));
