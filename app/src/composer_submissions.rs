@@ -19,8 +19,6 @@ use crate::composer_drafts::ComposerDraft;
 pub(crate) struct Submission {
     pub(crate) id: CanonicalUuid,
     pub(crate) lane: CanonicalUuid,
-    pub(crate) occupant: CanonicalUuid,
-    pub(crate) epoch: CanonicalUuid,
     pub(crate) message: String,
     pub(crate) attachments: Vec<DirectiveAttachment>,
     pub(crate) snapshot: ComposerDraft,
@@ -40,12 +38,43 @@ impl Submission {
         Self {
             id,
             lane,
-            occupant,
-            epoch,
             message,
             attachments,
             snapshot,
-            stage: Stage::Queued,
+            stage: Stage::Queued { occupant, epoch },
+        }
+    }
+
+    /// Detach a document for a bound seat that has no current occupant.
+    ///
+    /// No residency is guessed here. A successful wake and a causally later
+    /// lane read must supply both values before this submission can become a
+    /// steering command.
+    pub(crate) fn wake(
+        id: CanonicalUuid,
+        lane: CanonicalUuid,
+        message: String,
+        attachments: Vec<DirectiveAttachment>,
+        snapshot: ComposerDraft,
+    ) -> Self {
+        Self {
+            id,
+            lane,
+            message,
+            attachments,
+            snapshot,
+            stage: Stage::WakeQueued,
+        }
+    }
+
+    pub(crate) fn residency(&self) -> Option<(CanonicalUuid, CanonicalUuid)> {
+        match &self.stage {
+            Stage::Queued { occupant, epoch } => Some((*occupant, *epoch)),
+            Stage::WakeQueued
+            | Stage::WakeSent
+            | Stage::AwaitingResidency
+            | Stage::Sent { .. }
+            | Stage::Accepted { .. } => None,
         }
     }
 }
@@ -53,8 +82,20 @@ impl Submission {
 /// How far one submission has crossed the browser-to-resident boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Stage {
-    Queued,
-    Sent,
+    /// The document needs a vacant bound lane woken before it can be steered.
+    WakeQueued,
+    /// The wake bytes crossed the socket and await their command response.
+    WakeSent,
+    /// Wake succeeded; only a causally subsequent lane read may bind residency.
+    AwaitingResidency,
+    Queued {
+        occupant: CanonicalUuid,
+        epoch: CanonicalUuid,
+    },
+    Sent {
+        occupant: CanonicalUuid,
+        epoch: CanonicalUuid,
+    },
     Accepted {
         directive: CanonicalUuid,
         key: String,
@@ -153,9 +194,10 @@ impl SubmissionQueue {
     pub(crate) fn rollback(&mut self, id: CanonicalUuid) -> Option<Submission> {
         let lane = self.lane_for(id)?;
         let rows = self.0.get_mut(&lane)?;
-        let index = rows
-            .iter()
-            .position(|submission| submission.id == id && submission.stage == Stage::Queued)?;
+        let index = rows.iter().position(|submission| {
+            submission.id == id
+                && matches!(&submission.stage, Stage::WakeQueued | Stage::Queued { .. })
+        })?;
         let removed = rows.remove(index);
         if rows.is_empty() {
             self.0.remove(&lane);
@@ -170,32 +212,129 @@ impl SubmissionQueue {
             .filter(|rows| {
                 !rows
                     .iter()
-                    .any(|submission| submission.stage == Stage::Sent)
+                    .any(|submission| matches!(&submission.stage, Stage::Sent { .. }))
             })
             .filter_map(|rows| {
                 rows.iter()
-                    .find(|submission| submission.stage == Stage::Queued)
+                    .find(|submission| !matches!(&submission.stage, Stage::Accepted { .. }))
+                    .filter(|submission| matches!(&submission.stage, Stage::Queued { .. }))
                     .cloned()
             })
             .collect()
     }
 
+    /// At most one wake that is the first unsettled document in its lane.
+    pub(crate) fn ready_wakes(&self) -> Vec<Submission> {
+        self.0
+            .values()
+            .filter(|rows| {
+                !rows.iter().any(|submission| {
+                    matches!(
+                        &submission.stage,
+                        Stage::WakeSent | Stage::AwaitingResidency | Stage::Sent { .. }
+                    )
+                })
+            })
+            .filter_map(|rows| {
+                rows.iter()
+                    .find(|submission| !matches!(&submission.stage, Stage::Accepted { .. }))
+                    .filter(|submission| submission.stage == Stage::WakeQueued)
+                    .cloned()
+            })
+            .collect()
+    }
+
+    pub(crate) fn wake_sent(&mut self, id: CanonicalUuid) -> Result<(), String> {
+        let submission = self.submission_mut(id)?;
+        if submission.stage != Stage::WakeQueued {
+            return Err(format!(
+                "composer submission {id} did not need a wake when its bytes were sent"
+            ));
+        }
+        submission.stage = Stage::WakeSent;
+        Ok(())
+    }
+
     pub(crate) fn sent(&mut self, id: CanonicalUuid) -> Result<(), String> {
         let submission = self.submission_mut(id)?;
-        if submission.stage != Stage::Queued {
+        let Stage::Queued { occupant, epoch } = submission.stage.clone() else {
             return Err(format!(
                 "composer submission {id} was not queued when its bytes were sent"
             ));
-        }
-        submission.stage = Stage::Sent;
+        };
+        submission.stage = Stage::Sent { occupant, epoch };
         Ok(())
     }
 
     /// Make every result-less write eligible for replay with the same identity.
     pub(crate) fn reconnect(&mut self) {
         for submission in self.0.values_mut().flatten() {
-            if submission.stage == Stage::Sent {
-                submission.stage = Stage::Queued;
+            submission.stage = match submission.stage.clone() {
+                Stage::WakeSent => Stage::WakeQueued,
+                Stage::Sent { occupant, epoch } => Stage::Queued { occupant, epoch },
+                other => other,
+            };
+        }
+    }
+
+    /// Admit the wake result without inventing the residency it did not carry.
+    pub(crate) fn wake_accepted(&mut self, id: CanonicalUuid) -> Result<(), String> {
+        let submission = self.submission_mut(id)?;
+        if submission.stage != Stage::WakeSent {
+            return Err(format!(
+                "composer submission {id} received a wake result before wake was sent"
+            ));
+        }
+        submission.stage = Stage::AwaitingResidency;
+        Ok(())
+    }
+
+    /// Wake submissions awaiting a lane read issued after their wake replies.
+    pub(crate) fn awaiting_residency(&self) -> Vec<CanonicalUuid> {
+        self.0
+            .values()
+            .flatten()
+            .filter(|submission| submission.stage == Stage::AwaitingResidency)
+            .map(|submission| submission.id)
+            .collect()
+    }
+
+    /// Lanes still awaiting residency among the identities one read nominated.
+    ///
+    /// Multiple refreshes may nominate the same identity. A later reply simply
+    /// finds that the first one already advanced it and has nothing to do.
+    pub(crate) fn awaiting_lanes(
+        &self,
+        ids: &[CanonicalUuid],
+    ) -> std::collections::BTreeSet<CanonicalUuid> {
+        ids.iter()
+            .filter_map(|id| {
+                let submission = self
+                    .0
+                    .values()
+                    .flatten()
+                    .find(|submission| submission.id == *id)?;
+                (submission.stage == Stage::AwaitingResidency).then_some(submission.lane)
+            })
+            .collect()
+    }
+
+    /// Bind every unsent wake document in one lane to one fresh lane snapshot.
+    pub(crate) fn bind_woken_lane(
+        &mut self,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        epoch: CanonicalUuid,
+    ) {
+        let Some(rows) = self.0.get_mut(&lane) else {
+            return;
+        };
+        for submission in rows {
+            if matches!(
+                submission.stage,
+                Stage::WakeQueued | Stage::AwaitingResidency
+            ) {
+                submission.stage = Stage::Queued { occupant, epoch };
             }
         }
     }
@@ -212,7 +351,7 @@ impl SubmissionQueue {
                 "composer submission {id} received mismatched directive {directive}"
             ));
         }
-        if self.submission_mut(id)?.stage != Stage::Sent {
+        if !matches!(&self.submission_mut(id)?.stage, Stage::Sent { .. }) {
             return Err(format!(
                 "composer submission {id} received a result before it was sent"
             ));
@@ -239,6 +378,34 @@ impl SubmissionQueue {
 
     /// Restore the refused write and every later write that never became durable.
     pub(crate) fn refuse(&mut self, id: CanonicalUuid) -> Result<Vec<ComposerDraft>, String> {
+        self.refuse_when(id, |stage| matches!(stage, Stage::Sent { .. }))
+    }
+
+    pub(crate) fn refuse_wake(&mut self, id: CanonicalUuid) -> Result<Vec<ComposerDraft>, String> {
+        self.refuse_when(id, |stage| *stage == Stage::WakeSent)
+    }
+
+    /// Restore a successful wake whose fresh lane read could not prove residency.
+    pub(crate) fn refuse_woken_lane(
+        &mut self,
+        lane: CanonicalUuid,
+    ) -> Result<Vec<ComposerDraft>, String> {
+        let id = self
+            .0
+            .get(&lane)
+            .into_iter()
+            .flatten()
+            .find(|submission| submission.stage == Stage::AwaitingResidency)
+            .map(|submission| submission.id)
+            .ok_or_else(|| format!("lane {lane} has no wake awaiting residency"))?;
+        self.refuse_when(id, |stage| *stage == Stage::AwaitingResidency)
+    }
+
+    fn refuse_when(
+        &mut self,
+        id: CanonicalUuid,
+        expected: impl FnOnce(&Stage) -> bool,
+    ) -> Result<Vec<ComposerDraft>, String> {
         let lane = self
             .lane_for(id)
             .ok_or_else(|| format!("composer result named unknown submission {id}"))?;
@@ -250,7 +417,7 @@ impl SubmissionQueue {
             .iter()
             .position(|submission| submission.id == id)
             .expect("a located submission remains in its lane queue");
-        if rows[index].stage != Stage::Sent {
+        if !expected(&rows[index].stage) {
             return Err(format!(
                 "composer submission {id} was not awaiting a result"
             ));
@@ -271,7 +438,11 @@ impl SubmissionQueue {
             .flatten()
             .filter_map(|submission| match &submission.stage {
                 Stage::Accepted { directive, key, .. } => Some((*directive, key.clone())),
-                Stage::Queued | Stage::Sent => None,
+                Stage::WakeQueued
+                | Stage::WakeSent
+                | Stage::AwaitingResidency
+                | Stage::Queued { .. }
+                | Stage::Sent { .. } => None,
             })
             .collect()
     }
@@ -314,7 +485,11 @@ impl SubmissionQueue {
                             .get(directive)
                             .is_none_or(|captured_key| captured_key != key)
                 }
-                Stage::Queued | Stage::Sent => true,
+                Stage::WakeQueued
+                | Stage::WakeSent
+                | Stage::AwaitingResidency
+                | Stage::Queued { .. }
+                | Stage::Sent { .. } => true,
             });
             !rows.is_empty()
         });
@@ -334,7 +509,11 @@ impl SubmissionQueue {
                                 directive: submission.id,
                                 key: match &submission.stage {
                                     Stage::Accepted { key, .. } => Some(key.clone()),
-                                    Stage::Queued | Stage::Sent => None,
+                                    Stage::WakeQueued
+                                    | Stage::WakeSent
+                                    | Stage::AwaitingResidency
+                                    | Stage::Queued { .. }
+                                    | Stage::Sent { .. } => None,
                                 },
                             })
                             .collect(),
@@ -345,7 +524,7 @@ impl SubmissionQueue {
                 .0
                 .values()
                 .flatten()
-                .filter(|submission| matches!(submission.stage, Stage::Queued | Stage::Sent))
+                .filter(|submission| !matches!(&submission.stage, Stage::Accepted { .. }))
                 .count(),
         }
     }
@@ -407,6 +586,16 @@ mod tests {
             uuid(lane),
             uuid(OCCUPANT),
             uuid(EPOCH),
+            body.to_owned(),
+            Vec::new(),
+            draft(body),
+        )
+    }
+
+    fn wake_submission(id: &str, lane: &str, body: &str) -> Submission {
+        Submission::wake(
+            uuid(id),
+            uuid(lane),
             body.to_owned(),
             Vec::new(),
             draft(body),
@@ -618,5 +807,88 @@ mod tests {
         assert_eq!(queue.rollback(uuid(ID_B)).unwrap().snapshot.body, "second");
         assert_eq!(queue.ready()[0].id, uuid(ID_A));
         assert!(queue.rollback(uuid(ID_C)).is_none());
+    }
+
+    #[test]
+    fn wake_requires_its_reply_and_a_nominated_fresh_residency_before_steer() {
+        let mut queue = SubmissionQueue::default();
+        queue
+            .enqueue(wake_submission(ID_A, LANE_A, "wake first"))
+            .unwrap();
+        queue
+            .enqueue(wake_submission(ID_B, LANE_A, "wake second"))
+            .unwrap();
+
+        assert_eq!(queue.ready_wakes()[0].id, uuid(ID_A));
+        queue.wake_sent(uuid(ID_A)).unwrap();
+        assert!(queue.ready().is_empty());
+        assert!(queue.ready_wakes().is_empty());
+
+        queue.reconnect();
+        assert_eq!(queue.ready_wakes()[0].id, uuid(ID_A));
+        queue.wake_sent(uuid(ID_A)).unwrap();
+        queue.wake_accepted(uuid(ID_A)).unwrap();
+        let nominated = queue.awaiting_residency();
+        assert_eq!(nominated, [uuid(ID_A)]);
+        assert_eq!(
+            queue.awaiting_lanes(&nominated),
+            BTreeSet::from([uuid(LANE_A)])
+        );
+        assert!(queue.ready().is_empty());
+
+        queue.bind_woken_lane(uuid(LANE_A), uuid(OCCUPANT), uuid(EPOCH));
+        assert!(queue.awaiting_residency().is_empty());
+        assert_eq!(queue.ready()[0].id, uuid(ID_A));
+        assert_eq!(
+            queue.ready()[0].residency(),
+            Some((uuid(OCCUPANT), uuid(EPOCH)))
+        );
+        queue.sent(uuid(ID_A)).unwrap();
+        queue
+            .accept(
+                uuid(ID_A),
+                uuid(ID_A),
+                "1kWake".to_owned(),
+                Disposition::Live,
+            )
+            .unwrap();
+        assert_eq!(queue.ready()[0].id, uuid(ID_B));
+        assert_eq!(
+            queue.ready()[0].residency(),
+            Some((uuid(OCCUPANT), uuid(EPOCH))),
+            "the same causal lane read binds later vacant-lane drafts without a redundant wake"
+        );
+    }
+
+    #[test]
+    fn wake_refusal_and_missing_residency_restore_every_unsent_lane_draft() {
+        let mut refused = SubmissionQueue::default();
+        refused
+            .enqueue(wake_submission(ID_A, LANE_A, "refused first"))
+            .unwrap();
+        refused
+            .enqueue(wake_submission(ID_B, LANE_A, "refused second"))
+            .unwrap();
+        refused.wake_sent(uuid(ID_A)).unwrap();
+        assert_eq!(
+            refused
+                .refuse_wake(uuid(ID_A))
+                .unwrap()
+                .into_iter()
+                .map(|draft| draft.body)
+                .collect::<Vec<_>>(),
+            ["refused first", "refused second"]
+        );
+
+        let mut unproven = SubmissionQueue::default();
+        unproven
+            .enqueue(wake_submission(ID_C, LANE_B, "unproven"))
+            .unwrap();
+        unproven.wake_sent(uuid(ID_C)).unwrap();
+        unproven.wake_accepted(uuid(ID_C)).unwrap();
+        assert_eq!(
+            unproven.refuse_woken_lane(uuid(LANE_B)).unwrap()[0].body,
+            "unproven"
+        );
     }
 }

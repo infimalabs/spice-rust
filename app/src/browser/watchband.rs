@@ -29,6 +29,16 @@ const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
 const RENEWAL_REQUEST: &str = "Renew your current task lease now.";
 const LANE_DRAG_MIME: &str = "application/x-spice-lane";
 
+/// Authority a detached draft may use for its next transition.
+#[derive(Clone, Copy)]
+enum SubmissionTarget {
+    Resident {
+        occupant: CanonicalUuid,
+        epoch: CanonicalUuid,
+    },
+    Wake,
+}
+
 /// The media type a dragged team carries, and the only one a team accepts.
 ///
 /// Message cards are draggable too, and they carry their prose as `text/plain`
@@ -118,6 +128,9 @@ pub(super) fn render_lineage(
         standing.pending = submissions.status.pending(standing.lane, backend);
     }
     let can_send = runtime.offers(CommandKind::SteerSend);
+    // Wake-and-send needs both halves: lifecycle authority and the fresh lane
+    // read that establishes the new residency witness before steering.
+    let can_wake = runtime.offers(CommandKind::LaneState) && runtime.offers(CommandKind::LaneRead);
     let can_configure = runtime.offers(CommandKind::LineageConfigure);
     // Two drags, two laws: a card moves one lane, a grip restates the whole
     // topology. Each gesture is offered only when its own command is.
@@ -131,6 +144,7 @@ pub(super) fn render_lineage(
         runtime,
         epoch: lanes.epoch,
         can_send,
+        can_wake,
         can_arrange_lanes,
         can_arrange_lineages,
         can_configure,
@@ -148,6 +162,7 @@ struct FleetRender<'a> {
     runtime: &'a CanvasRuntime,
     epoch: CanonicalUuid,
     can_send: bool,
+    can_wake: bool,
     can_arrange_lanes: bool,
     can_arrange_lineages: bool,
     can_configure: bool,
@@ -230,6 +245,7 @@ fn render_populated_fleet(
                                     &lineage_standings,
                                     render.epoch,
                                     render.can_send,
+                                    render.can_wake,
                                     render.can_arrange_lanes,
                                     render.sender,
                                     render.drafts,
@@ -454,6 +470,7 @@ fn render_compose(
     standings: &[Standing],
     epoch: CanonicalUuid,
     can_send: bool,
+    can_wake: bool,
     can_arrange: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
@@ -470,14 +487,24 @@ fn render_compose(
     let submit = submit_lineage_callback(
         &lineage.members,
         epoch,
+        can_wake,
         sender.clone(),
         drafts.clone(),
         submissions.clone(),
     );
+    let wake_ready = can_send
+        && can_wake
+        && lineage.members.iter().any(|member| {
+            member.occupant.is_none()
+                && member.bound
+                && drafts
+                    .get(&member.lane.to_string())
+                    .is_some_and(|draft| !compose(draft).trim().is_empty())
+        });
     let ready = can_send
         && !control.pending_life
         && lineage.members.iter().any(|member| {
-            member.occupant.is_some()
+            (member.occupant.is_some() || (member.bound && can_wake))
                 && drafts
                     .get(&member.lane.to_string())
                     .is_some_and(|draft| !compose(draft).trim().is_empty())
@@ -496,6 +523,7 @@ fn render_compose(
                             epoch,
                             standing.pending,
                             can_send,
+                            can_wake,
                             can_arrange,
                             sender,
                             drafts,
@@ -513,6 +541,7 @@ fn render_compose(
                     sender,
                     can_configure,
                     ready,
+                    wake_ready,
                 )}
             </form>
             {view::chrome::render_lineage_ticker(runtime, lineage)}
@@ -897,6 +926,7 @@ fn render_agent_composer(
     epoch: CanonicalUuid,
     pending: usize,
     can_send: bool,
+    can_wake: bool,
     can_arrange: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
@@ -908,13 +938,16 @@ fn render_agent_composer(
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let occupant = member.occupant;
-    let send_enabled = can_send && occupant.is_some();
-    let renew_enabled = send_enabled;
+    let wake = can_send && can_wake && member.bound && occupant.is_none();
+    let target = occupant
+        .filter(|_| can_send)
+        .map(|occupant| SubmissionTarget::Resident { occupant, epoch })
+        .or_else(|| wake.then_some(SubmissionTarget::Wake));
+    let renew_enabled = can_send && occupant.is_some();
     let renew = renewal_callback(lane_id, occupant, epoch, sender);
     let onkeydown = keyboard_submit(
         lane_id,
-        occupant,
-        epoch,
+        target,
         lane_key.clone(),
         sender.clone(),
         drafts.clone(),
@@ -935,9 +968,10 @@ fn render_agent_composer(
             key={lane_key.clone()}
             class={classes!(
                 "team-agent",
-                (!send_enabled).then_some("team-agent--vacant"),
+                occupant.is_none().then_some("team-agent--vacant"),
             )}
             data-agent-lane={lane_id.to_string()}
+            data-wake-and-send={wake.to_string()}
             data-accent={standing.accent.to_string()}
             title={watchband::standing_title(standing)}
             {ondragover}
@@ -1107,52 +1141,45 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
 fn submit_lineage_callback(
     members: &[crate::runtime::LaneMember],
     epoch: CanonicalUuid,
+    can_wake: bool,
     sender: SenderHandle,
     drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
 ) -> Callback<SubmitEvent> {
     let targets = members
         .iter()
-        .map(|member| (member.lane, member.occupant, member.lane.to_string()))
+        .map(|member| {
+            let target = member
+                .occupant
+                .map(|occupant| SubmissionTarget::Resident { occupant, epoch })
+                .or_else(|| (can_wake && member.bound).then_some(SubmissionTarget::Wake));
+            (member.lane, target, member.lane.to_string())
+        })
         .collect::<Vec<_>>();
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        for (lane, occupant, lane_key) in &targets {
-            submit_draft(
-                *lane,
-                *occupant,
-                epoch,
-                lane_key,
-                &sender,
-                &drafts,
-                &submissions,
-            );
+        for (lane, target, lane_key) in &targets {
+            submit_draft(*lane, *target, lane_key, &sender, &drafts, &submissions);
         }
     })
 }
 
 fn submit_draft(
     lane: CanonicalUuid,
-    occupant: Option<CanonicalUuid>,
-    epoch: CanonicalUuid,
+    target: Option<SubmissionTarget>,
     lane_key: &str,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
 ) -> bool {
-    let Some(occupant) = occupant else {
-        return false;
-    };
     let Some(prepared) = drafts.0.prepare(lane_key) else {
         return false;
     };
     let Ok(id) = random_uuid() else {
         return false;
     };
-    if !queue_submission(
-        sender,
-        submissions,
-        Submission::new(
+    let submission = match target {
+        Some(SubmissionTarget::Resident { occupant, epoch }) => Submission::new(
             id,
             lane,
             occupant,
@@ -1161,7 +1188,16 @@ fn submit_draft(
             prepared.attachments,
             prepared.snapshot,
         ),
-    ) {
+        Some(SubmissionTarget::Wake) => Submission::wake(
+            id,
+            lane,
+            prepared.message,
+            prepared.attachments,
+            prepared.snapshot,
+        ),
+        None => return false,
+    };
+    if !queue_submission(sender, submissions, submission) {
         return false;
     }
     drafts.dispatch(ComposerAction::Clear {

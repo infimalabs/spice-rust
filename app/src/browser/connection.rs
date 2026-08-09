@@ -370,7 +370,7 @@ async fn dispatch_action(
                 principal,
                 writer,
                 pending,
-                PendingKind::Lanes,
+                PendingKind::Lanes { wakes: Vec::new() },
                 CommandKind::LaneArrange,
                 vec![],
                 LaneArrange { lane, before },
@@ -439,8 +439,36 @@ async fn drain_submissions(
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     submissions: &SubmissionHandle,
 ) -> Result<(), String> {
+    let ready_wakes = submissions.queue.borrow().ready_wakes();
+    for submission in ready_wakes {
+        send_typed(
+            principal,
+            writer,
+            pending,
+            PendingKind::WakeSubmission {
+                lane: submission.lane,
+                submission: submission.id,
+            },
+            CommandKind::LaneState,
+            vec![],
+            LaneState {
+                lane: submission.lane,
+                action: LaneAction::Wake,
+                worktree: None,
+            },
+        )
+        .await?;
+        submissions.queue.borrow_mut().wake_sent(submission.id)?;
+        submissions.publish();
+    }
     let ready = submissions.queue.borrow().ready();
     for submission in ready {
+        let (occupant, epoch) = submission.residency().ok_or_else(|| {
+            format!(
+                "composer submission {} became steerable without residency",
+                submission.id
+            )
+        })?;
         let body = SteerSend {
             lane: submission.lane,
             message: submission.message.clone(),
@@ -448,8 +476,8 @@ async fn drain_submissions(
         };
         let expected = vec![Witness::Residency {
             lane: submission.lane,
-            occupant: submission.occupant,
-            epoch: submission.epoch,
+            occupant,
+            epoch,
         }];
         send_typed_as(
             principal,
@@ -629,11 +657,14 @@ async fn send_refresh(
         BoardRead { family: None },
     )
     .await?;
+    let awaiting_residency = submissions.queue.borrow().awaiting_residency();
     send_if_offered(
         principal,
         writer,
         pending,
-        PendingKind::Lanes,
+        PendingKind::Lanes {
+            wakes: awaiting_residency,
+        },
         CommandKind::LaneRead,
         vec![],
         LaneRead {},
@@ -903,9 +934,10 @@ fn apply_command_response(
         // move when that answer lands, never before it: the surface holds the
         // order the resident last stated, so a refused arrangement has nothing
         // local to take back and needs no re-read either.
-        PendingKind::Lanes | PendingKind::LineageArrange => {
-            apply_lane_response(session, handles, runtime, bytes)?
+        PendingKind::Lanes { wakes } => {
+            apply_lane_response(session, handles, runtime, &wakes, bytes)?
         }
+        PendingKind::LineageArrange => apply_lane_response(session, handles, runtime, &[], bytes)?,
         PendingKind::Inbox { covered } => {
             apply_inbox_response(session, handles, runtime, &covered, bytes)?
         }
@@ -926,6 +958,9 @@ fn apply_command_response(
                 admit_response(session, bytes)?;
             runtime.apply_lane_change(&admitted);
             true
+        }
+        PendingKind::WakeSubmission { lane, submission } => {
+            apply_wake_submission_response(session, handles, runtime, submission, lane, bytes)?
         }
         PendingKind::LineageConfigure(lineage) => apply_lineage_configuration(
             session,
@@ -961,17 +996,60 @@ fn apply_lane_response(
     session: &Session,
     handles: &SurfaceHandles,
     runtime: &mut CanvasRuntime,
+    wakes: &[CanonicalUuid],
     bytes: &[u8],
 ) -> Result<bool, String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
         admit_response(session, bytes)?;
+    let wake_lanes = handles.submissions.queue.borrow().awaiting_lanes(wakes);
     if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
+        for lane in &wake_lanes {
+            let row = reply.body.lanes.iter().find(|row| row.lane == *lane);
+            if let Some(row) = row
+                && row.bound
+                && let Some(occupant) = row.occupant
+            {
+                handles.submissions.queue.borrow_mut().bind_woken_lane(
+                    *lane,
+                    occupant,
+                    reply.body.epoch,
+                );
+            } else {
+                let restored = handles
+                    .submissions
+                    .queue
+                    .borrow_mut()
+                    .refuse_woken_lane(*lane)?;
+                restore_lane_submissions(
+                    handles,
+                    *lane,
+                    restored,
+                    "Agent wake succeeded, but a fresh lane snapshot did not establish an \
+                     occupant. Review the lane and retry.",
+                );
+            }
+        }
         handles
             .lineage_controls
             .dispatch(LineageControlAction::SyncLanes {
                 answer: reply.body.clone(),
                 settle: false,
             });
+    } else if let Some(issue) = outcome_issue(
+        "Agent woke, but Canvas could not confirm fresh residency",
+        &admitted.get().outcome,
+    ) {
+        for lane in &wake_lanes {
+            let restored = handles
+                .submissions
+                .queue
+                .borrow_mut()
+                .refuse_woken_lane(*lane)?;
+            restore_lane_submissions(handles, *lane, restored, &issue);
+        }
+    }
+    if !wake_lanes.is_empty() {
+        handles.submissions.publish();
     }
     runtime.apply_lanes(&admitted);
     Ok(false)
@@ -1019,15 +1097,74 @@ fn apply_submission_response(
         )?,
         wire::Outcome::Refusal(_) | wire::Outcome::Fault(_) => {
             let restored = handles.submissions.queue.borrow_mut().refuse(id)?;
-            handles
-                .composer_drafts
-                .dispatch(ComposerAction::RestoreAll {
-                    lane: lane.to_string(),
-                    drafts: restored,
-                });
+            let issue = outcome_issue("Message was not sent", &admitted.get().outcome)
+                .expect("the refused or faulted steering outcome has an issue");
+            restore_lane_submissions(handles, lane, restored, &issue);
         }
     }
     handles.submissions.publish();
     runtime.apply_steer(&admitted, lane);
     Ok(true)
+}
+
+fn apply_wake_submission_response(
+    session: &Session,
+    handles: &SurfaceHandles,
+    runtime: &mut CanvasRuntime,
+    submission: CanonicalUuid,
+    lane: CanonicalUuid,
+    bytes: &[u8],
+) -> Result<bool, String> {
+    let admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
+        admit_response(session, bytes)?;
+    match &admitted.get().outcome {
+        wire::Outcome::Reply(_) => handles
+            .submissions
+            .queue
+            .borrow_mut()
+            .wake_accepted(submission)?,
+        wire::Outcome::Refusal(_) | wire::Outcome::Fault(_) => {
+            let restored = handles
+                .submissions
+                .queue
+                .borrow_mut()
+                .refuse_wake(submission)?;
+            let issue = outcome_issue("Could not wake this agent", &admitted.get().outcome)
+                .expect("the refused or faulted wake outcome has an issue");
+            restore_lane_submissions(handles, lane, restored, &issue);
+        }
+    }
+    handles.submissions.publish();
+    runtime.apply_lane_change(&admitted);
+    Ok(matches!(&admitted.get().outcome, wire::Outcome::Reply(_)))
+}
+
+fn restore_lane_submissions(
+    handles: &SurfaceHandles,
+    lane: CanonicalUuid,
+    restored: Vec<crate::composer_drafts::ComposerDraft>,
+    issue: &str,
+) {
+    handles
+        .composer_drafts
+        .dispatch(ComposerAction::RestoreAll {
+            lane: lane.to_string(),
+            drafts: restored,
+        });
+    handles.composer_drafts.dispatch(ComposerAction::SetIssue {
+        lane: lane.to_string(),
+        issue: issue.to_owned(),
+    });
+}
+
+fn outcome_issue<T>(action: &str, outcome: &wire::Outcome<T>) -> Option<String> {
+    match outcome {
+        wire::Outcome::Reply(_) => None,
+        wire::Outcome::Refusal(refusal) => {
+            Some(format!("{action}: {}. {}", refusal.reason, refusal.remedy))
+        }
+        wire::Outcome::Fault(fault) => {
+            Some(format!("{action}: {}. {}", fault.reason, fault.detail))
+        }
+    }
 }
