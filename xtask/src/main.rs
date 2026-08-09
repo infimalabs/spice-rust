@@ -10,7 +10,8 @@ use sill::Deadlines;
 const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <help|verify [--package PACKAGE]|gate ARM|app|activate-hooks|",
+    "usage: cargo xtask <help|verify [--package PACKAGE]|verify-action battery|",
+    "gate ARM|app|activate-hooks|",
     "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
     "[--free-space-floor BYTES] [--retain-live-worktrees N]|",
@@ -21,7 +22,16 @@ const USAGE: &str = concat!(
 
 fn help() -> String {
     let arms = gate::GateId::ALL.map(gate::GateId::as_str).join("\n  ");
-    format!("{USAGE}\n\ngate ARM accepts:\n  {arms}")
+    format!(
+        concat!(
+            "{usage}\n\n",
+            "verify-action battery is the public partial gate-battery action; ",
+            "it is not a completion verifier.\n\n",
+            "gate ARM accepts:\n  {arms}"
+        ),
+        usage = USAGE,
+        arms = arms,
+    )
 }
 
 fn main() -> ExitCode {
@@ -31,6 +41,10 @@ fn main() -> ExitCode {
     let mut output = io::stdout().lock();
     // Dispatch only current spellings; removed command names have no alias arm.
     let result: CommandResult = match command.as_deref() {
+        Some(value) if value == OsStr::new("verify-action") && arguments.len() == 1 => {
+            let action = arguments.next().expect("one verifier action was admitted");
+            return run_verify_action(&action, &mut output);
+        }
         Some(value) if value == OsStr::new("help") && arguments.len() == 0 => {
             writeln!(output, "{}", help()).map_err(Into::into)
         }
@@ -38,8 +52,13 @@ fn main() -> ExitCode {
             run_verify(arguments.collect(), &mut output)
         }
         #[cfg(not(target_arch = "wasm32"))]
-        Some(value) if value == OsStr::new("__workspace-tests") && arguments.len() == 0 => {
-            workspace_tests(&mut output)
+        Some(value) if value == OsStr::new("__workspace-tests") && arguments.len() == 1 => {
+            workspace_tests(
+                arguments
+                    .next()
+                    .expect("one workspace-test concurrency was admitted"),
+                &mut output,
+            )
         }
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
             run_gate(arguments.next(), &mut output)
@@ -103,6 +122,21 @@ fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandR
         _ => {
             eprintln!("{}", help());
             Err(usage_error().into())
+        }
+    }
+}
+
+fn run_verify_action(action: &OsStr, output: &mut impl io::Write) -> ExitCode {
+    if action != OsStr::new("battery") {
+        eprintln!("{}", help());
+        return ExitCode::from(USAGE_EXIT);
+    }
+    match xtask::verify_battery_child(output) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::from(xtask::VERIFY_ACTION_REFUSAL_EXIT),
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
         }
     }
 }
@@ -377,9 +411,16 @@ fn ambient_environment() -> Result<sill::Environment, sill::SpecError> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn workspace_tests(output: &mut impl io::Write) -> Result<(), Box<dyn std::error::Error>> {
+fn workspace_tests(
+    concurrency: OsString,
+    output: &mut impl io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let concurrency = concurrency
+        .to_str()
+        .ok_or("workspace-test concurrency is not UTF-8")?
+        .parse::<usize>()?;
     let environment = ambient_environment()?;
-    xtask::run_workspace_tests(environment, output).map_err(Into::into)
+    xtask::run_workspace_tests(environment, concurrency, output).map_err(Into::into)
 }
 
 fn release_environment() -> xtask::ReleaseEnvironment {
@@ -422,4 +463,16 @@ fn run_reference_transaction(state: &OsStr) -> Result<(), Box<dyn std::error::Er
     }
     let repository = env::current_dir()?;
     xtask::reference_transaction(&repository, state, &input).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::help;
+
+    #[test]
+    fn help_exposes_the_one_public_partial_battery_action() {
+        let help = help();
+        assert!(help.contains("verify-action battery"));
+        assert!(help.contains("not a completion verifier"));
+    }
 }

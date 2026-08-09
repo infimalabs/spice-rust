@@ -18,6 +18,9 @@ sill = { path = "../sill" }
 spice = { path = "../spice" }
 wire = { path = "../wire" }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+signal-hook = "0.3.18"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"
 

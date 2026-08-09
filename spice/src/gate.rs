@@ -21,6 +21,7 @@ use crate::repository::{Repository, StateError};
 
 const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
+const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 
 /// One staged battery capture retained across the full verifier's actions.
 ///
@@ -30,6 +31,7 @@ const PROCESS_PATH: &str = concat!("PA", "TH");
 pub struct PreparedBattery {
     capture: BatteryCapture<'static>,
     verifier_environment: Vec<(OsString, OsString)>,
+    cargo_jobs: Option<usize>,
 }
 
 impl PreparedBattery {
@@ -37,11 +39,18 @@ impl PreparedBattery {
     ///
     /// # Errors
     ///
-    /// Refuses a foreign arm or unavailable/drifted declared tool.
+    /// Refuses a foreign arm, an unavailable/drifted declared tool, or a Cargo
+    /// job cap that differs from the first contract minted by this capture.
     pub fn verifier_compiler_contract(
-        &self,
+        &mut self,
         gate_id: GateId,
+        cargo_jobs: usize,
     ) -> Result<VerifierCompilerContract, RunError> {
+        bind_cargo_jobs(
+            &mut self.verifier_environment,
+            &mut self.cargo_jobs,
+            cargo_jobs,
+        )?;
         self.capture
             .verifier_compiler_contract(gate_id, self.verifier_environment.clone())
             .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
@@ -62,6 +71,37 @@ impl PreparedBattery {
     }
 }
 
+fn bind_cargo_jobs(
+    environment: &mut Vec<(OsString, OsString)>,
+    bound: &mut Option<usize>,
+    requested: usize,
+) -> Result<(), RunError> {
+    let requested = requested.max(1);
+    match *bound {
+        Some(current) if current != requested => Err(RunError::refusal(
+            "gate::verifier-budget-refused",
+            format!(
+                concat!(
+                    "full verifier Cargo job cap changed from {} to {} ",
+                    "after capture"
+                ),
+                current, requested
+            ),
+        )),
+        Some(_) => Ok(()),
+        None => {
+            environment.retain(|(name, _)| name != CARGO_BUILD_JOBS);
+            environment.push((
+                OsString::from(CARGO_BUILD_JOBS),
+                OsString::from(requested.to_string()),
+            ));
+            environment.sort();
+            *bound = Some(requested);
+            Ok(())
+        }
+    }
+}
+
 /// Capture the selected source once for a full verifier run.
 ///
 /// # Errors
@@ -72,6 +112,7 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery, RunError> {
     capture(selector, None, None).map(|capture| PreparedBattery {
         capture,
         verifier_environment,
+        cargo_jobs: None,
     })
 }
 
@@ -346,3 +387,45 @@ impl fmt::Display for RunError {
 }
 
 impl std::error::Error for RunError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verifier_cargo_budget_binds_once_and_refuses_drift() {
+        let mut environment = vec![
+            (OsString::from("Z_FIXTURE"), OsString::from("last")),
+            (OsString::from(CARGO_BUILD_JOBS), OsString::from("99")),
+            (OsString::from("A_FIXTURE"), OsString::from("first")),
+        ];
+        let mut bound = None;
+
+        bind_cargo_jobs(&mut environment, &mut bound, 0).expect("zero normalizes to one job");
+        assert_eq!(bound, Some(1));
+        assert_eq!(
+            environment
+                .iter()
+                .filter(|(name, _)| name == CARGO_BUILD_JOBS)
+                .count(),
+            1
+        );
+        assert_eq!(
+            environment
+                .iter()
+                .find(|(name, _)| name == CARGO_BUILD_JOBS)
+                .map(|(_, value)| value),
+            Some(&OsString::from("1"))
+        );
+        assert!(environment.windows(2).all(|pair| pair[0] < pair[1]));
+
+        let exact = environment.clone();
+        bind_cargo_jobs(&mut environment, &mut bound, 1).expect("same budget is idempotent");
+        assert_eq!(environment, exact);
+
+        let error = bind_cargo_jobs(&mut environment, &mut bound, 2)
+            .expect_err("a later budget cannot change the evidence environment");
+        assert_eq!(error.reason(), "gate::verifier-budget-refused");
+        assert_eq!(environment, exact);
+    }
+}

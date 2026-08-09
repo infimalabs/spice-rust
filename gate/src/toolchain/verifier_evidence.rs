@@ -3,17 +3,20 @@
 //! The verifier already compiles the native workspace and the browser target
 //! before it reaches the canonical battery.  These values let that one caller
 //! hand the successful process evidence forward without turning success into a
-//! string, an environment flag, or a reusable file.  A process token can only
-//! be minted by [`VerifierCompilerContract::run`], and a complete arm token can
-//! only be assembled from the exact successful stages that arm requires.
+//! string, an environment flag, or a reusable file. A process token can only
+//! be minted by executing a [`VerifierCompilerContract`], and a complete arm
+//! token can only be assembled from the exact successful stages that arm requires.
 
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use sill::{
+    Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
+    ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
+};
 use wire::{Digest, Domain};
 
 use super::ToolEvidence;
@@ -23,6 +26,11 @@ use crate::manifest::GateId;
 
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
+const PROCESS_RUNTIME: Duration = Duration::from_secs(30 * 60);
+const OUTPUT_DRAIN: Duration = Duration::from_secs(30);
+const REAP_DEADLINE: Duration = Duration::from_secs(10);
+const TERMINATION_GRACE: Duration = Duration::from_secs(2);
+const OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
 
 const NATIVE_CLIPPY_ARGUMENTS: &[&str] = &[
     "clippy",
@@ -95,6 +103,16 @@ pub struct VerifierCompilerRun {
     success: bool,
     code: Option<i32>,
     evidence: Option<VerifierCompilerProcessEvidence>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    completion: VerifierCompilerCompletion,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VerifierCompilerCompletion {
+    Exited,
+    Cancelled,
+    TimedOut,
 }
 
 impl VerifierCompilerRun {
@@ -108,6 +126,30 @@ impl VerifierCompilerRun {
     #[must_use]
     pub const fn code(&self) -> Option<i32> {
         self.code
+    }
+
+    /// Complete bounded standard output from the compiler process.
+    #[must_use]
+    pub fn stdout(&self) -> &[u8] {
+        &self.stdout
+    }
+
+    /// Complete bounded standard error from the compiler process.
+    #[must_use]
+    pub fn stderr(&self) -> &[u8] {
+        &self.stderr
+    }
+
+    /// Whether cancellation terminated the compiler process group.
+    #[must_use]
+    pub const fn cancelled(&self) -> bool {
+        matches!(self.completion, VerifierCompilerCompletion::Cancelled)
+    }
+
+    /// Whether the compiler process group exceeded its runtime deadline.
+    #[must_use]
+    pub const fn timed_out(&self) -> bool {
+        matches!(self.completion, VerifierCompilerCompletion::TimedOut)
     }
 
     /// Successful reusable evidence, absent after process failure.
@@ -174,8 +216,31 @@ impl VerifierCompilerContract {
     ///
     /// # Errors
     ///
-    /// Returns an unsupported stage or process-launch failure.
+    /// Returns an unsupported stage, invalid supervision policy, launch, wait,
+    /// drain, or capture failure.
     pub fn run(&self, stage: VerifierCompilerStage) -> io::Result<VerifierCompilerRun> {
+        self.run_with_cancellation(stage, Cancellation::Never)
+    }
+
+    /// Run one compiler stage under an externally cancellable process group.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid supervision policy, launch, wait, drain, or capture
+    /// failures. Cancellation and timeout are returned as typed run outcomes.
+    pub fn run_supervised(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: CancellationToken,
+    ) -> io::Result<VerifierCompilerRun> {
+        self.run_with_cancellation(stage, Cancellation::Token(cancellation))
+    }
+
+    fn run_with_cancellation(
+        &self,
+        stage: VerifierCompilerStage,
+        cancellation: Cancellation,
+    ) -> io::Result<VerifierCompilerRun> {
         if stage.gate_id() != self.gate_id {
             return Err(io::Error::other(format!(
                 "{} cannot execute {} evidence",
@@ -192,16 +257,57 @@ impl VerifierCompilerContract {
         let arguments = stage_arguments(stage, &self.repository);
         let environment = compiler_environment(&self.environment, &self.repository);
         let started = Instant::now();
-        let status = Command::new(program)
-            .args(&arguments)
-            .current_dir(&self.selection_root)
-            .env_clear()
-            .envs(environment.iter().cloned())
-            .status()?;
+        let process_environment =
+            Environment::new(environment.clone()).map_err(io::Error::other)?;
+        let deadlines = Deadlines::new(PROCESS_RUNTIME, OUTPUT_DRAIN, REAP_DEADLINE)
+            .map_err(io::Error::other)?;
+        let wait = WaitPolicy::new(
+            format!("verifier compiler stage {}", stage.tag()),
+            cancellation,
+            RestartDisposition::Never,
+        )
+        .map_err(io::Error::other)?;
+        let spec = Spec {
+            argv: Argv::new(program, arguments.iter().cloned()).map_err(io::Error::other)?,
+            cwd: self.selection_root.clone(),
+            environment: process_environment,
+            group: ProcessGroup::New,
+            deadlines,
+            wait,
+            output: Output::new(
+                StdinPolicy::Null,
+                StreamPolicy::Capture {
+                    limit: OUTPUT_LIMIT,
+                },
+                StreamPolicy::Capture {
+                    limit: OUTPUT_LIMIT,
+                },
+            ),
+            redaction: Redaction::None,
+            grace: TERMINATION_GRACE,
+        };
+        let outcome = sill::spawn(spec)
+            .map_err(io::Error::other)?
+            .wait()
+            .map_err(io::Error::other)?;
+        if !outcome.outputs_drained() {
+            return Err(io::Error::other(format!(
+                "{} compiler output did not drain before cleanup",
+                stage.tag()
+            )));
+        }
+        let stdout = complete_output(stage, "stdout", outcome.stdout())?;
+        let stderr = complete_output(stage, "stderr", outcome.stderr())?;
+        let status = outcome.completion().status();
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let success = status.success();
         let code = status.code();
-        let evidence = success.then(|| {
+        let completion = match outcome.completion() {
+            Completion::Exited(_) => VerifierCompilerCompletion::Exited,
+            Completion::Cancelled(_) => VerifierCompilerCompletion::Cancelled,
+            Completion::TimedOut(_) => VerifierCompilerCompletion::TimedOut,
+        };
+        let evidence = (completion == VerifierCompilerCompletion::Exited && success).then(|| {
             VerifierCompilerProcessEvidence::mint(
                 self,
                 stage,
@@ -215,6 +321,9 @@ impl VerifierCompilerContract {
             success,
             code,
             evidence,
+            stdout,
+            stderr,
+            completion,
         })
     }
 
@@ -258,8 +367,9 @@ impl VerifierCompilerContract {
     }
 }
 
-/// One successful process token.  Only [`VerifierCompilerContract::run`] can
-/// mint it; callers may retain and return it but cannot alter its fields.
+/// One successful process token. Only [`VerifierCompilerContract::run`] or
+/// [`VerifierCompilerContract::run_supervised`] can mint it; callers may retain
+/// and return it but cannot alter its fields.
 #[derive(Clone, Debug)]
 pub struct VerifierCompilerProcessEvidence {
     gate_id: GateId,
@@ -491,6 +601,26 @@ fn cargo_program(tools: &[ToolEvidence]) -> Option<&OsStr> {
         | ToolEvidence::Unprobed { .. }
         | ToolEvidence::Identified { .. } => None,
     })
+}
+
+fn complete_output(
+    stage: VerifierCompilerStage,
+    stream: &str,
+    output: Option<&sill::CapturedOutput>,
+) -> io::Result<Vec<u8>> {
+    let output = output.ok_or_else(|| {
+        io::Error::other(format!(
+            "{} compiler {stream} capture is unexpectedly absent",
+            stage.tag()
+        ))
+    })?;
+    if output.truncated() || !output.complete() {
+        return Err(io::Error::other(format!(
+            "{} compiler {stream} exceeded its bounded complete-output contract",
+            stage.tag()
+        )));
+    }
+    Ok(output.bytes().to_vec())
 }
 
 fn stage_arguments(stage: VerifierCompilerStage, repository: &Path) -> Vec<OsString> {
@@ -898,5 +1028,49 @@ mod tests {
 
         assert!(!run.success());
         assert!(run.into_evidence().is_none());
+    }
+
+    #[test]
+    fn failed_process_feedback_is_captured_completely_without_minting_evidence() {
+        let root = crate::toolchain::exclusive_scratch_root("gate-verifier-captured-output");
+        let repository = root.join("repository");
+        let selection = root.join("selection");
+        fs::create_dir(&repository).expect("fixture repository");
+        fs::create_dir(&selection).expect("fixture selected root");
+        let cargo = root.join("cargo");
+        fs::write(
+            &cargo,
+            "#!/bin/sh\nprintf 'bounded stdout\\n'\nprintf 'bounded stderr\\n' >&2\nexit 23\n",
+        )
+        .expect("write fixture Cargo executable");
+        fs::set_permissions(
+            &cargo,
+            fs::metadata("/usr/bin/true")
+                .expect("read fixture executable permissions")
+                .permissions(),
+        )
+        .expect("make fixture Cargo executable");
+        let contract = VerifierCompilerContract::new(
+            GateId::RustTypecheck,
+            source(b"captured output selected tree"),
+            repository,
+            selection,
+            vec![tool("cargo", cargo.to_str().expect("UTF-8 fixture path"))],
+            Vec::new(),
+        )
+        .expect("captured output contract");
+
+        let run = contract
+            .run(VerifierCompilerStage::NativeClippy)
+            .expect("fixture Cargo launches");
+
+        assert!(!run.success());
+        assert_eq!(run.code(), Some(23));
+        assert_eq!(run.stdout(), b"bounded stdout\n");
+        assert_eq!(run.stderr(), b"bounded stderr\n");
+        assert!(!run.cancelled());
+        assert!(!run.timed_out());
+        assert!(run.into_evidence().is_none());
+        fs::remove_dir_all(root).expect("remove captured output fixture");
     }
 }

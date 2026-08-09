@@ -102,7 +102,7 @@ fn verifier_process_projects_one_bounded_actionable_file_shape_refusal() {
         "a forbidden program crossed the verifier rim: {}",
         programs.forbidden_marker.display()
     );
-    assert_full_verifier_action_trace(&programs, &output);
+    assert_full_verifier_action_trace(&programs, &fixture.repository, &output);
 
     assert_bounded_refusal(&output, &refused_result);
     assert_eq!(selected_result.gate_id(), GateId::EnvNameLedger);
@@ -118,9 +118,10 @@ struct FullVerifierPrograms {
 
 fn assert_full_verifier_action_trace(
     programs: &FullVerifierPrograms,
+    repository: &Path,
     output: &std::process::Output,
 ) {
-    assert_workspace_test_execution(&programs.cargo_log, output);
+    assert_workspace_test_execution(&programs.cargo_log, repository, output);
     let browser = fs::read_to_string(&programs.browser_log).expect("read verifier browser action");
     assert!(
         browser.starts_with("run test:canvas -- --spice-coverage-receipt "),
@@ -257,7 +258,18 @@ fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path) {
     );
 }
 
-fn assert_workspace_test_execution(cargo_log: &Path, output: &std::process::Output) {
+fn assert_workspace_test_execution(
+    cargo_log: &Path,
+    repository: &Path,
+    output: &std::process::Output,
+) {
+    let app_action = format!(
+        "xtask app --spice-verifier-publish-root {}",
+        repository
+            .canonicalize()
+            .expect("canonical verifier repository")
+            .display()
+    );
     assert_eq!(
         fs::read_to_string(cargo_log)
             .expect("read verifier Cargo actions")
@@ -269,7 +281,7 @@ fn assert_workspace_test_execution(cargo_log: &Path, output: &std::process::Outp
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
-            "xtask app",
+            app_action.as_str(),
             "test --locked --package verify-process-fixture-id --lib",
             "doc --locked --workspace --lib --bins --no-deps",
             "test --locked --workspace --doc",
@@ -619,10 +631,14 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
     assert!(output.status.success(), "{}", streams(&output));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("cargo xtask <help|verify [--package PACKAGE]|gate ARM|"),
+        stdout.contains(concat!(
+            "cargo xtask <help|verify [--package PACKAGE]|",
+            "verify-action battery|gate ARM|"
+        )),
         "{}",
         streams(&output)
     );
+    assert!(stdout.contains("not a completion verifier"));
     for gate_id in GateId::ALL {
         assert!(
             stdout
@@ -652,7 +668,7 @@ fn unknown_gate_arm_points_to_the_canonical_inventory() {
 }
 
 #[test]
-fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() {
+fn zero_exit_browser_process_without_a_receipt_refuses_and_never_lands() {
     let fixture = Fixture::new();
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create process fixture directory");
@@ -662,8 +678,25 @@ fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() 
     executable(
         &programs.join("cargo"),
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$*\" >> '{}'\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
+                "fi\n",
+                "exit 0\n",
+            ),
             cargo_log.display()
+        ),
+    );
+    executable(
+        &programs.join("trunk"),
+        concat!(
+            "#!/bin/sh\n",
+            "if [ \"$*\" = \"--version\" ]; then\n",
+            "  printf '%s\\n' 'trunk 0.21.14'\n",
+            "fi\n",
+            "exit 0\n",
         ),
     );
     executable(&programs.join("npm"), "#!/bin/sh\nexit 0\n");
@@ -681,21 +714,53 @@ fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() 
         "{}",
         streams(&output)
     );
+    let cargo_actions = fs::read_to_string(cargo_log).expect("read verifier Cargo actions");
+    let cargo_actions = cargo_actions.lines().collect::<Vec<_>>();
+    let chain = cargo_actions
+        .iter()
+        .copied()
+        .filter(|action| *action != "--version")
+        .collect::<Vec<_>>();
+    let app_action = format!(
+        "xtask app --spice-verifier-publish-root {}",
+        fixture
+            .repository
+            .canonicalize()
+            .expect("canonical verifier repository")
+            .display()
+    );
     assert_eq!(
-        fs::read_to_string(cargo_log)
-            .expect("read verifier Cargo actions")
-            .lines()
-            .filter(|line| *line != "--version")
-            .collect::<Vec<_>>(),
-        [
+        chain.get(..4),
+        Some(
+            &[
+                "clippy --locked --workspace --all-targets -- -D warnings",
+                "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
+                "check --locked --workspace --target wasm32-unknown-unknown",
+                app_action.as_str(),
+            ][..]
+        )
+    );
+    assert!(
+        chain.iter().all(|action| [
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
-            "xtask app",
+            app_action.as_str(),
+            "metadata --locked --format-version 1 --no-deps",
         ]
+        .contains(action)),
+        "unexpected Cargo action under browser refusal: {cargo_actions:?}",
+    );
+    let mut unique_chain = chain.clone();
+    unique_chain.sort_unstable();
+    unique_chain.dedup();
+    assert_eq!(
+        unique_chain.len(),
+        chain.len(),
+        "duplicate Cargo action: {chain:?}"
     );
     assert!(
-        !String::from_utf8_lossy(&output.stdout).contains("canonical Rust gate battery"),
+        !String::from_utf8_lossy(&output.stdout).contains("ordinal=12/12"),
         "{}",
         streams(&output)
     );
@@ -715,6 +780,10 @@ fn verifier_wasm_clippy_rejects_a_lint_hidden_from_the_native_target() {
             concat!(
                 "#!/bin/sh\n",
                 "printf '%s\\n' \"$*\" >> '{cargo_log}'\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
+                "  exit 0\n",
+                "fi\n",
                 "if [ \"$*\" = \"clippy --locked -p app --target ",
                 "wasm32-unknown-unknown -- -D warnings\" ]; then\n",
                 "  {path_name}=${{{path_name}#*:}}\n",
@@ -750,20 +819,37 @@ fn verifier_wasm_clippy_rejects_a_lint_hidden_from_the_native_target() {
 
     assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("variable does not need to be mutable"),
+        String::from_utf8_lossy(&output.stdout).contains("variable does not need to be mutable"),
         "{}",
         streams(&output),
     );
+    let cargo_actions = fs::read_to_string(cargo_log).expect("read wasm lint Cargo actions");
+    let cargo_actions = cargo_actions.lines().collect::<Vec<_>>();
     assert_eq!(
-        fs::read_to_string(cargo_log)
-            .expect("read wasm lint Cargo actions")
-            .lines()
-            .filter(|line| *line != "--version")
+        cargo_actions
+            .iter()
+            .copied()
+            .filter(|action| action.starts_with("clippy "))
             .collect::<Vec<_>>(),
         [
             "clippy --locked --workspace --all-targets -- -D warnings",
             "clippy --locked -p app --target wasm32-unknown-unknown -- -D warnings",
         ],
+    );
+    assert!(
+        cargo_actions
+            .iter()
+            .all(|action| *action == "--version" || action.starts_with("clippy ")),
+        "unexpected Cargo action while the battery ran concurrently: {cargo_actions:?}",
+    );
+    assert!(
+        cargo_actions
+            .iter()
+            .copied()
+            .filter(|action| *action == "--version")
+            .count()
+            <= 1,
+        "the concurrent battery repeated its Cargo probe: {cargo_actions:?}",
     );
 }
 
@@ -807,6 +893,16 @@ fn wasm_lint_fixture(repository: &Path) {
         ),
     )
     .expect("write wasm-only lint source");
+    git(
+        repository,
+        &[
+            "add",
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "src/lib.rs",
+        ],
+    );
 }
 
 struct Fixture {
@@ -856,6 +952,9 @@ impl Fixture {
             ),
         )
         .expect("write verifier fixture Cargo manifest");
+        fs::create_dir(repository.join("app")).expect("create verifier fixture app directory");
+        fs::write(repository.join("app/index.html"), "<!doctype html>\n")
+            .expect("write verifier fixture Canvas entry point");
         fs::write(repository.join("src/lib.rs"), "pub fn fixture() {}\n")
             .expect("write verifier fixture source");
         git(&repository, &["add", "."]);

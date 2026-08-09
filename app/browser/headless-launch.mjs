@@ -14,7 +14,8 @@ import { chromium } from "playwright";
 
 const execute = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const spiceBinary = join(root, "target/debug/spice");
+const isolatedBinary = process.env.SPICE_CANVAS_BINARY; // env-policy: allow
+const spiceBinary = isolatedBinary ?? join(root, "target/debug/spice");
 
 /// This module's own repository path: the sole tracked file allowed to spell a
 /// browser launch, which means the scan below has to recognise itself.
