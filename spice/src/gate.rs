@@ -14,12 +14,75 @@ use std::process::Command;
 use ::gate::{
     ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport, ClaimCapture,
     GateId, HygieneConfiguration, RepositoryExecutionEvent, RimCapture, Selector,
+    VerifierCompilerContract, VerifierCompilerEvidence,
 };
 
 use crate::repository::{Repository, StateError};
 
 const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
+
+/// One staged battery capture retained across the full verifier's actions.
+///
+/// Keeping this capture alive is what makes every compiler token and the later
+/// battery execution name one immutable selected source rather than two
+/// independently materialized readings of the index.
+pub struct PreparedBattery {
+    capture: BatteryCapture<'static>,
+    verifier_environment: Vec<(OsString, OsString)>,
+}
+
+impl PreparedBattery {
+    /// Capture an exact compiler contract for one reusable arm.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a foreign arm or unavailable/drifted declared tool.
+    pub fn verifier_compiler_contract(
+        &self,
+        gate_id: GateId,
+    ) -> Result<VerifierCompilerContract, RunError> {
+        self.capture
+            .verifier_compiler_contract(gate_id, self.verifier_environment.clone())
+            .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
+    }
+
+    /// Execute this retained capture with any completed compiler evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns the canonical battery refusal.
+    pub fn execute(
+        &mut self,
+        evidence: &[VerifierCompilerEvidence],
+    ) -> Result<BatteryReport, RunError> {
+        self.capture
+            .execute_with_verifier_evidence(evidence)
+            .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    }
+}
+
+/// Capture the selected source once for a full verifier run.
+///
+/// # Errors
+///
+/// Returns the same rim and capture failures as [`run`].
+pub fn prepare(selector: Selector) -> Result<PreparedBattery, RunError> {
+    let verifier_environment = verifier_environment();
+    capture(selector, None, None).map(|capture| PreparedBattery {
+        capture,
+        verifier_environment,
+    })
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the canonical gate command rim owns full-verifier environment acquisition"
+)]
+fn verifier_environment() -> Vec<(OsString, OsString)> {
+    env::vars_os().collect()
+}
+
 /// Execute the canonical battery over one selected source.
 ///
 /// # Errors
@@ -68,7 +131,7 @@ pub fn receipt(selector: Selector) -> Result<BatteryReceipt, RunError> {
 /// Returns the same acquisition and completeness refusals as [`run`].
 pub fn run_traced(
     selector: Selector,
-    trace: &mut dyn FnMut(RepositoryExecutionEvent),
+    trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<BatteryReport, RunError> {
     let mut capture = capture(selector, None, Some(trace))?;
     capture
@@ -79,7 +142,7 @@ pub fn run_traced(
 fn capture<'trace>(
     selector: Selector,
     selected: Option<GateId>,
-    trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
+    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
     let directory = env::current_dir()
         .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;

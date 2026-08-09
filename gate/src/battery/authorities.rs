@@ -6,6 +6,7 @@
 //! same three things, so they are taken here rather than assembled beside a
 //! second materialization of the same selection.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use wire::{Digest, Domain};
@@ -25,6 +26,7 @@ use crate::state::{
     ActorInputs, ActorResolution, BoundDecision, CurrentState, StateLedger, current_state_path,
 };
 use crate::toolchain::RimCapture;
+use crate::toolchain::{VerifierCompilerContract, VerifierCompilerEvidence};
 use crate::tree::{Selector, git_directories};
 
 /// Release whose grammar understood the tracked documents read here.
@@ -145,7 +147,7 @@ impl<'trace> BatteryCapture<'trace> {
         actor: ActorCapture,
         rim: RimCapture,
         hygiene: HygieneConfiguration,
-        trace: &'trace mut dyn FnMut(RepositoryExecutionEvent),
+        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
     ) -> Result<Self, BatteryError> {
         Self::capture_inner(
             repository,
@@ -176,7 +178,7 @@ impl<'trace> BatteryCapture<'trace> {
         rim: RimCapture,
         hygiene: HygieneConfiguration,
         gate_id: crate::GateId,
-        trace: &'trace mut dyn FnMut(RepositoryExecutionEvent),
+        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
     ) -> Result<Self, BatteryError> {
         Self::capture_inner(
             repository,
@@ -202,7 +204,7 @@ impl<'trace> BatteryCapture<'trace> {
         rim: RimCapture,
         hygiene: HygieneConfiguration,
         selected: Option<crate::GateId>,
-        trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
+        trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
         // Read before the capture consumes the observation, and both before the
@@ -259,6 +261,46 @@ impl<'trace> BatteryCapture<'trace> {
                 "selected capture for {gate_id} cannot execute a complete battery"
             )));
         }
+        let inputs = self.authorities.inputs()?;
+        run_battery(&inputs, &mut self.executor)
+    }
+
+    /// Capture one exact compiler contract for the enclosing full verifier.
+    ///
+    /// This does not run a gate arm.  It binds the verifier process it returns
+    /// to this capture's selected source and currently identified tools.
+    ///
+    /// # Errors
+    ///
+    /// Refuses selected-arm captures, foreign arms, or unusable tool evidence.
+    pub fn verifier_compiler_contract(
+        &self,
+        gate_id: crate::GateId,
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<VerifierCompilerContract, BatteryError> {
+        self.executor
+            .verifier_compiler_contract(gate_id, environment)
+    }
+
+    /// Run the complete battery with successful full-verifier compiler proof.
+    ///
+    /// Invalid evidence never admits an arm: the toolchain family ignores it
+    /// and executes that arm's ordinary standalone analysis.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same completeness failures as [`Self::execute`], plus use
+    /// of evidence on a selected or already-started capture.
+    pub fn execute_with_verifier_evidence(
+        &mut self,
+        evidence: &[VerifierCompilerEvidence],
+    ) -> Result<BatteryReport, BatteryError> {
+        if self.selected.is_some() {
+            return Err(BatteryError::new(
+                "selected capture cannot execute a complete battery",
+            ));
+        }
+        self.executor.set_verifier_evidence(evidence)?;
         let inputs = self.authorities.inputs()?;
         run_battery(&inputs, &mut self.executor)
     }

@@ -79,7 +79,7 @@ pub fn reference_transaction(
 /// is the one non-Cargo runtime check and requires its end-of-run receipt.
 /// Contract landing remains terminal: no alternate executable discovered from
 /// `PATH` repeats policy after the Rust-owned checks finish.
-const VERIFY_ACTIONS: [Action; 11] = [
+const VERIFY_ACTIONS: [Action; 12] = [
     Action::EntryPoint,
     Action::Format,
     Action::Command(Step::cargo(
@@ -112,6 +112,7 @@ const VERIFY_ACTIONS: [Action; 11] = [
         "cargo check --locked --workspace --target wasm32-unknown-unknown",
         &["check", "--locked", "--workspace", "--target", WASM_TARGET],
     )),
+    Action::Command(Step::cargo(CANVAS_APP_LABEL, &["xtask", "app"])),
     Action::Browser,
     Action::Command(Step::cargo(
         "cargo test --locked --workspace --all-targets",
@@ -179,7 +180,9 @@ const ENTRY_POINT_LABEL: &str = "published reference-transaction guard is this b
 /// action protects the remaining `composer -> mosaic_plane -> mosaic` path.
 const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
 const BROWSER_RECEIPT_FLAG: &str = "--spice-coverage-receipt";
+const BROWSER_PREBUILT_APP_FLAG: &str = "--spice-prebuilt-app";
 const BROWSER_RECEIPT: &[u8] = b"BROWSER-1kKSWhZk browser coverage complete\n";
+const CANVAS_APP_LABEL: &str = "cargo xtask app (canvas compiler evidence)";
 static NEXT_BROWSER_RECEIPT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -313,7 +316,99 @@ struct BrowserRun {
     completed: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+struct SystemRunner {
+    battery: Option<spice::gate::PreparedBattery>,
+    compiler_contracts: Vec<gate::VerifierCompilerContract>,
+    compiler_processes: Vec<gate::VerifierCompilerProcessEvidence>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl SystemRunner {
+    fn prepare() -> Result<Self, String> {
+        let battery =
+            spice::gate::prepare(gate::Selector::staged()).map_err(|error| error.to_string())?;
+        Ok(Self {
+            battery: Some(battery),
+            compiler_contracts: Vec::new(),
+            compiler_processes: Vec::new(),
+        })
+    }
+
+    fn standalone() -> Self {
+        Self {
+            battery: None,
+            compiler_contracts: Vec::new(),
+            compiler_processes: Vec::new(),
+        }
+    }
+
+    fn compiler_stage(step: Step) -> Option<gate::VerifierCompilerStage> {
+        match step.label {
+            "cargo clippy --locked --workspace --all-targets -- -D warnings" => {
+                Some(gate::VerifierCompilerStage::NativeClippy)
+            }
+            "cargo check --locked --workspace --target wasm32-unknown-unknown" => {
+                Some(gate::VerifierCompilerStage::CanvasCheck)
+            }
+            CANVAS_APP_LABEL => Some(gate::VerifierCompilerStage::CanvasApp),
+            _ => None,
+        }
+    }
+
+    fn run_compiler_stage(
+        &mut self,
+        stage: gate::VerifierCompilerStage,
+    ) -> Option<io::Result<Status>> {
+        let gate_id = match stage {
+            gate::VerifierCompilerStage::NativeClippy => gate::GateId::RustTypecheck,
+            gate::VerifierCompilerStage::CanvasCheck | gate::VerifierCompilerStage::CanvasApp => {
+                gate::GateId::CanvasWebTypecheck
+            }
+        };
+        if !self
+            .compiler_contracts
+            .iter()
+            .any(|contract| contract.gate_id() == gate_id)
+        {
+            let contract = self
+                .battery
+                .as_ref()?
+                .verifier_compiler_contract(gate_id)
+                .ok()?;
+            self.compiler_contracts.push(contract);
+        }
+        let contract = self
+            .compiler_contracts
+            .iter()
+            .find(|contract| contract.gate_id() == gate_id)?
+            .clone();
+        Some(contract.run(stage).map(|run| {
+            let status = Status {
+                success: run.success(),
+                code: run.code(),
+            };
+            if let Some(evidence) = run.into_evidence() {
+                self.compiler_processes.push(evidence);
+            }
+            status
+        }))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 struct SystemRunner;
+
+#[cfg(target_arch = "wasm32")]
+impl SystemRunner {
+    fn prepare() -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    const fn standalone() -> Self {
+        Self
+    }
+}
 
 impl Runner for SystemRunner {
     fn entry_point(&mut self) -> Result<String, String> {
@@ -357,6 +452,12 @@ impl Runner for SystemRunner {
     }
 
     fn run(&mut self, step: Step) -> io::Result<Status> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(stage) = Self::compiler_stage(step)
+            && let Some(result) = self.run_compiler_stage(stage)
+        {
+            return result;
+        }
         let status = Command::new("cargo").args(step.arguments).status()?;
         Ok(Status {
             success: status.success(),
@@ -384,6 +485,7 @@ impl Runner for SystemRunner {
         let process = Command::new("npm")
             .args(["run", "test:canvas", "--", BROWSER_RECEIPT_FLAG])
             .arg(&receipt)
+            .arg(BROWSER_PREBUILT_APP_FLAG)
             .status()?;
         let completed = fs::read(&receipt).is_ok_and(|body| body == BROWSER_RECEIPT);
         remove_receipt(&receipt)?;
@@ -399,8 +501,17 @@ impl Runner for SystemRunner {
     fn battery(&mut self) -> Result<BatteryRun, String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let report =
-                spice::gate::run(gate::Selector::staged()).map_err(|error| error.to_string())?;
+            let evidence = self
+                .compiler_contracts
+                .iter()
+                .filter_map(|contract| contract.complete(&self.compiler_processes).ok())
+                .collect::<Vec<_>>();
+            let report = self
+                .battery
+                .as_mut()
+                .ok_or_else(|| "full verifier battery capture is unavailable".to_owned())?
+                .execute(&evidence)
+                .map_err(|error| error.to_string())?;
             if report.admits() {
                 let document = report.encode().map_err(|error| error.to_string())?;
                 Ok(BatteryRun::Admitted(document))
@@ -458,7 +569,8 @@ pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), Ga
 /// Returns the first output, launch, or command failure and does not start any
 /// subsequent command.
 pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
-    verify_execution::verify_with(&mut SystemRunner, output)
+    let mut runner = SystemRunner::prepare().map_err(VerifyError::Battery)?;
+    verify_execution::verify_with(&mut runner, output)
 }
 
 /// Run lint, test, and documentation feedback for one Cargo package.
@@ -474,7 +586,7 @@ pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
 /// Returns an invalid package name or the first output, launch, or command
 /// failure.
 pub fn verify_package(package: &str, output: &mut impl Write) -> Result<(), VerifyError> {
-    verify_execution::verify_package_with(package, &mut SystemRunner, output)
+    verify_execution::verify_package_with(package, &mut SystemRunner::standalone(), output)
 }
 
 /// One selected gate-arm command failure.
@@ -906,7 +1018,7 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 11] = [
+        const GUARDED_ACTIONS: [Action; 12] = [
             Action::EntryPoint,
             Action::Format,
             Action::Command(Step::cargo(
@@ -945,6 +1057,7 @@ mod tests {
                     "wasm32-unknown-unknown",
                 ],
             )),
+            Action::Command(Step::cargo(CANVAS_APP_LABEL, &["xtask", "app"])),
             Action::Browser,
             Action::Command(Step::cargo(
                 "cargo test --locked --workspace --all-targets",
@@ -1033,10 +1146,13 @@ mod tests {
             .position(|action| *action == Action::Browser)
             .expect("the verifier has a browser action");
 
-        assert_eq!(browser, 5);
+        assert_eq!(browser, 6);
+        let wasm_build = VERIFY_ACTIONS[browser - 2];
         assert!(
-            matches!(VERIFY_ACTIONS[browser - 1], Action::Command(step) if step.arguments.contains(&WASM_TARGET))
+            matches!(wasm_build, Action::Command(step) if step.arguments.contains(&WASM_TARGET))
         );
+        let app_build = VERIFY_ACTIONS[browser - 1];
+        assert!(matches!(app_build, Action::Command(step) if step.arguments == ["xtask", "app"]));
         assert_eq!(
             BROWSER_RECEIPT,
             b"BROWSER-1kKSWhZk browser coverage complete\n"
@@ -1060,7 +1176,7 @@ mod tests {
             .expect_err("a skipped browser body emits no completion receipt");
 
         assert!(matches!(error, VerifyError::BrowserIncomplete));
-        assert_eq!(runner.calls, labels()[..=5]);
+        assert_eq!(runner.calls, labels()[..=6]);
     }
 
     #[test]
@@ -1179,7 +1295,7 @@ mod tests {
         assert_eq!(output.matches("stage=terminal").count(), 1);
         assert!(output.contains("disposition=error"));
         assert!(output.contains(&format!("identity={ENTRY_POINT_LABEL:?}")));
-        assert!(!output.contains("ordinal=2/11"));
+        assert!(!output.contains("ordinal=2/12"));
     }
 
     #[test]
@@ -1230,9 +1346,9 @@ mod tests {
         assert_eq!(runner.calls, labels()[..labels().len() - 1]);
         let output = String::from_utf8(output).expect("fixture diagnostic is UTF-8");
         assert!(output.contains("bounded battery refusal\n"));
-        assert!(output.contains(concat!("stage=terminal ordinal=10/11", " elapsed_ms=")));
+        assert!(output.contains(concat!("stage=terminal ordinal=11/12", " elapsed_ms=")));
         assert!(output.contains("disposition=refused family=in-process:gate-battery"));
-        assert!(!output.contains("ordinal=11/11"));
+        assert!(!output.contains("ordinal=12/12"));
     }
 
     #[test]
@@ -1255,7 +1371,7 @@ mod tests {
         let output = String::from_utf8(output.accepted).expect("lifecycle output is UTF-8");
         let terminal = output
             .lines()
-            .filter(|line| line.contains("stage=terminal ordinal=10/11"))
+            .filter(|line| line.contains("stage=terminal ordinal=11/12"))
             .collect::<Vec<_>>();
         assert_eq!(
             terminal.len(),
@@ -1263,7 +1379,7 @@ mod tests {
             "failed action has one terminal: {output}"
         );
         assert!(terminal[0].contains("disposition=render-error"));
-        assert!(!output.contains("ordinal=11/11"));
+        assert!(!output.contains("ordinal=12/12"));
     }
 
     #[test]
@@ -1287,8 +1403,8 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(action, Action::Command(_)))
                 .count(),
-            6,
-            "exactly six declared Cargo commands precede compiled landing"
+            7,
+            "exactly seven declared Cargo commands precede compiled landing"
         );
         assert_eq!(
             VERIFY_ACTIONS

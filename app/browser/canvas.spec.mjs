@@ -85,8 +85,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const artifacts = join(root, "artifacts/canvas");
 const coverageReceiptFlag = "--spice-coverage-receipt";
+const prebuiltAppFlag = "--spice-prebuilt-app";
 const coverageReceipt = "BROWSER-1kKSWhZk browser coverage complete\n";
 const coverageArguments = process.argv.slice(2);
+const prebuiltApp = coverageArguments.at(-1) === prebuiltAppFlag;
+if (prebuiltApp) coverageArguments.pop();
 let coverageReceiptPath;
 if (coverageArguments.length > 0) {
   if (
@@ -1236,7 +1239,7 @@ assertBoundaryLoadReading();
 // The launch-site guard interrogates this exact executable, so building is a
 // precondition rather than something an agent must remember after source gains
 // a no-pop gate. No fixture process can start before both steps pass.
-await buildResident();
+await buildResident({ app: !prebuiltApp });
 await assertHeadlessLaunchSites();
 await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
