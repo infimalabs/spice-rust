@@ -2,8 +2,11 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::SystemTime;
 
 /// Every Git-tracked Rust source under `app/src` must be reachable from the
 /// crate root. Attributes do not hide declarations from this walk: a module
@@ -182,32 +185,86 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn fixture() -> PathBuf {
-    let root = std::env::temp_dir().join(format!("spice-app-module-graph-{}", std::process::id()));
-    if root.exists() {
-        fs::remove_dir_all(&root).expect("remove stale module fixture");
+/// How many names one fixture tries before giving up on an exclusive root.
+const SCRATCH_ATTEMPTS: usize = 100;
+
+/// A scratch repository holding one tracked module graph.
+struct Fixture(PathBuf);
+
+impl Fixture {
+    /// One scratch repository under a root nothing else already holds.
+    ///
+    /// `create_dir` refuses a directory that exists rather than opening it, so
+    /// retrying under a fresh name is what makes the root exclusive. The name
+    /// carries the clock rather than the process id because ids are both reused
+    /// over time and held at once by the peer lanes sharing one temporary
+    /// directory. This fixture used to name itself from the id alone and then
+    /// delete whatever stood there, which destroys a live directory rather than
+    /// reusing a dead one; nothing here removes a directory it did not create.
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        for _ in 0..SCRATCH_ATTEMPTS {
+            let stamp = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("the clock reads after the epoch")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "spice-app-module-graph-{stamp}-{}",
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&root) {
+                Ok(()) => return Self::populated(root),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("exclusive scratch root is created: {error}"),
+            }
+        }
+        panic!("no exclusive scratch root was available in {SCRATCH_ATTEMPTS} attempts");
     }
-    fs::create_dir_all(root.join("app/src/browser")).expect("create module fixture");
-    fs::write(
-        root.join("app/src/lib.rs"),
-        "#[cfg(target_arch = \"wasm32\")]\nmod browser;\n",
-    )
-    .expect("write fixture crate root");
-    fs::write(
-        root.join("app/src/browser.rs"),
-        "#[cfg(any(target_arch = \"wasm32\", test))]\nmod controls;\n",
-    )
-    .expect("write fixture browser module");
-    fs::write(
-        root.join("app/src/browser/controls.rs"),
-        "pub fn live() {}\n",
-    )
-    .expect("write reachable fixture module");
-    fs::write(root.join("app/src/loose.rs"), "pub fn loose() {}\n")
-        .expect("write loose fixture module");
-    git(&root, &["init", "--quiet"]);
-    git(&root, &["add", "app/src"]);
-    root
+
+    /// Write the module graph under test into the freshly created `root`.
+    ///
+    /// The fixture owns the root before the first file is written, so a refusal
+    /// here unwinds through [`Fixture::drop`] and takes the directory with it.
+    /// Populating before taking ownership would leave behind the one root no
+    /// test ever used.
+    fn populated(root: PathBuf) -> Self {
+        let fixture = Self(root);
+        let root = &fixture.0;
+        fs::create_dir_all(root.join("app/src/browser")).expect("create module fixture");
+        fs::write(
+            root.join("app/src/lib.rs"),
+            "#[cfg(target_arch = \"wasm32\")]\nmod browser;\n",
+        )
+        .expect("write fixture crate root");
+        fs::write(
+            root.join("app/src/browser.rs"),
+            "#[cfg(any(target_arch = \"wasm32\", test))]\nmod controls;\n",
+        )
+        .expect("write fixture browser module");
+        fs::write(
+            root.join("app/src/browser/controls.rs"),
+            "pub fn live() {}\n",
+        )
+        .expect("write reachable fixture module");
+        fs::write(root.join("app/src/loose.rs"), "pub fn loose() {}\n")
+            .expect("write loose fixture module");
+        git(root, &["init", "--quiet"]);
+        git(root, &["add", "app/src"]);
+        fixture
+    }
+
+    fn root(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        // A root that outlives its test is a name another run could adopt, so
+        // remove it even where a panic is unwinding through here. Removal is
+        // allowed to fail rather than replace the failure the test carries.
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 fn git(root: &Path, arguments: &[&str]) {
@@ -227,12 +284,63 @@ fn every_tracked_app_rust_source_is_reachable_from_the_crate_root() {
 
 #[test]
 fn a_tracked_loose_module_fails_with_its_exact_path() {
-    let root = fixture();
+    let fixture = Fixture::new();
     assert_eq!(
-        admit_tracked_sources(&root).expect_err("tracked loose module must fail"),
+        admit_tracked_sources(fixture.root()).expect_err("tracked loose module must fail"),
         "Git-tracked app Rust sources outside the external module graph: app/src/loose.rs"
     );
-    fs::remove_dir_all(root).expect("remove module fixture");
+}
+
+/// Two fixtures held at once take separate roots, and neither survives its
+/// owner or is emptied by the other.
+///
+/// The scratch name was the process id alone, and a run finding that name taken
+/// deleted the directory rather than stepping around it. Both halves are tested
+/// from one process because that is where the old name was guaranteed to
+/// collide: the second fixture computed the first fixture's live path and
+/// removed its tree. Reading the paths back after the scope closes is what
+/// proves neither root survives to be adopted by the next run.
+#[test]
+fn two_module_fixtures_take_separate_roots_and_leave_neither_behind() {
+    let identifier = std::process::id().to_string();
+    let (first, second) = {
+        let earlier = Fixture::new();
+        let later = Fixture::new();
+        assert_ne!(earlier.0, later.0, "one fixture name was issued twice");
+        assert!(
+            earlier.0.join("app/src/lib.rs").is_file(),
+            "the later fixture removed a tree it did not create"
+        );
+
+        for root in [&earlier.0, &later.0] {
+            assert!(
+                root.is_dir(),
+                "{} is not a live scratch root",
+                root.display()
+            );
+            let name = root
+                .file_name()
+                .expect("a scratch root is named")
+                .to_string_lossy()
+                .into_owned();
+            assert!(
+                !name.split('-').any(|field| field == identifier),
+                "{name} still names the process id the operating system reuses"
+            );
+        }
+        (earlier.0.clone(), later.0.clone())
+    };
+
+    assert!(
+        !first.exists(),
+        "{} outlived the fixture that owns it",
+        first.display()
+    );
+    assert!(
+        !second.exists(),
+        "{} outlived the fixture that owns it",
+        second.display()
+    );
 }
 
 #[test]
