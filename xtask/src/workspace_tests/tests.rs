@@ -303,8 +303,8 @@ fn reporting_failure_case(point: ReportPoint, failure: ReportFailure) {
     let error = Coordinator::new(
         point.shards(),
         fixture.root.clone(),
-        fixture.environment,
-        fixture.cargo.into_os_string(),
+        fixture.environment.clone(),
+        fixture.cargo.clone().into_os_string(),
         policy,
         &mut output,
     )
@@ -326,7 +326,6 @@ fn reporting_failure_case(point: ReportPoint, failure: ReportFailure) {
             .expect("pid path has a UTF-8 role");
         assert_process_terminal(read_pid(&path), role);
     }
-    fs::remove_dir_all(fixture.root).expect("reporting fixture removes");
 }
 
 const FORCED_REPORT_FAILURE: &str = "forced coordinator report failure";
@@ -391,6 +390,33 @@ struct ReportingProcessFixture {
     root: PathBuf,
     cargo: PathBuf,
     environment: Environment,
+}
+
+impl Drop for ReportingProcessFixture {
+    fn drop(&mut self) {
+        // The shards this fixture launches outlive their coordinator by design:
+        // that abandonment is the defect under test. An assertion that fires
+        // before the coordinator reaps them would otherwise strand `tail -f` and
+        // a FIFO reader forever, so the fixture owns every pid it recorded and
+        // signals them all here, where a panic unwinding through also arrives.
+        for role in ["a", "b"] {
+            for path in process_pid_paths(&self.root, role) {
+                // A role that never started left no pid file, and one the
+                // coordinator already reaped is gone. The second case is the
+                // normal one, so the signal is sent through `output` to capture
+                // the "no such process" the passing run would otherwise print.
+                if let Some(pid) = fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|pid| pid.trim().parse::<u32>().ok())
+                {
+                    let _ = Command::new("/bin/kill")
+                        .args(["-KILL", &pid.to_string()])
+                        .output();
+                }
+            }
+        }
+        let _ = fs::remove_dir_all(&self.root);
+    }
 }
 
 fn reporting_process_fixture(label: &str) -> ReportingProcessFixture {
