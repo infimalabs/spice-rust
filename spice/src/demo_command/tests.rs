@@ -445,6 +445,55 @@ fn clean_automatic_service_removes_only_its_demo_root() {
     assert!(scratch.0.exists(), "cleanup stays scoped to the demo root");
 }
 
+#[test]
+fn a_disappearing_known_sqlite_sidecar_is_a_benign_readiness_change() {
+    let scratch = Scratch::new("transient-journal");
+    let journal = scratch.child("spicejournal.sqlite3");
+    let sidecar = journal.with_extension("sqlite3-journal");
+    fs::write(&sidecar, []).expect("the journal sidecar is discovered");
+    let error =
+        notify::Error::io(io::Error::from(io::ErrorKind::NotFound)).add_path(sidecar.clone());
+
+    fs::remove_file(&sidecar).expect("the journal sidecar disappears before inspection");
+
+    assert_eq!(readiness_change(Err(error), &journal), Ok(()));
+}
+
+#[test]
+fn persistent_and_unrelated_readiness_scan_failures_are_preserved() {
+    let scratch = Scratch::new("readiness-errors");
+    let journal = scratch.child("spicejournal.sqlite3");
+    let sidecar = journal.with_extension("sqlite3-journal");
+    fs::write(&sidecar, []).expect("the persistent journal sidecar exists");
+
+    let persistent = readiness_change(
+        Err(notify::Error::io(io::Error::from(io::ErrorKind::NotFound)).add_path(sidecar.clone())),
+        &journal,
+    )
+    .expect_err("a persistent path is not dismissed as a disappearance race");
+    assert!(persistent.contains(&sidecar.display().to_string()));
+
+    fs::remove_file(&sidecar).expect("the journal sidecar is absent for the I/O fixture");
+    let unrelated_io = readiness_change(
+        Err(
+            notify::Error::io(io::Error::from(io::ErrorKind::PermissionDenied))
+                .add_path(sidecar.clone()),
+        ),
+        &journal,
+    )
+    .expect_err("an unrelated I/O error remains a readiness failure");
+    assert!(unrelated_io.contains(&sidecar.display().to_string()));
+
+    let unrelated_path = scratch.child("unrelated.tmp");
+    let unrelated_missing = readiness_change(
+        Err(notify::Error::io(io::Error::from(io::ErrorKind::NotFound))
+            .add_path(unrelated_path.clone())),
+        &journal,
+    )
+    .expect_err("an unrelated missing path remains a readiness failure");
+    assert!(unrelated_missing.contains(&unrelated_path.display().to_string()));
+}
+
 /// A readiness scan that fails refuses under its own name.
 ///
 /// Three unrelated failures used to share `demo::readiness-unavailable`:

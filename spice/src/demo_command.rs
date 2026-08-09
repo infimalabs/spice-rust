@@ -975,9 +975,10 @@ fn watch_environment(
     environment: &Environment,
     events: Sender<Event>,
 ) -> DemoResult<notify::PollWatcher> {
+    let journal = environment.state.journal().to_path_buf();
     let mut watcher = notify::PollWatcher::new(
         move |event: notify::Result<notify::Event>| {
-            let observed = event.map(|_| ()).map_err(|error| error.to_string());
+            let observed = readiness_change(event, &journal);
             let _ = events.send(Event::Changed(observed));
         },
         notify::Config::default().with_poll_interval(WATCH_SCAN_INTERVAL),
@@ -1000,6 +1001,40 @@ fn watch_environment(
             )
         })?;
     Ok(watcher)
+}
+
+fn readiness_change(event: notify::Result<notify::Event>, journal: &Path) -> Result<(), String> {
+    match event {
+        Ok(_) => Ok(()),
+        Err(error) if is_missing_journal_sidecar(&error, journal) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn is_missing_journal_sidecar(error: &notify::Error, journal: &Path) -> bool {
+    let notify::ErrorKind::Io(source) = &error.kind else {
+        return false;
+    };
+    // PollWatcher enumerates each path before reading its metadata. SQLite may
+    // remove a transient sidecar between those steps, but no other scan error
+    // should disappear into a generic change notification.
+    source.kind() == io::ErrorKind::NotFound
+        && !error.paths.is_empty()
+        && error.paths.iter().all(|path| {
+            is_known_journal_sidecar(path, journal)
+                && matches!(
+                    fs::symlink_metadata(path),
+                    Err(source) if source.kind() == io::ErrorKind::NotFound
+                )
+        })
+}
+
+fn is_known_journal_sidecar(path: &Path, journal: &Path) -> bool {
+    ["-journal", "-wal", "-shm"].into_iter().any(|suffix| {
+        let mut sidecar = journal.as_os_str().to_owned();
+        sidecar.push(suffix);
+        path.as_os_str() == sidecar
+    })
 }
 
 fn signal_relay(signals: bool, events: Sender<Event>) -> DemoResult<Option<SignalRelay>> {
