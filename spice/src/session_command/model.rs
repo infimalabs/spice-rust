@@ -10,6 +10,15 @@ pub(crate) enum Vendor {
     Unknown,
 }
 
+impl Vendor {
+    pub(crate) fn from_vendor(vendor: &spice::extension::Vendor) -> Self {
+        match vendor.dialect() {
+            listen::Dialect::Codex => Self::Codex,
+            listen::Dialect::Claude => Self::Claude,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SourceView {

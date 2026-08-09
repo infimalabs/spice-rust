@@ -420,7 +420,6 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 name = "consent"
 version = "0.0.0"
 dependencies = [
- "fold",
  "journal",
  "serde",
  "wire",
@@ -3174,7 +3173,6 @@ name = "steer"
 version = "0.0.0"
 dependencies = [
  "atomic",
- "fold",
  "journal",
  "serde",
  "sill",
@@ -3253,7 +3251,6 @@ dependencies = [
 name = "taste"
 version = "0.0.0"
 dependencies = [
- "fold",
  "journal",
  "listen",
  "serde",

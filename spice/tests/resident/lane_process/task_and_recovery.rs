@@ -222,6 +222,10 @@ fn resident_capture_is_byte_exact_and_listenable_through_terminal_residue() {
     let replay = listen::retro(
         fixture.root.join(".git/.spice-rs/tape"),
         listen::RetroSelector::Lane(added.lane.to_string()),
+        &[
+            ("claude", listen::Dialect::Claude),
+            ("codex", listen::Dialect::Codex),
+        ],
     )
     .expect("resident transcript replays");
     assert!(replay.observations.iter().any(|observation| matches!(

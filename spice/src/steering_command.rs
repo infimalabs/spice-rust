@@ -31,9 +31,16 @@ pub(crate) fn hook_document(
     answer: &CommandAnswer,
     harness: &str,
 ) -> Result<Option<Vec<u8>>, String> {
-    if !matches!(harness, "claude" | "codex") {
+    if spice::extension::vendor(harness).is_none() {
+        let expected = spice::extension::registry()
+            .map_err(|error| error.to_string())?
+            .vendors()
+            .into_iter()
+            .map(|vendor| vendor.name())
+            .collect::<Vec<_>>()
+            .join(" or ");
         return Err(format!(
-            "unsupported hook harness {harness:?}; expected claude or codex"
+            "unsupported hook harness {harness:?}; expected {expected}"
         ));
     }
     let CommandAnswer::Inbox(inbox) = answer else {

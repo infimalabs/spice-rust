@@ -640,7 +640,7 @@ fn tape_evidence(root: &Path) -> CommandResult<Vec<DiskEvidence>> {
         members.sort();
         for member in members {
             let name = member.file_name().and_then(|name| name.to_str());
-            if !matches!(name, Some("claude" | "codex")) {
+            if !name.is_some_and(|name| spice::extension::vendor(name).is_some()) {
                 evidence.push(DiskEvidence {
                     lane,
                     marker: format!("tape contract: unexpected path {}", member.display()),

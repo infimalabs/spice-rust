@@ -30,20 +30,11 @@ pub const CLAIM_CRITICAL_REPEAT: Duration = Duration::from_secs(15);
 /// No scheduled refresh may collapse to a zero-delay loop.
 pub const MINIMUM_REFRESH: Duration = Duration::from_millis(50);
 
-/// Agent vendors whose live process environment can name the current actor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentVendor {
-    /// OpenAI Codex.
-    Codex,
-    /// Anthropic Claude Code.
-    Claude,
-}
-
 /// One actor identity proven by the running process environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CurrentActor<'a> {
-    /// Vendor whose environment variable carried the identity.
-    pub vendor: AgentVendor,
+    /// Declared vendor whose environment variable carried the identity.
+    pub vendor: &'static crate::extension::Vendor,
     /// Non-empty vendor thread or session identity.
     pub identity: &'a str,
 }
@@ -51,10 +42,9 @@ pub struct CurrentActor<'a> {
 /// Vendor identities captured at the binary rim from this process only.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProcessEnvironment<'a> {
-    /// Current `CODEX_THREAD_ID`, when present.
-    pub codex_thread: Option<&'a str>,
-    /// Current `CLAUDE_CODE_SESSION_ID`, when present.
-    pub claude_session: Option<&'a str>,
+    /// Vendor values paired with the ambient values captured for their
+    /// vendor-owned identity variables.
+    pub identities: &'a [(&'static crate::extension::Vendor, Option<&'a str>)],
 }
 
 impl<'a> ProcessEnvironment<'a> {
@@ -64,17 +54,11 @@ impl<'a> ProcessEnvironment<'a> {
     /// `None`; persisted tree state is intentionally not an input.
     #[must_use]
     pub fn current_actor(self) -> Option<CurrentActor<'a>> {
-        match (nonempty(self.codex_thread), nonempty(self.claude_session)) {
-            (Some(identity), None) => Some(CurrentActor {
-                vendor: AgentVendor::Codex,
-                identity,
-            }),
-            (None, Some(identity)) => Some(CurrentActor {
-                vendor: AgentVendor::Claude,
-                identity,
-            }),
-            (None, None) | (Some(_), Some(_)) => None,
-        }
+        let mut current = self.identities.iter().filter_map(|(vendor, value)| {
+            nonempty(*value).map(|identity| CurrentActor { vendor, identity })
+        });
+        let selected = current.next()?;
+        current.next().is_none().then_some(selected)
     }
 }
 
@@ -94,8 +78,8 @@ pub struct ClaimState {
 /// One active-claim observation read from the command boundary's live board.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimObservation {
-    /// Vendor whose live actor owns the claim.
-    pub vendor: AgentVendor,
+    /// Declared vendor whose live actor owns the claim.
+    pub vendor: &'static crate::extension::Vendor,
     /// Claim holder identity.
     pub actor: String,
     /// Fields eligible for the working-state line.
@@ -546,7 +530,7 @@ mod tests {
     fn only_the_running_process_environment_names_the_current_actor() {
         let claims = [
             ClaimObservation {
-                vendor: AgentVendor::Codex,
+                vendor: &crate::extension::CODEX,
                 actor: "stale-tree-thread".to_owned(),
                 state: ClaimState {
                     handle: "STALE-00000001".to_owned(),
@@ -554,7 +538,7 @@ mod tests {
                 },
             },
             ClaimObservation {
-                vendor: AgentVendor::Codex,
+                vendor: &crate::extension::CODEX,
                 actor: "live-codex-thread".to_owned(),
                 state: ClaimState {
                     handle: "LIVE-00000001".to_owned(),
@@ -564,10 +548,10 @@ mod tests {
         ];
         let absent =
             collect_working_state(ProcessEnvironment::default(), 0, &claims, String::new());
+        let current_identities = [(&crate::extension::CODEX, Some("live-codex-thread"))];
         let current = collect_working_state(
             ProcessEnvironment {
-                codex_thread: Some("live-codex-thread"),
-                claude_session: None,
+                identities: &current_identities,
             },
             0,
             &claims,
@@ -584,8 +568,10 @@ mod tests {
         );
         assert_eq!(
             ProcessEnvironment {
-                codex_thread: Some("codex"),
-                claude_session: Some("claude")
+                identities: &[
+                    (&crate::extension::CODEX, Some("codex")),
+                    (&crate::extension::CLAUDE, Some("claude")),
+                ],
             }
             .current_actor(),
             None,

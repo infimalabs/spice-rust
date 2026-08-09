@@ -1,9 +1,9 @@
 //! Daemonless observation and replay over owned transcript tape.
 //!
-//! A selected root contains sessions at `<root>/<lane>/codex` or
-//! `<root>/<lane>/claude`; the final component is the decoder contract and the
-//! parent component is the lane spelling. Discovery follows real directories
-//! only and never guesses a dialect from transcript contents.
+//! A selected root contains sessions at `<root>/<lane>/<vendor>`; the supplied
+//! vendor map binds that final component to the decoder contract and the parent
+//! component is the lane spelling. Discovery follows real directories only
+//! and never guesses a dialect from transcript contents.
 //!
 //! [`Watch`] retains one cursor per tape. A filesystem watcher may coalesce or
 //! miss notifications without losing a record because every wakeup compares
@@ -638,6 +638,7 @@ impl Session {
 #[derive(Debug)]
 pub struct Watch {
     root: PathBuf,
+    dialects: Vec<(&'static str, Dialect)>,
     checkpoints: BTreeMap<PathBuf, Checkpoint>,
     seen: BTreeMap<PathBuf, BTreeSet<EventKind>>,
 }
@@ -645,9 +646,13 @@ pub struct Watch {
 impl Watch {
     /// Begin a read-only cursor view. No filesystem access occurs until poll.
     #[must_use]
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        root: impl Into<PathBuf>,
+        dialects: impl IntoIterator<Item = (&'static str, Dialect)>,
+    ) -> Self {
         Self {
             root: root.into(),
+            dialects: dialects.into_iter().collect(),
             checkpoints: BTreeMap::new(),
             seen: BTreeMap::new(),
         }
@@ -664,7 +669,7 @@ impl Watch {
     /// Returns a typed surface failure when discovery or tape reads fail, or
     /// when append-only member bounds retreat behind an emitted cursor.
     pub fn poll(&mut self) -> Result<StreamOutcome, SurfaceError> {
-        let sessions = discover(&self.root)?;
+        let sessions = discover(&self.root, &self.dialects)?;
         let mut observations = Vec::new();
         if sessions.is_empty() {
             observations.push(Observation::Absent {
@@ -728,16 +733,17 @@ impl Watch {
 pub fn retro(
     root: impl Into<PathBuf>,
     selector: RetroSelector,
+    dialects: &[(&'static str, Dialect)],
 ) -> Result<StreamOutcome, SurfaceError> {
     let root = root.into();
     let selector_text = selector_text(&selector);
     let mut sessions = match &selector {
-        RetroSelector::Lane(lane) => discover(&root)?
+        RetroSelector::Lane(lane) => discover(&root, dialects)?
             .into_iter()
             .filter(|session| &session.lane == lane)
             .collect::<Vec<_>>(),
-        RetroSelector::Path(path) => discover(path)?,
-        RetroSelector::Locus(_) => discover(&root)?,
+        RetroSelector::Path(path) => discover(path, dialects)?,
+        RetroSelector::Locus(_) => discover(&root, dialects)?,
     };
     sessions.sort();
 
@@ -910,7 +916,10 @@ fn replay_locus(session: &Session, span: Span) -> Result<Vec<Observation>, Surfa
     Ok(observations)
 }
 
-fn discover(root: &Path) -> Result<Vec<Session>, SurfaceError> {
+fn discover(
+    root: &Path,
+    dialects: &[(&'static str, Dialect)],
+) -> Result<Vec<Session>, SurfaceError> {
     let metadata = match fs::symlink_metadata(root) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -927,13 +936,17 @@ fn discover(root: &Path) -> Result<Vec<Session>, SurfaceError> {
     }
 
     let mut sessions = Vec::new();
-    discover_beneath(root, &mut sessions)?;
+    discover_beneath(root, dialects, &mut sessions)?;
     sessions.sort();
     Ok(sessions)
 }
 
-fn discover_beneath(path: &Path, sessions: &mut Vec<Session>) -> Result<(), SurfaceError> {
-    if let Some(dialect) = dialect_name(path.file_name()) {
+fn discover_beneath(
+    path: &Path,
+    dialects: &[(&'static str, Dialect)],
+    sessions: &mut Vec<Session>,
+) -> Result<(), SurfaceError> {
+    if let Some(dialect) = dialect_name(path.file_name(), dialects) {
         let Some(lane) = path
             .parent()
             .and_then(Path::file_name)
@@ -969,18 +982,17 @@ fn discover_beneath(path: &Path, sessions: &mut Vec<Session>) -> Result<(), Surf
             source,
         })?;
         if file_type.is_dir() && !file_type.is_symlink() {
-            discover_beneath(&entry.path(), sessions)?;
+            discover_beneath(&entry.path(), dialects, sessions)?;
         }
     }
     Ok(())
 }
 
-fn dialect_name(name: Option<&OsStr>) -> Option<Dialect> {
-    match name.and_then(OsStr::to_str) {
-        Some("claude") => Some(Dialect::Claude),
-        Some("codex") => Some(Dialect::Codex),
-        _ => None,
-    }
+fn dialect_name(name: Option<&OsStr>, dialects: &[(&'static str, Dialect)]) -> Option<Dialect> {
+    let name = name.and_then(OsStr::to_str)?;
+    dialects
+        .iter()
+        .find_map(|(candidate, dialect)| (*candidate == name).then_some(*dialect))
 }
 
 fn selector_text(selector: &RetroSelector) -> String {

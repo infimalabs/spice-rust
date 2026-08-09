@@ -771,6 +771,10 @@ fn assert_no_codex_compaction(fixture: &Fixture, lane: wire::CanonicalUuid) {
     let replay = listen::retro(
         fixture.runtime.join("tape"),
         listen::RetroSelector::Lane(lane.to_string()),
+        &[
+            ("claude", listen::Dialect::Claude),
+            ("codex", listen::Dialect::Codex),
+        ],
     )
     .expect("Codex tape replays");
     assert!(replay.observations.iter().all(|observation| !matches!(

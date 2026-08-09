@@ -148,23 +148,16 @@ fn a_harmless_mention_still_selects_a_candidate_the_runtime_must_weigh() {
 }
 
 #[test]
-fn one_live_reminder_and_two_historical_kinds_cover_the_taste_plane() {
-    let mut plane = FactKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| fold::FactPlane::Taste.contains(*kind))
-        .collect::<Vec<_>>();
-    plane.sort_unstable();
-    let mut expected = [
+fn one_live_reminder_and_two_historical_kinds_have_their_domain_contracts() {
+    let expected = [
         FactKind::TasteConfirmed,
         FactKind::TasteCleared,
         FactKind::TasteReminded,
     ];
-    expected.sort_unstable();
-
-    assert_eq!(
-        plane, expected,
-        "the taste plane is exactly one live kind and the two historical ones"
+    assert!(
+        expected
+            .iter()
+            .all(|kind| kind.as_str().starts_with("taste::"))
     );
     assert_eq!(
         FactKind::TasteReminded.producer(),

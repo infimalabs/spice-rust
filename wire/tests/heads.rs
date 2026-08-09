@@ -47,7 +47,7 @@ const CLAIM: &str = r#"{
   "fact": 42,
   "claimed": 42,
   "cell": {
-    "project": "wire.binding",
+    "project": "wire",
     "phase": "todo"
   },
   "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
@@ -282,6 +282,7 @@ fn a_pre_extension_residency_head_has_one_visible_unrecorded_launch_state() {
 fn a_pre_context_task_head_normalizes_into_the_current_empty_context() {
     let head: TaskHead = serde_json::from_str(TASK_WITHOUT_AUTHORED_CONTEXT)
         .expect("the pre-context head has one explicit normalization");
+    assert_eq!(head.queue_origin.get(), 40);
     assert_eq!(head.description, None);
     assert_eq!(head.acceptance, Vec::<String>::new());
 }

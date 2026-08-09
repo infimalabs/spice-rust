@@ -230,7 +230,8 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::ReleasePublish,
         r#"{
   "key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-  "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "notes": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 }"#,
     ),
     (CommandKind::UpChange, r#"{ "state": "quiescing" }"#),

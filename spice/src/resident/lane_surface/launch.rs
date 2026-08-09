@@ -119,10 +119,24 @@ fn launch_plan(
     let executable = std::env::current_exe()
         .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?;
     let environment = launch_environment(repository, &executable)?;
-    let prompt = format!(
-        "[$spice](<{}>)",
-        spice::install::installed_skill(repository).display()
-    );
+    let Some(vendor) = spice::extension::vendor(name.as_str()) else {
+        return Err(Outcome::Refusal(Refusal {
+            reason: "lane::vendor-unsupported".to_owned(),
+            witness: Some("lane.vendor".to_owned()),
+            expected: Some(
+                spice::extension::registry()
+                    .expect("compiled extension declarations are validated by the test gate")
+                    .vendors()
+                    .into_iter()
+                    .map(|vendor| vendor.name())
+                    .collect::<Vec<_>>()
+                    .join(" or "),
+            ),
+            observed: Some(name.as_str().to_owned()),
+            remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
+        }));
+    };
+    let prompt = vendor.neutral_launch_prompt(&spice::install::installed_skill(repository));
     spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
@@ -139,7 +153,15 @@ fn launch_plan(
         spice::agent_launch::ComposeError::UnsupportedVendor(other) => Outcome::Refusal(Refusal {
             reason: "lane::vendor-unsupported".to_owned(),
             witness: Some("lane.vendor".to_owned()),
-            expected: Some("claude or codex".to_owned()),
+            expected: Some(
+                spice::extension::registry()
+                    .expect("compiled extension declarations are validated by the test gate")
+                    .vendors()
+                    .into_iter()
+                    .map(|vendor| vendor.name())
+                    .collect::<Vec<_>>()
+                    .join(" or "),
+            ),
             observed: Some(other),
             remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
         }),
