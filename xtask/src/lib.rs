@@ -11,9 +11,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod app;
 mod build_cache;
 mod commit_message;
-// The refresh drives `spice::install`, which the appliance itself gates off the
-// wasm target; the workspace wasm check compiles this crate too.
-#[cfg(not(target_arch = "wasm32"))]
 mod develop;
 mod hooks;
 mod landing;
@@ -30,8 +27,11 @@ pub use build_cache::{
     BuildCacheRootReport, build_cache, collect_build_cache_at, parse_byte_quantity,
 };
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
+pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh};
+// The install step drives `spice::install`, which the appliance itself gates
+// off the wasm target; the workspace wasm check compiles this crate too.
 #[cfg(not(target_arch = "wasm32"))]
-pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh, refresh_install};
+pub use develop::refresh_install;
 pub use hooks::{
     HookActivationError, activate_hooks, audit_entry_point, audit_entry_point_for_guard,
     compiled_reference_transaction_guard_digest, reference_transaction_guard_digest,
