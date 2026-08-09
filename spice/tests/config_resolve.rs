@@ -596,6 +596,9 @@ enabled = true
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+pre_commit = [
+    { label = "Rust gate", run = ["gate/pre-commit"], scopes = { paths = ["src/**"] } },
+]
 package_roots = ["src/fixture"]
 generated_paths = ["build/fixture"]
 name_cluster_threshold = 4
