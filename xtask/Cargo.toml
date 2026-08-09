@@ -18,5 +18,8 @@ sill = { path = "../sill" }
 spice = { path = "../spice" }
 wire = { path = "../wire" }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
 [lints]
 workspace = true

@@ -123,6 +123,22 @@ The scoped command identifies every full-verifier action and compiled gate arm
 it skips. It is feedback only; run the zero-argument command before completing
 or handing off work.
 
+## Cargo build cache
+
+Cargo's configured `build_directory` may point every worktree at a shared
+machine cache shaped as `CargoBuild/<bucket>/<workspace-hash>`. Inventory it
+without writes with:
+
+```sh
+cargo xtask build-cache --dry-run --max-bytes 40GiB --retain-live-worktrees 2
+```
+
+Apply the same deterministic oldest-first plan with `--apply`, or drive by
+free space instead of total cache size with `--free-space-floor 100GiB`. The
+collector retains the current worktree and the configured number of hottest
+linked worktree roots, skips any root with a held `.cargo-build-lock`, and never
+manages `CARGO_HOME`, `CARGO_TARGET_DIR`, or sccache.
+
 [SHELL.md](SHELL.md) inventories the few shell-bound entrypoints that remain
 and every orchestration script retired into these Rust commands.
 
