@@ -215,6 +215,7 @@ export async function assertAgentConversation(
   const producerNames = new Set(await authored.locator(".message-author").allTextContents());
   assert.ok(producerIds.size > 1, "the packed plane contains more than one producing agent");
   assert.ok(producerNames.size > 1, "each authored card footer names its producing agent");
+  await assertInitiallyDeferredMosaicIsReadable(page, console);
   await assertRosterPips(page, console, seated);
   const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
   for (const name of producerNames) {
@@ -465,6 +466,57 @@ export async function assertAgentConversation(
     quoteProse: team.quoteProse,
     primaryHeadings: team.primaryHeadings,
   };
+}
+
+async function assertInitiallyDeferredMosaicIsReadable(page, console) {
+  await console.getByRole("tab", { name: /^Info/ }).click();
+  const rule = await page.evaluate(() => {
+    const sheet = [...document.styleSheets]
+      .find((candidate) => candidate.href?.endsWith("mosaic.css"));
+    if (!sheet) throw new Error("the Mosaic stylesheet is unavailable");
+    const index = sheet.cssRules.length;
+    sheet.insertRule(".lane-mosaic-plane { width: 12px !important; }", index);
+    return index;
+  });
+  await console.getByRole("tab", { name: /^Compose/ }).click();
+  const plane = console.locator(".lane-mosaic-plane");
+  await plane.waitFor({ state: "attached" });
+  await waitForPage(page, "fresh Mosaic defers below its measurable width", TRANSITION_MS, () => {
+    const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+    return plane?.dataset.measurementPhase === "base"
+      && Number(plane.dataset.observedWidth) < 24;
+  });
+  const cards = plane.locator(".mosaic-message-card");
+  assert.ok(await cards.count(), "the initially deferred plane retains transcript cards");
+  const fallback = await cards.evaluateAll((nodes) => nodes.map((node) => {
+    const box = node.getBoundingClientRect();
+    return {
+      visibility: getComputedStyle(node).visibility,
+      top: box.top,
+      bottom: box.bottom,
+      height: box.height,
+    };
+  }));
+  assert.ok(
+    fallback.every((card) => card.visibility === "visible" && card.height > 0),
+    "an initially unmeasurable plane keeps every transcript card readable",
+  );
+  assert.ok(
+    fallback.slice(1).every((card, index) => card.top >= fallback[index].bottom),
+    "deferred transcript cards occupy non-overlapping flow rows",
+  );
+  await page.evaluate((index) => {
+    const sheet = [...document.styleSheets]
+      .find((candidate) => candidate.href?.endsWith("mosaic.css"));
+    if (!sheet) throw new Error("the Mosaic stylesheet is unavailable");
+    sheet.deleteRule(index);
+  }, rule);
+  await waitForPage(page, "fresh Mosaic commits after becoming measurable", TRANSITION_MS, () => {
+    const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+    return plane?.dataset.measurementPhase === "ready"
+      && [...plane.querySelectorAll(".mosaic-message-card")]
+        .every((card) => card.dataset.layoutPhase === "committed");
+  });
 }
 
 async function armPlacementProbe(plane, excluded = []) {
