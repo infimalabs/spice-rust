@@ -458,6 +458,16 @@ fn reversing_a_refresh_restores_the_tree_the_first_install_found() {
 
     let refreshed = plan(&repository, Some(&binary)).unwrap();
     apply(&repository, Some(&binary), &refreshed.digest().unwrap()).unwrap();
+    // Twice, because a second refresh is where an inherited reversal image
+    // could quietly rebase onto the first refresh's own output.
+    fs::write(&binary, b"newer binary bytes").unwrap();
+    set_test_mode(&binary, EXECUTABLE_MODE);
+    let again = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &again.digest().unwrap()).unwrap();
+    assert_eq!(
+        fs::read(repository.common_dir().join(BINARY_PATH)).unwrap(),
+        b"newer binary bytes"
+    );
     let receipt = unapply(&repository).expect("reverse the refreshed install");
 
     // A refresh inherits its reversal images rather than rebasing them onto its

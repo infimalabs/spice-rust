@@ -130,10 +130,24 @@ else.
 ## Upgrade
 
 Rebuild, preview, and apply as above; an apply is refused unless its digest
-matches the plan just previewed. Re-run `cargo xtask activate-hooks` when the
-hook assets or the verifier guard change — `cargo xtask verify` refuses while
-the published copy is not the running build's, and names the command. An
-upgrade stops nothing outside this appliance.
+matches the plan just previewed. Previewing a rebuilt executable against a
+complete install plans a refresh rather than a second installation: it keeps
+the reversal images that install recorded and exchanges each published file for
+its replacement in place. There is no uninstall step between the two builds, so
+`$SPICE_BIN` and the three Git hooks stay present and executable for the whole
+apply, and a reversal after any number of refreshes still restores the tree the
+first install found rather than the build before this one. The proof is
+`refresh_publishes_the_rebuilt_executable_without_withdrawing_anything`, which
+reads the installed tree from another thread while the refresh runs:
+
+```sh
+cargo test --locked -p spice --lib install::tests::refresh
+```
+
+Re-run `cargo xtask activate-hooks` when the hook assets or the verifier guard
+change — `cargo xtask verify` refuses while the published copy is not the
+running build's, and names the command. An upgrade stops nothing outside this
+appliance.
 
 ## The independence proof
 
