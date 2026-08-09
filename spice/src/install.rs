@@ -27,7 +27,9 @@ use files::{
     publish_operation, restore_operation,
 };
 use path::{relative_parents, validate_relative};
-use progress::{apply_with_interruption, unapply_with_interruption, verify_progress};
+use progress::{
+    apply_with_interruption, unapply_with_interruption, verify_progress, verify_refresh_progress,
+};
 use record::read_record;
 #[cfg(test)]
 use record::record_path;
@@ -608,10 +610,16 @@ pub fn plan(
         }
         if record.status == InstallStatus::Complete && rebuilt_binary(&record.plan, spice_binary)? {
             // A rebuilt executable over a complete install is a refresh, not a
-            // conflict. Proving the installed tree intact first is what lets
-            // the derived plan treat every destination as replaceable in place.
-            verify_progress(repository, &record)?;
-            return build_plan_over(repository, spice_binary, Some(&record.plan));
+            // conflict. Every non-binary destination must still be intact. A
+            // binary-only drift is reconciled by naming its exact observed
+            // image as the one this digest-bound refresh supersedes.
+            let binary_superseded = verify_refresh_progress(repository, &record)?;
+            return build_plan_over(
+                repository,
+                spice_binary,
+                Some(&record.plan),
+                binary_superseded.as_ref(),
+            );
         }
         verify_binary_context(&record.plan, spice_binary)?;
         verify_progress(repository, &record)?;
@@ -638,7 +646,7 @@ fn build_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
-    build_plan_over(repository, spice_binary, None)
+    build_plan_over(repository, spice_binary, None, None)
 }
 
 /// Derive the plan that installs this build over `installed`, or from nothing.
@@ -650,6 +658,7 @@ fn build_plan_over(
     repository: &Repository,
     spice_binary: Option<&Path>,
     installed: Option<&InstallPlan>,
+    binary_superseded: Option<&GeneratedImage>,
 ) -> Result<InstallPlan, InstallError> {
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
@@ -657,7 +666,7 @@ fn build_plan_over(
     let (exclude_bound, observed_exclude) =
         destination_state(repository, Location::CommonGit, EXCLUDE_PATH)?;
     let (exclude_previous, exclude_superseded) =
-        reversal_context(installed, Asset::Exclusions, observed_exclude);
+        reversal_context(installed, Asset::Exclusions, observed_exclude, None);
     let exclude_image = exclude_previous.as_ref().map(|previous| &previous.image);
     let exclude_bytes = exclusions(exclude_image.map(FileImage::bytes))?;
     let exclude_mode = exclude_image.map_or(DATA_MODE, FileImage::mode);
@@ -704,7 +713,7 @@ fn build_plan_over(
         (Asset::Skill, SKILL_PATH, SKILL.as_bytes(), DATA_MODE),
     ] {
         let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
-        let (previous, superseded) = reversal_context(installed, asset, observed);
+        let (previous, superseded) = reversal_context(installed, asset, observed, None);
         operations.push(operation(
             &mut virtual_directories,
             asset,
@@ -718,7 +727,8 @@ fn build_plan_over(
     if let Some(binary) = spice_binary {
         let bytes = read_binary(binary)?;
         let (bound, observed) = destination_state(repository, Location::CommonGit, BINARY_PATH)?;
-        let (previous, superseded) = reversal_context(installed, Asset::Binary, observed);
+        let (previous, superseded) =
+            reversal_context(installed, Asset::Binary, observed, binary_superseded);
         operations.push(operation(
             &mut virtual_directories,
             Asset::Binary,
@@ -749,6 +759,7 @@ fn reversal_context(
     installed: Option<&InstallPlan>,
     asset: Asset,
     observed: Option<ObservedFile>,
+    reconciled: Option<&GeneratedImage>,
 ) -> (Option<ObservedFile>, Option<GeneratedImage>) {
     match installed.and_then(|plan| {
         plan.operations
@@ -757,7 +768,11 @@ fn reversal_context(
     }) {
         Some(superseded) => (
             superseded.previous.clone(),
-            Some(superseded.generated.clone()),
+            Some(
+                reconciled
+                    .cloned()
+                    .unwrap_or_else(|| superseded.generated.clone()),
+            ),
         ),
         None => (observed, None),
     }
