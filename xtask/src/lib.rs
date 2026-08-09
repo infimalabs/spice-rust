@@ -662,13 +662,17 @@ mod tests {
     /// that the audit ran without reaching a real repository.
     const ENTRY_POINT_FIXTURE: &str = "fixture guard matches this build\n";
 
-    struct RefuseDiagnosticWrite;
+    #[derive(Default)]
+    struct RefuseDiagnosticWrite {
+        accepted: Vec<u8>,
+    }
 
     impl Write for RefuseDiagnosticWrite {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
             if bytes.starts_with(b"bounded battery refusal") {
                 Err(io::Error::other("fixture diagnostic output refusal"))
             } else {
+                self.accepted.extend_from_slice(bytes);
                 Ok(bytes.len())
             }
         }
@@ -1232,14 +1236,15 @@ mod tests {
     }
 
     #[test]
-    fn battery_refusal_does_not_hide_its_diagnostic_write_failure() {
+    fn battery_render_failure_emits_a_terminal_without_hiding_the_original_error() {
         let mut runner = runner(successful_commands());
         runner.battery = Some(Ok(BatteryRun::Refused(
             b"bounded battery refusal\n".to_vec(),
         )));
+        let mut output = RefuseDiagnosticWrite::default();
 
-        let error = verify_with(&mut runner, &mut RefuseDiagnosticWrite)
-            .expect_err("diagnostic write refusal surfaces");
+        let error =
+            verify_with(&mut runner, &mut output).expect_err("diagnostic write refusal surfaces");
 
         assert!(matches!(error, VerifyError::Output(_)));
         assert_eq!(
@@ -1247,6 +1252,18 @@ mod tests {
             "[verify] output failed: fixture diagnostic output refusal"
         );
         assert_eq!(runner.calls, labels()[..labels().len() - 1]);
+        let output = String::from_utf8(output.accepted).expect("lifecycle output is UTF-8");
+        let terminal = output
+            .lines()
+            .filter(|line| line.contains("stage=terminal ordinal=10/11"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            terminal.len(),
+            1,
+            "failed action has one terminal: {output}"
+        );
+        assert!(terminal[0].contains("disposition=render-error"));
+        assert!(!output.contains("ordinal=11/11"));
     }
 
     #[test]
