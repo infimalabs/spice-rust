@@ -1,91 +1,21 @@
-//! Resolve the one repository-common Spice state root from Git's own files.
+//! Resolve the repository-common state namespace owned only by this runtime.
 //!
-//! # Coexistence with the predecessor
+//! Python Spice owns `.spice`; this runtime owns `.spice-rs`. The roots are
+//! siblings beneath the Git common directory, so equal lane, task, thread, or
+//! steering identifiers cannot make either implementation discover, consume,
+//! acknowledge, or overwrite the other's state. The install appliance remains
+//! in the already-disjoint `.spice-install` sibling.
 //!
-//! The state root this module resolves -- `<git-common-dir>/.spice`, spelled by
-//! [`STATE_DIRECTORY`] -- is shared. The Python predecessor keeps its own
-//! durable state in that same directory and is expected to keep doing so
-//! indefinitely; neither system is scheduled to replace the other.
+//! The same rule covers the only writable file outside those roots. Python owns
+//! `<git-dir>/agent.gitconfig`; [`crate::git_shadow`] owns
+//! `<git-dir>/spice-rs-agent.gitconfig`. Neither implementation relies on
+//! byte-compatible whole-file writes by the other.
 //!
-//! The policy that shared root imposes:
-//!
-//! 1. No command in this port may import, convert, or rewrite the predecessor's
-//!    durable state, and none may do so as an incidental effect of another verb.
-//!    An in-place rewrite is still an in-place rewrite when it is called a
-//!    migration.
-//! 2. The only paths this runtime creates or writes under that root are the ones
-//!    [`StatePaths::owned_directories`] and [`StatePaths::owned_files`] name,
-//!    plus whatever sits inside a [`StatePaths::exclusive_directories`] entry --
-//!    a lock is named after whoever asked for it, so no list could enumerate one
-//!    in advance. Everything else under the root is another system's property
-//!    and is left exactly as found, byte for byte.
-//! 3. A cross-system bridge is refused by default. The sole translator that
-//!    exists, `spice config migrate-tasks`, runs only when an operator names an
-//!    export path on the command line, reads that one file, and writes nothing.
-//!
-//! `tests/coexistence.rs` enforces 2 and 3 by identity rather than by reading
-//! this comment: it seeds predecessor-owned files under a fixture root, runs the
-//! binary, and compares the bytes back.
-//!
-//! # Why the root is shared rather than split
-//!
-//! Taking a distinct Rust-owned root beside the predecessor's was considered and
-//! rejected. The two systems are already disjoint inside the one root, so a
-//! split would buy a separation that is there, at the cost of moving every path
-//! below and stranding the state written under the old name:
-//!
-//! * The **journal** is separate by filename. This port writes
-//!   `data/spicejournal.sqlite3` and `data/spicefolds.sqlite3`. The predecessor
-//!   writes `spiceacks`, `spicemaxims`, `spiceprojections`, `spiceteams` and
-//!   `taskchampion` beside them. Neither opens a database the other writes, so
-//!   an operator running both at once has no journal to cross-write -- the
-//!   guarantee holds per file, and does not depend on the two never running
-//!   together.
-//! * **Config** is separate by anchor. `config.toml` here hangs off the common
-//!   root, while the predecessor's worktree config hangs off `<git-dir>/.spice`
-//!   and the root `spice.toml` schema stays the predecessor's.
-//! * **Hooks** were separate before the question was asked: the installer owns
-//!   `.spice-install/`, which is not under this root at all.
-//! * **Worktree Git-dir state** is not shared, because this port keeps none.
-//!   Every `.spice` here hangs off the Git *common* directory --
-//!   [`Repository::admit_state`], `gate::state::current_state_path` and
-//!   `crate::config::load::locations` all anchor there -- so `<git-dir>/.spice`
-//!   is the predecessor's per-worktree config root alone, and no path in this
-//!   port constructs it.
-//!
-//! Under the shared root, `artifacts/tasks/<TASK-ID>/` is the one path both
-//! write, and that is the intent: one board, one task identifier, artifacts
-//! filed beneath it. The two contribute entries; neither rewrites the other's.
-//!
-//! # The one file both write outside the shared root
-//!
-//! `<git-dir>/agent.gitconfig` is written by both systems, at the per-worktree
-//! Git directory `rev-parse --absolute-git-dir` reports and not under any
-//! `.spice`. [`crate::git_shadow`] publishes it here and the predecessor's
-//! `spice/agent/shadow.py` publishes it there. Neither contributes an entry to
-//! it: each writes the whole file, so the bytes the later run leaves are the
-//! only bytes left.
-//!
-//! That is safe today only because the two generate identical bytes and both
-//! read the file back before writing, so whichever runs second finds its own
-//! content already there and writes nothing. It stays safe only while they stay
-//! agreed on every part of it: the filename, the `--absolute-git-dir` anchor,
-//! the header line, the `[include]` and `[branch]` section order, the tab
-//! indentation and trailing newline, the subsection quoting -- backslash then
-//! quote, in that order -- and the `git config --system --edit` probe under
-//! `GIT_EDITOR=echo` that fills in the include path. Change one of those on one
-//! side and the two overwrite each other on every alternating run, each leaving
-//! a file the other replaces, with nothing anywhere to notice it.
-//!
-//! Policy point 2 and `tests/coexistence.rs` do not reach this file: both are
-//! scoped to `<git-common-dir>/.spice`, and this path is under neither. What
-//! holds it is `tests/git_shadow.rs`, which pins the anchor and filename against
-//! a linked worktree, where the per-worktree Git directory and the common one
-//! are different paths. It also pins the complete bytes for a simple branch --
-//! header, section order, tab indentation and trailing newline -- plus the
-//! reachable double-quote subsection escaping. Git refuses backslashes in a
-//! refname, so that first escape replacement is recorded at the writer as a
-//! defensive predecessor-compatible arm rather than covered by a forged branch.
+//! Release-one `.spice-rust` state remains retired and is refused explicitly.
+//! Previous shared-root state under `.spice` is not admitted as current state:
+//! reading it would recreate the routing ambiguity this namespace boundary is
+//! meant to remove. `tests/coexistence.rs` seeds that complete predecessor root
+//! and proves native commands leave it byte-identical.
 
 use std::error::Error;
 use std::fmt;
@@ -94,7 +24,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Sole repository-common directory owned by the current Spice runtime.
-pub const STATE_DIRECTORY: &str = ".spice";
+pub const STATE_DIRECTORY: &str = ".spice-rs";
 
 const RETIRED_STATE_DIRECTORY: &str = ".spice-rust";
 const RETIRED_STATE_RELEASE: &str = "release-one";
@@ -261,9 +191,8 @@ impl StatePaths {
 
     /// Parent of per-lane steering inboxes.
     ///
-    /// The predecessor also keeps an inbox, but it puts one in each worktree
-    /// rather than one beside the shared root, so the two never name the same
-    /// file and this directory is unambiguously this port's.
+    /// Python's inbox is beneath its `.spice` root; this one is beneath the
+    /// Rust-only `.spice-rs` root.
     #[must_use]
     pub fn inbox(&self) -> &Path {
         &self.inbox
@@ -299,23 +228,12 @@ impl StatePaths {
         ]
     }
 
-    /// Every directory this runtime claims under the shared state root.
-    ///
-    /// This list and [`Self::owned_files`] are the whole of what this port owns
-    /// inside `.spice`. Because the root is shared with the predecessor, the
-    /// complement of these two lists is the other system's property, so naming
-    /// them once here is what lets a reader derive that complement by
-    /// subtraction. A second, hand-written list of foreign paths would drift the
-    /// moment this port claimed one more name.
+    /// Every named directory this runtime writes under its private state root.
     ///
     /// Ownership extends past what the runtime admits at startup: a name this
     /// port writes is its own whether or not a wrong shape there should abort a
     /// start. Deriving this list from the narrower admission list keeps the two
-    /// from disagreeing about the names they share.
-    ///
-    /// Claiming a directory does not by itself claim what is inside it: only
-    /// the directories [`Self::exclusive_directories`] repeats own their whole
-    /// contents. The rest are shared, and ownership there is decided per file.
+    /// registries aligned.
     #[must_use]
     pub fn owned_directories(&self) -> [&Path; 11] {
         let [
@@ -343,28 +261,14 @@ impl StatePaths {
         ]
     }
 
-    /// Directories whose entire contents belong to this port.
+    /// Root whose entire contents belong to this runtime.
     ///
-    /// Everything the runtime writes below one of these is its own, so no name
-    /// inside them has to be enumerated. The two directories deliberately left
-    /// out are the ones both systems write into: the root itself, which holds
-    /// the predecessor's `taskrc` beside this port's `config.toml`, and `data`,
-    /// which holds its databases beside this port's journals and gate state.
-    /// Ownership there is per file, which is why [`Self::owned_files`] names
-    /// each one.
+    /// A single exclusive root is the architectural boundary: new child names
+    /// cannot accidentally become Python-owned merely because a registry below
+    /// forgot to enumerate them.
     #[must_use]
-    pub fn exclusive_directories(&self) -> [&Path; 9] {
-        [
-            self.locks(),
-            self.proof(),
-            self.degraded(),
-            self.tape(),
-            &self.artifact_data,
-            self.artifacts(),
-            self.lane_canvas(),
-            self.inbox(),
-            self.learnings(),
-        ]
+    pub fn exclusive_directories(&self) -> [&Path; 1] {
+        [self.runtime()]
     }
 
     /// Files whose shape this runtime admits before it does any work.
@@ -379,13 +283,10 @@ impl StatePaths {
         ]
     }
 
-    /// Every regular file this runtime claims under the shared state root.
+    /// Every fixed regular file this runtime writes under its private root.
     ///
     /// The install receipt and the machine-local configuration belong here even
-    /// though neither is authority state: ownership is about which system may
-    /// write a name, not about how durable the bytes are. Leaving either out
-    /// would make the complement described on [`Self::owned_directories`] claim
-    /// this port's own files for the predecessor. Neither is admitted, because
+    /// though neither is authority state. Neither is admitted, because
     /// an operator repairing a bad `config.toml` needs the runtime to reach the
     /// refusal that names it rather than stop at a shape check.
     #[must_use]
@@ -891,19 +792,22 @@ mod tests {
         let state = repository
             .admit_state()
             .expect("admit absent current state");
-        assert_eq!(state.runtime(), common.join(".spice"));
-        assert_eq!(state.data(), common.join(".spice/data"));
+        assert_eq!(state.runtime(), common.join(".spice-rs"));
+        assert_eq!(state.data(), common.join(".spice-rs/data"));
         assert_eq!(
             state.journal(),
-            common.join(".spice/data/spicejournal.sqlite3")
+            common.join(".spice-rs/data/spicejournal.sqlite3")
         );
-        assert_eq!(state.folds(), common.join(".spice/data/spicefolds.sqlite3"));
-        assert_eq!(state.locks(), common.join(".spice/locks"));
-        assert_eq!(state.proof(), common.join(".spice/proof"));
-        assert_eq!(state.resident(), common.join(".spice/resident"));
-        assert_eq!(state.canvas(), common.join(".spice/canvas"));
-        assert_eq!(state.degraded(), common.join(".spice/degraded"));
-        assert_eq!(state.tape(), common.join(".spice/tape"));
+        assert_eq!(
+            state.folds(),
+            common.join(".spice-rs/data/spicefolds.sqlite3")
+        );
+        assert_eq!(state.locks(), common.join(".spice-rs/locks"));
+        assert_eq!(state.proof(), common.join(".spice-rs/proof"));
+        assert_eq!(state.resident(), common.join(".spice-rs/resident"));
+        assert_eq!(state.canvas(), common.join(".spice-rs/canvas"));
+        assert_eq!(state.degraded(), common.join(".spice-rs/degraded"));
+        assert_eq!(state.tape(), common.join(".spice-rs/tape"));
         assert_eq!(
             proof::Layout::new(
                 repository.worktree_root(),
@@ -948,8 +852,8 @@ mod tests {
         assert_eq!(
             state.runtime(),
             fs::canonicalize(&common)
-                .expect("canonical shared state root")
-                .join(".spice")
+                .expect("canonical Rust state parent")
+                .join(".spice-rs")
         );
         assert_eq!(
             proof::Layout::new(

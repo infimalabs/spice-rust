@@ -5,11 +5,40 @@ use tape::Locus;
 
 use crate::{Dialect, Event};
 
+/// Transcript lifecycle observed on one vendor record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum TurnMoment {
+    /// The record opens a new operator turn.
+    Started,
+    /// The record belongs to the named current turn without opening it again.
+    Observed,
+    /// The record closes the current turn.
+    Completed,
+}
+
+/// Vendor-neutral context shared by every event decoded from one record.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RecordContext {
+    /// Vendor timestamp spelling, when present.
+    pub timestamp: Option<String>,
+    /// Vendor turn identity attached to this record, when present.
+    pub turn_id: Option<String>,
+    /// Lifecycle position represented by this record, when present.
+    pub turn: Option<TurnMoment>,
+    /// Model context window advertised on this record, when present.
+    pub model_context_window: Option<u64>,
+}
+
 /// Result of decoding one complete record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Decoded {
-    /// One or more typed moments supplied by the record.
-    Events(Vec<Event>),
+    /// Zero or more typed moments supplied by a recognized record.
+    Events {
+        /// Context shared by the decoded moments.
+        context: RecordContext,
+        /// Typed moments in vendor order.
+        events: Vec<Event>,
+    },
     /// The whole record remains untyped and accounted.
     Residue(Residue),
 }
@@ -19,8 +48,17 @@ impl Decoded {
     #[must_use]
     pub fn events(&self) -> &[Event] {
         match self {
-            Self::Events(events) => events,
+            Self::Events { events, .. } => events,
             Self::Residue(_) => &[],
+        }
+    }
+
+    /// Shared record context, when the record was recognized.
+    #[must_use]
+    pub const fn context(&self) -> Option<&RecordContext> {
+        match self {
+            Self::Events { context, .. } => Some(context),
+            Self::Residue(_) => None,
         }
     }
 
@@ -28,7 +66,7 @@ impl Decoded {
     #[must_use]
     pub const fn residue(&self) -> Option<&Residue> {
         match self {
-            Self::Events(_) => None,
+            Self::Events { .. } => None,
             Self::Residue(residue) => Some(residue),
         }
     }

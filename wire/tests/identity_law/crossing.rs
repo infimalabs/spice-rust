@@ -275,6 +275,7 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
             TaskHead {
                 handle: task.clone(),
                 uuid: first_uuid,
+                queue_origin: seq(9),
                 title: "Build the gate".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
@@ -287,6 +288,7 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
             TaskHead {
                 handle: task.clone(),
                 uuid: second_uuid,
+                queue_origin: seq(9),
                 title: "Review the gate".to_owned(),
                 description: Some("Confirm every edge".to_owned()),
                 acceptance: vec!["The gate passes".to_owned()],
@@ -342,6 +344,11 @@ fn cover_claim_heads(covered: &mut BTreeSet<String>) {
             ClaimHead {
                 actor: Actor::Operator,
                 fact: seq(12),
+                claimed: seq(12),
+                cell: wire::ClaimCell {
+                    project: "gate".to_owned(),
+                    phase: "todo".parse().expect("phase"),
+                },
                 lane: first_uuid,
                 occupant: second_uuid,
                 epoch: first_uuid,
@@ -350,6 +357,11 @@ fn cover_claim_heads(covered: &mut BTreeSet<String>) {
             ClaimHead {
                 actor: Actor::Lane(first_uuid),
                 fact: seq(13),
+                claimed: seq(12),
+                cell: wire::ClaimCell {
+                    project: "gate".to_owned(),
+                    phase: "review".parse().expect("phase"),
+                },
                 lane: second_uuid,
                 occupant: first_uuid,
                 epoch: second_uuid,
@@ -1068,14 +1080,14 @@ fn cover_restore_reply_frames(covered: &mut BTreeSet<String>) {
         &[
             JournalRestore {
                 plan: digest("1"),
-                destination: "/repo/.git/.spice/data/spicejournal.sqlite3".to_owned(),
+                destination: "/repo/.git/.spice-rs/data/spicejournal.sqlite3".to_owned(),
                 previous: None,
                 verification: restore_verification("2", 0),
                 applied: false,
             },
             JournalRestore {
                 plan: digest("3"),
-                destination: "/repo/.git/.spice/data/spicejournal.sqlite3".to_owned(),
+                destination: "/repo/.git/.spice-rs/data/spicejournal.sqlite3".to_owned(),
                 previous: Some(digest("4")),
                 verification: restore_verification("5", 19),
                 applied: true,
@@ -1090,50 +1102,44 @@ fn cover_fold_reply_frames(covered: &mut BTreeSet<String>) {
         "FoldState",
         &[
             FoldState {
-                fold: "canvas::flow".to_owned(),
+                fold: "task::effort".to_owned(),
                 generation: None,
                 reducer_version: None,
                 cursor: None,
                 horizon: None,
-                recovery: "spice journal replay canvas::flow".to_owned(),
-                sources: vec!["task::*".to_owned(), "task".to_owned()],
+                recovery: "spice journal replay task::effort".to_owned(),
+                sources: vec![
+                    "task::*".to_owned(),
+                    "claim::*".to_owned(),
+                    "lane::*".to_owned(),
+                    "lineage::*".to_owned(),
+                    "journal::*".to_owned(),
+                ],
                 payload: None,
             },
             FoldState {
-                fold: "release::history".to_owned(),
+                fold: "task::effort".to_owned(),
                 generation: Some(2),
                 reducer_version: Some(1),
                 cursor: Some(seq(19)),
                 horizon: Some(seq(19)),
-                recovery: "spice journal replay release::history".to_owned(),
-                sources: vec!["proof::*".to_owned(), "release::*".to_owned()],
-                payload: Some(serde_json::json!({"facts": []})),
+                recovery: "spice journal replay task::effort".to_owned(),
+                sources: vec![
+                    "task::*".to_owned(),
+                    "claim::*".to_owned(),
+                    "lane::*".to_owned(),
+                    "lineage::*".to_owned(),
+                    "journal::*".to_owned(),
+                ],
+                payload: Some(serde_json::json!({"phases": [], "aggregates": []})),
             },
         ],
     );
 }
 
 fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
-    law(
-        covered,
-        "ProofEvidence",
-        &[
-            ProofEvidence {
-                target: ReleaseTarget::Aarch64AppleDarwin,
-                payload: digest("1"),
-                receipt: digest("2"),
-                battery: digest("3"),
-                replay: digest("4"),
-            },
-            ProofEvidence {
-                target: ReleaseTarget::X86_64UnknownLinuxMusl,
-                payload: digest("5"),
-                receipt: digest("6"),
-                battery: digest("7"),
-                replay: digest("8"),
-            },
-        ],
-    );
+    cover_release_note_frames(covered);
+    cover_proof_evidence_frames(covered);
     law(
         covered,
         "ReplyPosition",
@@ -1203,6 +1209,76 @@ fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
                 id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 outcome: Outcome::Fault(moved_epoch()),
+            },
+        ],
+    );
+}
+
+fn cover_proof_evidence_frames(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "ProofEvidence",
+        &[
+            ProofEvidence {
+                target: ReleaseTarget::Aarch64AppleDarwin,
+                payload: digest("1"),
+                receipt: digest("2"),
+                battery: digest("3"),
+                replay: digest("4"),
+            },
+            ProofEvidence {
+                target: ReleaseTarget::X86_64UnknownLinuxMusl,
+                payload: digest("5"),
+                receipt: digest("6"),
+                battery: digest("7"),
+                replay: digest("8"),
+            },
+        ],
+    );
+}
+
+fn cover_release_note_frames(covered: &mut BTreeSet<String>) {
+    let entries = [
+        ReleaseNotesEntry {
+            project: "general".to_owned(),
+            subject: "Seed the repository".to_owned(),
+            task: None,
+            references: vec!["1111111111111111111111111111111111111111".to_owned()],
+        },
+        ReleaseNotesEntry {
+            project: "dist.notes".to_owned(),
+            subject: "Derive release notes from history".to_owned(),
+            task: Some("notes".to_owned()),
+            references: vec![
+                "2222222222222222222222222222222222222222".to_owned(),
+                "3333333333333333333333333333333333333333".to_owned(),
+            ],
+        },
+    ];
+    law(covered, "ReleaseNotesEntry", &entries);
+    law(
+        covered,
+        "ReleaseNotes",
+        &[
+            ReleaseNotes {
+                version: 1,
+                identity: digest("1"),
+                release_version: "unreleased".to_owned(),
+                release_commit: "1111111111111111111111111111111111111111".to_owned(),
+                previous_tag: None,
+                bounded_recent_window: true,
+                entries: vec![entries[0].clone()],
+                document: "## Highlights\n".to_owned(),
+            },
+            ReleaseNotes {
+                version: 1,
+                identity: digest("2"),
+                release_version: "1.2.3".to_owned(),
+                release_commit: "3333333333333333333333333333333333333333".to_owned(),
+                previous_tag: Some("v1.2.2".to_owned()),
+                bounded_recent_window: false,
+                entries: entries.to_vec(),
+                document: "## Highlights\n\n- History-derived notes.\n".to_owned(),
             },
         ],
     );

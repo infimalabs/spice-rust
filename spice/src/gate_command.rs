@@ -11,8 +11,10 @@ use gate::{
 };
 #[cfg(test)]
 use gate::{GateReport, Standing};
-use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
+use wire::intent::{CommandAnswer, GateFindingWork, GateFindings};
+use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, body};
 
+use crate::cli::Contract;
 use spice::repository::Repository;
 
 /// Run the ordinary gate against the captured index or one selected commit.
@@ -26,6 +28,49 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {
         Ok(report) => direct(report),
         Err(error) => battery_failure(error),
     }
+}
+
+/// Run the ordinary gate and file its projected findings as deferred board work.
+pub(crate) fn findings(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+    let selector = matches
+        .get_one::<String>("at")
+        .map_or_else(Selector::staged, |revision| {
+            Selector::revision(revision.clone())
+        });
+    let report = match spice::gate::run(selector) {
+        Ok(report) => report,
+        Err(error) => return battery_failure(error),
+    };
+    let report_digest = match battery_report_digest(&report) {
+        Ok(digest) => digest,
+        Err(outcome) => return outcome,
+    };
+    let findings = report
+        .findings()
+        .into_iter()
+        .map(|finding| GateFindingWork {
+            identity: finding.identity().clone(),
+            severity: severity(finding.severity()),
+            locus: finding.locus().to_owned(),
+            title: finding.title().to_owned(),
+            description: finding.description().to_owned(),
+            acceptance: finding.acceptance().to_vec(),
+        })
+        .collect();
+    let repository = match current_repository() {
+        Ok(repository) => repository,
+        Err(outcome) => return outcome,
+    };
+    crate::command_client::execute_typed(
+        &repository,
+        contract,
+        wire::CommandKind::GateFindings,
+        Vec::new(),
+        &GateFindings {
+            report: report_digest,
+            findings,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -151,6 +196,43 @@ fn direct<B>(body: B) -> Outcome<B> {
         position: ReplyPosition::Direct {},
         body,
     })
+}
+
+fn battery_report_digest(report: &BatteryReport) -> Result<Digest, Outcome<CommandAnswer>> {
+    let bytes = report.encode().map_err(|error| {
+        Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "gate::report-unencodable".to_owned(),
+            detail: error.to_string(),
+        })
+    })?;
+    Ok(Digest::compute(Domain::GateBatteryReport, &bytes))
+}
+
+fn current_repository() -> Result<Repository, Outcome<CommandAnswer>> {
+    let current = std::env::current_dir().map_err(|error| {
+        Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "gate::working-directory-unavailable".to_owned(),
+            detail: error.to_string(),
+        })
+    })?;
+    Repository::discover(&current).map_err(|error| {
+        Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "gate::repository-unresolved".to_owned(),
+            detail: error.to_string(),
+        })
+    })
+}
+
+fn severity(value: &str) -> body::Severity {
+    match value {
+        "critical" => body::Severity::Critical,
+        "high" => body::Severity::High,
+        "medium" => body::Severity::Medium,
+        _ => body::Severity::Low,
+    }
 }
 
 /// One immutable selected tree and the current contract loaded from its bytes.

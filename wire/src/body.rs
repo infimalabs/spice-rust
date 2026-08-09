@@ -324,6 +324,15 @@ pub struct ClaimWon {
     pub occupant: CanonicalUuid,
     /// Resident epoch that minted the claim.
     pub epoch: CanonicalUuid,
+    /// Project and phase occupied when the claim was minted.
+    ///
+    /// Absence is admitted only for facts written before journal schema 4.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub cell: Option<crate::ClaimCell>,
     /// Lease expiry the possession runs to.
     pub until: Instant,
     /// Repository history fixed when possession was minted.
@@ -1238,6 +1247,19 @@ pub struct GateCleared {
     pub locus: String,
 }
 
+/// A requested gate finding dispatch completed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateFindingsFiled {
+    /// Digest of the complete typed battery report that was dispatched.
+    pub report: Digest,
+    /// Number of projected findings consumed.
+    pub findings: u32,
+    /// Number of deferred board tasks created.
+    pub created: u32,
+    /// Number of open board tasks reused.
+    pub reused: u32,
+}
+
 /// The one forward schema migration finalized before epoch mint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalMigrated {
@@ -1438,11 +1460,13 @@ pub struct PublishedTarget {
     pub receipt: Digest,
 }
 
-/// The sealed release manifest digest, and each target entry's artifact digest, published.
+/// The sealed release manifest, notes, and each target artifact digest published.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleasePublished {
     /// Sealed release manifest digest.
     pub manifest: Digest,
+    /// Identity of the exact curated release-note bytes published.
+    pub notes: Digest,
     /// Each target entry published under its detached proof receipt.
     pub targets: Vec<PublishedTarget>,
 }

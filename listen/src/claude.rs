@@ -1,9 +1,9 @@
 use tape::Locus;
 
 use crate::{
-    Compaction, Event, Events, Failure, Object, Prose, Reasoning, ReasoningContent, ResidueKind,
-    SessionDeclaration, Tool, ToolMoment, ToolResult, Usage, array, object, optional_boolean,
-    optional_unsigned, required, string,
+    Compaction, Event, Events, Failure, Object, Prose, ProseRole, Reasoning, ReasoningContent,
+    ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage, array,
+    object, optional_boolean, optional_unsigned, required, string,
 };
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
@@ -13,6 +13,19 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
         "user" => user(record, locus),
         "system" => system(record, locus),
         "result" => result(record, locus),
+        "summary" => Ok(vec![Event::Compaction(Compaction {
+            summary: Some(string(record, "summary")?.to_owned()),
+            locus,
+        })]),
+        "rate_limit_event" | "error" => Ok(vec![Event::Failure(Failure {
+            message: record
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("vendor reported an error")
+                .to_owned(),
+            locus,
+        })]),
+        "attachment" | "last-prompt" | "ai-title" | "mode" | "queue-operation" => Ok(Vec::new()),
         other => Err(ResidueKind::Unknown {
             discriminator: other.to_owned(),
         }),
@@ -25,6 +38,11 @@ fn assistant(record: &Object, locus: Locus) -> Events {
         return Err(drift("assistant:message"));
     }
 
+    let phase = message
+        .get("stop_reason")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(terminal_stop_reason)
+        .then(|| "final_answer".to_owned());
     let mut events = Vec::new();
     for value in array(message, "content")? {
         let block = value.as_object().ok_or(ResidueKind::Malformed {
@@ -33,8 +51,9 @@ fn assistant(record: &Object, locus: Locus) -> Events {
         })?;
         match string(block, "type")? {
             "text" => events.push(Event::Prose(Prose {
+                role: ProseRole::Assistant,
                 text: string(block, "text")?.to_owned(),
-                phase: None,
+                phase: phase.clone(),
                 locus,
             })),
             "thinking" => events.push(Event::Reasoning(Reasoning {
@@ -60,6 +79,12 @@ fn assistant(record: &Object, locus: Locus) -> Events {
         }
     }
 
+    if record.contains_key("timestamp")
+        && let Some(usage) = message.get("usage").and_then(serde_json::Value::as_object)
+    {
+        events.push(Event::Usage(usage_event(usage, locus)?));
+    }
+
     Ok(events)
 }
 
@@ -73,25 +98,20 @@ fn stream_event(record: &Object, locus: Locus) -> Events {
     }
 }
 
-/// The only Claude spend source. Assistant records repeat one per-turn usage
-/// block, so metering them would count the same turn once per content block.
-/// This record exists only when the vendor launches with partial messages.
+/// Claude streaming spend reported by a terminal message delta.
+///
+/// Persisted transcript records carry usage on timestamped assistant messages
+/// instead; this shape exists only when the vendor launches with partial
+/// messages.
 fn message_delta(event: &Object, locus: Locus) -> Events {
     let usage = object(event, "usage")?;
     let reasoning_output_tokens = match usage.get("output_tokens_details") {
         Some(_) => optional_unsigned(object(usage, "output_tokens_details")?, "thinking_tokens")?,
         None => None,
     };
-    Ok(vec![Event::Usage(Usage {
-        turns: 1,
-        input_tokens: optional_unsigned(usage, "input_tokens")?.unwrap_or(0),
-        cached_input_tokens: optional_unsigned(usage, "cache_read_input_tokens")?.unwrap_or(0),
-        cache_write_input_tokens: optional_unsigned(usage, "cache_creation_input_tokens")?
-            .unwrap_or(0),
-        output_tokens: optional_unsigned(usage, "output_tokens")?.unwrap_or(0),
-        reasoning_output_tokens,
-        locus,
-    })])
+    let mut normalized = usage_event(usage, locus)?;
+    normalized.reasoning_output_tokens = reasoning_output_tokens;
+    Ok(vec![Event::Usage(normalized)])
 }
 
 fn user(record: &Object, locus: Locus) -> Events {
@@ -101,11 +121,18 @@ fn user(record: &Object, locus: Locus) -> Events {
     }
 
     let content = required(message, "content")?;
-    let Some(blocks) = content.as_array() else {
-        return Err(ResidueKind::Unknown {
-            discriminator: "user".to_owned(),
-        });
-    };
+    if let Some(text) = content.as_str() {
+        return Ok(vec![Event::Prose(Prose {
+            role: ProseRole::Operator,
+            text: text.to_owned(),
+            phase: Some("prompt".to_owned()),
+            locus,
+        })]);
+    }
+    let blocks = content.as_array().ok_or(ResidueKind::Malformed {
+        field: "message.content",
+        expected: "string or array",
+    })?;
 
     let mut events = Vec::new();
     for value in blocks {
@@ -113,20 +140,35 @@ fn user(record: &Object, locus: Locus) -> Events {
             field: "message.content[]",
             expected: "object",
         })?;
-        if string(block, "type")? != "tool_result" {
-            return Err(drift("user:content"));
+        match string(block, "type")? {
+            "text" => events.push(Event::Prose(Prose {
+                role: ProseRole::Operator,
+                text: string(block, "text")?.to_owned(),
+                phase: Some("prompt".to_owned()),
+                locus,
+            })),
+            "tool_result" => {
+                let result = match optional_boolean(block, "is_error")? {
+                    Some(true) => ToolResult::Failed,
+                    Some(false) => ToolResult::Succeeded,
+                    None => ToolResult::Unreported,
+                };
+                events.push(Event::Tool(Tool {
+                    call_id: string(block, "tool_use_id")?.to_owned(),
+                    moment: ToolMoment::Result(ToolOutcome {
+                        result,
+                        output: block.get("content").map(render_output),
+                        exit_code: block
+                            .get("content")
+                            .map(render_output)
+                            .as_deref()
+                            .and_then(output_exit_code),
+                    }),
+                    locus,
+                }));
+            }
+            other => return Err(drift(&format!("user:{other}"))),
         }
-
-        let result = match optional_boolean(block, "is_error")? {
-            Some(true) => ToolResult::Failed,
-            Some(false) => ToolResult::Succeeded,
-            None => ToolResult::Unreported,
-        };
-        events.push(Event::Tool(Tool {
-            call_id: string(block, "tool_use_id")?.to_owned(),
-            moment: ToolMoment::Result(result),
-            locus,
-        }));
     }
 
     if events.is_empty() {
@@ -143,9 +185,81 @@ fn system(record: &Object, locus: Locus) -> Events {
             identity: string(record, "session_id")?.to_owned(),
             locus,
         })]),
-        "compact_boundary" => Ok(vec![Event::Compaction(Compaction { locus })]),
+        "compact_boundary" => Ok(vec![Event::Compaction(Compaction {
+            summary: None,
+            locus,
+        })]),
+        "api_error" => {
+            let error = object(record, "error")?;
+            Ok(vec![Event::Failure(Failure {
+                message: error
+                    .get("formatted")
+                    .or_else(|| error.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or(ResidueKind::Absent {
+                        field: "error.message",
+                    })?
+                    .to_owned(),
+                locus,
+            })])
+        }
         other => Err(drift(&format!("system:{other}"))),
     }
+}
+
+fn usage_event(usage: &Object, locus: Locus) -> Result<Usage, ResidueKind> {
+    Ok(Usage {
+        turns: 1,
+        input_tokens: optional_unsigned(usage, "input_tokens")?.unwrap_or(0),
+        cached_input_tokens: optional_unsigned(usage, "cache_read_input_tokens")?.unwrap_or(0),
+        cache_write_input_tokens: optional_unsigned(usage, "cache_creation_input_tokens")?
+            .unwrap_or(0),
+        output_tokens: optional_unsigned(usage, "output_tokens")?.unwrap_or(0),
+        reasoning_output_tokens: optional_unsigned(usage, "reasoning_output_tokens")?,
+        locus,
+    })
+}
+
+fn render_output(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .filter_map(|value| {
+                value
+                    .get("text")
+                    .or_else(|| value.get("content"))
+                    .and_then(serde_json::Value::as_str)
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        other => other.to_string(),
+    }
+}
+
+fn output_exit_code(output: &str) -> Option<i32> {
+    [
+        "Process exited with code ",
+        "exit_code\":",
+        "\"exit_code\":",
+    ]
+    .into_iter()
+    .find_map(|prefix| {
+        let rest = output.split(prefix).nth(1)?;
+        rest.trim_start()
+            .chars()
+            .take_while(|character| character.is_ascii_digit() || *character == '-')
+            .collect::<String>()
+            .parse()
+            .ok()
+    })
+}
+
+fn terminal_stop_reason(stop_reason: &str) -> bool {
+    matches!(
+        stop_reason,
+        "end_turn" | "stop_sequence" | "max_tokens" | "refusal"
+    )
 }
 
 fn result(record: &Object, locus: Locus) -> Events {

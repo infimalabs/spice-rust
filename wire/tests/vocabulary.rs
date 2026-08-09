@@ -76,6 +76,7 @@ const TASTE_CONFIRMED: &str = r#"{
 const RELEASE_PUBLISHED: &str = r#"{
   "kind": "release::published",
   "manifest": "4a1b9c2d3e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef",
+  "notes": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "targets": [
     {
       "target": "aarch64-apple-darwin",
@@ -444,8 +445,21 @@ fn producer_assignment_follows_the_specified_enumeration() {
         );
     }
 
+    let command_gate = [FactKind::GateFindingsFiled];
+    for kind in command_gate {
+        assert_eq!(
+            kind.producer(),
+            Producer::CommandDoor,
+            "{kind} is minted by the command door"
+        );
+    }
+
     for kind in FactKind::ALL {
-        if bus_timers.contains(kind) || scanned.contains(kind) || recognized.contains(kind) {
+        if bus_timers.contains(kind)
+            || scanned.contains(kind)
+            || recognized.contains(kind)
+            || command_gate.contains(kind)
+        {
             continue;
         }
         let spelling = kind.as_str();

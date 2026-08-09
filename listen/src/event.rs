@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub enum EventKind {
     /// The vendor declared the exact resumable session identity.
     Session,
-    /// Assistant prose visible to the operator.
+    /// Prose attributable to an operator or assistant role.
     Prose,
     /// Model reasoning, whether rendered or opaque.
     Reasoning,
@@ -54,7 +54,7 @@ impl EventKind {
 pub enum Event {
     /// Exact resumable vendor session declaration.
     Session(SessionDeclaration),
-    /// Assistant prose.
+    /// Prose attributable to an operator or assistant role.
     Prose(Prose),
     /// Model reasoning.
     Reasoning(Reasoning),
@@ -107,15 +107,26 @@ pub struct SessionDeclaration {
     pub locus: Locus,
 }
 
-/// Visible assistant text.
+/// Visible transcript text.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Prose {
+    /// Side that authored the visible text.
+    pub role: ProseRole,
     /// Text reported by the vendor.
     pub text: String,
     /// Vendor phase when the current dialect reports one.
     pub phase: Option<String>,
     /// Source bytes.
     pub locus: Locus,
+}
+
+/// Author of one visible transcript message.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum ProseRole {
+    /// Operator-authored input.
+    Operator,
+    /// Assistant-authored delivery.
+    Assistant,
 }
 
 /// Reasoning visibility.
@@ -159,8 +170,19 @@ pub enum ToolMoment {
         /// Vendor call payload, serialized as JSON.
         arguments: String,
     },
-    /// A result reports its outcome when available.
-    Result(ToolResult),
+    /// A result reports its normalized outcome and available output evidence.
+    Result(ToolOutcome),
+}
+
+/// Normalized evidence attached to one tool result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolOutcome {
+    /// Vendor knowledge of success or failure.
+    pub result: ToolResult,
+    /// Rendered result body when the vendor records one.
+    pub output: Option<String>,
+    /// Process exit code when the result reports one directly or structurally.
+    pub exit_code: Option<i32>,
 }
 
 /// Vendor knowledge of a tool result.
@@ -205,8 +227,10 @@ pub struct Usage {
 }
 
 /// A context compaction boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Compaction {
+    /// Vendor-provided summary when this record carries one.
+    pub summary: Option<String>,
     /// Source bytes.
     pub locus: Locus,
 }

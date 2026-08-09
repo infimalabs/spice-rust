@@ -343,34 +343,40 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
     let typed = record(
         fixture.lane,
         fixture.occupant,
-        listen::Decoded::Events(vec![
-            listen::Event::Reasoning(listen::Reasoning {
-                content: listen::ReasoningContent::Plain(vec!["polling".to_owned()]),
-                locus,
-            }),
-            listen::Event::Tool(listen::Tool {
-                call_id: "patch".to_owned(),
-                moment: listen::ToolMoment::Call {
-                    name: "file_change".to_owned(),
-                    arguments: r#"{"patch":"polling"}"#.to_owned(),
-                },
-                locus,
-            }),
-            listen::Event::Usage(listen::Usage {
-                turns: 1,
-                input_tokens: 1,
-                cached_input_tokens: 0,
-                cache_write_input_tokens: 0,
-                output_tokens: 1,
-                reasoning_output_tokens: None,
-                locus,
-            }),
-            listen::Event::Compaction(listen::Compaction { locus }),
-            listen::Event::Failure(listen::Failure {
-                message: "polling failed".to_owned(),
-                locus,
-            }),
-        ]),
+        listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![
+                listen::Event::Reasoning(listen::Reasoning {
+                    content: listen::ReasoningContent::Plain(vec!["polling".to_owned()]),
+                    locus,
+                }),
+                listen::Event::Tool(listen::Tool {
+                    call_id: "patch".to_owned(),
+                    moment: listen::ToolMoment::Call {
+                        name: "file_change".to_owned(),
+                        arguments: r#"{"patch":"polling"}"#.to_owned(),
+                    },
+                    locus,
+                }),
+                listen::Event::Usage(listen::Usage {
+                    turns: 1,
+                    input_tokens: 1,
+                    cached_input_tokens: 0,
+                    cache_write_input_tokens: 0,
+                    output_tokens: 1,
+                    reasoning_output_tokens: None,
+                    locus,
+                }),
+                listen::Event::Compaction(listen::Compaction {
+                    summary: None,
+                    locus,
+                }),
+                listen::Event::Failure(listen::Failure {
+                    message: "polling failed".to_owned(),
+                    locus,
+                }),
+            ],
+        },
     );
     assert!(candidates(&bag, &typed).expect("typed scan").is_empty());
     let residue = record(
@@ -803,11 +809,15 @@ fn prose_record(
     record(
         lane,
         occupant,
-        listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
-            text: text.to_owned(),
-            phase: Some("final".to_owned()),
-            locus,
-        })]),
+        listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: text.to_owned(),
+                phase: Some("final".to_owned()),
+                locus,
+            })],
+        },
     )
 }
 

@@ -1,6 +1,6 @@
 use listen::{
-    Canary, Decoded, Dialect, Event, EventKind, Locus, ReasoningContent, ResidueKind, ToolMoment,
-    decode,
+    Canary, Decoded, Dialect, Event, EventKind, Locus, ProseRole, ReasoningContent,
+    RecordDecodeError, ResidueKind, ToolMoment, ToolResult, TurnMoment, decode, decode_record,
 };
 
 const CLAUDE_INPUT_TOKENS: u64 = 13;
@@ -315,7 +315,7 @@ const RESIDUE: &[ResidueCase] = &[
     },
     ResidueCase {
         dialect: Dialect::Claude,
-        bytes: br#"{"type":"mode"}"#,
+        bytes: br#"{"type":"mystery"}"#,
         expected: ExpectedResidue::Unknown,
     },
     ResidueCase {
@@ -340,7 +340,7 @@ const RESIDUE: &[ResidueCase] = &[
     },
     ResidueCase {
         dialect: Dialect::Codex,
-        bytes: br#"{"type":"world_state"}"#,
+        bytes: br#"{"type":"mode"}"#,
         expected: ExpectedResidue::Unknown,
     },
     ResidueCase {
@@ -431,4 +431,96 @@ fn codex_canary_exposes_absent_compaction_signal() {
             kind: EventKind::Compaction
         }]
     );
+}
+
+#[test]
+fn persisted_records_publish_vendor_neutral_context_and_facts() {
+    let codex_start = br#"{"timestamp":"2026-08-09T01:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#;
+    let detected = decode_record(None, codex_start, locus(codex_start))
+        .expect("the Codex envelope owns its one decoder");
+    assert_eq!(detected.dialect, Dialect::Codex);
+    assert!(matches!(
+        detected.decoded,
+        Decoded::Events { context, events }
+            if context.timestamp.as_deref() == Some("2026-08-09T01:00:00Z")
+                && context.turn_id.as_deref() == Some("turn-1")
+                && context.turn == Some(TurnMoment::Started)
+                && events.is_empty()
+    ));
+
+    let codex_result = br#"{"timestamp":"2026-08-09T01:00:01Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"Process exited with code 7"}}"#;
+    let detected = decode_record(None, codex_result, locus(codex_result))
+        .expect("the Codex tool outcome stays typed");
+    assert!(matches!(
+        detected.decoded.events(),
+        [Event::Tool(tool)]
+            if matches!(
+                &tool.moment,
+                ToolMoment::Result(outcome)
+                    if outcome.result == ToolResult::Failed
+                        && outcome.exit_code == Some(7)
+                        && outcome.output.as_deref() == Some("Process exited with code 7")
+            )
+    ));
+
+    let claude_user = br#"{"timestamp":"2026-08-09T02:00:00Z","type":"user","promptId":"prompt-1","message":{"type":"message","role":"user","content":[{"type":"text","text":"inspect"}]}}"#;
+    let detected = decode_record(None, claude_user, locus(claude_user))
+        .expect("the Claude envelope owns its one decoder");
+    assert_eq!(detected.dialect, Dialect::Claude);
+    assert!(matches!(
+        &detected.decoded,
+        Decoded::Events { context, events }
+            if context.turn_id.as_deref() == Some("prompt-1")
+                && context.turn == Some(TurnMoment::Observed)
+                && matches!(events.as_slice(), [Event::Prose(prose)]
+                    if prose.role == ProseRole::Operator && prose.text == "inspect")
+    ));
+
+    let claude_final = br#"{"timestamp":"2026-08-09T02:00:01Z","type":"assistant","message":{"type":"message","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":5,"cache_read_input_tokens":2,"output_tokens":3}}}"#;
+    let detected = decode_record(None, claude_final, locus(claude_final))
+        .expect("the Claude final carries message and usage facts");
+    assert!(matches!(
+        &detected.decoded,
+        Decoded::Events { context, events }
+            if context.turn == Some(TurnMoment::Completed)
+                && matches!(events.as_slice(), [Event::Prose(prose), Event::Usage(usage)]
+                    if prose.role == ProseRole::Assistant
+                        && prose.phase.as_deref() == Some("final_answer")
+                        && usage.input_tokens == 5
+                        && usage.cached_input_tokens == 2
+                        && usage.output_tokens == 3)
+    ));
+}
+
+#[test]
+fn automatic_ownership_refuses_disagreement_without_a_fallback() {
+    let codex = br#"{"timestamp":"2026-08-09T01:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#;
+    assert!(matches!(
+        decode_record(Some(Dialect::Claude), codex, locus(codex)),
+        Err(RecordDecodeError::Disagreement {
+            expected: Dialect::Claude,
+            observed: Dialect::Codex,
+            ..
+        })
+    ));
+    assert!(matches!(
+        decode_record(None, b"{", locus(b"{")),
+        Err(RecordDecodeError::Invalid {
+            kind: ResidueKind::Truncated,
+        })
+    ));
+
+    let unknown = b"{\"type\":\"mystery\"}";
+    for dialect in [Dialect::Codex, Dialect::Claude] {
+        let residue = decode_record(Some(dialect), unknown, locus(unknown))
+            .expect("an explicit owner accounts unknown bytes")
+            .decoded;
+        assert_eq!(
+            residue
+                .residue()
+                .expect("unknown current record remains residue")
+                .accounted_bytes(),
+            unknown.len() as u64
+        );
+    }
 }

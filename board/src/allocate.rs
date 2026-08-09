@@ -13,7 +13,7 @@ use std::fmt;
 
 use journal::{BuildError, FactCause, JournalWrite, PendingFact};
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LeaseHead, TaskHandle,
+    Actor, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Instant, LeaseHead, TaskHandle,
     WorkflowHead, body,
 };
 
@@ -31,6 +31,8 @@ pub struct Mint<'a> {
     /// Workflow head as it stands, read for the review assignment and rewritten
     /// with it when the phase calls for one.
     pub workflow: &'a WorkflowHead,
+    /// Project occupied by the task at claim time.
+    pub project: &'a str,
     /// Lane whose live occupant holds the claim.
     pub lane: CanonicalUuid,
     /// Occupant authenticated for that lane.
@@ -126,6 +128,10 @@ pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, 
     let cause = assignment_cause(write, &request)?;
     let task = request.task.clone();
     let actor = request.actor.clone();
+    let cell = ClaimCell {
+        project: request.project.to_owned(),
+        phase: request.workflow.phase.clone(),
+    };
     let Mint {
         lane,
         occupant,
@@ -145,6 +151,7 @@ pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, 
                 lane,
                 occupant,
                 epoch,
+                cell: Some(cell.clone()),
                 until: expiry,
                 git,
                 source,
@@ -155,6 +162,8 @@ pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, 
     write.claim_head(task.clone(), won, move |fact| ClaimHead {
         actor,
         fact,
+        claimed: fact,
+        cell,
         lane,
         occupant,
         epoch,

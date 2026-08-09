@@ -15,13 +15,20 @@ use wire::intent::{
 };
 use wire::{CanonicalUuid, FactKind, Instant, Name, Phase, Seq, TaskHandle};
 
-use crate::{FoldId, Materialization, Reducer, Reduction};
+use crate::{FactPlane, FoldId, Materialization, Reducer, Reduction, Source};
 
 const ORIGIN: TranscriptPosition = TranscriptPosition {
     member: 1,
     offset: 0,
 };
 const REDUCER_VERSION: u32 = 1;
+const SOURCES: &[Source] = &[
+    Source::Facts(FactPlane::Task),
+    Source::Facts(FactPlane::Claim),
+    Source::Facts(FactPlane::Lane),
+    Source::Facts(FactPlane::Lineage),
+    Source::Facts(FactPlane::Journal),
+];
 
 /// The sole reducer for `task::effort`.
 #[derive(Debug, Default)]
@@ -30,6 +37,10 @@ pub struct TaskEffortReducer;
 impl Reducer for TaskEffortReducer {
     fn fold(&self) -> FoldId {
         FoldId::TaskEffort
+    }
+
+    fn sources(&self) -> &'static [Source] {
+        SOURCES
     }
 
     fn version(&self) -> u32 {

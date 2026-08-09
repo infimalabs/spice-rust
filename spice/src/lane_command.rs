@@ -1,5 +1,6 @@
 //! CLI acquisition and typed resident mappings for lane lifecycle commands.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
@@ -87,12 +88,21 @@ fn add(
         || resolved.root().lane().life().as_str().to_owned(),
         |life| life.to_ascii_lowercase(),
     );
-    let vendor = match matches.get_one::<String>("vendor") {
-        Some(vendor) => match vendor.parse::<wire::Name>() {
-            Ok(vendor) => vendor,
-            Err(error) => return protocol_fault("lane::vendor-invalid", &error.to_string()),
-        },
-        None => resolved.root().lane().vendor().clone(),
+    let vendor = match resolve_vendor(
+        matches.get_one::<String>("vendor").map(String::as_str),
+        crate::bootstrap_environment("SPICE_AGENT_VENDOR"), // env-policy: allow
+        resolved.root().lane().vendor(),
+    ) {
+        Ok(vendor) => vendor,
+        Err(VendorResolutionError::EnvironmentEncoding) => {
+            return protocol_fault(
+                "lane::vendor-environment-invalid",
+                "SPICE_AGENT_VENDOR must be valid UTF-8",
+            );
+        }
+        Err(VendorResolutionError::Invalid(detail)) => {
+            return protocol_fault("lane::vendor-invalid", &detail);
+        }
     };
     let lane = new_uuid();
     let lineage_id = match matches.get_one::<String>("lineage") {
@@ -115,6 +125,39 @@ fn add(
         resume: matches.get_one::<String>("resume").cloned(),
     };
     command_client::execute(canvas, contract, SelectedCommand::LaneSeat { body: &body })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum VendorResolutionError {
+    EnvironmentEncoding,
+    Invalid(String),
+}
+
+fn resolve_vendor(
+    explicit: Option<&str>,
+    environment: Option<OsString>,
+    configured: &wire::Name,
+) -> Result<wire::Name, VendorResolutionError> {
+    if let Some(explicit) = explicit {
+        return explicit
+            .parse()
+            .map_err(|error: wire::NameError| VendorResolutionError::Invalid(error.to_string()));
+    }
+    let environment = environment
+        .map(OsString::into_string)
+        .transpose()
+        .map_err(|_| VendorResolutionError::EnvironmentEncoding)?
+        .filter(|value| !value.trim().is_empty());
+    environment.map_or_else(
+        || Ok(configured.clone()),
+        |value| {
+            value
+                .trim()
+                .to_ascii_lowercase()
+                .parse()
+                .map_err(|error: wire::NameError| VendorResolutionError::Invalid(error.to_string()))
+        },
+    )
 }
 
 fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<CommandAnswer> {
@@ -261,4 +304,36 @@ fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
 
 fn new_uuid() -> CanonicalUuid {
     CanonicalUuid::new(uuid::Uuid::new_v4())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vendor_resolution_is_explicit_then_environment_then_configured_default() {
+        let configured = "configured".parse().expect("configured vendor");
+        assert_eq!(
+            resolve_vendor(
+                Some("explicit"),
+                Some(OsString::from("environment")),
+                &configured,
+            )
+            .expect("explicit vendor resolves")
+            .as_str(),
+            "explicit"
+        );
+        assert_eq!(
+            resolve_vendor(None, Some(OsString::from(" EnViRoNmEnT ")), &configured)
+                .expect("environment vendor resolves")
+                .as_str(),
+            "environment"
+        );
+        assert_eq!(
+            resolve_vendor(None, Some(OsString::new()), &configured)
+                .expect("configured vendor resolves")
+                .as_str(),
+            "configured"
+        );
+    }
 }

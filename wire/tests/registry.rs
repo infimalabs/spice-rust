@@ -67,6 +67,7 @@ fn every_command_names_the_witnesses_it_requires() {
         let law = kind.law();
         let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
         let output_repair = matches!(kind, CommandKind::SteerRepair);
+        let server_projected_gate_work = matches!(kind, CommandKind::GateFindings);
         let lane_lifecycle = matches!(
             kind,
             CommandKind::LaneSeat
@@ -77,10 +78,14 @@ fn every_command_names_the_witnesses_it_requires() {
         );
         assert_eq!(
             law.required.is_empty(),
-            kind.is_read() || output_repair || scanner_disposition || lane_lifecycle,
+            kind.is_read()
+                || output_repair
+                || scanner_disposition
+                || lane_lifecycle
+                || server_projected_gate_work,
             concat!(
-                "only reads, output repair, lane lifecycle, and scanner dispositions ",
-                "may omit required witnesses"
+                "only reads, output repair, lane lifecycle, scanner dispositions, and ",
+                "server-projected gate work may omit required witnesses"
             ),
         );
         if scanner_disposition {

@@ -9,6 +9,7 @@ mod authorities;
 mod context;
 mod execution;
 mod family_evidence;
+mod findings;
 mod manifest_contract;
 mod receipt;
 mod refusal_fold;
@@ -31,6 +32,7 @@ pub use execution::{
     run_battery_arm,
 };
 pub use family_evidence::{ArmEvidence, BatteryState, ResultProvenance};
+pub use findings::GateFinding;
 #[cfg(test)]
 use manifest_contract::declaration_identity;
 pub use manifest_contract::{

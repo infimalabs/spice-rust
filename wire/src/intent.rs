@@ -25,7 +25,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::body::{
-    ConsentQueueCause, DirectiveAttachment, SourceBoundary, TranscriptLocus, TranscriptPosition,
+    ConsentQueueCause, DirectiveAttachment, Severity, SourceBoundary, TranscriptLocus,
+    TranscriptPosition,
 };
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
@@ -92,6 +93,34 @@ pub struct TaskOopsAdd {
     pub title: String,
     /// Durable detail attached as the first note.
     pub description: String,
+}
+
+/// File the exact findings projected by one registered gate run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateFindings {
+    /// Digest of the complete typed battery report that produced these rows.
+    pub report: Digest,
+    /// Findings projected from that report, in gate order.
+    pub findings: Vec<GateFindingWork>,
+}
+
+/// One gate finding ready to become deferred board work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateFindingWork {
+    /// Stable gate-side finding identity.
+    pub identity: Digest,
+    /// Finding severity.
+    pub severity: Severity,
+    /// Evidence locus the finding cites.
+    pub locus: String,
+    /// Board task title.
+    pub title: String,
+    /// Board task description.
+    pub description: String,
+    /// Criteria that decide whether the filed task is done.
+    pub acceptance: Vec<String>,
 }
 
 /// Replace an unsettled task statement.
@@ -852,6 +881,8 @@ pub struct ReleasePublish {
     pub key: Digest,
     /// Digest of the canonical target manifest.
     pub manifest: Digest,
+    /// Identity of the exact curated release-note bytes in the approved plan.
+    pub notes: Digest,
 }
 
 /// Drive the resident to the requested lifecycle state.

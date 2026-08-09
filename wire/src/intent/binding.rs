@@ -8,8 +8,8 @@ use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
     ConsentRead, DeliveryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger,
-    EffortAnswer, EffortRead, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead,
-    LaneRecall, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
+    EffortAnswer, EffortRead, GateFindings, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer,
+    LaneRead, LaneRecall, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
     RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox,
     SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends,
     TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer,
@@ -33,6 +33,8 @@ pub enum BodyShape {
     TaskAdd,
     /// [`TaskOopsAdd`], the strict body for the server-owned `.oops` route.
     TaskOopsAdd,
+    /// [`GateFindings`]
+    GateFindings,
     /// [`TaskEdit`]
     TaskEdit,
     /// [`TaskDelete`]
@@ -316,6 +318,7 @@ impl CommandKind {
             | Self::EffortRead
             | Self::TaskAdd
             | Self::TaskOopsAdd
+            | Self::GateFindings
             | Self::TaskEdit
             | Self::TaskDelete
             | Self::TaskNote
@@ -373,6 +376,7 @@ impl CommandKind {
             Self::EffortRead => Binding::of(B::EffortRead, A::Effort),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
+            Self::GateFindings => Binding::of(B::GateFindings, A::Text),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskDelete => Binding::of(B::TaskDelete, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
@@ -448,6 +452,8 @@ pub enum Intent {
     TaskAdd(TaskAdd),
     /// [`BodyShape::TaskOopsAdd`]
     TaskOopsAdd(TaskOopsAdd),
+    /// [`BodyShape::GateFindings`]
+    GateFindings(GateFindings),
     /// [`BodyShape::TaskEdit`]
     TaskEdit(TaskEdit),
     /// [`BodyShape::TaskDelete`]
@@ -530,6 +536,7 @@ impl Intent {
             | Self::EffortRead(_)
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
+            | Self::GateFindings(_)
             | Self::TaskEdit(_)
             | Self::TaskDelete(_)
             | Self::TaskNote(_)
@@ -576,6 +583,7 @@ impl Intent {
             Self::EffortRead(_) => BodyShape::EffortRead,
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
+            Self::GateFindings(_) => BodyShape::GateFindings,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
             Self::TaskDelete(_) => BodyShape::TaskDelete,
             Self::TaskNote(_) => BodyShape::TaskNote,
@@ -647,6 +655,7 @@ impl BodyShape {
                 | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
+                | Self::GateFindings
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskNote
@@ -674,6 +683,7 @@ impl BodyShape {
                 | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
+                | Self::GateFindings
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskNote
@@ -695,6 +705,7 @@ impl BodyShape {
             Self::EffortRead => Intent::EffortRead(crate::decode(bytes)?),
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
+            Self::GateFindings => Intent::GateFindings(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),

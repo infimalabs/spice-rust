@@ -8,9 +8,7 @@ fn main() {
     println!("cargo::rerun-if-changed=build/registry.rs");
     println!("cargo::rerun-if-changed=src/registry.rs");
 
-    admission::validate(wire::FactKind::ALL, registry::FOLDS, registry::RINGS).unwrap_or_else(
-        |refusal| {
-            panic!("generated fold registry refused: {refusal}");
-        },
-    );
+    admission::validate(wire::FactKind::ALL, registry::FOLDS).unwrap_or_else(|refusal| {
+        panic!("generated fold registry refused: {refusal}");
+    });
 }

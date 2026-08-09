@@ -567,7 +567,7 @@ fn sanitize(
                 )
             } else {
                 format!(
-                    "{} is machine-local; set it in Git-common .spice/config.toml",
+                    "{} is machine-local; set it in Git-common .spice-rs/config.toml",
                     entry.template().as_str()
                 )
             };
