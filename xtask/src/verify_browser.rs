@@ -41,7 +41,7 @@ pub(super) fn run(
         cargo_jobs,
         &[],
     )?;
-    let completed = fs::read(&receipt).is_ok_and(|body| body == RECEIPT);
+    let completed = receipt_completed(&receipt);
     remove_receipt(&receipt).map_err(|error| RunError::Cleanup(error.to_string()))?;
     Ok(BrowserRun { process, completed })
 }
@@ -62,12 +62,31 @@ fn remove_receipt(path: &Path) -> io::Result<()> {
     }
 }
 
+fn receipt_completed(path: &Path) -> bool {
+    fs::read(path).is_ok_and(|body| body == RECEIPT)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::receipt_path;
+    use std::fs;
+
+    use super::{RECEIPT, receipt_completed, receipt_path, remove_receipt};
 
     #[test]
     fn browser_receipts_are_unique_within_one_verifier_process() {
         assert_ne!(receipt_path(), receipt_path());
+    }
+
+    #[test]
+    fn only_the_exact_complete_receipt_admits_browser_coverage() {
+        let receipt = receipt_path();
+        fs::write(&receipt, b"incomplete browser receipt\n").expect("write incomplete receipt");
+        assert!(!receipt_completed(&receipt));
+
+        fs::write(&receipt, RECEIPT).expect("write complete receipt");
+        assert!(receipt_completed(&receipt));
+
+        remove_receipt(&receipt).expect("remove receipt fixture");
+        assert!(!receipt_completed(&receipt));
     }
 }

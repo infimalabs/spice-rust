@@ -1029,4 +1029,48 @@ mod tests {
         assert!(!run.success());
         assert!(run.into_evidence().is_none());
     }
+
+    #[test]
+    fn failed_process_feedback_is_captured_completely_without_minting_evidence() {
+        let root = crate::toolchain::exclusive_scratch_root("gate-verifier-captured-output");
+        let repository = root.join("repository");
+        let selection = root.join("selection");
+        fs::create_dir(&repository).expect("fixture repository");
+        fs::create_dir(&selection).expect("fixture selected root");
+        let cargo = root.join("cargo");
+        fs::write(
+            &cargo,
+            "#!/bin/sh\nprintf 'bounded stdout\\n'\nprintf 'bounded stderr\\n' >&2\nexit 23\n",
+        )
+        .expect("write fixture Cargo executable");
+        fs::set_permissions(
+            &cargo,
+            fs::metadata("/usr/bin/true")
+                .expect("read fixture executable permissions")
+                .permissions(),
+        )
+        .expect("make fixture Cargo executable");
+        let contract = VerifierCompilerContract::new(
+            GateId::RustTypecheck,
+            source(b"captured output selected tree"),
+            repository,
+            selection,
+            vec![tool("cargo", cargo.to_str().expect("UTF-8 fixture path"))],
+            Vec::new(),
+        )
+        .expect("captured output contract");
+
+        let run = contract
+            .run(VerifierCompilerStage::NativeClippy)
+            .expect("fixture Cargo launches");
+
+        assert!(!run.success());
+        assert_eq!(run.code(), Some(23));
+        assert_eq!(run.stdout(), b"bounded stdout\n");
+        assert_eq!(run.stderr(), b"bounded stderr\n");
+        assert!(!run.cancelled());
+        assert!(!run.timed_out());
+        assert!(run.into_evidence().is_none());
+        fs::remove_dir_all(root).expect("remove captured output fixture");
+    }
 }

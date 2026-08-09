@@ -73,6 +73,7 @@ pub fn run(
     let inventory = acquire_inventory(&root, &environment, OsStr::new("cargo"))?;
     let shards = partition(&inventory);
     validate_partition(&inventory, &shards)?;
+    let policy = policy.for_shards(shards.len());
     Coordinator::new(
         shards,
         root,
@@ -324,6 +325,11 @@ impl RunPolicy {
             reap: REAP_DEADLINE,
             grace: TERMINATION_GRACE,
         })
+    }
+
+    fn for_shards(mut self, shards: usize) -> Self {
+        self.concurrency = self.concurrency.min(if shards == 0 { 1 } else { shards });
+        self
     }
 }
 

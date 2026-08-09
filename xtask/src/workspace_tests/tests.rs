@@ -8,11 +8,21 @@ use super::*;
 
 #[test]
 fn production_policy_uses_only_the_scheduler_granted_shard_workers() {
+    for concurrency in 1..=crate::WORKSPACE_TEST_CONCURRENCY_CAP {
+        assert_eq!(
+            RunPolicy::production(concurrency)
+                .expect("every bounded scheduler grant admits")
+                .concurrency,
+            concurrency
+        );
+    }
     assert_eq!(
-        RunPolicy::production(2)
+        RunPolicy::production(crate::WORKSPACE_TEST_CONCURRENCY_CAP)
             .expect("bounded scheduler grant admits")
+            .for_shards(2)
             .concurrency,
-        2
+        2,
+        "the coordinator never creates more workers than actual shards"
     );
     for concurrency in [0, crate::WORKSPACE_TEST_CONCURRENCY_CAP + 1] {
         let error = RunPolicy::production(concurrency)
