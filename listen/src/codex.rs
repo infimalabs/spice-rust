@@ -2,9 +2,9 @@ use serde_json::{Map, Value};
 use tape::Locus;
 
 use crate::{
-    Event, Events, Failure, Object, Prose, Reasoning, ReasoningContent, ResidueKind,
-    SessionDeclaration, Tool, ToolMoment, ToolResult, Usage, array, object, optional_unsigned,
-    string, unsigned,
+    Compaction, Event, Events, Failure, Object, Prose, ProseRole, Reasoning, ReasoningContent,
+    ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage, array,
+    object, optional_unsigned, string, unsigned,
 };
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
@@ -22,6 +22,14 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
             message: string(record, "message")?.to_owned(),
             locus,
         })]),
+        "session_meta" => rollout_session(record, locus),
+        "event_msg" => rollout_event(record, locus),
+        "response_item" => rollout_item(record, locus),
+        "compacted" => Ok(vec![Event::Compaction(Compaction {
+            summary: None,
+            locus,
+        })]),
+        "turn_context" | "world_state" => Ok(Vec::new()),
         other => Err(ResidueKind::Unknown {
             discriminator: other.to_owned(),
         }),
@@ -40,6 +48,7 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
     match string(item, "type")? {
         "agent_message" if matches!(moment, ItemMoment::Completed) => {
             Ok(vec![Event::Prose(Prose {
+                role: ProseRole::Assistant,
                 text: string(item, "text")?.to_owned(),
                 phase: None,
                 locus,
@@ -147,9 +156,19 @@ fn tool(
             }
             ToolMoment::Update { name, arguments }
         }
-        ItemMoment::Completed => ToolMoment::Result(match status_policy {
-            StatusPolicy::Reported => tool_result(item)?,
-            StatusPolicy::Unreported => ToolResult::Unreported,
+        ItemMoment::Completed => ToolMoment::Result(ToolOutcome {
+            result: match status_policy {
+                StatusPolicy::Reported => tool_result(item)?,
+                StatusPolicy::Unreported => ToolResult::Unreported,
+            },
+            output: item
+                .get("aggregated_output")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            exit_code: item
+                .get("exit_code")
+                .and_then(Value::as_i64)
+                .and_then(|code| i32::try_from(code).ok()),
         }),
     };
     Ok(vec![Event::Tool(Tool {
@@ -197,6 +216,309 @@ fn turn_failure(record: &Object, locus: Locus) -> Events {
         message: string(error, "message")?.to_owned(),
         locus,
     })])
+}
+
+fn rollout_session(record: &Object, locus: Locus) -> Events {
+    let payload = object(record, "payload")?;
+    let identity = payload
+        .get("session_id")
+        .or_else(|| payload.get("id"))
+        .and_then(Value::as_str);
+    Ok(identity.map_or_else(Vec::new, |identity| {
+        vec![Event::Session(SessionDeclaration {
+            identity: identity.to_owned(),
+            locus,
+        })]
+    }))
+}
+
+fn rollout_event(record: &Object, locus: Locus) -> Events {
+    let payload = object(record, "payload")?;
+    match string(payload, "type")? {
+        "task_started" => Ok(Vec::new()),
+        "task_complete" => payload
+            .get("last_agent_message")
+            .and_then(Value::as_str)
+            .map_or_else(
+                || Ok(Vec::new()),
+                |text| {
+                    Ok(vec![Event::Prose(Prose {
+                        role: ProseRole::Assistant,
+                        text: text.to_owned(),
+                        phase: Some("final_answer".to_owned()),
+                        locus,
+                    })])
+                },
+            ),
+        "exec_command_end" => completed_command(payload, locus),
+        "web_search" => Ok(vec![Event::Tool(Tool {
+            call_id: synthetic_id("web_search", locus),
+            moment: ToolMoment::Call {
+                name: "web_search".to_owned(),
+                arguments: argument(
+                    "query",
+                    payload.get("query").cloned().unwrap_or(Value::Null),
+                ),
+            },
+            locus,
+        })]),
+        "token_count" => rollout_usage(payload, locus),
+        "agent_message"
+        | "user_message"
+        | "thread_settings_applied"
+        | "patch_apply_end"
+        | "web_search_end"
+        | "context_compacted" => Ok(Vec::new()),
+        other => Err(drift(&format!("event_msg:{other}"))),
+    }
+}
+
+fn rollout_item(record: &Object, locus: Locus) -> Events {
+    let payload = object(record, "payload")?;
+    match string(payload, "type")? {
+        "message" => rollout_message(payload, locus),
+        "reasoning" => rollout_reasoning(payload, locus),
+        "function_call" | "custom_tool_call" => rollout_tool_call(payload, locus),
+        "function_call_output" | "custom_tool_call_output" => rollout_tool_result(payload, locus),
+        "token_count" => rollout_usage(payload, locus),
+        "web_search_call" => Ok(vec![Event::Tool(Tool {
+            call_id: payload
+                .get("call_id")
+                .or_else(|| payload.get("id"))
+                .and_then(Value::as_str)
+                .map_or_else(|| synthetic_id("web_search", locus), str::to_owned),
+            moment: ToolMoment::Call {
+                name: "web_search".to_owned(),
+                arguments: argument(
+                    "query",
+                    payload.get("query").cloned().unwrap_or(Value::Null),
+                ),
+            },
+            locus,
+        })]),
+        other => Err(drift(&format!("response_item:{other}"))),
+    }
+}
+
+fn rollout_message(payload: &Object, locus: Locus) -> Events {
+    let role = match string(payload, "role")? {
+        "user" => ProseRole::Operator,
+        "assistant" => ProseRole::Assistant,
+        "developer" => return Ok(Vec::new()),
+        other => return Err(drift(&format!("message:role:{other}"))),
+    };
+    let phase = payload
+        .get("phase")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut events = Vec::new();
+    for value in array(payload, "content")? {
+        let block = value.as_object().ok_or(ResidueKind::Malformed {
+            field: "payload.content[]",
+            expected: "object",
+        })?;
+        match block.get("type").and_then(Value::as_str) {
+            Some("text" | "input_text" | "output_text") | None => {
+                if let Some(text) = block
+                    .get("text")
+                    .or_else(|| block.get("content"))
+                    .and_then(Value::as_str)
+                {
+                    events.push(Event::Prose(Prose {
+                        role,
+                        text: text.to_owned(),
+                        phase: phase.clone(),
+                        locus,
+                    }));
+                }
+            }
+            Some(other) => return Err(drift(&format!("message:content:{other}"))),
+        }
+    }
+    Ok(events)
+}
+
+fn rollout_reasoning(payload: &Object, locus: Locus) -> Events {
+    let summary = payload
+        .get("summary")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    row.get("text")
+                        .or_else(|| row.get("summary"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(vec![Event::Reasoning(Reasoning {
+        content: if summary.is_empty() {
+            ReasoningContent::Opaque
+        } else {
+            ReasoningContent::Plain(summary)
+        },
+        locus,
+    })])
+}
+
+fn rollout_tool_call(payload: &Object, locus: Locus) -> Events {
+    let call_id = payload
+        .get("call_id")
+        .or_else(|| payload.get("id"))
+        .and_then(Value::as_str)
+        .ok_or(ResidueKind::Absent {
+            field: "payload.call_id",
+        })?;
+    let name = string(payload, "name")?;
+    let arguments = payload
+        .get("arguments")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            payload
+                .get("input")
+                .cloned()
+                .map(|input| argument("input", input))
+        })
+        .unwrap_or_else(|| NO_ARGUMENTS.to_owned());
+    Ok(vec![Event::Tool(Tool {
+        call_id: call_id.to_owned(),
+        moment: ToolMoment::Call {
+            name: name.to_owned(),
+            arguments,
+        },
+        locus,
+    })])
+}
+
+fn rollout_tool_result(payload: &Object, locus: Locus) -> Events {
+    let call_id = string(payload, "call_id")?.to_owned();
+    let output = payload.get("output").map(render_output);
+    let exit_code = output.as_deref().and_then(output_exit_code);
+    let result = match exit_code {
+        Some(0) => ToolResult::Succeeded,
+        Some(_) => ToolResult::Failed,
+        None => ToolResult::Unreported,
+    };
+    Ok(vec![Event::Tool(Tool {
+        call_id,
+        moment: ToolMoment::Result(ToolOutcome {
+            result,
+            output,
+            exit_code,
+        }),
+        locus,
+    })])
+}
+
+fn completed_command(payload: &Object, locus: Locus) -> Events {
+    let call_id = synthetic_id("exec_command_end", locus);
+    let command = payload.get("command").map_or_else(
+        || "-".to_owned(),
+        |value| match value {
+            Value::String(command) => command.clone(),
+            Value::Array(words) => words
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+            other => other.to_string(),
+        },
+    );
+    let arguments = Value::Object(Map::from_iter([
+        ("command".to_owned(), Value::String(command)),
+        (
+            "cwd".to_owned(),
+            payload.get("cwd").cloned().unwrap_or(Value::Null),
+        ),
+    ]))
+    .to_string();
+    let exit_code = payload.get("exit_code").and_then(|value| {
+        value
+            .as_i64()
+            .and_then(|code| i32::try_from(code).ok())
+            .or_else(|| Value::as_str(value).and_then(|code| code.parse().ok()))
+    });
+    let result = match exit_code {
+        Some(0) => ToolResult::Succeeded,
+        Some(_) => ToolResult::Failed,
+        None => ToolResult::Unreported,
+    };
+    Ok(vec![
+        Event::Tool(Tool {
+            call_id: call_id.clone(),
+            moment: ToolMoment::Call {
+                name: "exec_command".to_owned(),
+                arguments,
+            },
+            locus,
+        }),
+        Event::Tool(Tool {
+            call_id,
+            moment: ToolMoment::Result(ToolOutcome {
+                result,
+                output: None,
+                exit_code,
+            }),
+            locus,
+        }),
+    ])
+}
+
+fn rollout_usage(payload: &Object, locus: Locus) -> Events {
+    let info = object(payload, "info")?;
+    let usage = object(info, "last_token_usage")?;
+    Ok(vec![Event::Usage(Usage {
+        turns: 1,
+        input_tokens: optional_unsigned(usage, "input_tokens")?.unwrap_or(0),
+        cached_input_tokens: optional_unsigned(usage, "cached_input_tokens")?.unwrap_or(0),
+        cache_write_input_tokens: optional_unsigned(usage, "cache_write_input_tokens")?
+            .unwrap_or(0),
+        output_tokens: optional_unsigned(usage, "output_tokens")?.unwrap_or(0),
+        reasoning_output_tokens: optional_unsigned(usage, "reasoning_output_tokens")?,
+        locus,
+    })])
+}
+
+fn render_output(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Array(values) => values
+            .iter()
+            .filter_map(|value| {
+                value
+                    .get("text")
+                    .or_else(|| value.get("content"))
+                    .and_then(Value::as_str)
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        other => other.to_string(),
+    }
+}
+
+fn output_exit_code(output: &str) -> Option<i32> {
+    [
+        "Process exited with code ",
+        "exit_code\":",
+        "\"exit_code\":",
+    ]
+    .into_iter()
+    .find_map(|prefix| {
+        let rest = output.split(prefix).nth(1)?;
+        rest.trim_start()
+            .chars()
+            .take_while(|character| character.is_ascii_digit() || *character == '-')
+            .collect::<String>()
+            .parse()
+            .ok()
+    })
+}
+
+fn synthetic_id(kind: &str, locus: Locus) -> String {
+    format!("{kind}:{}:{}", locus.member, locus.offset)
 }
 
 fn drift(discriminator: &str) -> ResidueKind {

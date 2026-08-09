@@ -2,13 +2,17 @@
 //! Transcript-backed disposition is the sole acknowledgment path.
 
 use std::fs;
+use std::sync::Mutex;
 
 use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use steer::Standing as _;
 use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
-use wire::intent::{CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective};
+use wire::intent::{
+    CommandAnswer, DeliveryAnswer, DeliveryStanding, DirectiveAnswer, InboxAnswer, LaneInbox,
+    PendingDirective,
+};
 use wire::{
     Actor, CanonicalUuid, Command, Disposition, Fault, FaultClass, Instant, Outcome, Producer,
     Refusal, Reply, ReplyPosition, ResidencyHead, Seq, SeqRange, Witness,
@@ -23,9 +27,103 @@ mod preview;
 #[cfg(test)]
 mod tests;
 mod transcript;
+mod transitions;
 
 use preview::directive_preview;
 use transcript::transcript_recognition;
+pub(super) use transitions::{cancel, dispose, recover, resend, send};
+use transitions::{evidence_refusal, miss_recorded};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SteeringDeadline {
+    pub(super) directive: CanonicalUuid,
+    pub(super) key: steer::Key,
+    pub(super) lane: CanonicalUuid,
+    pub(super) expires: Instant,
+    pub(super) transition: DeadlineTransition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DeadlineTransition {
+    Escalate {
+        from: wire::body::SteeringStage,
+        to: wire::body::SteeringStage,
+    },
+    Lapse,
+}
+
+pub(super) fn apply_deadline(
+    bus: &Bus,
+    expected: &SteeringDeadline,
+    at: Instant,
+) -> CommandResult<bool> {
+    let facts = bus
+        .fact_snapshot()
+        .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
+    let ledger = steer::Ledger::from_snapshot(&facts)
+        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+    let Some(current) = ledger.directive(expected.directive) else {
+        return Ok(false);
+    };
+    if current.key() != &expected.key
+        || current.lane() != expected.lane
+        || current.expires() != expected.expires
+        || current.disposition() != Disposition::Live
+    {
+        return Ok(false);
+    }
+    let transition_matches = match expected.transition {
+        DeadlineTransition::Escalate { from, .. } => current.stage() == from,
+        DeadlineTransition::Lapse => true,
+    };
+    if !transition_matches {
+        return Ok(false);
+    }
+    let (origin, cause) = directive_cause(&facts, expected.directive);
+    let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::BusTimer);
+    match expected.transition {
+        DeadlineTransition::Escalate { from, to } => {
+            proposal.guard(stage_guard(expected.directive, from));
+            proposal
+                .fact(
+                    wire::body::SteerEscalated {
+                        directive: expected.directive,
+                        key: expected.key.to_string(),
+                        lane: expected.lane,
+                        stage: to,
+                    },
+                    FactCause::Existing(cause),
+                )
+                .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
+        }
+        DeadlineTransition::Lapse => {
+            proposal.guard(lapse_guard(
+                expected.directive,
+                expected.key.clone(),
+                expected.lane,
+                expected.expires,
+            ));
+            proposal
+                .fact(
+                    wire::body::SteerLapsed {
+                        key: expected.key.to_string(),
+                        lane: expected.lane,
+                        expires: expected.expires,
+                    },
+                    FactCause::Existing(cause),
+                )
+                .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
+        }
+    }
+    match commit(bus, proposal) {
+        Ok(_) => Ok(true),
+        Err(Outcome::Refusal(_)) => Ok(false),
+        Err(outcome) => Err(outcome),
+    }
+}
+
+const FOLD_RETRIES: usize = 4;
+static FOLD_AUTHORITY: Mutex<()> = Mutex::new(());
 
 pub(super) fn publish_lane_discoveries(
     paths: &RuntimePaths,
@@ -88,13 +186,8 @@ pub(super) fn publish_inboxes(
     paths: &RuntimePaths,
     residency: &ResidencyHead,
 ) -> CommandResult<()> {
-    let snapshot = bus
-        .fact_snapshot()
-        .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
-    let ledger = steer::Ledger::from_snapshot(&snapshot)
-        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
     for lane in &residency.lanes {
-        publish_lane_inbox(paths, lane, &ledger)?;
+        publish_inbox(bus, paths, residency, lane.lane)?;
     }
     Ok(())
 }
@@ -115,12 +208,94 @@ pub(super) fn publish_inbox(
                 &format!("lane {selected} disappeared while publishing its inbox"),
             )
         })?;
-    let snapshot = bus
-        .fact_snapshot()
-        .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
-    let ledger = steer::Ledger::from_snapshot(&snapshot)
-        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
-    publish_lane_inbox(paths, lane, &ledger)
+    fold_lane_inbox(bus, paths, lane).map(|_| ())
+}
+
+fn fold_lane_inbox(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    lane: &wire::LaneResidency,
+) -> CommandResult<DeliveryStanding> {
+    fold_lane_inbox_with(bus, paths, lane, |_| {})
+}
+
+pub(super) fn fold_lane_inbox_with(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    lane: &wire::LaneResidency,
+    mut after_publication: impl FnMut(usize),
+) -> CommandResult<DeliveryStanding> {
+    // Publication and its durable progress record are one process-local
+    // authority. A newer command may commit while this guard is held, but its
+    // fold queues behind this one and therefore has the final word.
+    let _authority = FOLD_AUTHORITY
+        .lock()
+        .map_err(|error| store_fault("steer::fold-authority-poisoned", &error.to_string()))?;
+    for attempt in 0..FOLD_RETRIES {
+        let snapshot = bus
+            .fact_snapshot()
+            .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
+        let source = snapshot.horizon().ok_or_else(|| {
+            store_fault(
+                "steer::journal-empty",
+                "a running resident has no durable startup fact",
+            )
+        })?;
+        let ledger = steer::Ledger::from_snapshot(&snapshot)
+            .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+        let keys = pending_keys(&ledger, lane.lane);
+        let publication = publish_lane_inbox(paths, lane, &ledger);
+        after_publication(attempt);
+        let current = bus
+            .fact_snapshot()
+            .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
+        let current = steer::Ledger::from_snapshot(&current)
+            .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+        let moved = pending_keys(&current, lane.lane) != keys;
+        if moved && attempt + 1 < FOLD_RETRIES {
+            continue;
+        }
+        if moved {
+            return Err(store_fault(
+                "steer::fold-moving",
+                "lane steering authority moved throughout the bounded fold refill",
+            ));
+        }
+        let delivery = match publication {
+            Ok(()) => DeliveryStanding::Published { source },
+            Err(Outcome::Fault(fault)) => DeliveryStanding::Parked {
+                source,
+                keys,
+                failure: format!("{}: {}", fault.reason, fault.detail),
+                repair: format!("spice steer repair {}", lane.lane),
+            },
+            Err(outcome) => return Err(outcome),
+        };
+        let record = steer::fold::Record::new(lane.lane, delivery.clone());
+        steer::fold::publish(&paths.data, &record).map_err(|error| {
+            environment_fault("steer::fold-progress-unwritable", &error.to_string())
+        })?;
+        return Ok(delivery);
+    }
+    unreachable!("the final fold attempt returns instead of retrying")
+}
+
+fn pending_keys(ledger: &steer::Ledger, lane: CanonicalUuid) -> Vec<String> {
+    ledger
+        .pending(lane)
+        .iter()
+        .map(|directive| directive.key().to_string())
+        .collect()
+}
+
+fn fold_delivery(paths: &RuntimePaths, lane: CanonicalUuid) -> CommandResult<DeliveryStanding> {
+    steer::fold::read(&paths.data, lane)
+        .map(|record| {
+            record.map_or(DeliveryStanding::Unknown, |record| {
+                record.delivery().clone()
+            })
+        })
+        .map_err(|error| environment_fault("steer::fold-progress-unreadable", &error.to_string()))
 }
 
 fn publish_lane_inbox(
@@ -149,6 +324,7 @@ pub(super) fn lane_capability(lane: &wire::LaneResidency) -> CommandResult<Canon
 
 pub(super) fn inbox(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     request: &wire::intent::SteerInbox,
@@ -191,8 +367,12 @@ pub(super) fn inbox(
                 .ledger
                 .pending(lane.lane)
                 .into_iter()
-                .map(|directive| pending_directive(&snapshot.facts, directive))
+                .map(pending_directive)
                 .collect(),
+            delivery: match fold_delivery(paths, lane.lane) {
+                Ok(delivery) => delivery,
+                Err(outcome) => return typed_outcome(outcome),
+            },
         });
     }
     if let Some(selected) = selected
@@ -211,20 +391,19 @@ pub(super) fn inbox(
     })
 }
 
-pub(super) fn send(
+pub(super) fn repair(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    config: &steer::Config,
     command: &wire::AdmittedCommand,
-    send: &wire::intent::SteerSend,
+    request: &wire::intent::SteerRepair,
 ) -> Outcome<CommandAnswer> {
-    if send.message.trim().is_empty() {
+    if !matches!(command.actor(), Actor::Operator) {
         return refusal(
-            "steer::message-empty",
-            Some("non-empty direction".to_owned()),
-            Some(send.message.clone()),
-            "supply direction text that the lane can act on",
+            "steer::operator-required",
+            Some("operator".to_owned()),
+            Some(command.actor().to_string()),
+            "submit fold repair through the current operator discovery",
         );
     }
     let residency = match current_residency(bus, epoch) {
@@ -235,537 +414,34 @@ pub(super) fn send(
         .body()
         .lanes
         .iter()
-        .find(|lane| lane.lane == send.lane)
+        .find(|lane| lane.lane == request.lane)
     else {
         return refusal(
-            "steer::lane-unknown",
-            None,
-            Some(send.lane.to_string()),
-            "seat the lane before sending it direction",
+            "steer::repair-lane-unknown",
+            Some("one current seated lane".to_owned()),
+            Some(request.lane.to_string()),
+            "read lane state and repair a lane the resident currently owns",
         );
     };
-    let Some(occupant) = lane.occupant else {
-        return refusal(
-            "steer::lane-vacant",
-            Some("occupied".to_owned()),
-            Some("vacant".to_owned()),
-            "start an occupant in the lane before sending it direction",
-        );
-    };
-    let witness = Witness::Residency {
-        lane: send.lane,
-        occupant,
-        epoch,
-    };
-    if command.expected() != [witness.clone()] {
-        return witness_refusal(command.expected(), &witness);
-    }
-    let snapshot = match snapshot(bus) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
-    if snapshot.ledger.directive(command.id()).is_some() {
-        return refusal(
-            "steer::identity-taken",
-            Some("unused directive identity".to_owned()),
-            Some(command.id().to_string()),
-            "submit a new command identity",
-        );
-    }
-    let at = match current_instant() {
-        Ok(at) => at,
-        Err(outcome) => return outcome,
-    };
-    let key = match mint_key(&snapshot.ledger, at) {
-        Ok(key) => key,
-        Err(outcome) => return outcome,
-    };
-    let expires = match expiry(at, config.expiry().get()) {
-        Ok(expires) => expires,
-        Err(outcome) => return outcome,
-    };
-    let sent = wire::body::SteerSent {
-        directive: command.id(),
-        key: key.to_string(),
-        lane: send.lane,
-        text: send.message.clone(),
-        control: None,
-        attachments: send.attachments.clone(),
-        expires,
-    };
-    let mut proposal = match write_at(command.actor().clone(), epoch, at, Producer::CommandDoor) {
-        Ok(proposal) => proposal,
+    let delivery = match fold_lane_inbox(bus, paths, lane) {
+        Ok(delivery) => delivery,
         Err(outcome) => return typed_outcome(outcome),
     };
-    proposal.guard(send_guard(
-        residency.position(),
-        witness,
-        command.id(),
-        key.clone(),
-    ));
-    if let Err(error) = proposal.fact(sent, FactCause::Existing(residency.position())) {
-        return typed_store_fault("steer::fact-invalid", &error.to_string());
-    }
-    let answer = DirectiveAnswer {
-        directive: command.id(),
-        key: key.to_string(),
-        disposition: Disposition::Live,
-    };
-    if let Err(error) =
-        proposal.command_result(typed_command(command, send.clone()), epoch, answer.clone())
-    {
-        return typed_store_fault("steer::receipt-invalid", &error.to_string());
-    }
-    finish(bus, paths, residency.body(), send.lane, proposal, answer)
-}
-
-pub(super) fn cancel(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    command: &wire::AdmittedCommand,
-    cancel: &wire::intent::DirectiveRef,
-) -> Outcome<CommandAnswer> {
-    let snapshot = match snapshot(bus) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
-    let directive = match live_directive(&snapshot.ledger, cancel.directive) {
-        Ok(directive) => directive,
-        Err(outcome) => return outcome,
-    };
-    let witness = Witness::Directive {
-        steer: cancel.directive,
-        disposition: Disposition::Live,
-    };
-    if command.expected() != [witness.clone()] {
-        return witness_refusal(command.expected(), &witness);
-    }
-    let (origin, cause) = directive_cause(&snapshot.facts, cancel.directive);
-    let mut proposal = match write_at_origin(command.actor().clone(), origin, Producer::CommandDoor)
-    {
-        Ok(proposal) => proposal,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    proposal.guard(live_guard(cancel.directive));
-    if let Err(error) = proposal.fact(
-        wire::body::SteerCanceled {
-            key: directive.key().to_string(),
-            lane: directive.lane(),
-        },
-        FactCause::Existing(cause),
-    ) {
-        return typed_store_fault("steer::fact-invalid", &error.to_string());
-    }
-    let answer = DirectiveAnswer {
-        directive: cancel.directive,
-        key: directive.key().to_string(),
-        disposition: Disposition::Canceled,
-    };
-    if let Err(error) = proposal.command_result(
-        typed_command(command, cancel.clone()),
-        epoch,
-        answer.clone(),
-    ) {
-        return typed_store_fault("steer::receipt-invalid", &error.to_string());
-    }
-    let residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    finish(
-        bus,
-        paths,
-        residency.body(),
-        directive.lane(),
-        proposal,
-        answer,
-    )
-}
-
-pub(super) fn recover(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    config: &steer::Config,
-    command: &wire::AdmittedCommand,
-    recover: &wire::intent::DirectiveRef,
-) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
-        return refusal(
-            "steer::operator-required",
-            Some("operator".to_owned()),
-            Some(command.actor().to_string()),
-            "submit recovery through the current operator discovery",
-        );
-    }
-    let residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let snapshot = match snapshot(bus) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
-    let Some(directive) = snapshot.ledger.directive(recover.directive) else {
-        return refusal(
-            "steer::recovery-missing",
-            Some("one durable lapsed directive".to_owned()),
-            Some(recover.directive.to_string()),
-            "inspect durable steering history and name its exact directive identity",
-        );
-    };
-    if directive.disposition() != Disposition::Lapsed {
-        let reason = if directive.disposition() == Disposition::Live {
-            "steer::recovery-live"
-        } else {
-            "steer::recovery-retired"
-        };
-        return refusal(
-            reason,
-            Some("lapsed".to_owned()),
-            Some(format!("{:?}", directive.disposition()).to_lowercase()),
-            "recover only a directive whose durable lineage lapsed",
-        );
-    }
-    let expected = [
-        Witness::Directive {
-            steer: recover.directive,
-            disposition: Disposition::Lapsed,
-        },
-        Witness::Lineage {
-            steer: recover.directive,
-        },
-    ];
-    if command.expected() != expected {
-        return refusal(
-            "steer::witness-moved",
-            Some(format!("{expected:?}")),
-            Some(format!("{:?}", command.expected())),
-            "read the failed directive again before recovering it",
-        );
-    }
-    let at = match current_instant() {
-        Ok(at) => at,
-        Err(outcome) => return outcome,
-    };
-    let expires = match expiry(at, config.expiry().get()) {
-        Ok(expires) => expires,
-        Err(outcome) => return outcome,
-    };
-    let (origin, cause) = directive_cause(&snapshot.facts, recover.directive);
-    let key = directive.key().clone();
-    let lane = directive.lane();
-    let lapsed_at = directive.expires();
-    let mut proposal = match write_at_origin(command.actor().clone(), origin, Producer::CommandDoor)
-    {
-        Ok(proposal) => proposal,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    proposal.guard(recovery_guard(
-        recover.directive,
-        key.clone(),
-        lane,
-        lapsed_at,
-    ));
-    if let Err(error) = proposal.fact(
-        wire::body::SteerRecovered {
-            directive: recover.directive,
-            key: key.to_string(),
-            lane,
-            lapsed_at,
-            expires,
-        },
-        FactCause::Existing(cause),
-    ) {
-        return typed_store_fault("steer::recovery-fact-invalid", &error.to_string());
-    }
-    let answer = DirectiveAnswer {
-        directive: recover.directive,
-        key: key.to_string(),
-        disposition: Disposition::Live,
-    };
-    if let Err(error) = proposal.command_result(
-        typed_command(command, recover.clone()),
-        epoch,
-        answer.clone(),
-    ) {
-        return typed_store_fault("steer::recovery-receipt-invalid", &error.to_string());
-    }
-    finish(bus, paths, residency.body(), lane, proposal, answer)
-}
-
-pub(super) fn dispose(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    command: &wire::AdmittedCommand,
-    dispose: &wire::intent::SteerDispose,
-) -> Outcome<CommandAnswer> {
-    if !matches!(
-        dispose.disposition,
-        Disposition::Acked | Disposition::Declined
-    ) {
-        return refusal(
-            "steer::disposition-invalid",
-            Some("acked or declined".to_owned()),
-            Some(format!("{:?}", dispose.disposition).to_lowercase()),
-            "use ack with or without --decline",
-        );
-    }
-    let Actor::Lane(actor_lane) = command.actor() else {
-        return refusal(
-            "steer::lane-required",
-            Some("authenticated lane".to_owned()),
-            Some(command.actor().to_string()),
-            "submit acknowledgment from an activated lane shell",
-        );
-    };
-    let residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let snapshot = match snapshot(bus) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
-    let Some(vendor) = residency
-        .body()
-        .lanes
-        .iter()
-        .find(|lane| lane.lane == *actor_lane)
-        .map(|lane| &lane.vendor)
-    else {
-        return refusal(
-            "steer::lane-missing",
-            Some("current durable lane".to_owned()),
-            Some(actor_lane.to_string()),
-            "use a capability belonging to one current lane",
-        );
-    };
-    let recognition = match transcript_recognition(
-        paths,
-        *actor_lane,
-        vendor,
-        &dispose.token,
-        dispose.disposition,
-        &snapshot.ledger,
-    ) {
-        Ok(recognition) => recognition,
-        Err(outcome) => return outcome,
-    };
-    match recognition.outcome {
-        ScanOutcome::Retired { key, disposition } => record_disposition(
-            bus,
-            paths,
-            epoch,
-            command,
-            dispose,
-            residency.body(),
-            &snapshot,
-            *actor_lane,
-            key,
-            disposition,
-            recognition.locus,
-        ),
-        ScanOutcome::Missed { token, miss } => record_miss(
-            bus,
-            epoch,
-            command,
-            residency.position(),
-            &snapshot.facts,
-            token,
-            miss,
-            recognition.locus,
-            *actor_lane,
-        ),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn record_disposition(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    command: &wire::AdmittedCommand,
-    dispose: &wire::intent::SteerDispose,
-    residency: &ResidencyHead,
-    snapshot: &SteeringSnapshot,
-    actor_lane: CanonicalUuid,
-    key: steer::Key,
-    disposition: Disposition,
-    locus: TranscriptLocus,
-) -> Outcome<CommandAnswer> {
-    let directive = snapshot
-        .ledger
-        .directives()
-        .into_iter()
-        .find(|directive| directive.key() == &key && directive.disposition() == Disposition::Live)
-        .expect("the scanner retires only a live directive key");
-    if directive.lane() != actor_lane {
-        return refusal(
-            "steer::lane-scope",
-            Some(directive.lane().to_string()),
-            Some(actor_lane.to_string()),
-            "acknowledge only direction addressed to the authenticated lane",
-        );
-    }
-    let witness = Witness::Directive {
-        steer: directive.directive(),
-        disposition: Disposition::Live,
-    };
-    if command.expected() != [witness.clone()] {
-        return witness_refusal(command.expected(), &witness);
-    }
-    let (origin, cause) = directive_cause(&snapshot.facts, directive.directive());
-    let mut proposal = match write_at_origin(command.actor().clone(), origin, Producer::AckScanner)
-    {
-        Ok(proposal) => proposal,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    proposal.guard(live_guard(directive.directive()));
-    if let Err(error) = append_disposition_fact(
-        &mut proposal,
-        directive,
-        &key,
-        epoch,
-        locus,
-        disposition,
-        FactCause::Existing(cause),
-    ) {
-        return typed_store_fault("steer::fact-invalid", &error.to_string());
-    }
-    let answer = DirectiveAnswer {
-        directive: directive.directive(),
-        key: key.to_string(),
-        disposition,
-    };
-    if let Err(error) = proposal.command_result(
-        typed_command(command, dispose.clone()),
-        epoch,
-        answer.clone(),
-    ) {
-        return typed_store_fault("steer::receipt-invalid", &error.to_string());
-    }
-    finish(bus, paths, residency, directive.lane(), proposal, answer)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn append_disposition_fact(
-    proposal: &mut JournalWrite,
-    directive: &steer::Directive,
-    key: &steer::Key,
-    epoch: CanonicalUuid,
-    locus: TranscriptLocus,
-    disposition: Disposition,
-    cause: FactCause,
-) -> Result<(), journal::BuildError> {
-    match disposition {
-        Disposition::Acked => proposal.fact(
-            wire::body::SteerAcked {
-                directive: directive.directive(),
-                key: key.to_string(),
-                lane: directive.lane(),
-                epoch,
-                locus,
-            },
-            cause,
-        ),
-        Disposition::Declined => proposal.fact(
-            wire::body::SteerDeclined {
-                directive: directive.directive(),
-                key: key.to_string(),
-                lane: directive.lane(),
-                epoch,
-                locus,
-                reason: "declined at the cited assistant transcript locus".to_owned(),
-            },
-            cause,
-        ),
-        _ => unreachable!("the transcript scanner emits only terminal lane dispositions"),
-    }
-    .map(|_| ())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn record_miss(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    command: &wire::AdmittedCommand,
-    residency: Seq,
-    facts: &journal::FactSnapshot,
-    token: String,
-    miss: Miss,
-    locus: TranscriptLocus,
-    lane: CanonicalUuid,
-) -> Outcome<CommandAnswer> {
-    if !command.expected().is_empty() {
-        return refusal(
-            "steer::witness-moved",
-            Some("no live directive witness".to_owned()),
-            Some(format!("{:?}", command.expected())),
-            "read the current steering snapshot before recording a missed recognition",
-        );
-    }
-    let body = wire::body::SteerMissed {
-        key: token.clone(),
-        lane,
-        epoch,
-        locus,
-        miss: acknowledgment_miss(miss),
-    };
-    if !miss_recorded(facts, &body) {
-        let mut proposal = match write(command.actor().clone(), epoch, Producer::AckScanner) {
-            Ok(proposal) => proposal,
-            Err(outcome) => return typed_outcome(outcome),
-        };
-        proposal.guard(miss_guard(body.clone()));
-        if let Err(error) = proposal.fact(body, FactCause::Existing(residency)) {
-            return typed_store_fault("steer::fact-invalid", &error.to_string());
+    let source = match &delivery {
+        DeliveryStanding::Published { source } | DeliveryStanding::Parked { source, .. } => *source,
+        DeliveryStanding::Unknown => {
+            return typed_store_fault(
+                "steer::fold-standing-invalid",
+                "repair completed without a published or parked standing",
+            );
         }
-        if let Err(outcome) = commit(bus, proposal) {
-            return typed_outcome(outcome);
-        }
-    }
-    refusal(
-        "steer::ack-missed",
-        Some("one live directive recognition".to_owned()),
-        Some(format!("{token}:{}", miss.as_str())),
-        "read the current inbox and acknowledge a live key in new assistant prose",
-    )
-}
-
-fn acknowledgment_miss(miss: Miss) -> wire::body::AcknowledgmentMiss {
-    match miss {
-        Miss::Buried => wire::body::AcknowledgmentMiss::Buried,
-        Miss::Quoted => wire::body::AcknowledgmentMiss::Quoted,
-        Miss::Malformed => wire::body::AcknowledgmentMiss::Malformed,
-        Miss::Unknown => wire::body::AcknowledgmentMiss::Unknown,
-        Miss::Historical => wire::body::AcknowledgmentMiss::Historical,
-    }
-}
-
-fn evidence_refusal(token: &str, observed: &str) -> Outcome<CommandAnswer> {
-    refusal(
-        "steer::transcript-evidence-absent",
-        Some(format!("assistant prose recognizing {token}")),
-        Some(observed.to_owned()),
-        "emit an ACK or NACK header in assistant prose before invoking ack",
-    )
-}
-
-fn miss_recorded(snapshot: &journal::FactSnapshot, expected: &wire::body::SteerMissed) -> bool {
-    snapshot.facts().iter().any(|envelope| {
-        if envelope.fact.kind() != wire::FactKind::SteerMissed {
-            return false;
-        }
-        let Some(observed) = steering_body::<wire::body::SteerMissed>(envelope) else {
-            return false;
-        };
-        observed.key == expected.key
-            && observed.lane == expected.lane
-            && observed.locus == expected.locus
-            && observed.miss == expected.miss
+    };
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Snapshot(source),
+        body: CommandAnswer::Delivery(DeliveryAnswer {
+            lane: request.lane,
+            delivery: Box::new(delivery),
+        }),
     })
 }
 
@@ -794,10 +470,7 @@ fn snapshot(bus: &Bus) -> Result<SteeringSnapshot, Outcome<CommandAnswer>> {
     })
 }
 
-fn pending_directive(
-    facts: &journal::FactSnapshot,
-    directive: &steer::Directive,
-) -> PendingDirective {
+fn pending_directive(directive: &steer::Directive) -> PendingDirective {
     PendingDirective {
         directive: directive.directive(),
         key: directive.key().to_string(),
@@ -805,7 +478,11 @@ fn pending_directive(
         preview: directive_preview(directive.text()),
         control: directive.control().map(str::to_owned),
         attachments: directive.attachments().to_vec(),
-        authored: directive_creation(facts, directive.directive()).at,
+        authored: directive
+            .published()
+            .expect("a directive replayed from authority has a publication instant"),
+        stage: directive.stage(),
+        escalations: directive.escalations().to_vec(),
         expires: directive.expires(),
     }
 }
@@ -896,6 +573,44 @@ fn expiry(at: Instant, duration: std::time::Duration) -> Result<Instant, Outcome
         .map_err(|error| typed_environment_fault("steer::expiry-invalid", &error.to_string()))
 }
 
+fn due_stage(
+    published: Instant,
+    at: Instant,
+    config: &steer::Config,
+) -> Result<wire::body::SteeringStage, Outcome<CommandAnswer>> {
+    let elapsed = at.get().duration_since(published.get());
+    let [reminded, escalated, overdue] = config.stage_horizons();
+    let signed = |duration: std::time::Duration| {
+        jiff::SignedDuration::try_from(duration)
+            .map_err(|error| typed_environment_fault("steer::horizon-invalid", &error.to_string()))
+    };
+    if elapsed >= signed(overdue)? {
+        Ok(wire::body::SteeringStage::Overdue)
+    } else if elapsed >= signed(escalated)? {
+        Ok(wire::body::SteeringStage::Escalated)
+    } else if elapsed >= signed(reminded)? {
+        Ok(wire::body::SteeringStage::Reminded)
+    } else {
+        Ok(wire::body::SteeringStage::Published)
+    }
+}
+
+fn missing_stages(
+    current: wire::body::SteeringStage,
+    due: wire::body::SteeringStage,
+) -> Vec<wire::body::SteeringStage> {
+    let mut stages = Vec::new();
+    let mut cursor = current;
+    while cursor < due {
+        let Some(next) = cursor.next() else {
+            break;
+        };
+        stages.push(next);
+        cursor = next;
+    }
+    stages
+}
+
 fn write_at(
     actor: Actor,
     epoch: CanonicalUuid,
@@ -977,6 +692,50 @@ fn live_guard(directive: CanonicalUuid) -> JournalGuard {
     })
 }
 
+fn stage_guard(directive: CanonicalUuid, stage: wire::body::SteeringStage) -> JournalGuard {
+    JournalGuard::new(move |read| {
+        let snapshot = read
+            .fact_snapshot()
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let ledger = steer::Ledger::from_snapshot(&snapshot)
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        match ledger.directive(directive) {
+            Some(current)
+                if current.disposition() == Disposition::Live && current.stage() == stage =>
+            {
+                Ok(())
+            }
+            _ => Err(GuardError::refused("steer::presentation-moved")),
+        }
+    })
+}
+
+fn lapse_guard(
+    directive: CanonicalUuid,
+    key: steer::Key,
+    lane: CanonicalUuid,
+    expires: Instant,
+) -> JournalGuard {
+    JournalGuard::new(move |read| {
+        let snapshot = read
+            .fact_snapshot()
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let ledger = steer::Ledger::from_snapshot(&snapshot)
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        match ledger.directive(directive) {
+            Some(current)
+                if current.key() == &key
+                    && current.lane() == lane
+                    && current.expires() == expires
+                    && current.disposition() == Disposition::Live =>
+            {
+                Ok(())
+            }
+            _ => Err(GuardError::refused("steer::expiry-moved")),
+        }
+    })
+}
+
 fn recovery_guard(
     directive: CanonicalUuid,
     key: steer::Key,
@@ -1035,13 +794,10 @@ fn directive_creation(
             wire::FactKind::SteerSent => steering_body::<wire::body::SteerSent>(envelope)
                 .filter(|body| body.directive == directive)
                 .map(|_| envelope),
-            wire::FactKind::SteerResent => steering_body::<wire::body::SteerResent>(envelope)
-                .filter(|body| body.directive == directive)
-                .map(|_| envelope),
-            // A reminder opens a lineage exactly as a send does, so it is a
-            // creating fact here for the same reason. Every kind the ledger
-            // admits as a first rung has to be findable, because the `expect`
-            // below reads a missing one as impossible rather than as absent.
+            // A reminder publishes a directive exactly as a send does, so it
+            // is a creating fact here for the same reason. Every kind the
+            // ledger admits as a publication has to be findable, because the
+            // `expect` below reads a missing one as impossible rather than as absent.
             wire::FactKind::TasteReminded => steering_body::<wire::body::TasteReminded>(envelope)
                 .filter(|body| body.directive == directive)
                 .map(|_| envelope),
@@ -1064,15 +820,25 @@ fn finish(
     residency: &ResidencyHead,
     lane: CanonicalUuid,
     proposal: JournalWrite,
-    answer: DirectiveAnswer,
+    mut answer: DirectiveAnswer,
 ) -> Outcome<CommandAnswer> {
     let committed = match commit(bus, proposal) {
         Ok(committed) => committed,
         Err(outcome) => return typed_outcome(outcome),
     };
-    // Rendering is disposable; a publication failure cannot rewrite a
-    // command result that the journal and receipt already committed.
-    let _rendering = publish_inbox(bus, paths, residency, lane);
+    let selected = match residency.lanes.iter().find(|row| row.lane == lane) {
+        Some(selected) => selected,
+        None => {
+            return typed_store_fault(
+                "steer::lane-missing-after-commit",
+                &format!("lane {lane} disappeared while publishing its inbox"),
+            );
+        }
+    };
+    answer.delivery = match fold_lane_inbox(bus, paths, selected) {
+        Ok(delivery) => Box::new(delivery),
+        Err(outcome) => return typed_outcome(outcome),
+    };
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {
             first: seq(committed.first()),

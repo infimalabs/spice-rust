@@ -89,7 +89,8 @@ fn generated_tree_and_contract_rows_are_bijective() {
             | (
                 JournalAccess::Command | JournalAccess::Recovery | JournalAccess::Resident,
                 ReplyPositionLaw::Committed,
-            ) => {}
+            )
+            | (JournalAccess::Command, ReplyPositionLaw::SnapshotOrCommitted) => {}
             _ => panic!("reply position does not match the leaf's journal authority: {contract:?}"),
         }
         if contract.result == ResultClass::Plan {
@@ -104,7 +105,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 93);
+    assert_eq!(contracts().len(), 96);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +118,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 93);
+    assert_eq!(landed, 96);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
@@ -131,6 +132,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["lane", "wake"]), Landing::Landed);
     assert_eq!(landing(&["lane", "import"]), Landing::Landed);
     assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
+    assert_eq!(landing(&["steer", "resend"]), Landing::Landed);
     assert_eq!(landing(&["task", "modify"]), Landing::Landed);
     assert_eq!(landing(&["task", "delete"]), Landing::Landed);
     assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
@@ -153,6 +155,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["taste"]), Landing::Landed);
     assert_eq!(landing(&["taste", "add"]), Landing::Landed);
     assert_eq!(landing(&["taste", "drop"]), Landing::Landed);
+    assert_eq!(landing(&["gate", "findings"]), Landing::Landed);
     for path in [
         &["backup"][..],
         &["restore"][..],
@@ -497,6 +500,7 @@ fn tool_postures_follow_the_closed_command_order() {
             ("doctor".to_owned(), vec!["rtk"]),
             ("lock run".to_owned(), vec!["CMD"]),
             ("gate".to_owned(), vec!["gate policy executable"]),
+            ("gate findings".to_owned(), vec!["gate policy executable"]),
             ("gate camp".to_owned(), vec!["gate policy executable"]),
             ("gate kill".to_owned(), vec!["gate mutation executable"]),
             ("gate pre-commit".to_owned(), vec!["gate policy executable"],),

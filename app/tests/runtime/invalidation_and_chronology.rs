@@ -482,6 +482,7 @@ fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_dispos
                 directive: uuid(LANE),
                 key: "1kKQtLsP".to_owned(),
                 disposition: wire::Disposition::Acked,
+                delivery: Box::new(wire::intent::DeliveryStanding::Unknown),
             },
         }),
     );
@@ -628,6 +629,7 @@ fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
                 directive: uuid(LANE),
                 key: "1kQTest".to_owned(),
                 disposition: wire::Disposition::Live,
+                delivery: Box::new(wire::intent::DeliveryStanding::Unknown),
             },
         }),
     );

@@ -20,6 +20,8 @@ pub const HIGHLIGHTS_PLACEHOLDER: &str = concat!(
 pub struct Landing {
     /// Fully resolved landing commit.
     pub commit: String,
+    /// First parent immediately preceding this landing, absent for a root.
+    pub first_parent: Option<String>,
     /// Commit subject.
     pub subject: String,
     /// Project declared by the commit.
@@ -46,8 +48,10 @@ pub struct NotesInput {
 /// Fold a release-note draft from first-parent landings.
 ///
 /// `contains` answers whether a reverted side-branch commit is reachable from
-/// a candidate first-parent landing. Keeping that Git observation at the rim
-/// leaves suppression, task collapsing, grouping, and rendering deterministic.
+/// a candidate commit. A landing introduces the target only when the target is
+/// reachable from the landing but not its first parent. Keeping both Git
+/// observations at the rim leaves suppression, task collapsing, grouping, and
+/// rendering deterministic.
 ///
 /// # Errors
 ///
@@ -127,7 +131,17 @@ fn suppressed_landings(
                     landing: landing.commit.clone(),
                     detail,
                 })?;
-            if included {
+            let included_by_parent = match landing.first_parent.as_deref() {
+                Some(parent) if included => {
+                    contains(target, parent).map_err(|detail| NotesError::Ancestry {
+                        target: target.to_owned(),
+                        landing: parent.to_owned(),
+                        detail,
+                    })?
+                }
+                Some(_) | None => false,
+            };
+            if included && !included_by_parent {
                 introduced = Some(landing_index);
                 break;
             }
@@ -621,6 +635,7 @@ mod tests {
     ) -> Landing {
         Landing {
             commit: commit.to_owned(),
+            first_parent: Some(format!("parent-{commit}")),
             subject: subject.to_owned(),
             project: project.to_owned(),
             task: task.map(str::to_owned),

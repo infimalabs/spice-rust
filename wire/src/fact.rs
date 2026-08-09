@@ -184,8 +184,8 @@ vocabulary! {
 
     /// A directive was created.
     SteerSent = "steer::sent" by CommandDoor;
-    /// The same intent was sent again with lineage and escalation carried.
-    SteerResent = "steer::resent" by CommandDoor;
+    /// One stable directive crossed a named silence horizon.
+    SteerEscalated = "steer::escalated" by BusTimer;
     /// A lapsed directive returned to live standing under operator recovery.
     SteerRecovered = "steer::recovered" by CommandDoor;
     /// A live directive was acknowledged at a transcript locus.
@@ -271,6 +271,8 @@ vocabulary! {
     GateFound = "gate::found" by ResidentRecognition;
     /// A standing finding resolved at its evidence; the Finding head closed.
     GateCleared = "gate::cleared" by ResidentRecognition;
+    /// A requested gate finding dispatch completed.
+    GateFindingsFiled = "gate::filed" by CommandDoor;
 
     /// The one forward schema migration finalized before epoch mint.
     JournalMigrated = "journal::migrated" by ResidentRecognition;

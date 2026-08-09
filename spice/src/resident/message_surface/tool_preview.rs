@@ -62,7 +62,7 @@ pub(super) fn activity(
             flatten(&format!("{preview} update"))
         }
         listen::ToolMoment::Result(result) => {
-            let outcome = match result {
+            let outcome = match result.result {
                 listen::ToolResult::Succeeded => "succeeded",
                 listen::ToolResult::Failed => "failed",
                 listen::ToolResult::Unreported => "completed",

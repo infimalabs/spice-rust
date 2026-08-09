@@ -74,6 +74,16 @@ fn steer_cancel_selects_cancel_rather_than_recover() {
 }
 
 #[test]
+fn steer_resend_selects_live_resend_rather_than_lapsed_recovery() {
+    let (contract, leaf) = parse(&["spice", "steer", "resend", DIRECTIVE]);
+    let selected = select(&leaf, contract, None, None).expect("resend selects");
+    assert!(matches!(
+        selected.0,
+        SelectedCommand::SteerResend { directive } if directive == self::directive()
+    ));
+}
+
+#[test]
 fn steer_recover_selects_recover_rather_than_cancel() {
     let (contract, leaf) = parse(&["spice", "steer", "recover", DIRECTIVE]);
     let (selected, context) = selection(&leaf, contract, None, None);

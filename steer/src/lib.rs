@@ -9,7 +9,7 @@
 //!
 //! The modules follow that arc. [`ack`] fixes the key grammar and reads
 //! outcomes out of prose with no I/O at all. [`directives`] reduces steering
-//! facts into what every lineage currently stands at. [`inbox`] renders what a
+//! facts into what every directive currently stands at. [`inbox`] renders what a
 //! lane still owes through the publication primitive, and [`run`] is the
 //! wrapper that reads that rendering and hands the command through. [`hook`]
 //! installs the interception that puts the wrapper in the path, and refuses
@@ -25,6 +25,8 @@ pub mod ack;
 pub mod config;
 pub mod directives;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod fold;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod hook;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod inbox;
@@ -36,4 +38,4 @@ pub use ack::keys::{
 };
 pub use ack::scan::{Locus, Miss, Outcome, Recognition, Standing, scan};
 pub use config::Config;
-pub use directives::{Directive, LADDER, Ledger, Refusal, Steering};
+pub use directives::{Directive, Ledger, Refusal, Steering};

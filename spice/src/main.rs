@@ -184,6 +184,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["doctor"] => deliver(&doctor_outcome(), form),
         ["demo"] => deliver(&demo_command::run(leaf), form),
         ["gate"] => deliver(&gate_command::run(leaf), form),
+        ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "pre-commit"] => deliver_commit_gate(&gate_command::pre_commit(), form),
@@ -304,7 +305,13 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["task", "delete"]
         | ["doc"]
         | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
-        ["steer"] | ["steer", "cancel"] | ["steer", "recover"] | ["ack"] | ["inbox"] => deliver(
+        ["steer"]
+        | ["steer", "cancel"]
+        | ["steer", "resend"]
+        | ["steer", "recover"]
+        | ["steer", "repair"]
+        | ["ack"]
+        | ["inbox"] => deliver(
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
             form,
         ),
