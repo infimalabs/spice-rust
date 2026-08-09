@@ -294,13 +294,14 @@ impl<'trace> BatteryCapture<'trace> {
     pub fn execute_with_verifier_evidence(
         &mut self,
         evidence: &[VerifierCompilerEvidence],
+        environment: Vec<(OsString, OsString)>,
     ) -> Result<BatteryReport, BatteryError> {
         if self.selected.is_some() {
             return Err(BatteryError::new(
                 "selected capture cannot execute a complete battery",
             ));
         }
-        self.executor.set_verifier_evidence(evidence)?;
+        self.executor.set_verifier_evidence(evidence, environment)?;
         let inputs = self.authorities.inputs()?;
         run_battery(&inputs, &mut self.executor)
     }

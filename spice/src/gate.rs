@@ -57,7 +57,7 @@ impl PreparedBattery {
         evidence: &[VerifierCompilerEvidence],
     ) -> Result<BatteryReport, RunError> {
         self.capture
-            .execute_with_verifier_evidence(evidence)
+            .execute_with_verifier_evidence(evidence, self.verifier_environment.clone())
             .map_err(|error| RunError::refusal("gate::battery-refused", error))
     }
 }
@@ -80,7 +80,9 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery, RunError> {
     reason = "the canonical gate command rim owns full-verifier environment acquisition"
 )]
 fn verifier_environment() -> Vec<(OsString, OsString)> {
-    env::vars_os().collect()
+    let mut environment = env::vars_os().collect::<Vec<_>>();
+    environment.sort();
+    environment
 }
 
 /// Execute the canonical battery over one selected source.
