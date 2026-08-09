@@ -22,6 +22,7 @@ mod allocation_migration;
 mod boundary;
 mod lineage_migration;
 mod read;
+mod release_notes_migration;
 mod schema;
 mod transcript;
 

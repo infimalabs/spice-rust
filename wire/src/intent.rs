@@ -30,7 +30,7 @@ use crate::body::{
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
 use crate::head::{ResidentState, TapeLocus, TrustState};
-use crate::ident::{CanonicalUuid, Digest, Instant};
+use crate::ident::{CanonicalUuid, Digest, Instant, ReleaseNotesIdentity};
 use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
 mod board;
@@ -845,7 +845,12 @@ pub struct ReleasePublish {
     /// Digest of the canonical target manifest.
     pub manifest: Digest,
     /// Identity of the exact curated release-note bytes in the approved plan.
-    pub notes: Digest,
+    ///
+    /// `HistoricalAbsent` represents only a command receipt migrated from
+    /// journal schema 4; the live release door refuses it before reading staged
+    /// publication data. The key is required even when its historical value is
+    /// absent.
+    pub notes: ReleaseNotesIdentity,
 }
 
 /// Drive the resident to the requested lifecycle state.

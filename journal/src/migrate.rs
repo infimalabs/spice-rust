@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod release_notes;
 mod residency_lineage;
 mod task_allocation;
 
@@ -449,6 +450,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (1, MigrationStep::Sql(MIGRATE_1_TO_2_SQL)),
     (2, MigrationStep::Rust(residency_lineage::migrate)),
     (3, MigrationStep::Rust(task_allocation::migrate)),
+    (4, MigrationStep::Rust(release_notes::migrate)),
 ];
 
 /// Schema 1 to 2: the table transcript accounting reads its heads from.
@@ -584,7 +586,7 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 4, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 5, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 "#;

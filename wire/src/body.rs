@@ -1453,7 +1453,12 @@ pub struct ReleasePublished {
     /// Sealed release manifest digest.
     pub manifest: Digest,
     /// Identity of the exact curated release-note bytes published.
-    pub notes: Digest,
+    ///
+    /// `HistoricalAbsent` is written only by the journal schema-4-to-5
+    /// migration for a publication whose pre-digest bytes cannot be
+    /// reconstructed. The field remains required on the wire, so unmigrated
+    /// schema-4 JSON does not enter the current decoder.
+    pub notes: crate::ReleaseNotesIdentity,
     /// Each target entry published under its detached proof receipt.
     pub targets: Vec<PublishedTarget>,
 }
