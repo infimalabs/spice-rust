@@ -834,12 +834,28 @@
   overflow-anchor: none;
 }
 .lane-mosaic-plane[data-measurement-phase="base"] {
-  visibility: hidden;
-  pointer-events: none;
+  /* Measurement is an enhancement, not admission. A fresh hidden or narrow
+     host cannot commit a lattice yet, but its admitted transcript must still
+     be readable while ResizeObserver waits for a real width. Keep measuring
+     cards in ordinary grid flow until the persistent plane takes ownership. */
+  height: auto;
+  visibility: visible;
+  pointer-events: auto;
 }
 .lane-mosaic-plane .mosaic-message-card[data-layout-phase="measuring"] {
   visibility: hidden;
   pointer-events: none;
+}
+.lane-mosaic-plane[data-measurement-phase="base"]
+  .mosaic-message-card[data-layout-phase="measuring"] {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  height: auto;
+  margin-bottom: var(--mosaic-gap);
+  visibility: visible;
+  pointer-events: auto;
 }
 .lane-mosaic-plane[data-lanes="2"] { --mosaic-module: 2.5rem; }
 .lane-mosaic-plane[data-lanes="1"] { --mosaic-module: 1.25rem; }
