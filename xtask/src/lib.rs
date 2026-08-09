@@ -10,6 +10,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod app;
 mod commit_message;
+// The developer refresh drives the installer, which `spice` itself gates off
+// the browser target. Nothing here is ever built as wasm; the workspace check
+// merely compiles it.
+#[cfg(not(target_arch = "wasm32"))]
 mod develop;
 mod hooks;
 mod landing;
@@ -21,6 +25,7 @@ use app::WASM_TARGET;
 
 pub use app::{AppBuildError, app};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
+#[cfg(not(target_arch = "wasm32"))]
 pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh, refresh_install};
 pub use hooks::{
     HookActivationError, activate_hooks, audit_entry_point, audit_entry_point_for_guard,
