@@ -41,6 +41,11 @@ const HEADLESS_FLAG = "--headless";
 /// How the library spells the same thing, which is what a launch inside this
 /// module has to carry.
 const HEADLESS_OPTION = "headless: true";
+const FIXTURE_SIGNAL_AUTHORITY = Object.freeze({
+  handleSIGINT: false,
+  handleSIGTERM: false,
+  handleSIGHUP: false,
+});
 
 /// Chromium states its build in the user agent: a headed browser reports
 /// `Chrome/<version>`, a headless one `HeadlessChrome/<version>`. Reading that
@@ -72,7 +77,9 @@ export async function assertDemoOpenGate(binary = spiceBinary) {
 
 /// Open the browser every fixture and diagnostic script shares.
 export async function launchBrowser() {
-  const browser = await chromium.launch({ headless: true });
+  // The fixture owner is the signal authority. Playwright's default signal
+  // hooks race that owner and can exit before its resident/vendor cleanup runs.
+  const browser = await chromium.launch({ headless: true, ...FIXTURE_SIGNAL_AUTHORITY });
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
