@@ -57,8 +57,8 @@ pub(crate) fn hook_document(
     for lane in &inbox.lanes {
         for directive in &lane.pending {
             context.push_str(&format!(
-                "\n\nlane={} key={}\n{}",
-                lane.lane, directive.key, directive.text
+                "\n\nlane={} key={} stage={}\n{}",
+                lane.lane, directive.key, directive.stage, directive.text
             ));
         }
     }
@@ -140,6 +140,10 @@ fn select<'a>(
         ["steer", "cancel"] => {
             let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;
             Ok((SelectedCommand::SteerCancel { directive }, None))
+        }
+        ["steer", "resend"] => {
+            let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;
+            Ok((SelectedCommand::SteerResend { directive }, None))
         }
         ["steer", "recover"] => {
             let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;

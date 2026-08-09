@@ -488,6 +488,7 @@ fn acknowledgment_paths(
         .as_str()
         .expect("hook context is text");
     assert!(additional_context.contains(&sent.key));
+    assert!(additional_context.contains("stage=published"));
     assert!(additional_context.contains(direction));
     assert!(additional_context.contains("ack <key>"));
     hook_harness_paths(fixture, &lane, &codex.stdout);
@@ -905,7 +906,7 @@ fn directive_authored(fixture: &Fixture, directive: wire::CanonicalUuid) -> Inst
                 .or_else(|| {
                     envelope
                         .fact
-                        .read::<wire::body::SteerResent>()
+                        .read::<wire::body::TasteReminded>()
                         .map(|body| body.directive)
                 })?;
             (authored == directive).then_some(envelope.at)
@@ -951,6 +952,52 @@ fn uuid(value: &str) -> wire::CanonicalUuid {
 
 fn instant(value: &str) -> Instant {
     value.parse().expect("canonical fixture instant")
+}
+
+#[test]
+fn resend_before_the_first_horizon_redelivers_one_unchanged_stable_directive() {
+    let (fixture, resident, lanes) = setup();
+    let lane = lanes.target.to_string();
+    let sent = text_directive(&invoke(
+        &fixture,
+        &["steer", &lane, "deliver this stable direction again"],
+        false,
+    ));
+    let resent = text_directive(&invoke(
+        &fixture,
+        &["steer", "resend", &sent.directive.to_string()],
+        false,
+    ));
+    assert_eq!(resent, sent);
+
+    let inbox = text_inbox(&invoke(&fixture, &["inbox", &lane], false));
+    let pending = inbox.lanes[0]
+        .pending
+        .iter()
+        .find(|pending| pending.directive == sent.directive)
+        .expect("redelivered directive remains pending");
+    assert_eq!(pending.key, sent.key);
+    assert_eq!(pending.stage, wire::body::SteeringStage::Published);
+    assert!(pending.escalations.is_empty());
+
+    let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
+    let snapshot = journal.fact_snapshot().expect("steering facts read");
+    assert!(snapshot.facts().iter().all(|envelope| {
+        envelope
+            .fact
+            .read::<wire::body::SteerEscalated>()
+            .is_none_or(|body| body.directive != sent.directive)
+    }));
+
+    let canceled = text_directive(&invoke(
+        &fixture,
+        &["steer", "cancel", &sent.directive.to_string()],
+        false,
+    ));
+    assert_eq!(canceled.directive, sent.directive);
+    assert_eq!(canceled.key, sent.key);
+    assert_eq!(canceled.disposition, wire::Disposition::Canceled);
+    stop(&fixture, resident);
 }
 
 #[test]

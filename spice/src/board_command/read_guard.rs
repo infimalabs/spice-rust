@@ -751,7 +751,6 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
         | Witness::Preview { .. }
         | Witness::Barrier { .. } => board_witness_holds(read, witness),
         Witness::Directive { .. }
-        | Witness::Lineage { .. }
         | Witness::Consent { .. }
         | Witness::Rule { .. }
         | Witness::Budget { .. }

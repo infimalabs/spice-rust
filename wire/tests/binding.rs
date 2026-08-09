@@ -119,6 +119,10 @@ const BODIES: &[(CommandKind, &str)] = &[
         r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
     ),
     (
+        CommandKind::SteerRecover,
+        r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
+    ),
+    (
         CommandKind::SteerCancel,
         r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
     ),
@@ -410,6 +414,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
       "text": "drain the queue",
       "preview": "drain the queue",
       "authored": "2026-08-01T06:07:19.000Z",
+      "stage": "published",
       "expires": "2026-08-01T07:07:19.000Z"
     }]
   }]

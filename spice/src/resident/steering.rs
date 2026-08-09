@@ -27,6 +27,94 @@ mod transcript;
 use preview::directive_preview;
 use transcript::transcript_recognition;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SteeringDeadline {
+    pub(super) directive: CanonicalUuid,
+    pub(super) key: steer::Key,
+    pub(super) lane: CanonicalUuid,
+    pub(super) expires: Instant,
+    pub(super) transition: DeadlineTransition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DeadlineTransition {
+    Escalate {
+        from: wire::body::SteeringStage,
+        to: wire::body::SteeringStage,
+    },
+    Lapse,
+}
+
+pub(super) fn apply_deadline(
+    bus: &Bus,
+    expected: &SteeringDeadline,
+    at: Instant,
+) -> CommandResult<bool> {
+    let facts = bus
+        .fact_snapshot()
+        .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
+    let ledger = steer::Ledger::from_snapshot(&facts)
+        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+    let Some(current) = ledger.directive(expected.directive) else {
+        return Ok(false);
+    };
+    if current.key() != &expected.key
+        || current.lane() != expected.lane
+        || current.expires() != expected.expires
+        || current.disposition() != Disposition::Live
+    {
+        return Ok(false);
+    }
+    let transition_matches = match expected.transition {
+        DeadlineTransition::Escalate { from, .. } => current.stage() == from,
+        DeadlineTransition::Lapse => true,
+    };
+    if !transition_matches {
+        return Ok(false);
+    }
+    let (origin, cause) = directive_cause(&facts, expected.directive);
+    let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::BusTimer);
+    match expected.transition {
+        DeadlineTransition::Escalate { from, to } => {
+            proposal.guard(stage_guard(expected.directive, from));
+            proposal
+                .fact(
+                    wire::body::SteerEscalated {
+                        directive: expected.directive,
+                        key: expected.key.to_string(),
+                        lane: expected.lane,
+                        stage: to,
+                    },
+                    FactCause::Existing(cause),
+                )
+                .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
+        }
+        DeadlineTransition::Lapse => {
+            proposal.guard(lapse_guard(
+                expected.directive,
+                expected.key.clone(),
+                expected.lane,
+                expected.expires,
+            ));
+            proposal
+                .fact(
+                    wire::body::SteerLapsed {
+                        key: expected.key.to_string(),
+                        lane: expected.lane,
+                        expires: expected.expires,
+                    },
+                    FactCause::Existing(cause),
+                )
+                .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
+        }
+    }
+    match commit(bus, proposal) {
+        Ok(_) => Ok(true),
+        Err(Outcome::Refusal(_)) => Ok(false),
+        Err(outcome) => Err(outcome),
+    }
+}
+
 pub(super) fn publish_lane_discoveries(
     paths: &RuntimePaths,
     operator: &canvas::Discovery,
@@ -191,7 +279,7 @@ pub(super) fn inbox(
                 .ledger
                 .pending(lane.lane)
                 .into_iter()
-                .map(|directive| pending_directive(&snapshot.facts, directive))
+                .map(pending_directive)
                 .collect(),
         });
     }
@@ -383,6 +471,103 @@ pub(super) fn cancel(
     )
 }
 
+pub(super) fn resend(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    config: &steer::Config,
+    command: &wire::AdmittedCommand,
+    resend: &wire::intent::DirectiveRef,
+) -> Outcome<CommandAnswer> {
+    if !matches!(command.actor(), Actor::Operator) {
+        return refusal(
+            "steer::operator-required",
+            Some("operator".to_owned()),
+            Some(command.actor().to_string()),
+            "submit resend through the current operator discovery",
+        );
+    }
+    let residency = match current_residency(bus, epoch) {
+        Ok(residency) => residency,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let snapshot = match snapshot(bus) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let directive = match live_directive(&snapshot.ledger, resend.directive) {
+        Ok(directive) => directive,
+        Err(outcome) => return outcome,
+    };
+    let witness = Witness::Directive {
+        steer: resend.directive,
+        disposition: Disposition::Live,
+    };
+    if command.expected() != [witness.clone()] {
+        return witness_refusal(command.expected(), &witness);
+    }
+    let Some(published) = directive.published() else {
+        return typed_store_fault(
+            "steer::publication-missing",
+            "a journal-replayed directive has no original publication instant",
+        );
+    };
+    let at = match current_instant() {
+        Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    let due = match due_stage(published, at, config) {
+        Ok(stage) => stage,
+        Err(outcome) => return outcome,
+    };
+    let stages = missing_stages(directive.stage(), due);
+    let answer = DirectiveAnswer {
+        directive: directive.directive(),
+        key: directive.key().to_string(),
+        disposition: Disposition::Live,
+    };
+    if stages.is_empty() {
+        if let Err(outcome) = publish_inbox(bus, paths, residency.body(), directive.lane()) {
+            return typed_outcome(outcome);
+        }
+        return Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(snapshot.position),
+            body: CommandAnswer::Directive(answer),
+        });
+    }
+    let (origin, cause) = directive_cause(&snapshot.facts, resend.directive);
+    let mut proposal = JournalWrite::new(command.actor().clone(), origin, at, Producer::BusTimer);
+    proposal.guard(stage_guard(resend.directive, directive.stage()));
+    for stage in stages {
+        if let Err(error) = proposal.fact(
+            wire::body::SteerEscalated {
+                directive: directive.directive(),
+                key: directive.key().to_string(),
+                lane: directive.lane(),
+                stage,
+            },
+            FactCause::Existing(cause),
+        ) {
+            return typed_store_fault("steer::fact-invalid", &error.to_string());
+        }
+    }
+    if let Err(error) = proposal.command_result(
+        typed_command(command, resend.clone()),
+        epoch,
+        answer.clone(),
+    ) {
+        return typed_store_fault("steer::receipt-invalid", &error.to_string());
+    }
+    finish(
+        bus,
+        paths,
+        residency.body(),
+        directive.lane(),
+        proposal,
+        answer,
+    )
+}
+
 pub(super) fn recover(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -425,18 +610,13 @@ pub(super) fn recover(
             reason,
             Some("lapsed".to_owned()),
             Some(format!("{:?}", directive.disposition()).to_lowercase()),
-            "recover only a directive whose durable lineage lapsed",
+            "recover only a durable directive that has lapsed",
         );
     }
-    let expected = [
-        Witness::Directive {
-            steer: recover.directive,
-            disposition: Disposition::Lapsed,
-        },
-        Witness::Lineage {
-            steer: recover.directive,
-        },
-    ];
+    let expected = [Witness::Directive {
+        steer: recover.directive,
+        disposition: Disposition::Lapsed,
+    }];
     if command.expected() != expected {
         return refusal(
             "steer::witness-moved",
@@ -794,10 +974,7 @@ fn snapshot(bus: &Bus) -> Result<SteeringSnapshot, Outcome<CommandAnswer>> {
     })
 }
 
-fn pending_directive(
-    facts: &journal::FactSnapshot,
-    directive: &steer::Directive,
-) -> PendingDirective {
+fn pending_directive(directive: &steer::Directive) -> PendingDirective {
     PendingDirective {
         directive: directive.directive(),
         key: directive.key().to_string(),
@@ -805,7 +982,11 @@ fn pending_directive(
         preview: directive_preview(directive.text()),
         control: directive.control().map(str::to_owned),
         attachments: directive.attachments().to_vec(),
-        authored: directive_creation(facts, directive.directive()).at,
+        authored: directive
+            .published()
+            .expect("a directive replayed from authority has a publication instant"),
+        stage: directive.stage(),
+        escalations: directive.escalations().to_vec(),
         expires: directive.expires(),
     }
 }
@@ -896,6 +1077,44 @@ fn expiry(at: Instant, duration: std::time::Duration) -> Result<Instant, Outcome
         .map_err(|error| typed_environment_fault("steer::expiry-invalid", &error.to_string()))
 }
 
+fn due_stage(
+    published: Instant,
+    at: Instant,
+    config: &steer::Config,
+) -> Result<wire::body::SteeringStage, Outcome<CommandAnswer>> {
+    let elapsed = at.get().duration_since(published.get());
+    let [reminded, escalated, overdue] = config.stage_horizons();
+    let signed = |duration: std::time::Duration| {
+        jiff::SignedDuration::try_from(duration)
+            .map_err(|error| typed_environment_fault("steer::horizon-invalid", &error.to_string()))
+    };
+    if elapsed >= signed(overdue)? {
+        Ok(wire::body::SteeringStage::Overdue)
+    } else if elapsed >= signed(escalated)? {
+        Ok(wire::body::SteeringStage::Escalated)
+    } else if elapsed >= signed(reminded)? {
+        Ok(wire::body::SteeringStage::Reminded)
+    } else {
+        Ok(wire::body::SteeringStage::Published)
+    }
+}
+
+fn missing_stages(
+    current: wire::body::SteeringStage,
+    due: wire::body::SteeringStage,
+) -> Vec<wire::body::SteeringStage> {
+    let mut stages = Vec::new();
+    let mut cursor = current;
+    while cursor < due {
+        let Some(next) = cursor.next() else {
+            break;
+        };
+        stages.push(next);
+        cursor = next;
+    }
+    stages
+}
+
 fn write_at(
     actor: Actor,
     epoch: CanonicalUuid,
@@ -977,6 +1196,50 @@ fn live_guard(directive: CanonicalUuid) -> JournalGuard {
     })
 }
 
+fn stage_guard(directive: CanonicalUuid, stage: wire::body::SteeringStage) -> JournalGuard {
+    JournalGuard::new(move |read| {
+        let snapshot = read
+            .fact_snapshot()
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let ledger = steer::Ledger::from_snapshot(&snapshot)
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        match ledger.directive(directive) {
+            Some(current)
+                if current.disposition() == Disposition::Live && current.stage() == stage =>
+            {
+                Ok(())
+            }
+            _ => Err(GuardError::refused("steer::presentation-moved")),
+        }
+    })
+}
+
+fn lapse_guard(
+    directive: CanonicalUuid,
+    key: steer::Key,
+    lane: CanonicalUuid,
+    expires: Instant,
+) -> JournalGuard {
+    JournalGuard::new(move |read| {
+        let snapshot = read
+            .fact_snapshot()
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let ledger = steer::Ledger::from_snapshot(&snapshot)
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        match ledger.directive(directive) {
+            Some(current)
+                if current.key() == &key
+                    && current.lane() == lane
+                    && current.expires() == expires
+                    && current.disposition() == Disposition::Live =>
+            {
+                Ok(())
+            }
+            _ => Err(GuardError::refused("steer::expiry-moved")),
+        }
+    })
+}
+
 fn recovery_guard(
     directive: CanonicalUuid,
     key: steer::Key,
@@ -1035,13 +1298,10 @@ fn directive_creation(
             wire::FactKind::SteerSent => steering_body::<wire::body::SteerSent>(envelope)
                 .filter(|body| body.directive == directive)
                 .map(|_| envelope),
-            wire::FactKind::SteerResent => steering_body::<wire::body::SteerResent>(envelope)
-                .filter(|body| body.directive == directive)
-                .map(|_| envelope),
-            // A reminder opens a lineage exactly as a send does, so it is a
-            // creating fact here for the same reason. Every kind the ledger
-            // admits as a first rung has to be findable, because the `expect`
-            // below reads a missing one as impossible rather than as absent.
+            // A reminder publishes a directive exactly as a send does, so it
+            // is a creating fact here for the same reason. Every kind the
+            // ledger admits as a publication has to be findable, because the
+            // `expect` below reads a missing one as impossible rather than as absent.
             wire::FactKind::TasteReminded => steering_body::<wire::body::TasteReminded>(envelope)
                 .filter(|body| body.directive == directive)
                 .map(|_| envelope),

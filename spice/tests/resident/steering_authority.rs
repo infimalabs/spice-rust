@@ -1,4 +1,4 @@
-//! Resident enforcement that intentionally remains below connected wire laws.
+//! Resident admission of operator-only steering commands.
 
 use super::*;
 
@@ -30,14 +30,11 @@ fn a_lane_cannot_recover_operator_direction() {
         v: wire::WireVersion::CURRENT,
         id: request,
         epoch: discovery.epoch,
-        kind: wire::CommandKind::SteerResend,
-        expected: vec![
-            wire::Witness::Directive {
-                steer: directive,
-                disposition: wire::Disposition::Lapsed,
-            },
-            wire::Witness::Lineage { steer: directive },
-        ],
+        kind: wire::CommandKind::SteerRecover,
+        expected: vec![wire::Witness::Directive {
+            steer: directive,
+            disposition: wire::Disposition::Lapsed,
+        }],
         body: wire::intent::DirectiveRef { directive },
     };
     socket
@@ -57,7 +54,7 @@ fn a_lane_cannot_recover_operator_direction() {
     assert!(matches!(
         response.outcome,
         Outcome::Refusal(wire::Refusal { ref reason, .. })
-            if reason == "steer::operator-required"
+            if reason == "command::authority"
     ));
 
     let down = invoke(&fixture, "down");

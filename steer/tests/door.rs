@@ -50,9 +50,9 @@ fn a_rendering_carries_one_lane_sealed() {
         rendered,
         "\
 <1kJK6N3R>
-key=1kJK6M0V expires=2026-08-01T07:07:19.000Z control=drive-drain-queue
+key=1kJK6M0V stage=published expires=2026-08-01T07:07:19.000Z control=drive-drain-queue
 DRAIN QUEUE ASAP
-key=1kJK7Sqy expires=2026-08-01T08:07:19.000Z
+key=1kJK7Sqy stage=published expires=2026-08-01T08:07:19.000Z
 feed the board
 </1kJK6N3R>
 "

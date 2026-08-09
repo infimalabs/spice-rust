@@ -79,8 +79,10 @@ pub enum CommandKind {
     SteerSend,
     /// Read pending direction visible to the authenticated principal.
     SteerInbox,
-    /// Send the same intent again with lineage and escalation carried.
+    /// Re-deliver one live directive and catch up any due presentation stages.
     SteerResend,
+    /// Restore one lapsed directive without changing its identity.
+    SteerRecover,
     /// Retire a live directive with a typed disposition.
     SteerDispose,
     /// Withdraw a live directive as operator intent.
@@ -349,12 +351,17 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// Exact directive disposition; resend also names the preceding directive
-    /// in its lineage.
+    /// Exact live directive disposition for a time-derived re-presentation.
     pub const RESEND: Self = Self {
-        required: &[WitnessKind::Directive, WitnessKind::Lineage],
+        required: &[WitnessKind::Directive],
         optional: &[],
-        authority: Authority::Connected,
+        authority: Authority::Operator,
+    };
+    /// Exact lapsed directive disposition for identity-preserving recovery.
+    pub const RECOVER: Self = Self {
+        required: &[WitnessKind::Directive],
+        optional: &[],
+        authority: Authority::Operator,
     };
     /// Exact directive disposition.
     pub const DISPOSE: Self = Self {
@@ -506,6 +513,7 @@ impl CommandKind {
         Self::SteerSend,
         Self::SteerInbox,
         Self::SteerResend,
+        Self::SteerRecover,
         Self::SteerDispose,
         Self::SteerCancel,
         Self::ConsentRead,
@@ -564,6 +572,7 @@ impl CommandKind {
             | Self::SteerSend
             | Self::SteerInbox
             | Self::SteerResend
+            | Self::SteerRecover
             | Self::SteerDispose
             | Self::SteerCancel
             | Self::ConsentRead
@@ -623,6 +632,7 @@ impl CommandKind {
             Self::SteerSend => "steer::send",
             Self::SteerInbox => "steer::inbox",
             Self::SteerResend => "steer::resend",
+            Self::SteerRecover => "steer::recover",
             Self::SteerDispose => "steer::dispose",
             Self::SteerCancel => "steer::cancel",
             Self::ConsentRead => "consent::read",
@@ -690,6 +700,7 @@ impl CommandKind {
             Self::SteerSend => Law::SEND,
             Self::SteerInbox => Law::READ,
             Self::SteerResend => Law::RESEND,
+            Self::SteerRecover => Law::RECOVER,
             Self::SteerDispose => Law::DISPOSE,
             Self::SteerCancel => Law::CANCEL,
             Self::ConsentRead | Self::ConsentPolicy => Law::INSPECT,
