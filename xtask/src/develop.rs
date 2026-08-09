@@ -295,31 +295,72 @@ fn endpoint_parts(endpoint: &str) -> Option<(String, u16)> {
 }
 
 /// Stop the running resident and wait for its discovery to withdraw.
+///
+/// A published discovery outlives the process that wrote it, so `down` failing
+/// is not itself a refusal: a resident that was already gone refuses the same
+/// way one that is still serving does, and only the endpoint separates them.
+/// The status is therefore classified against what is still answering. A clean
+/// stop waits for the discovery to withdraw; a refusal with nothing answering
+/// is a resident already gone and the refresh proceeds; a refusal with the
+/// endpoint still live is named here, because waiting it out spends the whole
+/// shutdown horizon to report a stop that was refused outright.
+///
+/// `down` answers its own reply on standard output, which is this command's
+/// progress stream and not a result the developer asked for, so that stream is
+/// captured and dropped. Its diagnostics are captured too and republished here:
+/// an inherited stream puts the refusal wherever the parent's happens to go,
+/// which is not this command's own report and is not what the error carries.
 fn stop(
     repository: &Repository,
     installed: &Path,
     output: &mut impl Write,
 ) -> Result<(), RefreshError> {
     writeln!(output, "stopping resident")?;
-    // A published discovery outlives the process that wrote it, so `down`
-    // failing is not itself a refusal: what matters is that nothing is still
-    // answering on the endpoint by the time the executable is replaced.
-    // `down` answers its own reply on standard output, which is this command's
-    // progress stream and not a result the developer asked for. Diagnostics
-    // stay inherited so a refusal is still legible.
-    Command::new(installed)
+    let answer = Command::new(installed)
         .arg("down")
         .current_dir(repository.worktree_root())
-        .stdout(Stdio::null())
-        .status()?;
+        .output()?;
+    if !answer.status.success() {
+        let refusal = refusal_text(&answer.stderr);
+        writeln!(output, "down refused ({}): {refusal}", answer.status)?;
+        if answering(repository) {
+            return Err(RefreshError::ResidentStopRefused(refusal));
+        }
+        writeln!(output, "nothing answers the endpoint; continuing")?;
+        return Ok(());
+    }
     let deadline = Instant::now() + SHUTDOWN_HORIZON;
-    while read_endpoint(repository).is_some_and(|endpoint| listening(&endpoint)) {
+    while answering(repository) {
         if Instant::now() >= deadline {
             return Err(RefreshError::ResidentStop);
         }
         sleep(READINESS_INTERVAL);
     }
     Ok(())
+}
+
+/// Whether the published discovery still names an endpoint that answers.
+fn answering(repository: &Repository) -> bool {
+    read_endpoint(repository).is_some_and(|endpoint| listening(&endpoint))
+}
+
+/// Everything a refused `down` said, as one line this command can report.
+///
+/// Joining rather than taking the last line keeps a multi-line refusal whole,
+/// because the line that names the reason is not reliably the last one, and a
+/// refusal reported in part is a refusal the developer has to go looking for.
+fn refusal_text(diagnostics: &[u8]) -> String {
+    let text = String::from_utf8_lossy(diagnostics)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if text.is_empty() {
+        "no diagnostic".to_owned()
+    } else {
+        text
+    }
 }
 
 /// Start the refreshed resident and answer the endpoint it published.
@@ -439,6 +480,8 @@ pub enum RefreshError {
     },
     /// The resident did not stop.
     ResidentStop,
+    /// `down` refused while the endpoint was still answering.
+    ResidentStopRefused(String),
     /// The resident exited before it was ready.
     ResidentExited(Option<i32>),
     /// The resident never published an endpoint it answers on.
@@ -461,6 +504,10 @@ impl fmt::Display for RefreshError {
                 "install refused: {cause}; restoring the previous executable also failed: {error}"
             ),
             Self::ResidentStop => write!(formatter, "resident did not stop"),
+            Self::ResidentStopRefused(refusal) => write!(
+                formatter,
+                "down refused and the endpoint is still answering: {refusal}"
+            ),
             Self::ResidentExited(code) => match code {
                 Some(code) => write!(formatter, "resident exited with status {code}"),
                 None => write!(formatter, "resident exited on a signal"),

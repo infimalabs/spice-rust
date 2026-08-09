@@ -116,14 +116,6 @@ pub fn compose(root: &Root, inputs: Inputs) -> Result<Plan, ComposeError> {
         OsString::from(SPICE_LANE),
         OsString::from(inputs.lane.to_string()),
     ));
-    let hook = vendor::SteeringHook {
-        command: format!("{} inbox", shell_word(&inputs.executable)),
-    };
-    let mcp = vendor::McpServer {
-        name: "spice".to_owned(),
-        command: inputs.executable,
-        args: vec!["mcp".to_owned()],
-    };
     let attribution = if root
         .policy()
         .commit_message()
@@ -168,6 +160,18 @@ pub fn compose(root: &Root, inputs: Inputs) -> Result<Plan, ComposeError> {
             )
         }
         other => return Err(ComposeError::UnsupportedVendor(other.to_owned())),
+    };
+    let hook_harness = match dialect {
+        Dialect::Claude => "claude",
+        Dialect::Codex => "codex",
+    };
+    let hook = vendor::SteeringHook {
+        command: format!("{} hook {hook_harness}", shell_word(&inputs.executable)),
+    };
+    let mcp = vendor::McpServer {
+        name: "spice".to_owned(),
+        command: inputs.executable,
+        args: vec!["mcp".to_owned()],
     };
     let environment = Environment::new(environment).map_err(ComposeError::Environment)?;
 
