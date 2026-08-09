@@ -170,6 +170,116 @@ fn a_resident_that_exits_before_readiness_is_reported_as_an_exit() {
     );
 }
 
+/// A port nothing is bound to, taken by binding one and letting it go.
+///
+/// Naming a fixed port would race every other lane on this machine, and the
+/// distinction under test is exactly whether the endpoint answers.
+fn unbound_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a scratch port binds");
+    let port = listener
+        .local_addr()
+        .expect("the scratch port is named")
+        .port();
+    drop(listener);
+    port
+}
+
+/// A clean stop is not reported as a refusal.
+///
+/// `down` succeeding is the outcome that has nothing to say, so the assertion
+/// is that the refusal report stays absent: a status classified only as
+/// "not success" would announce a refusal here that never happened.
+#[test]
+fn a_clean_stop_withdraws_without_reporting_a_refusal() {
+    let fixture = Fixture::new("stop-clean");
+    let repository = fixture.repository();
+    let installed = fixture.binary("spice-down-clean", b"#!/bin/sh\nexit 0\n");
+    fixture.publish(&format!("http://127.0.0.1:{}", unbound_port()));
+
+    let mut output = Vec::new();
+    let stopped = stop(&repository, &installed, &mut output);
+    let output = String::from_utf8_lossy(&output).into_owned();
+
+    assert!(stopped.is_ok(), "a clean stop was refused: {stopped:?}");
+    assert!(
+        output.contains("stopping resident"),
+        "the stop was never announced: {output}"
+    );
+    assert!(
+        !output.contains("down refused"),
+        "a clean stop was reported as a refusal: {output}"
+    );
+}
+
+/// A resident already gone refuses the stop, and the refresh proceeds anyway.
+///
+/// The refusal text is asserted on this command's own stream, which is where an
+/// inherited stream would not have put it: `stop` captures the child's
+/// diagnostics, so a version that let them through to the parent would leave
+/// this buffer without them and still stop cleanly.
+#[test]
+fn a_refused_stop_with_a_dead_endpoint_proceeds_and_republishes_the_refusal() {
+    let fixture = Fixture::new("stop-refused-dead");
+    let repository = fixture.repository();
+    let installed = fixture.binary(
+        "spice-down-absent",
+        b"#!/bin/sh\necho 'resident::not-running nothing to stop' >&2\nexit 7\n",
+    );
+    fixture.publish(&format!("http://127.0.0.1:{}", unbound_port()));
+
+    let mut output = Vec::new();
+    let stopped = stop(&repository, &installed, &mut output);
+    let output = String::from_utf8_lossy(&output).into_owned();
+
+    assert!(
+        stopped.is_ok(),
+        "a resident that was already gone failed the refresh: {stopped:?}"
+    );
+    assert!(
+        output.contains("resident::not-running nothing to stop"),
+        "the refusal text never reached the refresh's own stream: {output}"
+    );
+    assert!(
+        output.contains("nothing answers the endpoint; continuing"),
+        "proceeding past a dead endpoint was never reported: {output}"
+    );
+}
+
+/// A refused stop with the endpoint still live is named, not waited out.
+///
+/// The elapsed bound is the half of this that the horizon would have satisfied
+/// on its own: falling through to the withdrawal wait also ends in an error,
+/// just fifteen seconds later and under a name that says the resident did not
+/// stop rather than that `down` refused.
+#[test]
+fn a_refused_stop_with_a_live_endpoint_is_named_rather_than_waited_out() {
+    let fixture = Fixture::new("stop-refused-live");
+    let repository = fixture.repository();
+    let installed = fixture.binary(
+        "spice-down-refuses",
+        b"#!/bin/sh\necho 'resident::down-refused still serving' >&2\nexit 7\n",
+    );
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a scratch port binds");
+    let bound = listener.local_addr().expect("the scratch port is named");
+    fixture.publish(&format!("http://127.0.0.1:{}", bound.port()));
+
+    let mut output = Vec::new();
+    let started = Instant::now();
+    let stopped = stop(&repository, &installed, &mut output);
+    let elapsed = started.elapsed();
+    drop(listener);
+
+    assert!(
+        matches!(&stopped, Err(RefreshError::ResidentStopRefused(refusal))
+            if refusal.contains("resident::down-refused still serving")),
+        "a refused stop over a live endpoint was not named: {stopped:?}"
+    );
+    assert!(
+        elapsed < SHUTDOWN_HORIZON,
+        "the refusal fell through to the shutdown horizon: {elapsed:?}"
+    );
+}
+
 /// The refresh `cargo xtask install` performs, and the withdrawal it must not.
 ///
 /// A rebuilt binary over a completed receipt derives a refresh rather than

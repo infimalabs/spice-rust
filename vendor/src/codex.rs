@@ -14,13 +14,12 @@ use crate::launch::{
 };
 use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 
-/// Tools whose completion Codex's hook surface can report.
+/// Total matcher for every Codex tool completion.
 ///
-/// Claude's matcher is total; Codex's has to name what it reaches, so a tool
-/// missing from this pattern is a tool after which steering never arrives.
-/// `apply_patch` covers Codex's own patch tool plus the `Edit` and `Write`
-/// spellings, and `mcp__.*` covers every MCP tool at once.
-pub const POST_TOOL_HOOK_MATCHER: &str = "^(Bash|apply_patch|Edit|Write|mcp__.*)$";
+/// Tool names are not a closed vocabulary. Enumerating them makes any newly
+/// named tool a boundary after which steering never arrives, so every
+/// completion is deliberately a steering checkpoint.
+pub const POST_TOOL_HOOK_MATCHER: &str = "*";
 
 /// Build the exact current Codex invocation without performing I/O.
 ///

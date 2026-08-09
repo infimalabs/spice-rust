@@ -473,6 +473,23 @@ fn acknowledgment_paths(
         Some("bind the exact command family")
     );
 
+    let hook = invoke_as_lane(fixture, &lane, &["hook", "codex"], false);
+    assert!(
+        hook.status.success(),
+        "hook inbox failed: {:?}",
+        hook.stderr
+    );
+    assert!(hook.stderr.is_empty(), "hook inbox spoke on stderr");
+    let hook: serde_json::Value =
+        wire::decode(&hook.stdout).expect("hook inbox speaks one Codex hook document");
+    assert_eq!(hook["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+    let additional_context = hook["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .expect("hook context is text");
+    assert!(additional_context.contains(&sent.key));
+    assert!(additional_context.contains(direction));
+    assert!(additional_context.contains("ack <key>"));
+
     let other = lanes.other.to_string();
     record_reply(
         fixture,
@@ -491,6 +508,14 @@ fn acknowledgment_paths(
     let acknowledged = text_directive(&invoke_as_lane(fixture, &lane, &["ack", &sent.key], false));
     assert_eq!(acknowledged.directive, sent.directive);
     assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
+    let empty_hook = invoke_as_lane(fixture, &lane, &["hook", "codex"], false);
+    assert!(
+        empty_hook.status.success(),
+        "empty hook inbox failed: {:?}",
+        empty_hook.stderr
+    );
+    assert!(empty_hook.stdout.is_empty());
+    assert!(empty_hook.stderr.is_empty());
     let duplicate = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);
     assert_refusal(&duplicate, "steer::ack-missed");
     let duplicate_again = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);

@@ -112,6 +112,7 @@ fn add(
         worktree: worktree.worktree_root().display().to_string(),
         life,
         vendor,
+        resume: matches.get_one::<String>("resume").cloned(),
     };
     command_client::execute(canvas, contract, SelectedCommand::LaneSeat { body: &body })
 }

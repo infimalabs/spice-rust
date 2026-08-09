@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 92);
+    assert_eq!(contracts().len(), 93);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 92);
+    assert_eq!(landed, 93);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
@@ -141,6 +141,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["steer"]), Landing::Landed);
     assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
     assert_eq!(landing(&["inbox"]), Landing::Landed);
+    assert_eq!(landing(&["hook"]), Landing::Landed);
     assert_eq!(landing(&["ack"]), Landing::Landed);
     assert_eq!(landing(&["consent"]), Landing::Landed);
     assert_eq!(landing(&["consent", "allow"]), Landing::Landed);
@@ -674,12 +675,20 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "task", "add", "title", "--project", "rim.cli"],
         &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
         &["spice", "lane", "add", "--life", "Drive"],
+        &["spice", "hook", "codex"],
         &[
             "spice",
             "lane",
             "add",
             "--lineage",
             "018f82d4-6f59-7d06-92e3-bce913116302",
+        ],
+        &[
+            "spice",
+            "lane",
+            "add",
+            "--resume",
+            "019fe3e7-c53f-7422-a6eb-a73a51879e40",
         ],
         &["spice", "install", "--apply=digest"],
         &["spice", "restore", "verify", "bundle"],

@@ -14,9 +14,9 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, EffortRead, LaneArrange, LaneRead, LaneSeat,
-    LineageArrange, LineageArrangement, LineageConfigure, LineageLife, SteerInbox, SteerSend,
-    TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, EffortRead, LaneAction, LaneArrange, LaneRead, LaneSeat,
+    LaneState, LineageArrange, LineageArrangement, LineageConfigure, LineageLife, SteerInbox,
+    SteerSend, TaskAnswer, TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
@@ -398,7 +398,10 @@ enum ClientAction {
 #[derive(Clone)]
 enum PendingKind {
     Board,
-    Lanes,
+    Lanes {
+        /// Wake submissions this read was issued after and may therefore bind.
+        wakes: Vec<CanonicalUuid>,
+    },
     Inbox {
         /// Accepted keys a successful answer can reconstruct as settled.
         covered: BTreeMap<CanonicalUuid, String>,
@@ -407,6 +410,10 @@ enum PendingKind {
     Policy,
     Effort,
     LaneSeat,
+    WakeSubmission {
+        lane: CanonicalUuid,
+        submission: CanonicalUuid,
+    },
     LineageConfigure(CanonicalUuid),
     /// A team arrangement in flight.
     ///

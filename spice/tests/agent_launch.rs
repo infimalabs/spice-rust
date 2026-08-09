@@ -80,7 +80,7 @@ auto_compact_window_tokens = 123456
             .trailer_rejection(CLAUDE_ATTRIBUTION_TRAILER),
         Some(gate::TrailerRejection::Disallowed)
     );
-    assert_eq!(launch.hook.command, "'/opt/spice'\\''s bin' inbox");
+    assert_eq!(launch.hook.command, "'/opt/spice'\\''s bin' hook claude");
     assert_eq!(launch.mcp.name, "spice");
     assert_eq!(launch.mcp.command, "/opt/spice's bin");
     assert_eq!(launch.mcp.args, ["mcp"]);
@@ -164,6 +164,10 @@ fast_mode = true
         .expect("Codex plan composes");
     let rendered = arguments(&plan.record().expect("Codex plan renders"));
 
+    assert_eq!(
+        plan.launch().hook.command,
+        "'/opt/spice'\\''s bin' hook codex"
+    );
     assert_eq!(plan.launch().personality.as_deref(), Some("pragmatic"));
     assert_eq!(plan.launch().fast_mode, Some(true));
     assert!(

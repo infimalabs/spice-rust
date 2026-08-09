@@ -41,7 +41,7 @@ pub(super) use session::{
 use super::shutdown::{current_residency, guard_residency};
 use super::{
     CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome,
-    typed_store_fault, write,
+    typed_protocol_fault, typed_store_fault, write,
 };
 
 const OCCUPIED: &str = "occupied";
@@ -504,6 +504,14 @@ fn prepare_seat(
     runtime: &Runtime<'_>,
     request: &LaneSeat,
 ) -> Result<PreparedSeat, Outcome<CommandAnswer>> {
+    let resume = request.resume.as_ref().map_or_else(
+        || Ok(vendor::Resume::Fresh),
+        |session| {
+            vendor::SessionId::new(session.clone())
+                .map(vendor::Resume::Session)
+                .map_err(|error| typed_protocol_fault("lane::resume-invalid", &error.to_string()))
+        },
+    )?;
     let capability = new_uuid();
     let actor = Actor::Lane(request.lane);
     runtime
@@ -527,7 +535,7 @@ fn prepare_seat(
             epoch,
             lane: request.lane,
             occupant,
-            resume: vendor::Resume::Fresh,
+            resume,
         },
         Arc::clone(&runtime.capture),
     )
