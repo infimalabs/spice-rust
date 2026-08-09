@@ -1,5 +1,6 @@
 //! Production execution of the compiled battery from one selected tree.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use wire::Digest;
@@ -23,8 +24,9 @@ use crate::metrics::{
 };
 use crate::state::{BoundDecision, LatchEntry};
 use crate::toolchain::{
-    RimCapture, TASTE_EXTENSIONS, TOOLCHAIN_ARMS, ToolchainSource, acquire_toolchain,
-    acquire_toolchain_arm, environment_baseline_suffixes, measure_toolchain, measure_toolchain_arm,
+    RimCapture, TASTE_EXTENSIONS, TOOLCHAIN_ARMS, ToolchainSource, VerifierCompilerContract,
+    VerifierCompilerEvidence, acquire_toolchain, acquire_toolchain_arm, acquire_verifier_tools,
+    environment_baseline_suffixes, measure_toolchain, measure_toolchain_arm,
 };
 use crate::tree::{SelectedTree, Selector};
 
@@ -92,8 +94,9 @@ pub struct RepositoryExecutor<'trace> {
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
     families: [Option<FamilyExecution>; FAMILY_COUNT],
+    verifier_evidence: Vec<VerifierCompilerEvidence>,
     selected: Option<GateId>,
-    trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
+    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 }
 
 impl<'trace> RepositoryExecutor<'trace> {
@@ -138,7 +141,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         hygiene: HygieneConfiguration,
         latches: &[LatchEntry],
         selected: Option<GateId>,
-        mut trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
+        mut trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
         let tree = selector.materialize(&repository).map_err(|error| {
@@ -231,6 +234,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             hygiene,
             context: None,
             families: std::array::from_fn(|_| None),
+            verifier_evidence: Vec::new(),
             selected,
             trace,
         })
@@ -246,6 +250,50 @@ impl<'trace> RepositoryExecutor<'trace> {
     #[must_use]
     pub fn root(&self) -> &Path {
         self.tree.root()
+    }
+
+    /// Capture the exact compiler/tool contract the full verifier may execute.
+    pub(super) fn verifier_compiler_contract(
+        &self,
+        gate_id: GateId,
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<VerifierCompilerContract, BatteryError> {
+        if self.selected.is_some() {
+            return Err(BatteryError::new(
+                "selected-arm captures cannot mint full-verifier evidence contracts",
+            ));
+        }
+        let source = ToolchainSource::capture(&self.tree, self.rim.clone());
+        let tools =
+            acquire_verifier_tools(&source, &self.contract, gate_id).map_err(BatteryError::new)?;
+        VerifierCompilerContract::new(
+            gate_id,
+            self.source.clone(),
+            self.tree.repository().to_path_buf(),
+            self.tree.root().to_path_buf(),
+            tools,
+            environment,
+        )
+        .map_err(BatteryError::new)
+    }
+
+    /// Offer opaque verifier evidence before any battery arm executes.
+    pub(super) fn set_verifier_evidence(
+        &mut self,
+        evidence: &[VerifierCompilerEvidence],
+    ) -> Result<(), BatteryError> {
+        if self.selected.is_some() {
+            return Err(BatteryError::new(
+                "selected-arm captures cannot consume full-verifier evidence",
+            ));
+        }
+        if self.context.is_some() || self.families.iter().any(Option::is_some) {
+            return Err(BatteryError::new(
+                "full-verifier evidence must be supplied before battery execution",
+            ));
+        }
+        self.verifier_evidence = evidence.to_vec();
+        Ok(())
     }
 
     /// The tracked contract this capture loaded from the selected tree.
@@ -331,8 +379,13 @@ impl<'trace> RepositoryExecutor<'trace> {
             |gate_id| vec![gate_id],
         );
         self.record_analyses(ArmFamily::Toolchain, analyses);
-        let source =
-            ToolchainSource::capture_with_baselines(&self.tree, self.rim.clone(), &self.baselines);
+        let source = ToolchainSource::capture_with_baselines(
+            &self.tree,
+            self.rim.clone(),
+            &self.baselines,
+            &self.source,
+            &self.verifier_evidence,
+        );
         if let Some(gate_id) = self.selected {
             let observation = acquire_toolchain_arm(&source, &self.contract, gate_id)
                 .map_err(|error| error.to_string())?;
@@ -514,7 +567,7 @@ fn core_arm(
 }
 
 fn record_capture_analyses(
-    trace: &mut Option<&mut dyn FnMut(RepositoryExecutionEvent)>,
+    trace: &mut Option<&mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     family: ArmFamily,
     gate_ids: impl IntoIterator<Item = GateId>,
 ) {

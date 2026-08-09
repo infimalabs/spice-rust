@@ -42,8 +42,9 @@ use wire::{Digest, Domain};
 
 use super::analyze::{self, Analysis};
 use super::{
-    ArmObservation, ArmOutcome, ProbeFailure, TOOLCHAIN_ARMS, ToolEvidence, ToolRequirement,
-    ToolchainDeclaration, ToolchainError, contracted_version,
+    ArmObservation, ArmOutcome, ArmTiming, ProbeFailure, TOOLCHAIN_ARMS, ToolEvidence,
+    ToolRequirement, ToolchainDeclaration, ToolchainError, VerifierCompilerEvidence,
+    contracted_version,
 };
 use crate::GateId;
 use crate::input::Contract;
@@ -163,6 +164,8 @@ pub struct ToolchainSource<'a> {
     repository: &'a Path,
     rim: RimCapture,
     baselines: Option<&'a BaselineCapture>,
+    identity: Option<&'a Digest>,
+    verifier_evidence: &'a [VerifierCompilerEvidence],
 }
 
 impl<'a> ToolchainSource<'a> {
@@ -178,6 +181,8 @@ impl<'a> ToolchainSource<'a> {
             repository: tree.repository(),
             rim,
             baselines: None,
+            identity: None,
+            verifier_evidence: &[],
         }
     }
 
@@ -187,12 +192,16 @@ impl<'a> ToolchainSource<'a> {
         tree: &'a SelectedTree,
         rim: RimCapture,
         baselines: &'a BaselineCapture,
+        identity: &'a Digest,
+        verifier_evidence: &'a [VerifierCompilerEvidence],
     ) -> Self {
         Self {
             root: tree.root(),
             repository: tree.repository(),
             rim,
             baselines: Some(baselines),
+            identity: Some(identity),
+            verifier_evidence,
         }
     }
 
@@ -212,6 +221,16 @@ impl<'a> ToolchainSource<'a> {
     #[must_use]
     pub const fn rim(&self) -> &RimCapture {
         &self.rim
+    }
+
+    /// Selected-tree identity reusable verifier evidence must name.
+    pub(super) const fn identity(&self) -> Option<&Digest> {
+        self.identity
+    }
+
+    /// Opaque successful verifier evidence offered to this battery run.
+    pub(super) const fn verifier_evidence(&self) -> &[VerifierCompilerEvidence] {
+        self.verifier_evidence
     }
 
     /// Selected-tree-relative paths the rim captured as changed.
@@ -273,6 +292,37 @@ pub(crate) fn acquire_toolchain_arm(
         contract.bounds(),
         contract.environment_names(),
     ))
+}
+
+/// Probe and validate the exact declared tools a reusable verifier contract
+/// must bind, without running the arm's analysis.
+pub(crate) fn acquire_verifier_tools(
+    source: &ToolchainSource<'_>,
+    contract: &Contract,
+    gate_id: GateId,
+) -> Result<Vec<ToolEvidence>, String> {
+    let declaration = TOOLCHAIN_ARMS
+        .into_iter()
+        .find(|declaration| declaration.id == gate_id)
+        .ok_or_else(|| format!("{gate_id} is not a toolchain arm"))?;
+    if !matches!(gate_id, GateId::RustTypecheck | GateId::CanvasWebTypecheck) {
+        return Err(format!(
+            "{} has no reusable verifier compiler contract",
+            gate_id.as_str()
+        ));
+    }
+    if let Some(analysis) = analyze::before_tools(declaration, source.root()) {
+        return Err(analysis.reason);
+    }
+    let tools = declaration
+        .tools
+        .iter()
+        .map(|requirement| probe(requirement, source, contract.bounds()))
+        .collect::<Vec<_>>();
+    if let Some(analysis) = refusal(declaration, &tools) {
+        return Err(analysis.reason);
+    }
+    Ok(tools)
 }
 
 fn observe(
@@ -347,6 +397,9 @@ fn examine(
     if let Some(refusal) = refusal(declaration, tools) {
         return refusal;
     }
+    if let Some(reused) = reusable_verifier_analysis(declaration, source, bounds, tools) {
+        return reused;
+    }
     let Some(owed) = owed_analyzer(declaration.id) else {
         return match declaration.id {
             GateId::Formatters => analyze::formatters(
@@ -403,6 +456,44 @@ fn examine(
             declaration.id.as_str()
         ),
     )
+}
+
+/// Admit one opaque full-verifier proof or leave the ordinary arm untouched.
+///
+/// Rejection is deliberately a fall-through, not a refusal: stale, forged,
+/// partial, or failed evidence has no authority, so the standalone analysis
+/// executes exactly as it did before evidence was offered.
+fn reusable_verifier_analysis(
+    declaration: ToolchainDeclaration,
+    source: &ToolchainSource<'_>,
+    bounds: &Bounds,
+    tools: &[ToolEvidence],
+) -> Option<Analysis> {
+    let identity = source.identity()?;
+    let evidence = source
+        .verifier_evidence()
+        .iter()
+        .find(|evidence| evidence.admits(declaration.id, identity, tools))?;
+    let analysis = Analysis::terminal(
+        ArmOutcome::Passed,
+        format!(
+            "{} reused exact successful full-verifier compiler evidence",
+            declaration.id.as_str()
+        ),
+    );
+    if declaration.id != GateId::RustTypecheck {
+        return Some(analysis);
+    }
+    let deadlines = bounds.deadlines();
+    let observation = deadlines
+        .runtime()
+        .saturating_add(deadlines.output_drain())
+        .saturating_add(deadlines.reap())
+        .saturating_add(bounds.grace());
+    Some(analysis.timed(ArmTiming {
+        elapsed_ms: evidence.elapsed_ms(),
+        observation_bound_ms: u64::try_from(observation.as_millis()).unwrap_or(u64::MAX),
+    }))
 }
 
 /// The refusal this arm's probed evidence earns before any analysis runs.

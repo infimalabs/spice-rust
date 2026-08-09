@@ -19,6 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const worker = join(here, "canvas.spec.mjs");
 const COVERAGE_FLAG = "--spice-coverage-receipt";
+const PREBUILT_APP_FLAG = "--spice-prebuilt-app";
 const COVERAGE_RECEIPT = "BROWSER-1kKSWhZk browser coverage complete\n";
 const SHARD_TIMEOUT_MS = 120_000;
 const COORDINATOR_TIMEOUT_MS = 180_000;
@@ -36,6 +37,15 @@ function coveragePath(arguments_) {
   assert.equal(arguments_.length, 2, `expected ${COVERAGE_FLAG} FILE or no arguments`);
   assert.ok(arguments_[1] && !arguments_[1].startsWith("--"), "coverage receipt names a file");
   return arguments_[1];
+}
+
+function invocation(arguments_) {
+  const prebuiltFlags = arguments_.filter((argument) => argument === PREBUILT_APP_FLAG);
+  assert.ok(prebuiltFlags.length <= 1, `${PREBUILT_APP_FLAG} is singular`);
+  return {
+    prebuiltApp: prebuiltFlags.length === 1,
+    receipt: coveragePath(arguments_.filter((argument) => argument !== PREBUILT_APP_FLAG)),
+  };
 }
 
 function alive(pid) {
@@ -183,9 +193,9 @@ async function runShard(shard) {
 async function coordinate() {
   assertShardInventory();
   assertShardMutationGuard();
-  const receipt = coveragePath(process.argv.slice(2));
+  const { prebuiltApp, receipt } = invocation(process.argv.slice(2));
   const started = Date.now();
-  await buildResident();
+  await buildResident({ app: !prebuiltApp });
   const buildElapsedMs = Date.now() - started;
   assert.ok(buildElapsedMs < COORDINATOR_TIMEOUT_MS, "Canvas build leaves time for its shards");
   let peak = 0;
