@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use dialect::Priority;
-use wire::{ClaimDisposition, TaskHandle};
+use wire::{ClaimDisposition, TaskStamp};
 
 use crate::task::Entry;
 
@@ -18,14 +18,14 @@ impl Urgency {
     /// and claim heads. No priority tag contributes zero; if malformed input
     /// carries several priority tags, the strongest declared priority wins.
     #[must_use]
-    pub fn from_heads(entry: &Entry, completed: &BTreeSet<TaskHandle>) -> Self {
+    pub fn from_heads(entry: &Entry, completed: &BTreeSet<TaskStamp>) -> Self {
         Self::from_heads_with_effective_priority(entry, completed, declared_priority(entry))
     }
 
     /// Score one entry after allocation has resolved graph-inherited priority.
     pub(crate) fn from_heads_with_effective_priority(
         entry: &Entry,
-        completed: &BTreeSet<TaskHandle>,
+        completed: &BTreeSet<TaskStamp>,
         effective_priority: i64,
     ) -> Self {
         let workflow = entry.workflow();

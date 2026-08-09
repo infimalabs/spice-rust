@@ -622,8 +622,7 @@ fn seed_authority(path: &Path) {
             None,
             FactKind::TaskAdded,
             json!({
-                "task": "JOURNAL-a1",
-                "uuid": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+                "task": "1kKRRsDP",
                 "title": "Journal fixture",
                 "project": "journal",
                 "tags": [],
@@ -637,7 +636,7 @@ fn seed_authority(path: &Path) {
             2,
             Some(1),
             FactKind::TaskPhased,
-            json!({"task": "JOURNAL-a1", "phase": "review"}),
+            json!({"task": "1kKRRsDP", "phase": "review"}),
         ),
     ] {
         let bytes = wire::encode(&envelope).expect("encode fact fixture");
@@ -666,8 +665,8 @@ fn seed_authority(path: &Path) {
     connection
         .execute_batch(
             "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
-                (1, 'task:JOURNAL-a1', NULL, 1, 0),
-                (2, 'task:JOURNAL-a1', 1, 1, 1);
+                (1, 'task:1kKRRsDP', NULL, 1, 0),
+                (2, 'task:1kKRRsDP', 1, 1, 1);
              UPDATE cursor_head SET seq = 2, wake = 1 WHERE singleton = 1;",
         )
         .expect("insert index and cursor fixture");
@@ -680,7 +679,7 @@ fn append_note_facts(path: &Path, through: u64) {
             seq,
             Some(seq - 1),
             FactKind::TaskNoted,
-            json!({"task": "JOURNAL-a1", "note": format!("note {seq}")}),
+            json!({"task": "1kKRRsDP", "note": format!("note {seq}")}),
         );
         let bytes = wire::encode(&envelope).expect("encode bounded-report fact");
         connection
@@ -739,7 +738,7 @@ fn fact(
         seq: Seq::new(seq).expect("nonzero fixture seq"),
         at: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         actor: Actor::Spice,
-        origin: "task:JOURNAL-a1".parse::<Origin>().expect("fixture origin"),
+        origin: "task:1kKRRsDP".parse::<Origin>().expect("fixture origin"),
         cause: cause.map(|cause| Seq::new(cause).expect("nonzero fixture cause")),
         fact,
     }

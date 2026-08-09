@@ -374,7 +374,7 @@ pub(super) fn render_flow(
                         id="note-task"
                         list="note-tasks"
                         value={selected}
-                        placeholder="SPICE-aBcD"
+                        placeholder="SPICE-1kKRRsDP"
                         oninput={state_from_input(note_task.clone())}
                     />
                     <datalist id="note-tasks">

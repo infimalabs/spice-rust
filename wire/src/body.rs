@@ -14,7 +14,7 @@ use crate::Name;
 use crate::envelope::{Actor, Seq};
 use crate::head::TranscriptSourceHead;
 use crate::ident::{CanonicalUuid, Digest, Instant};
-use crate::witness::{Phase, TaskHandle};
+use crate::witness::{Phase, TaskStamp};
 
 /// How a review closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -53,10 +53,8 @@ pub enum Severity {
 /// A task statement and initial workflow head were created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAdded {
-    /// Handle the statement was minted under.
-    pub task: TaskHandle,
-    /// Durable identity behind the handle.
-    pub uuid: CanonicalUuid,
+    /// Sole task identity minted from the statement's inception instant.
+    pub task: TaskStamp,
     /// Statement title.
     pub title: String,
     /// Longer authored context.
@@ -74,7 +72,7 @@ pub struct TaskAdded {
     /// Free tags carried on the statement.
     pub tags: Vec<String>,
     /// Tasks this one waits behind.
-    pub depends: Vec<TaskHandle>,
+    pub depends: Vec<TaskStamp>,
     /// Ordered phases the workflow head will walk.
     pub flow: Vec<Phase>,
     /// Phase the initial workflow head sits in.
@@ -87,7 +85,7 @@ pub struct TaskAdded {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskPhased {
     /// Advanced task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Phase the workflow head advanced into.
     pub phase: Phase,
 }
@@ -195,7 +193,7 @@ impl SourceBoundary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDone {
     /// Completed task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Evidence the completion rests on.
     pub validation: String,
     /// Repository history published before the workflow advanced.
@@ -217,7 +215,7 @@ pub struct TaskDone {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskReviewed {
     /// Reviewed task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Principal that reviewed.
     pub reviewer: Actor,
     /// How the review closed.
@@ -248,7 +246,7 @@ pub struct TaskReviewed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAssigned {
     /// Assigned task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Principal seated as reviewer.
     pub reviewer: Actor,
     /// Phase the assignment covers.
@@ -259,7 +257,7 @@ pub struct TaskAssigned {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskNoted {
     /// Annotated task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Note text.
     pub note: String,
 }
@@ -268,7 +266,7 @@ pub struct TaskNoted {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDeferred {
     /// Deferred task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Instant the deferral becomes wakeable.
     pub until: Instant,
 }
@@ -277,14 +275,14 @@ pub struct TaskDeferred {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskWoken {
     /// Woken task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
 }
 
 /// An unsettled task statement changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEdited {
     /// Edited task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Statement revision the edit produced.
     pub revision: u32,
 }
@@ -299,7 +297,7 @@ pub struct TaskEdited {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDeleted {
     /// Withdrawn task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Operator's stated reason for the withdrawal.
     pub reason: String,
     /// Actor whose live claim the withdrawal overrode, when it overrode one.
@@ -315,7 +313,7 @@ pub struct TaskDeleted {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimWon {
     /// Possessed task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Winning actor.
     pub actor: Actor,
     /// Lane the claim is bound to.
@@ -345,7 +343,7 @@ pub struct ClaimWon {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimCarried {
     /// Carried task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Lane the possession stays bound to.
     pub lane: CanonicalUuid,
     /// Successor occupant.
@@ -370,7 +368,7 @@ pub struct ClaimCarried {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimFreed {
     /// Released task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Actor that held the possession.
     pub actor: Actor,
 }
@@ -379,7 +377,7 @@ pub struct ClaimFreed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimLapsed {
     /// Expired task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Occupant that lost possession.
     pub occupant: CanonicalUuid,
     /// Lease deadline that passed.
@@ -390,7 +388,7 @@ pub struct ClaimLapsed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimRenewed {
     /// Renewed task.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Resident epoch permitted to advance the lease.
     pub epoch: CanonicalUuid,
     /// Extended expiry.

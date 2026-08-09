@@ -31,7 +31,7 @@ use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
 use crate::head::{ResidentState, TapeLocus, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant};
-use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
+use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle, TaskStamp};
 
 mod board;
 pub use board::{
@@ -356,7 +356,7 @@ pub enum EffortAvailability {
 #[serde(deny_unknown_fields)]
 pub struct EffortPhaseAnswer {
     /// Task this phase belongs to.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Workflow phase name at the opening claim.
     pub phase: Phase,
     /// Zero-based workflow attempt index advanced by each phase transition.
@@ -470,15 +470,15 @@ pub struct TaskReview {
     pub followup: Vec<TaskHandle>,
 }
 
-/// One follow-up statement a review creates, paired with its minted handle.
+/// One follow-up statement a review creates, paired with its inception stamp.
 ///
-/// The caller mints the handle and witnesses its absence, the way `task add`
+/// The caller mints the stamp and witnesses its absence, the way `task add`
 /// does, so the whole batch is decided before the review writes anything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewFollowup {
-    /// Handle minted for the statement.
-    pub task: TaskHandle,
+    /// Sole identity minted for the statement.
+    pub task: TaskStamp,
     /// The statement to create.
     pub add: TaskAdd,
 }

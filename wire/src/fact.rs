@@ -322,7 +322,7 @@ impl fmt::Display for FactKind {
 /// let fact = wire::Fact {
 ///     kind: wire::FactKind::TaskDone,
 ///     body: wire::body::TaskWoken {
-///         task: "WIRE-aBcD".parse().expect("task handle"),
+///         task: "1kKRRsDP".parse().expect("task stamp"),
 ///     },
 /// };
 /// ```

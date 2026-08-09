@@ -32,7 +32,9 @@ fn edited_status(outcome: Outcome<CommandAnswer>) -> String {
 
 /// Facts recording a correction of this task, in journal order.
 fn edit_facts(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, u64)> {
-    let handle = task.to_string();
+    let incepted = task
+        .incepted()
+        .expect("fixture handle carries an inception stamp");
     bus.fact_snapshot()
         .expect("edit facts read")
         .facts()
@@ -44,7 +46,7 @@ fn edit_facts(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, u64)> {
                     .body()
                     .get("task")
                     .and_then(serde_json::Value::as_str)
-                    == Some(handle.as_str())
+                    == Some(incepted.as_str())
         })
         .map(|fact| {
             (
@@ -57,6 +59,54 @@ fn edit_facts(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, u64)> {
             )
         })
         .collect()
+}
+
+/// Shape CASE 146 / INVARIANTS ID-01: re-homing changes only the derived name.
+#[test]
+fn rehoming_rerenders_the_handle_without_migrating_identity() {
+    let (_root, bus, epoch, _seats) = fixture("task-edit-rehome-identity", 0);
+    let original = add_project(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "ALPHA-1kKfYW09",
+        "Move between projects",
+        "board.alpha",
+        Some("todo"),
+    );
+    let incepted = original
+        .incepted()
+        .expect("filed handle carries its sole identity");
+
+    let expected = TaskHandle::for_project("board.beta", &incepted);
+    let CommandAnswer::Task(edited) = assert_committed(correct(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &TaskEdit {
+            task: original.clone(),
+            title: None,
+            description: None,
+            acceptance: Vec::new(),
+            priority: None,
+            project: Some("board.beta".to_owned()),
+        },
+    )) else {
+        panic!("task edit answers with a task status");
+    };
+    assert_eq!(edited.status, "edited");
+    assert_eq!(edited.task, expected);
+
+    let answer = board(&bus, epoch, Actor::Operator);
+    let moved = at(&answer, &expected);
+    assert_eq!(moved.statement.body.incepted, incepted);
+    assert_eq!(moved.statement.body.handle, expected);
+    assert!(task_heads(&answer, &original).is_err());
+    let stored = statement_head(&bus, &expected);
+    let stored = serde_json::to_value(stored.body).expect("stored head JSON");
+    let stored = stored.as_object().expect("stored head object");
+    assert!(!stored.contains_key("handle"));
+    assert!(!stored.contains_key("uuid"));
 }
 
 /// A filed statement is correctable, and the correction is durable and
@@ -145,7 +195,7 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
     );
     assert_eq!(after.body.project, before.body.project);
     assert_eq!(
-        after.body.uuid, before.body.uuid,
+        after.body.incepted, before.body.incepted,
         "a correction edits the task rather than replacing it",
     );
     assert!(
@@ -322,7 +372,7 @@ pub(super) fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Optio
         .expect("allocation board has one lineage subscription");
     board::select(&entries, actor, subscription, answer.allocation_band).map(|selection| {
         (
-            selection.entry().statement().handle.to_string(),
+            selection.entry().handle().to_string(),
             selection.urgency().value(),
         )
     })
@@ -338,7 +388,10 @@ fn statement_head(bus: &Bus, task: &TaskHandle) -> Positioned<TaskHead> {
     let heads = snapshot
         .tasks()
         .iter()
-        .find(|heads| heads.statement().body().handle == *task)
+        .find(|heads| {
+            task.incepted()
+                .is_ok_and(|stamp| heads.statement().body().incepted == stamp)
+        })
         .expect("the journal carries this task");
     positioned(heads.statement())
 }
@@ -678,8 +731,14 @@ fn a_corrected_project_moves_the_row_out_of_the_editors_own_subscription() {
     );
 
     let moved = board(&bus, epoch, lane.clone());
+    let moved_handle = TaskHandle::for_project(
+        "rim.elsewhere",
+        &task
+            .incepted()
+            .expect("fixture handle carries an inception stamp"),
+    );
     assert_eq!(
-        at(&moved, &task).statement.body.project,
+        at(&moved, &moved_handle).statement.body.project,
         "rim.elsewhere",
         "the move is a correction, not a refusal",
     );
@@ -707,7 +766,7 @@ fn a_corrected_project_moves_the_row_out_of_the_editors_own_subscription() {
         },
     );
     assert!(
-        listed.contains(&format!("{task} [todo] rim.elsewhere")),
+        listed.contains(&format!("{moved_handle} [todo] rim.elsewhere")),
         "the row the editor can no longer be handed stays readable to it: {listed}",
     );
 }
@@ -779,5 +838,5 @@ fn a_priority_or_project_correction_records_its_revision_and_editor() {
         corrected.body.title, filed.body.title,
         "a widened correction carries the prose it did not name forward",
     );
-    assert_eq!(corrected.body.uuid, filed.body.uuid);
+    assert_eq!(corrected.body.incepted, filed.body.incepted);
 }

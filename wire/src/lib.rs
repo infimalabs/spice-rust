@@ -90,8 +90,8 @@ pub use stream::{
     StreamFrame, StreamRequest, TrustView, ViewSubject,
 };
 pub use witness::{
-    Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError, Witness,
-    WitnessKind,
+    Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,
+    TaskStamp, TaskStampError, TaskStampMintError, Witness, WitnessKind,
 };
 
 /// Decode wire bytes into a DTO.

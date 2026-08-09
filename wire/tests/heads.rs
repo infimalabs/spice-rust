@@ -8,26 +8,24 @@ use wire::{
 };
 
 const TASK: &str = r#"{
-  "handle": "WIRE-aBcD",
-  "uuid": "018f82d4-6f59-7d06-92e3-bce913116301",
+  "incepted": "1kKRRsDP",
   "title": "Bind authority heads",
   "description": "Keep complete task context on the current statement",
   "acceptance": ["Every authored field survives the head round trip"],
   "project": "wire",
   "tags": ["genesis", "wire"],
-  "dependencies": ["WIRE-ZyX9"],
-  "provenance": "task:WIRE-ZyX9",
+  "dependencies": ["1kKRRsDQ"],
+  "provenance": "task:1kKRRsDQ",
   "revision": 41
 }"#;
 
 const TASK_WITHOUT_AUTHORED_CONTEXT: &str = r#"{
-  "handle": "WIRE-aBcD",
-  "uuid": "018f82d4-6f59-7d06-92e3-bce913116301",
+  "incepted": "1kKRRsDP",
   "title": "Bind authority heads",
   "project": "wire",
   "tags": ["genesis", "wire"],
-  "dependencies": ["WIRE-ZyX9"],
-  "provenance": "task:WIRE-ZyX9",
+  "dependencies": ["1kKRRsDQ"],
+  "provenance": "task:1kKRRsDQ",
   "revision": 41
 }"#;
 
@@ -69,7 +67,7 @@ const COMMAND: &str = r#"{
   "id": "018f82d4-6f59-7d06-92e3-bce913116304",
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "kind": "task::note",
-  "expected": [{ "kind": "existence", "task": "WIRE-aBcD" }],
+  "expected": [{ "kind": "existence", "task": "1kKRRsDP" }],
   "body": {}
 }"#;
 
@@ -163,13 +161,12 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
             "acceptance",
             "dependencies",
             "description",
-            "handle",
+            "incepted",
             "project",
             "provenance",
             "revision",
             "tags",
             "title",
-            "uuid",
         ],
     );
     assert_fields::<WorkflowHead>(

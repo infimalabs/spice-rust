@@ -14,7 +14,7 @@ pub(super) fn claim_free(
     let Some(entry) = snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == task.task)
+        .find(|entry| entry.handle() == &task.task)
     else {
         return refusal(
             "task::unknown",
@@ -40,7 +40,7 @@ pub(super) fn claim_free(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&task.task) {
+    let origin = match task_origin(entry.incepted()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -48,7 +48,7 @@ pub(super) fn claim_free(
     guard(&mut write, command.expected().to_vec());
     let freed = match write.fact(
         body::ClaimFreed {
-            task: task.task.clone(),
+            task: entry.incepted().clone(),
             actor: command.actor().clone(),
         },
         FactCause::Root,
@@ -58,7 +58,7 @@ pub(super) fn claim_free(
     };
     let mut next = claim.clone();
     next.disposition = ClaimDisposition::Freed;
-    write.claim_head(task.task.clone(), freed, move |fact| ClaimHead {
+    write.claim_head(entry.incepted().clone(), freed, move |fact| ClaimHead {
         fact,
         ..next
     });
@@ -97,7 +97,7 @@ pub(super) fn claim_reclaim(
         Ok(window) => window,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&renew.task) {
+    let origin = match task_origin(entry.incepted()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -105,7 +105,7 @@ pub(super) fn claim_reclaim(
     guard(&mut write, command.expected().to_vec());
     let renewed = match write.fact(
         body::ClaimRenewed {
-            task: renew.task.clone(),
+            task: entry.incepted().clone(),
             epoch: command.epoch(),
             until,
             maximum: lease.maximum,
@@ -118,7 +118,7 @@ pub(super) fn claim_reclaim(
     let mut next = lease.clone();
     next.renewal = at;
     next.expiry = until;
-    write.lease_head(renew.task.clone(), renewed, move |_| next);
+    write.lease_head(entry.incepted().clone(), renewed, move |_| next);
     let answer = wire::intent::ClaimAnswer {
         task: renew.task.clone(),
         holder: command.actor().clone(),
@@ -142,7 +142,7 @@ fn reclaim_entry<'a>(
     snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == renew.task)
+        .find(|entry| entry.handle() == &renew.task)
         .ok_or_else(|| {
             refusal(
                 "task::unknown",
@@ -267,7 +267,7 @@ pub(super) fn task_done(
             return store_fault("task::boundary-unreadable", &error.to_string());
         }
     };
-    let origin = match task_origin(&done.task) {
+    let origin = match task_origin(entry.incepted()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -299,7 +299,7 @@ fn done_entry<'a>(
     snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == done.task)
+        .find(|entry| entry.handle() == &done.task)
         .ok_or_else(|| {
             refusal(
                 "task::unknown",
@@ -369,7 +369,7 @@ fn append_done(
     let completed = write
         .fact(
             body::TaskDone {
-                task: done.task.clone(),
+                task: entry.incepted().clone(),
                 validation: done.validation.clone(),
                 git,
                 source,
@@ -381,7 +381,7 @@ fn append_done(
         board::TransitionKind::Advance { to, .. } => write
             .fact(
                 body::TaskPhased {
-                    task: done.task.clone(),
+                    task: entry.incepted().clone(),
                     phase: to.clone(),
                 },
                 FactCause::Pending(completed),
@@ -390,13 +390,13 @@ fn append_done(
         board::TransitionKind::Complete { .. } => completed,
     };
     let workflow = transition.next().clone();
-    write.workflow_head(done.task.clone(), workflow_fact, move |_| workflow);
+    write.workflow_head(entry.incepted().clone(), workflow_fact, move |_| workflow);
     let mut claim = entry
         .claim()
         .expect("Active proof requires a claim head")
         .clone();
     claim.disposition = ClaimDisposition::Freed;
-    write.claim_head(done.task.clone(), completed, move |fact| ClaimHead {
+    write.claim_head(entry.incepted().clone(), completed, move |fact| ClaimHead {
         fact,
         ..claim
     });
@@ -443,7 +443,7 @@ fn admit_review<'a>(
     let Some(entry) = snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == review.task)
+        .find(|entry| entry.handle() == &review.task)
     else {
         return Err(refusal(
             "task::unknown",
@@ -528,7 +528,7 @@ pub(super) fn task_review(
         Ok(decided) => decided,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&review.task) {
+    let origin = match task_origin(entry.incepted()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -540,7 +540,7 @@ pub(super) fn task_review(
     guard(&mut write, command.expected().to_vec());
     let reviewed = match write.fact(
         body::TaskReviewed {
-            task: review.task.clone(),
+            task: entry.incepted().clone(),
             reviewer: command.actor().clone(),
             verdict,
             finding,
@@ -558,13 +558,13 @@ pub(super) fn task_review(
         body::Verdict::Finding => "finding",
     }
     .to_owned();
-    write.workflow_head(review.task.clone(), reviewed, move |_| workflow);
+    write.workflow_head(entry.incepted().clone(), reviewed, move |_| workflow);
     let mut claim = entry
         .claim()
         .expect("Active proof requires a claim head")
         .clone();
     claim.disposition = ClaimDisposition::Freed;
-    write.claim_head(review.task.clone(), reviewed, move |fact| ClaimHead {
+    write.claim_head(entry.incepted().clone(), reviewed, move |fact| ClaimHead {
         fact,
         ..claim
     });
@@ -597,10 +597,11 @@ struct DocPlan {
 
 struct DocTaskSpec {
     task: TaskHandle,
+    incepted: wire::TaskStamp,
     title: String,
     project: String,
     tags: Vec<String>,
-    dependencies: Vec<TaskHandle>,
+    dependencies: Vec<wire::TaskStamp>,
     flow: Vec<wire::Phase>,
     initial: wire::Phase,
 }
@@ -657,7 +658,11 @@ fn validate_doc_plan(
             "author a project admitted by the captured task metadata",
         )
     })?;
-    let touched = document_handles(preview.document());
+    let touched = document_handles(
+        preview.document(),
+        &snapshot.answer,
+        jiff::Timestamp::now().as_millisecond(),
+    );
     if touched.is_empty() {
         return Err(refusal(
             "doc::empty",
@@ -741,7 +746,11 @@ fn commit_doc_plan(
     apply: &DocApply,
     plan: &DocPlan,
 ) -> Outcome<CommandAnswer> {
-    let origin = match task_origin(&plan.touched[0]) {
+    let origin = match plan.touched[0]
+        .incepted()
+        .map_err(|error| protocol_fault("doc::task-identity-invalid", &error.to_string()))
+        .and_then(|incepted| task_origin(&incepted))
+    {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -787,7 +796,12 @@ fn doc_task_spec(plan: &DocPlan, node: &dialect::Node) -> DocTaskSpec {
         .edges
         .iter()
         .filter(|edge| edge.source == node.id)
-        .filter_map(|edge| plan.handles.get(&edge.target).cloned())
+        .filter_map(|edge| plan.handles.get(&edge.target))
+        .map(|handle| {
+            handle
+                .incepted()
+                .expect("document handles carry canonical task stamps")
+        })
         .collect();
     let project = plan
         .preview
@@ -805,10 +819,14 @@ fn doc_task_spec(plan: &DocPlan, node: &dialect::Node) -> DocTaskSpec {
     };
     let initial = flow[0].clone();
     let mut tags = node.tags.clone();
+    tags.push(document_slug_tag(&node.slug));
     if let Some(priority) = node.priority {
         tags.push(format!("priority:{priority}"));
     }
     DocTaskSpec {
+        incepted: task
+            .incepted()
+            .expect("document handles carry canonical task stamps"),
         task,
         title: node.title.clone(),
         project,
@@ -831,7 +849,7 @@ fn write_doc_task(
         .snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == spec.task);
+        .find(|entry| entry.handle() == &spec.task);
     match existing {
         Some(entry) => edit_doc_task(write, entry, spec, cause),
         None => add_doc_task(write, spec, origin, cause),
@@ -857,7 +875,7 @@ fn edit_doc_task(
     let edited = write
         .fact(
             body::TaskEdited {
-                task: spec.task,
+                task: existing.incepted().clone(),
                 revision,
             },
             cause,
@@ -881,12 +899,10 @@ fn add_doc_task(
     origin: &wire::Origin,
     cause: FactCause,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
-    let identity = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
     let added = write
         .fact(
             body::TaskAdded {
-                task: spec.task.clone(),
-                uuid: identity,
+                task: spec.incepted.clone(),
                 title: spec.title.clone(),
                 description: None,
                 acceptance: Vec::new(),
@@ -900,11 +916,10 @@ fn add_doc_task(
             cause,
         )
         .map_err(|error| store_fault("doc::add-build", &error.to_string()))?;
-    let statement_task = spec.task.clone();
+    let statement_task = spec.incepted.clone();
     let statement_origin = origin.clone();
     write.task_head(added, move |position| TaskHead {
-        handle: statement_task,
-        uuid: identity,
+        incepted: statement_task,
         title: spec.title,
         description: None,
         acceptance: Vec::new(),
@@ -914,7 +929,7 @@ fn add_doc_task(
         provenance: statement_origin,
         revision: position,
     });
-    write.workflow_head(spec.task, added, move |_| WorkflowHead {
+    write.workflow_head(spec.incepted, added, move |_| WorkflowHead {
         flow: spec.flow,
         phase: spec.initial,
         status: "pending".to_owned(),

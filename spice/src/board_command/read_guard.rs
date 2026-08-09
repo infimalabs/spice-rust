@@ -35,7 +35,7 @@ pub(super) fn validated_snapshot(
         let workflow = positioned(heads.workflow());
         let claim = heads.claim().map(positioned);
         let lease = heads.lease().map(positioned);
-        let handle = statement.body.handle.clone();
+        let handle = TaskHandle::for_project(&statement.body.project, &statement.body.incepted);
         let entry = Entry::new(
             statement.body.clone(),
             workflow.body.clone(),
@@ -50,12 +50,15 @@ pub(super) fn validated_snapshot(
             )
         })?;
         let visibility = entry.project().visibility().clone();
-        let origin_thread = origin_threads.get(&handle).cloned().ok_or_else(|| {
-            protocol_fault(
-                "board::task-origin-missing",
-                &format!("task {handle} has no authoritative creation fact"),
-            )
-        })?;
+        let origin_thread = origin_threads
+            .get(&statement.body.incepted)
+            .cloned()
+            .ok_or_else(|| {
+                protocol_fault(
+                    "board::task-origin-missing",
+                    &format!("task {handle} has no authoritative creation fact"),
+                )
+            })?;
         entries.push(entry);
         tasks.push(BoardTask::from_authoritative(
             visibility,
@@ -152,7 +155,7 @@ fn route_actor_identity(identity: &str) -> Option<String> {
 fn task_origin_threads(
     facts: &[wire::Envelope<wire::AnyFact>],
     residency: &wire::ResidencyHead,
-) -> Result<std::collections::BTreeMap<wire::TaskHandle, String>, Outcome<CommandAnswer>> {
+) -> Result<std::collections::BTreeMap<wire::TaskStamp, String>, Outcome<CommandAnswer>> {
     let mut occupants = std::collections::BTreeMap::new();
     let mut sessions = std::collections::BTreeMap::new();
     let mut origins = std::collections::BTreeMap::new();
@@ -172,11 +175,11 @@ fn task_origin_threads(
             }
             wire::FactKind::TaskAdded => {
                 let task = required_fact_text(fact, "task")?
-                    .parse::<wire::TaskHandle>()
+                    .parse::<wire::TaskStamp>()
                     .map_err(|error| {
                         protocol_fault(
                             "board::task-origin-fact-invalid",
-                            &format!("task creation fact has an invalid handle: {error}"),
+                            &format!("task creation fact has an invalid inception stamp: {error}"),
                         )
                     })?;
                 let actor = match fact.actor {
@@ -317,7 +320,7 @@ pub(super) fn publish_task_boundary(
     spice::task_git::publish(
         &lane,
         spice::task_git::Metadata {
-            label: entry.statement().handle.as_str(),
+            label: entry.handle().as_str(),
             title: &entry.statement().title,
             project: &entry.statement().project,
             phase: entry.workflow().phase.as_str(),
@@ -648,7 +651,10 @@ pub(super) fn guard_allocation(
             .iter()
             .map(|task| {
                 (
-                    task.statement().body().handle.clone(),
+                    TaskHandle::for_project(
+                        &task.statement().body().project,
+                        &task.statement().body().incepted,
+                    ),
                     task.statement().position(),
                     task.workflow().position(),
                     task.claim().map(journal::JournalHead::position),
@@ -682,7 +688,7 @@ pub(super) fn guard_allocation(
             &observed.subscription,
             observed.band,
         )
-        .is_some_and(|selected| selected.entry().statement().handle == observed.winner)
+        .is_some_and(|selected| selected.entry().handle() == &observed.winner)
         {
             Ok(())
         } else {
@@ -705,7 +711,10 @@ pub(super) fn guard_capture(
             .iter()
             .map(|task| {
                 (
-                    task.statement().body().handle.clone(),
+                    TaskHandle::for_project(
+                        &task.statement().body().project,
+                        &task.statement().body().incepted,
+                    ),
                     task.statement().position(),
                     task.workflow().position(),
                     task.claim().map(journal::JournalHead::position),
@@ -898,7 +907,10 @@ fn board_barrier_from_read(read: &JournalRead<'_>) -> Result<Digest, GuardError>
         .into_iter()
         .map(|task| {
             (
-                task.statement().body().handle.clone(),
+                TaskHandle::for_project(
+                    &task.statement().body().project,
+                    &task.statement().body().incepted,
+                ),
                 task.statement().position(),
                 task.workflow().position(),
             )
@@ -909,13 +921,36 @@ fn board_barrier_from_read(read: &JournalRead<'_>) -> Result<Digest, GuardError>
     Ok(Digest::compute(Domain::BoardBarrier, &bytes))
 }
 
-pub(super) fn task_origin(task: &TaskHandle) -> Result<wire::Origin, Outcome<CommandAnswer>> {
+pub(super) fn task_origin(task: &wire::TaskStamp) -> Result<wire::Origin, Outcome<CommandAnswer>> {
     format!("task:{task}").parse().map_err(|error| {
         protocol_fault(
             "task::origin-invalid",
-            &format!("validated handle did not form a task origin: {error}"),
+            &format!("validated inception stamp did not form a task origin: {error}"),
         )
     })
+}
+
+pub(super) fn normalize_task_origin(
+    origin: wire::Origin,
+) -> Result<wire::Origin, Outcome<CommandAnswer>> {
+    let Some(identity) = origin.as_str().strip_prefix("task:") else {
+        return Ok(origin);
+    };
+    let incepted = match identity.parse::<wire::TaskStamp>() {
+        Ok(incepted) => Ok(incepted),
+        Err(stamp_error) => identity
+            .parse::<TaskHandle>()
+            .map_err(|handle_error| format!("{stamp_error}; {handle_error}"))
+            .and_then(|handle| handle.incepted().map_err(|error| error.to_string())),
+    };
+    let incepted = incepted.map_err(|error| {
+        refusal(
+            "task::origin-invalid",
+            Some(error.to_string()),
+            "name a task origin carrying one canonical inception stamp",
+        )
+    })?;
+    task_origin(&incepted)
 }
 
 pub(super) fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {

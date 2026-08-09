@@ -9,16 +9,14 @@ use crate::Name;
 use crate::body::{LaneLaunchIdentity, TranscriptPosition};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
-use crate::witness::{Phase, TaskHandle};
+use crate::witness::{Phase, TaskStamp};
 
 /// One current task statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskHead {
-    /// Public task name.
-    pub handle: TaskHandle,
-    /// Stable task identity.
-    pub uuid: CanonicalUuid,
+    /// Sole task identity, minted from its inception instant.
+    pub incepted: TaskStamp,
     /// Authored title.
     pub title: String,
     /// Longer authored context.
@@ -36,7 +34,7 @@ pub struct TaskHead {
     /// Authored task labels.
     pub tags: Vec<String>,
     /// Tasks that must complete first.
-    pub dependencies: Vec<TaskHandle>,
+    pub dependencies: Vec<TaskStamp>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: Origin,
     /// Fact that established this statement revision.

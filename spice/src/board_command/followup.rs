@@ -82,9 +82,9 @@ fn parse_followup(spec: &str) -> Result<TaskAdd, String> {
     Ok(add)
 }
 
-/// Mint one handle per `--then` record and witness each intended absence.
+/// Mint one inception stamp per `--then` record and witness each intended absence.
 ///
-/// Every record is parsed before the first handle is minted, so a malformed
+/// Every record is parsed before the first stamp is minted, so a malformed
 /// record later in the batch cannot leave earlier ones half-planned.
 pub(super) fn plan_followups(
     board: &BoardAnswer,
@@ -97,23 +97,10 @@ pub(super) fn plan_followups(
             .map_err(|error| refusal("review::followup-invalid", Some(spec.clone()), &error))?;
         parsed.push(add);
     }
-    let minted_at = jiff::Timestamp::now().as_millisecond();
+    let incepted =
+        allocate_inceptions(board, jiff::Timestamp::now().as_millisecond(), parsed.len());
     let mut planned: Vec<ReviewFollowup> = Vec::new();
-    for (offset, add) in parsed.into_iter().enumerate() {
-        let stamp = minted_at.saturating_add(i64::try_from(offset).unwrap_or_default());
-        let task = mint_handle_at(add.project.as_deref(), &add.title, stamp);
-        let taken = board
-            .tasks
-            .iter()
-            .any(|entry| entry.statement.body.handle == task)
-            || planned.iter().any(|followup| followup.task == task);
-        if taken {
-            return Err(refusal(
-                "task::identity-collision",
-                Some(task.to_string()),
-                "retry the review so the authority can mint fresh follow-up handles",
-            ));
-        }
+    for (add, task) in parsed.into_iter().zip(incepted) {
         expected.push(Witness::Absence { task: task.clone() });
         planned.push(ReviewFollowup { task, add });
     }
@@ -140,8 +127,8 @@ pub(super) fn plan_followup_edges(
         expected.push(statement_witness(heads));
         expected.push(workflow_witness(heads));
         expected.push(Witness::Edge {
-            task: handle.clone(),
-            after: task.clone(),
+            task: heads.statement.body.incepted.clone(),
+            after: task_heads(board, task)?.statement.body.incepted.clone(),
         });
         linked.push(handle);
     }
@@ -158,7 +145,9 @@ pub(super) fn record_followups(
     projects: &ProjectPolicy,
 ) -> Result<(), Outcome<CommandAnswer>> {
     for followup in &review.then {
-        create_followup(write, command, review, followup, reviewed, projects)?;
+        create_followup(
+            write, command, snapshot, review, followup, reviewed, projects,
+        )?;
     }
     for handle in &review.followup {
         wire_followup_edge(write, snapshot, review, handle, reviewed, projects)?;
@@ -170,6 +159,7 @@ pub(super) fn record_followups(
 fn create_followup(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
+    snapshot: &ValidatedSnapshot,
     review: &TaskReview,
     followup: &ReviewFollowup,
     reviewed: PendingFact,
@@ -182,7 +172,7 @@ fn create_followup(
     if !witnessed {
         return Err(protocol_fault(
             "review::followup-witness-invalid",
-            "each review follow-up requires its own intended absent handle",
+            "each review follow-up requires its own intended absent inception stamp",
         ));
     }
     let requested = followup.add.project.as_deref().unwrap_or("task.private");
@@ -193,19 +183,27 @@ fn create_followup(
             "name a public project for each review follow-up, or leave it private",
         )
     })?;
+    let reviewed_entry = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.handle() == &review.task)
+        .ok_or_else(|| {
+            protocol_fault(
+                "review::task-missing",
+                "reviewed task disappeared from the validated snapshot",
+            )
+        })?;
     let flow = phases(followup.add.flow.as_deref())?;
     let phase = flow[0].clone();
-    let identity = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
     let statement = TaskHead {
-        handle: followup.task.clone(),
-        uuid: identity,
+        incepted: followup.task.clone(),
         title: followup.add.title.clone(),
         description: followup.add.description.clone(),
         acceptance: followup.add.acceptance.clone(),
         project: project.as_str().to_owned(),
         tags: Vec::new(),
-        dependencies: vec![review.task.clone()],
-        provenance: task_origin(&review.task)?,
+        dependencies: vec![reviewed_entry.incepted().clone()],
+        provenance: task_origin(reviewed_entry.incepted())?,
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
     let workflow = WorkflowHead {
@@ -228,7 +226,6 @@ fn create_followup(
         .fact(
             body::TaskAdded {
                 task: followup.task.clone(),
-                uuid: identity,
                 title: statement.title.clone(),
                 description: statement.description.clone(),
                 acceptance: statement.acceptance.clone(),
@@ -262,7 +259,7 @@ fn wire_followup_edge(
     let Some(entry) = snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == *handle)
+        .find(|entry| entry.handle() == handle)
     else {
         return Err(refusal(
             "task::unknown",
@@ -278,14 +275,23 @@ fn wire_followup_edge(
         ));
     }
     let mut statement = entry.statement().clone();
-    if *handle == review.task || statement.dependencies.contains(&review.task) {
+    let reviewed_entry = snapshot
+        .entries
+        .iter()
+        .find(|candidate| candidate.handle() == &review.task)
+        .expect("reviewed task belongs to the validated snapshot");
+    if entry.incepted() == reviewed_entry.incepted()
+        || statement.dependencies.contains(reviewed_entry.incepted())
+    {
         return Err(refusal(
             "task::dependency-refused",
             Some(format!("{handle} after {}", review.task)),
             "name a distinct follow-up that does not already follow the reviewed task",
         ));
     }
-    statement.dependencies.push(review.task.clone());
+    statement
+        .dependencies
+        .push(reviewed_entry.incepted().clone());
     if let Err(error) = Entry::new(
         statement.clone(),
         entry.workflow().clone(),
@@ -305,7 +311,7 @@ fn wire_followup_edge(
     let edited = write
         .fact(
             body::TaskEdited {
-                task: handle.clone(),
+                task: entry.incepted().clone(),
                 revision,
             },
             FactCause::Pending(reviewed),

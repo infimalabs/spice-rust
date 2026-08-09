@@ -18,7 +18,7 @@ struct Fixture {
     lane: CanonicalUuid,
     ancestor: CanonicalUuid,
     successor: CanonicalUuid,
-    task: wire::TaskHandle,
+    task: wire::TaskStamp,
     at: wire::Instant,
     expiry: wire::Instant,
     maximum: wire::Instant,
@@ -45,7 +45,7 @@ fn fixture() -> Fixture {
         lane: uuid(3),
         ancestor: uuid(4),
         successor: uuid(5),
-        task: "CARRY-active01".parse().expect("fixture task"),
+        task: "1kKRRsDP".parse().expect("fixture task"),
         at: "2026-08-01T06:00:00.000Z".parse().expect("fixture instant"),
         expiry: "2030-08-01T07:00:00.000Z".parse().expect("fixture expiry"),
         maximum: "2030-08-01T08:00:00.000Z".parse().expect("fixture maximum"),
@@ -118,7 +118,6 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
         .fact(
             wire::body::TaskAdded {
                 task: fixture.task.clone(),
-                uuid: uuid(7),
                 title: "Carry active work".into(),
                 description: None,
                 acceptance: Vec::new(),
@@ -134,8 +133,7 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
         .expect("task fact");
     let task = fixture.task.clone();
     seed.task_head(added, move |position| wire::TaskHead {
-        handle: task,
-        uuid: uuid(7),
+        incepted: task,
         title: "Carry active work".into(),
         description: None,
         acceptance: Vec::new(),

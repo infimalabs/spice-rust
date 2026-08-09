@@ -647,7 +647,7 @@ fn task_selection_recomputes_aggregates_from_only_the_retained_rows() {
         model: "sonnet".to_owned(),
         effort: "high".to_owned(),
     };
-    let available = |task: TaskHandle, opening: u64, input_tokens: u64| EffortPhaseAnswer {
+    let available = |task: TaskStamp, opening: u64, input_tokens: u64| EffortPhaseAnswer {
         task,
         phase: phase("todo"),
         phase_index: 0,
@@ -667,7 +667,7 @@ fn task_selection_recomputes_aggregates_from_only_the_retained_rows() {
         },
     };
     let selected_task = task();
-    let other_task: TaskHandle = "EFFORT-b2".parse().expect("fixture task");
+    let other_task: TaskStamp = "1kKRRsDQ".parse().expect("fixture task");
     let phases = vec![
         available(selected_task.clone(), 1, 3),
         available(other_task, 3, 97),
@@ -680,7 +680,7 @@ fn task_selection_recomputes_aggregates_from_only_the_retained_rows() {
     let answer = select_task_effort(
         answer,
         &wire::intent::EffortRead {
-            task: Some(selected_task.clone()),
+            task: Some(wire::TaskHandle::for_project("fold.effort", &selected_task)),
         },
     )
     .expect("selection recomputes");
@@ -723,7 +723,6 @@ impl Facts {
     fn task(&mut self) {
         self.push(body::TaskAdded {
             task: task(),
-            uuid: uuid("018f82d4-6f59-7d06-92e3-bce913116399"),
             title: "fixture effort".to_owned(),
             description: None,
             acceptance: Vec::new(),
@@ -960,8 +959,8 @@ fn reasons(phase: &EffortPhaseAnswer) -> &[EffortUnavailable] {
     }
 }
 
-fn task() -> TaskHandle {
-    "EFFORT-a1".parse().expect("fixture task")
+fn task() -> TaskStamp {
+    "1kKRRsDP".parse().expect("fixture task")
 }
 
 fn phase(value: &str) -> Phase {

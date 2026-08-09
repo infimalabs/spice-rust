@@ -5,13 +5,17 @@ use super::*;
 // presentation, while the actor who owns it still reads it in full.
 
 fn add_oops(bus: &Bus, epoch: CanonicalUuid, actor: Actor, task: &str, title: &str) -> TaskHandle {
-    let task = task.parse::<TaskHandle>().expect("oops fixture handle");
+    let value = task.bytes().fold(0_i64, |value, byte| {
+        (value * 131 + i64::from(byte)) % 10_000_000_000_000
+    });
+    let incepted = wire::TaskStamp::for_millis(value).expect("oops fixture stamp");
+    let task = TaskHandle::for_project(".oops", &incepted);
     assert_committed(issue(
         bus,
         epoch,
         actor,
         CommandKind::TaskOopsAdd,
-        vec![Witness::Absence { task: task.clone() }],
+        vec![Witness::Absence { task: incepted }],
         &TaskOopsAdd {
             title: title.to_owned(),
             description: title.to_owned(),
@@ -120,7 +124,9 @@ fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() 
     let authoritative = observed
         .tasks()
         .iter()
-        .find(|heads| heads.statement().body().handle == hidden)
+        .find(|heads| {
+            heads.statement().body().incepted == at(&available, &hidden).statement.body.incepted
+        })
         .expect("hidden authoritative statement remains present");
     assert_eq!(
         authoritative.statement().body().title,
@@ -240,8 +246,8 @@ fn document_ledgers_keep_hidden_titles_actor_facing_and_public_bytes_stable() {
 fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
     let (root, bus, epoch, seats) = fixture("hidden-board-documents", 1);
     let secret = "secret graph and handout details";
-    add_oops(&bus, epoch, Actor::Operator, "HIDDEN-graph1", secret);
-    add_project(
+    let hidden = add_oops(&bus, epoch, Actor::Operator, "HIDDEN-graph1", secret);
+    let public = add_project(
         &bus,
         epoch,
         Actor::Operator,
@@ -251,10 +257,11 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
         Some("todo"),
     );
 
-    let expected_graph = concat!(
-        "graph workflow\n",
-        "HIDDEN-graph1: todo [pending]\n",
-        "PUBLIC-graph1: todo [pending]\n",
+    let mut rows = [hidden.clone(), public.clone()];
+    rows.sort();
+    let expected_graph = format!(
+        "graph workflow\n{}: todo [pending]\n{}: todo [pending]\n",
+        rows[0], rows[1]
     );
     let mut actor_graphs = Vec::new();
     for actor in [Actor::Operator, Actor::Lane(seats[0].lane)] {
@@ -286,29 +293,30 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
             let document = String::from_utf8(document).expect("graph rendering is UTF-8");
             assert!(!document.contains(secret), "{form:?} leaked hidden title");
             assert!(
-                document.contains("PUBLIC-graph1: todo [pending]"),
+                document.contains(&format!("{public}: todo [pending]")),
                 "{form:?} changed public graph row"
             );
         }
     }
     assert_eq!(actor_graphs[0], actor_graphs[1]);
 
-    let expected_handout = concat!(
-        "# Board handout\n\n",
-        "## dependencies\n\n",
-        "```text\n",
-        "graph dependencies\n",
-        "```\n\n",
-        "## workflow\n\n",
-        "```text\n",
-        "graph workflow\n",
-        "HIDDEN-graph1: todo [pending]\n",
-        "PUBLIC-graph1: todo [pending]\n",
-        "```\n\n",
-        "## claims\n\n",
-        "```text\n",
-        "graph claims\n",
-        "```\n\n",
+    let expected_handout = format!(
+        concat!(
+            "# Board handout\n\n",
+            "## dependencies\n\n",
+            "```text\n",
+            "graph dependencies\n",
+            "```\n\n",
+            "## workflow\n\n",
+            "```text\n",
+            "{}",
+            "```\n\n",
+            "## claims\n\n",
+            "```text\n",
+            "graph claims\n",
+            "```\n\n",
+        ),
+        expected_graph
     );
     let handout = issue(
         &bus,
@@ -337,7 +345,7 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
         let document = String::from_utf8(document).expect("handout rendering is UTF-8");
         assert!(!document.contains(secret), "{form:?} leaked hidden title");
         assert!(
-            document.contains("PUBLIC-graph1: todo [pending]"),
+            document.contains(&format!("{public}: todo [pending]")),
             "{form:?} changed public handout row"
         );
     }
@@ -386,15 +394,16 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
         (lane.clone(), "MANUAL-maxim1", ".maxim_proposal.theme_2"),
         (Actor::Operator, "MANUAL-sand1", ".sandbox.audit"),
     ];
-    for (actor, handle, project) in manual {
-        let task = handle.parse::<TaskHandle>().expect("manual fixture handle");
+    for (actor, _handle, project) in manual {
         let before = facts_len(bus, "facts read before manual refusal");
         let outcome = issue(
             bus,
             epoch,
             actor,
             CommandKind::TaskAdd,
-            vec![Witness::Absence { task }],
+            vec![Witness::Absence {
+                task: wire::TaskStamp::for_millis(42).expect("fixture task stamp"),
+            }],
             &TaskAdd {
                 title: "Manual hidden creation must refuse".to_owned(),
                 project: Some(project.to_owned()),
@@ -426,17 +435,16 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
 fn assert_forged_hidden_route_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &Actor) {
     for actor in [Actor::Operator, lane.clone()] {
         for project in [".oops", ".maxim_proposal.theme_2", ".sandbox.audit"] {
-            let task: TaskHandle =
-                format!("FORGED-{:08}", NEXT_COMMAND.fetch_add(1, Ordering::Relaxed))
-                    .parse()
-                    .expect("forged fixture handle");
+            let _ = NEXT_COMMAND.fetch_add(1, Ordering::Relaxed);
             let before = facts_len(bus, "facts before route decode refusal");
             let rejection = Command {
                 v: WireVersion::CURRENT,
                 id: uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed)),
                 epoch,
                 kind: CommandKind::TaskOopsAdd,
-                expected: vec![Witness::Absence { task }],
+                expected: vec![Witness::Absence {
+                    task: wire::TaskStamp::for_millis(43).expect("fixture task stamp"),
+                }],
                 body: serde_json::json!({
                     "title": "forged hidden route",
                     "description": "caller-selected project must not cross",
@@ -495,7 +503,11 @@ pub(super) fn seed_edit_tasks(
         Actor::Operator,
         CommandKind::TaskNote,
         vec![Witness::Existence {
-            task: alpha.clone(),
+            task: at(&board(bus, epoch, Actor::Operator), &alpha)
+                .statement
+                .body
+                .incepted
+                .clone(),
         }],
         &TaskNote {
             task: alpha.clone(),
@@ -577,8 +589,8 @@ pub(super) fn add_dependency(
             statement_witness(beta_heads),
             workflow_witness(beta_heads),
             Witness::Edge {
-                task: alpha.clone(),
-                after: beta.clone(),
+                task: alpha_heads.statement.body.incepted.clone(),
+                after: beta_heads.statement.body.incepted.clone(),
             },
         ],
         &TaskDepends {
@@ -603,7 +615,24 @@ pub(super) fn assert_graph_handout_and_ledger(
     else {
         panic!("graph was not a text snapshot: {graph_one:?}");
     };
-    assert!(graph.text.contains("BOARD-alpha001 -> BOARD-beta0001"));
+    let visible = board(bus, epoch, Actor::Operator);
+    let alpha_heads = at(&visible, alpha);
+    let beta_stamp = alpha_heads
+        .statement
+        .body
+        .dependencies
+        .first()
+        .expect("alpha depends on beta");
+    let beta = visible
+        .tasks
+        .iter()
+        .find(|task| &task.statement.body.incepted == beta_stamp)
+        .expect("dependency task is visible");
+    assert!(
+        graph
+            .text
+            .contains(&format!("{} -> {}", alpha, beta.statement.body.handle))
+    );
     let handout = issue(
         bus,
         epoch,
@@ -685,6 +714,9 @@ pub(super) fn assert_render_form_parity(graph: &Outcome<CommandAnswer>) {
 
 pub(super) fn assert_oops_note_exists(bus: &Bus, oops: &TaskHandle) {
     let facts = bus.fact_snapshot().expect("fixture facts read");
+    let incepted = oops
+        .incepted()
+        .expect("fixture oops handle carries an inception stamp");
     assert!(facts.facts().iter().any(|fact| {
         fact.fact.kind() == wire::FactKind::TaskNoted
             && fact
@@ -692,6 +724,6 @@ pub(super) fn assert_oops_note_exists(bus: &Bus, oops: &TaskHandle) {
                 .body()
                 .get("task")
                 .and_then(serde_json::Value::as_str)
-                == Some(oops.as_str())
+                == Some(incepted.as_str())
     }));
 }

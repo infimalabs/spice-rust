@@ -78,8 +78,7 @@ pub(super) fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
     board::select(&entries, actor, subscription, answer.allocation_band)
         .expect("allocation guard fixture selects a task")
         .entry()
-        .statement()
-        .handle
+        .handle()
         .clone()
 }
 
@@ -416,8 +415,8 @@ fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
     let command = claim_next_command(epoch, &actor, &answer, &winner, &seats[0]);
     let plan = plan_claim(&bus, &command);
     assert_eq!(
-        plan.selected.statement().handle,
-        winner,
+        plan.selected.handle(),
+        &winner,
         "the production plan decided the winner this command witnessed"
     );
 
@@ -525,7 +524,12 @@ fn a_moved_witness_refuses_before_any_allocator_comparison_is_reached() {
 
     let refusal = commit_planned_claim(&bus, &command, plan);
     assert!(
-        refusal.contains(winner.as_str()),
+        refusal.contains(
+            winner
+                .incepted()
+                .expect("fixture winner carries an inception stamp")
+                .as_str()
+        ),
         "the refusal names the client witness that moved, not a comparison: {refusal}"
     );
     assert!(

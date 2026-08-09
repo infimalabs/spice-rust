@@ -40,14 +40,14 @@ fn seq(value: u64) -> wire::Seq {
 fn stream_write(note: &str, trust: bool) -> journal::JournalWrite {
     let mut write = journal::JournalWrite::new(
         wire::Actor::Operator,
-        "task:STREAM-a1".parse().expect("origin"),
+        "task:1kKRRsDP".parse().expect("origin"),
         "2030-04-12T18:44:09.271Z".parse().expect("instant"),
         wire::Producer::CommandDoor,
     );
     write
         .fact(
             wire::body::TaskNoted {
-                task: "STREAM-a1".parse().expect("task handle"),
+                task: "1kKRRsDP".parse().expect("task stamp"),
                 note: note.to_owned(),
             },
             journal::FactCause::Root,

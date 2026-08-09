@@ -36,7 +36,11 @@ pub(super) fn run_doc(
         Ok(board) => board,
         Err(outcome) => return outcome,
     };
-    let touched = document_handles(normalized.document());
+    let touched = document_handles(
+        normalized.document(),
+        &board,
+        jiff::Timestamp::now().as_millisecond(),
+    );
     let answer = wire::intent::DocAnswer {
         preview: normalized.digest().clone(),
         touched,
@@ -107,32 +111,41 @@ fn read_doc_input(matches: &ArgMatches) -> Result<String, Outcome<CommandAnswer>
         .map_err(|error| environment_fault("doc::input-unreadable", &error.to_string()))
 }
 
-pub(super) fn document_handles(document: &dialect::Document) -> Vec<TaskHandle> {
+pub(super) fn document_handles(
+    document: &dialect::Document,
+    board: &BoardAnswer,
+    mut epoch_millis: i64,
+) -> Vec<TaskHandle> {
+    let project = document.project.as_deref().unwrap_or("task.document");
+    let mut planned = Vec::<wire::TaskStamp>::new();
     document
         .nodes
         .iter()
         .filter(|node| node.kind != dialect::NodeKind::SyntheticRoot)
-        .map(|node| document_handle(document.project.as_deref(), node))
+        .map(|node| {
+            let marker = document_slug_tag(&node.slug);
+            if let Some(existing) = board.tasks.iter().find(|task| {
+                task.statement.body.project == project && task.statement.body.tags.contains(&marker)
+            }) {
+                return existing.statement.body.handle.clone();
+            }
+            let incepted = loop {
+                let candidate = allocate_inception(board, epoch_millis);
+                epoch_millis = epoch_millis
+                    .checked_add(1)
+                    .expect("document task inception increment fits i64");
+                if planned.iter().all(|planned| planned != &candidate) {
+                    break candidate;
+                }
+            };
+            planned.push(incepted.clone());
+            TaskHandle::for_project(project, &incepted)
+        })
         .collect()
 }
 
-fn document_handle(project: Option<&str>, node: &dialect::Node) -> TaskHandle {
-    let family = project
-        .and_then(|project| project.rsplit('.').next())
-        .map(stem)
-        .filter(|stem| !stem.is_empty())
-        .unwrap_or_else(|| stem(&node.title));
-    let family = if family.is_empty() {
-        "TASK".to_owned()
-    } else {
-        family
-    };
-    let seed = wire::encode(&(project, node.slug.as_str()))
-        .expect("canonical document task identity encodes");
-    let key = Digest::compute(Domain::BoardTaskIdentity, &seed);
-    format!("{family}-{}", &key.as_str()[..8])
-        .parse()
-        .expect("document handle uses admitted ASCII components")
+pub(super) fn document_slug_tag(slug: &str) -> String {
+    format!("document-slug:{slug}")
 }
 
 pub(super) fn board_barrier(board: &BoardAnswer) -> Digest {

@@ -47,11 +47,11 @@ fn current_rows_cross_schema_two_without_an_alternate_rewrite() {
     let scratch = Scratch::new();
     let path = scratch.path().join("current.sqlite3");
     schema_two_lineage_authority(&path, [StoredLineage::Current; 3]);
-    let before = carrier_bytes(&Connection::open(&path).expect("open current fixture"));
+    let before = lineage_payloads(&Connection::open(&path).expect("open current fixture"));
 
     let journal = Journal::open(&path).expect("the current authority migrates");
 
-    assert_eq!(carrier_bytes(&journal.connection), before);
+    assert_eq!(lineage_payloads(&journal.connection), before);
     assert_all_carriers(&journal.connection, LINEAGE);
 }
 
@@ -150,6 +150,7 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
         "/body",
         shapes[2],
     );
+    downgrade_task_identity_to_three(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -325,6 +326,20 @@ fn carrier_bytes(connection: &Connection) -> Vec<Vec<u8>> {
             .expect("read lineage carrier")
     })
     .collect()
+}
+
+fn lineage_payloads(connection: &Connection) -> Vec<Value> {
+    carrier_bytes(connection)
+        .into_iter()
+        .zip(["/lanes/0", "/fact", "/body"])
+        .map(|(bytes, pointer)| {
+            serde_json::from_slice::<Value>(&bytes)
+                .expect("decode lineage carrier")
+                .pointer(pointer)
+                .expect("lineage payload")
+                .clone()
+        })
+        .collect()
 }
 
 fn version_records(connection: &Connection) -> (u32, u32) {

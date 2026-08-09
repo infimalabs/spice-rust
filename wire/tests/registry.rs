@@ -31,10 +31,10 @@ const COMMAND: &str = r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "kind": "task::done",
   "expected": [
-    { "kind": "task", "task": "SPICE-aBcD", "head": 48168 },
-    { "kind": "workflow", "task": "SPICE-aBcD", "head": 48169, "phase": "verify" },
-    { "kind": "claim", "task": "SPICE-aBcD", "head": 48172 },
-    { "kind": "lease", "task": "SPICE-aBcD", "head": 48173 },
+    { "kind": "task", "task": "0000000B", "head": 48168 },
+    { "kind": "workflow", "task": "0000000B", "head": 48169, "phase": "verify" },
+    { "kind": "claim", "task": "0000000B", "head": 48172 },
+    { "kind": "lease", "task": "0000000B", "head": 48173 },
     {
       "kind": "residency",
       "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -234,7 +234,7 @@ fn an_optional_witness_is_admitted_without_being_required() {
 
     let mut command = done();
     command.expected.push(Witness::Assignment {
-        task: "SPICE-aBcD".parse().expect("a handle"),
+        task: "0000000B".parse().expect("a stamp"),
         head: wire::Seq(48174.try_into().expect("a position")),
         reviewer: "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
             .parse()
@@ -245,7 +245,7 @@ fn an_optional_witness_is_admitted_without_being_required() {
 
 #[test]
 fn a_claim_witness_distinguishes_no_head_from_a_null_or_present_head() {
-    let absent = r#"{"kind":"claim","task":"SPICE-aBcD"}"#;
+    let absent = r#"{"kind":"claim","task":"0000000B"}"#;
     let witness = wire::decode::<Witness>(absent.as_bytes()).expect("absent claim head decodes");
     assert!(matches!(witness, Witness::Claim { head: None, .. }));
     assert_eq!(
@@ -253,7 +253,7 @@ fn a_claim_witness_distinguishes_no_head_from_a_null_or_present_head() {
         absent.as_bytes()
     );
 
-    let null = r#"{"kind":"claim","task":"SPICE-aBcD","head":null}"#;
+    let null = r#"{"kind":"claim","task":"0000000B","head":null}"#;
     assert!(
         wire::decode::<Witness>(null.as_bytes()).is_err(),
         "null must not alias an absent claim head"
@@ -347,7 +347,7 @@ fn every_witness_class_has_a_sample_and_reports_its_own_kind() {
 /// One value of every witness class, used to prove structural properties that
 /// hold for the whole vocabulary rather than for one command.
 fn sample_witnesses() -> Vec<Witness> {
-    let task: TaskHandle = "SPICE-aBcD".parse().expect("a handle");
+    let task: wire::TaskStamp = "1kKRRsDP".parse().expect("a task stamp");
     let uuid = |text: &str| text.parse().expect("a canonical uuid");
     let seq = |value: u64| wire::Seq(value.try_into().expect("a position"));
     let name = |text: &str| Name::from_str(text).expect("a name");
@@ -382,7 +382,7 @@ fn sample_witnesses() -> Vec<Witness> {
         Witness::Existence { task: task.clone() },
         Witness::Edge {
             task: task.clone(),
-            after: "SPICE-eFgH".parse().expect("a handle"),
+            after: "1kKRRsDQ".parse().expect("a task stamp"),
         },
         Witness::Deferral {
             task: task.clone(),

@@ -66,7 +66,7 @@ const ENVELOPE: &str = r#"{
   "cause": 48190,
   "fact": {
     "kind": "task::phased",
-    "task": "SPICE-aBcD",
+    "task": "0000000B",
     "phase": "verify"
   }
 }"#;
@@ -94,10 +94,10 @@ const COMMAND: &str = r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "kind": "task::done",
   "expected": [
-    { "kind": "task", "task": "SPICE-aBcD", "head": 48168 },
-    { "kind": "workflow", "task": "SPICE-aBcD", "head": 48169, "phase": "verify" },
-    { "kind": "claim", "task": "SPICE-aBcD", "head": 48172 },
-    { "kind": "lease", "task": "SPICE-aBcD", "head": 48173 },
+    { "kind": "task", "task": "0000000B", "head": 48168 },
+    { "kind": "workflow", "task": "0000000B", "head": 48169, "phase": "verify" },
+    { "kind": "claim", "task": "0000000B", "head": 48172 },
+    { "kind": "lease", "task": "0000000B", "head": 48173 },
     {
       "kind": "residency",
       "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -140,7 +140,7 @@ const PROOF_EVIDENCE: &str = concat!(
 
 const TASK_EFFORT: &str = r#"{
   "phases": [{
-    "task": "EFFORT-a1",
+    "task": "0000000B",
     "phase": "todo",
     "phase_index": 0,
     "opening": 10,
@@ -489,7 +489,7 @@ fn envelope_omits_cause_at_a_chain_root() {
         origin: "task:SPICE-aBcD".parse::<Origin>().expect("origin"),
         cause: None,
         fact: Fact::new(body::TaskPhased {
-            task: "SPICE-aBcD".parse().expect("handle"),
+            task: "0000000B".parse().expect("stamp"),
             phase: "todo".parse().expect("phase"),
         }),
     };

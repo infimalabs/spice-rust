@@ -15,6 +15,85 @@ use crate::envelope::{Actor, Seq};
 use crate::head::{ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest};
 
+const TASK_STAMP_ALPHABET: &[u8; 52] = b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
+const TASK_STAMP_SPACE: u64 = 52_u64.pow(TaskStamp::WIDTH as u32);
+
+/// A task's sole durable identity: its fixed-width inception instant.
+///
+/// The alphabet is ASCII ordered and vowel-free. Fixed-width base-52 therefore
+/// preserves inception order under ordinary string comparison while keeping a
+/// minted stamp out of prose-shaped words.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TaskStamp(String);
+
+/// Text that does not spell a canonical task inception stamp.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("task stamp must be eight characters from the vowel-free base-52 alphabet: {0:?}")]
+pub struct TaskStampError(String);
+
+/// An epoch millisecond that cannot be represented by a task stamp.
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
+#[error("task inception millisecond is outside the eight-character base-52 space: {0}")]
+pub struct TaskStampMintError(i64);
+
+impl TaskStamp {
+    /// Characters in every task stamp.
+    pub const WIDTH: usize = 8;
+
+    /// Mint the order-preserving stamp for one epoch millisecond.
+    pub fn for_millis(epoch_millis: i64) -> Result<Self, TaskStampMintError> {
+        let mut value =
+            u64::try_from(epoch_millis).map_err(|_| TaskStampMintError(epoch_millis))?;
+        if value >= TASK_STAMP_SPACE {
+            return Err(TaskStampMintError(epoch_millis));
+        }
+        let mut bytes = [b'0'; Self::WIDTH];
+        for byte in bytes.iter_mut().rev() {
+            *byte = TASK_STAMP_ALPHABET[(value % 52) as usize];
+            value /= 52;
+        }
+        Ok(Self(bytes.into_iter().map(char::from).collect()))
+    }
+
+    /// The canonical stored spelling.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for TaskStamp {
+    type Err = TaskStampError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text.len() == Self::WIDTH && text.bytes().all(|byte| TASK_STAMP_ALPHABET.contains(&byte))
+        {
+            Ok(Self(text.to_owned()))
+        } else {
+            Err(TaskStampError(text.to_owned()))
+        }
+    }
+}
+
+impl fmt::Display for TaskStamp {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Serialize for TaskStamp {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskStamp {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        text.parse().map_err(D::Error::custom)
+    }
+}
+
 /// A task handle such as `SPICE-aBcD`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskHandle(String);
@@ -29,6 +108,28 @@ impl TaskHandle {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Render the current public name from a project and sole inception stamp.
+    #[must_use]
+    pub fn for_project(project: &str, incepted: &TaskStamp) -> Self {
+        let source = project.rsplit('.').next().unwrap_or(project);
+        let stem = source
+            .bytes()
+            .filter(|byte| byte.is_ascii_alphanumeric())
+            .map(|byte| char::from(byte.to_ascii_uppercase()))
+            .take(7)
+            .collect::<String>();
+        let stem = if stem.is_empty() { "TASK" } else { &stem };
+        Self(format!("{stem}-{incepted}"))
+    }
+
+    /// Recover the inception stamp carried by a rendered handle.
+    pub fn incepted(&self) -> Result<TaskStamp, TaskStampError> {
+        self.0
+            .rsplit_once('-')
+            .map_or(self.0.as_str(), |(_, stamp)| stamp)
+            .parse()
     }
 }
 
@@ -207,14 +308,14 @@ pub enum Witness {
     /// The task statement head.
     Task {
         /// Subject task.
-        task: TaskHandle,
+        task: TaskStamp,
         /// Statement head the command relies on.
         head: Seq,
     },
     /// The workflow head and the phase it currently sits in.
     Workflow {
         /// Subject task.
-        task: TaskHandle,
+        task: TaskStamp,
         /// Workflow head the command relies on.
         head: Seq,
         /// Phase the workflow head carries.
@@ -223,7 +324,7 @@ pub enum Witness {
     /// The claim head.
     Claim {
         /// Subject task.
-        task: TaskHandle,
+        task: TaskStamp,
         /// Claim head the command relies on, absent before the first win.
         #[serde(
             default,
@@ -235,7 +336,7 @@ pub enum Witness {
     /// The lease head.
     Lease {
         /// Subject task.
-        task: TaskHandle,
+        task: TaskStamp,
         /// Lease head the command relies on.
         head: Seq,
     },
@@ -248,30 +349,30 @@ pub enum Witness {
         /// Resident epoch the command relies on.
         epoch: CanonicalUuid,
     },
-    /// A handle the command intends to mint does not yet exist.
+    /// An inception stamp the command intends to mint does not yet exist.
     Absence {
-        /// Handle that must be absent.
-        task: TaskHandle,
+        /// Stamp that must be absent.
+        task: TaskStamp,
     },
     /// A task exists, with no constraint on its statement revision.
     ///
     /// Appending to a task proves identity without proving a head, because an
     /// append cannot lose to a concurrent edit the way a replacement can.
     Existence {
-        /// Handle that must exist.
-        task: TaskHandle,
+        /// Stamp that must exist.
+        task: TaskStamp,
     },
     /// A dependency edge is absent between two existing tasks.
     Edge {
         /// Dependent task.
-        task: TaskHandle,
+        task: TaskStamp,
         /// Task the dependent waits on.
-        after: TaskHandle,
+        after: TaskStamp,
     },
     /// The task's current deferral disposition.
     Deferral {
         /// Subject task.
-        task: TaskHandle,
+        task: TaskStamp,
         /// Deferral head the command relies on.
         head: Seq,
         /// Whether the task currently carries a deferral.
@@ -285,7 +386,7 @@ pub enum Witness {
     /// A review assignment and the reviewer it seated.
     Assignment {
         /// Subject task.
-        task: TaskHandle,
+        task: TaskStamp,
         /// Assignment head the command relies on.
         head: Seq,
         /// Reviewer seated under the anti-self-review rule.
@@ -395,7 +496,7 @@ pub enum WitnessKind {
     Lease,
     /// Lane occupancy under a resident generation.
     Residency,
-    /// A handle that must not yet exist.
+    /// An inception stamp that must not yet exist.
     Absence,
     /// A task that must exist, with no constraint on its revision.
     Existence,

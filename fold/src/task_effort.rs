@@ -13,7 +13,7 @@ use wire::intent::{
     EffortAggregateAnswer, EffortAnswer, EffortAvailability, EffortIdentity, EffortPhaseAnswer,
     EffortSegmentAnswer, EffortUnavailable, EffortUnavailableCode, EffortUsage,
 };
-use wire::{CanonicalUuid, FactKind, Instant, Name, Phase, Seq, TaskHandle};
+use wire::{CanonicalUuid, FactKind, Instant, Name, Phase, Seq, TaskStamp};
 
 use crate::{FoldId, Materialization, Reducer, Reduction};
 
@@ -66,7 +66,10 @@ pub fn select_task_effort(
     read: &wire::intent::EffortRead,
 ) -> Result<EffortAnswer, String> {
     if let Some(task) = &read.task {
-        answer.phases.retain(|phase| &phase.task == task);
+        let incepted = task
+            .incepted()
+            .map_err(|error| format!("effort task handle has no canonical stamp: {error}"))?;
+        answer.phases.retain(|phase| phase.task == incepted);
         answer.aggregates = aggregate(&answer.phases)?;
     }
     Ok(answer)
@@ -74,7 +77,7 @@ pub fn select_task_effort(
 
 fn derive(facts: &journal::FactSnapshot) -> Result<EffortAnswer, String> {
     let evidence = Evidence::collect(facts);
-    let mut tasks = BTreeMap::<TaskHandle, TaskState>::new();
+    let mut tasks = BTreeMap::<TaskStamp, TaskState>::new();
     let mut phases = Vec::new();
 
     for envelope in facts.facts() {
@@ -89,7 +92,7 @@ fn derive(facts: &journal::FactSnapshot) -> Result<EffortAnswer, String> {
 
 fn apply_lifecycle(
     envelope: &wire::Envelope<wire::AnyFact>,
-    tasks: &mut BTreeMap<TaskHandle, TaskState>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
     phases: &mut Vec<EffortPhaseAnswer>,
     evidence: &Evidence,
 ) {
@@ -168,7 +171,7 @@ fn apply_lifecycle(
 
 fn record_task_added(
     envelope: &wire::Envelope<wire::AnyFact>,
-    tasks: &mut BTreeMap<TaskHandle, TaskState>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
 ) {
     let body: body::TaskAdded = read(envelope);
     tasks.insert(
@@ -184,7 +187,7 @@ fn record_task_added(
 
 fn record_task_phased(
     envelope: &wire::Envelope<wire::AnyFact>,
-    tasks: &mut BTreeMap<TaskHandle, TaskState>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
 ) {
     let body: body::TaskPhased = read(envelope);
     let state = tasks.entry(body.task).or_insert_with(TaskState::unknown);
@@ -197,7 +200,7 @@ fn record_task_phased(
 
 fn record_claim_won(
     envelope: &wire::Envelope<wire::AnyFact>,
-    tasks: &mut BTreeMap<TaskHandle, TaskState>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
     phases: &mut Vec<EffortPhaseAnswer>,
     evidence: &Evidence,
 ) {
@@ -253,7 +256,7 @@ fn record_claim_won(
 
 fn record_claim_renewed(
     envelope: &wire::Envelope<wire::AnyFact>,
-    tasks: &mut BTreeMap<TaskHandle, TaskState>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
 ) {
     let body: body::ClaimRenewed = read(envelope);
     if let Some(open) = tasks
@@ -273,7 +276,7 @@ fn record_claim_renewed(
 
 fn record_claim_carried(
     envelope: &wire::Envelope<wire::AnyFact>,
-    tasks: &mut BTreeMap<TaskHandle, TaskState>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
 ) {
     let body: body::ClaimCarried = read(envelope);
     let Some(open) = tasks
@@ -309,7 +312,7 @@ fn record_claim_carried(
 
 fn close_remaining(
     facts: &journal::FactSnapshot,
-    tasks: &mut BTreeMap<TaskHandle, TaskState>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
     phases: &mut Vec<EffortPhaseAnswer>,
     evidence: &Evidence,
 ) {
@@ -350,9 +353,9 @@ fn phase_order(left: &EffortPhaseAnswer, right: &EffortPhaseAnswer) -> std::cmp:
 }
 
 fn close_terminal(
-    tasks: &mut BTreeMap<TaskHandle, TaskState>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
     phases: &mut Vec<EffortPhaseAnswer>,
-    task: TaskHandle,
+    task: TaskStamp,
     seq: Seq,
     at: Instant,
     boundary: SourceBoundary,
@@ -388,9 +391,9 @@ fn close_terminal(
 
 #[allow(clippy::too_many_arguments)]
 fn interrupt(
-    tasks: &mut BTreeMap<TaskHandle, TaskState>,
+    tasks: &mut BTreeMap<TaskStamp, TaskState>,
     phases: &mut Vec<EffortPhaseAnswer>,
-    task: &TaskHandle,
+    task: &TaskStamp,
     seq: Seq,
     at: Instant,
     code: EffortUnavailableCode,
@@ -1268,7 +1271,7 @@ impl TaskState {
 
 #[derive(Debug)]
 struct OpenPhase {
-    task: TaskHandle,
+    task: TaskStamp,
     phase: Phase,
     phase_index: u32,
     opening: Seq,
@@ -1283,7 +1286,7 @@ struct OpenPhase {
 }
 
 impl OpenPhase {
-    fn missing(task: TaskHandle, phase: Phase, phase_index: u32, seq: Seq, at: Instant) -> Self {
+    fn missing(task: TaskStamp, phase: Phase, phase_index: u32, seq: Seq, at: Instant) -> Self {
         let nil: CanonicalUuid = "00000000-0000-0000-0000-000000000000"
             .parse()
             .expect("nil UUID is canonical");

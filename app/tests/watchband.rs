@@ -16,7 +16,6 @@ const LINEAGE_TWO: &str = "99999999-9999-4999-8999-999999999999";
 const LINEAGE_THREE: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OCCUPANT: &str = "33333333-3333-4333-8333-333333333333";
 const EPOCH: &str = "44444444-4444-4444-8444-444444444444";
-const TASK_UUID: &str = "55555555-5555-4555-8555-555555555555";
 const BASE: &str = "2026-08-05T12:00:00.000Z";
 
 fn uuid(text: &str) -> CanonicalUuid {
@@ -102,6 +101,11 @@ fn inbox(id: &str, directives: &[(&str, Option<&str>)]) -> LaneInbox {
 
 /// A board task whose claim names `lane` and whose lease began `held` ago.
 fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> BoardTask {
+    let incepted = handle
+        .parse::<wire::TaskHandle>()
+        .expect("fixture task handle")
+        .incepted()
+        .expect("fixture handle carries an inception stamp");
     serde_json::from_value(serde_json::json!({
         "visibility": {"kind": "public"},
         "origin_thread": "operator",
@@ -110,11 +114,11 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
             "position": 1,
             "body": {
                 "handle": handle,
-                "uuid": TASK_UUID,
+                "incepted": incepted,
                 "project": "canvas.fidelity",
                 "tags": [],
                 "dependencies": [],
-                "provenance": format!("task:{handle}"),
+                "provenance": format!("task:{incepted}"),
                 "revision": 1,
             },
         },

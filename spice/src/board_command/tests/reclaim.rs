@@ -82,9 +82,8 @@ pub(super) fn assert_reclaim_survives_restart(
         )
         .expect("allocator still has unclaimed work")
         .entry()
-        .statement()
-        .handle,
-        *available_task,
+        .handle(),
+        available_task,
         "the renewed claim remains excluded from allocation after restart",
     );
     clean(root, reopened);

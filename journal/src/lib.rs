@@ -6,7 +6,7 @@
 /// open when `migrate::MIGRATIONS` carries the step, and refused by name when it
 /// does not. A newer version is always refused: this build cannot know what the
 /// release that wrote it added.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod guard;
@@ -46,7 +46,7 @@ pub mod crossing {
     pub use wire::{
         Actor, CanonicalUuid, ClaimHead, Command, CommandKind, Digest, Fact, FactKind, FindingHead,
         Instant, LaneResidency, LaneSession, LeaseHead, Origin, Phase, Producer, ResidencyHead,
-        ResidentState, Seq, TapeLocus, TaskHandle, TaskHead, TranscriptSourceHead,
+        ResidentState, Seq, TapeLocus, TaskHandle, TaskHead, TaskStamp, TranscriptSourceHead,
         TranscriptStreamKey, TrustHead, WireVersion, Witness, WitnessHead, WorkflowHead,
     };
 }

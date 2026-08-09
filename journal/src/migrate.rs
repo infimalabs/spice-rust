@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod identity_stamp;
 mod residency_lineage;
 
 const FINALIZED: &str = "finalized";
@@ -447,6 +448,7 @@ impl MigrationStep {
 const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (1, MigrationStep::Sql(MIGRATE_1_TO_2_SQL)),
     (2, MigrationStep::Rust(residency_lineage::migrate)),
+    (3, MigrationStep::Rust(identity_stamp::migrate)),
 ];
 
 /// Schema 1 to 2: the table transcript accounting reads its heads from.
@@ -523,22 +525,22 @@ CREATE TABLE command_receipts (
 ) STRICT;
 
 CREATE TABLE task_heads (
-    handle TEXT PRIMARY KEY,
+    stamp TEXT PRIMARY KEY,
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
 CREATE TABLE workflow_heads (
-    handle TEXT PRIMARY KEY REFERENCES task_heads(handle),
+    stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
 CREATE TABLE claim_heads (
-    handle TEXT PRIMARY KEY REFERENCES task_heads(handle),
+    stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
 CREATE TABLE lease_heads (
-    handle TEXT PRIMARY KEY REFERENCES task_heads(handle),
+    stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
@@ -582,7 +584,7 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 3, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 4, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 "#;

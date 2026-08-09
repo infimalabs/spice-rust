@@ -36,7 +36,7 @@ const DOC_APPLIED: &str = r#"{
 
 const CLAIM_RENEWED: &str = r#"{
   "kind": "claim::renewed",
-  "task": "SPICE-aBcD",
+  "task": "0000000B",
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "until": "2030-04-12T19:44:09.271Z",
   "maximum": "2030-04-12T22:44:09.271Z"
@@ -140,7 +140,7 @@ fn the_bus_timer_body_matches_the_specified_fields() {
 
     assert_eq!(fact.kind(), FactKind::ClaimRenewed);
     assert_eq!(fact.producer(), Producer::BusTimer);
-    assert_eq!(fact.body.task.as_str(), "SPICE-aBcD");
+    assert_eq!(fact.body.task.as_str(), "0000000B");
     assert!(
         fact.body.until < fact.body.maximum,
         "a renewal extends the lease within its maximum"
@@ -345,7 +345,7 @@ fn assert_noncanonical_digest_refused<F: wire::Body>(document: &str, field: &str
 #[test]
 fn a_body_pairs_only_with_its_own_kind() {
     let fact = Fact::new(body::TaskWoken {
-        task: "SPICE-aBcD".parse().expect("handle"),
+        task: "0000000B".parse().expect("stamp"),
     });
 
     assert_eq!(fact.kind(), FactKind::TaskWoken);

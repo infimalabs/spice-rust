@@ -53,9 +53,9 @@
 //!   is the predecessor's per-worktree config root alone, and no path in this
 //!   port constructs it.
 //!
-//! Under the shared root, `artifacts/tasks/<TASK-ID>/` is the one path both
-//! write, and that is the intent: one board, one task identifier, artifacts
-//! filed beneath it. The two contribute entries; neither rewrites the other's.
+//! Under the shared root, `artifacts/tasks/<INCEPTION-STAMP>/` is the Rust
+//! artifact path. Its directory key is the same sole identity stored by the
+//! board; the current rendered handle is never a second filesystem authority.
 //!
 //! # The one file both write outside the shared root
 //!

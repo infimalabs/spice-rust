@@ -49,7 +49,7 @@ fn one_captured_band_drives_board_answer_server_selection_and_guard_replay() {
         .expect("fixture lane has one allocation subscription");
     let selected = board::select(&entries, &lane, subscription, available.allocation_band)
         .expect("configured client preselection has work");
-    assert_eq!(selected.entry().statement().handle, higher);
+    assert_eq!(selected.entry().handle(), &higher);
 
     assert_committed(issue_with_allocation(
         &bus,
@@ -118,7 +118,7 @@ pub(super) fn advance_task_to_review(
         vec![
             claim_witness(held_heads),
             Witness::Lease {
-                task: task.clone(),
+                task: held_heads.statement.body.incepted.clone(),
                 head: held_heads.lease.as_ref().expect("lease head").position,
             },
             residency(&held, seat),
@@ -195,7 +195,7 @@ pub(super) fn complete_review_with_finding(
         true,
     )
     .expect("assigned review has exact witnesses");
-    let tracked: TaskHandle = "FOLLOW-1kKRRsDP".parse().expect("follow-up handle");
+    let tracked: wire::TaskStamp = "1kKRRsDP".parse().expect("follow-up stamp");
     let mut expected = expected;
     expected.push(Witness::Absence {
         task: tracked.clone(),
@@ -243,7 +243,7 @@ fn assert_review_assignment_fact(
     let typed: wire::Envelope<wire::Fact<wire::body::TaskAssigned>> =
         wire::decode(&wire::encode(envelope).expect("opaque review assignment fact encodes"))
             .expect("workflow head is the registered review assignment fact");
-    assert_eq!(typed.fact.body.task, *task);
+    assert_eq!(typed.fact.body.task, heads.statement.body.incepted);
     assert_eq!(typed.fact.body.reviewer, *reviewer);
     assert_eq!(typed.fact.body.phase.as_str(), "review");
     assert!(typed.is_root(), "assignment begins the claim causal chain");
@@ -275,7 +275,7 @@ fn assert_review_settled(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> 
     let entries = actor_entries(&settled).expect("settled board projects to entries");
     let entry = entries
         .iter()
-        .find(|entry| entry.statement().handle == *task)
+        .find(|entry| entry.handle() == task)
         .expect("settled task remains on the board");
     assert_eq!(
         accepted_transition(&settled.principal, &settled.residency.body, &entries, entry,),
@@ -430,16 +430,17 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
         true,
     )
     .expect("assigned review has exact witnesses");
-    let created: TaskHandle = "FOLLOW-1kKRRsDQ".parse().expect("follow-up handle");
+    let created_stamp: wire::TaskStamp = "1kKRRsDQ".parse().expect("follow-up stamp");
+    let created = TaskHandle::for_project("board.test", &created_stamp);
     expected.push(Witness::Absence {
-        task: created.clone(),
+        task: created_stamp.clone(),
     });
     let linked_heads = at(&assigned, &linked);
     expected.push(statement_witness(linked_heads));
     expected.push(workflow_witness(linked_heads));
     expected.push(Witness::Edge {
-        task: linked.clone(),
-        after: reviewed.clone(),
+        task: linked_heads.statement.body.incepted.clone(),
+        after: at(&assigned, &reviewed).statement.body.incepted.clone(),
     });
     assert_committed(issue(
         &bus,
@@ -452,7 +453,7 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
             finding: "two corrections need durable owners".to_owned(),
             note: None,
             then: vec![ReviewFollowup {
-                task: created.clone(),
+                task: created_stamp,
                 add: TaskAdd {
                     title: "Create the missing review fixture".to_owned(),
                     project: Some("board.test".to_owned()),
@@ -480,7 +481,7 @@ fn assert_review_followup_tracking(
     let settled = board(bus, epoch, Actor::Operator);
     assert_eq!(
         at(&settled, created).statement.body.dependencies,
-        vec![reviewed.clone()],
+        vec![at(&settled, reviewed).statement.body.incepted.clone()],
         "--then did not create a task behind the reviewed task"
     );
     assert!(
@@ -488,7 +489,7 @@ fn assert_review_followup_tracking(
             .statement
             .body
             .dependencies
-            .contains(reviewed),
+            .contains(&at(&settled, reviewed).statement.body.incepted),
         "--followup did not wire the existing task behind the review"
     );
     assert_eq!(at(&settled, reviewed).workflow.body.review, "finding");
@@ -632,7 +633,12 @@ fn assert_initial_document(applied: &AppliedDocument) {
             .statement
             .body
             .dependencies
-            .contains(&applied.answer.touched[1])
+            .contains(
+                &at(&applied.board, &applied.answer.touched[1])
+                    .statement
+                    .body
+                    .incepted
+            )
     );
 }
 

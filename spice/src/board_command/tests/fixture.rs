@@ -15,6 +15,13 @@ pub(super) fn uuid(value: u64) -> CanonicalUuid {
         .expect("fixture UUID is canonical")
 }
 
+pub(super) fn stamp(text: &str) -> wire::TaskStamp {
+    let value = text.bytes().fold(0_i64, |value, byte| {
+        (value * 131 + i64::from(byte)) % 10_000_000_000_000
+    });
+    wire::TaskStamp::for_millis(value).expect("fixture name fits the task stamp codec")
+}
+
 pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, CanonicalUuid, Vec<Seat>) {
     let number = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
@@ -229,13 +236,14 @@ pub(super) fn add_project_with_acceptance(
     flow: Option<&str>,
     acceptance: &[&str],
 ) -> TaskHandle {
-    let task = task.parse::<TaskHandle>().expect("fixture task handle");
+    let incepted = stamp(task);
+    let task = TaskHandle::for_project(project, &incepted);
     assert_committed(issue(
         bus,
         epoch,
         actor,
         CommandKind::TaskAdd,
-        vec![Witness::Absence { task: task.clone() }],
+        vec![Witness::Absence { task: incepted }],
         &TaskAdd {
             title: title.to_owned(),
             project: Some(project.to_owned()),
