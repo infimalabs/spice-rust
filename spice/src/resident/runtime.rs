@@ -207,16 +207,11 @@ impl Drop for PublishedDiscovery {
 /// because reaching this surface from another machine is a decision only the
 /// operator can make, and `--host` is how they make it.
 ///
-/// This port is not the only system that picked 8765. The Python predecessor
-/// serves on `*:8765` and `*:8766` and holds them for as long as it runs, so on
-/// a machine running both, this default cannot bind. Nothing in either system
-/// resolves that: fixing the port is the whole point above, so there is no
-/// fallback to resolve it with. Lanes step around it by naming `--port` once per
-/// invocation, by hand. That is the standing arrangement between two systems
-/// that both keep running -- not a rough edge on the way to one replacing the
-/// other -- and no check records that the workaround is required.
+/// This successor uses a port separate from the Python predecessor so both
+/// residents can run without requiring the operator to name `--port` on every
+/// invocation.
 pub(super) const DEFAULT_LISTEN: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8765);
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8767);
 /// Bounds on an operator-supplied bearer token for a non-loopback bind.
 ///
 /// Stated rather than inlined so the refusal text and the check cannot come to

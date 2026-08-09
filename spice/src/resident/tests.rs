@@ -81,6 +81,7 @@ fn access_refusal_for(argv: &[&str]) -> String {
 #[test]
 fn the_listen_address_is_what_was_asked_for_or_one_stable_default() {
     assert_eq!(listen_for(&["spice", "up"]), Ok(DEFAULT_LISTEN));
+    assert_eq!(DEFAULT_LISTEN.port(), 8767);
     assert_ne!(
         DEFAULT_LISTEN.port(),
         0,

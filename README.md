@@ -49,17 +49,17 @@ standard output, and adding `--open` has the resident open the default browser
 too.
 
 ```
-canvas endpoint: http://127.0.0.1:8765
+canvas endpoint: http://127.0.0.1:8767
 ```
 
 That URL is announced only after the resident reads back the discovery file it
 just published and admits it, so it has already passed the same ownership,
-loopback-origin, and generation checks a client applies. `127.0.0.1:8765` is
+loopback-origin, and generation checks a client applies. `127.0.0.1:8767` is
 the default; `--host` and `--port` bind a different address, and `--port 0`
-takes any free port. Name a port wherever the predecessor's serve resident
-already holds 8765: that default binds or refuses, with no fallback. The
-listener is IPv4 loopback unless `--host` names another address of this
-machine, so by default the app is reachable only from the host running it.
+takes any free port. The default avoids the predecessor serve resident's ports;
+it binds or refuses with no fallback. The listener is IPv4 loopback unless
+`--host` names another address of this machine, so by default the app is
+reachable only from the host running it.
 
 A non-loopback listener requires explicit consent and a URL-safe bearer token:
 
