@@ -17,6 +17,9 @@ enabled = true
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+pre_commit = [
+    { label = "Rust gate", run = ["gate/pre-commit", "--fixture"], scopes = { paths = ["src/**", "tests/**"] } },
+]
 package_roots = ["src/fixture"]
 generated_paths = ["build/fixture"]
 name_cluster_threshold = 4
@@ -251,6 +254,12 @@ fn root_is_exactly_the_fifteen_typed_domains() {
         root.policy().env_names(),
         ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     );
+    let [pre_commit] = root.policy().pre_commit() else {
+        panic!("the complete root must carry one pre-commit command");
+    };
+    assert_eq!(pre_commit.label(), "Rust gate");
+    assert_eq!(pre_commit.run(), ["gate/pre-commit", "--fixture"]);
+    assert_eq!(pre_commit.scopes().paths(), ["src/**", "tests/**"]);
 
     let Value::Table(table) = encoded(&Root::default()) else {
         panic!("a root must encode as a table");
@@ -292,6 +301,39 @@ fn shared_metadata_directly_refuses_invalid_names_depths_and_children() {
         ("[policy]\nunknown = true\n", "unknown"),
     ] {
         let error = decode(document).expect_err("invalid shared metadata must refuse");
+        assert!(error.contains(expected), "{document:?}: {error}");
+    }
+}
+
+#[test]
+fn pre_commit_commands_admit_only_the_current_nonempty_shape() {
+    for (document, expected) in [
+        (
+            "[policy]\npre_commit = [{ label = \"\", run = [\"gate/pre-commit\"] }]\n",
+            "labels must be nonempty",
+        ),
+        (
+            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [] }]\n",
+            "argv must not be empty",
+        ),
+        (
+            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"\"] }]\n",
+            "argv entries must be nonempty",
+        ),
+        (
+            "[policy]\npre_commit = [{ label = \"Rust gate\", argv = [\"gate/pre-commit\"] }]\n",
+            "argv",
+        ),
+        (
+            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], when = \"staged\" }]\n",
+            "when",
+        ),
+        (
+            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], formatter = true }]\n",
+            "formatter",
+        ),
+    ] {
+        let error = decode(document).expect_err("a retired or empty pre-commit shape must refuse");
         assert!(error.contains(expected), "{document:?}: {error}");
     }
 }
@@ -375,6 +417,9 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "tasks.project_max_depth",
     "judge.enabled",
     "policy.env_names",
+    "policy.pre_commit[].label",
+    "policy.pre_commit[].run",
+    "policy.pre_commit[].scopes.paths",
     "policy.commit_message.allowed_trailers",
     "policy.commit_message.blocked_trailers",
     "policy.repo_truth.docs",

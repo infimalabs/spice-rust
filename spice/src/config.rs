@@ -287,6 +287,8 @@ impl<'de> Deserialize<'de> for TaskMetadata {
 pub struct WorkspacePolicy {
     #[serde(deserialize_with = "unique_names")]
     env_names: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pre_commit: Vec<PreCommitStep>,
     commit_message: gate::CommitMessagePolicy,
     repo_truth: gate::RepoTruthPolicy,
     file_shape: gate::FileShapePolicy,
@@ -305,6 +307,16 @@ impl WorkspacePolicy {
     #[must_use]
     pub fn env_names(&self) -> &[String] {
         &self.env_names
+    }
+
+    /// Repository-owned commands the predecessor runs before its own commit gate.
+    ///
+    /// The current Rust gate admits these declarations so both runtimes can
+    /// read one tracked document, but it deliberately does not execute them:
+    /// the repository's bridge is one predecessor-to-Rust edge, not recursion.
+    #[must_use]
+    pub fn pre_commit(&self) -> &[PreCommitStep] {
+        &self.pre_commit
     }
 
     /// Documents the workspace measures as repository truth.
@@ -382,6 +394,58 @@ impl WorkspacePolicy {
     }
 }
 
+/// One current predecessor pre-commit command admitted by tracked policy.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreCommitStep {
+    #[serde(deserialize_with = "nonempty_string")]
+    label: String,
+    #[serde(deserialize_with = "nonempty_argv")]
+    run: Vec<String>,
+    #[serde(default, skip_serializing_if = "PreCommitScopes::is_empty")]
+    scopes: PreCommitScopes,
+}
+
+impl PreCommitStep {
+    /// Human-readable identity shown by the predecessor gate.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Exact executable and arguments, retained in authored order.
+    #[must_use]
+    pub fn run(&self) -> &[String] {
+        &self.run
+    }
+
+    /// Optional path selection; an empty selection means every commit.
+    #[must_use]
+    pub const fn scopes(&self) -> &PreCommitScopes {
+        &self.scopes
+    }
+}
+
+/// Current path selection carried by a predecessor pre-commit command.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PreCommitScopes {
+    #[serde(deserialize_with = "unique_names")]
+    paths: Vec<String>,
+}
+
+impl PreCommitScopes {
+    /// Authored path selectors, empty when the command is unscoped.
+    #[must_use]
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+}
+
 const fn default_project_min_depth() -> u64 {
     dialect::PROJECT_MIN_DEPTH as u64
 }
@@ -413,6 +477,28 @@ fn unique_names<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String
         }
     }
     Ok(names)
+}
+
+fn nonempty_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    if value.is_empty() {
+        Err(D::Error::custom("pre-commit labels must be nonempty"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn nonempty_argv<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    let arguments = Vec::<String>::deserialize(deserializer)?;
+    if arguments.is_empty() {
+        return Err(D::Error::custom("pre-commit run argv must not be empty"));
+    }
+    if arguments.iter().any(String::is_empty) {
+        return Err(D::Error::custom(
+            "pre-commit run argv entries must be nonempty",
+        ));
+    }
+    Ok(arguments)
 }
 
 /// Serialized shape of one leaf value.
@@ -741,6 +827,27 @@ registry! {
     fixed "policy.env_names" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    indexed "policy.pre_commit[].label" {
+        kind: String,
+        builtin: None,
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    indexed "policy.pre_commit[].run" {
+        kind: StringList,
+        builtin: None,
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    indexed "policy.pre_commit[].scopes.paths" {
+        kind: StringList,
+        builtin: None,
         layers: TRACKED,
         class: Policy,
         flag: None,
