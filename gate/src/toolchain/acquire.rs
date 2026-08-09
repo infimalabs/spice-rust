@@ -165,6 +165,7 @@ pub struct ToolchainSource<'a> {
     rim: RimCapture,
     baselines: Option<&'a BaselineCapture>,
     identity: Option<&'a Digest>,
+    verifier_environment: &'a [(OsString, OsString)],
     verifier_evidence: &'a [VerifierCompilerEvidence],
 }
 
@@ -182,6 +183,7 @@ impl<'a> ToolchainSource<'a> {
             rim,
             baselines: None,
             identity: None,
+            verifier_environment: &[],
             verifier_evidence: &[],
         }
     }
@@ -193,6 +195,7 @@ impl<'a> ToolchainSource<'a> {
         rim: RimCapture,
         baselines: &'a BaselineCapture,
         identity: &'a Digest,
+        verifier_environment: &'a [(OsString, OsString)],
         verifier_evidence: &'a [VerifierCompilerEvidence],
     ) -> Self {
         Self {
@@ -201,6 +204,7 @@ impl<'a> ToolchainSource<'a> {
             rim,
             baselines: Some(baselines),
             identity: Some(identity),
+            verifier_environment,
             verifier_evidence,
         }
     }
@@ -231,6 +235,11 @@ impl<'a> ToolchainSource<'a> {
     /// Opaque successful verifier evidence offered to this battery run.
     pub(super) const fn verifier_evidence(&self) -> &[VerifierCompilerEvidence] {
         self.verifier_evidence
+    }
+
+    /// Ambient compiler environment captured by the consuming verifier.
+    pub(super) const fn verifier_environment(&self) -> &[(OsString, OsString)] {
+        self.verifier_environment
     }
 
     /// Selected-tree-relative paths the rim captured as changed.
@@ -470,10 +479,16 @@ fn reusable_verifier_analysis(
     tools: &[ToolEvidence],
 ) -> Option<Analysis> {
     let identity = source.identity()?;
-    let evidence = source
-        .verifier_evidence()
-        .iter()
-        .find(|evidence| evidence.admits(declaration.id, identity, tools))?;
+    let evidence = source.verifier_evidence().iter().find(|evidence| {
+        evidence.admits(
+            declaration.id,
+            identity,
+            source.repository(),
+            source.root(),
+            source.verifier_environment(),
+            tools,
+        )
+    })?;
     let analysis = Analysis::terminal(
         ArmOutcome::Passed,
         format!(

@@ -8,10 +8,8 @@
 //! only be assembled from the exact successful stages that arm requires.
 
 use std::ffi::{OsStr, OsString};
-use std::fs;
 use std::io;
-use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -19,10 +17,12 @@ use std::time::Instant;
 use wire::{Digest, Domain};
 
 use super::ToolEvidence;
+use crate::VERIFIER_APP_PUBLISH_FLAG;
 use crate::battery::CANONICAL_BATTERY_MANIFEST;
 use crate::manifest::GateId;
 
-const GIT: &str = "/usr/bin/git";
+const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
+const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
 
 const NATIVE_CLIPPY_ARGUMENTS: &[&str] = &[
     "clippy",
@@ -65,7 +65,7 @@ impl VerifierCompilerStage {
         }
     }
 
-    const fn arguments(self) -> &'static [&'static str] {
+    const fn base_arguments(self) -> &'static [&'static str] {
         match self {
             Self::NativeClippy => NATIVE_CLIPPY_ARGUMENTS,
             Self::CanvasCheck => CANVAS_CHECK_ARGUMENTS,
@@ -110,7 +110,7 @@ impl VerifierCompilerRun {
         self.code
     }
 
-    /// Successful reusable evidence, absent after failure or source drift.
+    /// Successful reusable evidence, absent after process failure.
     #[must_use]
     pub fn into_evidence(self) -> Option<VerifierCompilerProcessEvidence> {
         self.evidence
@@ -167,9 +167,10 @@ impl VerifierCompilerContract {
 
     /// Run one exact compiler stage and mint evidence only after a clean exit.
     ///
-    /// The worktree/index relation is checked on both sides of the process.  A
-    /// command still provides ordinary verifier feedback when that relation is
-    /// not exact, but it cannot then stand in for analysis of the staged tree.
+    /// The process runs from the immutable selected source root. Compiler
+    /// outputs are redirected into the live repository, and the app stage is
+    /// given an explicit separate publication root, so neither output nor
+    /// ignored live-worktree inputs can change what was analyzed.
     ///
     /// # Errors
     ///
@@ -188,22 +189,28 @@ impl VerifierCompilerContract {
                 self.gate_id.as_str()
             )));
         };
-        let source_before =
-            selection_matches_worktree(&self.repository, &self.selection_root, &self.environment);
+        let arguments = stage_arguments(stage, &self.repository);
+        let environment = compiler_environment(&self.environment, &self.repository);
         let started = Instant::now();
         let status = Command::new(program)
-            .args(stage.arguments())
-            .current_dir(&self.repository)
+            .args(&arguments)
+            .current_dir(&self.selection_root)
             .env_clear()
-            .envs(self.environment.iter().cloned())
+            .envs(environment.iter().cloned())
             .status()?;
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let source_after =
-            selection_matches_worktree(&self.repository, &self.selection_root, &self.environment);
         let success = status.success();
         let code = status.code();
-        let evidence = (success && source_before && source_after)
-            .then(|| VerifierCompilerProcessEvidence::mint(self, stage, elapsed_ms, code));
+        let evidence = success.then(|| {
+            VerifierCompilerProcessEvidence::mint(
+                self,
+                stage,
+                environment,
+                arguments,
+                elapsed_ms,
+                code,
+            )
+        });
         Ok(VerifierCompilerRun {
             success,
             code,
@@ -260,10 +267,11 @@ pub struct VerifierCompilerProcessEvidence {
     source: Digest,
     manifest: Digest,
     repository: PathBuf,
+    selection_root: PathBuf,
     tools: Vec<ToolEvidence>,
     environment: Vec<(OsString, OsString)>,
     targets: Vec<String>,
-    arguments: Vec<String>,
+    arguments: Vec<OsString>,
     exit_code: i32,
     elapsed_ms: u64,
     seal: Digest,
@@ -273,6 +281,8 @@ impl VerifierCompilerProcessEvidence {
     fn mint(
         contract: &VerifierCompilerContract,
         stage: VerifierCompilerStage,
+        environment: Vec<(OsString, OsString)>,
+        arguments: Vec<OsString>,
         elapsed_ms: u64,
         code: Option<i32>,
     ) -> Self {
@@ -282,18 +292,15 @@ impl VerifierCompilerProcessEvidence {
             source: contract.source.clone(),
             manifest: contract.manifest.clone(),
             repository: contract.repository.clone(),
+            selection_root: contract.selection_root.clone(),
             tools: contract.tools.clone(),
-            environment: contract.environment.clone(),
+            environment,
             targets: stage
                 .targets()
                 .iter()
                 .map(|value| (*value).to_owned())
                 .collect(),
-            arguments: stage
-                .arguments()
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect(),
+            arguments,
             exit_code: code.unwrap_or(0),
             elapsed_ms,
             seal: Digest::compute(Domain::GateReceipt, b"unsealed verifier compiler process"),
@@ -308,10 +315,11 @@ impl VerifierCompilerProcessEvidence {
             && self.source == contract.source
             && self.manifest == contract.manifest
             && self.repository == contract.repository
+            && self.selection_root == contract.selection_root
             && self.tools == contract.tools
-            && self.environment == contract.environment
+            && self.environment == compiler_environment(&contract.environment, &contract.repository)
             && self.targets == self.stage.targets()
-            && self.arguments == self.stage.arguments()
+            && self.arguments == stage_arguments(self.stage, &contract.repository)
             && self.exit_code == 0
             && self.seal == self.compute_seal()
     }
@@ -323,6 +331,7 @@ impl VerifierCompilerProcessEvidence {
         frame(&mut bytes, self.source.as_str().as_bytes());
         frame(&mut bytes, self.manifest.as_str().as_bytes());
         frame(&mut bytes, self.repository.as_os_str().as_bytes());
+        frame(&mut bytes, self.selection_root.as_os_str().as_bytes());
         for tool in &self.tools {
             let encoded = wire::encode(tool).expect("tool evidence is encodable");
             frame(&mut bytes, &encoded);
@@ -335,7 +344,7 @@ impl VerifierCompilerProcessEvidence {
             frame(&mut bytes, target.as_bytes());
         }
         for argument in &self.arguments {
-            frame(&mut bytes, argument.as_bytes());
+            frame(&mut bytes, argument.as_os_str().as_bytes());
         }
         frame(&mut bytes, &self.exit_code.to_be_bytes());
         frame(&mut bytes, &self.elapsed_ms.to_be_bytes());
@@ -350,7 +359,10 @@ pub struct VerifierCompilerEvidence {
     gate_id: GateId,
     source: Digest,
     manifest: Digest,
+    repository: PathBuf,
+    selection_root: PathBuf,
     tools: Vec<ToolEvidence>,
+    environment: Vec<(OsString, OsString)>,
     processes: Vec<VerifierCompilerProcessEvidence>,
     seal: Digest,
 }
@@ -364,7 +376,10 @@ impl VerifierCompilerEvidence {
             gate_id: contract.gate_id,
             source: contract.source.clone(),
             manifest: contract.manifest.clone(),
+            repository: contract.repository.clone(),
+            selection_root: contract.selection_root.clone(),
             tools: contract.tools.clone(),
+            environment: contract.environment.clone(),
             processes,
             seal: Digest::compute(Domain::GateReceipt, b"unsealed verifier compiler evidence"),
         };
@@ -372,12 +387,24 @@ impl VerifierCompilerEvidence {
         evidence
     }
 
-    pub(crate) fn admits(&self, gate_id: GateId, source: &Digest, tools: &[ToolEvidence]) -> bool {
+    pub(crate) fn admits(
+        &self,
+        gate_id: GateId,
+        source: &Digest,
+        repository: &Path,
+        selection_root: &Path,
+        environment: &[(OsString, OsString)],
+        tools: &[ToolEvidence],
+    ) -> bool {
         let expected = expected_stages(gate_id);
+        let process_environment = compiler_environment(environment, repository);
         self.gate_id == gate_id
             && &self.source == source
             && self.manifest == manifest_identity()
+            && self.repository == repository
+            && self.selection_root == selection_root
             && self.tools == tools
+            && self.environment == environment
             && self.processes.len() == expected.len()
             && expected.iter().all(|stage| {
                 self.processes
@@ -390,10 +417,13 @@ impl VerifierCompilerEvidence {
                 process.gate_id == gate_id
                     && &process.source == source
                     && process.manifest == self.manifest
+                    && process.repository == repository
+                    && process.selection_root == selection_root
                     && process.tools == self.tools
+                    && process.environment == process_environment
                     && process.exit_code == 0
                     && process.targets == process.stage.targets()
-                    && process.arguments == process.stage.arguments()
+                    && process.arguments == stage_arguments(process.stage, repository)
                     && process.seal == process.compute_seal()
             })
             && self.seal == self.compute_seal()
@@ -415,9 +445,15 @@ impl VerifierCompilerEvidence {
         frame(&mut bytes, self.gate_id.as_str().as_bytes());
         frame(&mut bytes, self.source.as_str().as_bytes());
         frame(&mut bytes, self.manifest.as_str().as_bytes());
+        frame(&mut bytes, self.repository.as_os_str().as_bytes());
+        frame(&mut bytes, self.selection_root.as_os_str().as_bytes());
         for tool in &self.tools {
             let encoded = wire::encode(tool).expect("tool evidence is encodable");
             frame(&mut bytes, &encoded);
+        }
+        for (name, value) in &self.environment {
+            frame(&mut bytes, name.as_bytes());
+            frame(&mut bytes, value.as_bytes());
         }
         for process in &self.processes {
             frame(&mut bytes, process.seal.as_str().as_bytes());
@@ -457,107 +493,47 @@ fn cargo_program(tools: &[ToolEvidence]) -> Option<&OsStr> {
     })
 }
 
-fn selection_matches_worktree(
-    repository: &Path,
-    selection: &Path,
-    environment: &[(OsString, OsString)],
-) -> bool {
-    let indexed = Command::new(GIT)
-        .args([
-            "-C",
-            repository.to_string_lossy().as_ref(),
-            "ls-files",
-            "-z",
-        ])
-        .env_clear()
-        .envs(environment.iter().cloned())
-        .output();
-    let Ok(indexed) = indexed else {
-        return false;
-    };
-    if !indexed.status.success() {
-        return false;
-    }
-    let mut indexed = indexed
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-        .map(|path| PathBuf::from(OsString::from_vec(path.to_vec())))
+fn stage_arguments(stage: VerifierCompilerStage, repository: &Path) -> Vec<OsString> {
+    let mut arguments = stage
+        .base_arguments()
+        .iter()
+        .map(OsString::from)
         .collect::<Vec<_>>();
-    indexed.sort();
-    let Ok(mut selected) = selected_paths(selection) else {
-        return false;
-    };
-    selected.sort();
-    if indexed != selected
-        || indexed
-            .iter()
-            .any(|path| !same_selected_entry(&selection.join(path), &repository.join(path)))
-    {
-        return false;
+    if stage == VerifierCompilerStage::CanvasApp {
+        arguments.push(OsString::from(VERIFIER_APP_PUBLISH_FLAG));
+        arguments.push(repository.as_os_str().to_owned());
     }
-    Command::new(GIT)
-        .args([
-            "-C",
-            repository.to_string_lossy().as_ref(),
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ])
-        .env_clear()
-        .envs(environment.iter().cloned())
-        .output()
-        .is_ok_and(|output| output.status.success() && output.stdout.is_empty())
+    arguments
 }
 
-fn selected_paths(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut directories = vec![root.to_path_buf()];
-    let mut paths = Vec::new();
-    while let Some(directory) = directories.pop() {
-        for entry in fs::read_dir(&directory)? {
-            let entry = entry?;
-            let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)?;
-            if metadata.is_dir() {
-                directories.push(path);
-            } else {
-                paths.push(
-                    path.strip_prefix(root)
-                        .expect("selected descendants retain their root")
-                        .to_path_buf(),
-                );
+fn compiler_environment(
+    environment: &[(OsString, OsString)],
+    repository: &Path,
+) -> Vec<(OsString, OsString)> {
+    let mut environment = environment.to_vec();
+    for variable in [CARGO_TARGET_DIR, CARGO_BUILD_BUILD_DIR] {
+        let name = OsStr::new(variable);
+        match environment
+            .iter_mut()
+            .find(|(candidate, _)| candidate == name)
+        {
+            Some((_, value)) if Path::new(value).is_relative() => {
+                *value = repository.join(&*value).into_os_string();
             }
+            Some(_) | None => {}
         }
     }
-    Ok(paths)
-}
-
-fn same_selected_entry(selected: &Path, worktree: &Path) -> bool {
-    let (Ok(selected_metadata), Ok(worktree_metadata)) = (
-        fs::symlink_metadata(selected),
-        fs::symlink_metadata(worktree),
-    ) else {
-        return false;
-    };
-    let selected_type = selected_metadata.file_type();
-    let worktree_type = worktree_metadata.file_type();
-    if selected_type.is_symlink() != worktree_type.is_symlink()
-        || selected_type.is_file() != worktree_type.is_file()
-        || selected_metadata.mode() & 0o111 != worktree_metadata.mode() & 0o111
+    if !environment
+        .iter()
+        .any(|(name, _)| name == OsStr::new(CARGO_TARGET_DIR))
     {
-        return false;
+        environment.push((
+            OsString::from(CARGO_TARGET_DIR),
+            repository.join("target").into_os_string(),
+        ));
     }
-    if selected_type.is_symlink() {
-        return fs::read_link(selected).ok() == fs::read_link(worktree).ok();
-    }
-    if !selected_type.is_file() {
-        return false;
-    }
-    matches!(
-        (fs::read(selected), fs::read(worktree)),
-        (Ok(selected), Ok(worktree)) if selected == worktree
-    )
+    environment.sort();
+    environment
 }
 
 fn frame(into: &mut Vec<u8>, bytes: &[u8]) {
@@ -567,6 +543,8 @@ fn frame(into: &mut Vec<u8>, bytes: &[u8]) {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn source(label: &[u8]) -> Digest {
@@ -613,11 +591,33 @@ mod tests {
                 VerifierCompilerProcessEvidence::mint(
                     contract,
                     *stage,
+                    compiler_environment(&contract.environment, &contract.repository),
+                    stage_arguments(*stage, &contract.repository),
                     u64::try_from(index + 1).expect("small fixture duration"),
                     Some(0),
                 )
             })
             .collect()
+    }
+
+    fn admits(candidate: &VerifierCompilerEvidence, contract: &VerifierCompilerContract) -> bool {
+        candidate.admits(
+            contract.gate_id,
+            &contract.source,
+            &contract.repository,
+            &contract.selection_root,
+            &contract.environment,
+            &contract.tools,
+        )
+    }
+
+    fn first_process_mut(
+        candidate: &mut VerifierCompilerEvidence,
+    ) -> &mut VerifierCompilerProcessEvidence {
+        candidate
+            .processes
+            .first_mut()
+            .expect("complete evidence has a compiler process")
     }
 
     #[test]
@@ -628,7 +628,14 @@ mod tests {
                 .complete(&complete_processes(&contract))
                 .expect("complete evidence");
 
-            assert!(evidence.admits(gate_id, &contract.source, &contract.tools));
+            assert!(evidence.admits(
+                gate_id,
+                &contract.source,
+                &contract.repository,
+                &contract.selection_root,
+                &contract.environment,
+                &contract.tools,
+            ));
         }
     }
 
@@ -651,86 +658,228 @@ mod tests {
         let exact = contract
             .complete(&complete_processes(&contract))
             .expect("complete evidence");
-        let admits = |candidate: &VerifierCompilerEvidence| {
-            candidate.admits(contract.gate_id, &contract.source, &contract.tools)
-        };
 
         let mut candidate = exact.clone();
         candidate.gate_id = GateId::RustTypecheck;
-        assert!(!admits(&candidate));
+        assert!(!admits(&candidate, &contract));
 
         let mut candidate = exact.clone();
         candidate.source = source(b"stale selected tree");
-        assert!(!admits(&candidate));
+        assert!(!admits(&candidate, &contract));
 
         let mut candidate = exact.clone();
         candidate.manifest = Digest::compute(Domain::GateBatteryManifest, b"foreign manifest");
-        assert!(!admits(&candidate));
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        candidate.repository = PathBuf::from("/foreign/repository");
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        candidate.selection_root = PathBuf::from("/foreign/selection");
+        assert!(!admits(&candidate, &contract));
 
         let mut candidate = exact.clone();
         candidate.tools[0] = tool("cargo", "/forged/cargo");
-        assert!(!admits(&candidate));
+        assert!(!admits(&candidate, &contract));
 
         let mut candidate = exact.clone();
-        candidate.processes[0].gate_id = GateId::RustTypecheck;
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0].stage = VerifierCompilerStage::NativeClippy;
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0].source = source(b"stale process source");
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0].manifest =
-            Digest::compute(Domain::GateBatteryManifest, b"stale process manifest");
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0].repository = PathBuf::from("/forged/repository");
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0].tools[0] = tool("cargo", "/forged/process-cargo");
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0]
+        candidate
             .environment
-            .push((OsString::from("FORGED"), OsString::from("1")));
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0]
-            .targets
-            .push("foreign-target".to_owned());
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0].arguments.push("--forged".to_owned());
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0].exit_code = 17;
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0].elapsed_ms += 1;
-        assert!(!admits(&candidate));
-
-        let mut candidate = exact.clone();
-        candidate.processes[0].seal = Digest::compute(Domain::GateReceipt, b"forged process seal");
-        assert!(!admits(&candidate));
+            .push((OsString::from("FORGED"), OsString::from("forged")));
+        assert!(!admits(&candidate, &contract));
 
         let mut candidate = exact.clone();
         candidate.processes.pop();
-        assert!(!admits(&candidate));
+        assert!(!admits(&candidate, &contract));
 
         let mut candidate = exact;
         candidate.seal = Digest::compute(Domain::GateReceipt, b"forged seal");
-        assert!(!admits(&candidate));
+        assert!(!admits(&candidate, &contract));
+    }
+
+    #[test]
+    fn every_bound_process_field_mutation_invalidates_evidence() {
+        let contract = contract(GateId::CanvasWebTypecheck);
+        let exact = contract
+            .complete(&complete_processes(&contract))
+            .expect("complete evidence");
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).gate_id = GateId::RustTypecheck;
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).stage = VerifierCompilerStage::NativeClippy;
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).source = source(b"stale process source");
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).manifest =
+            Digest::compute(Domain::GateBatteryManifest, b"stale process manifest");
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).repository = PathBuf::from("/forged/repository");
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).selection_root = PathBuf::from("/forged/selection");
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).tools = vec![tool("cargo", "/forged/process-cargo")];
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate)
+            .environment
+            .push((OsString::from("FORGED"), OsString::from("forged")));
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate)
+            .targets
+            .push("foreign-target".to_owned());
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate)
+            .arguments
+            .push(OsString::from("--forged"));
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).exit_code = 17;
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).elapsed_ms += 1;
+        assert!(!admits(&candidate, &contract));
+
+        let mut candidate = exact.clone();
+        first_process_mut(&mut candidate).seal =
+            Digest::compute(Domain::GateReceipt, b"forged process seal");
+        assert!(!admits(&candidate, &contract));
+    }
+
+    #[test]
+    fn sealed_evidence_cannot_cross_a_consumer_environment_or_capture_root() {
+        let mut producer = contract(GateId::RustTypecheck);
+        producer.environment.push((
+            OsString::from("RUSTFLAGS"),
+            OsString::from("--cfg=producer"),
+        ));
+        producer.environment.sort();
+        let evidence = producer
+            .complete(&complete_processes(&producer))
+            .expect("producer evidence");
+
+        let mut consumer_environment = producer.environment.clone();
+        let (_, rustflags) = consumer_environment
+            .iter_mut()
+            .find(|(name, _)| name == "RUSTFLAGS")
+            .expect("fixture RUSTFLAGS");
+        *rustflags = OsString::from("--cfg=consumer");
+        assert!(!evidence.admits(
+            producer.gate_id,
+            &producer.source,
+            &producer.repository,
+            &producer.selection_root,
+            &consumer_environment,
+            &producer.tools,
+        ));
+        assert!(!evidence.admits(
+            producer.gate_id,
+            &producer.source,
+            &producer.repository,
+            Path::new("/another/capture/root"),
+            &producer.environment,
+            &producer.tools,
+        ));
+    }
+
+    #[test]
+    fn ignored_live_compiler_inputs_cannot_mint_selected_source_evidence() {
+        let root = crate::toolchain::exclusive_scratch_root("gate-verifier-selected-source");
+        let repository = root.join("repository");
+        let selection = root.join("selection");
+        fs::create_dir_all(repository.join(".cargo")).expect("live Cargo configuration root");
+        fs::create_dir_all(repository.join("ignored")).expect("live ignored build root");
+        fs::create_dir(&selection).expect("immutable selected root");
+        let manifest = concat!(
+            "[package]\n",
+            "name = \"selected-source-fixture\"\n",
+            "version = \"0.0.0\"\n",
+            "edition = \"2024\"\n",
+            "build = \"ignored/build.rs\"\n",
+        );
+        for root in [&repository, &selection] {
+            fs::write(root.join("Cargo.toml"), manifest).expect("tracked fixture manifest");
+            fs::write(root.join(".gitignore"), ".cargo/config.toml\nignored/\n")
+                .expect("tracked ignored-input policy");
+        }
+        fs::write(
+            repository.join(".cargo/config.toml"),
+            "[build]\nrustflags = []\n",
+        )
+        .expect("ignored live Cargo configuration");
+        fs::write(repository.join("ignored/build.rs"), "fn main() {}\n")
+            .expect("ignored live build script");
+        for (label, live_only_input) in [
+            ("ignored-cargo-config", ".cargo/config.toml"),
+            ("ignored-build-script", "ignored/build.rs"),
+        ] {
+            let cargo = root.join(label);
+            fs::write(
+                &cargo,
+                format!(
+                    concat!(
+                        "#!/bin/sh\n",
+                        "if [ -f '{live_only_input}' ]; then\n",
+                        "  exit 0\n",
+                        "fi\n",
+                        "exit 19\n",
+                    ),
+                    live_only_input = live_only_input,
+                ),
+            )
+            .expect("write compiler-input witness");
+            fs::set_permissions(
+                &cargo,
+                fs::metadata("/usr/bin/true")
+                    .expect("read fixture executable permissions")
+                    .permissions(),
+            )
+            .expect("make compiler-input witness executable");
+            let contract = VerifierCompilerContract::new(
+                GateId::RustTypecheck,
+                source(label.as_bytes()),
+                repository.clone(),
+                selection.clone(),
+                vec![tool("cargo", cargo.to_str().expect("UTF-8 fixture path"))],
+                Vec::new(),
+            )
+            .expect("selected-source compiler contract");
+
+            let run = contract
+                .run(VerifierCompilerStage::NativeClippy)
+                .expect("compiler-input witness launches");
+
+            assert!(!run.success());
+            assert!(
+                run.into_evidence().is_none(),
+                "{live_only_input} minted evidence from outside the selected root"
+            );
+            assert!(
+                contract.complete(&[]).is_err(),
+                "{live_only_input} admitted evidence without a successful process token"
+            );
+        }
+        fs::remove_dir_all(root).expect("remove selected-source fixture");
     }
 
     #[test]
@@ -740,6 +889,7 @@ mod tests {
             .parent()
             .expect("gate crate has a workspace parent")
             .to_path_buf();
+        contract.selection_root = contract.repository.clone();
         contract.tools = vec![tool("cargo", "/usr/bin/false")];
 
         let run = contract

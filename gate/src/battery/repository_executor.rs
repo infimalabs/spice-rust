@@ -94,6 +94,7 @@ pub struct RepositoryExecutor<'trace> {
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
     families: [Option<FamilyExecution>; FAMILY_COUNT],
+    verifier_environment: Vec<(OsString, OsString)>,
     verifier_evidence: Vec<VerifierCompilerEvidence>,
     selected: Option<GateId>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
@@ -234,6 +235,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             hygiene,
             context: None,
             families: std::array::from_fn(|_| None),
+            verifier_environment: Vec::new(),
             verifier_evidence: Vec::new(),
             selected,
             trace,
@@ -281,6 +283,7 @@ impl<'trace> RepositoryExecutor<'trace> {
     pub(super) fn set_verifier_evidence(
         &mut self,
         evidence: &[VerifierCompilerEvidence],
+        environment: Vec<(OsString, OsString)>,
     ) -> Result<(), BatteryError> {
         if self.selected.is_some() {
             return Err(BatteryError::new(
@@ -292,6 +295,7 @@ impl<'trace> RepositoryExecutor<'trace> {
                 "full-verifier evidence must be supplied before battery execution",
             ));
         }
+        self.verifier_environment = environment;
         self.verifier_evidence = evidence.to_vec();
         Ok(())
     }
@@ -384,6 +388,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             self.rim.clone(),
             &self.baselines,
             &self.source,
+            &self.verifier_environment,
             &self.verifier_evidence,
         );
         if let Some(gate_id) = self.selected {
