@@ -266,7 +266,7 @@ mod tests {
         let scratch = Scratch::new();
         let worktree = scratch.join("worktree");
         let common = scratch.join("common");
-        let state = common.join(".spice");
+        let state = common.join(".spice-rs");
 
         for target in [
             ReleaseTarget::Aarch64AppleDarwin,
@@ -289,7 +289,7 @@ mod tests {
                     .expect("matching payload")
                     .path(),
                 common
-                    .join(".spice/proof")
+                    .join(".spice-rs/proof")
                     .join(payload.source.as_str())
                     .join(target.as_str())
                     .join("receipt.json")
@@ -302,7 +302,7 @@ mod tests {
         let scratch = Scratch::new();
         let layout = Layout::new(
             scratch.join("worktree"),
-            scratch.join("common/.spice/proof"),
+            scratch.join("common/.spice-rs/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::X86_64UnknownLinuxMusl, "other target");
@@ -323,7 +323,7 @@ mod tests {
         let common = scratch.join("common");
         let layout = Layout::new(
             &worktree,
-            common.join(".spice/proof"),
+            common.join(".spice-rs/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::Aarch64AppleDarwin, "readable");
@@ -349,13 +349,13 @@ mod tests {
         let common = scratch.join("common");
         let layout = Layout::new(
             &worktree,
-            common.join(".spice/proof"),
+            common.join(".spice-rs/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::Aarch64AppleDarwin, "missing");
         let receipt = layout.receipt_for(&payload).expect("matching payload");
         let payload_decoy = worktree.join("dist/stage/targets/latest/payload.json");
-        let receipt_decoy = common.join(".spice/proof/latest/receipt.json");
+        let receipt_decoy = common.join(".spice-rs/proof/latest/receipt.json");
         fs::create_dir_all(payload_decoy.parent().expect("payload decoy parent"))
             .expect("create payload decoy parent");
         fs::create_dir_all(receipt_decoy.parent().expect("receipt decoy parent"))
@@ -389,7 +389,7 @@ mod tests {
         let scratch = Scratch::new();
         let layout = Layout::new(
             scratch.join("worktree"),
-            scratch.join("common/.spice/proof"),
+            scratch.join("common/.spice-rs/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::Aarch64AppleDarwin, "directory inputs");
@@ -418,7 +418,7 @@ mod tests {
         let scratch = Scratch::new();
         let layout = Layout::new(
             scratch.join("worktree"),
-            scratch.join("common/.spice/proof"),
+            scratch.join("common/.spice-rs/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::Aarch64AppleDarwin, "symlink inputs");

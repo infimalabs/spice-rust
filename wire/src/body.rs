@@ -324,6 +324,15 @@ pub struct ClaimWon {
     pub occupant: CanonicalUuid,
     /// Resident epoch that minted the claim.
     pub epoch: CanonicalUuid,
+    /// Project and phase occupied when the claim was minted.
+    ///
+    /// Absence is admitted only for facts written before journal schema 4.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub cell: Option<crate::ClaimCell>,
     /// Lease expiry the possession runs to.
     pub until: Instant,
     /// Repository history fixed when possession was minted.

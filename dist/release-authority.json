@@ -1,0 +1,1 @@
+{"schema":1,"provider":"git","package":"spice","remote":"origin","source":"refs/heads/main","package_ref":"refs/spice/packages/vVERSION","tag_ref":"refs/tags/vVERSION","announcement_ref":"refs/spice/releases/vVERSION","version_file":"dist/VERSION"}

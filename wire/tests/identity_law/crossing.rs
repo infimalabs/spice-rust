@@ -275,6 +275,7 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
             TaskHead {
                 handle: task.clone(),
                 uuid: first_uuid,
+                queue_origin: seq(9),
                 title: "Build the gate".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
@@ -287,6 +288,7 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
             TaskHead {
                 handle: task.clone(),
                 uuid: second_uuid,
+                queue_origin: seq(9),
                 title: "Review the gate".to_owned(),
                 description: Some("Confirm every edge".to_owned()),
                 acceptance: vec!["The gate passes".to_owned()],
@@ -342,6 +344,11 @@ fn cover_claim_heads(covered: &mut BTreeSet<String>) {
             ClaimHead {
                 actor: Actor::Operator,
                 fact: seq(12),
+                claimed: seq(12),
+                cell: wire::ClaimCell {
+                    project: "gate".to_owned(),
+                    phase: "todo".parse().expect("phase"),
+                },
                 lane: first_uuid,
                 occupant: second_uuid,
                 epoch: first_uuid,
@@ -350,6 +357,11 @@ fn cover_claim_heads(covered: &mut BTreeSet<String>) {
             ClaimHead {
                 actor: Actor::Lane(first_uuid),
                 fact: seq(13),
+                claimed: seq(12),
+                cell: wire::ClaimCell {
+                    project: "gate".to_owned(),
+                    phase: "review".parse().expect("phase"),
+                },
                 lane: second_uuid,
                 occupant: first_uuid,
                 epoch: second_uuid,
@@ -1068,14 +1080,14 @@ fn cover_restore_reply_frames(covered: &mut BTreeSet<String>) {
         &[
             JournalRestore {
                 plan: digest("1"),
-                destination: "/repo/.git/.spice/data/spicejournal.sqlite3".to_owned(),
+                destination: "/repo/.git/.spice-rs/data/spicejournal.sqlite3".to_owned(),
                 previous: None,
                 verification: restore_verification("2", 0),
                 applied: false,
             },
             JournalRestore {
                 plan: digest("3"),
-                destination: "/repo/.git/.spice/data/spicejournal.sqlite3".to_owned(),
+                destination: "/repo/.git/.spice-rs/data/spicejournal.sqlite3".to_owned(),
                 previous: Some(digest("4")),
                 verification: restore_verification("5", 19),
                 applied: true,

@@ -71,8 +71,8 @@ pub use doctor::{
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
-    ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LaneSession,
-    LeaseHead, LineageSubscription, ResidencyHead, ResidentState, TapeLocus, TaskHead,
+    ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency,
+    LaneSession, LeaseHead, LineageSubscription, ResidencyHead, ResidentState, TapeLocus, TaskHead,
     TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
     WorkflowHead,
 };

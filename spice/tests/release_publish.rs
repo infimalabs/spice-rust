@@ -82,7 +82,7 @@ impl Fixture {
             "## Highlights\n\n- Published one proof-bound Rust release.\n",
         )
         .expect("curated notes write");
-        let runtime = root.join(".git/.spice");
+        let runtime = root.join(".git/.spice-rs");
         let journal = runtime.join("data/spicejournal.sqlite3");
         let canvas = runtime.join("canvas");
         let manifest = publish_stage(&root);

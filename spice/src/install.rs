@@ -36,23 +36,19 @@ use record::record_path;
 
 const PLAN_VERSION: u16 = 5;
 const RECORD_VERSION: u16 = 5;
-const LEGACY_RECORDS: [(&str, &str); 2] = [
-    (".spice/install", "SURFACE-1kJQkpFs"),
-    (".spice/rust/install.json", "SURFACE-1kJRGpf2"),
-];
 const LEGACY_RECORD_VERSIONS: [(u16, &str); 3] = [
     (2, "SURFACE-1kJRGpf2"),
     (3, "HOOKS-1kJQnmG8"),
     (4, "INSTALL-1kKQTfBp"),
 ];
 const RECORD_NAME: &str = "install.json";
-const RECORD_PATH: &str = ".spice/install.json";
+const RECORD_PATH: &str = ".spice-rs/install.json";
 const RECORD_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
 
-// The receipt materializes `.spice` before applying operations. Appliance
+// The receipt materializes `.spice-rs` before applying operations. Appliance
 // assets use a sibling namespace so that publication cannot invalidate the
 // side-effect-free preview's descriptor-bound parent observations.
 const EXCLUDE_PATH: &str = "info/exclude";
@@ -68,7 +64,7 @@ const EXCLUDE_BEGIN: &str = "# BEGIN Spice managed assets";
 const EXCLUDE_END: &str = "# END Spice managed assets";
 const EXCLUDE_BLOCK: &str = concat!(
     "# BEGIN Spice managed assets\n",
-    "/.spice/\n",
+    "/.spice-rs/\n",
     "/.agents/skills/spice/\n",
     "# END Spice managed assets\n",
 );

@@ -100,7 +100,7 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
             reason: "repository::state-path-refused".to_owned(),
             witness: Some("repository-state-root".to_owned()),
             expected: Some(
-                "real fixed components beneath the canonical Git-common .spice directory"
+                "real fixed components beneath the canonical Git-common .spice-rs directory"
                     .to_owned(),
             ),
             observed: Some(error.to_string()),

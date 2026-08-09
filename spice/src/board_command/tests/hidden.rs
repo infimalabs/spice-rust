@@ -186,7 +186,7 @@ fn document_ledgers_keep_hidden_titles_actor_facing_and_public_bytes_stable() {
         else {
             panic!("hidden ledger was not a text snapshot: {hidden_ledger:?}");
         };
-        assert_eq!(answer.text, "# Hidden task\nFlow: todo, review\n");
+        assert_eq!(answer.text, "# Hidden task\nFlow: plan, todo, review\n");
         for form in [crate::render::Form::Text, crate::render::Form::Json] {
             let document = crate::render::render(&hidden_ledger, form)
                 .expect("hidden ledger renders")
@@ -253,7 +253,7 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
 
     let expected_graph = concat!(
         "graph workflow\n",
-        "HIDDEN-graph1: todo [pending]\n",
+        "HIDDEN-graph1: plan [pending]\n",
         "PUBLIC-graph1: todo [pending]\n",
     );
     let mut actor_graphs = Vec::new();
@@ -302,7 +302,7 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
         "## workflow\n\n",
         "```text\n",
         "graph workflow\n",
-        "HIDDEN-graph1: todo [pending]\n",
+        "HIDDEN-graph1: plan [pending]\n",
         "PUBLIC-graph1: todo [pending]\n",
         "```\n\n",
         "## claims\n\n",

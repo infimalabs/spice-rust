@@ -11,6 +11,16 @@ use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Phase, TaskHandle};
 
+/// One allocator locality coordinate captured when a claim is won.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimCell {
+    /// Project occupied by the claimed task.
+    pub project: String,
+    /// Workflow phase occupied by the claimed task.
+    pub phase: Phase,
+}
+
 /// One current task statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,6 +29,8 @@ pub struct TaskHead {
     pub handle: TaskHandle,
     /// Stable task identity.
     pub uuid: CanonicalUuid,
+    /// Fact that first placed this task in the queue.
+    pub queue_origin: Seq,
     /// Authored title.
     pub title: String,
     /// Longer authored context.
@@ -96,8 +108,12 @@ pub enum ClaimDisposition {
 pub struct ClaimHead {
     /// Actor that won possession.
     pub actor: Actor,
-    /// Fact that established the win.
+    /// Fact that established the current claim-head disposition.
     pub fact: Seq,
+    /// Fact that established the most recent win, unchanged by its disposition.
+    pub claimed: Seq,
+    /// Project and phase occupied when the most recent win was minted.
+    pub cell: ClaimCell,
     /// Lane bound to the claim.
     pub lane: CanonicalUuid,
     /// Occupant bound to the claim.

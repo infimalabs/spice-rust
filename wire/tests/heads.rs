@@ -10,6 +10,7 @@ use wire::{
 const TASK: &str = r#"{
   "handle": "WIRE-aBcD",
   "uuid": "018f82d4-6f59-7d06-92e3-bce913116301",
+  "queue_origin": 40,
   "title": "Bind authority heads",
   "description": "Keep complete task context on the current statement",
   "acceptance": ["Every authored field survives the head round trip"],
@@ -23,6 +24,7 @@ const TASK: &str = r#"{
 const TASK_WITHOUT_AUTHORED_CONTEXT: &str = r#"{
   "handle": "WIRE-aBcD",
   "uuid": "018f82d4-6f59-7d06-92e3-bce913116301",
+  "queue_origin": 40,
   "title": "Bind authority heads",
   "project": "wire",
   "tags": ["genesis", "wire"],
@@ -43,6 +45,11 @@ const WORKFLOW: &str = r#"{
 const CLAIM: &str = r#"{
   "actor": "lane:018f82d4-6f59-7d06-92e3-bce913116302",
   "fact": 42,
+  "claimed": 42,
+  "cell": {
+    "project": "wire",
+    "phase": "todo"
+  },
   "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
   "occupant": "018f82d4-6f59-7d06-92e3-bce913116303",
   "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
@@ -166,6 +173,7 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
             "handle",
             "project",
             "provenance",
+            "queue_origin",
             "revision",
             "tags",
             "title",
@@ -185,7 +193,16 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
     );
     assert_fields::<ClaimHead>(
         CLAIM,
-        &["actor", "disposition", "epoch", "fact", "lane", "occupant"],
+        &[
+            "actor",
+            "cell",
+            "claimed",
+            "disposition",
+            "epoch",
+            "fact",
+            "lane",
+            "occupant",
+        ],
     );
     assert_fields::<LeaseHead>(LEASE, &["epoch", "expiry", "maximum", "renewal", "start"]);
     assert_fields::<WitnessHead>(WITNESS, &["head", "kind", "name", "predicate"]);

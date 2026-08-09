@@ -1,7 +1,7 @@
 use wire::manifest::{
     BuildPins, InventoryEntry, JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember,
-    PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION,
-    ReleaseManifest, ReleaseManifestTarget, ReleaseTarget, TargetPayload,
+    PROOF_RECEIPT_VERSION, ProductVersion, ProofEnvironment, ProofReceipt, ProofStanding,
+    RELEASE_MANIFEST_VERSION, ReleaseManifest, ReleaseManifestTarget, ReleaseTarget, TargetPayload,
 };
 use wire::{Digest, Domain, WireVersion};
 
@@ -184,6 +184,21 @@ fn release_targets_encode_as_canonical_rust_triples() {
         wire::encode(&ReleaseTarget::X86_64UnknownLinuxMusl).expect("target encodes"),
         br#""x86_64-unknown-linux-musl""#
     );
+}
+
+#[test]
+fn product_versions_have_one_canonical_semantic_spelling() {
+    for accepted in ["0.0.0", "1.2.3-rc.1", "1.2.3+build.01"] {
+        let version = ProductVersion::parse(accepted).expect("canonical version");
+        let bytes = wire::encode(&version).expect("version encodes");
+        assert_eq!(
+            wire::decode::<ProductVersion>(&bytes).expect("version decodes"),
+            version
+        );
+    }
+    for refused in ["", "v1.2.3", "01.2.3", "1.2", "1.2.3-01", "1.2.3+"] {
+        assert!(ProductVersion::parse(refused).is_err(), "{refused}");
+    }
 }
 
 #[test]

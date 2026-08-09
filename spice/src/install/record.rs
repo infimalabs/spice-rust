@@ -1,5 +1,3 @@
-use std::fs;
-use std::io;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -9,8 +7,8 @@ use super::binding::bind_destination;
 use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallReceipt, InstallStatus,
-    LEGACY_RECORD_VERSIONS, LEGACY_RECORDS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
-    Repository, RepositoryIdentity,
+    LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION, Repository,
+    RepositoryIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -180,7 +178,6 @@ impl InstallRecord {
 }
 
 pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {
-    refuse_legacy_record(repository)?;
     record_path(repository)?;
     let binding = bind_destination(repository.common_dir(), RECORD_PATH)?;
     let (observed, _) = observe_bound(
@@ -260,22 +257,4 @@ pub(super) fn record_path(repository: &Repository) -> Result<PathBuf, InstallErr
         .map_err(InstallError::State)?
         .runtime()
         .join(RECORD_NAME))
-}
-
-fn refuse_legacy_record(repository: &Repository) -> Result<(), InstallError> {
-    for (relative, owner) in LEGACY_RECORDS {
-        let path = repository.common_dir().join(relative);
-        match fs::symlink_metadata(&path) {
-            Ok(_) => return Err(InstallError::LegacyRecord { path, owner }),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(InstallError::io(
-                    "inspect legacy install record",
-                    path,
-                    source,
-                ));
-            }
-        }
-    }
-    Ok(())
 }

@@ -52,6 +52,8 @@ pub const TARGET_PAYLOAD_VERSION: u16 = 1;
 pub const RELEASE_MANIFEST_VERSION: u16 = 1;
 /// The sole current deterministic release-note document schema.
 pub const RELEASE_NOTES_VERSION: u16 = 1;
+/// The sole current externally installable release-package schema.
+pub const RELEASE_PACKAGE_VERSION: u16 = 1;
 
 /// An OCI image identity that is pinned by one canonical SHA-256 digest.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -253,6 +255,104 @@ impl fmt::Display for ReleaseTarget {
     }
 }
 
+/// One canonical semantic product version without a Git tag prefix.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ProductVersion(String);
+
+impl ProductVersion {
+    /// Admit one canonical semantic version.
+    ///
+    /// # Errors
+    ///
+    /// Refuses whitespace, a `v` prefix, missing core numbers, leading zeroes,
+    /// and malformed pre-release or build identifiers.
+    pub fn parse(text: &str) -> Result<Self, ProductVersionError> {
+        if canonical_semver(text) {
+            Ok(Self(text.to_owned()))
+        } else {
+            Err(ProductVersionError(text.to_owned()))
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for ProductVersion {
+    type Err = ProductVersionError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::parse(text)
+    }
+}
+
+impl fmt::Display for ProductVersion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Serialize for ProductVersion {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProductVersion {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(D::Error::custom)
+    }
+}
+
+/// Why one external product version was refused.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("product version is not canonical semantic version text: {0:?}")]
+pub struct ProductVersionError(String);
+
+fn canonical_semver(text: &str) -> bool {
+    if text.is_empty() || text.trim() != text || text.starts_with('v') {
+        return false;
+    }
+    let (without_build, build) = split_once_optional(text, '+');
+    let (core, prerelease) = split_once_optional(without_build, '-');
+    let mut numbers = core.split('.');
+    let valid_core = [numbers.next(), numbers.next(), numbers.next()]
+        .into_iter()
+        .all(|number| number.is_some_and(canonical_number))
+        && numbers.next().is_none();
+    valid_core
+        && prerelease.is_none_or(|value| identifiers(value, true))
+        && build.is_none_or(|value| identifiers(value, false))
+}
+
+fn split_once_optional(text: &str, separator: char) -> (&str, Option<&str>) {
+    text.split_once(separator)
+        .map_or((text, None), |(left, right)| (left, Some(right)))
+}
+
+fn canonical_number(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+        && (value == "0" || !value.starts_with('0'))
+}
+
+fn identifiers(value: &str, numeric_no_leading_zero: bool) -> bool {
+    !value.is_empty()
+        && value.split('.').all(|identifier| {
+            !identifier.is_empty()
+                && identifier
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && (!numeric_no_leading_zero
+                    || !identifier.bytes().all(|byte| byte.is_ascii_digit())
+                    || canonical_number(identifier))
+        })
+}
+
 /// Exact identities required before distribution may build.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -351,4 +451,41 @@ pub struct ReleaseManifest {
     pub source: Digest,
     /// Both supported targets in [`ReleaseTarget`] declaration order.
     pub targets: Vec<ReleaseManifestTarget>,
+}
+/// One externally installable executable and its sealed provenance.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleasePackageTarget {
+    /// Supported target tuple in declaration order.
+    pub target: ReleaseTarget,
+    /// Fixed package-tree path of the standalone executable.
+    pub executable_path: String,
+    /// Domain-separated identity of the exact executable bytes.
+    pub executable: Digest,
+    /// Canonical receipt-free target payload identity.
+    pub payload: Digest,
+    /// Detached proof receipt that admitted the payload.
+    pub proof: Digest,
+}
+
+/// Canonical index of one externally installable Rust Spice release.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleasePackage {
+    /// Current package-index schema.
+    pub schema: u16,
+    /// Stable external product name.
+    pub package: String,
+    /// Canonical semantic product version without a tag prefix.
+    pub product_version: ProductVersion,
+    /// Immutable source commit identity shared by both target payloads.
+    pub source: Digest,
+    /// Canonical sealed two-target manifest identity.
+    pub manifest: Digest,
+    /// Identity of the exact release-note evidence document.
+    pub notes: Digest,
+    /// Identity of the exact operator-facing note bytes in the package tree.
+    pub notes_content: Digest,
+    /// Both supported targets in [`ReleaseTarget`] declaration order.
+    pub targets: Vec<ReleasePackageTarget>,
 }
