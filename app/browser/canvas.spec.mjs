@@ -166,6 +166,37 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   const secondarySurface = console.locator(
     `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
   );
+  const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
+  assert.deepEqual(
+    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
+    ["Compose", "Compose"],
+    "each newly rendered team begins in Compose",
+  );
+  await primarySurface.getByRole("tab", { name: /^Metrics/ }).click();
+  assert.deepEqual(
+    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
+    ["Metrics", "Compose"],
+    "switching the primary team to Metrics leaves its sibling in Compose",
+  );
+  await secondarySurface.getByRole("tab", { name: /^Info/ }).click();
+  assert.deepEqual(
+    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
+    ["Metrics", "Info"],
+    "two teams retain different selected views simultaneously",
+  );
+  await primarySurface.getByRole("tab", { name: /^Filters/ }).click();
+  assert.deepEqual(
+    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
+    ["Filters", "Info"],
+    "a subsequent primary switch preserves the secondary selection",
+  );
+  await secondarySurface.getByRole("tab", { name: /^Compose/ }).click();
+  assert.deepEqual(
+    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
+    ["Filters", "Compose"],
+    "a subsequent secondary switch preserves the primary selection",
+  );
+  await primarySurface.getByRole("tab", { name: /^Compose/ }).click();
   const noCardDestination = await primaryDestination(secondarySurface, secondary.lane);
   assert.equal(
     noCardDestination.rendered.length,
