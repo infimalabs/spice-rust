@@ -9,6 +9,7 @@ mod tests {
         Success,
         Exit(i32),
         Launch,
+        EvidenceRefused,
     }
 
     /// The report a current entry point produces, so the order test can pin
@@ -194,6 +195,9 @@ mod tests {
                 code: Some(code),
             }))),
             Outcome::Launch => Err(RunError::Launch(io::Error::other(launch_detail.to_owned()))),
+            Outcome::EvidenceRefused => Err(RunError::EvidenceRefused(
+                "fixture selected tree differs from the verifier worktree".to_owned(),
+            )),
         }
     }
 
@@ -328,7 +332,7 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 11] = [
+        const GUARDED_ACTIONS: [Action; 12] = [
             Action::EntryPoint,
             Action::Format,
             Action::Command(Step::cargo(
@@ -367,11 +371,12 @@ mod tests {
                     "wasm32-unknown-unknown",
                 ],
             )),
-            Action::Browser,
             Action::Command(Step::cargo(
-                "cargo test --locked --workspace --all-targets",
-                &["test", "--locked", "--workspace", "--all-targets"],
+                "cargo xtask app (canvas compiler evidence)",
+                &["xtask", "app"],
             )),
+            Action::Browser,
+            Action::WorkspaceTests,
             Action::Command(Step::cargo(
                 "cargo doc --locked --workspace --lib --bins --no-deps",
                 &[
@@ -447,19 +452,23 @@ mod tests {
     }
 
     /// BROWSER-1kKSWhZk removed one former surface, so real Chromium guards
-    /// the final production edge immediately after the browser-target build.
+    /// the final production edge immediately after the prebuilt app action.
     #[test]
-    fn verifier_makes_the_real_browser_guard_mandatory_after_the_wasm_build() {
+    fn verifier_makes_the_real_browser_guard_mandatory_after_the_prebuilt_app() {
         let browser = VERIFY_ACTIONS
             .iter()
             .position(|action| *action == Action::Browser)
             .expect("the verifier has a browser action");
 
-        assert_eq!(browser, 5);
+        assert_eq!(browser, 6);
         let predecessor = VERIFY_ACTIONS[browser - 1];
-        assert!(
-            matches!(predecessor, Action::Command(step) if step.arguments.contains(&WASM_TARGET))
-        );
+        assert!(matches!(predecessor, Action::Command(step) if step.label == CANVAS_APP_LABEL));
+        let wasm_predecessor = VERIFY_ACTIONS[browser - 2];
+        let is_wasm = match wasm_predecessor {
+            Action::Command(step) => step.arguments.contains(&WASM_TARGET),
+            _ => false,
+        };
+        assert!(is_wasm);
         assert_eq!(
             BROWSER_RECEIPT,
             b"BROWSER-1kKSWhZk browser coverage complete\n"
@@ -605,7 +614,7 @@ mod tests {
         assert_eq!(output.matches("stage=terminal").count(), 1);
         assert!(output.contains("disposition=error"));
         assert!(output.contains(&format!("identity={ENTRY_POINT_LABEL:?}")));
-        assert!(!output.contains("ordinal=2/11"));
+        assert!(!output.contains("ordinal=2/12"));
     }
 
     #[test]
@@ -637,6 +646,30 @@ mod tests {
         assert!(!calls.contains(&VERIFY_ACTIONS[2].label()));
         assert!(!calls.contains(&landing::LABEL));
         assert_calls_are_unique(&calls);
+    }
+
+    #[test]
+    fn compiler_evidence_refusal_is_primary_action_failure_not_cleanup() {
+        let runner = runner([Outcome::Success, Outcome::EvidenceRefused, Outcome::Success]);
+        let mut output = Vec::new();
+
+        let error = verify_with(&runner, &mut output).expect_err("evidence refusal surfaces");
+
+        assert!(matches!(error, VerifyError::EvidenceRefused { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("fixture selected tree differs from the verifier worktree")
+        );
+        let calls = runner.calls();
+        assert!(calls.contains(&VERIFY_ACTIONS[2].label()));
+        assert!(!calls.contains(&VERIFY_ACTIONS[3].label()));
+        assert!(!calls.contains(&landing::LABEL));
+        assert_calls_are_unique(&calls);
+        let output = String::from_utf8(output).expect("lifecycle output is UTF-8");
+        assert!(output.contains("disposition=refused"));
+        assert!(output.contains("primary_ordinal=3 interrupted=false cleanup_faults=0"));
+        assert!(!output.contains("scheduler=cleanup-fault"));
     }
 
     #[test]
@@ -673,25 +706,25 @@ mod tests {
         assert_calls_are_unique(&calls);
         let output = String::from_utf8(output).expect("fixture diagnostic is UTF-8");
         assert!(output.contains("bounded battery refusal\n"));
-        assert!(output.contains(concat!("stage=terminal ordinal=10/11", " elapsed_ms=")));
-        assert!(output.contains("disposition=refused family=child-process:gate-battery"));
-        assert!(!output.contains("ordinal=11/11"));
+        assert!(output.contains(concat!("stage=terminal ordinal=11/12", " elapsed_ms=")));
+        assert!(output.contains("disposition=refused family=in-process:gate-battery"));
+        assert!(!output.contains("ordinal=12/12"));
     }
 
     #[test]
-    fn battery_child_failure_is_primary_action_error_not_a_cleanup_fault() {
+    fn battery_action_failure_is_primary_action_error_not_a_cleanup_fault() {
         let runner = runner(successful_commands());
         runner.set_battery(BatteryRun::Error(
-            "fixture child protocol failure".to_owned(),
+            "fixture battery execution failure".to_owned(),
         ));
         let mut output = Vec::new();
 
-        let error = verify_with(&runner, &mut output).expect_err("battery child failure surfaces");
+        let error = verify_with(&runner, &mut output).expect_err("battery action failure surfaces");
 
         assert!(matches!(error, VerifyError::Battery(_)));
         let output = String::from_utf8(output).expect("fixture output is UTF-8");
-        assert!(output.contains("disposition=error family=child-process:gate-battery"));
-        assert!(output.contains("primary_ordinal=10 interrupted=false cleanup_faults=0"));
+        assert!(output.contains("disposition=error family=in-process:gate-battery"));
+        assert!(output.contains("primary_ordinal=11 interrupted=false cleanup_faults=0"));
         assert!(!output.contains("scheduler=cleanup-fault"));
     }
 
@@ -716,7 +749,7 @@ mod tests {
         let output = String::from_utf8(output.accepted).expect("lifecycle output is UTF-8");
         let terminal = output
             .lines()
-            .filter(|line| line.contains("stage=terminal ordinal=10/11"))
+            .filter(|line| line.contains("stage=terminal ordinal=11/12"))
             .collect::<Vec<_>>();
         assert_eq!(
             terminal.len(),
@@ -724,7 +757,7 @@ mod tests {
             "failed action has one terminal: {output}"
         );
         assert!(terminal[0].contains("disposition=render-error"));
-        assert!(!output.contains("ordinal=11/11"));
+        assert!(!output.contains("ordinal=12/12"));
     }
 
     #[test]
@@ -799,7 +832,12 @@ mod tests {
     fn successful_commands() -> Vec<Outcome> {
         VERIFY_ACTIONS
             .iter()
-            .filter(|action| matches!(action, Action::Format | Action::Command(_)))
+            .filter(|action| {
+                matches!(
+                    action,
+                    Action::Format | Action::Command(_) | Action::WorkspaceTests
+                )
+            })
             .map(|_| Outcome::Success)
             .collect()
     }

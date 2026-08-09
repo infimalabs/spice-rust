@@ -91,16 +91,25 @@ contract-landing check. The checked gate manifest maps each of the 25 retired
 standard policy checks to one compiled gate arm, and workspace tests exercise
 the exact mapping and production executor.
 
-Verification uses an explicit dependency graph. The warm Cargo chain remains
-serial in its build root, while the separately rooted Canvas battery and the
-selected-snapshot gate analysis may overlap their declared prerequisites. The
-scheduler has a hard ceiling of three actions. It counts peer Cargo processes,
-reduces that ceiling from three to two to one as peer pressure rises, and sets
-the local worker count no higher than the logical CPUs left after those peers.
-One worker remains the progress floor when peers already saturate that budget.
-The scheduler sets `CARGO_BUILD_JOBS` to the logical-CPU budget divided across
-the peer and local participants; an unavailable peer probe fails closed to one
-worker and one Cargo job.
+Verification uses an explicit dependency graph. The warm compiler-evidence
+chain remains serial through native Clippy, Wasm Clippy, the Wasm workspace
+check, and the prebuilt Canvas app. Browser verification and deterministic
+workspace tests then fork. Documentation and doctests follow the workspace
+tests and may continue while the browser branch runs; the canonical battery
+waits for both branches and consumes the compiler evidence before contract
+landing crosses the final barrier.
+
+The outer scheduler has a hard ceiling of three actions. It counts peer Cargo
+processes, reduces that ceiling from three to two to one as peer pressure
+rises, and sets the local worker count no higher than the logical CPUs left
+after those peers. One worker remains the progress floor when peers already
+saturate that budget. The scheduler sets `CARGO_BUILD_JOBS` to the logical-CPU
+budget divided across the peer and local participants; an unavailable peer
+probe fails closed to one worker, one Cargo job, and one test shard. After
+reserving every possible concurrent outer sibling's Cargo grant, the scheduler
+gives the workspace-test coordinator the remaining logical-CPU slots, capped
+at four, and fixes each shard to one Cargo job. Package or target count
+therefore cannot create an unbounded process or CPU fan-out.
 
 Every external action runs in a new process group under bounded output,
 runtime, termination, and reap deadlines. The first failure or an operator
@@ -126,11 +135,17 @@ cargo xtask verify
 ```
 
 The command discovers the repository from the current directory and runs the
-one canonical verifier; there is no wrapper or second suite.
+one canonical verifier; there is no wrapper or second suite. Its workspace Rust
+tests are metadata-sorted into deterministic chunks of at most 12 targets and
+run in no more than the scheduler-granted workers, with an absolute ceiling of
+four owned process groups. Every shard prints its package and target inventory
+before launch, reports progress every 30 seconds, and has a hard 180-second
+deadline that terminates and reaps the complete process group.
 
-`cargo xtask verify-action battery` is the visible, scheduler-owned child
-surface for the canonical gate action. It is not a completion verifier and has
-no legacy alias; ordinary callers use `cargo xtask verify`.
+`cargo xtask verify-action battery` is the visible public partial surface for
+the canonical gate action. It does not share the full verifier's retained
+compiler evidence, is not a completion verifier, and has no legacy alias;
+ordinary callers use `cargo xtask verify`.
 
 For fast feedback while changing one Cargo package, scope the formatter,
 Clippy, all-target tests, and doctests to that package:
@@ -142,6 +157,22 @@ cargo xtask verify --package gate
 The scoped command identifies every full-verifier action and compiled gate arm
 it skips. It is feedback only; run the zero-argument command before completing
 or handing off work.
+
+## Cargo build cache
+
+Cargo's configured `build_directory` may point every worktree at a shared
+machine cache shaped as `CargoBuild/<bucket>/<workspace-hash>`. Inventory it
+without writes with:
+
+```sh
+cargo xtask build-cache --dry-run --max-bytes 40GiB --retain-live-worktrees 2
+```
+
+Apply the same deterministic oldest-first plan with `--apply`, or drive by
+free space instead of total cache size with `--free-space-floor 100GiB`. The
+collector retains the current worktree and the configured number of hottest
+linked worktree roots, skips any root with a held `.cargo-build-lock`, and never
+manages `CARGO_HOME`, `CARGO_TARGET_DIR`, or sccache.
 
 [SHELL.md](SHELL.md) inventories the few shell-bound entrypoints that remain
 and every orchestration script retired into these Rust commands.

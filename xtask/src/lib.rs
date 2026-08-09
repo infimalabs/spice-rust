@@ -2,32 +2,43 @@
 
 use std::ffi::OsStr;
 use std::fmt;
-use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Mutex;
 
 use sill::CancellationToken;
 
 mod app;
+mod build_cache;
 mod commit_message;
-// The refresh drives `spice::install`, which the appliance itself gates off the
-// wasm target; the workspace wasm check compiles this crate too.
-#[cfg(not(target_arch = "wasm32"))]
 mod develop;
 mod hooks;
 mod landing;
 mod proof_image;
 mod reference_transaction;
 mod release;
+mod verify_browser;
 mod verify_execution;
 mod verify_timing;
+#[cfg(not(target_arch = "wasm32"))]
+mod workspace_tests;
 
 use app::WASM_TARGET;
 pub use app::{AppBuildError, app};
+pub use build_cache::{
+    BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheReport, BuildCacheRequest,
+    BuildCacheRootReport, build_cache, collect_build_cache_at, parse_byte_quantity,
+};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
+pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh};
+use verify_browser::BrowserRun;
+#[cfg(test)]
+const BROWSER_RECEIPT: &[u8] = verify_browser::RECEIPT;
+// The install step drives `spice::install`, which the appliance itself gates
+// off the wasm target; the workspace wasm check compiles this crate too.
 #[cfg(not(target_arch = "wasm32"))]
-pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh, refresh_install};
+pub use develop::refresh_install;
 pub use hooks::{
     HookActivationError, activate_hooks, audit_entry_point, audit_entry_point_for_guard,
     compiled_reference_transaction_guard_digest, reference_transaction_guard_digest,
@@ -35,6 +46,8 @@ pub use hooks::{
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use reference_transaction::{ReferenceTransactionError, WorktreeDamage};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
+#[cfg(not(target_arch = "wasm32"))]
+pub use workspace_tests::{WorkspaceTestError, run as run_workspace_tests};
 
 /// Apply the repository's native commit-message law to one Git message file.
 ///
@@ -82,7 +95,7 @@ pub fn reference_transaction(
 /// `PATH` repeats policy after the Rust-owned checks finish. Execution order is
 /// constrained by the explicit graph in `verify_execution`, not this report
 /// order.
-const VERIFY_ACTIONS: [Action; 11] = [
+const VERIFY_ACTIONS: [Action; 12] = [
     Action::EntryPoint,
     Action::Format,
     Action::Command(Step::cargo(
@@ -115,11 +128,9 @@ const VERIFY_ACTIONS: [Action; 11] = [
         "cargo check --locked --workspace --target wasm32-unknown-unknown",
         &["check", "--locked", "--workspace", "--target", WASM_TARGET],
     )),
+    Action::Command(Step::cargo(CANVAS_APP_LABEL, &["xtask", "app"])),
     Action::Browser,
-    Action::Command(Step::cargo(
-        "cargo test --locked --workspace --all-targets",
-        &["test", "--locked", "--workspace", "--all-targets"],
-    )),
+    Action::WorkspaceTests,
     Action::Command(Step::cargo(
         DOCUMENTATION_LABEL,
         &[
@@ -183,10 +194,10 @@ const ENTRY_POINT_LABEL: &str = "published reference-transaction guard is this b
 const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
 /// Exit spelling for a completed verifier action that refused publication.
 pub const VERIFY_ACTION_REFUSAL_EXIT: u8 = 3;
-const BROWSER_RECEIPT_FLAG: &str = "--spice-coverage-receipt";
-const BROWSER_RECEIPT: &[u8] = b"BROWSER-1kKSWhZk browser coverage complete\n";
-const BROWSER_BINARY_ENV: &str = "SPICE_CANVAS_BINARY"; // env-policy: allow
-static NEXT_BROWSER_RECEIPT: AtomicU64 = AtomicU64::new(0);
+const CANVAS_APP_LABEL: &str = "cargo xtask app (canvas compiler evidence)";
+const WORKSPACE_TEST_CONCURRENCY_CAP: usize = 4;
+const WORKSPACE_TEST_LABEL: &str =
+    "deterministic sharded cargo test --locked --workspace --all-targets";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Step {
@@ -206,6 +217,7 @@ enum Action {
     Format,
     Command(Step),
     Browser,
+    WorkspaceTests,
     Battery,
     Landing,
 }
@@ -264,6 +276,7 @@ impl Action {
             Self::EntryPoint => ENTRY_POINT_LABEL,
             Self::Format => FORMAT_LABEL,
             Self::Browser => BROWSER_LABEL,
+            Self::WorkspaceTests => WORKSPACE_TEST_LABEL,
             Self::Battery => BATTERY_LABEL,
             Self::Landing => landing::LABEL,
         }
@@ -275,7 +288,8 @@ impl Action {
             Self::Format => "child-process:rustfmt",
             Self::Command(_) => "child-process:cargo",
             Self::Browser => "child-process:npm",
-            Self::Battery => "child-process:gate-battery",
+            Self::WorkspaceTests => "child-process:rust-test-coordinator",
+            Self::Battery => "in-process:gate-battery",
             Self::Landing => "in-process:contract-landing",
         }
     }
@@ -315,6 +329,11 @@ impl ProcessOutput {
 #[derive(Debug)]
 enum RunError {
     Launch(io::Error),
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "compiler evidence supervision is native-only")
+    )]
+    EvidenceRefused(String),
     Cleanup(String),
 }
 
@@ -343,6 +362,18 @@ trait Runner: Sync {
         cancellation: &CancellationToken,
         cargo_jobs: usize,
     ) -> Result<BrowserRun, RunError>;
+    fn workspace_tests(
+        &self,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+        workspace_workers: usize,
+    ) -> Result<CommandRun, RunError> {
+        self.run(
+            Step::cargo(WORKSPACE_TEST_LABEL, &[]),
+            cancellation,
+            cargo_jobs.min(workspace_workers),
+        )
+    }
     fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError>;
     fn landing(&self) -> Result<landing::Report, landing::Error>;
 }
@@ -363,16 +394,153 @@ enum BatteryRun {
     Refused(Vec<u8>),
     Error(String),
     Cancelled,
-    TimedOut,
 }
 
-#[derive(Debug)]
-struct BrowserRun {
-    process: CommandRun,
-    completed: bool,
+#[cfg(not(target_arch = "wasm32"))]
+struct SystemState {
+    battery: Option<spice::gate::PreparedBattery>,
+    compiler_contracts: Vec<gate::VerifierCompilerContract>,
+    compiler_processes: Vec<gate::VerifierCompilerProcessEvidence>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+struct SystemRunner {
+    state: Mutex<SystemState>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl SystemRunner {
+    fn prepare() -> Result<Self, String> {
+        let battery =
+            spice::gate::prepare(gate::Selector::staged()).map_err(|error| error.to_string())?;
+        Ok(Self::from_state(SystemState {
+            battery: Some(battery),
+            compiler_contracts: Vec::new(),
+            compiler_processes: Vec::new(),
+        }))
+    }
+
+    fn standalone() -> Self {
+        Self::from_state(SystemState {
+            battery: None,
+            compiler_contracts: Vec::new(),
+            compiler_processes: Vec::new(),
+        })
+    }
+
+    fn from_state(state: SystemState) -> Self {
+        Self {
+            state: Mutex::new(state),
+        }
+    }
+
+    fn state(&self) -> Result<std::sync::MutexGuard<'_, SystemState>, RunError> {
+        self.state
+            .lock()
+            .map_err(|error| RunError::Cleanup(format!("verifier state lock poisoned: {error}")))
+    }
+
+    fn compiler_stage(step: Step) -> Option<gate::VerifierCompilerStage> {
+        match step.label {
+            "cargo clippy --locked --workspace --all-targets -- -D warnings" => {
+                Some(gate::VerifierCompilerStage::NativeClippy)
+            }
+            "cargo check --locked --workspace --target wasm32-unknown-unknown" => {
+                Some(gate::VerifierCompilerStage::CanvasCheck)
+            }
+            CANVAS_APP_LABEL => Some(gate::VerifierCompilerStage::CanvasApp),
+            _ => None,
+        }
+    }
+
+    fn compiler_contract(
+        &self,
+        stage: gate::VerifierCompilerStage,
+        cargo_jobs: usize,
+    ) -> Result<gate::VerifierCompilerContract, RunError> {
+        let gate_id = match stage {
+            gate::VerifierCompilerStage::NativeClippy => gate::GateId::RustTypecheck,
+            gate::VerifierCompilerStage::CanvasCheck | gate::VerifierCompilerStage::CanvasApp => {
+                gate::GateId::CanvasWebTypecheck
+            }
+        };
+        let mut state = self.state()?;
+        if !state
+            .compiler_contracts
+            .iter()
+            .any(|contract| contract.gate_id() == gate_id)
+        {
+            let battery = state.battery.as_ref().ok_or_else(|| {
+                RunError::Cleanup("full verifier compiler evidence has no prepared battery".into())
+            })?;
+            let contract = battery
+                .verifier_compiler_contract(gate_id)
+                .map_err(|error| RunError::Launch(io::Error::other(error.to_string())))?;
+            let contract = contract.with_cargo_jobs(cargo_jobs);
+            state.compiler_contracts.push(contract);
+        }
+        state
+            .compiler_contracts
+            .iter()
+            .find(|contract| contract.gate_id() == gate_id)
+            .cloned()
+            .ok_or_else(|| {
+                RunError::Cleanup(format!("missing {} compiler contract", gate_id.as_str()))
+            })
+    }
+
+    fn run_compiler_stage(
+        &self,
+        stage: gate::VerifierCompilerStage,
+        cancellation: &CancellationToken,
+        cargo_jobs: usize,
+    ) -> Result<CommandRun, RunError> {
+        let contract = self.compiler_contract(stage, cargo_jobs)?;
+        let run = contract
+            .run_supervised(stage, cancellation.clone())
+            .map_err(RunError::Launch)?;
+        if let Some(reason) = run.evidence_refusal() {
+            return Err(RunError::EvidenceRefused(format!(
+                "{} compiler evidence refused: {reason}",
+                contract.gate_id().as_str()
+            )));
+        }
+        let cancelled = run.cancelled();
+        let timed_out = run.timed_out();
+        let output = ProcessOutput {
+            status: Status {
+                success: run.success(),
+                code: run.code(),
+            },
+            stdout: run.stdout().to_vec(),
+            stderr: run.stderr().to_vec(),
+        };
+        if let Some(evidence) = run.into_evidence() {
+            self.state()?.compiler_processes.push(evidence);
+        }
+        Ok(if cancelled {
+            CommandRun::Cancelled(output)
+        } else if timed_out {
+            CommandRun::TimedOut(output)
+        } else {
+            CommandRun::Exited(output)
+        })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 struct SystemRunner;
+
+#[cfg(target_arch = "wasm32")]
+impl SystemRunner {
+    fn prepare() -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    const fn standalone() -> Self {
+        Self
+    }
+}
 
 impl Runner for SystemRunner {
     fn entry_point(&self) -> Result<String, String> {
@@ -435,6 +603,10 @@ impl Runner for SystemRunner {
         cancellation: &CancellationToken,
         cargo_jobs: usize,
     ) -> Result<CommandRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(stage) = Self::compiler_stage(step) {
+            return self.run_compiler_stage(stage, cancellation, cargo_jobs);
+        }
         verify_execution::run_process(
             step.label,
             "cargo",
@@ -468,71 +640,77 @@ impl Runner for SystemRunner {
         cancellation: &CancellationToken,
         cargo_jobs: usize,
     ) -> Result<BrowserRun, RunError> {
-        let receipt = std::env::temp_dir().join(format!(
-            "spice-browser-coverage-{}-{}",
-            std::process::id(),
-            NEXT_BROWSER_RECEIPT.fetch_add(1, Ordering::Relaxed),
-        ));
-        remove_receipt(&receipt).map_err(RunError::Launch)?;
-        let root = std::env::current_dir().map_err(RunError::Launch)?;
-        let canvas_root = root.join("target/verify-canvas");
-        let canvas_target = canvas_root.join("target");
-        let canvas_build = canvas_root.join("build");
-        let canvas_binary = canvas_target.join("debug/spice");
-        let process = verify_execution::run_process(
-            BROWSER_LABEL,
-            "npm",
-            [
-                std::ffi::OsString::from("run"),
-                std::ffi::OsString::from("test:canvas"),
-                std::ffi::OsString::from("--"),
-                std::ffi::OsString::from(BROWSER_RECEIPT_FLAG),
-                receipt.as_os_str().to_owned(),
-            ],
-            cancellation,
-            cargo_jobs,
-            &[
-                ("CARGO_TARGET_DIR", canvas_target.as_os_str()),
-                ("CARGO_BUILD_BUILD_DIR", canvas_build.as_os_str()),
-                (BROWSER_BINARY_ENV, canvas_binary.as_os_str()),
-            ],
-        )?;
-        let completed = fs::read(&receipt).is_ok_and(|body| body == BROWSER_RECEIPT);
-        remove_receipt(&receipt).map_err(|error| RunError::Cleanup(error.to_string()))?;
-        Ok(BrowserRun { process, completed })
+        verify_browser::run(cancellation, cargo_jobs)
+    }
+
+    fn workspace_tests(
+        &self,
+        cancellation: &CancellationToken,
+        _cargo_jobs: usize,
+        workspace_workers: usize,
+    ) -> Result<CommandRun, RunError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let executable = std::env::current_exe().map_err(RunError::Launch)?;
+            verify_execution::run_process(
+                WORKSPACE_TEST_LABEL,
+                executable,
+                [
+                    "__workspace-tests".to_owned(),
+                    workspace_workers.to_string(),
+                ],
+                cancellation,
+                1,
+                &[],
+            )
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (cancellation, workspace_workers);
+            Err(RunError::Launch(io::Error::other(
+                "workspace tests are unavailable on wasm32",
+            )))
+        }
     }
 
     fn battery(&self, cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let executable = std::env::current_exe().map_err(RunError::Launch)?;
-            let run = verify_execution::run_process(
-                BATTERY_LABEL,
-                executable,
-                ["verify-action", "battery"],
-                cancellation,
-                1,
-                &[],
-            )?;
-            match run {
-                CommandRun::Cancelled(_) => Ok(BatteryRun::Cancelled),
-                CommandRun::TimedOut(_) => Ok(BatteryRun::TimedOut),
-                CommandRun::Exited(output) if output.status.success => {
-                    Ok(BatteryRun::Admitted(output.stdout))
+            if cancellation.is_cancelled() {
+                return Ok(BatteryRun::Cancelled);
+            }
+            let mut state = self.state()?;
+            let evidence = match state
+                .compiler_contracts
+                .iter()
+                .map(|contract| contract.complete(&state.compiler_processes))
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(evidence) => evidence,
+                Err(error) => return Ok(BatteryRun::Error(error)),
+            };
+            let report = match state
+                .battery
+                .as_mut()
+                .ok_or_else(|| {
+                    RunError::Launch(io::Error::other(
+                        "full verifier battery capture is unavailable",
+                    ))
+                })?
+                .execute(&evidence)
+            {
+                Ok(report) => report,
+                Err(error) => return Ok(BatteryRun::Error(error.to_string())),
+            };
+            if cancellation.is_cancelled() {
+                Ok(BatteryRun::Cancelled)
+            } else if report.admits() {
+                match report.encode() {
+                    Ok(document) => Ok(BatteryRun::Admitted(document)),
+                    Err(error) => Ok(BatteryRun::Error(error.to_string())),
                 }
-                CommandRun::Exited(output)
-                    if output.status.code == Some(i32::from(VERIFY_ACTION_REFUSAL_EXIT)) =>
-                {
-                    Ok(BatteryRun::Refused(output.stdout))
-                }
-                CommandRun::Exited(output) => {
-                    let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-                    Ok(BatteryRun::Error(if detail.is_empty() {
-                        format!("battery child exited {:?}", output.status.code)
-                    } else {
-                        detail
-                    }))
-                }
+            } else {
+                Ok(BatteryRun::Refused(report.refusal_fold().into_bytes()))
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -549,19 +727,11 @@ impl Runner for SystemRunner {
     }
 }
 
-fn remove_receipt(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-/// Execute the gate battery body for the verifier's supervised child process.
+/// Execute the public partial gate-battery action.
 ///
-/// The boolean is true for admission and false for a policy refusal. The
-/// caller owns the distinct process exit codes so the parent scheduler can
-/// distinguish a refusal from an acquisition or encoding fault.
+/// This action owns a fresh capture and deliberately does not share the full
+/// verifier's retained compiler evidence. The boolean is true for admission
+/// and false for a policy refusal; the CLI owns their distinct exit codes.
 ///
 /// # Errors
 ///
@@ -720,6 +890,10 @@ pub enum VerifyError {
         label: String,
         code: Option<i32>,
     },
+    EvidenceRefused {
+        label: String,
+        detail: String,
+    },
     Cleanup {
         label: String,
         detail: String,
@@ -799,6 +973,9 @@ impl fmt::Display for VerifyError {
             Self::ScopedExit { label, code: None } => {
                 write!(formatter, "[verify] failed: {label} (terminated by signal)")
             }
+            Self::EvidenceRefused { label, detail } => {
+                write!(formatter, "[verify] evidence refused: {label} ({detail})")
+            }
             Self::Cleanup { label, detail } => {
                 write!(formatter, "[verify] cleanup failed: {label} ({detail})")
             }
@@ -837,6 +1014,7 @@ impl std::error::Error for VerifyError {
             | Self::BrowserIncomplete
             | Self::Exit { .. }
             | Self::ScopedExit { .. }
+            | Self::EvidenceRefused { .. }
             | Self::Cleanup { .. }
             | Self::Cancelled { .. }
             | Self::TimedOut { .. }

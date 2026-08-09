@@ -50,12 +50,14 @@ const root = resolve(here, "../..");
 const isolatedBinary = process.env.SPICE_CANVAS_BINARY; // env-policy: allow
 const binary = isolatedBinary ?? join(root, "target/debug/spice");
 
-export async function buildResident() {
+export async function buildResident({ app = true } = {}) {
   try {
-    await execute("cargo", ["xtask", "app"], {
-      cwd: root,
-      maxBuffer: 32 * 1024 * 1024,
-    });
+    if (app) {
+      await execute("cargo", ["xtask", "app"], {
+        cwd: root,
+        maxBuffer: 32 * 1024 * 1024,
+      });
+    }
     await execute("cargo", ["build", "-p", "spice", "--bin", "spice"], {
       cwd: root,
       maxBuffer: 16 * 1024 * 1024,

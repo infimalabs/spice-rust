@@ -33,15 +33,16 @@ mod tests {
         fn benchmark() -> Self {
             let mut delays = BTreeMap::new();
             delays.insert(ENTRY_POINT_LABEL, Duration::from_millis(5));
-            delays.insert(FORMAT_LABEL, Duration::from_millis(25));
-            for action in &VERIFY_ACTIONS[2..=4] {
-                delays.insert(action.label(), Duration::from_millis(35));
+            delays.insert(FORMAT_LABEL, Duration::from_millis(5));
+            for action in &VERIFY_ACTIONS[2..=5] {
+                delays.insert(action.label(), Duration::from_millis(10));
             }
-            delays.insert(BROWSER_LABEL, Duration::from_millis(100));
-            for action in &VERIFY_ACTIONS[6..=8] {
-                delays.insert(action.label(), Duration::from_millis(35));
+            delays.insert(BROWSER_LABEL, Duration::from_millis(200));
+            delays.insert(VERIFY_ACTIONS[7].label(), Duration::from_millis(200));
+            for action in &VERIFY_ACTIONS[8..=9] {
+                delays.insert(action.label(), Duration::from_millis(10));
             }
-            delays.insert(BATTERY_LABEL, Duration::from_millis(160));
+            delays.insert(BATTERY_LABEL, Duration::from_millis(10));
             delays.insert(landing::LABEL, Duration::from_millis(5));
             Self::new(delays)
         }
@@ -174,7 +175,7 @@ mod tests {
         }
         assert_eq!(
             PREREQUISITES.last(),
-            Some(&&[1, 2, 3, 4, 5, 6, 7, 8, 9][..])
+            Some(&&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10][..])
         );
     }
 
@@ -186,23 +187,21 @@ mod tests {
         assert_eq!(ready_nodes(&nodes), [0]);
 
         nodes[0] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
-        assert_eq!(ready_nodes(&nodes), [1, 9]);
-        nodes[9] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         assert_eq!(ready_nodes(&nodes), [1]);
 
-        for index in 1..9 {
-            let ready = ready_nodes(&nodes);
-            assert!(
-                ready.contains(&index),
-                "action {index} was not ready after its prerequisites"
-            );
-            assert!(
-                !ready.contains(&10),
-                "landing crossed unfinished action {index}"
-            );
+        for index in 1..=5 {
+            assert_eq!(ready_nodes(&nodes), [index]);
             nodes[index] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
         }
-        assert_eq!(ready_nodes(&nodes), [10]);
+        assert_eq!(ready_nodes(&nodes), [6, 7]);
+        nodes[6] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [7]);
+        for index in 7..=9 {
+            nodes[index] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+            assert_eq!(ready_nodes(&nodes), [index + 1]);
+        }
+        nodes[10] = super::NodeState::Complete(success(Vec::new(), Disposition::Success));
+        assert_eq!(ready_nodes(&nodes), [11]);
     }
 
     #[test]
@@ -222,6 +221,13 @@ mod tests {
         assert_eq!(saturated_cpu.workers, 1);
         assert_eq!(unknown.workers, 1);
         assert_eq!(unknown.cargo_jobs, 1);
+        assert_eq!(no_pressure.workspace_workers, 4);
+        assert_eq!(one_peer.workspace_workers, 4);
+        assert_eq!(pressure.workspace_workers, 4);
+        assert_eq!(two_cpus.workspace_workers, 1);
+        assert_eq!(one_free_cpu.workspace_workers, 1);
+        assert_eq!(saturated_cpu.workspace_workers, 1);
+        assert_eq!(unknown.workspace_workers, 1);
         assert!(no_pressure.cargo_jobs <= FIXTURE_CPU_COUNT / no_pressure.workers);
         assert_eq!(pressure.cargo_jobs, 1);
     }
@@ -298,9 +304,14 @@ mod tests {
         let serial_started = Instant::now();
         let serial_cancellation = CancellationToken::new();
         for action in VERIFY_ACTIONS {
-            execute_action(&serial, action, &serial_cancellation, 2)
-                .result
-                .expect("serial fixture action succeeds");
+            execute_action(
+                &serial,
+                action,
+                &serial_cancellation,
+                Budget::fixture(3, 2, 0),
+            )
+            .result
+            .expect("serial fixture action succeeds");
         }
         let serial_wall = serial_started.elapsed();
 
@@ -387,8 +398,8 @@ mod tests {
             CancellationToken::new(),
             Arc::new(AtomicBool::new(false)),
         )
-        .expect_err("battery refusal cancels its running sibling");
-        assert!(matches!(error, VerifyError::BatteryRefused));
+        .expect_err("browser refusal cancels its running sibling");
+        assert!(matches!(error, VerifyError::BrowserIncomplete));
 
         let pids = read_pids(&fixture.pid_file);
         for pid in pids {
@@ -396,14 +407,14 @@ mod tests {
         }
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
         assert!(output.contains("disposition=cancelled"));
-        assert!(output.contains("primary_ordinal=10 interrupted=false"));
+        assert!(output.contains("primary_ordinal=7 interrupted=false"));
         fs::remove_file(&fixture.pid_file).expect("remove failure fixture pid file");
     }
 
     #[test]
     fn primary_failure_reports_a_deterministic_sibling_cleanup_fault() {
         let runner = CleanupFaultRunner {
-            format_started: AtomicBool::new(false),
+            sibling_started: AtomicBool::new(false),
         };
         let mut output = Vec::new();
         let error = verify_with_control(
@@ -413,12 +424,12 @@ mod tests {
             CancellationToken::new(),
             Arc::new(AtomicBool::new(false)),
         )
-        .expect_err("battery refusal remains primary");
+        .expect_err("browser refusal remains primary");
 
-        assert!(matches!(error, VerifyError::BatteryRefused));
+        assert!(matches!(error, VerifyError::BrowserIncomplete));
         let output = String::from_utf8(output).expect("scheduler output is UTF-8");
-        assert!(output.contains("scheduler=cleanup-fault ordinal=2"));
-        assert!(output.contains("primary_ordinal=10 interrupted=false cleanup_faults=1"));
+        assert!(output.contains("scheduler=cleanup-fault ordinal=8"));
+        assert!(output.contains("primary_ordinal=7 interrupted=false cleanup_faults=1"));
     }
 
     #[test]
@@ -482,7 +493,7 @@ mod tests {
     }
 
     struct CleanupFaultRunner {
-        format_started: AtomicBool,
+        sibling_started: AtomicBool,
     }
 
     struct WorkerPanicRunner;
@@ -546,14 +557,10 @@ mod tests {
 
         fn format(
             &self,
-            cancellation: &CancellationToken,
+            _cancellation: &CancellationToken,
             _cargo_jobs: usize,
         ) -> Result<CommandRun, RunError> {
-            self.format_started.store(true, Ordering::Release);
-            while !cancellation.is_cancelled() {
-                thread::yield_now();
-            }
-            Err(RunError::Cleanup("fixture sibling reap fault".to_owned()))
+            Ok(timed_command(true))
         }
 
         fn run(
@@ -562,7 +569,7 @@ mod tests {
             _cancellation: &CancellationToken,
             _cargo_jobs: usize,
         ) -> Result<CommandRun, RunError> {
-            panic!("a successor crossed a failed prerequisite")
+            Ok(timed_command(true))
         }
 
         fn run_scoped(
@@ -580,14 +587,30 @@ mod tests {
             _cancellation: &CancellationToken,
             _cargo_jobs: usize,
         ) -> Result<BrowserRun, RunError> {
-            panic!("browser crossed a failed prerequisite")
+            while !self.sibling_started.load(Ordering::Acquire) {
+                thread::yield_now();
+            }
+            Ok(BrowserRun {
+                process: timed_command(true),
+                completed: false,
+            })
+        }
+
+        fn workspace_tests(
+            &self,
+            cancellation: &CancellationToken,
+            _cargo_jobs: usize,
+            _workspace_workers: usize,
+        ) -> Result<CommandRun, RunError> {
+            self.sibling_started.store(true, Ordering::Release);
+            while !cancellation.is_cancelled() {
+                thread::yield_now();
+            }
+            Err(RunError::Cleanup("fixture sibling reap fault".to_owned()))
         }
 
         fn battery(&self, _cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
-            while !self.format_started.load(Ordering::Acquire) {
-                thread::yield_now();
-            }
-            Ok(BatteryRun::Refused(b"fixture refusal\n".to_vec()))
+            panic!("battery crossed a failed prerequisite")
         }
 
         fn landing(&self) -> Result<landing::Report, landing::Error> {
@@ -760,10 +783,10 @@ mod tests {
 
         fn format(
             &self,
-            cancellation: &CancellationToken,
-            cargo_jobs: usize,
+            _cancellation: &CancellationToken,
+            _cargo_jobs: usize,
         ) -> Result<CommandRun, RunError> {
-            supervised_sleep(&self.pid_file, cancellation, cargo_jobs)
+            Ok(timed_command(true))
         }
 
         fn run(
@@ -772,7 +795,7 @@ mod tests {
             _cancellation: &CancellationToken,
             _cargo_jobs: usize,
         ) -> Result<CommandRun, RunError> {
-            panic!("a successor crossed the primary failure")
+            Ok(timed_command(true))
         }
 
         fn run_scoped(
@@ -790,12 +813,24 @@ mod tests {
             _cancellation: &CancellationToken,
             _cargo_jobs: usize,
         ) -> Result<BrowserRun, RunError> {
-            panic!("browser crossed the primary failure")
+            wait_for_path(&self.pid_file);
+            Ok(BrowserRun {
+                process: timed_command(true),
+                completed: false,
+            })
+        }
+
+        fn workspace_tests(
+            &self,
+            cancellation: &CancellationToken,
+            cargo_jobs: usize,
+            _workspace_workers: usize,
+        ) -> Result<CommandRun, RunError> {
+            supervised_sleep(&self.pid_file, cancellation, cargo_jobs)
         }
 
         fn battery(&self, _cancellation: &CancellationToken) -> Result<BatteryRun, RunError> {
-            wait_for_path(&self.pid_file);
-            Ok(BatteryRun::Refused(b"fixture refusal\n".to_vec()))
+            panic!("battery crossed the primary failure")
         }
 
         fn landing(&self) -> Result<landing::Report, landing::Error> {

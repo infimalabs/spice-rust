@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::metrics::{EvidenceState, MetricId, MetricKey, StructuralArmEvidence};
+use std::ffi::OsString;
+use std::os::unix::fs::PermissionsExt as _;
 
 /// What each metric arm reports for this fixture, by state and by evidence.
 ///
@@ -236,6 +238,164 @@ fn one_capture_reads_every_authority_and_runs_each_family_once() {
     assert_eq!(
         BatteryReceipt::verify(&receipt_bytes).expect("verify production receipt"),
         receipt
+    );
+}
+
+#[test]
+fn stale_verifier_evidence_runs_both_real_compiler_arms() {
+    let fixture = Fixture::new();
+    let repository = compiler_fixture_repository(&fixture);
+    let (programs, cargo_log, trunk_log) = install_compiler_programs(&fixture);
+    let rim = crate::RimCapture::new(
+        &repository,
+        Some(OsString::from(programs.as_os_str())),
+        Vec::new(),
+    )
+    .expect("absolute compiler rim");
+    let mut capture = crate::BatteryCapture::capture(
+        &repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        acting("compiler-actor"),
+        rim,
+        crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
+    )
+    .expect("capture compiler fixture");
+    let (native, evidence) = stale_compiler_evidence(&capture);
+
+    fs::write(
+        repository.join("src/lib.rs"),
+        "pub fn fixture() { let _index_moved_after_capture = true; }\n",
+    )
+    .expect("move the live worktree after compiler capture");
+    fixture_git(&repository, &["add", "src/lib.rs"]);
+    let drifted = native
+        .run(crate::VerifierCompilerStage::NativeClippy)
+        .expect("drifted compiler still provides ordinary verifier feedback");
+    assert!(drifted.success());
+    assert!(
+        drifted.into_evidence().is_none(),
+        "a compiler run against a later index minted evidence for the retained capture"
+    );
+    fs::remove_file(&cargo_log).expect("clear verifier Cargo trace");
+
+    capture
+        .execute_with_verifier_evidence(&evidence)
+        .expect("invalid evidence falls through to a complete battery");
+    assert_fallback_compiler_trace(&cargo_log, &trunk_log);
+}
+
+fn compiler_fixture_repository(fixture: &Fixture) -> PathBuf {
+    let repository = production_repository(&fixture.root);
+    fs::write(
+        repository.join("Cargo.toml"),
+        "[workspace]\nmembers = []\nresolver = \"3\"\n",
+    )
+    .expect("fixture Cargo manifest");
+    fs::write(repository.join("Cargo.lock"), "version = 4\n").expect("fixture Cargo lock");
+    fs::write(
+        repository.join("app/index.html"),
+        "<!doctype html><title>fixture</title>\n",
+    )
+    .expect("fixture canvas entry point");
+    fixture_git(&repository, &["add", "--all"]);
+    fixture_git(&repository, &["commit", "-q", "-m", "compiler fixture"]);
+    repository
+}
+
+fn install_compiler_programs(fixture: &Fixture) -> (PathBuf, PathBuf, PathBuf) {
+    let programs = fixture.root.join("compiler-programs");
+    fs::create_dir(&programs).expect("compiler program directory");
+    let cargo_log = fixture.root.join("compiler-cargo-log");
+    let trunk_log = fixture.root.join("compiler-trunk-log");
+    let executable = |path: &Path, body: String| {
+        fs::write(path, body).expect("write compiler fixture program");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+            .expect("make compiler fixture executable");
+    };
+    executable(
+        &programs.join("cargo"),
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
+                "  exit 0\n",
+                "fi\n",
+                "printf '%s\\n' \"$*\" >> '{}'\n",
+                "exit 0\n",
+            ),
+            cargo_log.display()
+        ),
+    );
+    executable(
+        &programs.join("trunk"),
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  printf '%s\\n' 'trunk 0.21.14'\n",
+                "  exit 0\n",
+                "fi\n",
+                "printf '%s\\n' \"$*\" >> '{}'\n",
+                "exit 0\n",
+            ),
+            trunk_log.display()
+        ),
+    );
+    (programs, cargo_log, trunk_log)
+}
+
+fn stale_compiler_evidence(
+    capture: &crate::BatteryCapture<'_>,
+) -> (
+    crate::VerifierCompilerContract,
+    Vec<crate::VerifierCompilerEvidence>,
+) {
+    let native = capture
+        .verifier_compiler_contract(GateId::RustTypecheck, Vec::new())
+        .expect("native verifier contract");
+    let canvas = capture
+        .verifier_compiler_contract(GateId::CanvasWebTypecheck, Vec::new())
+        .expect("canvas verifier contract");
+    let mut processes = Vec::new();
+    for (contract, stages) in [
+        (
+            &native,
+            [Some(crate::VerifierCompilerStage::NativeClippy), None],
+        ),
+        (
+            &canvas,
+            [
+                Some(crate::VerifierCompilerStage::CanvasCheck),
+                Some(crate::VerifierCompilerStage::CanvasApp),
+            ],
+        ),
+    ] {
+        for stage in stages.into_iter().flatten() {
+            let run = contract.run(stage).expect("compiler evidence process");
+            assert!(run.success());
+            processes.push(run.into_evidence().expect("clean successful process token"));
+        }
+    }
+    let mut evidence = vec![
+        native.complete(&processes).expect("native evidence"),
+        canvas.complete(&processes).expect("canvas evidence"),
+    ];
+    for item in &mut evidence {
+        item.corrupt_source_for_test();
+    }
+    (native, evidence)
+}
+
+fn assert_fallback_compiler_trace(cargo_log: &Path, trunk_log: &Path) {
+    let cargo = fs::read_to_string(cargo_log).expect("read fallback Cargo trace");
+    assert!(cargo.contains("check --locked --workspace --all-targets"));
+    assert!(cargo.contains("check --locked --workspace --target wasm32-unknown-unknown"));
+    let trunk = fs::read_to_string(trunk_log).expect("read fallback Trunk trace");
+    assert_eq!(
+        trunk.trim(),
+        "build index.html --release --locked --filehash=false"
     );
 }
 

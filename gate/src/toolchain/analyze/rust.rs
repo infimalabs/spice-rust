@@ -259,10 +259,9 @@ fn rust_environment(cargo: &str, workspace: &RustWorkspace) -> Result<Environmen
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt as _;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
 
-    use crate::toolchain::{ArmFinding, GateId, declaration};
+    use crate::toolchain::{ArmFinding, GateId, declaration, exclusive_scratch_root};
     use sill::{
         Acquisition, Cancellation, CancellationToken, Deadlines, LockFile, RestartDisposition,
         WaitPolicy,
@@ -272,8 +271,6 @@ mod tests {
     fn build_root_lock(root: &Path) -> Result<LockFile, String> {
         held_root::held_root_lock(root, RUST_LOCK, RUST_LABEL)
     }
-
-    static NEXT_RUST_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     /// The manifest of a workspace whose only crate is the planted one.
     const FIXTURE_MANIFEST: &str = "\
@@ -478,22 +475,21 @@ mod tests {
     /// A workspace the real compiler is run over.
     struct RustFixture {
         root: PathBuf,
+        build_lock: PathBuf,
     }
 
     impl RustFixture {
         fn new(label: &str) -> Self {
-            let sequence = NEXT_RUST_FIXTURE.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "gate-rust-{label}-{}-{sequence}",
-                std::process::id()
-            ));
-            if root.exists() {
-                fs::remove_dir_all(&root).expect("remove stale native fixture");
-            }
+            let root = exclusive_scratch_root(&format!("gate-rust-{label}"));
             fs::create_dir_all(root.join("src")).expect("create native fixture tree");
             fs::write(root.join("Cargo.toml"), FIXTURE_MANIFEST).expect("write fixture manifest");
             fs::write(root.join("Cargo.lock"), FIXTURE_LOCK).expect("write fixture lock");
-            Self { root }
+            let build_root = build_root_path(&root).expect("the native fixture names a build root");
+            let build_lock = build_root_lock(&build_root)
+                .expect("the native fixture build root names a lock")
+                .path()
+                .to_path_buf();
+            Self { root, build_lock }
         }
 
         fn source(&self, contents: &str) {
@@ -555,8 +551,46 @@ mod tests {
 
     impl Drop for RustFixture {
         fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("remove native fixture");
+            // Learn the sibling lock path at construction and unlink it
+            // directly here. Acquiring it during teardown would couple cleanup
+            // to the exact held-lock state a test may be trying to report.
+            let root_removal = fs::remove_dir_all(&self.root);
+            match fs::remove_file(&self.build_lock) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("remove native fixture build lock: {error}"),
+            }
+            root_removal.expect("remove native fixture");
         }
+    }
+
+    /// Fixture teardown unlinks its lock path rather than acquiring the lock.
+    ///
+    /// Holding the file across `drop(fixture)` proves cleanup is direct path
+    /// ownership rather than a second lock acquisition.
+    #[test]
+    fn native_fixture_teardown_unlinks_even_a_held_build_lock() {
+        let fixture = RustFixture::new("held-fixture-lock");
+        let fixture_root = fixture.root.clone();
+        let lock = build_root_lock(
+            &build_root_path(&fixture.root).expect("the fixture names a build root"),
+        )
+        .expect("the fixture build root names a lock");
+        assert_eq!(lock.path(), fixture.build_lock);
+        let Ok(Acquisition::Acquired(possession)) = lock.try_acquire() else {
+            panic!("a fresh fixture build lock is available");
+        };
+        assert!(fixture.build_lock.is_file(), "acquisition created the lock");
+
+        let lock_path = fixture.build_lock.clone();
+        drop(fixture);
+
+        assert!(!fixture_root.exists(), "fixture teardown removed its tree");
+        assert!(
+            !lock_path.exists(),
+            "fixture teardown removed its held sibling lock"
+        );
+        drop(possession);
     }
 
     /// Bounds whose runtime cannot elapse, so only the compiler ends the run.

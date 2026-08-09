@@ -3985,6 +3985,7 @@ dependencies = [
  "atomic",
  "dist",
  "gate",
+ "libc",
  "proof",
  "serde",
  "serde_json",

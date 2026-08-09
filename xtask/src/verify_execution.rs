@@ -26,10 +26,10 @@ use super::{
 
 /// The explicit full-verifier dependency graph, indexed by report ordinal.
 ///
-/// The main Cargo chain is serial and retains its warm build root. Canvas owns
-/// a separate build root and may overlap the Cargo tail after its wasm build.
-/// The canonical gate battery owns selected-snapshot build roots and may
-/// overlap the entire Cargo chain. Entry-point audit and landing are barriers.
+/// The compiler-evidence chain is serial and retains its warm build root. Once
+/// the prebuilt app exists, Canvas and the sharded workspace tests may overlap.
+/// Documentation follows the test coordinator, the evidence-consuming battery
+/// waits for both branches, and entry-point audit and landing remain barriers.
 const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[],
     &[0],
@@ -37,14 +37,15 @@ const PREREQUISITES: [&[usize]; VERIFY_ACTIONS.len()] = [
     &[2],
     &[3],
     &[4],
-    &[4],
-    &[6],
+    &[5],
+    &[5],
     &[7],
-    &[0],
-    &[1, 2, 3, 4, 5, 6, 7, 8, 9],
+    &[8],
+    &[2, 4, 5, 6, 9],
+    &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
 ];
 
-/// Three is the fleet-safe ceiling: Cargo, Canvas, and gate analysis.
+/// Three is the fleet-safe ceiling for independently ready outer actions.
 const MAX_CONCURRENT_ACTIONS: usize = 3;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const SCHEDULER_POLL: Duration = Duration::from_millis(50);
@@ -58,6 +59,7 @@ const OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
 struct Budget {
     workers: usize,
     cargo_jobs: usize,
+    workspace_workers: usize,
     active_cargo_jobs: Option<usize>,
 }
 
@@ -73,6 +75,7 @@ impl Budget {
             return Self {
                 workers: 1,
                 cargo_jobs: 1,
+                workspace_workers: 1,
                 active_cargo_jobs: None,
             };
         };
@@ -82,18 +85,24 @@ impl Budget {
         let workers = fleet_slots.min(cpu_slots);
         let participants = active + workers;
         let cargo_jobs = (cpus / participants.max(1)).max(1);
+        let sibling_reserve = cargo_jobs.saturating_mul(workers.saturating_sub(1));
+        let workspace_workers = cpu_slots
+            .saturating_sub(sibling_reserve)
+            .clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP);
         Self {
             workers,
             cargo_jobs,
+            workspace_workers,
             active_cargo_jobs: Some(active),
         }
     }
 
     #[cfg(test)]
-    const fn fixture(workers: usize, cargo_jobs: usize, active_cargo_jobs: usize) -> Self {
+    fn fixture(workers: usize, cargo_jobs: usize, active_cargo_jobs: usize) -> Self {
         Self {
             workers,
             cargo_jobs,
+            workspace_workers: cargo_jobs.clamp(1, super::WORKSPACE_TEST_CONCURRENCY_CAP),
             active_cargo_jobs: Some(active_cargo_jobs),
         }
     }
@@ -148,13 +157,8 @@ pub(super) fn verify_system(output: &mut impl Write) -> Result<(), VerifyError> 
     let cancellation = CancellationToken::new();
     let interrupted = Arc::new(AtomicBool::new(false));
     let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))?;
-    let result = verify_with_control(
-        &super::SystemRunner,
-        output,
-        Budget::detect(),
-        cancellation,
-        interrupted,
-    );
+    let runner = super::SystemRunner::prepare().map_err(VerifyError::Battery)?;
+    let result = verify_with_control(&runner, output, Budget::detect(), cancellation, interrupted);
     drop(signal_guard);
     result
 }
@@ -174,11 +178,12 @@ fn verify_with_control<R: Runner>(
         output,
         concat!(
             "[verify] scheduler workers={} cargo_jobs={} ",
-            "active_peer_cargo_jobs={} action_count={}"
+            "active_peer_cargo_jobs={} workspace_workers={} action_count={}"
         ),
         budget.workers,
         budget.cargo_jobs,
         active,
+        budget.workspace_workers,
         VERIFY_ACTIONS.len(),
     )
     .map_err(VerifyError::Output)?;
@@ -305,15 +310,7 @@ fn start_ready_actions<'scope, 'env: 'scope, R: Runner + 'env>(
             break;
         }
         let started = Instant::now();
-        match spawn_action(
-            scope,
-            runner,
-            action,
-            index,
-            budget.cargo_jobs,
-            cancellation,
-            sender,
-        ) {
+        match spawn_action(scope, runner, action, index, budget, cancellation, sender) {
             Ok(()) => {
                 nodes[index] = NodeState::Running {
                     started,
@@ -344,7 +341,7 @@ fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
     runner: &'scope R,
     action: Action,
     index: usize,
-    cargo_jobs: usize,
+    budget: Budget,
     cancellation: &CancellationToken,
     sender: &mpsc::Sender<WorkerCompletion>,
 ) -> io::Result<()> {
@@ -355,7 +352,7 @@ fn spawn_action<'scope, 'env: 'scope, R: Runner + 'env>(
         .spawn_scoped(scope, move || {
             let started = Instant::now();
             let mut completion = panic::catch_unwind(AssertUnwindSafe(|| {
-                execute_action(runner, action, &cancellation, cargo_jobs)
+                execute_action(runner, action, &cancellation, budget)
             }))
             .unwrap_or_else(|payload| {
                 failure(
@@ -505,7 +502,7 @@ fn execute_action<R: Runner>(
     runner: &R,
     action: Action,
     cancellation: &CancellationToken,
-    cargo_jobs: usize,
+    budget: Budget,
 ) -> ActionCompletion {
     match action {
         Action::EntryPoint => match runner.entry_point() {
@@ -513,7 +510,7 @@ fn execute_action<R: Runner>(
             Err(detail) => failure(VerifyError::EntryPoint(detail), Disposition::Error),
         },
         Action::Format => execute_process(
-            runner.format(cancellation, cargo_jobs),
+            runner.format(cancellation, budget.cargo_jobs),
             FORMAT_LABEL,
             |source| VerifyError::Launch {
                 label: FORMAT_LABEL,
@@ -525,7 +522,7 @@ fn execute_action<R: Runner>(
             },
         ),
         Action::Command(step) => execute_process(
-            runner.run(step, cancellation, cargo_jobs),
+            runner.run(step, cancellation, budget.cargo_jobs),
             step.label,
             |source| VerifyError::Launch {
                 label: step.label,
@@ -536,7 +533,19 @@ fn execute_action<R: Runner>(
                 code,
             },
         ),
-        Action::Browser => execute_browser(runner.browser(cancellation, cargo_jobs)),
+        Action::Browser => execute_browser(runner.browser(cancellation, budget.cargo_jobs)),
+        Action::WorkspaceTests => execute_process(
+            runner.workspace_tests(cancellation, budget.cargo_jobs, budget.workspace_workers),
+            super::WORKSPACE_TEST_LABEL,
+            |source| VerifyError::Launch {
+                label: super::WORKSPACE_TEST_LABEL,
+                source,
+            },
+            |code| VerifyError::Exit {
+                label: super::WORKSPACE_TEST_LABEL,
+                code,
+            },
+        ),
         Action::Battery => execute_battery(runner.battery(cancellation)),
         Action::Landing => match runner.landing() {
             Err(source) => failure(VerifyError::Landing(source.to_string()), Disposition::Error),
@@ -570,6 +579,13 @@ fn execute_process(
 ) -> ActionCompletion {
     match run {
         Err(RunError::Launch(source)) => failure(launch_error(source), Disposition::LaunchError),
+        Err(RunError::EvidenceRefused(detail)) => failure(
+            VerifyError::EvidenceRefused {
+                label: label.to_owned(),
+                detail,
+            },
+            Disposition::Refused,
+        ),
         Err(RunError::Cleanup(detail)) => failure(
             VerifyError::Cleanup {
                 label: label.to_owned(),
@@ -617,6 +633,13 @@ fn execute_browser(run: Result<BrowserRun, RunError>) -> ActionCompletion {
         Err(RunError::Launch(source)) => failure(
             VerifyError::BrowserLaunch { source },
             Disposition::LaunchError,
+        ),
+        Err(RunError::EvidenceRefused(detail)) => failure(
+            VerifyError::EvidenceRefused {
+                label: BROWSER_LABEL.to_owned(),
+                detail,
+            },
+            Disposition::Refused,
         ),
         Err(RunError::Cleanup(detail)) => failure(
             VerifyError::Cleanup {
@@ -680,6 +703,13 @@ fn execute_battery(run: Result<BatteryRun, RunError>) -> ActionCompletion {
             VerifyError::Battery(source.to_string()),
             Disposition::LaunchError,
         ),
+        Err(RunError::EvidenceRefused(detail)) => failure(
+            VerifyError::EvidenceRefused {
+                label: BATTERY_LABEL.to_owned(),
+                detail,
+            },
+            Disposition::Refused,
+        ),
         Err(RunError::Cleanup(detail)) => failure(
             VerifyError::Cleanup {
                 label: BATTERY_LABEL.to_owned(),
@@ -703,12 +733,6 @@ fn execute_battery(run: Result<BatteryRun, RunError>) -> ActionCompletion {
                 label: BATTERY_LABEL.to_owned(),
             },
             Disposition::Cancelled,
-        ),
-        Ok(BatteryRun::TimedOut) => failure(
-            VerifyError::TimedOut {
-                label: BATTERY_LABEL.to_owned(),
-            },
-            Disposition::TimedOut,
         ),
     }
 }
@@ -787,7 +811,8 @@ pub(super) fn verify_package_system(
     let cancellation = CancellationToken::new();
     let interrupted = Arc::new(AtomicBool::new(false));
     let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))?;
-    let result = verify_package_with_control(package, &super::SystemRunner, output, &cancellation);
+    let runner = super::SystemRunner::standalone();
+    let result = verify_package_with_control(package, &runner, output, &cancellation);
     drop(signal_guard);
     if interrupted.load(Ordering::Acquire) {
         Err(VerifyError::Interrupted)

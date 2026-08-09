@@ -8,10 +8,13 @@ use std::time::Duration;
 use sill::Deadlines;
 
 const USAGE_EXIT: u8 = 2;
+type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
     "usage: cargo xtask <help|verify [--package PACKAGE]|verify-action battery|",
     "gate ARM|app|activate-hooks|",
     "install [--host HOST] [--port PORT] [--release] [--no-resident]|",
+    "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
+    "[--free-space-floor BYTES] [--retain-live-worktrees N]|",
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "stage-target TARGET|",
     "commit-msg MESSAGE_FILE|reference-transaction STATE>"
@@ -22,7 +25,7 @@ fn help() -> String {
     format!(
         concat!(
             "{usage}\n\n",
-            "verify-action battery is the scheduler-owned child action; ",
+            "verify-action battery is the public partial gate-battery action; ",
             "it is not a completion verifier.\n\n",
             "gate ARM accepts:\n  {arms}"
         ),
@@ -37,7 +40,7 @@ fn main() -> ExitCode {
 
     let mut output = io::stdout().lock();
     // Dispatch only current spellings; removed command names have no alias arm.
-    let result: Result<(), Box<dyn std::error::Error>> = match command.as_deref() {
+    let result: CommandResult = match command.as_deref() {
         Some(value) if value == OsStr::new("verify-action") && arguments.len() == 1 => {
             let action = arguments.next().expect("one verifier action was admitted");
             return run_verify_action(&action, &mut output);
@@ -46,42 +49,29 @@ fn main() -> ExitCode {
             writeln!(output, "{}", help()).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("verify") => {
-            return run_verify(arguments.collect(), &mut output);
+            run_verify(arguments.collect(), &mut output)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(value) if value == OsStr::new("__workspace-tests") && arguments.len() == 1 => {
+            workspace_tests(
+                arguments
+                    .next()
+                    .expect("one workspace-test concurrency was admitted"),
+                &mut output,
+            )
         }
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
-            let arm = arguments.next().expect("one gate arm was admitted");
-            let Some(arm) = arm.to_str() else {
-                eprintln!("{}", help());
-                return ExitCode::from(USAGE_EXIT);
-            };
-            let Some(gate_id) = gate::GateId::ALL
-                .into_iter()
-                .find(|gate_id| gate_id.as_str() == arm)
-            else {
-                eprintln!(
-                    "unknown gate arm {arm:?}; run `cargo xtask help` for accepted gate arms"
-                );
-                return ExitCode::from(USAGE_EXIT);
-            };
-            xtask::gate_arm(gate_id, &mut output).map_err(Into::into)
+            run_gate(arguments.next(), &mut output)
         }
         Some(value) if value == OsStr::new("app") && arguments.len() == 0 => {
             xtask::app(&release_environment(), &mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("activate-hooks") && arguments.len() == 0 => {
-            // The executable published for the hooks to exec is this one. Cargo
-            // keeps it under a content-keyed directory, so this is the only
-            // moment its path is known to anything that could copy it.
-            env::current_exe()
-                .map_err(Into::into)
-                .and_then(|entry_point| {
-                    xtask::activate_hooks(Path::new("."), &entry_point, &mut output)
-                        .map_err(Into::into)
-                })
+            run_activate_hooks(&mut output)
         }
-        // The refresh drives `spice::install`, which is gated off the wasm
-        // target the workspace check compiles this binary for.
-        #[cfg(not(target_arch = "wasm32"))]
+        Some(value) if value == OsStr::new("build-cache") => {
+            run_build_cache(arguments.collect(), &mut output)
+        }
         Some(value) if value == OsStr::new("install") => {
             drop(output);
             return run_install(arguments.collect());
@@ -91,35 +81,10 @@ fn main() -> ExitCode {
             return run_proof_image(arguments.collect());
         }
         Some(value) if value == OsStr::new("stage-target") && arguments.len() == 1 => {
-            let target = arguments.next().expect("one release target was admitted");
-            let Some(target) = target.to_str() else {
-                eprintln!("{}", help());
-                return ExitCode::from(USAGE_EXIT);
-            };
-            preflight_native_release(target).and_then(|()| {
-                xtask::stage_target(target, release_environment(), &mut output)
-                    .map(|_| ())
-                    .map_err(Into::into)
-            })
+            run_stage_target(arguments.next(), &mut output)
         }
         Some(value) if value == OsStr::new("commit-msg") && arguments.len() == 1 => {
-            let path = arguments
-                .next()
-                .expect("one commit-message path was admitted");
-            match run_commit_message(Path::new(&path)) {
-                Ok(true) => {
-                    eprintln!(
-                        concat!(
-                            "spice commit-msg: auto-folded commit message body lines; ",
-                            "keep body prose wrapped at {} chars"
-                        ),
-                        xtask::COMMIT_MESSAGE_WRAP_LIMIT
-                    );
-                    Ok(())
-                }
-                Ok(false) => Ok(()),
-                Err(error) => Err(error),
-            }
+            run_commit_message_command(arguments.next())
         }
         Some(value) if value == OsStr::new("reference-transaction") && arguments.len() == 1 => {
             let state = arguments
@@ -132,12 +97,13 @@ fn main() -> ExitCode {
             return ExitCode::from(USAGE_EXIT);
         }
     };
-    result_exit(result)
+    finish(result)
 }
 
-fn result_exit(result: Result<(), Box<dyn std::error::Error>>) -> ExitCode {
+fn finish(result: Result<(), Box<dyn std::error::Error>>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
+        Err(error) if error.is::<UsageError>() => ExitCode::from(USAGE_EXIT),
         Err(error) => {
             eprintln!("{error}");
             ExitCode::FAILURE
@@ -145,22 +111,21 @@ fn result_exit(result: Result<(), Box<dyn std::error::Error>>) -> ExitCode {
     }
 }
 
-fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> ExitCode {
-    let result = match arguments.as_slice() {
+fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+    match arguments.as_slice() {
         [] => xtask::verify(output).map_err(Into::into),
         [option, package] if option == OsStr::new("--package") => {
             let Some(package) = package.to_str() else {
                 eprintln!("{}", help());
-                return ExitCode::from(USAGE_EXIT);
+                return Err(usage_error().into());
             };
             xtask::verify_package(package, output).map_err(Into::into)
         }
         _ => {
             eprintln!("{}", help());
-            return ExitCode::from(USAGE_EXIT);
+            Err(usage_error().into())
         }
-    };
-    result_exit(result)
+    }
 }
 
 fn run_verify_action(action: &OsStr, output: &mut impl io::Write) -> ExitCode {
@@ -178,7 +143,89 @@ fn run_verify_action(action: &OsStr, output: &mut impl io::Write) -> ExitCode {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+fn run_gate(argument: Option<OsString>, output: &mut impl io::Write) -> CommandResult {
+    let arm = argument.expect("one gate arm was admitted");
+    let Some(arm) = arm.to_str() else {
+        eprintln!("{}", help());
+        return Err(usage_error().into());
+    };
+    let Some(gate_id) = gate::GateId::ALL
+        .into_iter()
+        .find(|gate_id| gate_id.as_str() == arm)
+    else {
+        eprintln!("unknown gate arm {arm:?}; run `cargo xtask help` for accepted gate arms");
+        return Err(usage_error().into());
+    };
+    xtask::gate_arm(gate_id, output).map_err(Into::into)
+}
+
+fn run_activate_hooks(output: &mut impl io::Write) -> CommandResult {
+    // The executable published for the hooks to exec is this one. Cargo keeps
+    // it under a content-keyed directory, so this is the only moment its path
+    // is known to anything that could copy it.
+    env::current_exe()
+        .map_err(Into::into)
+        .and_then(|entry_point| {
+            xtask::activate_hooks(Path::new("."), &entry_point, output).map_err(Into::into)
+        })
+}
+
+fn run_build_cache(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+    let Some(request) = build_cache_request(&arguments) else {
+        eprintln!("{}", help());
+        return Err(usage_error().into());
+    };
+    xtask::build_cache(&request, output)
+        .map(|_| ())
+        .map_err(Into::into)
+}
+
+fn run_stage_target(argument: Option<OsString>, output: &mut impl io::Write) -> CommandResult {
+    let target = argument.expect("one release target was admitted");
+    let Some(target) = target.to_str() else {
+        eprintln!("{}", help());
+        return Err(usage_error().into());
+    };
+    preflight_native_release(target).and_then(|()| {
+        xtask::stage_target(target, release_environment(), output)
+            .map(|_| ())
+            .map_err(Into::into)
+    })
+}
+
+fn run_commit_message_command(argument: Option<OsString>) -> CommandResult {
+    let path = argument.expect("one commit-message path was admitted");
+    match run_commit_message(Path::new(&path)) {
+        Ok(true) => {
+            eprintln!(
+                concat!(
+                    "spice commit-msg: auto-folded commit message body lines; ",
+                    "keep body prose wrapped at {} chars"
+                ),
+                xtask::COMMIT_MESSAGE_WRAP_LIMIT
+            );
+            Ok(())
+        }
+        Ok(false) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[derive(Debug)]
+struct UsageError;
+
+impl std::fmt::Display for UsageError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("invalid cargo xtask invocation")
+    }
+}
+
+impl std::error::Error for UsageError {}
+
+fn usage_error() -> UsageError {
+    UsageError
+}
+
 fn run_install(arguments: Vec<OsString>) -> ExitCode {
     let Some(request) = install_request(&arguments) else {
         eprintln!("{}", help());
@@ -195,7 +242,6 @@ fn run_install(arguments: Vec<OsString>) -> ExitCode {
 }
 
 /// Read one `cargo xtask install` invocation, or refuse the whole spelling.
-#[cfg(not(target_arch = "wasm32"))]
 fn install_request(arguments: &[OsString]) -> Option<xtask::RefreshRequest> {
     let mut request = xtask::RefreshRequest {
         restart: true,
@@ -208,6 +254,41 @@ fn install_request(arguments: &[OsString]) -> Option<xtask::RefreshRequest> {
             "--no-resident" => request.restart = false,
             "--host" => request.host = Some(arguments.next()?.to_str()?.to_owned()),
             "--port" => request.port = Some(arguments.next()?.to_str()?.parse().ok()?),
+            _ => return None,
+        }
+    }
+    Some(request)
+}
+
+fn build_cache_request(arguments: &[OsString]) -> Option<xtask::BuildCacheRequest> {
+    let mut request = xtask::BuildCacheRequest::default();
+    let mut mode = None;
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.to_str()? {
+            "--dry-run" => {
+                if mode.replace(false).is_some() {
+                    return None;
+                }
+                request.apply = false;
+            }
+            "--apply" => {
+                if mode.replace(true).is_some() {
+                    return None;
+                }
+                request.apply = true;
+            }
+            "--max-bytes" => {
+                request.max_bytes =
+                    Some(xtask::parse_byte_quantity(arguments.next()?.to_str()?).ok()?);
+            }
+            "--free-space-floor" => {
+                request.free_space_floor =
+                    Some(xtask::parse_byte_quantity(arguments.next()?.to_str()?).ok()?);
+            }
+            "--retain-live-worktrees" => {
+                request.retain_live_worktrees = arguments.next()?.to_str()?.parse().ok()?;
+            }
             _ => return None,
         }
     }
@@ -308,6 +389,28 @@ fn preflight_native_release(target: &str) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary rim snapshots the environment before passing typed configuration inward"
+)]
+fn ambient_environment() -> Result<sill::Environment, sill::SpecError> {
+    sill::Environment::new(env::vars_os())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn workspace_tests(
+    concurrency: OsString,
+    output: &mut impl io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let concurrency = concurrency
+        .to_str()
+        .ok_or("workspace-test concurrency is not UTF-8")?
+        .parse::<usize>()?;
+    let environment = ambient_environment()?;
+    xtask::run_workspace_tests(environment, concurrency, output).map_err(Into::into)
+}
+
 fn release_environment() -> xtask::ReleaseEnvironment {
     xtask::ReleaseEnvironment::new(
         bootstrap_environment("PATH"),
@@ -355,7 +458,7 @@ mod tests {
     use super::help;
 
     #[test]
-    fn help_exposes_the_one_scheduler_owned_battery_action() {
+    fn help_exposes_the_one_public_partial_battery_action() {
         let help = help();
         assert!(help.contains("verify-action battery"));
         assert!(help.contains("not a completion verifier"));
