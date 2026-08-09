@@ -1,8 +1,11 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread;
 
 use super::*;
 
@@ -377,6 +380,145 @@ fn changed_optional_binary_refuses_the_planned_digest() {
 }
 
 #[test]
+fn refresh_publishes_the_rebuilt_executable_without_withdrawing_anything() {
+    let scratch = Scratch::new("refresh-window");
+    let repository = scratch.repository();
+    let first = vec![0x5a; LARGE_BINARY_BYTES];
+    let second = vec![0xa5; LARGE_BINARY_BYTES];
+    let binary = scratch.binary(&first);
+    let installed = plan(&repository, Some(&binary)).unwrap().digest().unwrap();
+    apply(&repository, Some(&binary), &installed).unwrap();
+    fs::write(&binary, &second).unwrap();
+    set_test_mode(&binary, EXECUTABLE_MODE);
+
+    let observer = watch_installed_tree(&repository);
+    let refreshed = plan(&repository, Some(&binary)).expect("a rebuilt executable plans a refresh");
+    let receipt =
+        apply(&repository, Some(&binary), &refreshed.digest().unwrap()).expect("apply the refresh");
+    let observed = observer.stop();
+
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+    assert_eq!(
+        fs::read(repository.common_dir().join(BINARY_PATH)).unwrap(),
+        second
+    );
+    assert!(
+        observed.withdrawn.is_empty(),
+        "the refresh withdrew {:?}",
+        observed.withdrawn
+    );
+    // Without this the emptiness above is vacuous: an observer that ran
+    // entirely before or after the swap would report the same nothing.
+    assert!(
+        observed.binary_images.contains(&first) && observed.binary_images.contains(&second),
+        "the observer never spanned the swap: {} samples over {} distinct images",
+        observed.samples,
+        observed.binary_images.len()
+    );
+}
+
+/// A refresh is a rebuilt executable, never a differently shaped install.
+///
+/// Deriving one from a plan that drops the binary would publish a plan with no
+/// operation owning the installed executable, so reversing it later would leave
+/// that file behind. Both directions of the disagreement stay refusals, because
+/// neither says anything about which build the destination holds.
+#[test]
+fn a_complete_install_refuses_a_plan_that_adds_or_drops_the_executable() {
+    let dropped = Scratch::new("refresh-drops-binary");
+    let repository = dropped.repository();
+    let binary = dropped.binary(b"old binary bytes");
+    let installed = plan(&repository, Some(&binary)).unwrap().digest().unwrap();
+    apply(&repository, Some(&binary), &installed).unwrap();
+
+    let error = plan(&repository, None).expect_err("a plan without the installed executable");
+    assert!(
+        matches!(error, InstallError::BinaryContextChanged),
+        "{error:?}"
+    );
+    assert!(repository.common_dir().join(BINARY_PATH).is_file());
+
+    let added = Scratch::new("refresh-adds-binary");
+    let repository = added.repository();
+    let installed = plan(&repository, None).unwrap().digest().unwrap();
+    apply(&repository, None, &installed).unwrap();
+    let binary = added.binary(b"new binary bytes");
+
+    let error =
+        plan(&repository, Some(&binary)).expect_err("a plan adding an executable to an install");
+    assert!(
+        matches!(error, InstallError::BinaryContextChanged),
+        "{error:?}"
+    );
+    assert!(!repository.common_dir().join(BINARY_PATH).exists());
+}
+
+#[test]
+fn reversing_before_reinstalling_withdraws_what_a_refresh_keeps() {
+    let scratch = Scratch::new("refresh-control");
+    let repository = scratch.repository();
+    let first = vec![0x5a; LARGE_BINARY_BYTES];
+    let second = vec![0xa5; LARGE_BINARY_BYTES];
+    let binary = scratch.binary(&first);
+    let installed = plan(&repository, Some(&binary)).unwrap().digest().unwrap();
+    apply(&repository, Some(&binary), &installed).unwrap();
+    fs::write(&binary, &second).unwrap();
+    set_test_mode(&binary, EXECUTABLE_MODE);
+
+    // The upgrade the refresh replaces, watched by the same observer: it has to
+    // report the window, or its silence next door proves nothing.
+    let observer = watch_installed_tree(&repository);
+    unapply(&repository).expect("reverse the install");
+    let rebuilt = plan(&repository, Some(&binary)).expect("plan a fresh install");
+    apply(&repository, Some(&binary), &rebuilt.digest().unwrap()).expect("reinstall");
+    let observed = observer.stop();
+
+    assert!(
+        observed.withdrawn.contains(BINARY_PATH),
+        "the observer cannot see a withdrawn executable at all: {} samples",
+        observed.samples
+    );
+    assert!(observed.withdrawn.contains(GIT_PRE_COMMIT_PATH));
+}
+
+#[test]
+fn reversing_a_refresh_restores_the_tree_the_first_install_found() {
+    let scratch = Scratch::new("refresh-reversal");
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"old binary bytes");
+    let before_exclude = fs::read(scratch.exclude()).unwrap();
+    let installed = plan(&repository, Some(&binary)).unwrap().digest().unwrap();
+    apply(&repository, Some(&binary), &installed).unwrap();
+    fs::write(&binary, b"new binary bytes").unwrap();
+    set_test_mode(&binary, EXECUTABLE_MODE);
+
+    let refreshed = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &refreshed.digest().unwrap()).unwrap();
+    // Twice, because a second refresh is where an inherited reversal image
+    // could quietly rebase onto the first refresh's own output.
+    fs::write(&binary, b"newer binary bytes").unwrap();
+    set_test_mode(&binary, EXECUTABLE_MODE);
+    let again = plan(&repository, Some(&binary)).unwrap();
+    apply(&repository, Some(&binary), &again.digest().unwrap()).unwrap();
+    assert_eq!(
+        fs::read(repository.common_dir().join(BINARY_PATH)).unwrap(),
+        b"newer binary bytes"
+    );
+    let receipt = unapply(&repository).expect("reverse the refreshed install");
+
+    // A refresh inherits its reversal images rather than rebasing them onto its
+    // own output, so reversing one uninstalls instead of downgrading.
+    assert_eq!(receipt.status(), InstallStatus::Uninstalled);
+    assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
+    for path in PUBLISHED_PATHS {
+        assert!(
+            !repository.common_dir().join(path).exists(),
+            "{path} survived the reversal"
+        );
+    }
+}
+
+#[test]
 fn generated_guidance_and_install_errors_name_spice() {
     assert_eq!(
         SKILL
@@ -658,6 +800,69 @@ fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
             if path == state_root
     ));
     assert!(fs::read_dir(&outside).unwrap().next().is_none());
+}
+
+/// Every path an install publishes and a refresh must never withdraw.
+const PUBLISHED_PATHS: [&str; 7] = [
+    GIT_PRE_COMMIT_PATH,
+    GIT_COMMIT_MESSAGE_PATH,
+    GIT_REFERENCE_TRANSACTION_PATH,
+    ENTRY_PATH,
+    STATIC_PATH,
+    SKILL_PATH,
+    BINARY_PATH,
+];
+
+/// What a concurrent reader saw of the installed tree while it was changing.
+#[derive(Default)]
+struct ObservedTree {
+    samples: usize,
+    withdrawn: BTreeSet<String>,
+    binary_images: BTreeSet<Vec<u8>>,
+}
+
+struct TreeObserver {
+    stop: Arc<AtomicBool>,
+    worker: thread::JoinHandle<ObservedTree>,
+}
+
+impl TreeObserver {
+    fn stop(self) -> ObservedTree {
+        self.stop.store(true, Ordering::Relaxed);
+        self.worker.join().expect("the tree observer finishes")
+    }
+}
+
+/// Read every published path in a tight loop until stopped.
+///
+/// The loop never sleeps, so a withdrawal that spans more than a few syscalls
+/// is seen rather than stepped over; `reversing_before_reinstalling_withdraws_
+/// what_a_refresh_keeps` is the control that this reader can report one.
+fn watch_installed_tree(repository: &Repository) -> TreeObserver {
+    let common = repository.common_dir().to_path_buf();
+    let stop = Arc::new(AtomicBool::new(false));
+    let signal = Arc::clone(&stop);
+    let worker = thread::spawn(move || {
+        let mut observed = ObservedTree::default();
+        while !signal.load(Ordering::Relaxed) {
+            observed.samples += 1;
+            for path in PUBLISHED_PATHS {
+                match fs::read(common.join(path)) {
+                    Ok(bytes) => {
+                        if path == BINARY_PATH {
+                            observed.binary_images.insert(bytes);
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        observed.withdrawn.insert(path.to_owned());
+                    }
+                    Err(error) => panic!("observe {path}: {error}"),
+                }
+            }
+        }
+        observed
+    });
+    TreeObserver { stop, worker }
 }
 
 fn images(repository: &Repository, plan: &InstallPlan) -> Vec<Option<ObservedFile>> {

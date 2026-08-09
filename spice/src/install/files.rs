@@ -7,8 +7,7 @@ use crate::repository::Repository;
 use super::handle::AdmittedPath;
 use super::{
     Asset, FileImage, GIT_COMMIT_MESSAGE, GIT_PRE_COMMIT, GIT_REFERENCE_TRANSACTION, Generation,
-    InstallError, ObservedFile, Operation, ParentObservation, SKILL, exclusions, images_match,
-    read_binary,
+    InstallError, ObservedFile, Operation, ParentObservation, SKILL, exclusions, read_binary,
 };
 
 pub(super) fn publish_operation(
@@ -24,7 +23,7 @@ pub(super) fn publish_operation(
         operation.introduced_parents.len(),
     )?;
     let current = path.observe()?;
-    if !images_match(current.as_ref(), operation.previous.as_ref()) {
+    if !operation.expects_in_place(current.as_ref()) {
         return Err(InstallError::Drift {
             path: operation.path.clone(),
             observed: current.map(|observed| observed.image.generated().digest),

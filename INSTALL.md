@@ -141,12 +141,19 @@ it was told rather than on the default. `--release` installs the release
 profile, and `--no-resident` refreshes the executable without starting
 anything.
 
-The preview and apply above cannot express an upgrade. A completed receipt pins
-the executable bytes it installed, so once the tree is rebuilt both `install`
-and `install --apply` answer `install::input-refused` with `Spice executable
-selection differs from the recorded plan`. The preview refuses too, which
-leaves no digest to apply. The command withdraws the recorded plan, derives a
-fresh one over the new binary, and applies that.
+Rebuild, preview, and apply by hand as above when the plan itself is what you
+want to read; an apply is refused unless its digest matches the plan just
+previewed. Previewing a rebuilt executable against a complete install plans a
+refresh rather than a second installation: it keeps the reversal images that
+install recorded and exchanges each published file for its replacement in
+place, so a reversal after any number of refreshes still restores the tree the
+first install found rather than the build before this one. The proof is
+`refresh_publishes_the_rebuilt_executable_without_withdrawing_anything`, which
+reads the installed tree from another thread while the refresh runs:
+
+```sh
+cargo test --locked -p spice --lib install::tests::refresh
+```
 
 The previous executable is copied to `target/spice-develop/spice.rollback`
 before anything moves and reinstalled if the install or the readiness wait
@@ -158,8 +165,9 @@ never got there reports that log's last line, because the refusal explaining it
 nowhere else.
 
 `.spice-install` lives under the Git common directory, so an upgrade is
-repository-wide: every linked worktree sees the new executable at once, and the
-hooks are withdrawn for as long as the plan is being replaced. Re-run
+repository-wide: every linked worktree sees the new executable at once, and no
+worktree sees it missing, because the refresh replaces each published file in
+place rather than withdrawing the plan and reinstalling it. Re-run
 `cargo xtask activate-hooks` when the hook assets or the verifier guard change
 — `cargo xtask verify` refuses while the published copy is not the running
 build's, and names the command. An upgrade stops nothing outside this
