@@ -1441,6 +1441,9 @@ pub enum RecallProvenance {
             deserialize_with = "crate::optional::present"
         )]
         stage: Option<crate::body::SteeringStage>,
+        /// Complete ordered presentation-transition audit retained by the stable directive.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        escalations: Vec<crate::body::SteeringTransition>,
         /// Resident generation authenticating transcript evidence, when applicable.
         #[serde(
             default,
