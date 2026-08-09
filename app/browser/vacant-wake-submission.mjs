@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   chooseCanvasView,
@@ -27,8 +29,6 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     `.mosaic-message-card[data-card-kind="agent-message"]`
       + `[data-agent-lane="${seeded.lane}"]`,
   );
-  const priorCardKeys = await agentCards.evaluateAll((cards) =>
-    cards.map((card) => card.dataset.mosaicCardKey));
   const before = await reply(fixture, ["lane"]);
   const departed = before.body.lanes.find((candidate) => candidate.lane === seeded.lane);
   assert.ok(departed?.occupant, "the wake scenario starts from an occupied bound lane");
@@ -68,25 +68,29 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   const directive = await directiveCard.getAttribute("data-directive");
   assert.ok(directive, "the wake path renders the durable directive identity");
 
-  await waitForPage(
-    page,
-    "woken occupant contributes a new mosaic message card",
-    WAKE_MS,
-    ({ laneId, prior }) => [...document.querySelectorAll(
-      `.mosaic-message-card[data-card-kind="agent-message"]`
-        + `[data-agent-lane="${laneId}"]`,
-    )].some((card) => !prior.includes(card.dataset.mosaicCardKey)),
-    { laneId: seeded.lane, prior: priorCardKeys },
-  );
-
   const after = await reply(fixture, ["lane"]);
   const resident = after.body.lanes.find((candidate) => candidate.lane === seeded.lane);
-  assert.ok(resident?.occupant, "the lane has an occupant before the directive is observed");
+  assert.ok(resident?.occupant, "the lane has an occupant after the directive is observed");
   assert.notEqual(
     resident.occupant,
     departed.occupant,
     "wake establishes a replacement residency instead of reusing the stale occupant",
   );
+  const postDirectiveCardKeys = await agentCards.evaluateAll((cards) =>
+    cards.map((card) => card.dataset.mosaicCardKey));
+  await writeFile(join(resident.worktree, ".spice-prose-trigger"), "emit\n");
+  await waitForPage(
+    page,
+    "woken occupant contributes post-directive prose to the mosaic",
+    WAKE_MS,
+    ({ laneId, prior }) => [...document.querySelectorAll(
+      `.mosaic-message-card[data-card-kind="agent-message"]`
+        + `[data-agent-lane="${laneId}"]`,
+    )].some((card) => !prior.includes(card.dataset.mosaicCardKey)
+      && card.textContent?.includes("newest lane prose witness")),
+    { laneId: seeded.lane, prior: postDirectiveCardKeys },
+  );
+
   const inbox = await reply(fixture, ["inbox", seeded.lane]);
   const durable = inbox.body.lanes[0].pending.find((candidate) => candidate.directive === directive);
   assert.equal(durable?.text, exactDraft, "wake-and-steer preserves the exact authored draft");
