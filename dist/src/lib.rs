@@ -8,7 +8,10 @@ mod notes;
 mod pins;
 mod stage;
 
-pub use notes::{NotesError, release_notes};
+pub use notes::{
+    HIGHLIGHTS_PLACEHOLDER, INVENTORY_OPEN, Landing, NotesError, NotesInput, curated_release_notes,
+    release_notes,
+};
 pub use pins::{PinError, PinName, RequiredPins};
 pub use stage::{
     BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError, Publisher, StageError,

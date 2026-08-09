@@ -50,7 +50,7 @@ pub const PROOF_RECEIPT_VERSION: u16 = 3;
 pub const TARGET_PAYLOAD_VERSION: u16 = 1;
 /// The sole current multi-target release manifest schema.
 pub const RELEASE_MANIFEST_VERSION: u16 = 1;
-/// The sole current deterministic release-note input and output schema.
+/// The sole current deterministic release-note document schema.
 pub const RELEASE_NOTES_VERSION: u16 = 1;
 
 /// An OCI image identity that is pinned by one canonical SHA-256 digest.
@@ -351,54 +351,4 @@ pub struct ReleaseManifest {
     pub source: Digest,
     /// Both supported targets in [`ReleaseTarget`] declaration order.
     pub targets: Vec<ReleaseManifestTarget>,
-}
-
-/// One proof-receipt identity together with the bindings it attests.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseNotesProof {
-    /// Release tuple carried by the detached proof receipt.
-    pub target: ReleaseTarget,
-    /// Receipt-free target payload admitted by the proof receipt.
-    pub payload: Digest,
-    /// Canonical detached proof-receipt identity.
-    pub receipt: Digest,
-}
-
-/// One gate-receipt identity together with the bindings it attests.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseNotesGate {
-    /// Release tuple whose build the gate admitted.
-    pub target: ReleaseTarget,
-    /// Exact release source admitted by the gate run.
-    pub source: Digest,
-    /// Canonical complete gate-receipt identity.
-    pub receipt: Digest,
-}
-
-/// All release evidence for one target, before note derivation.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseNotesInputTarget {
-    /// Supported release tuple in declaration order.
-    pub target: ReleaseTarget,
-    /// Canonical receipt-free target-payload identity.
-    pub payload: Digest,
-    /// Target- and payload-bound proof evidence.
-    pub proof: ReleaseNotesProof,
-    /// Target- and source-bound gate evidence.
-    pub gate: ReleaseNotesGate,
-}
-
-/// The complete canonical evidence document consumed by release notes.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseNotesInput {
-    /// Sole release-note input schema admitted by this build.
-    pub version: u16,
-    /// Exact source identity shared by every target and gate receipt.
-    pub source: Digest,
-    /// Both supported targets in [`ReleaseTarget`] declaration order.
-    pub targets: Vec<ReleaseNotesInputTarget>,
 }

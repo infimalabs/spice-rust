@@ -16,6 +16,7 @@ use wire::{
 pub(crate) struct AdmittedRelease {
     published: proof::PublishedManifest,
     key: Digest,
+    notes: Digest,
     targets: Vec<PublishedTarget>,
 }
 
@@ -28,6 +29,10 @@ impl AdmittedRelease {
         &self.published.digest
     }
 
+    pub(crate) const fn notes(&self) -> &Digest {
+        &self.notes
+    }
+
     pub(crate) fn receipts(&self) -> impl Iterator<Item = &Digest> {
         self.targets.iter().map(|target| &target.receipt)
     }
@@ -35,6 +40,7 @@ impl AdmittedRelease {
     pub(crate) fn fact(&self) -> ReleasePublished {
         ReleasePublished {
             manifest: self.published.digest.clone(),
+            notes: self.notes.clone(),
             targets: self.targets.clone(),
         }
     }
@@ -44,6 +50,7 @@ impl AdmittedRelease {
             key: self.key.clone(),
             manifest: self.published.digest.clone(),
             source: self.published.manifest.source.clone(),
+            notes: self.notes.clone(),
             targets: self.targets.clone(),
         }
     }
@@ -70,7 +77,7 @@ pub(crate) enum RunResult {
 }
 
 pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunResult {
-    let prepared = match prepare() {
+    let prepared = match prepare(matches) {
         Ok(prepared) => prepared,
         Err(outcome) => return RunResult::Plan(*outcome),
     };
@@ -118,7 +125,7 @@ struct Prepared {
     canvas: PathBuf,
 }
 
-fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
+fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
     let current = std::env::current_dir().map_err(|error| {
         Box::new(environment::<ReleasePlan>(
             "release::working-directory-unavailable",
@@ -131,10 +138,41 @@ fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
             &error.to_string(),
         ))
     })?;
+    let canonical = crate::release_history::draft(
+        repository.worktree_root(),
+        matches
+            .get_one::<String>("release-commit")
+            .map(String::as_str),
+    )
+    .map_err(|error| {
+        Box::new(notes_refusal::<ReleasePlan>(
+            "release::history-refused",
+            &error,
+        ))
+    })?;
+    let candidate = match matches.get_one::<String>("notes-file") {
+        Some(path) => fs::read_to_string(path).map_err(|error| {
+            Box::new(environment::<ReleasePlan>(
+                "release::notes-unreadable",
+                &format!("cannot read release notes {path:?}: {error}"),
+            ))
+        })?,
+        None => canonical.document.clone(),
+    };
+    let notes = dist::curated_release_notes(&candidate, &canonical).map_err(|error| {
+        Box::new(notes_refusal::<ReleasePlan>(
+            "release::notes-refused",
+            &error,
+        ))
+    })?;
     let app = app_digest(repository.worktree_root())
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::app-stage-refused", &error)))?;
-    let release = admit_stage(&repository.worktree_root().join("dist/stage"), &app)
-        .map_err(|error| Box::new(refusal::<ReleasePlan>("release::manifest-refused", &error)))?;
+    let release = admit_stage(
+        &repository.worktree_root().join("dist/stage"),
+        &app,
+        &notes.identity,
+    )
+    .map_err(|error| Box::new(refusal::<ReleasePlan>("release::manifest-refused", &error)))?;
     let state_paths = repository
         .admit_state()
         .map_err(|error| Box::new(crate::state_failure(&error).outcome()))?;
@@ -207,44 +245,16 @@ mod tests {
     }
 
     #[test]
-    fn notes_reads_the_one_explicit_input_operand_it_was_given() {
-        let name = format!("spice-release-notes-input-{}", std::process::id());
-        let root = std::env::temp_dir().join(name);
-        fs::create_dir_all(&root).expect("scratch root");
-        let input = root.join("release-input.json");
-        let path = input.to_str().expect("scratch path is UTF-8");
-        let dispatch = |path: &str| {
-            let matches = spice::cli::command()
-                .try_get_matches_from(["spice", "release", "notes", path])
-                .expect("one explicit release input parses");
-            notes(spice::cli::selected_matches(&matches))
-        };
-        let refused = |bytes: &[u8]| {
-            fs::write(&input, bytes).expect("scratch input");
-            let outcome = dispatch(path);
-            let Outcome::Refusal(refusal) = outcome else {
-                panic!("release notes must refuse an input that is not release evidence");
-            };
-            assert_eq!(refusal.reason, "release::notes-refused");
-            refusal.observed.expect("a refusal names what it read")
-        };
+    fn the_plan_key_binds_the_notes_identity_as_well_as_the_manifest() {
+        let manifest = b"canonical manifest";
+        let first = Digest::compute(Domain::DistReleaseNotes, b"first notes");
+        let second = Digest::compute(Domain::DistReleaseNotes, b"second notes");
 
-        // Two inputs at one path refuse differently, so the bytes behind the
-        // operand decide the answer and no other source can stand in for them.
-        assert_ne!(refused(b"{}"), refused(b"a release range"));
-
-        fs::remove_file(&input).expect("scratch input is removable");
-        let Outcome::Fault(fault) = dispatch(path) else {
-            panic!("an unreadable release input must fault");
-        };
-        assert_eq!(fault.class, FaultClass::Environment);
-        assert_eq!(fault.reason, "release::input-unreadable");
-        assert!(
-            fault.detail.contains(path),
-            "the release-notes fault named an input it was never given: {:?}",
-            fault.detail,
+        assert_ne!(plan_key(manifest, &first), plan_key(manifest, &second));
+        assert_ne!(
+            plan_key(manifest, &first),
+            plan_key(b"other manifest", &first)
         );
-        fs::remove_dir_all(&root).expect("scratch root is removable");
     }
 }
 
@@ -254,7 +264,11 @@ pub(crate) fn app_digest(worktree: &Path) -> Result<Digest, String> {
         .map_err(|error| error.to_string())
 }
 
-pub(crate) fn admit_stage(root: &Path, app: &Digest) -> Result<AdmittedRelease, ReleaseError> {
+pub(crate) fn admit_stage(
+    root: &Path,
+    app: &Digest,
+    notes: &Digest,
+) -> Result<AdmittedRelease, ReleaseError> {
     let executable = std::env::current_exe().map_err(ReleaseError::CurrentExecutable)?;
     let bytes = fs::read(&executable).map_err(|source| ReleaseError::ReadExecutable {
         path: executable,
@@ -264,7 +278,7 @@ pub(crate) fn admit_stage(root: &Path, app: &Digest) -> Result<AdmittedRelease, 
     let target = proof::compiled_target().map_err(ReleaseError::UnsupportedHost)?;
     let published =
         proof::admit_manifest(root, app, target, &native).map_err(ReleaseError::Manifest)?;
-    let key = Digest::compute(Domain::DistReleasePlan, &published.bytes);
+    let key = plan_key(&published.bytes, notes);
     let targets = published
         .manifest
         .targets
@@ -278,8 +292,18 @@ pub(crate) fn admit_stage(root: &Path, app: &Digest) -> Result<AdmittedRelease, 
     Ok(AdmittedRelease {
         published,
         key,
+        notes: notes.clone(),
         targets,
     })
+}
+
+fn plan_key(manifest: &[u8], notes: &Digest) -> Digest {
+    let notes = notes.to_string();
+    let mut binding = Vec::with_capacity(8 + manifest.len() + notes.len());
+    binding.extend_from_slice(&(manifest.len() as u64).to_be_bytes());
+    binding.extend_from_slice(manifest);
+    binding.extend_from_slice(notes.as_bytes());
+    Digest::compute(Domain::DistReleasePlan, &binding)
 }
 
 pub(crate) fn observe(
@@ -402,34 +426,42 @@ fn environment<B>(reason: &str, detail: &str) -> Outcome<B> {
 }
 
 pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
-    let input = matches
-        .get_one::<String>("INPUT")
-        .expect("release notes requires its generated INPUT operand");
-    let bytes = match fs::read(Path::new(input)) {
-        Ok(bytes) => bytes,
+    let current = match std::env::current_dir() {
+        Ok(current) => current,
         Err(error) => {
-            return Outcome::Fault(Fault {
-                class: FaultClass::Environment,
-                reason: "release::input-unreadable".to_owned(),
-                detail: format!("cannot read release input {input:?}: {error}"),
-            });
+            return environment("release::working-directory-unavailable", &error.to_string());
         }
     };
-    match dist::release_notes(&bytes) {
+    let repository = match spice::repository::Repository::discover(&current) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return environment("release::repository-unresolved", &error.to_string());
+        }
+    };
+    match crate::release_history::draft(
+        repository.worktree_root(),
+        matches
+            .get_one::<String>("release-commit")
+            .map(String::as_str),
+    ) {
         Ok(body) => Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
             body,
         }),
-        Err(error) => failure(error),
+        Err(error) => notes_refusal("release::history-refused", &error),
     }
 }
 
-fn failure(error: dist::NotesError) -> Outcome<ReleaseNotes> {
+fn notes_refusal<B>(reason: &str, error: &impl fmt::Display) -> Outcome<B> {
     Outcome::Refusal(Refusal {
-        reason: "release::notes-refused".to_owned(),
-        witness: Some("release-input".to_owned()),
-        expected: Some("one canonical current ordered release evidence document".to_owned()),
+        reason: reason.to_owned(),
+        witness: Some("first-parent-release-notes".to_owned()),
+        expected: Some(
+            "reachable release history and curated highlights above the generated inventory"
+                .to_owned(),
+        ),
         observed: Some(error.to_string()),
-        remedy: "supply both target-matched proof and gate receipts for one source".to_owned(),
+        remedy: "generate a fresh release notes draft, curate Highlights, and retry its file"
+            .to_owned(),
     })
 }

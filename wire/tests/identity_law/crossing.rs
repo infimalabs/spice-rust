@@ -1114,26 +1114,8 @@ fn cover_fold_reply_frames(covered: &mut BTreeSet<String>) {
 }
 
 fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
-    law(
-        covered,
-        "ProofEvidence",
-        &[
-            ProofEvidence {
-                target: ReleaseTarget::Aarch64AppleDarwin,
-                payload: digest("1"),
-                receipt: digest("2"),
-                battery: digest("3"),
-                replay: digest("4"),
-            },
-            ProofEvidence {
-                target: ReleaseTarget::X86_64UnknownLinuxMusl,
-                payload: digest("5"),
-                receipt: digest("6"),
-                battery: digest("7"),
-                replay: digest("8"),
-            },
-        ],
-    );
+    cover_release_note_frames(covered);
+    cover_proof_evidence_frames(covered);
     law(
         covered,
         "ReplyPosition",
@@ -1203,6 +1185,76 @@ fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
                 id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 outcome: Outcome::Fault(moved_epoch()),
+            },
+        ],
+    );
+}
+
+fn cover_proof_evidence_frames(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "ProofEvidence",
+        &[
+            ProofEvidence {
+                target: ReleaseTarget::Aarch64AppleDarwin,
+                payload: digest("1"),
+                receipt: digest("2"),
+                battery: digest("3"),
+                replay: digest("4"),
+            },
+            ProofEvidence {
+                target: ReleaseTarget::X86_64UnknownLinuxMusl,
+                payload: digest("5"),
+                receipt: digest("6"),
+                battery: digest("7"),
+                replay: digest("8"),
+            },
+        ],
+    );
+}
+
+fn cover_release_note_frames(covered: &mut BTreeSet<String>) {
+    let entries = [
+        ReleaseNotesEntry {
+            project: "general".to_owned(),
+            subject: "Seed the repository".to_owned(),
+            task: None,
+            references: vec!["1111111111111111111111111111111111111111".to_owned()],
+        },
+        ReleaseNotesEntry {
+            project: "dist.notes".to_owned(),
+            subject: "Derive release notes from history".to_owned(),
+            task: Some("notes".to_owned()),
+            references: vec![
+                "2222222222222222222222222222222222222222".to_owned(),
+                "3333333333333333333333333333333333333333".to_owned(),
+            ],
+        },
+    ];
+    law(covered, "ReleaseNotesEntry", &entries);
+    law(
+        covered,
+        "ReleaseNotes",
+        &[
+            ReleaseNotes {
+                version: 1,
+                identity: digest("1"),
+                release_version: "unreleased".to_owned(),
+                release_commit: "1111111111111111111111111111111111111111".to_owned(),
+                previous_tag: None,
+                bounded_recent_window: true,
+                entries: vec![entries[0].clone()],
+                document: "## Highlights\n".to_owned(),
+            },
+            ReleaseNotes {
+                version: 1,
+                identity: digest("2"),
+                release_version: "1.2.3".to_owned(),
+                release_commit: "3333333333333333333333333333333333333333".to_owned(),
+                previous_tag: Some("v1.2.2".to_owned()),
+                bounded_recent_window: false,
+                entries: entries.to_vec(),
+                document: "## Highlights\n\n- History-derived notes.\n".to_owned(),
             },
         ],
     );
