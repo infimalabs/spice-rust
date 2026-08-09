@@ -75,19 +75,26 @@ pub fn refresh(
     let published = read_endpoint(&repository);
     let endpoint = requested_endpoint(request, published.as_deref());
 
+    let unwind = Rollback {
+        installed: &installed,
+        executable: rollback.as_deref(),
+        published: published.as_deref(),
+        restart: request.restart,
+    };
+
     if request.restart && published.is_some() {
         stop(&repository, &installed, output)?;
     }
     let digest = match refresh_install(&repository, &built) {
         Ok(digest) => digest,
-        Err(error) => return Err(restore(&repository, rollback.as_deref(), output, error)),
+        Err(error) => return Err(restore(&repository, &unwind, output, error)),
     };
     writeln!(output, "installed {} plan={digest}", installed.display())?;
 
     let bound = (endpoint.0.as_deref(), endpoint.1);
     let endpoint = match restart(&repository, &installed, bound, request, output) {
         Ok(endpoint) => endpoint,
-        Err(error) => return Err(restore(&repository, rollback.as_deref(), output, error)),
+        Err(error) => return Err(restore(&repository, &unwind, output, error)),
     };
     Ok(RefreshReport {
         built,
@@ -179,27 +186,68 @@ fn park(repository: &Repository, installed: &Path) -> Result<Option<PathBuf>, Re
     Ok(Some(rollback))
 }
 
-/// Reinstall the parked executable and report the failure that forced it.
+/// What a failed refresh needs to put the appliance back the way it found it.
+struct Rollback<'a> {
+    /// Published executable a restored resident is started from.
+    installed: &'a Path,
+    /// Parked copy of the executable that was installed before the refresh.
+    executable: Option<&'a Path>,
+    /// Endpoint the stopped resident had published, when one was running.
+    published: Option<&'a str>,
+    /// Whether this refresh was the kind that stops and starts a resident.
+    restart: bool,
+}
+
+/// Reinstall the parked executable, restart what was running, and report the
+/// failure that forced both.
 fn restore(
     repository: &Repository,
-    rollback: Option<&Path>,
+    rollback: &Rollback<'_>,
     output: &mut impl Write,
     cause: impl Into<RefreshError>,
 ) -> RefreshError {
     let cause = cause.into();
-    let Some(rollback) = rollback else {
+    let Some(executable) = rollback.executable else {
         return cause;
     };
     let _ = writeln!(output, "restoring previous executable after: {cause}");
-    match refresh_install(repository, rollback) {
+    match refresh_install(repository, executable) {
         Ok(digest) => {
             let _ = writeln!(output, "restored plan={digest}");
-            cause
         }
-        Err(error) => RefreshError::RestoreFailed {
-            cause: cause.to_string(),
-            error,
-        },
+        Err(error) => {
+            return RefreshError::RestoreFailed {
+                cause: cause.to_string(),
+                error,
+            };
+        }
+    }
+    restore_resident(repository, rollback, output);
+    cause
+}
+
+/// Start the restored executable's resident back on the endpoint it had.
+///
+/// A refresh that stopped the resident and then failed leaves the appliance
+/// installed but unserved, so putting the executable back is only half of what
+/// was taken away. A resident that will not come back is reported rather than
+/// raised, because the failure worth answering is the one that forced the
+/// restore, not the restore's own aftermath.
+fn restore_resident(repository: &Repository, rollback: &Rollback<'_>, output: &mut impl Write) {
+    if !rollback.restart {
+        return;
+    }
+    let Some((host, port)) = rollback.published.and_then(endpoint_parts) else {
+        return;
+    };
+    let _ = writeln!(output, "restarting previous resident");
+    let request = RefreshRequest {
+        restart: true,
+        ..RefreshRequest::default()
+    };
+    let bound = (Some(host.as_str()), Some(port));
+    if let Err(error) = restart(repository, rollback.installed, bound, &request, output) {
+        let _ = writeln!(output, "previous resident did not come back: {error}");
     }
 }
 

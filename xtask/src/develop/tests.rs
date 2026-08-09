@@ -227,7 +227,12 @@ fn a_failed_refresh_restores_the_parked_executable_and_reports_its_cause() {
     let mut output = Vec::new();
     let reported = restore(
         &repository,
-        Some(&parked),
+        &Rollback {
+            installed: &installed,
+            executable: Some(&parked),
+            published: None,
+            restart: false,
+        },
         &mut output,
         RefreshError::ResidentUnready,
     );
@@ -238,6 +243,64 @@ fn a_failed_refresh_restores_the_parked_executable_and_reports_its_cause() {
     assert_eq!(
         fs::read(&installed).expect("installed executable reads"),
         b"first build\n"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output).contains("restarting previous resident"),
+        "a refresh that never stopped a resident started one anyway: {}",
+        String::from_utf8_lossy(&output)
+    );
+}
+
+/// A refresh that stopped a resident brings it back, and a resident that will
+/// not come back still does not replace the cause that forced the restore.
+///
+/// Restoring the executable alone would leave the appliance installed but
+/// unserved, which is not the state the refresh was asked to preserve.
+#[test]
+fn a_failed_refresh_restarts_the_resident_it_stopped() {
+    let fixture = Fixture::new("resident-restore");
+    let repository = fixture.repository();
+    let installed = install::installed_binary(&repository);
+    // The restored executable is what the restart is launched from, so a script
+    // that refuses to stay up is a resident that cannot come back.
+    let first = fixture.binary("spice-first", b"#!/bin/sh\nexit 3\n");
+    let second = fixture.binary("spice-second", b"second build\n");
+
+    refresh_install(&repository, &first).expect("first install applies");
+    let parked = park(&repository, &installed)
+        .expect("the installed executable is parked")
+        .expect("an installed executable exists to park");
+    refresh_install(&repository, &second).expect("second install applies");
+
+    let mut output = Vec::new();
+    let reported = restore(
+        &repository,
+        &Rollback {
+            installed: &installed,
+            executable: Some(&parked),
+            published: Some("http://127.0.0.1:8767"),
+            restart: true,
+        },
+        &mut output,
+        RefreshError::ResidentUnready,
+    );
+    let output = String::from_utf8_lossy(&output).into_owned();
+
+    assert!(
+        matches!(reported, RefreshError::ResidentUnready),
+        "the restore's own aftermath replaced the reported cause: {reported}"
+    );
+    assert!(
+        output.contains("restarting previous resident"),
+        "a stopped resident was never restarted: {output}"
+    );
+    assert!(
+        output.contains("previous resident did not come back: resident exited with status 3"),
+        "a resident that refused to come back was not reported: {output}"
+    );
+    assert_eq!(
+        fs::read(&installed).expect("installed executable reads"),
+        b"#!/bin/sh\nexit 3\n"
     );
 }
 
