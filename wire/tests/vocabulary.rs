@@ -435,7 +435,7 @@ fn producer_assignment_follows_the_specified_enumeration() {
     // authored prose and raises the reminder. Naming the exception here keeps
     // the domain rule below meaning "every other taste fact is the judge's"
     // rather than quietly widening to whoever arrives next.
-    let recognized = [FactKind::TasteReminded];
+    let recognized = [FactKind::SteerDeadLettered, FactKind::TasteReminded];
     for kind in recognized {
         assert_eq!(
             kind.producer(),

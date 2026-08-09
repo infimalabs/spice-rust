@@ -462,7 +462,7 @@ pub struct SteerResent {
     pub escalation: u32,
 }
 
-/// A lapsed directive was restored to live standing exactly once.
+/// A lapsed or dead-lettered directive was restored to live standing exactly once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerRecovered {
     /// Durable directive identity retained by the recovery.
@@ -567,6 +567,21 @@ pub struct SteerLapsed {
     pub lane: CanonicalUuid,
     /// Expiry that passed.
     pub expires: Instant,
+}
+
+/// A live directive was parked because its vacant lane could not start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteerDeadLettered {
+    /// Durable directive identity retained for requeue.
+    pub directive: CanonicalUuid,
+    /// Parked directive key reported to the operator.
+    pub key: String,
+    /// Lane that could not be started for delivery.
+    pub lane: CanonicalUuid,
+    /// Closed lifecycle failure that prevented delivery.
+    pub reason: String,
+    /// Exact command that restores this directive's standing.
+    pub requeue: String,
 }
 
 /// The operator withdrew a live directive; the lineage retired without an agent disposition.

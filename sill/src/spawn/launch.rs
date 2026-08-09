@@ -81,7 +81,13 @@ fn spawn_inner_with_guardian(
         completion: Mutex::new(ProcessCompletion::default()),
         exited: Condvar::new(),
     });
-    start_exit_watcher(pid, wakes.exit, Arc::clone(&process));
+    let failure_observer = observation.as_ref().map(Observation::observer);
+    start_exit_watcher(
+        pid,
+        wakes.exit,
+        Arc::clone(&process),
+        failure_observer.as_ref().map(Arc::clone),
+    );
     let failure = Arc::new(FailureContext {
         pid,
         group: spec.group,
@@ -92,7 +98,6 @@ fn spawn_inner_with_guardian(
         wake: wakes.failure,
         failed: AtomicBool::new(false),
     });
-    let failure_observer = observation.as_ref().map(Observation::observer);
     let mut captures = CaptureSetup {
         observation,
         failure_observer,

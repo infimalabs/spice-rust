@@ -181,13 +181,7 @@ impl MappedCommand {
             contract,
             &["steer", "recover"],
             CommandKind::SteerResend,
-            vec![
-                Witness::Directive {
-                    steer: directive,
-                    disposition: Disposition::Lapsed,
-                },
-                Witness::Lineage { steer: directive },
-            ],
+            vec![Witness::Lineage { steer: directive }],
             &wire::intent::DirectiveRef { directive },
         )
     }

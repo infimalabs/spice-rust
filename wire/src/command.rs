@@ -349,10 +349,10 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// Exact directive disposition; resend also names the preceding directive
-    /// in its lineage.
+    /// Exact failed lineage member. Its current lapsed or dead-lettered
+    /// disposition is re-read and guarded by the resident before recovery.
     pub const RESEND: Self = Self {
-        required: &[WitnessKind::Directive, WitnessKind::Lineage],
+        required: &[WitnessKind::Lineage],
         optional: &[],
         authority: Authority::Connected,
     };

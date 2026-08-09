@@ -178,6 +178,8 @@ pub enum Disposition {
     Declined,
     /// Reached expiry without a valid disposition.
     Lapsed,
+    /// Parked because its lane could not start for delivery.
+    DeadLettered,
     /// Withdrawn by the operator.
     Canceled,
 }

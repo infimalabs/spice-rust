@@ -10,16 +10,17 @@ use wire::{CanonicalUuid, ClaimDisposition, Instant, ResidentState, TaskHandle, 
 
 use super::{CommandResult, environment_fault, new_uuid, store_fault};
 
-/// The only currently armed production kind is `ClaimLapse`: it has a complete
-/// guarded `BusTimer` transition. The other declared kinds remain unarmed
-/// until their own durable transition contracts exist; they are never routed
-/// through a user command as a fallback.
+/// Production arms `ClaimLapse` from durable lease heads, `TaskWake` from the
+/// lifecycle resolver's durable-age/retry deadline, and `LaneResume` from a
+/// durable hold. Other kinds remain unarmed until their own transition
+/// contracts exist; none is routed through a user command.
 pub(super) struct Runtime {
     worker: Option<TimerWorker>,
     events: tokio::sync::mpsc::UnboundedReceiver<TimerEvent>,
     forwarder: Option<JoinHandle<()>>,
     projects: ProjectPolicy,
     claims: BTreeMap<TaskHandle, ArmedClaim>,
+    wake: Option<ArmedWake>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,6 +34,21 @@ struct ClaimAuthority {
 struct ArmedClaim {
     id: TimerId,
     authority: ClaimAuthority,
+}
+
+struct ArmedWake {
+    id: TimerId,
+    lane: CanonicalUuid,
+    deadline: Instant,
+    kind: super::lifecycle::WakeKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Fired {
+    Stale,
+    ClaimLapse,
+    TaskWake(CanonicalUuid),
+    LaneResume(CanonicalUuid),
 }
 
 impl Runtime {
@@ -64,6 +80,7 @@ impl Runtime {
             forwarder: Some(forwarder),
             projects,
             claims: BTreeMap::new(),
+            wake: None,
         })
     }
 
@@ -71,36 +88,45 @@ impl Runtime {
         self.events.recv().await
     }
 
-    /// Continuously reconcile durable commits and consume fired claim timers.
-    pub(super) async fn drive(
-        mut self,
-        bus: &Bus,
-        mut commits: bus::BroadcastSubscriber,
+    /// Make the sole automatic lifecycle wait match the resolver's next event.
+    pub(super) fn synchronize_wake(
+        &mut self,
+        desired: Option<super::lifecycle::WakeDeadline>,
     ) -> CommandResult<()> {
-        self.synchronize(bus)?;
-        loop {
-            tokio::select! {
-                timer = self.recv() => {
-                    let timer = timer.ok_or_else(|| environment_fault(
-                        "bus::timer-events-closed",
-                        "the production timer event stream closed while the resident was live",
-                    ))?;
-                    self.consume(bus, timer)?;
-                    self.synchronize(bus)?;
-                }
-                committed = commits.recv() => match committed {
-                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        self.synchronize(bus)?;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        return Err(environment_fault(
-                            "bus::timer-commits-closed",
-                            "the durable commit stream closed while the resident was live",
-                        ));
-                    }
-                }
-            }
+        if self.wake.as_ref().is_some_and(|armed| {
+            desired.is_some_and(|desired| {
+                armed.lane == desired.lane
+                    && armed.deadline == desired.at
+                    && armed.kind == desired.kind
+            })
+        }) {
+            return Ok(());
         }
+        if let Some(armed) = self.wake.take() {
+            self.worker()?
+                .cancel(armed.id)
+                .map_err(|error| store_fault("bus::timer-cancel-failed", &error.to_string()))?;
+        }
+        if let Some(desired) = desired {
+            let id = self
+                .worker()?
+                .arm(
+                    desired.lane.to_string(),
+                    match desired.kind {
+                        super::lifecycle::WakeKind::Task => TimerKind::TaskWake,
+                        super::lifecycle::WakeKind::Hold => TimerKind::LaneResume,
+                    },
+                    desired.at,
+                )
+                .map_err(|error| store_fault("bus::timer-arm-failed", &error.to_string()))?;
+            self.wake = Some(ArmedWake {
+                id,
+                lane: desired.lane,
+                deadline: desired.at,
+                kind: desired.kind,
+            });
+        }
+        Ok(())
     }
 
     /// Make process-local waits exactly match current lapse-capable claim heads.
@@ -139,7 +165,35 @@ impl Runtime {
     }
 
     /// Consume one fired event using only authority captured when it was armed.
-    pub(super) fn consume(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<()> {
+    pub(super) fn consume(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<Fired> {
+        if matches!(event.kind(), TimerKind::TaskWake | TimerKind::LaneResume) {
+            let fired_kind = event.kind();
+            let Some(armed) = self.wake.take() else {
+                // Cancellation can race an event already queued by the timer
+                // worker. With no matching armed identity it has no authority.
+                return Ok(Fired::Stale);
+            };
+            if armed.id != event.id() {
+                self.wake = Some(armed);
+                return Ok(Fired::Stale);
+            }
+            if armed.lane.to_string() != event.owner()
+                || armed.deadline != event.deadline()
+                || match armed.kind {
+                    super::lifecycle::WakeKind::Task => fired_kind != TimerKind::TaskWake,
+                    super::lifecycle::WakeKind::Hold => fired_kind != TimerKind::LaneResume,
+                }
+            {
+                return Err(environment_fault(
+                    "bus::timer-authority-mismatch",
+                    "fired lifecycle timer disagreed with its captured authority",
+                ));
+            }
+            return Ok(match armed.kind {
+                super::lifecycle::WakeKind::Task => Fired::TaskWake(armed.lane),
+                super::lifecycle::WakeKind::Hold => Fired::LaneResume(armed.lane),
+            });
+        }
         if event.kind() != TimerKind::ClaimLapse {
             return Err(environment_fault(
                 "bus::timer-kind-unhandled",
@@ -153,7 +207,7 @@ impl Runtime {
         else {
             // A cancellation can race an already-emitted event. The durable
             // re-proof made its authority stale before this consumer saw it.
-            return Ok(());
+            return Ok(Fired::ClaimLapse);
         };
         let armed = self
             .claims
@@ -189,7 +243,7 @@ impl Runtime {
             })
             .map_err(|error| store_fault("bus::timer-lapse-failed", &error.to_string()))?;
         match lapse {
-            Ok(_) | Err(board::lapse::LapseError::Refused(_)) => Ok(()),
+            Ok(_) | Err(board::lapse::LapseError::Refused(_)) => Ok(Fired::ClaimLapse),
             Err(error) => Err(store_fault("bus::timer-lapse-failed", &error.to_string())),
         }
     }
@@ -344,6 +398,65 @@ mod tests {
         assert_commit_history(&fixture.bus);
         drop(timers);
         fixture.bus.shutdown().expect("fixture bus stops");
+    }
+
+    #[test]
+    fn task_wake_is_an_explicit_timer_event_for_the_selected_lane() {
+        let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        let mut timers = Runtime::start(projects()).expect("timer runtime starts");
+        let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+        let lane = uuid(41);
+        timers
+            .synchronize_wake(Some(super::super::lifecycle::WakeDeadline {
+                lane,
+                at: shifted(now, -1),
+                kind: super::super::lifecycle::WakeKind::Task,
+            }))
+            .expect("past task wake arms");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("fixture async runtime builds");
+        let event = runtime
+            .block_on(timers.recv())
+            .expect("task wake timer fires");
+        assert_eq!(event.kind(), TimerKind::TaskWake);
+        assert_eq!(event.owner(), lane.to_string());
+        assert_eq!(
+            timers.consume(&bus, event).expect("task wake consumes"),
+            Fired::TaskWake(lane)
+        );
+        drop(timers);
+        bus.shutdown().expect("fixture bus stops");
+    }
+
+    #[test]
+    fn lane_resume_is_an_explicit_timer_event_for_the_held_lane() {
+        let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        let mut timers = Runtime::start(projects()).expect("timer runtime starts");
+        let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+        let lane = uuid(42);
+        timers
+            .synchronize_wake(Some(super::super::lifecycle::WakeDeadline {
+                lane,
+                at: shifted(now, -1),
+                kind: super::super::lifecycle::WakeKind::Hold,
+            }))
+            .expect("past lane resume arms");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("fixture async runtime builds");
+        let event = runtime
+            .block_on(timers.recv())
+            .expect("lane resume timer fires");
+        assert_eq!(event.kind(), TimerKind::LaneResume);
+        assert_eq!(
+            timers.consume(&bus, event).expect("lane resume consumes"),
+            Fired::LaneResume(lane)
+        );
+        drop(timers);
+        bus.shutdown().expect("fixture bus stops");
     }
 
     fn fixture() -> Fixture {

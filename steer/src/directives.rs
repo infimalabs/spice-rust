@@ -21,8 +21,8 @@ use std::error::Error;
 use std::fmt;
 
 use wire::body::{
-    DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed,
-    SteerRecovered, SteerResent, SteerSent, TasteReminded,
+    DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeadLettered, SteerDeclined, SteerLapsed,
+    SteerMissed, SteerRecovered, SteerResent, SteerSent, TasteReminded,
 };
 use wire::{CanonicalUuid, Disposition, Instant};
 
@@ -120,7 +120,7 @@ pub enum Steering<'a> {
     Sent(&'a SteerSent),
     /// A live directive climbed a rung.
     Resent(&'a SteerResent),
-    /// A lapsed directive was restored to live standing.
+    /// A lapsed or dead-lettered directive was restored to live standing.
     Recovered(&'a SteerRecovered),
     /// A lineage was heard.
     Acked(&'a SteerAcked),
@@ -130,6 +130,8 @@ pub enum Steering<'a> {
     Missed(&'a SteerMissed),
     /// A lineage reached its expiry unheard.
     Lapsed(&'a SteerLapsed),
+    /// A lineage was parked because its lane could not start.
+    DeadLettered(&'a SteerDeadLettered),
     /// The operator withdrew a lineage.
     Canceled(&'a SteerCanceled),
     /// A taste fired on authored prose and opened a directive.
@@ -329,6 +331,8 @@ impl Ledger {
                 ledger.absorb(Steering::Missed(&body))
             } else if let Some(body) = fact.read::<SteerLapsed>() {
                 ledger.absorb(Steering::Lapsed(&body))
+            } else if let Some(body) = fact.read::<SteerDeadLettered>() {
+                ledger.absorb(Steering::DeadLettered(&body))
             } else if let Some(body) = fact.read::<SteerCanceled>() {
                 ledger.absorb(Steering::Canceled(&body))
             } else {
@@ -365,6 +369,7 @@ impl Ledger {
                 self.retire(&read("key", &body.key)?, Disposition::Canceled)
             }
             Steering::Lapsed(body) => self.lapse(body),
+            Steering::DeadLettered(body) => self.dead_letter(body),
             // A missed acknowledgment alters nothing, by law. Its key is not
             // even read: the fact exists precisely because the key was unknown,
             // malformed, quoted, or historical, so refusing it here would
@@ -574,7 +579,10 @@ impl Ledger {
                 observed: body.lane,
             });
         }
-        if directive.disposition != Disposition::Lapsed {
+        if !matches!(
+            directive.disposition,
+            Disposition::Lapsed | Disposition::DeadLettered
+        ) {
             return Err(Refusal::Retired {
                 key,
                 disposition: directive.disposition,
@@ -601,7 +609,10 @@ impl Ledger {
                 .directives
                 .get(member)
                 .expect("lineage member came from the directive map");
-            if directive.disposition != Disposition::Lapsed {
+            if !matches!(
+                directive.disposition,
+                Disposition::Lapsed | Disposition::DeadLettered
+            ) {
                 return Err(Refusal::Retired {
                     key: member.clone(),
                     disposition: directive.disposition,
@@ -670,6 +681,15 @@ impl Ledger {
             });
         }
         self.retire(&key, Disposition::Lapsed)
+    }
+
+    fn dead_letter(&mut self, body: &SteerDeadLettered) -> Result<(), Refusal> {
+        self.dispose(
+            &body.key,
+            body.directive,
+            body.lane,
+            Disposition::DeadLettered,
+        )
     }
 
     /// Retires a whole lineage at once.

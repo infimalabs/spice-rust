@@ -76,7 +76,7 @@ pub(crate) enum SelectedCommand<'a> {
     },
     /// The operator withdraws one live directive.
     SteerCancel { directive: CanonicalUuid },
-    /// The operator restores one exact lapsed directive.
+    /// The operator restores one exact lapsed or dead-lettered directive.
     SteerRecover { directive: CanonicalUuid },
     /// The authenticated principal reads visible pending direction.
     SteerInbox { lane: Option<CanonicalUuid> },

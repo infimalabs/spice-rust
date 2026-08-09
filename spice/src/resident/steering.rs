@@ -27,6 +27,92 @@ mod transcript;
 use preview::directive_preview;
 use transcript::transcript_recognition;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DeadLetter {
+    pub(super) directive: CanonicalUuid,
+    pub(super) key: String,
+    pub(super) requeue: String,
+}
+
+/// Park every pending directive on a lane after one terminal start failure.
+pub(super) fn dead_letter_pending(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    cursor: Seq,
+    failure: &Outcome<()>,
+) -> CommandResult<Vec<DeadLetter>> {
+    let snapshot = bus.task_snapshot().map_err(|error| {
+        store_fault("steer::dead-letter-snapshot-unreadable", &error.to_string())
+    })?;
+    if snapshot.cursor() != Some(cursor) {
+        return Err(Outcome::Refusal(Refusal {
+            reason: "steer::dead-letter-snapshot-moved".to_owned(),
+            witness: Some("task-snapshot-cursor".to_owned()),
+            expected: Some(cursor.to_string()),
+            observed: snapshot.cursor().map(|observed| observed.to_string()),
+            remedy: "reconcile pending inbox standing before parking it".to_owned(),
+        }));
+    }
+    let ledger = steer::Ledger::from_snapshot(snapshot.facts())
+        .map_err(|error| store_fault("steer::dead-letter-replay-invalid", &error.to_string()))?;
+    let pending = ledger.pending(lane);
+    if pending.is_empty() {
+        return Err(Outcome::Refusal(Refusal {
+            reason: "steer::dead-letter-standing-moved".to_owned(),
+            witness: Some("pending-inbox".to_owned()),
+            expected: Some(lane.to_string()),
+            observed: Some("empty".to_owned()),
+            remedy: "reconcile the current pending-inbox arm".to_owned(),
+        }));
+    }
+    let reason = lifecycle_failure_reason(failure);
+    let mut parked = Vec::with_capacity(pending.len());
+    let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    proposal.guard(JournalGuard::new(move |read| {
+        if read.cursor()? == Some(cursor) {
+            Ok(())
+        } else {
+            Err(GuardError::refused("steer::dead-letter-snapshot-moved"))
+        }
+    }));
+    for directive in pending {
+        let requeue = format!("spice steer recover {}", directive.directive());
+        let (_, cause) = directive_cause(snapshot.facts(), directive.directive());
+        proposal
+            .fact(
+                wire::body::SteerDeadLettered {
+                    directive: directive.directive(),
+                    key: directive.key().to_string(),
+                    lane,
+                    reason: reason.clone(),
+                    requeue: requeue.clone(),
+                },
+                FactCause::Existing(cause),
+            )
+            .map_err(|error| store_fault("steer::dead-letter-fact-invalid", &error.to_string()))?;
+        parked.push(DeadLetter {
+            directive: directive.directive(),
+            key: directive.key().to_string(),
+            requeue,
+        });
+    }
+    commit(bus, proposal)?;
+    if let Some(residency) = snapshot.residency() {
+        let _rendering = publish_inbox(bus, paths, residency.body(), lane);
+    }
+    Ok(parked)
+}
+
+fn lifecycle_failure_reason(failure: &Outcome<()>) -> String {
+    match failure {
+        Outcome::Refusal(refusal) => refusal.reason.clone(),
+        Outcome::Fault(fault) => fault.reason.clone(),
+        Outcome::Reply(_) => unreachable!("a successful lifecycle start was not dead-lettered"),
+    }
+}
+
 pub(super) fn publish_lane_discoveries(
     paths: &RuntimePaths,
     operator: &canvas::Discovery,
@@ -410,12 +496,15 @@ pub(super) fn recover(
     let Some(directive) = snapshot.ledger.directive(recover.directive) else {
         return refusal(
             "steer::recovery-missing",
-            Some("one durable lapsed directive".to_owned()),
+            Some("one durable lapsed or deadlettered directive".to_owned()),
             Some(recover.directive.to_string()),
             "inspect durable steering history and name its exact directive identity",
         );
     };
-    if directive.disposition() != Disposition::Lapsed {
+    if !matches!(
+        directive.disposition(),
+        Disposition::Lapsed | Disposition::DeadLettered
+    ) {
         let reason = if directive.disposition() == Disposition::Live {
             "steer::recovery-live"
         } else {
@@ -423,20 +512,14 @@ pub(super) fn recover(
         };
         return refusal(
             reason,
-            Some("lapsed".to_owned()),
+            Some("lapsed or deadlettered".to_owned()),
             Some(format!("{:?}", directive.disposition()).to_lowercase()),
-            "recover only a directive whose durable lineage lapsed",
+            "recover only a directive whose durable lineage lapsed or was deadlettered",
         );
     }
-    let expected = [
-        Witness::Directive {
-            steer: recover.directive,
-            disposition: Disposition::Lapsed,
-        },
-        Witness::Lineage {
-            steer: recover.directive,
-        },
-    ];
+    let expected = [Witness::Lineage {
+        steer: recover.directive,
+    }];
     if command.expected() != expected {
         return refusal(
             "steer::witness-moved",
@@ -467,6 +550,7 @@ pub(super) fn recover(
         key.clone(),
         lane,
         lapsed_at,
+        directive.disposition(),
     ));
     if let Err(error) = proposal.fact(
         wire::body::SteerRecovered {
@@ -982,6 +1066,7 @@ fn recovery_guard(
     key: steer::Key,
     lane: CanonicalUuid,
     lapsed_at: Instant,
+    disposition: Disposition,
 ) -> JournalGuard {
     JournalGuard::new(move |read| {
         let snapshot = read
@@ -994,7 +1079,7 @@ fn recovery_guard(
                 if current.key() == &key
                     && current.lane() == lane
                     && current.expires() == lapsed_at
-                    && current.disposition() == Disposition::Lapsed =>
+                    && current.disposition() == disposition =>
             {
                 Ok(())
             }

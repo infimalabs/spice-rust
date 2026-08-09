@@ -196,6 +196,8 @@ vocabulary! {
     SteerMissed = "steer::missed" by AckScanner;
     /// A directive reached expiry without a valid disposition.
     SteerLapsed = "steer::lapsed" by BusTimer;
+    /// A live directive was parked because its lane could not start.
+    SteerDeadLettered = "steer::deadlettered" by ResidentRecognition;
     /// The operator withdrew a live directive.
     SteerCanceled = "steer::canceled" by CommandDoor;
 

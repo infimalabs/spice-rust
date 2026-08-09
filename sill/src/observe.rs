@@ -184,6 +184,13 @@ pub trait RecordObserver: Send + Sync + 'static {
 
     /// Receive the single terminal observation failure, after bounded cleanup.
     fn failed(&self, _failure: &ObservationFailure) {}
+
+    /// Receive the child process's kernel-backed exit notification.
+    ///
+    /// This callback is driven by the blocking `waitid` watcher. It does not
+    /// imply that selected output has finished draining; the owner must reap
+    /// the [`crate::Running`] value to join both completion paths.
+    fn exited(&self) {}
 }
 
 /// One bounded selected-stream observation contract.

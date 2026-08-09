@@ -53,6 +53,8 @@ mod followup;
 use followup::*;
 mod next_action;
 use next_action::*;
+mod automatic_lifecycle;
+pub(crate) use automatic_lifecycle::{AutomaticClaim, claim_automatic, release_automatic};
 mod mutation;
 use mutation::*;
 mod progress;
