@@ -356,6 +356,32 @@ pub struct DoctorCommand {
     pub tools: Vec<DoctorTool>,
 }
 
+/// Extension namespace inspected by Doctor.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DoctorExtensionNamespace {
+    /// Agent CLI vendors.
+    Vendor,
+    /// Shell command wrappers.
+    Wrapper,
+    /// Repository gates.
+    Gate,
+}
+
+/// One discovered extension declaration or registry diagnostic.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DoctorExtension {
+    /// Namespace containing the declaration.
+    pub namespace: DoctorExtensionNamespace,
+    /// Stable selected name, or `registry` for a namespace-wide diagnostic.
+    pub name: String,
+    /// Distribution or compiled component supplying the declaration.
+    pub provider: String,
+    /// Ready for a coherent declaration; unsupported for broken discovery.
+    pub observation: DoctorObservation,
+}
+
 /// Complete successful Doctor answer.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -372,6 +398,8 @@ pub struct DoctorReport<C> {
     pub provenance: Vec<DoctorConfigProvenance>,
     /// One deterministic row for every generated command contract.
     pub commands: Vec<DoctorCommand>,
+    /// Deterministically discovered vendor, wrapper, and gate declarations.
+    pub extensions: Vec<DoctorExtension>,
 }
 
 #[cfg(test)]
@@ -420,7 +448,9 @@ mod tests {
             r#","owner":"rtk","mode":"observe","requirement":"optional""#,
             r#","source":"worktree-configuration","bounds":"not-executed""#,
             r#","cancellation":"not-executed","network":"not-executed""#,
-            r#","observation":{"status":"ready"}}]}]}"#,
+            r#","observation":{"status":"ready"}}]}]"#,
+            r#","extensions":[{"namespace":"vendor","name":"codex""#,
+            r#","provider":"vendor","observation":{"status":"ready"}}]}"#,
         );
 
         let admitted: DoctorReport<()> =
@@ -435,6 +465,7 @@ mod tests {
             "/provenance/0",
             "/commands/0",
             "/commands/0/tools/0",
+            "/extensions/0",
         ] {
             let mut document: serde_json::Value =
                 serde_json::from_str(REPORT).expect("fixture is JSON");

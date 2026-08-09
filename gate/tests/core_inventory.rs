@@ -388,7 +388,7 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root");
-    for path in ["spice/src/config.rs", "spice/src/agent_launch.rs"] {
+    for path in ["spice/src/config.rs", "spice/src/extension.rs"] {
         let source = fs::read_to_string(workspace.join(path))
             .unwrap_or_else(|error| panic!("read current {path}: {error}"));
         repository.write(path, &source);
