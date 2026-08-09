@@ -288,6 +288,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["steer", "cancel"]
         | ["steer", "recover"]
         | ["inbox"]
+        | ["hook"]
         | ["ack"]
         | ["consent"]
         | ["consent", "allow"]

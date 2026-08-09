@@ -352,6 +352,7 @@ async fn dispatch_action(
                 worktree,
                 life,
                 vendor,
+                resume: None,
             };
             send_typed(
                 principal,

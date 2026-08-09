@@ -302,10 +302,22 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["task", "delete"]
         | ["doc"]
         | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
-        ["steer"] | ["steer", "cancel"] | ["steer", "recover"] | ["inbox"] | ["ack"] => deliver(
+        ["steer"] | ["steer", "cancel"] | ["steer", "recover"] | ["ack"] => deliver(
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
             form,
         ),
+        ["inbox"] => deliver(
+            &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
+            form,
+        ),
+        ["hook"] => {
+            let outcome =
+                steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE));
+            let harness = leaf
+                .get_one::<String>("HARNESS")
+                .expect("clap requires a hook harness");
+            deliver_inbox_hook(&outcome, harness, form)
+        }
         ["trust"] => deliver(&trust_command::report(contract), form),
         ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
         ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
@@ -750,6 +762,27 @@ fn deliver<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
                 .speak();
             terminate(&fault);
         }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_inbox_hook(
+    outcome: &Outcome<wire::intent::CommandAnswer>,
+    harness: &str,
+    form: Form,
+) -> ! {
+    match outcome {
+        Outcome::Reply(reply) => match steering_command::hook_document(&reply.body, harness) {
+            Ok(Some(document)) => {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&document);
+                let _ = stdout.flush();
+                terminate_code(REPLY_EXIT);
+            }
+            Ok(None) => terminate_code(REPLY_EXIT),
+            Err(error) => deliver_fault(render_fault(error), Form::Text),
+        },
+        Outcome::Refusal(_) | Outcome::Fault(_) => deliver(outcome, form),
     }
 }
 
