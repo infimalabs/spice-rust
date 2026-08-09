@@ -46,6 +46,20 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
+        CommandKind::GateFindings,
+        r#"{
+  "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "findings": [{
+    "identity": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "severity": "high",
+    "locus": "wire/src/intent.rs:1",
+    "title": "Gate finding needs board work",
+    "description": "The explicit gate findings route files this row as deferred work.",
+    "acceptance": ["the finding has a deferred task"]
+  }]
+}"#,
+    ),
+    (
         CommandKind::TaskEdit,
         r#"{ "task": "SPICE-aBcD", "title": "a replacement statement" }"#,
     ),
@@ -1006,6 +1020,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::EffortRead,
     BodyShape::TaskAdd,
     BodyShape::TaskOopsAdd,
+    BodyShape::GateFindings,
     BodyShape::TaskEdit,
     BodyShape::TaskDelete,
     BodyShape::TaskNote,

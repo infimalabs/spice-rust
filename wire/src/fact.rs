@@ -271,6 +271,8 @@ vocabulary! {
     GateFound = "gate::found" by ResidentRecognition;
     /// A standing finding resolved at its evidence; the Finding head closed.
     GateCleared = "gate::cleared" by ResidentRecognition;
+    /// A requested gate finding dispatch completed.
+    GateFindingsFiled = "gate::filed" by CommandDoor;
 
     /// The one forward schema migration finalized before epoch mint.
     JournalMigrated = "journal::migrated" by ResidentRecognition;

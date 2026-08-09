@@ -42,6 +42,9 @@ fn invoke_with_path(argv: &[&str], current: &Path, path: Option<&Path>) -> Spoke
 
 #[test]
 fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_processes() {
+    // GOV-45 / CASE 250: ordinary `gate` and `gate pre-commit` remain direct
+    // observation/enforcement paths; only the explicit `gate findings` leaf
+    // enters board dispatch.
     let repository = GateRepository::new();
     let tripwires = Scratch::new("tripwires");
     let marker = tripwires.path().join("invoked");

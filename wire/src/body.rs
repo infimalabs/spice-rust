@@ -1247,6 +1247,19 @@ pub struct GateCleared {
     pub locus: String,
 }
 
+/// A requested gate finding dispatch completed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateFindingsFiled {
+    /// Digest of the complete typed battery report that was dispatched.
+    pub report: Digest,
+    /// Number of projected findings consumed.
+    pub findings: u32,
+    /// Number of deferred board tasks created.
+    pub created: u32,
+    /// Number of open board tasks reused.
+    pub reused: u32,
+}
+
 /// The one forward schema migration finalized before epoch mint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalMigrated {
