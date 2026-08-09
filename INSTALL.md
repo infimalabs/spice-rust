@@ -129,13 +129,24 @@ else.
 
 ## Upgrade
 
-Rebuild, preview, and apply as above; an apply is refused unless its digest
-matches the plan just previewed. Previewing a rebuilt executable against a
-complete install plans a refresh rather than a second installation: it keeps
-the reversal images that install recorded and exchanges each published file for
-its replacement in place. There is no uninstall step between the two builds, so
-`$SPICE_BIN` and the three Git hooks stay present and executable for the whole
-apply, and a reversal after any number of refreshes still restores the tree the
+```sh
+cargo xtask install --port PORT
+```
+
+That builds the current tree, republishes the executable, and restarts the
+resident on the endpoint the running one had published. `--host` and `--port`
+each override their own half of that endpoint and are honoured whether or not
+anything was published, so the first refresh of a repository still lands where
+it was told rather than on the default. `--release` installs the release
+profile, and `--no-resident` refreshes the executable without starting
+anything.
+
+Rebuild, preview, and apply by hand as above when the plan itself is what you
+want to read; an apply is refused unless its digest matches the plan just
+previewed. Previewing a rebuilt executable against a complete install plans a
+refresh rather than a second installation: it keeps the reversal images that
+install recorded and exchanges each published file for its replacement in
+place, so a reversal after any number of refreshes still restores the tree the
 first install found rather than the build before this one. The proof is
 `refresh_publishes_the_rebuilt_executable_without_withdrawing_anything`, which
 reads the installed tree from another thread while the refresh runs:
@@ -144,9 +155,21 @@ reads the installed tree from another thread while the refresh runs:
 cargo test --locked -p spice --lib install::tests::refresh
 ```
 
-Re-run `cargo xtask activate-hooks` when the hook assets or the verifier guard
-change — `cargo xtask verify` refuses while the published copy is not the
-running build's, and names the command. An upgrade stops nothing outside this
+The previous executable is copied to `target/spice-develop/spice.rollback`
+before anything moves and reinstalled if the install or the readiness wait
+fails; the reported failure is the one that forced the restore, not the
+restore. The restarted resident logs to `target/spice-develop/resident.log`,
+and readiness means it published a discovery it also answers on. A start that
+never got there reports that log's last line, because the refusal explaining it
+— `canvas::bind-failed` for a taken port — is written by the resident and
+nowhere else.
+
+`.spice-install` lives under the Git common directory, so an upgrade is
+repository-wide: every linked worktree sees the new executable at once, and the
+hooks are withdrawn for as long as the plan is being replaced. Re-run
+`cargo xtask activate-hooks` when the hook assets or the verifier guard change
+— `cargo xtask verify` refuses while the published copy is not the running
+build's, and names the command. An upgrade stops nothing outside this
 appliance.
 
 ## The independence proof

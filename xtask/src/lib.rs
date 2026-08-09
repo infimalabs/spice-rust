@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod app;
 mod commit_message;
+mod develop;
 mod hooks;
 mod landing;
 mod proof_image;
@@ -20,6 +21,7 @@ use app::WASM_TARGET;
 
 pub use app::{AppBuildError, app};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
+pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh, refresh_install};
 pub use hooks::{
     HookActivationError, activate_hooks, audit_entry_point, audit_entry_point_for_guard,
     compiled_reference_transaction_guard_digest, reference_transaction_guard_digest,
