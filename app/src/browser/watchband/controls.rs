@@ -245,6 +245,7 @@ pub(super) fn render_lineage_controls(
     sender: &SenderHandle,
     can_configure: bool,
     ready: bool,
+    wake_ready: bool,
 ) -> Html {
     let speech = control.speech;
     let update_speech = lineage_controls.clone();
@@ -327,8 +328,12 @@ pub(super) fn render_lineage_controls(
                 )}
                 type="submit"
                 disabled={!ready}
-                title={format!("Send with {}: {}", selected.label(), selected.help())}
-            >{selected.label()}</button>
+                title={if wake_ready {
+                    "Wake vacant agents, confirm fresh residency, then steer their drafts".to_owned()
+                } else {
+                    format!("Send with {}: {}", selected.label(), selected.help())
+                }}
+            >{if wake_ready { "Wake & Steer" } else { selected.label() }}</button>
             if let Some(issue) = &control.issue {
                 <p class="team-control-issue" role="status">{issue.clone()}</p>
             }
