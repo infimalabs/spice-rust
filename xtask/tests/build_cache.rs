@@ -8,8 +8,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use sill::{Acquisition, Availability, LockFile, LockName, Possession};
+use xtask::{
+    BuildCacheContext, BuildCacheDisposition, BuildCacheRequest, BuildCacheRootReport,
+    collect_build_cache_at, parse_byte_quantity,
+};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+const CACHE_TAG: &str = "CACHEDIR.TAG";
 const LOCK_NAME: &str = ".cargo-build-lock";
 const WAIT_LIMIT: Duration = Duration::from_secs(15);
 
@@ -102,11 +107,335 @@ fn cargo_gc_visits_neither_a_held_nor_an_idle_build_directory() {
     fixture.assert_collector_root();
 }
 
+#[test]
+fn build_cache_dry_run_inventories_and_selects_oldest_without_removing() {
+    let scratch = Scratch::new("dry-run-lru");
+    let cache = scratch.join("CargoBuild");
+    let old = write_cache_root(&cache, "00", "00000000000000", "old");
+    let newer = write_cache_root(&cache, "01", "00000000000000", "newer");
+    let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
+    let inventory = collect_cache(&current, BuildCacheRequest::default(), Vec::new(), None);
+    let old_bytes = root_report(&inventory, &old).bytes;
+    let report = collect_cache(
+        &current,
+        BuildCacheRequest {
+            max_bytes: Some(inventory.total_bytes - old_bytes),
+            ..BuildCacheRequest::default()
+        },
+        Vec::new(),
+        None,
+    );
+
+    assert_eq!(
+        root_report(&report, &old).disposition,
+        BuildCacheDisposition::WouldReclaim
+    );
+    assert_eq!(
+        root_report(&report, &newer).disposition,
+        BuildCacheDisposition::Kept
+    );
+    assert_eq!(
+        root_report(&report, &current).disposition,
+        BuildCacheDisposition::RetainedCurrent
+    );
+    assert!(old.is_dir(), "dry-run removed the selected old root");
+    assert_eq!(report.reclaimed_bytes, 0);
+    assert_eq!(report.selected_bytes, old_bytes);
+}
+
+#[test]
+fn build_cache_applies_lru_cap_and_is_idempotent_on_an_eight_hundred_root_fixture() {
+    let scratch = Scratch::new("large-lru");
+    let cache = scratch.join("CargoBuild");
+    let mut roots = Vec::new();
+    for index in 0..800_u16 {
+        roots.push(write_cache_root(
+            &cache,
+            &format!("{:02x}", index % 256),
+            &format!("{index:014x}"),
+            "payload",
+        ));
+    }
+    let current = roots.last().expect("fixture root exists").clone();
+    let inventory = collect_cache(&current, BuildCacheRequest::default(), Vec::new(), None);
+    let current_bytes = root_report(&inventory, &current).bytes;
+    let request = BuildCacheRequest {
+        apply: true,
+        max_bytes: Some(current_bytes),
+        retain_live_worktrees: 0,
+        ..BuildCacheRequest::default()
+    };
+
+    let started = Instant::now();
+    let first = collect_cache(&current, request.clone(), Vec::new(), None);
+    assert!(
+        started.elapsed() < Duration::from_secs(120),
+        "800-root collection exceeded the task bound"
+    );
+    assert!(first.reclaimed_bytes > 0, "large fixture reclaimed nothing");
+    assert!(
+        roots[..roots.len() - 1].iter().all(|root| !root.exists()),
+        "collector left an old root behind"
+    );
+    assert!(current.is_dir(), "collector removed the current root");
+
+    let second = collect_cache(&current, request, Vec::new(), None);
+    assert_eq!(second.reclaimed_bytes, 0, "second run was not idempotent");
+    assert_eq!(second.selected_bytes, 0, "second run selected a root");
+}
+
+#[test]
+fn build_cache_skips_held_native_release_and_wasm_locks_until_release() {
+    let scratch = Scratch::new("held-locks");
+    let cache = scratch.join("CargoBuild");
+    let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
+    let native = write_cache_root(&cache, "00", "00000000000000", "native");
+    let release = write_cache_root(&cache, "01", "00000000000000", "release");
+    let wasm = write_cache_root(&cache, "02", "00000000000000", "wasm");
+    let held = vec![
+        hold_lock(&add_lock(&native, "debug/.cargo-build-lock")),
+        hold_lock(&add_lock(&release, "release/.cargo-build-lock")),
+        hold_lock(&add_lock(
+            &wasm,
+            "wasm32-unknown-unknown/debug/.cargo-build-lock",
+        )),
+    ];
+    let request = BuildCacheRequest {
+        apply: true,
+        max_bytes: Some(0),
+        retain_live_worktrees: 0,
+        ..BuildCacheRequest::default()
+    };
+
+    let blocked = collect_cache(&current, request.clone(), Vec::new(), None);
+    for root in [&native, &release, &wasm] {
+        assert_eq!(
+            root_report(&blocked, root).disposition,
+            BuildCacheDisposition::SkippedActive,
+            "{} was not reported as active",
+            root.display()
+        );
+        assert!(root.is_dir(), "{} was removed while locked", root.display());
+    }
+
+    drop(held);
+    let collected = collect_cache(&current, request, Vec::new(), None);
+    for root in [&native, &release, &wasm] {
+        assert_eq!(
+            root_report(&collected, root).disposition,
+            BuildCacheDisposition::Reclaimed,
+            "{} was not reclaimed after release",
+            root.display()
+        );
+        assert!(!root.exists(), "{} survived after release", root.display());
+    }
+}
+
+#[test]
+fn build_cache_retains_current_and_configured_hottest_live_worktree_roots() {
+    let scratch = Scratch::new("live-retention");
+    let cache = scratch.join("CargoBuild");
+    let victim = write_cache_root(&cache, "00", "00000000000000", "victim");
+    let cold_live = write_cache_root(&cache, "01", "00000000000000", "cold-live");
+    thread::sleep(Duration::from_millis(5));
+    let hot_live = write_cache_root(&cache, "02", "00000000000000", "hot-live");
+    let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
+    let request = BuildCacheRequest {
+        apply: true,
+        max_bytes: Some(0),
+        retain_live_worktrees: 1,
+        ..BuildCacheRequest::default()
+    };
+
+    let report = collect_cache(
+        &current,
+        request,
+        vec![cold_live.clone(), hot_live.clone()],
+        None,
+    );
+
+    assert_eq!(
+        root_report(&report, &current).disposition,
+        BuildCacheDisposition::RetainedCurrent
+    );
+    assert_eq!(
+        root_report(&report, &hot_live).disposition,
+        BuildCacheDisposition::RetainedLiveWorktree
+    );
+    assert_eq!(
+        root_report(&report, &cold_live).disposition,
+        BuildCacheDisposition::Reclaimed
+    );
+    assert_eq!(
+        root_report(&report, &victim).disposition,
+        BuildCacheDisposition::Reclaimed
+    );
+    assert!(current.is_dir(), "current worktree root was removed");
+    assert!(hot_live.is_dir(), "hottest live worktree root was removed");
+    assert!(
+        !cold_live.exists(),
+        "unretained live worktree root survived"
+    );
+}
+
+#[test]
+fn build_cache_uses_free_space_floor_as_a_reclaim_target() {
+    let scratch = Scratch::new("free-floor");
+    let cache = scratch.join("CargoBuild");
+    let old = write_cache_root(&cache, "00", "00000000000000", "old");
+    let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
+    let inventory = collect_cache(
+        &current,
+        BuildCacheRequest::default(),
+        Vec::new(),
+        Some(100),
+    );
+    let old_bytes = root_report(&inventory, &old).bytes;
+
+    let report = collect_cache(
+        &current,
+        BuildCacheRequest {
+            free_space_floor: Some(100 + old_bytes),
+            ..BuildCacheRequest::default()
+        },
+        Vec::new(),
+        Some(100),
+    );
+
+    assert_eq!(
+        root_report(&report, &old).disposition,
+        BuildCacheDisposition::WouldReclaim
+    );
+    assert_eq!(report.target_bytes, inventory.total_bytes - old_bytes);
+}
+
+#[test]
+fn build_cache_removal_never_follows_symlinks_or_collects_malformed_root_links() {
+    let scratch = Scratch::new("symlink-boundary");
+    let cache = scratch.join("CargoBuild");
+    let outside = scratch.join("outside");
+    fs::create_dir(&outside).expect("create outside directory");
+    fs::write(outside.join("kept"), b"outside").expect("write outside witness");
+    let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
+    let linked_inside = write_cache_root(&cache, "00", "00000000000000", "linked-inside");
+    fs::create_dir_all(linked_inside.join("debug")).expect("create symlink parent");
+    std::os::unix::fs::symlink(&outside, linked_inside.join("debug/outside-link"))
+        .expect("create inside symlink");
+    let malformed_bucket = cache.join("01");
+    fs::create_dir_all(&malformed_bucket).expect("create malformed bucket");
+    let malformed = malformed_bucket.join("11111111111111");
+    std::os::unix::fs::symlink(&outside, &malformed).expect("create root symlink");
+
+    let report = collect_cache(
+        &current,
+        BuildCacheRequest {
+            apply: true,
+            max_bytes: Some(0),
+            retain_live_worktrees: 0,
+            ..BuildCacheRequest::default()
+        },
+        Vec::new(),
+        None,
+    );
+
+    assert_eq!(
+        root_report(&report, &linked_inside).disposition,
+        BuildCacheDisposition::Reclaimed
+    );
+    assert!(
+        outside.join("kept").is_file(),
+        "collector followed a symlink outside the hierarchy"
+    );
+    assert!(
+        malformed.exists(),
+        "collector removed a symlink candidate root"
+    );
+    assert!(matches!(
+        root_report(&report, &malformed).disposition,
+        BuildCacheDisposition::SkippedMalformed(_)
+    ));
+}
+
+#[test]
+fn build_cache_byte_parser_accepts_documented_binary_suffixes() {
+    assert_eq!(
+        parse_byte_quantity("7G").expect("parse G"),
+        7 * 1024 * 1024 * 1024
+    );
+    assert_eq!(
+        parse_byte_quantity("50GiB").expect("parse GiB"),
+        50 * 1024 * 1024 * 1024
+    );
+    assert!(parse_byte_quantity("eight").is_err());
+}
+
 fn acquired(acquisition: Acquisition) -> Possession {
     match acquisition {
         Acquisition::Acquired(possession) => possession,
         Acquisition::Contended => panic!("fixture Cargo lock is unexpectedly held"),
     }
+}
+
+fn write_cache_root(cache: &Path, bucket: &str, hash: &str, label: &str) -> PathBuf {
+    let root = cache.join(bucket).join(hash);
+    fs::create_dir_all(root.join("debug")).expect("create cache root");
+    fs::write(
+        root.join(CACHE_TAG),
+        b"Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .expect("write cache tag");
+    fs::write(
+        root.join("payload"),
+        format!("{label}\n{}", "x".repeat(4096)),
+    )
+    .expect("write payload");
+    fs::write(root.join("debug/.cargo-build-lock"), b"").expect("write idle lock");
+    root
+}
+
+fn add_lock(root: &Path, relative: &str) -> PathBuf {
+    let path = root.join(relative);
+    fs::create_dir_all(path.parent().expect("lock has a parent")).expect("create lock parent");
+    fs::write(&path, b"").expect("write lock file");
+    path
+}
+
+fn hold_lock(path: &Path) -> Possession {
+    let lock = LockFile::new(
+        LockName::new(LOCK_NAME).expect("Cargo lock name is one component"),
+        path,
+    );
+    match lock.try_acquire().expect("hold lock") {
+        Acquisition::Acquired(possession) => possession,
+        Acquisition::Contended => panic!("fixture lock is unexpectedly held"),
+    }
+}
+
+fn collect_cache(
+    current: &Path,
+    request: BuildCacheRequest,
+    live_build_directories: Vec<PathBuf>,
+    available_bytes: Option<u64>,
+) -> xtask::BuildCacheReport {
+    let mut context = BuildCacheContext::new(current);
+    context.live_build_directories = live_build_directories;
+    context.available_bytes = available_bytes;
+    let mut output = Vec::new();
+    collect_build_cache_at(&request, &context, &mut output).expect("collect build cache")
+}
+
+fn root_report<'a>(report: &'a xtask::BuildCacheReport, root: &Path) -> &'a BuildCacheRootReport {
+    let canonical = fs::canonicalize(root).ok();
+    report
+        .roots
+        .iter()
+        .find(|entry| {
+            canonical
+                .as_ref()
+                .is_some_and(|canonical| entry.path == *canonical)
+                || entry.path == root
+        })
+        .unwrap_or_else(|| panic!("{} was not reported", root.display()))
 }
 
 fn await_path(path: &Path) {
@@ -351,7 +680,7 @@ impl Scratch {
             NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&path).expect("create build-cache scratch");
-        Self(path)
+        Self(fs::canonicalize(path).expect("canonicalize build-cache scratch"))
     }
 
     fn join(&self, relative: impl AsRef<Path>) -> PathBuf {

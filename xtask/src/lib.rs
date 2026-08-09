@@ -9,6 +9,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod app;
+mod build_cache;
 mod commit_message;
 // The refresh drives `spice::install`, which the appliance itself gates off the
 // wasm target; the workspace wasm check compiles this crate too.
@@ -24,6 +25,10 @@ mod verify_timing;
 
 use app::WASM_TARGET;
 pub use app::{AppBuildError, app};
+pub use build_cache::{
+    BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheReport, BuildCacheRequest,
+    BuildCacheRootReport, build_cache, collect_build_cache_at, parse_byte_quantity,
+};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 #[cfg(not(target_arch = "wasm32"))]
 pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh, refresh_install};
