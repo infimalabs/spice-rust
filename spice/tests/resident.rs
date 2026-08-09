@@ -1358,6 +1358,9 @@ mod lane_process;
 #[path = "resident/lane_continuity.rs"]
 mod lane_continuity;
 
+#[path = "resident/lane_resume.rs"]
+mod lane_resume;
+
 #[path = "resident/steering_authority.rs"]
 mod steering_authority;
 

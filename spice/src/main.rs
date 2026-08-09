@@ -302,11 +302,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["task", "delete"]
         | ["doc"]
         | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
-        ["steer"] | ["steer", "cancel"] | ["steer", "recover"] | ["ack"] => deliver(
-            &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
-            form,
-        ),
-        ["inbox"] => deliver(
+        ["steer"] | ["steer", "cancel"] | ["steer", "recover"] | ["ack"] | ["inbox"] => deliver(
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
             form,
         ),
