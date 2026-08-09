@@ -157,6 +157,7 @@ fn board_task(handle: &str, id: &str, title: &str, project: &str) -> wire::inten
             body: wire::intent::BoardStatement {
                 handle: handle.parse().expect("fixture task handle"),
                 uuid: uuid(id),
+                queue_origin: seq(1),
                 description: None,
                 acceptance: Vec::new(),
                 project: project.to_owned(),
@@ -189,6 +190,7 @@ fn board_response(
 ) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
     let body = wire::intent::BoardAnswer {
         allocation_band: 2,
+        recent_cell: None,
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,

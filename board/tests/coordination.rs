@@ -8,7 +8,7 @@ use board::oops::{Friction, Report, Routed};
 use board::phase::PhaseRefusal;
 use board::{
     Active, Entry, Preview, Snapshot, SnapshotReadError, Transition, Urgency, View, apply,
-    digest_of, graph, handout, select,
+    digest_of, graph, handout,
 };
 use fold::Cursor;
 use journal::{FactCause, Journal, JournalWrite};
@@ -46,6 +46,15 @@ fn all_projects() -> wire::LineageSubscription {
     }
 }
 
+fn select<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &wire::LineageSubscription,
+    band: u64,
+) -> Option<board::Selection<'a>> {
+    board::select(entries, actor, subscription, band, None)
+}
+
 fn projects() -> board::ProjectPolicy {
     board::ProjectPolicy::new(
         ["board".to_owned(), "agent".to_owned()],
@@ -69,6 +78,7 @@ fn statement(name: &str) -> TaskHead {
     TaskHead {
         handle: handle(name),
         uuid: uuid("019fbbde-5105-75a3-a76a-722afde1e407"),
+        queue_origin: seq(1),
         title: format!("Implement {name}"),
         description: None,
         acceptance: Vec::new(),
@@ -96,6 +106,11 @@ fn claim(disposition: ClaimDisposition) -> ClaimHead {
     ClaimHead {
         actor: Actor::Spice,
         fact: seq(2),
+        claimed: seq(2),
+        cell: wire::ClaimCell {
+            project: "board.kernel".to_owned(),
+            phase: phase("todo"),
+        },
         lane: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
         occupant: uuid("019fbbde-5105-75a3-a76a-722afde1e409"),
         epoch: uuid("019fbbde-5105-75a3-a76a-722afde1e410"),
@@ -168,6 +183,7 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
         )
         .expect("registered board fixture fact");
     write.task_head(fact, move |position| {
+        statement.queue_origin = position;
         statement.revision = position;
         statement
     });
@@ -746,28 +762,34 @@ fn advance_target_outside_declared_flow_is_named() {
 }
 
 #[test]
-fn urgency_is_a_pure_total_scalar_over_heads() {
-    let completed = BTreeSet::new();
+fn urgency_is_durable_queue_age_and_ignores_unrelated_edits() {
     let plain = entry("BOARD-a1");
-    let mut important_head = statement("BOARD-b2");
-    important_head.tags.push("priority:high".to_owned());
-    let important = admitted(important_head, workflow("todo"), None, None).expect("valid heads");
-    let claimed = claimed_entry("BOARD-c3", "todo");
+    let mut edited_head = statement("BOARD-b2");
+    edited_head.queue_origin = plain.statement().queue_origin;
+    edited_head.revision = seq(99);
+    edited_head.tags.push("priority:high".to_owned());
+    edited_head.dependencies.push(handle("BOARD-d4"));
+    let edited = admitted(edited_head, workflow("review"), None, None).expect("valid heads");
+    let mut newer_head = statement("BOARD-c3");
+    newer_head.queue_origin = seq(2);
+    let newer = admitted(newer_head, workflow("todo"), None, None).expect("valid heads");
 
     assert_eq!(
-        Urgency::from_heads(&plain, &completed),
-        Urgency::from_heads(&plain, &completed)
+        Urgency::from_heads(&plain),
+        Urgency::from_heads(&edited),
+        "statement, dependency, revision and phase changes do not reset age",
     );
-    assert!(Urgency::from_heads(&important, &completed) > Urgency::from_heads(&plain, &completed));
-    assert!(Urgency::from_heads(&claimed, &completed) < Urgency::from_heads(&plain, &completed));
+    assert!(Urgency::from_heads(&plain) > Urgency::from_heads(&newer));
 }
 
 #[test]
 fn urgency_band_changes_only_the_winner_inside_one_priority_class() {
+    let mut lower_statement = statement("BOARD-a1");
+    lower_statement.queue_origin = seq(101);
     let mut assigned_workflow = workflow("todo");
     assigned_workflow.assignment = Some(Actor::Spice);
     let lower_handle =
-        admitted(statement("BOARD-a1"), assigned_workflow, None, None).expect("assigned candidate");
+        admitted(lower_statement, assigned_workflow, None, None).expect("newer assigned candidate");
     let higher_handle = entry("BOARD-z1");
     let ordered = [lower_handle.clone(), higher_handle.clone()];
     let reversed = [higher_handle, lower_handle];
@@ -927,9 +949,11 @@ fn priority_inheritance_terminates_on_a_dependency_cycle() {
 #[test]
 fn downstream_weight_precedes_native_urgency_and_handle_order() {
     let eager = entry("BOARD-a1");
+    let mut weighted_head = statement("BOARD-z1");
+    weighted_head.queue_origin = seq(10);
     let mut weighted_workflow = workflow("todo");
     weighted_workflow.assignment = Some(Actor::Spice);
-    let weighted = admitted(statement("BOARD-z1"), weighted_workflow, None, None)
+    let weighted = admitted(weighted_head, weighted_workflow, None, None)
         .expect("assigned weighted candidate");
     let mut direct_head = statement("BOARD-z2");
     direct_head.dependencies.push(handle("BOARD-z1"));
@@ -940,8 +964,7 @@ fn downstream_weight_precedes_native_urgency_and_handle_order() {
         admitted(transitive_head, workflow("todo"), None, None).expect("transitive dependent");
 
     assert!(
-        Urgency::from_heads(&eager, &BTreeSet::new())
-            > Urgency::from_heads(&weighted, &BTreeSet::new()),
+        Urgency::from_heads(&eager) > Urgency::from_heads(&weighted),
         "native urgency favors the unweighted candidate",
     );
     let ordered = [

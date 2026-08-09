@@ -832,6 +832,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             body: BoardStatement {
                 handle: handle("SPICE-aBcD"),
                 uuid: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+                queue_origin: seq(2),
                 description: Some(
                     "One task spelled through every field the shape carries.".to_owned(),
                 ),
@@ -863,6 +864,11 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             body: ClaimHead {
                 actor: actor("operator"),
                 fact: seq(4),
+                claimed: seq(4),
+                cell: wire::ClaimCell {
+                    project: "wire.binding".to_owned(),
+                    phase: phase("todo"),
+                },
                 lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
                 occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c6"),
                 epoch,

@@ -142,6 +142,7 @@ fn create_task<B: serde::Serialize>(
     };
     let statement = prepared.statement;
     write.task_head(added, move |position| TaskHead {
+        queue_origin: position,
         revision: position,
         ..statement
     });
@@ -197,6 +198,7 @@ fn prepare_task(
     let statement = TaskHead {
         handle: task.clone(),
         uuid: command.id(),
+        queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: add.title.clone(),
         description: add.description.clone(),
         acceptance: add.acceptance.clone(),
@@ -1079,6 +1081,11 @@ fn projected_claim_next_action(
         Some(ClaimHead {
             actor: command.actor().clone(),
             fact: snapshot.cursor,
+            claimed: snapshot.cursor,
+            cell: wire::ClaimCell {
+                project: selected.project().as_str().to_owned(),
+                phase: selected.workflow().phase.clone(),
+            },
             lane,
             occupant,
             epoch: command.epoch(),
@@ -1141,6 +1148,7 @@ fn claim_selection<'a>(
             command.actor(),
             subscription,
             snapshot.answer.allocation_band,
+            snapshot.answer.recent_cell.as_ref(),
         )
         .map(|selected| selected.entry())
         .ok_or_else(|| {
@@ -1321,6 +1329,7 @@ fn guard_claim(
                 residency_position: snapshot.answer.residency.position,
                 projects: projects.clone(),
                 band: snapshot.answer.allocation_band,
+                recent_cell: snapshot.answer.recent_cell.clone(),
             },
         );
     }
@@ -1349,6 +1358,7 @@ fn append_claim_heads(
             task,
             actor: command.actor(),
             workflow: selected.workflow(),
+            project: selected.project().as_str(),
             lane,
             occupant,
             epoch: command.epoch(),

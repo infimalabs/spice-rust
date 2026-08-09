@@ -78,6 +78,7 @@ pub(super) fn validated_snapshot(
     }
     board::project_subscription_history(&mut residency.body, &entries, observed.facts().facts())
         .map_err(|error| store_fault("lineage::subscription-history-invalid", &error))?;
+    let recent_cell = board::recent_claim_cell(&entries, observed.facts().facts(), &principal);
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
     }
@@ -95,6 +96,7 @@ pub(super) fn validated_snapshot(
             },
             actor_route,
             allocation_band: allocation.band(),
+            recent_cell,
             tasks,
             residency,
         },
@@ -547,6 +549,7 @@ pub(super) struct AllocationObservation {
     pub(super) residency_position: Seq,
     pub(super) projects: ProjectPolicy,
     pub(super) band: u64,
+    pub(super) recent_cell: Option<wire::ClaimCell>,
 }
 
 pub(super) fn allocation_subscription<'a>(
@@ -691,6 +694,7 @@ pub(super) fn guard_allocation(
             &observed.actor,
             &observed.subscription,
             observed.band,
+            observed.recent_cell.as_ref(),
         )
         .is_some_and(|selected| selected.entry().statement().handle == observed.winner)
         {
