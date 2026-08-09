@@ -37,6 +37,10 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("verify") => {
             run_verify(arguments.collect(), &mut output)
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(value) if value == OsStr::new("__workspace-tests") && arguments.len() == 0 => {
+            workspace_tests(&mut output)
+        }
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
             run_gate(arguments.next(), &mut output)
         }
@@ -74,6 +78,10 @@ fn main() -> ExitCode {
             return ExitCode::from(USAGE_EXIT);
         }
     };
+    finish(result)
+}
+
+fn finish(result: Result<(), Box<dyn std::error::Error>>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) if error.is::<UsageError>() => ExitCode::from(USAGE_EXIT),
@@ -345,6 +353,21 @@ fn preflight_native_release(target: &str) -> Result<(), Box<dyn std::error::Erro
         proof::NativeRunner::attest(runner.as_path(), repository.worktree_root(), limits)?;
     admitted.preflight()?;
     Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary rim snapshots the environment before passing typed configuration inward"
+)]
+fn ambient_environment() -> Result<sill::Environment, sill::SpecError> {
+    sill::Environment::new(env::vars_os())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn workspace_tests(output: &mut impl io::Write) -> Result<(), Box<dyn std::error::Error>> {
+    let environment = ambient_environment()?;
+    xtask::run_workspace_tests(environment, output).map_err(Into::into)
 }
 
 fn release_environment() -> xtask::ReleaseEnvironment {

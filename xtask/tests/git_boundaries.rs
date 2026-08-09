@@ -162,7 +162,7 @@ const ENTRY_POINTS: [(&str, &[(&str, Boundary)]); 2] = [
 const LAUNCH_SURFACE: &str = "spice/src/resident/lane_surface/launch.rs";
 
 /// The verifier action that runs this file, and the source that declares it.
-const WORKSPACE_TEST_ACTION: &str = "cargo test --locked --workspace --all-targets";
+const WORKSPACE_TEST_ACTION: &str = "Action::WorkspaceTests";
 const VERIFIER_SOURCE: &str = "xtask/src/lib.rs";
 const VERIFIER_ACTION_LIST: &str = "const VERIFY_ACTIONS";
 
@@ -354,7 +354,7 @@ fn this_battery_runs_inside_the_canonical_verifier() {
     let list = &list[..list.find("\n];").expect("the action list is terminated")];
     assert!(
         list.contains(WORKSPACE_TEST_ACTION),
-        "the canonical verifier no longer runs {WORKSPACE_TEST_ACTION}, so \
+        "the canonical verifier no longer owns {WORKSPACE_TEST_ACTION}, so \
          nothing in this file runs during verify"
     );
 }

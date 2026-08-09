@@ -68,6 +68,35 @@ independently gives a lower-bound full verify cost of about **338.22 seconds**.
 A real `cargo xtask verify` on this snapshot stops after about 256.03 seconds at
 the integration failure and never reaches doc tests, the battery, or landing.
 
+## Workspace test sharding follow-up
+
+Task `PERFORM-1kL5YDZ9` replaced that monolithic verifier action with a native
+coordinator. On 2026-08-08, `/usr/bin/time -lp` measured both commands over the
+same staged tree and warm Cargo cache. The final monolithic run rebuilt `app` in
+2.54 seconds; that small rebuild is included in its wall and CPU totals. Both
+commands completed the same current inventory: 138 test targets across 23
+workspace packages.
+
+| Run | Wall | User CPU | System CPU | Total CPU | Peak shards | Slowest shard |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Monolithic workspace | 241.40 s | 267.74 s | 74.95 s | 342.69 s | 1 | workspace, 241.40 s |
+| 12-target shards | 115.83 s | 275.12 s | 84.83 s | 359.95 s | 4 | `spice`, 103.02 s |
+
+The sharded result reduces wall time by 125.57 seconds, or 52.0%, while spending
+5.0% more aggregate CPU. The coordinator's own elapsed time was 115.82 seconds,
+below both the two-minute feedback goal and its hard 180-second bound. Its
+slowest shard was also below two minutes. An immediately preceding successful
+run completed in 96.16 seconds with an 87.42-second slowest shard, so the table
+uses the slower repeat as the conservative result.
+
+The partition is deterministic: packages and targets are metadata-sorted, then
+split into chunks of at most 12 targets. Each chunk uses exact Cargo selectors
+(`--lib`, `--bin`, and `--test`) so binary unit tests remain in the inventory.
+Four process groups may run at once. Each group has its own 180-second deadline,
+and the coordinator has the same overall bound. Start records print the complete
+target inventory; 30-second progress records name the last observed test; and a
+terminal record names the package, binary, disposition, and elapsed time.
+
 ## Pre-commit battery: all 27 arms
 
 Core rows share 831.738 ms of eager family setup. Metrics rows share 31.374 ms.
