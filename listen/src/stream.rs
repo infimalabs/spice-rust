@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tape::{Locus, SourceId, Tape};
 
-use crate::{Decoded, Dialect, Event, LocusLengthError, Residue, decode};
+use crate::{Decoded, Dialect, Event, LocusLengthError, RecordContext, Residue, decode};
 
 /// Serializable spelling of one durable tape span.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -100,6 +100,8 @@ pub struct SourcedEvent {
     pub ordinal: u64,
     /// Exact physical tape spans supplying the record.
     pub spans: Vec<Span>,
+    /// Context shared by every event from this vendor record.
+    pub context: RecordContext,
     /// Vendor-neutral event.
     pub event: Event,
 }
@@ -116,7 +118,7 @@ pub struct SourcedResidue {
 /// Public result of one complete record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RecordPayload {
-    /// One or more typed events in vendor-record order.
+    /// Zero or more typed events in vendor-record order.
     Events(Vec<SourcedEvent>),
     /// The complete record remained residue.
     Residue(SourcedResidue),
@@ -397,13 +399,14 @@ fn validate_position(
 
 fn source_decoded(decoded: Decoded, spans: &[Span]) -> RecordPayload {
     match decoded {
-        Decoded::Events(events) => RecordPayload::Events(
+        Decoded::Events { context, events } => RecordPayload::Events(
             events
                 .into_iter()
                 .enumerate()
                 .map(|(ordinal, event)| SourcedEvent {
                     ordinal: ordinal as u64,
                     spans: spans.to_vec(),
+                    context: context.clone(),
                     event,
                 })
                 .collect(),
