@@ -117,7 +117,7 @@ pub enum Location {
     /// Retired: no operation resolves here, and none can.
     ///
     /// An install identifies its repository by common directory alone, which
-    /// [`RepositoryIdentity::capture`] enforces by capturing no worktree at
+    /// `RepositoryIdentity::capture` enforces by capturing no worktree at
     /// all. A worktree-relative destination is therefore unresolvable from the
     /// record that owns it: one record serves every linked worktree, so the
     /// root this variant names is whichever worktree happened to run install
