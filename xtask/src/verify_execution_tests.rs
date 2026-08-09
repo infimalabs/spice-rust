@@ -2,6 +2,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::hint::black_box;
+    use std::io::Write as _;
     use std::path::PathBuf;
     use std::process::Command;
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -11,10 +12,11 @@ mod tests {
 
     use super::{
         BATTERY_LABEL, BROWSER_LABEL, BatteryRun, BrowserRun, Budget, CancellationToken,
-        CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, PREREQUISITES, ProcessOutput, RunError,
-        Runner, Status, VERIFY_ACTIONS, VerifyError, count_peer_cargo, execute_action, ready_nodes,
-        run_process, success, verify_package_with_control, verify_with_control,
-        verify_with_deadline,
+        CommandRun, ENTRY_POINT_LABEL, FORMAT_LABEL, FULL_VERIFIER_HARD_RUNTIME,
+        FULL_VERIFIER_PROCESS_BOUNDS, PREREQUISITES, ProcessBounds, ProcessOutput, RunError,
+        Runner, SignalGuard, Status, VERIFY_ACTIONS, VerifyError, count_peer_cargo, execute_action,
+        ready_nodes, run_bounded_process, run_process, success, verify_package_with_control,
+        verify_with_control, verify_with_deadline,
     };
     use crate::verify_timing::Disposition;
     use crate::{ScopedCommand, Step, landing};
@@ -28,6 +30,9 @@ mod tests {
         "verify_execution::tests::warm_serial_full_verifier_benchmark_fixture";
     const CONCURRENT_BENCHMARK_TEST: &str =
         "verify_execution::tests::warm_concurrent_full_verifier_benchmark_fixture";
+    const NON_COOPERATIVE_CHILD_TEST: &str =
+        "verify_execution::tests::non_cooperative_in_process_verifier_fixture";
+    const SUPERVISOR_PID_MARKER: &str = "verifier-supervisor-fixture pid=";
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     struct TimedRunner {
@@ -299,6 +304,94 @@ mod tests {
         let output = String::from_utf8(output).expect("deadline output is UTF-8");
         assert!(output.contains("deadline_ms=1"));
         assert!(output.contains("primary_ordinal=deadline"));
+    }
+
+    #[test]
+    fn outer_supervisor_reserves_every_terminal_phase_inside_five_minutes() {
+        let bounds = FULL_VERIFIER_PROCESS_BOUNDS;
+        let hard_envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
+        assert_eq!(hard_envelope, Duration::from_secs(295));
+        assert!(hard_envelope < FULL_VERIFIER_HARD_RUNTIME);
+        assert_eq!(
+            bounds.output_limit,
+            super::OUTPUT_LIMIT * VERIFY_ACTIONS.len() * 2,
+            "the outer capture retains both per-action stream bounds"
+        );
+        assert!(
+            bounds.grace >= super::TERMINATION_GRACE + super::REAP_DEADLINE + super::OUTPUT_DRAIN,
+            "the child must survive long enough to clean independently grouped actions"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_supervisor_reaps_a_non_cooperative_in_process_verifier() {
+        let bounds = ProcessBounds {
+            runtime: Duration::from_millis(200),
+            grace: Duration::from_millis(100),
+            output_drain: Duration::from_millis(100),
+            reap: Duration::from_millis(100),
+            output_limit: super::OUTPUT_LIMIT,
+        };
+        let executable = std::env::current_exe().expect("resolve the xtask unit-test process");
+        let started = Instant::now();
+        let run = run_bounded_process(
+            "non-cooperative verifier fixture",
+            executable,
+            benchmark_arguments(NON_COOPERATIVE_CHILD_TEST),
+            &CancellationToken::new(),
+            None,
+            &[],
+            bounds,
+        )
+        .expect("supervise the non-cooperative verifier fixture");
+        let elapsed = started.elapsed();
+        let CommandRun::TimedOut(output) = run else {
+            panic!("non-cooperative verifier did not reach the hard timeout: {run:?}");
+        };
+        let stdout = String::from_utf8(output.stdout).expect("fixture stdout is UTF-8");
+        let stderr = String::from_utf8(output.stderr).expect("fixture stderr is UTF-8");
+        let transcript = format!("{stdout}{stderr}");
+        let pid = transcript
+            .lines()
+            .find_map(|line| {
+                line.find(SUPERVISOR_PID_MARKER)
+                    .map(|offset| &line[offset + SUPERVISOR_PID_MARKER.len()..])
+            })
+            .and_then(|pid| pid.parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("fixture emitted no pid marker: {transcript}"));
+        let scaled_envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
+        assert!(
+            elapsed <= scaled_envelope + Duration::from_secs(1),
+            "supervisor exceeded the scaled hard envelope: elapsed={elapsed:?} envelope={scaled_envelope:?}"
+        );
+        assert!(
+            !process_exists(pid),
+            "supervisor returned while owned verifier process {pid} was still alive"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "launched exactly by the hard-supervisor parent test"]
+    fn non_cooperative_in_process_verifier_fixture() {
+        let cancellation = CancellationToken::new();
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))
+            .expect("install fixture signal bridge");
+        println!("{SUPERVISOR_PID_MARKER}{}", std::process::id());
+        std::io::stdout().flush().expect("flush fixture pid marker");
+
+        let runner = TimedRunner::uniform(Duration::from_secs(60));
+        let _ = verify_with_deadline(
+            &runner,
+            &mut Vec::new(),
+            Budget::fixture(1, 1, 0),
+            cancellation,
+            interrupted,
+            Duration::from_millis(10),
+        );
+        drop(signal_guard);
     }
 
     #[test]
