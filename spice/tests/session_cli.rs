@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -400,7 +399,7 @@ fn claude_rows() -> Vec<Value> {
             "user",
             json!({
                 "promptId": "prompt-one",
-                "message": {"content": [{
+                "message": {"type": "message", "role": "user", "content": [{
                     "type": "text",
                     "text": "Can you inspect Claude evidence?",
                 }]},
@@ -409,7 +408,7 @@ fn claude_rows() -> Vec<Value> {
         transcript_event(
             "2026-01-02T00:00:02Z",
             "assistant",
-            json!({"message": {
+            json!({"message": {"type": "message", "role": "assistant",
                 "content": [
                     {"type": "text", "text": "I will inspect it."},
                     {
@@ -434,7 +433,7 @@ fn claude_rows() -> Vec<Value> {
             "user",
             json!({
                 "promptId": "prompt-one",
-                "message": {"content": [{
+                "message": {"type": "message", "role": "user", "content": [{
                     "type": "tool_result",
                     "tool_use_id": "claude-command",
                     "content": "Process exited with code 0",
@@ -444,7 +443,7 @@ fn claude_rows() -> Vec<Value> {
         transcript_event(
             "2026-01-02T00:00:04Z",
             "assistant",
-            json!({"message": {
+            json!({"message": {"type": "message", "role": "assistant",
                 "content": [{"type": "text", "text": "Claude evidence is intact."}],
                 "stop_reason": "end_turn",
                 "usage": {
@@ -470,7 +469,7 @@ fn claude_rows() -> Vec<Value> {
             "user",
             json!({
                 "promptId": "prompt-two",
-                "message": {"content": [{
+                "message": {"type": "message", "role": "user", "content": [{
                     "type": "text",
                     "text": "Finish Claude reconstruction.",
                 }]},
@@ -479,7 +478,7 @@ fn claude_rows() -> Vec<Value> {
         transcript_event(
             "2026-01-02T00:00:07Z",
             "assistant",
-            json!({"message": {
+            json!({"message": {"type": "message", "role": "assistant",
                 "content": [{"type": "text", "text": "Claude reconstruction is done."}],
                 "stop_reason": "end_turn",
                 "usage": {
@@ -657,6 +656,7 @@ fn assert_phases_slices_and_summary(file: &str, start: &str, end: &str) {
         "slices",
     );
     assert_eq!(slices["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(slices["rows"][0]["crossing_files"], json!(["session.rs"]));
 
     let summary = reply_forms(
         &strings(&["session", "summary", file, "--recent", "1"]),
@@ -768,7 +768,10 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
     );
     assert_eq!(all_commands["rows"].as_array().map(Vec::len), Some(2));
     assert_eq!(all_commands["rows"][0]["pipeline"], "noncanonical");
+    assert_eq!(all_commands["rows"][0]["exit_code"], 1);
+    assert_eq!(all_commands["rows"][0]["status"], "completed");
     assert_eq!(all_commands["rows"][1]["pipeline"], "canonical");
+    assert_eq!(all_commands["rows"][1]["exit_code"], 0);
 }
 
 #[test]
@@ -886,6 +889,12 @@ fn assert_codex_turn_and_recall_rows(codex: &str) {
 }
 
 fn assert_claude_identity_rows(claude: &str) {
+    let tokens = reply_forms(&strings(&["session", "tokens", claude]), &[], "tokens");
+    assert_eq!(tokens["usage"][0]["snapshots"], 3);
+    assert_eq!(tokens["usage"][0]["input"], 75);
+    assert_eq!(tokens["usage"][0]["cached"], 19);
+    assert_eq!(tokens["usage"][0]["output"], 27);
+
     let claude_messages = reply_forms(
         &strings(&[
             "session",
@@ -952,7 +961,7 @@ fn provider_turn_identity_and_final_deduplication_cross_query_projections() {
 }
 
 #[test]
-fn token_reporting_drops_invalid_time_and_keeps_an_unknown_context_unknown() {
+fn token_reporting_refuses_invalid_time_and_keeps_an_unknown_context_unknown() {
     let scratch = Scratch::new("token-admission");
     let path = scratch.path().join("usage.jsonl");
     let invalid = codex_event(
@@ -974,7 +983,14 @@ fn token_reporting_drops_invalid_time_and_keeps_an_unknown_context_unknown() {
         "response_item",
         token_payload(7, 0, 2, 0, 9),
     );
-    write_jsonl(&path, &[invalid, valid_unknown]);
+    write_jsonl(&path, &[invalid]);
+
+    refusal(
+        &strings(&["session", "tokens", &path.to_string_lossy()]),
+        &[],
+        "session::transcript-timestamp-invalid",
+    );
+    write_jsonl(&path, &[valid_unknown]);
 
     let tokens = reply_forms(
         &strings(&["session", "tokens", &path.to_string_lossy()]),
@@ -985,12 +1001,7 @@ fn token_reporting_drops_invalid_time_and_keeps_an_unknown_context_unknown() {
     assert_eq!(tokens["usage"][0]["input"], 7);
     assert_eq!(tokens["usage"][0]["snapshots"], 1);
     assert_eq!(tokens["usage"][0]["model_context_window"], Value::Null);
-    assert_eq!(tokens["residues"][0]["kind"], "timestamp-invalid");
-    assert!(
-        tokens["residues"][0]["detail"]
-            .as_str()
-            .is_some_and(|detail| detail.contains("not-a-timestamp"))
-    );
+    assert_eq!(tokens["residues"], json!([]));
     scratch.remove();
 }
 
@@ -1178,34 +1189,27 @@ fn damaged_fixture(scratch: &Scratch) -> String {
 }
 
 fn assert_damaged_recovery(damaged: &str) {
-    let first = reply_forms(&strings(&["session", "summary", damaged]), &[], "summary");
-    let second = reply_forms(&strings(&["session", "summary", damaged]), &[], "summary");
-    assert_eq!(first, second, "residue projection is deterministic");
-    let residues = first["residues"].as_array().expect("residues are typed");
-    let kinds = residues
-        .iter()
-        .filter_map(|row| row["kind"].as_str())
-        .collect::<BTreeSet<_>>();
-    assert_eq!(kinds, BTreeSet::from(["malformed-json", "truncated-json"]));
-    assert!(residues.iter().all(|row| {
-        row["recovery"]
-            .as_str()
-            .is_some_and(|recovery| !recovery.is_empty())
-    }));
-    let full_history_slice = reply_forms(
-        &strings(&["session", "slices", damaged, "--limit", "1"]),
+    let first = refusal(
+        &strings(&["session", "summary", damaged]),
         &[],
-        "slices",
+        "session::transcript-evidence-invalid",
     );
-    assert_eq!(
-        full_history_slice["rows"][0]["basis"],
-        "full_history_no_compactions"
+    let second = refusal(
+        &strings(&["session", "summary", damaged]),
+        &[],
+        "session::transcript-evidence-invalid",
+    );
+    assert_eq!(first, second, "malformed-evidence refusal is deterministic");
+    assert!(
+        first["observed"]
+            .as_str()
+            .is_some_and(|observed| observed.contains(":2: Malformed"))
     );
 }
 
-fn assert_invalid_query_arguments(damaged: &str) {
+fn assert_invalid_query_arguments(transcript: &str) {
     refusal(
-        &strings(&["session", "briefing", damaged, "--deadline-seconds", "0"]),
+        &strings(&["session", "briefing", transcript, "--deadline-seconds", "0"]),
         &[],
         "session::deadline-invalid",
     );
@@ -1213,7 +1217,7 @@ fn assert_invalid_query_arguments(damaged: &str) {
         &strings(&[
             "session",
             "turns",
-            damaged,
+            transcript,
             "--start",
             "2026-01-04T00:00:00Z",
             "--end",
@@ -1223,12 +1227,18 @@ fn assert_invalid_query_arguments(damaged: &str) {
         "session::bounds-reversed",
     );
     refusal(
-        &strings(&["session", "timeline", damaged, "--start", "not-a-timestamp"]),
+        &strings(&[
+            "session",
+            "timeline",
+            transcript,
+            "--start",
+            "not-a-timestamp",
+        ]),
         &[],
         "session::timestamp-invalid",
     );
     refusal(
-        &strings(&["session", "summary", damaged, "--recent", "many"]),
+        &strings(&["session", "summary", transcript, "--recent", "many"]),
         &[],
         "session::bound-invalid",
     );
@@ -1353,7 +1363,9 @@ fn malformed_truncated_missing_and_unavailable_state_is_accounted_with_recovery(
     let scratch = Scratch::new("residue");
     let damaged = damaged_fixture(&scratch);
     assert_damaged_recovery(&damaged);
-    assert_invalid_query_arguments(&damaged);
+    let valid_path = scratch.path().join("valid.jsonl");
+    write_jsonl(&valid_path, &codex_rows());
+    assert_invalid_query_arguments(&valid_path.to_string_lossy());
     assert_unavailable_files(&scratch);
     assert_unavailable_turn_identity(&scratch);
     scratch.remove();

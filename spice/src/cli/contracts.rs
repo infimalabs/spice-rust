@@ -307,6 +307,17 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "gate::run"
     ),
     row!(
+        ["gate", "findings"],
+        "gate findings [--at REV]",
+        OperatorOrLane,
+        Command,
+        [GateFindingsFiled, TaskAdded, TaskDeferred],
+        [Resident, Toolful],
+        GATE_POLICY_TOOLS,
+        Reply,
+        "gate::findings"
+    ),
+    row!(
         ["gate", "camp"],
         "gate camp",
         Local,
@@ -380,7 +391,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["release", "notes"],
-        "release notes INPUT",
+        "release notes [--release-commit REV]",
         Local,
         None,
         [],
@@ -986,7 +997,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["release", "publish"],
-        "release publish [--apply=<digest>]",
+        "release publish [--notes-file FILE] [--release-commit REV] [--apply=<digest>]",
         Operator,
         Command,
         [ReleasePublished],

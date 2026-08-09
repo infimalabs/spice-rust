@@ -142,6 +142,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::EffortRead
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
+        | CommandKind::GateFindings
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
         | CommandKind::TaskNote
@@ -252,6 +253,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["doctor"]
         | ["version"]
         | ["gate"]
+        | ["gate", "findings"]
         | ["gate", "camp"]
         | ["gate", "kill"]
         | ["gate", "pre-commit"]

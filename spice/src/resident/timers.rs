@@ -788,6 +788,10 @@ mod tests {
                     lane: authority.lane,
                     occupant: authority.occupant,
                     epoch: authority.epoch,
+                    cell: Some(wire::ClaimCell {
+                        project: "timer.claim".to_owned(),
+                        phase: phase.clone(),
+                    }),
                     until: authority.expiry,
                     git: Some(GitBoundary {
                         head: "local-commit".to_owned(),
@@ -828,6 +832,7 @@ mod tests {
         write.task_head(added, move |position| TaskHead {
             handle: statement_task,
             uuid: uuid(1),
+            queue_origin: position,
             title: "Capture commit after lapse".to_owned(),
             description: None,
             acceptance: Vec::new(),
@@ -854,6 +859,11 @@ mod tests {
         write.claim_head(claim_task, won, move |position| ClaimHead {
             actor: Actor::Lane(lane),
             fact: position,
+            claimed: position,
+            cell: wire::ClaimCell {
+                project: "timer.claim".to_owned(),
+                phase,
+            },
             lane,
             occupant,
             epoch,

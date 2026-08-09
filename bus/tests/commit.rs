@@ -245,6 +245,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
     write.task_head(fact, move |seq| TaskHead {
         handle: task_for_head,
         uuid: task_uuid,
+        queue_origin: seq,
         title: "Implement bus writer".to_owned(),
         description: Some("Persist one ordered write".to_owned()),
         acceptance: vec!["The journal commits atomically".to_owned()],

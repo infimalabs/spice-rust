@@ -13,6 +13,7 @@ pub mod codex;
 pub mod config;
 pub mod launch;
 mod record;
+mod vendor;
 
 pub use acp::{PermissionRequestError, permission_request};
 pub use config::{
@@ -26,4 +27,8 @@ pub use launch::{
 pub use record::{
     LaunchError, Process, ProcessError, Record, RecordStream, Resume, SessionDeclaration,
     SessionId, SessionIdError,
+};
+pub use vendor::{
+    CLAUDE, CODEX, LaunchValues, StdoutContract, StdoutFormat, ToolEnvelope, TranscriptIndex,
+    TranscriptLayout, Vendor,
 };

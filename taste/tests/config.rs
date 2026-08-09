@@ -36,6 +36,7 @@ fn documented_seeds() -> &'static str {
 
 fn prose(text: &str) -> Event {
     Event::Prose(Prose {
+        role: listen::ProseRole::Assistant,
         text: text.to_owned(),
         phase: Some("final".to_owned()),
         locus: Locus::new(7, 31, text.len() as u64),

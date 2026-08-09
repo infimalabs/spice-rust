@@ -111,6 +111,7 @@ const PINNED: &[(&str, &str)] = &[
     ("CommitLanded", "commit::landed"),
     ("GateFound", "gate::found"),
     ("GateCleared", "gate::cleared"),
+    ("GateFindingsFiled", "gate::filed"),
     ("JournalMigrated", "journal::migrated"),
     ("JournalBacked", "journal::backed"),
     ("JournalRestored", "journal::restored"),
@@ -182,7 +183,7 @@ fn plane(kind: FactKind) -> &'static str {
         FactKind::VendorArmed => "vendor",
         FactKind::TrustPended | FactKind::TrustGranted | FactKind::TrustRevoked => "trust",
         FactKind::CommitLanded => "commit",
-        FactKind::GateFound | FactKind::GateCleared => "gate",
+        FactKind::GateFound | FactKind::GateCleared | FactKind::GateFindingsFiled => "gate",
         FactKind::JournalMigrated
         | FactKind::JournalBacked
         | FactKind::JournalRestored

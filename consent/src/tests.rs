@@ -823,9 +823,7 @@ fn a_decided_request_keeps_the_identity_and_lane_it_arrived_with() {
 }
 
 #[test]
-fn every_outcome_this_seat_can_reach_is_a_fact_of_the_declared_consent_plane() {
-    // The sweep asks fold what the consent plane contains rather than
-    // restating it here, so a kind that leaves the plane fails by name.
+fn every_outcome_this_seat_can_reach_is_a_consent_fact() {
     let mut actuator = Actuator::new(table(vec![
         rule("reads", "read", Answer::Allow, None),
         rule("blocked", "rm *", Answer::Deny, None),
@@ -838,7 +836,12 @@ fn every_outcome_this_seat_can_reach_is_a_fact_of_the_declared_consent_plane() {
             .expect("the sweep mints a fresh request for each operation")
             .kind();
         assert!(
-            fold::FactPlane::Consent.contains(kind),
+            matches!(
+                kind,
+                wire::FactKind::ConsentGranted
+                    | wire::FactKind::ConsentDenied
+                    | wire::FactKind::ConsentQueued
+            ),
             "deciding {operation:?} produced {kind:?}, which is not a consent fact",
         );
     }

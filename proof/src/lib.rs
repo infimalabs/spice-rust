@@ -35,6 +35,7 @@ pub mod evidence;
 pub mod layout;
 pub mod manifest;
 pub mod native;
+pub mod package;
 pub mod payload;
 pub mod rederive;
 pub mod replay;
@@ -50,6 +51,10 @@ pub use manifest::{
     ManifestPublishError, ManifestPublisher, PublishedManifest, admit_manifest, publish_manifest,
 };
 pub use native::{NativeError, NativeRunner};
+pub use package::{
+    AdmittedPackage, PackageError, PackageInput, PackageMember, PackageTargetInput, PackageTree,
+    admit_package_tree, build_package,
+};
 pub use payload::{AdmittedPayload, PayloadError, admit};
 pub use rederive::{RederiveError, rederive};
 pub use replay::{

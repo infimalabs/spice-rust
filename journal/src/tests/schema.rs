@@ -86,7 +86,9 @@ fn schema_one_authority(path: &Path) {
     journal
         .connection
         .execute_batch(
-            "DROP TABLE transcript_source_heads;
+            "DELETE FROM lease_heads;
+             DELETE FROM claim_heads;
+             DROP TABLE transcript_source_heads;
              UPDATE journal_schema SET version = 1 WHERE singleton = 1;
              PRAGMA user_version = 1;",
         )

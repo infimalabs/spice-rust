@@ -7,6 +7,7 @@ use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use sill::{Acquisition, LockFile, LockName};
+use wire::intent::EffortAnswer;
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest};
 use wire::{
     Actor, AnyFact, Envelope, FactKind, FoldReport, JournalBackup, JournalReindex, JournalReport,
@@ -36,7 +37,7 @@ impl Fixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        let data = root.join(".git/.spice/data");
+        let data = root.join(".git/.spice-rs/data");
         let authority = data.join("spicejournal.sqlite3");
         let folds = data.join("spicefolds.sqlite3");
         let bundle = root.join("operator-backup");
@@ -110,7 +111,7 @@ impl RunningResident {
             .spawn()
             .expect("launch foreground resident");
         let mut resident = Self { child: Some(child) };
-        let canvas = fixture.root.join(".git/.spice/canvas");
+        let canvas = fixture.root.join(".git/.spice-rs/canvas");
         let watched = canvas.parent().expect("canvas has runtime parent");
         fs::create_dir_all(watched).expect("runtime directory");
         match readiness::wait_until_ready(
@@ -149,7 +150,7 @@ impl RunningResident {
         let mut child = self.child.take().expect("resident child");
         child.kill().expect("terminate damaged resident");
         child.wait().expect("reap damaged resident");
-        let canvas = fixture.root.join(".git/.spice/canvas");
+        let canvas = fixture.root.join(".git/.spice-rs/canvas");
         if canvas.exists() {
             fs::remove_file(canvas).expect("remove interrupted discovery");
         }
@@ -265,10 +266,10 @@ fn assert_journal_thread_and_fold(fixture: &Fixture) {
         "read-only fold report created a store"
     );
     let first = fixture
-        .reply::<FoldReport>(&["journal", "replay", "canvas::flow"])
+        .reply::<FoldReport>(&["journal", "replay", "task::effort"])
         .body;
     let second = fixture
-        .reply::<FoldReport>(&["journal", "replay", "canvas::flow"])
+        .reply::<FoldReport>(&["journal", "replay", "task::effort"])
         .body;
     assert_eq!(
         second, first,
@@ -281,19 +282,25 @@ fn assert_journal_thread_and_fold(fixture: &Fixture) {
         fold_bytes,
         "read-only fold report changed the materialization store"
     );
-    let flow = first
+    let effort = first
         .folds
         .iter()
-        .find(|fold| fold.fold == "canvas::flow")
-        .expect("canvas flow state");
-    assert_eq!(flow.generation, Some(1));
-    assert_eq!(flow.cursor, Some(position));
-    assert!(!flow.sources.is_empty(), "fold provenance is explicit");
+        .find(|fold| fold.fold == "task::effort")
+        .expect("task effort state");
+    assert_eq!(effort.generation, Some(1));
+    assert_eq!(effort.cursor, Some(position));
+    assert_eq!(effort.horizon, Some(position));
     assert_eq!(
-        flow.payload.as_ref().expect("flow payload")["facts"]
-            .as_array()
-            .map(Vec::len),
-        Some(2)
+        effort.sources,
+        ["task::*", "claim::*", "lane::*", "lineage::*", "journal::*"]
+    );
+    let replay_answer: EffortAnswer =
+        serde_json::from_value(effort.payload.clone().expect("typed task effort payload"))
+            .expect("replay payload decodes as task effort");
+    let live_answer = fixture.reply::<EffortAnswer>(&["task", "effort"]).body;
+    assert_eq!(
+        replay_answer, live_answer,
+        "journal replay and the live CLI/Canvas resident surface use the same typed materialization"
     );
 }
 
@@ -483,7 +490,7 @@ fn active_writer_refuses_maintenance_in_a_typed_envelope() {
     let fixture = Fixture::new();
     let lock = LockFile::new(
         LockName::new("resident").expect("resident lock name"),
-        fixture.root.join(".git/.spice/resident"),
+        fixture.root.join(".git/.spice-rs/resident"),
     );
     let Acquisition::Acquired(_held) = lock.try_acquire().expect("acquire writer fixture") else {
         panic!("writer fixture lock was unexpectedly held")
@@ -509,7 +516,7 @@ fn resident_reads_require_authentication_without_mutating_authority() {
     for arguments in [
         &["journal"][..],
         &["journal", "verify"][..],
-        &["journal", "replay", "canvas::flow"][..],
+        &["journal", "replay", "task::effort"][..],
         &["fold"][..],
         &["thread", "2"][..],
     ] {

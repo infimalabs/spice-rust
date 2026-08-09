@@ -56,7 +56,7 @@ impl Fixture {
     }
 
     fn local(&self) -> PathBuf {
-        self.root.join(".git/.spice/config.toml")
+        self.root.join(".git/.spice-rs/config.toml")
     }
 
     fn assert_tracked_unchanged(&self) {
@@ -316,7 +316,7 @@ fn linked_repository_owner_refuses_without_mutating_outside_authority() {
     let marker = fixture.root.join(".git");
     let outside = fixture.root.join("outside-git-owner");
     fs::rename(&marker, &outside).expect("park real Git owner");
-    let authority = outside.join(".spice/data/spicejournal.sqlite3");
+    let authority = outside.join(".spice-rs/data/spicejournal.sqlite3");
     fs::create_dir_all(authority.parent().expect("outside authority parent"))
         .expect("create outside authority");
     fs::write(&authority, b"outside authority\n").expect("plant outside authority");
@@ -330,8 +330,8 @@ fn linked_repository_owner_refuses_without_mutating_outside_authority() {
         fs::read(&authority).expect("read outside authority"),
         b"outside authority\n"
     );
-    assert!(!outside.join(".spice/config.toml").exists());
-    assert!(!outside.join(".spice/config.lock").exists());
+    assert!(!outside.join(".spice-rs/config.toml").exists());
+    assert!(!outside.join(".spice-rs/config.lock").exists());
 }
 
 #[test]

@@ -771,6 +771,10 @@ impl Facts {
             lane: lane(),
             occupant,
             epoch: uuid(EPOCH),
+            cell: Some(wire::ClaimCell {
+                project: "task.effort".to_owned(),
+                phase: "todo".parse().expect("phase"),
+            }),
             until: instant(50),
             git: None,
             source,

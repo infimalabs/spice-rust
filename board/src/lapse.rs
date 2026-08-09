@@ -574,6 +574,7 @@ mod tests {
                 task: &task(),
                 actor: &actor,
                 workflow: &workflow,
+                project: "board.possession",
                 lane: uuid(20),
                 occupant: uuid(21),
                 epoch: uuid(22),
@@ -640,6 +641,7 @@ mod tests {
         write.task_head(fact, move |position| TaskHead {
             handle: task(),
             uuid: uuid(1),
+            queue_origin: position,
             title: "Lapse".to_owned(),
             description: None,
             acceptance: Vec::new(),

@@ -36,29 +36,20 @@ pub struct Inputs {
     pub resume: vendor::Resume,
 }
 
-/// Landed renderer selected by one admitted plan.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Dialect {
-    /// Claude Code stream-json.
-    Claude,
-    /// Codex exec JSONL.
-    Codex,
-}
-
 /// Complete deterministic inputs to vendor rendering and the process door.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Plan {
-    dialect: Dialect,
+    vendor: &'static crate::extension::Vendor,
     binary: String,
     launch: vendor::Launch,
     environment: Environment,
 }
 
 impl Plan {
-    /// Selected vendor dialect.
+    /// Selected declared vendor.
     #[must_use]
-    pub const fn dialect(&self) -> Dialect {
-        self.dialect
+    pub const fn vendor(&self) -> &'static crate::extension::Vendor {
+        self.vendor
     }
 
     /// Configured vendor executable.
@@ -87,10 +78,7 @@ impl Plan {
     /// argument-vector refusal. Rendering performs no repository, policy,
     /// environment, or clock reads.
     pub fn record(&self) -> Result<vendor::Record, vendor::ContractError> {
-        match self.dialect {
-            Dialect::Claude => vendor::claude::record(self.binary.as_str(), &self.launch),
-            Dialect::Codex => vendor::codex::record(self.binary.as_str(), &self.launch),
-        }
+        self.vendor.record(self.binary.as_str(), &self.launch)
     }
 }
 
@@ -101,6 +89,16 @@ impl Plan {
 /// Refuses an unsupported lane vendor, empty rim values, or a child environment
 /// that attempts to supply the composition-owned lane identity.
 pub fn compose(root: &Root, inputs: Inputs) -> Result<Plan, ComposeError> {
+    let registry = crate::extension::registry()
+        .expect("compiled extension declarations are validated by the test gate");
+    compose_with_registry(root, inputs, &registry)
+}
+
+fn compose_with_registry(
+    root: &Root,
+    inputs: Inputs,
+    registry: &crate::extension::Registry<'_>,
+) -> Result<Plan, ComposeError> {
     if inputs.worktree.as_os_str().is_empty() {
         return Err(ComposeError::Empty("launch.worktree"));
     }
@@ -130,43 +128,24 @@ pub fn compose(root: &Root, inputs: Inputs) -> Result<Plan, ComposeError> {
         token: inputs.lane.to_string(),
     });
 
-    let (dialect, binary, model, effort, personality, fast_mode) = match inputs.vendor.as_str() {
-        "claude" => {
-            let configured = root.vendor().claude();
-            if !environment_contains_entries(&environment, CLAUDE_AUTO_COMPACT_WINDOW) {
-                environment.push((
-                    OsString::from(CLAUDE_AUTO_COMPACT_WINDOW),
-                    OsString::from(configured.auto_compact_window_tokens().to_string()),
-                ));
-            }
-            (
-                Dialect::Claude,
-                configured.binary().as_str(),
-                configured.model(),
-                configured.effort(),
-                None,
-                None,
-            )
-        }
-        "codex" => {
-            let configured = root.vendor().codex();
-            (
-                Dialect::Codex,
-                configured.binary().as_str(),
-                configured.model(),
-                configured.effort(),
-                configured.personality().map(str::to_owned),
-                Some(configured.fast_mode()),
-            )
-        }
-        other => return Err(ComposeError::UnsupportedVendor(other.to_owned())),
-    };
-    let hook_harness = match dialect {
-        Dialect::Claude => "claude",
-        Dialect::Codex => "codex",
-    };
+    let declared = registry
+        .vendor(inputs.vendor.as_str())
+        .ok_or_else(|| ComposeError::UnsupportedVendor(inputs.vendor.as_str().to_owned()))?;
+    let configured = declared.launch_values(root);
+    if let Some(window) = configured.auto_compact_window_tokens
+        && !environment_contains_entries(&environment, CLAUDE_AUTO_COMPACT_WINDOW)
+    {
+        environment.push((
+            OsString::from(CLAUDE_AUTO_COMPACT_WINDOW),
+            OsString::from(window.to_string()),
+        ));
+    }
     let hook = vendor::SteeringHook {
-        command: format!("{} hook {hook_harness}", shell_word(&inputs.executable)),
+        command: format!(
+            "{} hook {}",
+            shell_word(&inputs.executable),
+            declared.name()
+        ),
     };
     let mcp = vendor::McpServer {
         name: "spice".to_owned(),
@@ -176,15 +155,15 @@ pub fn compose(root: &Root, inputs: Inputs) -> Result<Plan, ComposeError> {
     let environment = Environment::new(environment).map_err(ComposeError::Environment)?;
 
     Ok(Plan {
-        dialect,
-        binary: binary.to_owned(),
+        vendor: declared,
+        binary: configured.binary.to_owned(),
         launch: vendor::Launch {
             cwd: inputs.worktree,
             prompt: inputs.prompt,
-            model: model.to_owned(),
-            effort,
-            personality,
-            fast_mode,
+            model: configured.model.to_owned(),
+            effort: configured.effort,
+            personality: configured.personality.map(str::to_owned),
+            fast_mode: configured.fast_mode,
             attribution,
             hook,
             steering_key,
@@ -226,7 +205,7 @@ impl fmt::Display for ComposeError {
             Self::Empty(path) => write!(formatter, "{path} must not be empty"),
             Self::UnsupportedVendor(vendor) => write!(
                 formatter,
-                "lane.vendor must be claude or codex; observed {vendor:?}"
+                "lane.vendor has no declared extension value; observed {vendor:?}"
             ),
             Self::ReservedEnvironment(name) => write!(
                 formatter,
@@ -245,5 +224,61 @@ impl Error for ComposeError {
             Self::Environment(error) => Some(error),
             Self::Empty(_) | Self::UnsupportedVendor(_) | Self::ReservedEnvironment(_) => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c7";
+    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
+    const FIXTURE_VENDOR: crate::extension::Vendor =
+        crate::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration);
+    const FIXTURE_DECLARATIONS: &[crate::extension::Declaration] =
+        &[crate::extension::Declaration {
+            namespace: crate::extension::Namespace::Vendor,
+            name: "fixture",
+            provider: "fixture",
+            value: crate::extension::Value::Vendor(&FIXTURE_VENDOR),
+        }];
+
+    fn fixture_configuration(root: &Root) -> vendor::LaunchValues<'_> {
+        let configured = root.vendor().codex();
+        vendor::LaunchValues {
+            binary: configured.binary().as_str(),
+            model: configured.model(),
+            effort: configured.effort(),
+            personality: configured.personality(),
+            fast_mode: Some(configured.fast_mode()),
+            auto_compact_window_tokens: None,
+        }
+    }
+
+    #[test]
+    fn a_third_declaration_reaches_launch_without_another_mode_arm() {
+        let registry = crate::extension::Registry::discover(FIXTURE_DECLARATIONS)
+            .expect("third declaration is coherent");
+        let plan = compose_with_registry(
+            &Root::default(),
+            Inputs {
+                worktree: PathBuf::from("/work/tree"),
+                vendor: "fixture".parse().expect("fixture vendor name"),
+                prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
+                executable: "spice".to_owned(),
+                environment: Environment::empty(),
+                lane: LANE.parse().expect("fixture lane"),
+                resume: vendor::Resume::Fresh,
+            },
+            &registry,
+        )
+        .expect("third declaration composes");
+
+        assert_eq!(plan.vendor().name(), "fixture");
+        assert_eq!(plan.launch().hook.command, "'spice' hook fixture");
+        assert_eq!(
+            plan.record().expect("third declaration renders").dialect(),
+            listen::Dialect::Codex
+        );
     }
 }

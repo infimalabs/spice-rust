@@ -40,6 +40,8 @@ pub enum CommandKind {
     TaskAdd,
     /// Add one task through the fixed server-owned `.oops` route.
     TaskOopsAdd,
+    /// File gate findings as deferred board work.
+    GateFindings,
     /// Replace an unsettled task statement.
     TaskEdit,
     /// Withdraw a task from the board with a recorded reason.
@@ -232,6 +234,13 @@ impl Law {
     pub const ADD: Self = Self {
         required: &[WitnessKind::Absence],
         optional: &[WitnessKind::Workflow],
+        authority: Authority::Connected,
+    };
+    /// Gate finding dispatch derives its task witnesses inside the resident
+    /// transaction from one typed gate report projection.
+    pub const GATE_FINDINGS: Self = Self {
+        required: &[],
+        optional: &[],
         authority: Authority::Connected,
     };
     /// Exact task statement head.
@@ -494,6 +503,7 @@ impl CommandKind {
         Self::EffortRead,
         Self::TaskAdd,
         Self::TaskOopsAdd,
+        Self::GateFindings,
         Self::TaskEdit,
         Self::TaskDelete,
         Self::TaskNote,
@@ -553,6 +563,7 @@ impl CommandKind {
             | Self::EffortRead
             | Self::TaskAdd
             | Self::TaskOopsAdd
+            | Self::GateFindings
             | Self::TaskEdit
             | Self::TaskDelete
             | Self::TaskNote
@@ -607,6 +618,7 @@ impl CommandKind {
             Self::EffortRead => "effort::read",
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
+            Self::GateFindings => "gate::findings",
             Self::TaskEdit => "task::edit",
             Self::TaskDelete => "task::delete",
             Self::TaskNote => "task::note",
@@ -678,6 +690,7 @@ impl CommandKind {
             Self::BoardRead | Self::BoardGraph | Self::DocLedger | Self::EffortRead => Law::READ,
             Self::BoardHandout => Law::OPERATOR_READ,
             Self::TaskAdd | Self::TaskOopsAdd => Law::ADD,
+            Self::GateFindings => Law::GATE_FINDINGS,
             Self::TaskEdit => Law::EDIT,
             Self::TaskDelete => Law::DELETE,
             Self::TaskNote => Law::NOTE,

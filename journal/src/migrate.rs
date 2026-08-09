@@ -8,6 +8,7 @@ use crate::SCHEMA_VERSION;
 
 mod residency_lineage;
 mod steering_identity;
+mod task_allocation;
 
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
@@ -445,10 +446,15 @@ impl MigrationStep {
     }
 }
 
+fn migrate_schema_3(connection: &Connection) -> Result<(), OpenError> {
+    steering_identity::migrate(connection)?;
+    task_allocation::migrate(connection)
+}
+
 const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (1, MigrationStep::Sql(MIGRATE_1_TO_2_SQL)),
     (2, MigrationStep::Rust(residency_lineage::migrate)),
-    (3, MigrationStep::Rust(steering_identity::migrate)),
+    (3, MigrationStep::Rust(migrate_schema_3)),
 ];
 
 /// Schema 1 to 2: the table transcript accounting reads its heads from.

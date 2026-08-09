@@ -1,8 +1,8 @@
-//! The predecessor's durable state survives this port running beside it.
+//! Python Spice's durable state survives Rust Spice running beside it.
 //!
 //! `spice/src/repository.rs` states the coexistence policy; this file enforces
-//! it. Everything here works by identity -- seed files the predecessor owns
-//! under a fixture state root, run the real binary, read the bytes back --
+//! it. Everything here works by identity -- seed Python's complete `.spice`
+//! root, run the real Rust binary against `.spice-rs`, read the bytes back --
 //! rather than by asserting that no offending code path exists. A policy proved
 //! by grepping for the absence of a call is only as good as the grep.
 
@@ -16,13 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::Value;
 use spice::repository::{Repository, StatePaths};
 
-/// Durable state the predecessor owns inside the shared root.
-///
-/// `data/` is this port's own directory, but only the files explicitly named by
-/// [`StatePaths::owned_files`] belong to this port; every other file there is
-/// the predecessor's. Ownership is decided per path, never per parent, which is
-/// why seeding foreign files inside an owned directory is the interesting case
-/// rather than an unfair one.
+/// Representative durable state Python Spice owns inside `.spice`.
 const PREDECESSOR_STATE: &[(&str, &[u8])] = &[
     ("data/taskchampion.sqlite3", b"taskchampion pages"),
     ("data/spiceacks.sqlite3", b"ack pages"),
@@ -63,22 +57,30 @@ const EXPORT: &[u8] = br#"{
   "teams": []
 }"#;
 
-/// The runtime must not claim a name the predecessor already answers for.
-///
-/// Every other test here subtracts the owned set to decide what is foreign, so
-/// this is the assertion that keeps that subtraction honest: if this port ever
-/// declares `migrations/` or `taskrc` as its own, the seeded fixtures below stop
-/// describing another system's property and would start passing vacuously.
+/// Rust Spice owns one complete root and no path below Python Spice's root.
 #[test]
 fn this_runtime_claims_no_path_the_predecessor_owns() {
     let fixture = Fixture::seeded("claims");
-    let owned = fixture.owned();
+    let rust_root = fixture.state_root();
+    let python_root = fixture.predecessor_root();
 
-    for (relative, _) in PREDECESSOR_STATE.iter().chain(PREDECESSOR_GATE_STATE) {
-        let seeded = fixture.state_root().join(relative);
+    assert_ne!(rust_root, python_root, "routing roots must be different");
+    assert_eq!(
+        fixture.paths().exclusive_directories(),
+        [rust_root.as_path()],
+        "the complete Rust state root must be exclusive"
+    );
+
+    for owned in fixture.owned() {
         assert!(
-            !owned.contains(&seeded),
-            "{relative} is seeded as the predecessor's, yet this runtime claims it"
+            owned.starts_with(&rust_root),
+            "Rust claimed state outside its exclusive root: {}",
+            owned.display()
+        );
+        assert!(
+            !owned.starts_with(&python_root),
+            "Rust claimed Python state: {}",
+            owned.display()
         );
     }
 }
@@ -132,51 +134,40 @@ fn ordinary_gate_ignores_predecessor_gate_state() {
     );
 }
 
-/// Two files in one directory, one on each side of the ownership boundary.
-///
-/// `data/` holds this port's journal beside the predecessor's databases, which
-/// is the whole of what "shared by design" means here. The foreign set must
-/// contain the predecessor's file and exclude this port's, and asserting both
-/// directions is what makes the subtraction load-bearing rather than
-/// decorative -- no command run by these tests writes an owned path, so nothing
-/// else here would notice if the subtraction stopped subtracting.
+/// Identical relative names still resolve to physically different places.
 #[test]
-fn ownership_splits_inside_the_one_shared_data_directory() {
-    let fixture = Fixture::seeded("split");
-    let journal = fixture.state_root().join("data/spicejournal.sqlite3");
-    fs::write(&journal, b"this port's own pages").expect("seed this port's journal");
+fn state_roots_are_siblings_and_database_names_cannot_cross() {
+    let fixture = Fixture::seeded("roots");
+    let relative = "data/spiceacks.sqlite3";
+    let python_database = fixture.predecessor_root().join(relative);
+    let rust_database = fixture.state_root().join(relative);
+    fs::create_dir_all(rust_database.parent().expect("database has a parent"))
+        .expect("create Rust data directory");
+    fs::write(&rust_database, b"Rust namespace sentinel").expect("seed Rust sentinel");
 
-    let foreign = fixture.foreign_identity();
-
-    assert!(
-        !foreign.contains_key(&journal),
-        "this port's own journal was counted as the predecessor's state"
+    assert_eq!(
+        fs::read(python_database).expect("read Python database"),
+        b"ack pages"
     );
-    assert!(
-        foreign.contains_key(&fixture.state_root().join("data/taskchampion.sqlite3")),
-        "the predecessor's database in that same directory went missing from the foreign set"
+    assert_eq!(
+        fs::read(rust_database).expect("read Rust sentinel"),
+        b"Rust namespace sentinel"
     );
 }
 
-/// Inside an exclusive directory, ownership needs no enumerated name.
-///
-/// A lock is named after whatever asked for it, so no declaration could list
-/// one ahead of time. The subtree rule is what covers it, and this is the only
-/// case that exercises that rule: without it the rule could be deleted and every
-/// other test here would stay green, because none of them run a command that
-/// writes inside one of this port's exclusive directories.
+/// A dynamically named Rust file remains outside Python's complete snapshot.
 #[test]
 fn ownership_covers_unnameable_files_inside_an_exclusive_directory() {
     let fixture = Fixture::seeded("exclusive");
+    let before = fixture.predecessor_identity();
     let lock = fixture.paths().locks().join("journal.lock");
     fs::create_dir_all(lock.parent().expect("lock has a parent")).expect("create lock directory");
     fs::write(&lock, b"this port's own lock").expect("seed this port's lock");
 
-    let foreign = fixture.foreign_identity();
-
-    assert!(
-        !foreign.contains_key(&lock),
-        "a file this port wrote inside its own lock directory was counted as the predecessor's"
+    assert_eq!(
+        fixture.predecessor_identity(),
+        before,
+        "a dynamically named Rust file changed Python's state tree"
     );
 }
 
@@ -190,7 +181,7 @@ fn ownership_covers_unnameable_files_inside_an_exclusive_directory() {
 #[test]
 fn running_this_port_leaves_predecessor_state_byte_identical() {
     let fixture = Fixture::seeded("running");
-    let before = fixture.foreign_identity();
+    let before = fixture.predecessor_identity();
 
     let output = fixture.invoke(&["doctor"]);
     assert!(output.status.success(), "doctor must run: {output:?}");
@@ -204,7 +195,7 @@ fn running_this_port_leaves_predecessor_state_byte_identical() {
     );
 
     assert_eq!(
-        fixture.foreign_identity(),
+        fixture.predecessor_identity(),
         before,
         "running this port changed state the predecessor owns"
     );
@@ -212,17 +203,11 @@ fn running_this_port_leaves_predecessor_state_byte_identical() {
 
 /// Installing and uninstalling leaves every predecessor file as found.
 ///
-/// Install is the one verb that writes into the shared root on purpose, so it
-/// is the only real test of the subtraction: the receipt it creates must come
-/// out of the foreign set by being owned, not by being missed. Requiring the
-/// receipt to land on [`spice::repository::StatePaths::install_record`] is what
-/// keeps that honest -- the installer spells the same name independently, and
-/// if the two ever diverge this reds here instead of silently reclassifying
-/// this port's own receipt as the predecessor's property.
+/// Install writes its receipt only below the Rust root.
 #[test]
 fn installing_this_port_leaves_predecessor_state_byte_identical() {
     let fixture = Fixture::seeded("install");
-    let before = fixture.foreign_identity();
+    let before = fixture.predecessor_identity();
 
     let preview = fixture.invoke(&["--json", "install"]);
     assert!(preview.status.success(), "install preview: {preview:?}");
@@ -239,8 +224,10 @@ fn installing_this_port_leaves_predecessor_state_byte_identical() {
         receipt.is_file(),
         "install wrote no receipt at the path this runtime claims"
     );
+    assert!(receipt.starts_with(fixture.state_root()));
+    assert!(!receipt.starts_with(fixture.predecessor_root()));
     assert_eq!(
-        fixture.foreign_identity(),
+        fixture.predecessor_identity(),
         before,
         "installing this port changed state the predecessor owns"
     );
@@ -248,7 +235,7 @@ fn installing_this_port_leaves_predecessor_state_byte_identical() {
     let removed = fixture.invoke(&["install", "--unapply"]);
     assert!(removed.status.success(), "install unapply: {removed:?}");
     assert_eq!(
-        fixture.foreign_identity(),
+        fixture.predecessor_identity(),
         before,
         "uninstalling this port changed state the predecessor owns"
     );
@@ -259,7 +246,7 @@ fn installing_this_port_leaves_predecessor_state_byte_identical() {
 fn the_bridge_leaves_predecessor_state_byte_identical() {
     let fixture = Fixture::seeded("bridge");
     let export = fixture.export();
-    let before = fixture.foreign_identity();
+    let before = fixture.predecessor_identity();
 
     let output = fixture.invoke(&["config", "migrate-tasks", &export]);
     assert!(
@@ -268,7 +255,7 @@ fn the_bridge_leaves_predecessor_state_byte_identical() {
     );
 
     assert_eq!(
-        fixture.foreign_identity(),
+        fixture.predecessor_identity(),
         before,
         "the bridge changed state the predecessor owns"
     );
@@ -278,7 +265,7 @@ fn the_bridge_leaves_predecessor_state_byte_identical() {
 #[test]
 fn the_bridge_refuses_without_an_operator_named_export() {
     let fixture = Fixture::seeded("refusal");
-    let before = fixture.foreign_identity();
+    let before = fixture.predecessor_identity();
 
     let output = fixture.invoke(&["config", "migrate-tasks"]);
 
@@ -287,13 +274,13 @@ fn the_bridge_refuses_without_an_operator_named_export() {
         "a bridge with no operator-named export must refuse: {output:?}"
     );
     assert_eq!(
-        fixture.foreign_identity(),
+        fixture.predecessor_identity(),
         before,
         "a refused bridge still changed state the predecessor owns"
     );
 }
 
-/// `.spice/migrations/` is the predecessor's release ledger, not this port's.
+/// Python's `.spice/migrations/` is not Rust Spice's release ledger.
 ///
 /// This port names no migrations path anywhere, so the directory must stay
 /// absent when the predecessor has not made one. A runtime that created it
@@ -301,7 +288,7 @@ fn the_bridge_refuses_without_an_operator_named_export() {
 #[test]
 fn the_predecessor_migrations_ledger_is_never_created_here() {
     let fixture = Fixture::bare("migrations");
-    let migrations = fixture.state_root().join("migrations");
+    let migrations = fixture.predecessor_root().join("migrations");
     assert!(!migrations.exists(), "the fixture starts without a ledger");
 
     let export = fixture.export();
@@ -318,7 +305,7 @@ fn the_predecessor_migrations_ledger_is_never_created_here() {
     );
 }
 
-/// One temporary repository whose shared state root stands in for the real one.
+/// One temporary repository with physically separate Python and Rust roots.
 struct Fixture {
     root: PathBuf,
 }
@@ -328,7 +315,7 @@ impl Fixture {
     fn seeded(label: &str) -> Self {
         let fixture = Self::bare(label);
         for (relative, bytes) in PREDECESSOR_STATE.iter().chain(PREDECESSOR_GATE_STATE) {
-            let path = fixture.state_root().join(relative);
+            let path = fixture.predecessor_root().join(relative);
             fs::create_dir_all(path.parent().expect("seeded path has a parent"))
                 .expect("create predecessor directory");
             fs::write(&path, bytes).expect("seed predecessor state");
@@ -409,7 +396,12 @@ impl Fixture {
             .join(spice::repository::STATE_DIRECTORY)
     }
 
-    /// Write the operator-named export outside the shared state root.
+    /// Python Spice's state root, which Rust Spice treats as foreign.
+    fn predecessor_root(&self) -> PathBuf {
+        self.root.join(".git").join(".spice")
+    }
+
+    /// Write the operator-named export outside both state roots.
     fn export(&self) -> String {
         let path = self.root.join("export.json");
         fs::write(&path, EXPORT).expect("write predecessor export");
@@ -432,7 +424,7 @@ impl Fixture {
         repository.admit_state().expect("fixture state admits")
     }
 
-    /// Every path under the shared root this runtime declares as its own.
+    /// Every path this runtime declares as its own.
     fn owned(&self) -> Vec<PathBuf> {
         let paths = self.paths();
         paths
@@ -448,38 +440,17 @@ impl Fixture {
         PREDECESSOR_GATE_STATE
             .iter()
             .map(|(relative, _)| {
-                let path = self.state_root().join(relative);
+                let path = self.predecessor_root().join(relative);
                 let bytes = fs::read(&path).expect("read predecessor gate state");
                 (path, Entry::File(bytes))
             })
             .collect()
     }
 
-    /// Identity of everything under the shared root this port does not own.
-    ///
-    /// The owned set is subtracted from the runtime's own declaration rather
-    /// than from a list repeated here, so claiming one more name moves it out of
-    /// this set automatically instead of leaving a stale copy to update by hand.
-    ///
-    /// Subtracting exact names is not enough on its own. A lock or a receipt
-    /// written inside one of this port's exclusive directories has a name no
-    /// declaration could enumerate ahead of time, so those subtrees are removed
-    /// wholesale. The shared directories are deliberately not treated that way:
-    /// dropping everything under `data` would drop the predecessor's databases,
-    /// which are the very files these tests exist to watch.
-    fn foreign_identity(&self) -> BTreeMap<PathBuf, Entry> {
-        let paths = self.paths();
-        let exclusive: Vec<PathBuf> = paths
-            .exclusive_directories()
-            .into_iter()
-            .map(Path::to_path_buf)
-            .collect();
-        let owned = self.owned();
+    /// Complete byte-level identity of Python Spice's foreign state root.
+    fn predecessor_identity(&self) -> BTreeMap<PathBuf, Entry> {
         let mut found = BTreeMap::new();
-        walk(&self.state_root(), &mut found);
-        found.retain(|path, _| {
-            !owned.contains(path) && !exclusive.iter().any(|root| path.starts_with(root))
-        });
+        walk(&self.predecessor_root(), &mut found);
         found
     }
 }

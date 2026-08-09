@@ -155,6 +155,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["taste"]), Landing::Landed);
     assert_eq!(landing(&["taste", "add"]), Landing::Landed);
     assert_eq!(landing(&["taste", "drop"]), Landing::Landed);
+    assert_eq!(landing(&["gate", "findings"]), Landing::Landed);
     for path in [
         &["backup"][..],
         &["restore"][..],
@@ -227,11 +228,11 @@ const LOCAL_SUCCESSION: &[LocalSuccession] = &[
         rationale: "strict offline archive verification is an intentional native-only addition",
     },
     LocalSuccession {
-        python: None,
+        python: Some("release notes"),
         rust: &["release", "notes"],
-        invocation: "release notes INPUT",
-        relationship: LocalRelationship::Addition,
-        rationale: "strict offline release-note rendering is an intentional native-only addition",
+        invocation: "release notes [--release-commit REV]",
+        relationship: LocalRelationship::Replacement,
+        rationale: "the Rust history fold replaces the Python first-parent release-note draft",
     },
 ];
 
@@ -241,7 +242,10 @@ fn daemonless_local_succession_is_closed_and_explicit() {
         .iter()
         .filter_map(|row| row.python)
         .collect::<BTreeSet<_>>();
-    assert_eq!(python, BTreeSet::from(["lock run", "lock status"]),);
+    assert_eq!(
+        python,
+        BTreeSet::from(["lock run", "lock status", "release notes"]),
+    );
 
     let rust = LOCAL_SUCCESSION
         .iter()
@@ -496,6 +500,7 @@ fn tool_postures_follow_the_closed_command_order() {
             ("doctor".to_owned(), vec!["rtk"]),
             ("lock run".to_owned(), vec!["CMD"]),
             ("gate".to_owned(), vec!["gate policy executable"]),
+            ("gate findings".to_owned(), vec!["gate policy executable"]),
             ("gate camp".to_owned(), vec!["gate policy executable"]),
             ("gate kill".to_owned(), vec!["gate mutation executable"]),
             ("gate pre-commit".to_owned(), vec!["gate policy executable"],),
@@ -614,58 +619,61 @@ fn every_registered_leaf_renders_its_exact_usage() {
 }
 
 #[test]
-fn release_notes_surfaces_name_only_the_canonical_explicit_input() {
+fn release_notes_exposes_one_read_only_history_target() {
     let contract = contract_at(CONTRACTS, &["release", "notes"])
         .expect("release notes has one registered contract");
-    assert_eq!(contract.syntax, "release notes INPUT");
+    assert_eq!(contract.syntax, "release notes [--release-commit REV]");
 
     assert_eq!(
         contract.journal,
         JournalAccess::None,
-        "release notes opened a journal instead of reading its explicit input",
+        "release notes opened a journal instead of reading Git history",
     );
     assert!(
         contract.facts.is_empty(),
-        "release notes read a hidden fact instead of its explicit input: {:?}",
+        "release notes read a hidden fact instead of Git history: {:?}",
         contract.facts,
     );
     assert!(
         contract.guards.contains(&Guard::Offline),
-        "release notes left the offline guard that keeps its input explicit",
+        "release notes left the offline guard for read-only local history",
     );
 
-    // One operand carries the whole input: a Git range or a sealed manifest
-    // would need a second endpoint, or none at all.
     let parser = command();
     let admitted = parser
         .clone()
-        .try_get_matches_from(["spice", "release", "notes", "release-input.json"])
-        .expect("one explicit input parses");
+        .try_get_matches_from([
+            "spice",
+            "release",
+            "notes",
+            "--release-commit",
+            "release-head",
+        ])
+        .expect("one explicit release target parses");
     assert_eq!(
         selected_matches(&admitted)
-            .get_one::<String>("INPUT")
+            .get_one::<String>("release-commit")
             .map(String::as_str),
-        Some("release-input.json"),
+        Some("release-head"),
     );
-    for legacy in [
-        &["spice", "release", "notes"][..],
-        &["spice", "release", "notes", "FIRST", "SECOND"],
-    ] {
-        assert!(
-            parser.clone().try_get_matches_from(legacy).is_err(),
-            "{legacy:?} must be rejected: release notes takes exactly one canonical input",
-        );
-    }
+    parser
+        .clone()
+        .try_get_matches_from(["spice", "release", "notes"])
+        .expect("HEAD is the default release target");
+    assert!(
+        parser
+            .clone()
+            .try_get_matches_from(["spice", "release", "notes", "FIRST"])
+            .is_err(),
+        "a positional evidence file must not survive the history-fold replacement",
+    );
 
-    // The native dispatch reads that one operand as a file, proven against the
-    // binary rim in `release_command::tests`; on wasm32 the same operand is the
-    // only thing the terminal refusal can name.
     let wasm_dispatch = include_str!("../main.rs");
     assert!(
-        wasm_dispatch
-            .contains("reading the explicit release notes INPUT file is unavailable on wasm32")
+        wasm_dispatch.contains(
+            "immutable Git history inspection for release notes is unavailable on wasm32"
+        )
     );
-    assert!(!wasm_dispatch.contains("immutable Git object inspection"));
 }
 
 #[test]

@@ -67,7 +67,7 @@ impl Fixture {
         fs::create_dir_all(root.join(".git")).expect("fixture Git directory");
         staged_app::seed(&root);
         fs::write(root.join("spice.toml"), POLICY).expect("tracked policy");
-        let runtime = root.join(".git/.spice");
+        let runtime = root.join(".git/.spice-rs");
         let fixture = Self {
             journal: runtime.join("data/spicejournal.sqlite3"),
             canvas: runtime.join("canvas"),
