@@ -7,13 +7,13 @@ use crate::command::CommandKind;
 use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
-    ConsentRead, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger, EffortAnswer,
-    EffortRead, GateFindings, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead,
-    LaneRecall, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
-    RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox, SteerSend,
-    TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit,
-    TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer, TasteRecord, TextAnswer,
-    TrustAnswer, TrustRef, UpChange,
+    ConsentRead, DeliveryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger,
+    EffortAnswer, EffortRead, GateFindings, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer,
+    LaneRead, LaneRecall, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
+    RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox,
+    SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends,
+    TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer,
+    TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -67,6 +67,8 @@ pub enum BodyShape {
     SteerSend,
     /// [`SteerInbox`]
     SteerInbox,
+    /// [`SteerRepair`]
+    SteerRepair,
     /// [`DirectiveRef`]
     DirectiveRef,
     /// [`SteerDispose`]
@@ -120,6 +122,8 @@ pub enum AnswerShape {
     Directive,
     /// [`InboxAnswer`]
     Inbox,
+    /// [`DeliveryAnswer`]
+    Delivery,
     /// [`ConsentAnswer`]
     Consent,
     /// [`ConsentQueueAnswer`]
@@ -162,6 +166,8 @@ pub enum CommandAnswer {
     Directive(DirectiveAnswer),
     /// [`AnswerShape::Inbox`]
     Inbox(InboxAnswer),
+    /// [`AnswerShape::Delivery`]
+    Delivery(DeliveryAnswer),
     /// [`AnswerShape::Consent`]
     Consent(ConsentAnswer),
     /// [`AnswerShape::ConsentQueue`]
@@ -198,6 +204,7 @@ impl CommandAnswer {
             Self::Doc(_) => AnswerShape::Doc,
             Self::Directive(_) => AnswerShape::Directive,
             Self::Inbox(_) => AnswerShape::Inbox,
+            Self::Delivery(_) => AnswerShape::Delivery,
             Self::Consent(_) => AnswerShape::Consent,
             Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
             Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
@@ -230,6 +237,7 @@ impl AnswerShape {
             | Self::Doc
             | Self::Directive
             | Self::Inbox
+            | Self::Delivery
             | Self::Consent
             | Self::ConsentQueue => self.decode_primary(bytes),
             Self::ConsentPolicy
@@ -253,6 +261,7 @@ impl AnswerShape {
             Self::Doc => CommandAnswer::Doc(crate::decode(bytes)?),
             Self::Directive => CommandAnswer::Directive(crate::decode(bytes)?),
             Self::Inbox => CommandAnswer::Inbox(crate::decode(bytes)?),
+            Self::Delivery => CommandAnswer::Delivery(crate::decode(bytes)?),
             Self::Consent => CommandAnswer::Consent(crate::decode(bytes)?),
             Self::ConsentQueue => CommandAnswer::ConsentQueue(crate::decode(bytes)?),
             _ => unreachable!("answer-shape decode partition is closed"),
@@ -328,6 +337,7 @@ impl CommandKind {
             | Self::DocApply => self.board_binding(),
             Self::SteerSend
             | Self::SteerInbox
+            | Self::SteerRepair
             | Self::SteerResend
             | Self::SteerDispose
             | Self::SteerCancel
@@ -393,6 +403,7 @@ impl CommandKind {
         match self {
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
             Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
+            Self::SteerRepair => Binding::of(B::SteerRepair, A::Delivery),
             Self::SteerResend | Self::SteerCancel => Binding::of(B::DirectiveRef, A::Directive),
             Self::SteerDispose => Binding::of(B::SteerDispose, A::Directive),
             Self::ConsentDecide => Binding::of(B::ConsentDecide, A::Consent),
@@ -475,6 +486,8 @@ pub enum Intent {
     SteerSend(SteerSend),
     /// [`BodyShape::SteerInbox`]
     SteerInbox(SteerInbox),
+    /// [`BodyShape::SteerRepair`]
+    SteerRepair(SteerRepair),
     /// [`BodyShape::DirectiveRef`]
     DirectiveRef(DirectiveRef),
     /// [`BodyShape::SteerDispose`]
@@ -540,6 +553,7 @@ impl Intent {
             | Self::DocApply(_) => self.board_shape(),
             Self::SteerSend(_)
             | Self::SteerInbox(_)
+            | Self::SteerRepair(_)
             | Self::DirectiveRef(_)
             | Self::SteerDispose(_)
             | Self::ConsentDecide(_)
@@ -592,6 +606,7 @@ impl Intent {
         match self {
             Self::SteerSend(_) => BodyShape::SteerSend,
             Self::SteerInbox(_) => BodyShape::SteerInbox,
+            Self::SteerRepair(_) => BodyShape::SteerRepair,
             Self::DirectiveRef(_) => BodyShape::DirectiveRef,
             Self::SteerDispose(_) => BodyShape::SteerDispose,
             Self::ConsentDecide(_) => BodyShape::ConsentDecide,
@@ -720,6 +735,7 @@ impl BodyShape {
             self,
             Self::SteerSend
                 | Self::SteerInbox
+                | Self::SteerRepair
                 | Self::DirectiveRef
                 | Self::SteerDispose
                 | Self::ConsentDecide
@@ -737,6 +753,7 @@ impl BodyShape {
         Ok(match self {
             Self::SteerSend => Intent::SteerSend(crate::decode(bytes)?),
             Self::SteerInbox => Intent::SteerInbox(crate::decode(bytes)?),
+            Self::SteerRepair => Intent::SteerRepair(crate::decode(bytes)?),
             Self::DirectiveRef => Intent::DirectiveRef(crate::decode(bytes)?),
             Self::SteerDispose => Intent::SteerDispose(crate::decode(bytes)?),
             Self::ConsentDecide => Intent::ConsentDecide(crate::decode(bytes)?),

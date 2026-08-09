@@ -66,6 +66,7 @@ fn every_command_names_the_witnesses_it_requires() {
     for kind in CommandKind::ALL {
         let law = kind.law();
         let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
+        let output_repair = matches!(kind, CommandKind::SteerRepair);
         let server_projected_gate_work = matches!(kind, CommandKind::GateFindings);
         let lane_lifecycle = matches!(
             kind,
@@ -77,10 +78,14 @@ fn every_command_names_the_witnesses_it_requires() {
         );
         assert_eq!(
             law.required.is_empty(),
-            kind.is_read() || scanner_disposition || lane_lifecycle || server_projected_gate_work,
+            kind.is_read()
+                || output_repair
+                || scanner_disposition
+                || lane_lifecycle
+                || server_projected_gate_work,
             concat!(
-                "only reads, lane lifecycle, scanner dispositions, and server-projected gate ",
-                "work may omit required witnesses"
+                "only reads, output repair, lane lifecycle, scanner dispositions, and ",
+                "server-projected gate work may omit required witnesses"
             ),
         );
         if scanner_disposition {
@@ -135,6 +140,7 @@ fn lane_lifecycle_is_admitted_for_the_operator_alone() {
 fn operator_only_moves_are_admitted_for_the_operator_alone() {
     for kind in [
         CommandKind::SteerSend,
+        CommandKind::SteerRepair,
         CommandKind::ConsentDecide,
         CommandKind::TrustGrant,
         CommandKind::TrustRevoke,

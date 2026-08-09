@@ -2,13 +2,17 @@
 //! Transcript-backed disposition is the sole acknowledgment path.
 
 use std::fs;
+use std::sync::Mutex;
 
 use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use steer::Standing as _;
 use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
-use wire::intent::{CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective};
+use wire::intent::{
+    CommandAnswer, DeliveryAnswer, DeliveryStanding, DirectiveAnswer, InboxAnswer, LaneInbox,
+    PendingDirective,
+};
 use wire::{
     Actor, CanonicalUuid, Command, Disposition, Fault, FaultClass, Instant, Outcome, Producer,
     Refusal, Reply, ReplyPosition, ResidencyHead, Seq, SeqRange, Witness,
@@ -26,6 +30,9 @@ mod transcript;
 
 use preview::directive_preview;
 use transcript::transcript_recognition;
+
+const FOLD_RETRIES: usize = 4;
+static FOLD_AUTHORITY: Mutex<()> = Mutex::new(());
 
 pub(super) fn publish_lane_discoveries(
     paths: &RuntimePaths,
@@ -88,13 +95,8 @@ pub(super) fn publish_inboxes(
     paths: &RuntimePaths,
     residency: &ResidencyHead,
 ) -> CommandResult<()> {
-    let snapshot = bus
-        .fact_snapshot()
-        .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
-    let ledger = steer::Ledger::from_snapshot(&snapshot)
-        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
     for lane in &residency.lanes {
-        publish_lane_inbox(paths, lane, &ledger)?;
+        publish_inbox(bus, paths, residency, lane.lane)?;
     }
     Ok(())
 }
@@ -115,12 +117,94 @@ pub(super) fn publish_inbox(
                 &format!("lane {selected} disappeared while publishing its inbox"),
             )
         })?;
-    let snapshot = bus
-        .fact_snapshot()
-        .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
-    let ledger = steer::Ledger::from_snapshot(&snapshot)
-        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
-    publish_lane_inbox(paths, lane, &ledger)
+    fold_lane_inbox(bus, paths, lane).map(|_| ())
+}
+
+fn fold_lane_inbox(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    lane: &wire::LaneResidency,
+) -> CommandResult<DeliveryStanding> {
+    fold_lane_inbox_with(bus, paths, lane, |_| {})
+}
+
+pub(super) fn fold_lane_inbox_with(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    lane: &wire::LaneResidency,
+    mut after_publication: impl FnMut(usize),
+) -> CommandResult<DeliveryStanding> {
+    // Publication and its durable progress record are one process-local
+    // authority. A newer command may commit while this guard is held, but its
+    // fold queues behind this one and therefore has the final word.
+    let _authority = FOLD_AUTHORITY
+        .lock()
+        .map_err(|error| store_fault("steer::fold-authority-poisoned", &error.to_string()))?;
+    for attempt in 0..FOLD_RETRIES {
+        let snapshot = bus
+            .fact_snapshot()
+            .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
+        let source = snapshot.horizon().ok_or_else(|| {
+            store_fault(
+                "steer::journal-empty",
+                "a running resident has no durable startup fact",
+            )
+        })?;
+        let ledger = steer::Ledger::from_snapshot(&snapshot)
+            .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+        let keys = pending_keys(&ledger, lane.lane);
+        let publication = publish_lane_inbox(paths, lane, &ledger);
+        after_publication(attempt);
+        let current = bus
+            .fact_snapshot()
+            .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
+        let current = steer::Ledger::from_snapshot(&current)
+            .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+        let moved = pending_keys(&current, lane.lane) != keys;
+        if moved && attempt + 1 < FOLD_RETRIES {
+            continue;
+        }
+        if moved {
+            return Err(store_fault(
+                "steer::fold-moving",
+                "lane steering authority moved throughout the bounded fold refill",
+            ));
+        }
+        let delivery = match publication {
+            Ok(()) => DeliveryStanding::Published { source },
+            Err(Outcome::Fault(fault)) => DeliveryStanding::Parked {
+                source,
+                keys,
+                failure: format!("{}: {}", fault.reason, fault.detail),
+                repair: format!("spice steer repair {}", lane.lane),
+            },
+            Err(outcome) => return Err(outcome),
+        };
+        let record = steer::fold::Record::new(lane.lane, delivery.clone());
+        steer::fold::publish(&paths.data, &record).map_err(|error| {
+            environment_fault("steer::fold-progress-unwritable", &error.to_string())
+        })?;
+        return Ok(delivery);
+    }
+    unreachable!("the final fold attempt returns instead of retrying")
+}
+
+fn pending_keys(ledger: &steer::Ledger, lane: CanonicalUuid) -> Vec<String> {
+    ledger
+        .pending(lane)
+        .iter()
+        .map(|directive| directive.key().to_string())
+        .collect()
+}
+
+fn fold_delivery(paths: &RuntimePaths, lane: CanonicalUuid) -> CommandResult<DeliveryStanding> {
+    steer::fold::read(&paths.data, lane)
+        .map(|record| {
+            record.map_or(DeliveryStanding::Unknown, |record| {
+                record.delivery().clone()
+            })
+        })
+        .map_err(|error| environment_fault("steer::fold-progress-unreadable", &error.to_string()))
 }
 
 fn publish_lane_inbox(
@@ -149,6 +233,7 @@ pub(super) fn lane_capability(lane: &wire::LaneResidency) -> CommandResult<Canon
 
 pub(super) fn inbox(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     request: &wire::intent::SteerInbox,
@@ -193,6 +278,10 @@ pub(super) fn inbox(
                 .into_iter()
                 .map(|directive| pending_directive(&snapshot.facts, directive))
                 .collect(),
+            delivery: match fold_delivery(paths, lane.lane) {
+                Ok(delivery) => delivery,
+                Err(outcome) => return typed_outcome(outcome),
+            },
         });
     }
     if let Some(selected) = selected
@@ -208,6 +297,60 @@ pub(super) fn inbox(
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(snapshot.position),
         body: CommandAnswer::Inbox(InboxAnswer { epoch, lanes }),
+    })
+}
+
+pub(super) fn repair(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    request: &wire::intent::SteerRepair,
+) -> Outcome<CommandAnswer> {
+    if !matches!(command.actor(), Actor::Operator) {
+        return refusal(
+            "steer::operator-required",
+            Some("operator".to_owned()),
+            Some(command.actor().to_string()),
+            "submit fold repair through the current operator discovery",
+        );
+    }
+    let residency = match current_residency(bus, epoch) {
+        Ok(residency) => residency,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let Some(lane) = residency
+        .body()
+        .lanes
+        .iter()
+        .find(|lane| lane.lane == request.lane)
+    else {
+        return refusal(
+            "steer::repair-lane-unknown",
+            Some("one current seated lane".to_owned()),
+            Some(request.lane.to_string()),
+            "read lane state and repair a lane the resident currently owns",
+        );
+    };
+    let delivery = match fold_lane_inbox(bus, paths, lane) {
+        Ok(delivery) => delivery,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let source = match &delivery {
+        DeliveryStanding::Published { source } | DeliveryStanding::Parked { source, .. } => *source,
+        DeliveryStanding::Unknown => {
+            return typed_store_fault(
+                "steer::fold-standing-invalid",
+                "repair completed without a published or parked standing",
+            );
+        }
+    };
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Snapshot(source),
+        body: CommandAnswer::Delivery(DeliveryAnswer {
+            lane: request.lane,
+            delivery: Box::new(delivery),
+        }),
     })
 }
 
@@ -310,6 +453,7 @@ pub(super) fn send(
         directive: command.id(),
         key: key.to_string(),
         disposition: Disposition::Live,
+        delivery: Box::new(DeliveryStanding::Unknown),
     };
     if let Err(error) =
         proposal.command_result(typed_command(command, send.clone()), epoch, answer.clone())
@@ -361,6 +505,7 @@ pub(super) fn cancel(
         directive: cancel.directive,
         key: directive.key().to_string(),
         disposition: Disposition::Canceled,
+        delivery: Box::new(DeliveryStanding::Unknown),
     };
     if let Err(error) = proposal.command_result(
         typed_command(command, cancel.clone()),
@@ -484,6 +629,7 @@ pub(super) fn recover(
         directive: recover.directive,
         key: key.to_string(),
         disposition: Disposition::Live,
+        delivery: Box::new(DeliveryStanding::Unknown),
     };
     if let Err(error) = proposal.command_result(
         typed_command(command, recover.clone()),
@@ -639,6 +785,7 @@ fn record_disposition(
         directive: directive.directive(),
         key: key.to_string(),
         disposition,
+        delivery: Box::new(DeliveryStanding::Unknown),
     };
     if let Err(error) = proposal.command_result(
         typed_command(command, dispose.clone()),
@@ -1064,15 +1211,25 @@ fn finish(
     residency: &ResidencyHead,
     lane: CanonicalUuid,
     proposal: JournalWrite,
-    answer: DirectiveAnswer,
+    mut answer: DirectiveAnswer,
 ) -> Outcome<CommandAnswer> {
     let committed = match commit(bus, proposal) {
         Ok(committed) => committed,
         Err(outcome) => return typed_outcome(outcome),
     };
-    // Rendering is disposable; a publication failure cannot rewrite a
-    // command result that the journal and receipt already committed.
-    let _rendering = publish_inbox(bus, paths, residency, lane);
+    let selected = match residency.lanes.iter().find(|row| row.lane == lane) {
+        Some(selected) => selected,
+        None => {
+            return typed_store_fault(
+                "steer::lane-missing-after-commit",
+                &format!("lane {lane} disappeared while publishing its inbox"),
+            );
+        }
+    };
+    answer.delivery = match fold_lane_inbox(bus, paths, selected) {
+        Ok(delivery) => Box::new(delivery),
+        Err(outcome) => return typed_outcome(outcome),
+    };
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {
             first: seq(committed.first()),

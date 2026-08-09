@@ -159,6 +159,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::DocApply
         | CommandKind::SteerSend
         | CommandKind::SteerInbox
+        | CommandKind::SteerRepair
         | CommandKind::SteerResend
         | CommandKind::SteerDispose
         | CommandKind::SteerCancel
@@ -289,6 +290,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["steer"]
         | ["steer", "cancel"]
         | ["steer", "recover"]
+        | ["steer", "repair"]
         | ["inbox"]
         | ["hook"]
         | ["ack"]

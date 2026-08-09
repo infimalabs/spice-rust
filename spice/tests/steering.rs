@@ -713,6 +713,8 @@ fn direct_input_cannot_ack(fixture: &Fixture, lane: wire::CanonicalUuid) {
 }
 
 fn rendering_failure_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
+    // ST-05 + ID-10 + CON-05: the journal commit remains authoritative when
+    // its disposable inbox rendering fails, and the failure is observable.
     let lane = lane.to_string();
     let inbox_root = fixture.runtime.join("inbox");
     fs::remove_dir_all(&inbox_root).expect("fixture removes disposable inbox renderings");
@@ -722,6 +724,19 @@ fn rendering_failure_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
         &["steer", &lane, "remain authoritative without a rendering"],
         false,
     ));
+    let wire::intent::DeliveryStanding::Parked {
+        source,
+        keys,
+        failure,
+        repair,
+    } = sent.delivery.as_ref()
+    else {
+        panic!("failed publication did not return parked delivery: {sent:?}");
+    };
+    assert!(source.get() > 0);
+    assert_eq!(keys, std::slice::from_ref(&sent.key));
+    assert!(failure.contains("steer::inbox-unwritable"));
+    assert_eq!(repair, &format!("spice steer repair {lane}"));
     let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
     assert!(
         inbox.lanes[0]
@@ -729,7 +744,36 @@ fn rendering_failure_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
             .iter()
             .any(|pending| pending.directive == sent.directive)
     );
+    assert_eq!(&inbox.lanes[0].delivery, sent.delivery.as_ref());
     fs::remove_file(&inbox_root).expect("fixture unblocks inbox publication");
+    let repaired = invoke(fixture, &["steer", "repair", &lane], true);
+    let Outcome::Reply(repaired): Outcome<wire::intent::DeliveryAnswer> = json_outcome(&repaired)
+    else {
+        panic!("fold repair must reply: {:?}", repaired.stderr);
+    };
+    assert_eq!(repaired.body.lane, lane.parse().expect("lane UUID"));
+    assert!(matches!(
+        repaired.body.delivery.as_ref(),
+        wire::intent::DeliveryStanding::Published { .. }
+    ));
+    let rendered = fs::read_to_string(inbox_root.join(&lane)).expect("repair republishes inbox");
+    assert!(rendered.contains(&sent.key));
+    assert_eq!(rendered.matches(&sent.key).count(), 1);
+    let repaired_again = invoke(fixture, &["steer", "repair", &lane], true);
+    let Outcome::Reply(repaired_again): Outcome<wire::intent::DeliveryAnswer> =
+        json_outcome(&repaired_again)
+    else {
+        panic!(
+            "idempotent fold repair must reply: {:?}",
+            repaired_again.stderr
+        );
+    };
+    assert_eq!(repaired_again.body.delivery, repaired.body.delivery);
+    assert_eq!(
+        fs::read_to_string(inbox_root.join(&lane)).expect("repeat repair leaves inbox readable"),
+        rendered,
+        "ID-10 repair is idempotent at an unchanged journal horizon"
+    );
     let canceled = text_directive(&invoke(
         fixture,
         &["steer", "cancel", &sent.directive.to_string()],

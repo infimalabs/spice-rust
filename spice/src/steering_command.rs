@@ -152,6 +152,10 @@ fn select<'a>(
             let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;
             Ok((SelectedCommand::SteerRecover { directive }, None))
         }
+        ["steer", "repair"] => {
+            let lane = uuid_operand(matches, "LANE", "steer::lane-invalid")?;
+            Ok((SelectedCommand::SteerRepair { lane }, None))
+        }
         ["inbox"] => {
             let lane = optional_uuid_operand(matches, "LANE", "steer::lane-invalid")?;
             Ok((
