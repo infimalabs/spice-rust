@@ -94,13 +94,11 @@ async function assignTeamLaneIds(page) {
   }, teamLaneIds);
 }
 
-export async function assertAgentConversation(
-  page,
-  fixture,
-  worktrees,
-  activityReplay,
-  artifacts,
-) {
+/// Seat the canonical four-member fixture team without running its scenarios.
+///
+/// Other independently runnable browser shards need a real lineage but must
+/// not replay the conversation assertions or their deliberate quiet window.
+export async function seatAgentTeam(page, fixture, worktrees, assertInvalidVendor = false) {
   const teamWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
   await chooseCanvasView(page, "Agents");
@@ -110,17 +108,15 @@ export async function assertAgentConversation(
   await console.getByLabel("Worktree").fill(teamWorktrees[0]);
   await console.getByLabel("Life").fill("steer");
 
-  // A refused submission has to say why. The vendor field is free text with no
-  // datalist, so a proper name typed the way it is written everywhere else is
-  // the trip an operator actually takes, and it used to send no request and
-  // print nothing: the button read as dead. This is the only refusal reachable
-  // by clicking, because the compose button disables itself while the message
-  // is empty or no agent is seated.
   const refusal = console.locator(".form-refusal");
-  await console.getByLabel("Vendor").fill("My Agent");
-  await console.getByRole("button", { name: "Seat agent" }).click();
-  await refusal.waitFor({ timeout: 10_000 });
-  assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
+  if (assertInvalidVendor) {
+    // A refused submission has to say why. The vendor field is free text with
+    // no datalist, so a proper name is the trip an operator actually takes.
+    await console.getByLabel("Vendor").fill("My Agent");
+    await console.getByRole("button", { name: "Seat agent" }).click();
+    await refusal.waitFor({ timeout: 10_000 });
+    assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
+  }
 
   await assignTeamLaneIds(page);
   await console.getByLabel("Vendor").fill("Claude");
@@ -165,6 +161,43 @@ export async function assertAgentConversation(
       + "session: 018f7777-7777-7444-8888-999999999999",
     "the agent card tooltip carries the admitted launch and session identity",
   );
+
+  return {
+    console,
+    firstSeatedAt,
+    host,
+    seated,
+    teamWorktrees,
+    lane: seated[0].lane,
+    quoteLane: seated[3].lane,
+    agentName: agentNames[0],
+    quoteProse: agentProse(teamWorktrees[3]),
+    primaryHeadings: seated.map((lane, index) => ({
+      lane: lane.lane,
+      prose: index === 0
+        ? "newest lane prose witness"
+        : index === 1
+          ? "periodic live witness"
+          : agentProse(teamWorktrees[index]),
+    })),
+  };
+}
+
+export async function assertAgentConversation(
+  page,
+  fixture,
+  worktrees,
+  activityReplay,
+  artifacts,
+) {
+  const team = await seatAgentTeam(page, fixture, worktrees, true);
+  const {
+    console,
+    firstSeatedAt,
+    host,
+    seated,
+    teamWorktrees,
+  } = team;
 
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await console.locator(".team-agent").nth(3).waitFor();
@@ -426,18 +459,11 @@ export async function assertAgentConversation(
   const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
   await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
   return {
-    lane: seated[0].lane,
-    quoteLane: seated[3].lane,
-    agentName: agentNames[0],
-    quoteProse: agentProse(teamWorktrees[3]),
-    primaryHeadings: seated.map((lane, index) => ({
-      lane: lane.lane,
-      prose: index === 0
-        ? "newest lane prose witness"
-        : index === 1
-          ? "periodic live witness"
-          : agentProse(teamWorktrees[index]),
-    })),
+    lane: team.lane,
+    quoteLane: team.quoteLane,
+    agentName: team.agentName,
+    quoteProse: team.quoteProse,
+    primaryHeadings: team.primaryHeadings,
   };
 }
 

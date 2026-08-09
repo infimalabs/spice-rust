@@ -453,6 +453,45 @@ fn a_complete_install_refuses_a_plan_that_adds_or_drops_the_executable() {
     assert!(!repository.common_dir().join(BINARY_PATH).exists());
 }
 
+/// Apply is a second door onto the refresh branch, and it refuses the same way.
+///
+/// Apply derives its own plan rather than reusing `plan`, so a shape
+/// disagreement reaching its refresh branch would be caught only incidentally,
+/// by the derived plan failing to match the digest the caller named. That
+/// reports `DigestMismatch` — a stale-plan answer — for a caller that is not
+/// stale at all, so both directions have to refuse at the binary context here
+/// too, before the digest is ever compared.
+#[test]
+fn a_complete_install_refuses_an_apply_that_adds_or_drops_the_executable() {
+    let dropped = Scratch::new("apply-drops-binary");
+    let repository = dropped.repository();
+    let binary = dropped.binary(b"old binary bytes");
+    let installed = plan(&repository, Some(&binary)).unwrap().digest().unwrap();
+    apply(&repository, Some(&binary), &installed).unwrap();
+
+    let error = apply(&repository, None, &installed)
+        .expect_err("an apply without the installed executable");
+    assert!(
+        matches!(error, InstallError::BinaryContextChanged),
+        "{error:?}"
+    );
+    assert!(repository.common_dir().join(BINARY_PATH).is_file());
+
+    let added = Scratch::new("apply-adds-binary");
+    let repository = added.repository();
+    let installed = plan(&repository, None).unwrap().digest().unwrap();
+    apply(&repository, None, &installed).unwrap();
+    let binary = added.binary(b"new binary bytes");
+
+    let error = apply(&repository, Some(&binary), &installed)
+        .expect_err("an apply adding an executable to an install");
+    assert!(
+        matches!(error, InstallError::BinaryContextChanged),
+        "{error:?}"
+    );
+    assert!(!repository.common_dir().join(BINARY_PATH).exists());
+}
+
 #[test]
 fn reversing_before_reinstalling_withdraws_what_a_refresh_keeps() {
     let scratch = Scratch::new("refresh-control");

@@ -2,31 +2,38 @@
 
 use std::ffi::OsStr;
 use std::fmt;
-use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 mod app;
+mod build_cache;
 mod commit_message;
-// The refresh drives `spice::install`, which the appliance itself gates off the
-// wasm target; the workspace wasm check compiles this crate too.
-#[cfg(not(target_arch = "wasm32"))]
 mod develop;
 mod hooks;
 mod landing;
 mod proof_image;
 mod reference_transaction;
 mod release;
+mod verify_browser;
 mod verify_execution;
 mod verify_timing;
+#[cfg(not(target_arch = "wasm32"))]
+mod workspace_tests;
 
 use app::WASM_TARGET;
 pub use app::{AppBuildError, app};
+pub use build_cache::{
+    BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheReport, BuildCacheRequest,
+    BuildCacheRootReport, build_cache, collect_build_cache_at, parse_byte_quantity,
+};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
+pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh};
+use verify_browser::BrowserRun;
+// The install step drives `spice::install`, which the appliance itself gates
+// off the wasm target; the workspace wasm check compiles this crate too.
 #[cfg(not(target_arch = "wasm32"))]
-pub use develop::{RefreshError, RefreshReport, RefreshRequest, refresh, refresh_install};
+pub use develop::refresh_install;
 pub use hooks::{
     HookActivationError, activate_hooks, audit_entry_point, audit_entry_point_for_guard,
     compiled_reference_transaction_guard_digest, reference_transaction_guard_digest,
@@ -34,6 +41,8 @@ pub use hooks::{
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use reference_transaction::{ReferenceTransactionError, WorktreeDamage};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
+#[cfg(not(target_arch = "wasm32"))]
+pub use workspace_tests::{WorkspaceTestError, run as run_workspace_tests};
 
 /// Apply the repository's native commit-message law to one Git message file.
 ///
@@ -114,10 +123,7 @@ const VERIFY_ACTIONS: [Action; 12] = [
     )),
     Action::Command(Step::cargo(CANVAS_APP_LABEL, &["xtask", "app"])),
     Action::Browser,
-    Action::Command(Step::cargo(
-        "cargo test --locked --workspace --all-targets",
-        &["test", "--locked", "--workspace", "--all-targets"],
-    )),
+    Action::WorkspaceTests,
     Action::Command(Step::cargo(
         DOCUMENTATION_LABEL,
         &[
@@ -179,11 +185,9 @@ const ENTRY_POINT_LABEL: &str = "published reference-transaction guard is this b
 /// BROWSER-1kKSWhZk removed one of the two former surfaces. This mandatory
 /// action protects the remaining `composer -> mosaic_plane -> mosaic` path.
 const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
-const BROWSER_RECEIPT_FLAG: &str = "--spice-coverage-receipt";
-const BROWSER_PREBUILT_APP_FLAG: &str = "--spice-prebuilt-app";
-const BROWSER_RECEIPT: &[u8] = b"BROWSER-1kKSWhZk browser coverage complete\n";
 const CANVAS_APP_LABEL: &str = "cargo xtask app (canvas compiler evidence)";
-static NEXT_BROWSER_RECEIPT: AtomicU64 = AtomicU64::new(0);
+const WORKSPACE_TEST_LABEL: &str =
+    "deterministic sharded cargo test --locked --workspace --all-targets";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Step {
@@ -203,6 +207,7 @@ enum Action {
     Format,
     Command(Step),
     Browser,
+    WorkspaceTests,
     Battery,
     Landing,
 }
@@ -261,6 +266,7 @@ impl Action {
             Self::EntryPoint => ENTRY_POINT_LABEL,
             Self::Format => FORMAT_LABEL,
             Self::Browser => BROWSER_LABEL,
+            Self::WorkspaceTests => WORKSPACE_TEST_LABEL,
             Self::Battery => BATTERY_LABEL,
             Self::Landing => landing::LABEL,
         }
@@ -272,6 +278,7 @@ impl Action {
             Self::Format => "child-process:rustfmt",
             Self::Command(_) => "child-process:cargo",
             Self::Browser => "child-process:npm",
+            Self::WorkspaceTests => "child-process:rust-test-coordinator",
             Self::Battery => "in-process:gate-battery",
             Self::Landing => "in-process:contract-landing",
         }
@@ -290,6 +297,7 @@ trait Runner {
     fn run(&mut self, step: Step) -> io::Result<Status>;
     fn run_scoped(&mut self, step: ScopedCommand, package: &str) -> io::Result<Status>;
     fn browser(&mut self) -> io::Result<BrowserRun>;
+    fn workspace_tests(&mut self) -> io::Result<Status>;
     fn battery(&mut self) -> Result<BatteryRun, String>;
     fn landing(&mut self) -> Result<landing::Report, landing::Error>;
 }
@@ -308,12 +316,6 @@ trait Runner {
 enum BatteryRun {
     Admitted(Vec<u8>),
     Refused(Vec<u8>),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BrowserRun {
-    status: Status,
-    completed: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -476,26 +478,26 @@ impl Runner for SystemRunner {
     }
 
     fn browser(&mut self) -> io::Result<BrowserRun> {
-        let receipt = std::env::temp_dir().join(format!(
-            "spice-browser-coverage-{}-{}",
-            std::process::id(),
-            NEXT_BROWSER_RECEIPT.fetch_add(1, Ordering::Relaxed),
-        ));
-        remove_receipt(&receipt)?;
-        let process = Command::new("npm")
-            .args(["run", "test:canvas", "--", BROWSER_RECEIPT_FLAG])
-            .arg(&receipt)
-            .arg(BROWSER_PREBUILT_APP_FLAG)
-            .status()?;
-        let completed = fs::read(&receipt).is_ok_and(|body| body == BROWSER_RECEIPT);
-        remove_receipt(&receipt)?;
-        Ok(BrowserRun {
-            status: Status {
-                success: process.success(),
-                code: process.code(),
-            },
-            completed,
-        })
+        verify_browser::run()
+    }
+
+    fn workspace_tests(&mut self) -> io::Result<Status> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let status = Command::new(std::env::current_exe()?)
+                .arg("__workspace-tests")
+                .status()?;
+            Ok(Status {
+                success: status.success(),
+                code: status.code(),
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Err(io::Error::other(
+                "workspace tests are unavailable on wasm32",
+            ))
+        }
     }
 
     fn battery(&mut self) -> Result<BatteryRun, String> {
@@ -527,14 +529,6 @@ impl Runner for SystemRunner {
 
     fn landing(&mut self) -> Result<landing::Report, landing::Error> {
         landing::inspect()
-    }
-}
-
-fn remove_receipt(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
     }
 }
 
@@ -869,6 +863,21 @@ mod tests {
                 .expect("fixture has one browser outcome")
         }
 
+        fn workspace_tests(&mut self) -> io::Result<Status> {
+            self.calls.push(WORKSPACE_TEST_LABEL);
+            match self.outcomes.pop_front().expect("fixture has an outcome") {
+                Outcome::Success => Ok(Status {
+                    success: true,
+                    code: Some(0),
+                }),
+                Outcome::Exit(code) => Ok(Status {
+                    success: false,
+                    code: Some(code),
+                }),
+                Outcome::Launch => Err(io::Error::other("fixture shard launch refusal")),
+            }
+        }
+
         fn battery(&mut self) -> Result<BatteryRun, String> {
             self.calls.push(BATTERY_LABEL);
             self.battery
@@ -1059,10 +1068,7 @@ mod tests {
             )),
             Action::Command(Step::cargo(CANVAS_APP_LABEL, &["xtask", "app"])),
             Action::Browser,
-            Action::Command(Step::cargo(
-                "cargo test --locked --workspace --all-targets",
-                &["test", "--locked", "--workspace", "--all-targets"],
-            )),
+            Action::WorkspaceTests,
             Action::Command(Step::cargo(
                 "cargo doc --locked --workspace --lib --bins --no-deps",
                 &[
@@ -1154,7 +1160,7 @@ mod tests {
         let app_build = VERIFY_ACTIONS[browser - 1];
         assert!(matches!(app_build, Action::Command(step) if step.arguments == ["xtask", "app"]));
         assert_eq!(
-            BROWSER_RECEIPT,
+            verify_browser::RECEIPT,
             b"BROWSER-1kKSWhZk browser coverage complete\n"
         );
         assert!(BROWSER_LABEL.contains("BROWSER-1kKSWhZk"));
@@ -1403,8 +1409,16 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(action, Action::Command(_)))
                 .count(),
-            7,
-            "exactly seven declared Cargo commands precede compiled landing"
+            6,
+            "exactly six ordinary Cargo commands precede compiled landing"
+        );
+        assert_eq!(
+            VERIFY_ACTIONS
+                .iter()
+                .filter(|action| matches!(action, Action::WorkspaceTests))
+                .count(),
+            1,
+            "one bounded workspace-test coordinator precedes compiled landing"
         );
         assert_eq!(
             VERIFY_ACTIONS
@@ -1452,7 +1466,12 @@ mod tests {
     fn successful_commands() -> Vec<Outcome> {
         VERIFY_ACTIONS
             .iter()
-            .filter(|action| matches!(action, Action::Format | Action::Command(_)))
+            .filter(|action| {
+                matches!(
+                    action,
+                    Action::Format | Action::Command(_) | Action::WorkspaceTests
+                )
+            })
             .map(|_| Outcome::Success)
             .collect()
     }

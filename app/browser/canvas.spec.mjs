@@ -13,6 +13,7 @@ import {
   assertMosaicLattice,
   entirelyQuotedMessage,
   nestedQuoteMessage,
+  seatAgentTeam,
 } from "./agent-conversation.mjs";
 import {
   assertComposerShards,
@@ -27,6 +28,7 @@ import { assertAgentRenewalRequest, captureReferenceControls } from "./control-r
 import { assertMotionPreference } from "./mosaic-motion.mjs";
 import { assertTeamArrangement } from "./team-arrangement.mjs";
 import { assertTeamMenu } from "./team-menu.mjs";
+import { assertTaskNotes } from "./task-notes.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs";
 import {
@@ -35,8 +37,9 @@ import {
 } from "./canvas-endpoint-probes.mjs";
 import { assertLineageLifeIsolation } from "./canvas-lineage-life.mjs";
 import { assertLineageDrainFailureTeardown } from "./canvas-lineage-teardown.mjs";
-import { ownFixture } from "./canvas-lifecycle.mjs";
+import { ownFixture, recordedVendorPids } from "./canvas-lifecycle.mjs";
 import { assertBoundaryLoadReading, withLoadReading } from "./canvas-load.mjs";
+import { descendantPids, emitShardEvent, startShardWorker } from "./canvas-shards.mjs";
 import { assertSignalExitedChildSkipsTeardown } from "./canvas-signal-teardown.mjs";
 import { assertFixtureTeardownReaps } from "./canvas-teardown.mjs";
 import {
@@ -84,24 +87,6 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const artifacts = join(root, "artifacts/canvas");
-const coverageReceiptFlag = "--spice-coverage-receipt";
-const prebuiltAppFlag = "--spice-prebuilt-app";
-const coverageReceipt = "BROWSER-1kKSWhZk browser coverage complete\n";
-const coverageArguments = process.argv.slice(2);
-const prebuiltApp = coverageArguments.at(-1) === prebuiltAppFlag;
-if (prebuiltApp) coverageArguments.pop();
-let coverageReceiptPath;
-if (coverageArguments.length > 0) {
-  if (
-    coverageArguments.length !== 2 ||
-    coverageArguments[0] !== coverageReceiptFlag ||
-    !coverageArguments[1] ||
-    coverageArguments[1].startsWith("--")
-  ) {
-    throw new Error(`expected ${coverageReceiptFlag} FILE or no arguments`);
-  }
-  coverageReceiptPath = coverageArguments[1];
-}
 const staleEpoch = "018f9999-9999-7444-8888-999999999999";
 
 async function waitAtFirstSpecCaller(page) {
@@ -724,7 +709,7 @@ async function seedMixedLaunchEffort(page, fixture, linkedRoot, lane) {
 /// `missing-end` and `claim-freed`. `seedProvenEffort` adds the other side, so
 /// both tables stand at once and each control below has a leg that would notice
 /// if the surface simply stopped rendering.
-async function assertTaskEffortSurface(page, fixture, seeded) {
+async function assertTaskEffortSurface(page, fixture, linkedRoot, seeded) {
   // Enough turns for the `todo` work the fixture already carries to drain far
   // enough that a phase this lane completed outranks what is left, which is the
   // only axis of the grouping key this fixture can move: one `[vendor.claude]`
@@ -1236,191 +1221,197 @@ async function assertSameGenerationResume(
 }
 
 assertBoundaryLoadReading();
-// The launch-site guard interrogates this exact executable, so building is a
-// precondition rather than something an agent must remember after source gains
-// a no-pop gate. No fixture process can start before both steps pass.
-await buildResident({ app: !prebuiltApp });
-await assertHeadlessLaunchSites();
-await assertEndpointProbeClosesWithoutResponse();
-await assertEndpointProbeStates();
-await assertSignalExitedChildSkipsTeardown();
-await assertLineageDrainFailureTeardown();
-await assertSurvivingVendorsAreReported();
-await assertFullyReapedVendorsStaySilent();
-await assertFixtureTeardownReaps();
-const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
-const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
-// Ownership is taken before the fixture is configured rather than inside the
-// try below, because configuring it is already enough work to be interrupted
-// during, and an interruption there used to leave both directories behind.
-const owner = ownFixture({ fixture, linkedRoot });
-await mkdir(artifacts, { recursive: true });
-
+const run = startShardWorker(process.argv.slice(2));
+if (process.env.SPICE_CANVAS_PREBUILT !== "1") await buildResident();
+let fixture;
+let linkedRoot;
+let owner;
 let resident;
 let browser;
 try {
-  // Configuring the fixture is inside the guarded region, not before it.
-  // Outside, a failure here -- a bad stage copy, a git worktree that will not
-  // add -- left both temporary directories behind with nothing to remove them.
-  const worktrees = await configureFixture(fixture, linkedRoot, 5, { noCardMember: 5 });
-  resident = owner.ownResident(await startResident(fixture));
-  const seeded = await seedAuthority(fixture);
-  browser = await launchBrowser();
-  await assertHandshakeTimeout(browser, resident.discovery.endpoint);
-  await assertLineageLifeIsolation(browser);
-
-  const light = await browser.newContext({
-    colorScheme: "light",
-    viewport: { width: 1440, height: 900 },
-  });
-  const activityReplay = await installActivityReplay(light);
-  await installBrowserSpeech(light);
-  await installSocketControl(light);
-  const lightPage = await light.newPage();
-  const lightMonitor = monitorPage(lightPage);
-  lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
-  await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-  await assertCanvas(lightPage, "light");
-  await assertDistinctWaitCallSites(lightPage);
-  const hiddenStatusReport = await assertWaitReporting(lightPage, resident);
-  Object.assign(
-    seeded,
-    await assertAgentConversation(lightPage, fixture, worktrees, activityReplay, artifacts),
-  );
-  await assertTeamMenu(lightPage, fixture);
-  const reference = await browser.newContext({
-    colorScheme: "dark",
-    viewport: { width: 1000, height: 568 },
-  });
-  await installBrowserSpeech(reference);
-  const referencePage = await reference.newPage();
-  const referenceMonitor = monitorPage(referencePage);
-  await referencePage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-  await captureReferenceViewport(referencePage);
-  referenceMonitor.assertClean();
-  await reference.close();
-  seeded.extent = await journalExtent(fixture);
-  await assertAuthoritySurface(lightPage, seeded);
-  await assertMosaicComposer(lightPage, fixture, seeded);
-  await assertComposerRecovery(lightPage, fixture, seeded, lightMonitor);
-  await assertVacantWakeSubmission(lightPage, fixture, seeded);
-  await assertPackedHistory(lightPage, fixture, await journalExtent(fixture), true);
-  await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
-  await assertSystemSpeech(lightPage);
-  await chooseCanvasView(lightPage, "Flow");
-  await lightPage.getByLabel("Task").fill(seeded.task);
-  await lightPage.getByLabel("Observation").fill("browser mutation reached the resident");
-  await lightPage.getByRole("button", { name: "Add note" }).click();
-  await chooseCanvasView(lightPage, "Chronology");
-  await lightPage.getByText(/Note appended to/).waitFor({ timeout: 10_000 });
-  await chooseCanvasView(lightPage, "Flow");
-  await lightPage.getByLabel("Task").fill("not a handle");
-  await lightPage.getByLabel("Observation").fill("the callback must explain this refusal");
-  const addNote = lightPage.getByRole("button", { name: "Add note" });
-  assert.equal(await addNote.isEnabled(), true, "nonempty malformed input reaches the callback");
-  await addNote.click();
-  const noteRefusal = lightPage.getByRole("alert");
-  await noteRefusal.waitFor();
-  assert.match(await noteRefusal.innerText(), /Task must be .*both parts alphanumeric/);
-  assert.match(await noteRefusal.innerText(), /"not a handle"/);
-  const existingTasks = await lightPage.locator("#note-tasks option").evaluateAll(
-    (options) => options.map((option) => option.value),
-  );
-  const absentTask = ["SPICE-aBcD", "SPICE-zYxW"].find(
-    (candidate) => !existingTasks.includes(candidate),
-  );
-  assert.ok(absentTask, "an absent canonical task handle is available");
-  await lightPage.getByLabel("Task").fill(absentTask);
-  await lightPage.getByLabel("Observation").fill("this task does not exist");
-  await addNote.click();
-  await noteRefusal.waitFor({ state: "detached" });
-  await chooseCanvasView(lightPage, "Chronology");
-  await lightPage.locator(".event.refusal").waitFor({ timeout: 10_000 });
-  const beforeReconnect = await journalExtent(fixture);
-  await assertPackedHistory(lightPage, fixture, beforeReconnect);
-  // Effort runs after the extent-sensitive history checks: closing a claim
-  // appends facts, and a helper that pinned an extent before this point would
-  // be reading a journal this one had already moved.
-  await assertTaskEffortSurface(lightPage, fixture, seeded);
-
-  const dark = await browser.newContext({
-    colorScheme: "dark",
-    viewport: { width: 390, height: 844 },
-  });
-  await installBrowserSpeech(dark);
-  const darkPage = await dark.newPage();
-  const darkMonitor = monitorPage(darkPage);
-  await darkPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-  await assertCanvas(darkPage, "dark-narrow");
-  await assertMosaicLattice(darkPage, false);
-  await assertAuthoritySurface(darkPage, seeded);
-  await assertNoCredentialOrLandingGap(darkPage, [resident.discovery.capability]);
-  darkMonitor.assertClean();
-  await assertMotionPreference(browser, resident.discovery.endpoint, artifacts);
-  await assertSpeechVariants(browser, resident.discovery.endpoint);
-  await assertStaleGeneration(browser, resident.discovery.endpoint, resident.discovery.epoch);
-
-  await assertSameGenerationResume(
-    lightPage,
-    lightMonitor,
-    fixture,
-    seeded,
-    resident.discovery.epoch,
-    beforeReconnect,
-  );
-  await assertHalfOpenSocket(
-    browser,
-    resident.discovery.endpoint,
-    resident.discovery.epoch,
-    fixture,
-    seeded,
-  );
-  // Its own context for the same reason the half-open case takes one: the route
-  // that makes the resident go quiet has to exist before the socket opens, and
-  // every page above this line connected long ago.
-  await assertAgesTickWhileTheResidentIsSilent(
-    browser,
-    resident.discovery.endpoint,
-    fixture,
-    seeded.lane,
-  );
-  const configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
-  await assertTeamArrangement(lightPage, fixture, artifacts);
-  lightMonitor.assertClean();
-  await dark.close();
-
-  const liveTeam = await reply(fixture, ["lane"]);
-  for (const agent of liveTeam.body.lanes) {
-    await reply(fixture, ["lane", "drain", agent.lane]);
+  if (run.owns("ownership")) {
+    await run.scenario("launch-boundaries", async () => {
+      await assertHeadlessLaunchSites();
+      await assertEndpointProbeClosesWithoutResponse();
+      await assertEndpointProbeStates();
+      await assertSignalExitedChildSkipsTeardown();
+      await assertLineageDrainFailureTeardown();
+    });
+    await run.scenario("fixture-reaping", async () => {
+      await assertSurvivingVendorsAreReported();
+      await assertFullyReapedVendorsStaySilent();
+      await assertFixtureTeardownReaps();
+    });
+  } else {
+    fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
+    linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
+    owner = ownFixture({ fixture, linkedRoot });
+    await mkdir(artifacts, { recursive: true });
+    const worktrees = await configureFixture(fixture, linkedRoot, 5, { noCardMember: 5 });
+    resident = owner.ownResident(await startResident(fixture));
+    const seeded = await seedAuthority(fixture);
+    browser = await launchBrowser();
+    let light;
+    let lightPage;
+    let lightMonitor;
+    let hiddenStatusReport;
+    let configuredPolicy;
+    let dark;
+    let darkMonitor;
+    if (run.owns("readiness")) {
+      await run.scenario("light-readiness", async () => {
+        await assertHandshakeTimeout(browser, resident.discovery.endpoint);
+        await assertLineageLifeIsolation(browser);
+        light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
+        await installBrowserSpeech(light);
+        await installSocketControl(light);
+        lightPage = await light.newPage();
+        lightMonitor = monitorPage(lightPage);
+        lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
+        await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+        await assertCanvas(lightPage, "light");
+        await assertDistinctWaitCallSites(lightPage);
+        await assertWaitReporting(lightPage, resident);
+        lightMonitor.assertClean();
+        await light.close();
+      });
+    } else if (run.owns("interaction")) {
+      light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
+      const activityReplay = await installActivityReplay(light);
+      await installBrowserSpeech(light);
+      await installSocketControl(light);
+      lightPage = await light.newPage();
+      lightMonitor = monitorPage(lightPage);
+      lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
+      await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+      await assertCanvas(lightPage, "light");
+      await run.scenario("agent-conversation", async () => {
+        Object.assign(seeded, await assertAgentConversation(
+          lightPage, fixture, worktrees, activityReplay, artifacts,
+        ));
+        await assertTeamMenu(lightPage, fixture);
+      });
+      await run.scenario("reference-composer", async () => {
+        const reference = await browser.newContext({ colorScheme: "dark", viewport: { width: 1000, height: 568 } });
+        await installBrowserSpeech(reference);
+        const page = await reference.newPage();
+        const monitor = monitorPage(page);
+        await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+        await captureReferenceViewport(page);
+        monitor.assertClean();
+        await reference.close();
+        seeded.extent = await journalExtent(fixture);
+        await assertAuthoritySurface(lightPage, seeded);
+        await assertMosaicComposer(lightPage, fixture, seeded);
+        await assertComposerRecovery(lightPage, fixture, seeded, lightMonitor);
+        await assertVacantWakeSubmission(lightPage, fixture, seeded);
+        await assertPackedHistory(lightPage, fixture, await journalExtent(fixture), true);
+        await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
+        await assertSystemSpeech(lightPage);
+      });
+      await run.scenario("authority-task-flow", async () => {
+        await assertTaskNotes(lightPage, seeded.task);
+        await assertPackedHistory(lightPage, fixture, await journalExtent(fixture));
+        await assertTaskEffortSurface(lightPage, fixture, linkedRoot, seeded);
+        lightMonitor.assertClean();
+        await light.close();
+      });
+    } else {
+      await run.scenario("variant-surfaces", async () => {
+        light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
+        await installBrowserSpeech(light);
+        await installSocketControl(light);
+        lightPage = await light.newPage();
+        lightMonitor = monitorPage(lightPage);
+        await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+        await assertCanvas(lightPage, "light-resilience");
+        hiddenStatusReport = await assertWaitReporting(lightPage, resident);
+        const team = await seatAgentTeam(lightPage, fixture, worktrees);
+        Object.assign(seeded, {
+          lane: team.lane,
+          quoteLane: team.quoteLane,
+          agentName: team.agentName,
+          quoteProse: team.quoteProse,
+          primaryHeadings: team.primaryHeadings,
+        });
+        await reply(fixture, ["steer", seeded.lane, "browser direction survives streaming"]);
+        for (const [index, member] of team.seated.entries()) {
+          const rows = Array.from({ length: 18 + index * 6 }, (_, row) => `- row ${row + 1}`);
+          await reply(fixture, ["steer", member.lane,
+            [`resilience lattice witness ${index + 1}`, ...rows].join("\n")]);
+        }
+        seeded.extent = await journalExtent(fixture);
+        dark = await browser.newContext({ colorScheme: "dark", viewport: { width: 390, height: 844 } });
+        await installBrowserSpeech(dark);
+        const page = await dark.newPage();
+        darkMonitor = monitorPage(page);
+        await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+        await assertCanvas(page, "dark-narrow");
+        await assertMosaicLattice(page, false);
+        await assertAuthoritySurface(page, seeded);
+        await assertNoCredentialOrLandingGap(page, [resident.discovery.capability]);
+        await assertMotionPreference(browser, resident.discovery.endpoint, artifacts);
+        await assertSpeechVariants(browser, resident.discovery.endpoint);
+        await assertStaleGeneration(browser, resident.discovery.endpoint, resident.discovery.epoch);
+      });
+      await run.scenario("socket-resilience", async () => {
+        const extent = await journalExtent(fixture);
+        await assertSameGenerationResume(
+          lightPage, lightMonitor, fixture, seeded, resident.discovery.epoch, extent,
+        );
+        await assertHalfOpenSocket(
+          browser, resident.discovery.endpoint, resident.discovery.epoch, fixture, seeded,
+        );
+        await assertAgesTickWhileTheResidentIsSilent(
+          browser, resident.discovery.endpoint, fixture, seeded.lane,
+        );
+      });
+      await run.scenario("team-lifecycle", async () => {
+        configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
+        await assertTeamArrangement(lightPage, fixture, artifacts);
+        lightMonitor.assertClean();
+        darkMonitor.assertClean();
+        await dark.close();
+      });
+      await run.scenario("resident-restart", async () => {
+        const liveTeam = await reply(fixture, ["lane"]);
+        for (const agent of liveTeam.body.lanes) await reply(fixture, ["lane", "drain", agent.lane]);
+        const firstEpoch = resident.discovery.epoch;
+        const firstCapability = resident.discovery.capability;
+        lightMonitor.expectNetworkInterruption(true);
+        await chooseCanvasView(lightPage, "Chronology");
+        await assertWaitReportDistinguishesLayout(lightPage, resident, hiddenStatusReport);
+        await stopResident(fixture, resident);
+        await assertResidentLossObserved(lightPage, resident);
+        const restart = { epoch: firstEpoch, capability: firstCapability, policy: configuredPolicy };
+        resident = owner.ownResident(await assertResidentRestart(fixture, lightPage, restart));
+        lightMonitor.expectNetworkInterruption(false);
+        await assertCanvas(lightPage, "light-restarted");
+        await chooseCanvasView(lightPage, "Chronology");
+        assert.equal(await lightPage.getByText(/Note appended to/).count(), 0,
+          "new generation clears prior command reply state");
+        await assertPackedHistory(lightPage, fixture, await journalExtent(fixture));
+        await assertAuthoritySurface(lightPage, seeded);
+        await assertNoCredentialOrLandingGap(
+          lightPage, [firstCapability, resident.discovery.capability],
+        );
+        lightMonitor.assertClean();
+        await light.close();
+      });
+    }
   }
-  const firstEpoch = resident.discovery.epoch;
-  const firstCapability = resident.discovery.capability;
-  lightMonitor.expectNetworkInterruption(true);
-  await chooseCanvasView(lightPage, "Chronology");
-  await assertWaitReportDistinguishesLayout(lightPage, resident, hiddenStatusReport);
-  await stopResident(fixture, resident);
-  await assertResidentLossObserved(lightPage, resident);
-  const restart = { epoch: firstEpoch, capability: firstCapability, policy: configuredPolicy };
-  resident = owner.ownResident(await assertResidentRestart(fixture, lightPage, restart));
-  lightMonitor.expectNetworkInterruption(false);
-  await assertCanvas(lightPage, "light-restarted");
-  await chooseCanvasView(lightPage, "Chronology");
-  assert.equal(
-    await lightPage.getByText(/Note appended to/).count(),
-    0,
-    "new generation clears prior command reply state",
-  );
-  const restartedExtent = await journalExtent(fixture);
-  await assertPackedHistory(lightPage, fixture, restartedExtent);
-  await assertAuthoritySurface(lightPage, seeded);
-  await assertNoCredentialOrLandingGap(lightPage, [firstCapability, resident.discovery.capability]);
-  lightMonitor.assertClean();
-
-  await light.close();
 } catch (error) {
   throw withLoadReading(error);
 } finally {
-  if (browser) await browser.close();
-  await owner.cleanup();
+  if (owner) {
+    const pids = [...new Set([process.pid, resident?.child.pid,
+      ...await recordedVendorPids(fixture), ...descendantPids()])].filter(Number.isInteger);
+    try {
+      if (browser) await browser.close();
+    } finally {
+      await owner.cleanup();
+      emitShardEvent({ kind: "ownership", shard: run.shard.name, pids, fixture, linkedRoot });
+    }
+  }
 }
-if (coverageReceiptPath) await writeFile(coverageReceiptPath, coverageReceipt);
+run.finish();

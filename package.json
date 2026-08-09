@@ -2,7 +2,7 @@
   "name": "spice-browser-tests",
   "private": true,
   "scripts": {
-    "test:canvas": "node app/browser/canvas.spec.mjs"
+    "test:canvas": "node app/browser/canvas-coordinator.mjs"
   },
   "devDependencies": {
     "playwright": "1.62.1"
