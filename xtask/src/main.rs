@@ -79,6 +79,9 @@ fn main() -> ExitCode {
                         .map_err(Into::into)
                 })
         }
+        // The refresh drives `spice::install`, which is gated off the wasm
+        // target the workspace check compiles this binary for.
+        #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("install") => {
             drop(output);
             return run_install(arguments.collect());
@@ -138,6 +141,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_install(arguments: Vec<OsString>) -> ExitCode {
     let Some(request) = install_request(&arguments) else {
         eprintln!("{}", help());
@@ -154,6 +158,7 @@ fn run_install(arguments: Vec<OsString>) -> ExitCode {
 }
 
 /// Read one `cargo xtask install` invocation, or refuse the whole spelling.
+#[cfg(not(target_arch = "wasm32"))]
 fn install_request(arguments: &[OsString]) -> Option<xtask::RefreshRequest> {
     let mut request = xtask::RefreshRequest {
         restart: true,
