@@ -3,29 +3,59 @@ use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
+use std::time::SystemTime;
 
 use super::*;
+
+/// How many names one fixture tries before giving up on an exclusive root.
+const SCRATCH_ATTEMPTS: usize = 100;
 
 /// A scratch repository the installer is allowed to publish into.
 struct Fixture(PathBuf);
 
 impl Fixture {
+    /// One scratch repository under a root nothing else already holds.
+    ///
+    /// `create_dir` refuses a directory that exists rather than opening it, so
+    /// retrying under a fresh name is what makes the root exclusive. The name
+    /// carries the clock rather than the process id because ids are reused and
+    /// the clock is not: a run that inherited a recycled id used to find its own
+    /// name already taken by a root an earlier run had left behind.
     fn new(label: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "spice-xtask-develop-{label}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).expect("exclusive scratch root is created");
-        let root = fs::canonicalize(&root).expect("scratch root canonicalizes");
+        for _ in 0..SCRATCH_ATTEMPTS {
+            let stamp = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("the clock reads after the epoch")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "spice-xtask-develop-{label}-{stamp}-{}",
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&root) {
+                Ok(()) => return Self::initialized(root),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("exclusive scratch root is created: {error}"),
+            }
+        }
+        panic!("no exclusive scratch root was available in {SCRATCH_ATTEMPTS} attempts");
+    }
+
+    /// Canonicalize the freshly created `root` and make it a repository.
+    ///
+    /// The fixture owns the root before `git` is asked to initialize it, so a
+    /// refusal here unwinds through [`Fixture::drop`] and takes the directory
+    /// with it. Building the fixture last would leave the one root no test ever
+    /// used behind, which is the collision this whole change exists to stop.
+    fn initialized(root: PathBuf) -> Self {
+        let fixture = Self(fs::canonicalize(&root).expect("scratch root canonicalizes"));
         let status = Command::new("git")
             .args(["init", "--quiet", "--initial-branch=main", "."])
-            .current_dir(&root)
+            .current_dir(&fixture.0)
             .status()
             .expect("git launches");
         assert!(status.success(), "scratch repository is initialized");
-        Self(root)
+        fixture
     }
 
     fn repository(&self) -> Repository {
@@ -65,6 +95,17 @@ impl Fixture {
         discovery
             .publish(state.canvas())
             .expect("scratch discovery publishes");
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        // A root that outlives its test is a name the next run can collide
+        // with, so remove it even where a panic is unwinding through here.
+        // Removal is allowed to fail: a resident this test started may still
+        // hold a file open, and reporting that from a drop would replace the
+        // failure the test is already carrying.
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -606,5 +647,53 @@ fn an_explicit_endpoint_survives_an_unpublished_counterpart() {
         requested_endpoint(&hosted, None),
         (Some("127.0.0.1".to_owned()), None),
         "an explicitly named host was dropped for want of a port"
+    );
+}
+
+/// Two fixtures sharing one label take separate roots and leave neither behind.
+///
+/// The scratch name used to carry the process id, and nothing removed the root
+/// afterwards. Those two defects only bite together: ids are recycled, so a run
+/// that inherited one found a root an earlier run had abandoned under exactly
+/// the name it wanted, and `create_dir` refused before the test under it ran.
+/// Holding both fixtures at once is what proves the second name is not the
+/// first, and reading the paths back after the scope closes is what proves
+/// neither root survives to be collided with.
+#[test]
+fn two_fixtures_sharing_a_label_take_separate_roots_and_leave_neither_behind() {
+    let identifier = std::process::id().to_string();
+    let (first, second) = {
+        let earlier = Fixture::new("collision");
+        let later = Fixture::new("collision");
+        assert_ne!(earlier.0, later.0, "one label named one root twice");
+
+        for root in [&earlier.0, &later.0] {
+            assert!(
+                root.is_dir(),
+                "{} is not a live scratch root",
+                root.display()
+            );
+            let name = root
+                .file_name()
+                .expect("a scratch root is named")
+                .to_string_lossy()
+                .into_owned();
+            assert!(
+                !name.split('-').any(|field| field == identifier),
+                "{name} still names the process id the operating system reuses"
+            );
+        }
+        (earlier.0.clone(), later.0.clone())
+    };
+
+    assert!(
+        !first.exists(),
+        "{} outlived the fixture that owns it",
+        first.display()
+    );
+    assert!(
+        !second.exists(),
+        "{} outlived the fixture that owns it",
+        second.display()
     );
 }
