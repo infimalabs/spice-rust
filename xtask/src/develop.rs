@@ -261,7 +261,7 @@ fn workspace(repository: &Repository) -> Result<PathBuf, RefreshError> {
 /// Endpoint the published discovery names, when a resident published one.
 fn read_endpoint(repository: &Repository) -> Option<String> {
     let bytes = fs::read(repository.admit_state().ok()?.canvas()).ok()?;
-    let discovery = wire::decode::<canvas::Discovery>(&bytes).ok()?;
+    let discovery = wire::decode::<spice::canvas::Discovery>(&bytes).ok()?;
     Some(discovery.endpoint)
 }
 

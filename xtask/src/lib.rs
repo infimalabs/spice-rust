@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod app;
 mod commit_message;
+// The refresh drives `spice::install`, which the appliance itself gates off the
+// wasm target; the workspace wasm check compiles this crate too.
 #[cfg(not(target_arch = "wasm32"))]
 mod develop;
 mod hooks;
