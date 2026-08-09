@@ -26,7 +26,7 @@ fn one_old_rung_and_its_terminal_fact_fold_onto_the_root() {
     super::super::advance(&transaction).expect("old steering graph migrates");
     transaction.commit().expect("migration commits");
 
-    assert_eq!(version(&connection), 4);
+    assert_eq!(version(&connection), crate::SCHEMA_VERSION);
     let escalated = stored_fact(&connection, 2);
     assert_eq!(escalated["kind"], ESCALATED);
     assert_eq!(escalated["directive"], FIRST);

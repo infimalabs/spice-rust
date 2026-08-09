@@ -78,7 +78,7 @@ pub use head::{
     WorkflowHead,
 };
 pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected, SpeechPlayback, SpeechRequest};
-pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
+pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, FoldReport, FoldState, JournalBackup,
