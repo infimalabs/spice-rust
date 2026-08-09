@@ -23,8 +23,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tape::{Locus, Tape};
 
 use crate::{
-    Checkpoint, Decoded, Dialect, Event, EventKind, ReasoningContent, RecordPayload, ResidueKind,
-    Scan, ScanError, Span, ToolMoment, ToolResult, decode, scan as scan_records,
+    Checkpoint, Decoded, Dialect, Event, EventKind, ProseRole, ReasoningContent, RecordPayload,
+    ResidueKind, Scan, ScanError, Span, ToolMoment, ToolResult, decode, scan as scan_records,
 };
 
 /// Which daemonless surface produced a stream outcome.
@@ -252,8 +252,8 @@ impl From<&ToolMoment> for SurfaceToolMoment {
         match moment {
             ToolMoment::Call { name, .. } => Self::Call { name: name.clone() },
             ToolMoment::Update { name, .. } => Self::Update { name: name.clone() },
-            ToolMoment::Result(result) => Self::Result {
-                standing: (*result).into(),
+            ToolMoment::Result(outcome) => Self::Result {
+                standing: outcome.result.into(),
             },
         }
     }
@@ -871,8 +871,11 @@ fn decode_record(
 
 fn observe(session: &Session, decoded: &Decoded, spans: &[Span]) -> Vec<Observation> {
     match decoded {
-        Decoded::Events(events) => events
+        Decoded::Events { events, .. } => events
             .iter()
+            .filter(
+                |event| !matches!(event, Event::Prose(prose) if prose.role == ProseRole::Operator),
+            )
             .map(|event| Observation::Event {
                 lane: session.lane.clone(),
                 dialect: session.dialect,

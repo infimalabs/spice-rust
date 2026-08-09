@@ -1,4 +1,4 @@
-use listen::{Event, Locus, Prose, Usage};
+use listen::{Event, Locus, Prose, ProseRole, Usage};
 use taste::{
     Bag, REMINDER_MARKER, Taste, Trigger, TriggerError, is_reminder_echo, normalize_prose,
     reminder_identity, reminder_text,
@@ -14,6 +14,7 @@ fn locus(text: &str) -> Locus {
 
 fn prose(text: &str) -> Event {
     Event::Prose(Prose {
+        role: ProseRole::Assistant,
         text: text.to_owned(),
         phase: Some("final".to_owned()),
         locus: locus(text),
