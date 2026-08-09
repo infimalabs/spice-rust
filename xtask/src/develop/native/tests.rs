@@ -310,15 +310,23 @@ fn the_one_command_refresh_applies_a_bare_plan_without_withdrawing_anything() {
     let previewed = planned.digest().expect("the refresh plan is canonical");
 
     let stop = Arc::new(AtomicBool::new(false));
+    let first_seen = Arc::new(AtomicBool::new(false));
+    let second_seen = Arc::new(AtomicBool::new(false));
     let reader = {
         let stop = Arc::clone(&stop);
+        let first_seen = Arc::clone(&first_seen);
+        let second_seen = Arc::clone(&second_seen);
         let installed = installed.clone();
+        let first_image = first_image.clone();
+        let second_image = second_image.clone();
         thread::spawn(move || {
             let mut absences = 0_usize;
             let mut images = BTreeSet::new();
             while !stop.load(Ordering::Relaxed) {
                 match fs::read(&installed) {
                     Ok(bytes) => {
+                        first_seen.fetch_or(bytes == first_image, Ordering::Relaxed);
+                        second_seen.fetch_or(bytes == second_image, Ordering::Relaxed);
                         images.insert(bytes);
                     }
                     Err(error) if error.kind() == io::ErrorKind::NotFound => absences += 1,
@@ -328,7 +336,9 @@ fn the_one_command_refresh_applies_a_bare_plan_without_withdrawing_anything() {
             (absences, images)
         })
     };
+    wait_for_image(&first_seen, "first installed image");
     let second_digest = refresh_install(&repository, &second).expect("refresh applies");
+    wait_for_image(&second_seen, "refreshed installed image");
     stop.store(true, Ordering::Relaxed);
     let (absences, images) = reader.join().expect("the reading thread joins");
 
@@ -354,6 +364,14 @@ fn the_one_command_refresh_applies_a_bare_plan_without_withdrawing_anything() {
         fs::read(&installed).expect("installed executable reads"),
         second_image
     );
+}
+
+fn wait_for_image(observed: &AtomicBool, label: &str) {
+    let started = Instant::now();
+    while !observed.load(Ordering::Relaxed) && started.elapsed() < Duration::from_secs(5) {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(observed.load(Ordering::Relaxed), "reader missed {label}");
 }
 
 /// A refresh that fails after the executable moved puts the previous one back

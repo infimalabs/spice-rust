@@ -19,6 +19,8 @@ mod reference_transaction;
 mod release;
 mod verify_execution;
 mod verify_timing;
+#[cfg(not(target_arch = "wasm32"))]
+mod workspace_tests;
 
 use app::WASM_TARGET;
 pub use app::{AppBuildError, app};
@@ -39,6 +41,8 @@ pub use hooks::{
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use reference_transaction::{ReferenceTransactionError, WorktreeDamage};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
+#[cfg(not(target_arch = "wasm32"))]
+pub use workspace_tests::{WorkspaceTestError, run as run_workspace_tests};
 
 /// Apply the repository's native commit-message law to one Git message file.
 ///
@@ -118,10 +122,7 @@ const VERIFY_ACTIONS: [Action; 11] = [
         &["check", "--locked", "--workspace", "--target", WASM_TARGET],
     )),
     Action::Browser,
-    Action::Command(Step::cargo(
-        "cargo test --locked --workspace --all-targets",
-        &["test", "--locked", "--workspace", "--all-targets"],
-    )),
+    Action::WorkspaceTests,
     Action::Command(Step::cargo(
         DOCUMENTATION_LABEL,
         &[
@@ -185,6 +186,8 @@ const ENTRY_POINT_LABEL: &str = "published reference-transaction guard is this b
 const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
 const BROWSER_RECEIPT_FLAG: &str = "--spice-coverage-receipt";
 const BROWSER_RECEIPT: &[u8] = b"BROWSER-1kKSWhZk browser coverage complete\n";
+const WORKSPACE_TEST_LABEL: &str =
+    "deterministic sharded cargo test --locked --workspace --all-targets";
 static NEXT_BROWSER_RECEIPT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -205,6 +208,7 @@ enum Action {
     Format,
     Command(Step),
     Browser,
+    WorkspaceTests,
     Battery,
     Landing,
 }
@@ -263,6 +267,7 @@ impl Action {
             Self::EntryPoint => ENTRY_POINT_LABEL,
             Self::Format => FORMAT_LABEL,
             Self::Browser => BROWSER_LABEL,
+            Self::WorkspaceTests => WORKSPACE_TEST_LABEL,
             Self::Battery => BATTERY_LABEL,
             Self::Landing => landing::LABEL,
         }
@@ -274,6 +279,7 @@ impl Action {
             Self::Format => "child-process:rustfmt",
             Self::Command(_) => "child-process:cargo",
             Self::Browser => "child-process:npm",
+            Self::WorkspaceTests => "child-process:rust-test-coordinator",
             Self::Battery => "in-process:gate-battery",
             Self::Landing => "in-process:contract-landing",
         }
@@ -292,6 +298,7 @@ trait Runner {
     fn run(&mut self, step: Step) -> io::Result<Status>;
     fn run_scoped(&mut self, step: ScopedCommand, package: &str) -> io::Result<Status>;
     fn browser(&mut self) -> io::Result<BrowserRun>;
+    fn workspace_tests(&mut self) -> io::Result<Status>;
     fn battery(&mut self) -> Result<BatteryRun, String>;
     fn landing(&mut self) -> Result<landing::Report, landing::Error>;
 }
@@ -399,6 +406,25 @@ impl Runner for SystemRunner {
             },
             completed,
         })
+    }
+
+    fn workspace_tests(&mut self) -> io::Result<Status> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let status = Command::new(std::env::current_exe()?)
+                .arg("__workspace-tests")
+                .status()?;
+            Ok(Status {
+                success: status.success(),
+                code: status.code(),
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Err(io::Error::other(
+                "workspace tests are unavailable on wasm32",
+            ))
+        }
     }
 
     fn battery(&mut self) -> Result<BatteryRun, String> {
@@ -762,6 +788,21 @@ mod tests {
                 .expect("fixture has one browser outcome")
         }
 
+        fn workspace_tests(&mut self) -> io::Result<Status> {
+            self.calls.push(WORKSPACE_TEST_LABEL);
+            match self.outcomes.pop_front().expect("fixture has an outcome") {
+                Outcome::Success => Ok(Status {
+                    success: true,
+                    code: Some(0),
+                }),
+                Outcome::Exit(code) => Ok(Status {
+                    success: false,
+                    code: Some(code),
+                }),
+                Outcome::Launch => Err(io::Error::other("fixture shard launch refusal")),
+            }
+        }
+
         fn battery(&mut self) -> Result<BatteryRun, String> {
             self.calls.push(BATTERY_LABEL);
             self.battery
@@ -951,10 +992,7 @@ mod tests {
                 ],
             )),
             Action::Browser,
-            Action::Command(Step::cargo(
-                "cargo test --locked --workspace --all-targets",
-                &["test", "--locked", "--workspace", "--all-targets"],
-            )),
+            Action::WorkspaceTests,
             Action::Command(Step::cargo(
                 "cargo doc --locked --workspace --lib --bins --no-deps",
                 &[
@@ -1292,8 +1330,16 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(action, Action::Command(_)))
                 .count(),
-            6,
-            "exactly six declared Cargo commands precede compiled landing"
+            5,
+            "exactly five ordinary Cargo commands precede compiled landing"
+        );
+        assert_eq!(
+            VERIFY_ACTIONS
+                .iter()
+                .filter(|action| matches!(action, Action::WorkspaceTests))
+                .count(),
+            1,
+            "one bounded workspace-test coordinator precedes compiled landing"
         );
         assert_eq!(
             VERIFY_ACTIONS
@@ -1341,7 +1387,12 @@ mod tests {
     fn successful_commands() -> Vec<Outcome> {
         VERIFY_ACTIONS
             .iter()
-            .filter(|action| matches!(action, Action::Format | Action::Command(_)))
+            .filter(|action| {
+                matches!(
+                    action,
+                    Action::Format | Action::Command(_) | Action::WorkspaceTests
+                )
+            })
             .map(|_| Outcome::Success)
             .collect()
     }

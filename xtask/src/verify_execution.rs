@@ -39,6 +39,7 @@ fn run_action<R: Runner + Send>(
         Action::Format => run_format(runner, output, stage),
         Action::Command(step) => run_command(runner, output, stage, step),
         Action::Browser => run_browser(runner, output, stage),
+        Action::WorkspaceTests => run_workspace_tests(runner, output, stage),
         Action::Battery => run_battery(runner, output, stage),
         Action::Landing => run_landing(runner, output, stage),
     }
@@ -145,6 +146,31 @@ fn run_browser<R: Runner + Send>(
                 }
                 Ok(run) => Conclusion::success((), Disposition::from_status(run.status.code)),
             })
+        },
+    )
+}
+
+fn run_workspace_tests<R: Runner + Send>(
+    runner: &mut R,
+    output: &mut impl Write,
+    stage: Stage<'_>,
+) -> Result<(), VerifyError> {
+    verify_timing::observe(
+        output,
+        stage,
+        || runner.workspace_tests(),
+        |result, _| {
+            Ok(process_conclusion(
+                result,
+                |source| VerifyError::Launch {
+                    label: super::WORKSPACE_TEST_LABEL,
+                    source,
+                },
+                |code| VerifyError::Exit {
+                    label: super::WORKSPACE_TEST_LABEL,
+                    code,
+                },
+            ))
         },
     )
 }
