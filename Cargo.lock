@@ -585,6 +585,7 @@ dependencies = [
  "serde_json",
  "sill",
  "thiserror 2.0.19",
+ "toml",
  "wire",
 ]
 
