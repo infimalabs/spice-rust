@@ -153,5 +153,5 @@ Doctrine conformance holds [DOCTRINE.md](DOCTRINE.md) to its compiled section,
 kernel, and decision-record contract. It requires every invariant to be stated
 rather than merely named, every decision to carry rationale and explicit
 deletions, settled language throughout, and every relative record link to
-resolve on disk. [TASTES.md](TASTES.md) and [LATER.md](LATER.md) are the
-companion records that govern curated preferences and deferred surfaces.
+resolve on disk. [TASTES.md](TASTES.md) is the companion record that governs
+curated preferences.
