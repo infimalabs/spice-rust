@@ -10,9 +10,10 @@ use std::os::unix::fs::PermissionsExt as _;
 use spice::config::{self, Resolved, Root};
 use spice::repository::Repository;
 use wire::{
-    DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorLocations, DoctorObservation,
-    DoctorReport, DoctorTarget, DoctorTool, DoctorToolSource, Fault, FaultClass, Outcome, Refusal,
-    Reply, ReplyPosition, SpiceVariable,
+    DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorExtension,
+    DoctorExtensionNamespace, DoctorLocations, DoctorObservation, DoctorReport, DoctorTarget,
+    DoctorTool, DoctorToolSource, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition,
+    SpiceVariable,
 };
 
 use crate::cli::{self, ExternalTool};
@@ -99,6 +100,38 @@ fn report(
         configuration,
         provenance,
         commands,
+        extensions: extension_report(spice::extension::DECLARATIONS),
+    }
+}
+
+fn extension_report(declarations: &[spice::extension::Declaration]) -> Vec<DoctorExtension> {
+    match spice::extension::Registry::discover(declarations) {
+        Ok(registry) => registry
+            .rows()
+            .iter()
+            .map(|row| DoctorExtension {
+                namespace: extension_namespace(row.namespace),
+                name: row.name.to_owned(),
+                provider: row.provider.to_owned(),
+                observation: DoctorObservation::Ready {},
+            })
+            .collect(),
+        Err(error) => vec![DoctorExtension {
+            namespace: extension_namespace(error.namespace()),
+            name: "registry".to_owned(),
+            provider: "spice".to_owned(),
+            observation: DoctorObservation::Unsupported {
+                reason: error.to_string(),
+            },
+        }],
+    }
+}
+
+const fn extension_namespace(namespace: spice::extension::Namespace) -> DoctorExtensionNamespace {
+    match namespace {
+        spice::extension::Namespace::Vendor => DoctorExtensionNamespace::Vendor,
+        spice::extension::Namespace::Wrapper => DoctorExtensionNamespace::Wrapper,
+        spice::extension::Namespace::Gate => DoctorExtensionNamespace::Gate,
     }
 }
 
@@ -336,6 +369,45 @@ mod tests {
             named: BTreeMap::from([("rtk".to_owned(), Ok(()))]),
             exact,
         }
+    }
+
+    #[test]
+    fn broken_and_mixed_extension_declarations_remain_visible_without_loading_them() {
+        let mixed = [spice::extension::Declaration {
+            namespace: spice::extension::Namespace::Gate,
+            name: "mixed",
+            provider: "fixture",
+            value: spice::extension::Value::Vendor(&spice::extension::CODEX),
+        }];
+        let report = extension_report(&mixed);
+        assert!(matches!(
+            report.as_slice(),
+            [DoctorExtension {
+                name,
+                observation: DoctorObservation::Unsupported { reason },
+                ..
+            }] if name == "registry"
+                && reason.contains("spice.gates")
+                && reason.contains("spice.vendors")
+        ));
+
+        let broken = [spice::extension::Declaration {
+            namespace: spice::extension::Namespace::Vendor,
+            name: "broken",
+            provider: "fixture",
+            value: spice::extension::Value::Vendor(&spice::extension::CODEX),
+        }];
+        let report = extension_report(&broken);
+        assert!(matches!(
+            report.as_slice(),
+            [DoctorExtension {
+                name,
+                observation: DoctorObservation::Unsupported { reason },
+                ..
+            }] if name == "registry"
+                && reason.contains("broken")
+                && reason.contains("codex")
+        ));
     }
 
     fn default_command_report(contract: &cli::Contract, probe: &Probe) -> DoctorCommand {

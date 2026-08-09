@@ -458,7 +458,8 @@ fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
         },
         None => RetroSelector::Path(PathBuf::from(".")),
     };
-    match listen::retro(".", selector) {
+    let dialects = extension_dialects();
+    match listen::retro(".", selector, &dialects) {
         Ok(outcome) => deliver_stream_once(&outcome, form),
         Err(error) => deliver_fault(surface_fault(error), form),
     }
@@ -600,7 +601,7 @@ fn run_watch(matches: &clap::ArgMatches, form: Form) -> ! {
     let root = matches
         .get_one::<String>("ROOT")
         .map_or_else(|| PathBuf::from("."), PathBuf::from);
-    let mut watch = Watch::new(&root);
+    let mut watch = Watch::new(&root, extension_dialects());
 
     if !is_real_directory(&root) {
         match poll_and_emit(&mut watch, form) {
@@ -610,6 +611,15 @@ fn run_watch(matches: &clap::ArgMatches, form: Form) -> ! {
     }
 
     follow(&root, &mut watch, form)
+}
+
+fn extension_dialects() -> Vec<(&'static str, listen::Dialect)> {
+    spice::extension::registry()
+        .expect("compiled extension declarations are validated by the test gate")
+        .vendors()
+        .into_iter()
+        .map(|vendor| (vendor.name(), vendor.dialect()))
+        .collect()
 }
 
 fn is_real_directory(path: &Path) -> bool {
@@ -866,12 +876,22 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn session_environment() -> session_command::Environment {
+    let vendors = spice::extension::registry()
+        .expect("compiled extension declarations are validated by the test gate")
+        .vendors()
+        .into_iter()
+        .map(|vendor| {
+            let layout = vendor.transcript_layout();
+            session_command::VendorEnvironment::new(
+                vendor,
+                bootstrap_environment(vendor.thread_id_environment()),
+                bootstrap_environment(layout.home_environment),
+            )
+        })
+        .collect();
     session_command::Environment::new(
-        bootstrap_environment("CODEX_THREAD_ID"), // env-policy: allow
-        bootstrap_environment("CLAUDE_CODE_SESSION_ID"), // env-policy: allow
+        vendors,
         bootstrap_environment("SPICE_AGENT_VENDOR"), // env-policy: allow
-        bootstrap_environment("CODEX_HOME"),
-        bootstrap_environment("CLAUDE_CONFIG_DIR"),
         bootstrap_environment("HOME"),
     )
 }
