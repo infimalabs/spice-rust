@@ -187,7 +187,7 @@ fn prepare_task(
     };
     let task = task.clone();
     let project_text = project.as_str().to_owned();
-    let flow = phases(add.flow.as_deref())?;
+    let flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
     let phase = flow[0].clone();
     let origin = match add.origin.clone() {
         Some(origin) => origin,

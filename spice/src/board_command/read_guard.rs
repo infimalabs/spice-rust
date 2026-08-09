@@ -5,6 +5,16 @@ pub(super) fn phase(name: &str) -> wire::Phase {
         .expect("dialect phase is a lower-case wire phase")
 }
 
+pub(super) fn task_flow(
+    flow: Option<&str>,
+    acceptance: &[String],
+) -> Result<Vec<wire::Phase>, Outcome<CommandAnswer>> {
+    if flow.is_none() && acceptance.is_empty() {
+        return phases(Some("plan,todo,review"));
+    }
+    phases(flow)
+}
+
 pub(super) fn validated_snapshot(
     bus: &Bus,
     principal: wire::Actor,

@@ -1121,7 +1121,15 @@ fn add_next_action_task(
 ) -> wire::intent::TaskAnswer {
     reply_body(&invoke_args(
         fixture,
-        &["task", "add", title, "--project", "spice.client"],
+        &[
+            "task",
+            "add",
+            title,
+            "--project",
+            "spice.client",
+            "--acceptance",
+            "typed task can advance through its fixture workflow",
+        ],
         true,
         Some(lane),
     ))

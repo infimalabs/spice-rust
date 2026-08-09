@@ -1066,6 +1066,17 @@ pub(super) fn progress_witnesses(
             reviewer,
         });
     }
+    if heads.workflow.body.phase.as_str() == "plan" {
+        for dependency in &heads.statement.body.dependencies {
+            let child = task_heads(board, dependency)?;
+            if child.workflow.body.status == "pending"
+                && !child.statement.body.acceptance.is_empty()
+            {
+                expected.push(statement_witness(child));
+                expected.push(workflow_witness(child));
+            }
+        }
+    }
     Ok(expected)
 }
 

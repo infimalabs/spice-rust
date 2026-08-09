@@ -193,7 +193,7 @@ fn create_followup(
             "name a public project for each review follow-up, or leave it private",
         )
     })?;
-    let flow = phases(followup.add.flow.as_deref())?;
+    let flow = task_flow(followup.add.flow.as_deref(), &followup.add.acceptance)?;
     let phase = flow[0].clone();
     let identity = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
     let statement = TaskHead {
