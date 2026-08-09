@@ -647,7 +647,7 @@ hold = "40m"
 
 [steer]
 expiry = "12h"
-resend = ["2m"]
+resend = ["2m", "4m", "6m"]
 
 [vendor.claude]
 binary = "/opt/claude"
@@ -829,7 +829,7 @@ fn lists_replace_as_units_and_taste_rows_retain_declared_order() {
         Some(
             r#"
 [steer]
-resend = ["2m"]
+resend = ["2m", "4m", "6m"]
 
 [gate.walk]
 skip = ["target/**"]
@@ -855,7 +855,7 @@ message = "Done."
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
-        ["2m"]
+        ["2m", "4m", "6m"]
     );
     assert_eq!(
         resolved

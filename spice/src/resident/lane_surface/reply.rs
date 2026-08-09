@@ -211,18 +211,18 @@ pub(super) fn recall_provenance(
                 Some(body.directive),
                 body.key,
                 wire::Disposition::Live,
-                None,
+                Some(wire::body::SteeringStage::Published),
                 None,
                 None,
             ))
         }
-        wire::FactKind::SteerResent => {
-            let body: wire::body::SteerResent = recall_body(fact)?;
+        wire::FactKind::SteerEscalated => {
+            let body: wire::body::SteerEscalated = recall_body(fact)?;
             Some(steering_provenance(
                 Some(body.directive),
                 body.key,
                 wire::Disposition::Live,
-                Some(body.ancestor),
+                Some(body.stage),
                 None,
                 None,
             ))
@@ -239,7 +239,7 @@ pub(super) fn recall_provenance(
                 Some(body.directive),
                 body.key,
                 wire::Disposition::Live,
-                None,
+                Some(wire::body::SteeringStage::Published),
                 None,
                 None,
             ))
@@ -295,7 +295,7 @@ fn steering_provenance(
     directive: Option<CanonicalUuid>,
     key: String,
     disposition: wire::Disposition,
-    ancestor: Option<String>,
+    stage: Option<wire::body::SteeringStage>,
     epoch: Option<CanonicalUuid>,
     locus: Option<wire::body::TranscriptLocus>,
 ) -> RecallProvenance {
@@ -303,7 +303,7 @@ fn steering_provenance(
         directive,
         key,
         disposition,
-        ancestor,
+        stage,
         epoch,
         locus,
     }

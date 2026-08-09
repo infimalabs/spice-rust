@@ -1066,8 +1066,13 @@ pub struct PendingDirective {
     /// Exact attachments retained with the directive.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<DirectiveAttachment>,
-    /// Commit instant of the fact that authored this directive rung.
+    /// Commit instant of the original publication.
     pub authored: Instant,
+    /// Current presentation urgency on the stable directive.
+    pub stage: crate::body::SteeringStage,
+    /// Complete ordered presentation-transition audit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub escalations: Vec<crate::body::SteeringTransition>,
     /// Instant at which the directive lapses.
     pub expires: Instant,
 }
@@ -1429,13 +1434,13 @@ pub enum RecallProvenance {
         key: String,
         /// Current disposition established by the fact.
         disposition: Disposition,
-        /// Prior key named by a resend, when this is a lineage rung.
+        /// Presentation state established by this fact, when applicable.
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
             deserialize_with = "crate::optional::present"
         )]
-        ancestor: Option<String>,
+        stage: Option<crate::body::SteeringStage>,
         /// Resident generation authenticating transcript evidence, when applicable.
         #[serde(
             default,
