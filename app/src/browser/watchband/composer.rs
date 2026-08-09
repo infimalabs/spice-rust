@@ -20,8 +20,7 @@ pub(super) fn update_body(
 
 pub(super) fn keyboard_submit(
     lane: CanonicalUuid,
-    occupant: Option<CanonicalUuid>,
-    epoch: CanonicalUuid,
+    target: Option<SubmissionTarget>,
     lane_key: String,
     sender: SenderHandle,
     drafts: UseReducerHandle<ComposerDrafts>,
@@ -30,15 +29,7 @@ pub(super) fn keyboard_submit(
     Callback::from(move |event: KeyboardEvent| {
         if event.key() == "Enter" && (event.meta_key() || event.ctrl_key()) {
             event.prevent_default();
-            if submit_draft(
-                lane,
-                occupant,
-                epoch,
-                &lane_key,
-                &sender,
-                &drafts,
-                &submissions,
-            ) {
+            if submit_draft(lane, target, &lane_key, &sender, &drafts, &submissions) {
                 focus_after_render(primary_textarea_id(&lane_key));
             }
         }
