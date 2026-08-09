@@ -683,7 +683,18 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "provenance": {
       "kind": "steering",
       "key": "1kJJP87B",
-      "disposition": "acked"
+      "disposition": "acked",
+      "stage": "overdue",
+      "escalations": [{
+        "stage": "reminded",
+        "at": "2026-08-06T03:00:02.000Z"
+      }, {
+        "stage": "escalated",
+        "at": "2026-08-06T03:01:00.000Z"
+      }, {
+        "stage": "overdue",
+        "at": "2026-08-06T03:05:00.000Z"
+      }]
     }
   }]
 }"#,
