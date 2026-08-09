@@ -39,6 +39,15 @@ function coveragePath(arguments_) {
   return arguments_[1];
 }
 
+function invocation(arguments_) {
+  const prebuiltFlags = arguments_.filter((argument) => argument === PREBUILT_APP_FLAG);
+  assert.ok(prebuiltFlags.length <= 1, `${PREBUILT_APP_FLAG} is singular`);
+  return {
+    prebuiltApp: prebuiltFlags.length === 1,
+    receipt: coveragePath(arguments_.filter((argument) => argument !== PREBUILT_APP_FLAG)),
+  };
+}
+
 function alive(pid) {
   try {
     process.kill(pid, 0);
@@ -184,10 +193,7 @@ async function runShard(shard) {
 async function coordinate() {
   assertShardInventory();
   assertShardMutationGuard();
-  const arguments_ = process.argv.slice(2);
-  const prebuiltApp = arguments_.at(-1) === PREBUILT_APP_FLAG;
-  if (prebuiltApp) arguments_.pop();
-  const receipt = coveragePath(arguments_);
+  const { prebuiltApp, receipt } = invocation(process.argv.slice(2));
   const started = Date.now();
   await buildResident({ app: !prebuiltApp });
   const buildElapsedMs = Date.now() - started;
