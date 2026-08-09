@@ -367,14 +367,69 @@ export async function assertAgentRenewalRequest(surface, fixture) {
     )
     .first();
   await menu.waitFor();
+  const composer = menu.locator(
+    "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' composer-shard--primary ')][1]",
+  );
+  const textbox = composer.getByRole("textbox");
   assert.equal(
     await menu.getAttribute("open"),
     null,
     "agent renewal starts inside a closed drawer",
   );
   const trigger = menu.locator(":scope > summary");
+  const focus = menu.getByRole("button", { name: "Focus message editor" });
   const renew = menu.locator(".agent-renew-request:not(:disabled)");
   assert.equal(await renew.isVisible(), false, "renewal is hidden while its drawer is closed");
+  await trigger.click();
+  await renew.waitFor();
+  const geometry = await menu.evaluate((details) => {
+    const composer = details.closest(".composer-shard--primary");
+    const drawer = details.querySelector(".agent-action-drawer");
+    const trigger = details.querySelector(":scope > summary");
+    if (!composer || !drawer || !trigger) throw new Error("agent menu geometry is incomplete");
+    const rect = (element) => element.getBoundingClientRect().toJSON();
+    const composerBox = rect(composer);
+    const drawerBox = rect(drawer);
+    const hit = document.elementFromPoint(
+      composerBox.left + composerBox.width / 2,
+      composerBox.bottom - 8,
+    );
+    return {
+      composer: composerBox,
+      drawer: drawerBox,
+      trigger: rect(trigger),
+      drawerOwnsComposerInterior: hit !== null && drawer.contains(hit),
+    };
+  });
+  for (const edge of ["top", "right", "bottom", "left"]) {
+    assert.ok(
+      Math.abs(geometry.drawer[edge] - geometry.composer[edge]) <= 1,
+      `the open agent menu covers the composer's ${edge} edge: ${JSON.stringify(geometry)}`,
+    );
+  }
+  assert.ok(
+    geometry.trigger.left >= geometry.composer.left &&
+      geometry.trigger.right <= geometry.composer.right &&
+      geometry.trigger.top >= geometry.composer.top &&
+      geometry.trigger.bottom <= geometry.composer.bottom,
+    `the hamburger remains inside the composer while its full overlay is open: ${JSON.stringify(geometry)}`,
+  );
+  assert.equal(
+    geometry.drawerOwnsComposerInterior,
+    true,
+    "the open drawer receives interaction across the composer's covered interior",
+  );
+  await focus.click();
+  assert.equal(await menu.getAttribute("open"), null, "focusing the editor closes its overlay");
+  assert.equal(
+    await textbox.evaluate(async (textarea) => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      return document.activeElement === textarea;
+    }),
+    true,
+    "the focus action returns interaction to this agent's message editor",
+  );
+
   await trigger.click();
   await renew.waitFor();
   assert.equal(
@@ -387,6 +442,7 @@ export async function assertAgentRenewalRequest(surface, fixture) {
   );
   assert.ok(renewalLane, "the renewal control retains its exact agent lane");
   await renew.click();
+  assert.equal(await menu.getAttribute("open"), null, "renewing closes the full composer overlay");
   await surface
     .locator(`.mosaic-message-card[data-agent-lane="${renewalLane}"]`)
     .filter({ hasText: renewalRequest })
@@ -398,7 +454,6 @@ export async function assertAgentRenewalRequest(surface, fixture) {
     ),
     "Renew this agent routes a residency-witnessed renewal request through the resident",
   );
-  if (await menu.getAttribute("open") !== null) await trigger.click();
   assert.equal(await renew.isVisible(), false, "renewal hides again when its drawer closes");
 }
 

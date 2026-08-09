@@ -551,7 +551,10 @@
 }
 /* Quote shards are the context leading into the primary draft, so the visible
    stack and the submitted Markdown share quote-then-primary order. */
-.composer-shard--primary { order: 1; }
+.composer-shard--primary {
+  position: relative;
+  order: 1;
+}
 .composer-shard--primary[draggable="true"] { cursor: grab; }
 .composer-shard--primary[draggable="true"]:active { cursor: grabbing; }
 .composer-shard--quote {
@@ -636,26 +639,29 @@
   color: var(--muted);
   font-size: .55rem;
 }
-.agent-action-menu { position: relative; }
+.agent-action-menu { position: static; }
 .agent-action-menu > summary {
   list-style: none;
   cursor: pointer;
 }
 .agent-action-menu > summary::-webkit-details-marker { display: none; }
 .agent-action-menu[open] > summary {
+  position: relative;
+  z-index: 5;
+  background: var(--panel);
   border-color: var(--accent);
   color: var(--accent);
 }
 .agent-action-drawer {
   position: absolute;
   z-index: 4;
-  top: calc(100% + 4px);
-  right: 0;
+  inset: 0;
   display: grid;
-  width: max-content;
-  min-width: 132px;
+  width: auto;
+  min-width: 0;
+  align-content: start;
   gap: 4px;
-  padding: 5px;
+  padding: 34px 7px 7px;
   border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
   border-radius: 7px;
   background: var(--panel);

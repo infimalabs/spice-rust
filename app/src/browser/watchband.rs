@@ -1085,8 +1085,13 @@ fn render_composer_heading(
     indicators: Html,
 ) -> Html {
     let focus_lane = lane_key.to_owned();
-    let focus = Callback::from(move |_| {
+    let focus = Callback::from(move |event: MouseEvent| {
+        close_agent_action_menu(&event);
         focus_after_render(primary_textarea_id(&focus_lane));
+    });
+    let renew = Callback::from(move |event: MouseEvent| {
+        close_agent_action_menu(&event);
+        renew.emit(event);
     });
     html! {
         <header class="composer-shard-heading">
@@ -1117,6 +1122,16 @@ fn render_composer_heading(
                 </div>
             </details>
         </header>
+    }
+}
+
+fn close_agent_action_menu(event: &MouseEvent) {
+    if let Some(menu) = event
+        .current_target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest(".agent-action-menu").ok().flatten())
+    {
+        let _removed = menu.remove_attribute("open");
     }
 }
 
