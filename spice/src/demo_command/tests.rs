@@ -448,7 +448,12 @@ fn clean_automatic_service_removes_only_its_demo_root() {
 #[test]
 fn a_disappearing_known_sqlite_sidecar_is_a_benign_readiness_change() {
     let scratch = Scratch::new("transient-journal");
-    let journal = scratch.child("spicejournal.sqlite3");
+    let root = scratch.child("automatic-root");
+    fs::create_dir(&root).expect("the automatic demo root is created");
+    let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
+        .expect("the automatic demo root is seeded");
+    assert!(environment.automatic);
+    let journal = environment.state.journal();
     let sidecar = journal.with_extension("sqlite3-journal");
     fs::write(&sidecar, []).expect("the journal sidecar is discovered");
     let error =
@@ -456,7 +461,7 @@ fn a_disappearing_known_sqlite_sidecar_is_a_benign_readiness_change() {
 
     fs::remove_file(&sidecar).expect("the journal sidecar disappears before inspection");
 
-    assert_eq!(readiness_change(Err(error), &journal), Ok(()));
+    assert_eq!(readiness_change(Err(error), journal), Ok(()));
 }
 
 #[test]
