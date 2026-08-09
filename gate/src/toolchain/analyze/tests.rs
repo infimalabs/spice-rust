@@ -1,17 +1,14 @@
 use super::*;
 
 use std::os::unix::fs::PermissionsExt as _;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
 use crate::toolchain::{
-    PACKAGED_SCANNER_EXCLUDES, TOOLCHAIN_ARMS, declaration, fixture_external_finding,
+    PACKAGED_SCANNER_EXCLUDES, TOOLCHAIN_ARMS, declaration, exclusive_scratch_root,
+    fixture_external_finding,
 };
 use sill::{Acquisition, Deadlines};
-
-static NEXT_CANVAS_FIXTURE: AtomicU64 = AtomicU64::new(0);
-static NEXT_DECODING_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 /// The compiled exclusions and the retained sentences are one rule set.
 ///
@@ -715,12 +712,7 @@ struct DecodingFixture {
 
 impl DecodingFixture {
     fn new() -> Self {
-        let sequence = NEXT_DECODING_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let root =
-            std::env::temp_dir().join(format!("gate-decoding-{}-{sequence}", std::process::id(),));
-        if root.exists() {
-            fs::remove_dir_all(&root).expect("remove stale decoding fixture");
-        }
+        let root = exclusive_scratch_root("gate-decoding");
         fs::create_dir_all(root.join("app")).expect("create application fixture directory");
         fs::create_dir_all(root.join("docs")).expect("create prose fixture directory");
         fs::write(root.join("app/settings.py"), "import os\n")
@@ -755,14 +747,7 @@ struct CanvasFixture {
 
 impl CanvasFixture {
     fn new(label: &str, applicable: bool) -> Self {
-        let sequence = NEXT_CANVAS_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let base = std::env::temp_dir().join(format!(
-            "gate-canvas-{label}-{}-{sequence}",
-            std::process::id()
-        ));
-        if base.exists() {
-            fs::remove_dir_all(&base).expect("remove stale canvas fixture");
-        }
+        let base = exclusive_scratch_root(&format!("gate-canvas-{label}"));
         let root = base.join("tree");
         let output = base.join("repository");
         fs::create_dir_all(&output).expect("create canvas output fixture");

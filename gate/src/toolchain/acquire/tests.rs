@@ -1,11 +1,9 @@
 use super::*;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::toolchain::exclusive_scratch_root;
 use sill::Deadlines;
-
-static NEXT_PROBE_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 /// The program name every fixture declares, requests, and plants.
 const PROGRAM: &str = "probe-tool";
@@ -35,14 +33,7 @@ struct ProbeFixture {
 
 impl ProbeFixture {
     fn new(label: &str) -> Self {
-        let sequence = NEXT_PROBE_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "gate-probe-{label}-{}-{sequence}",
-            std::process::id()
-        ));
-        if root.exists() {
-            fs::remove_dir_all(&root).expect("remove stale probe fixture");
-        }
+        let root = exclusive_scratch_root(&format!("gate-probe-{label}"));
         let rim = root.join("rim");
         let tree = root.join("tree");
         fs::create_dir_all(rim.join("bin")).expect("create the rim fixture directory");

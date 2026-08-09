@@ -259,10 +259,9 @@ fn rust_environment(cargo: &str, workspace: &RustWorkspace) -> Result<Environmen
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt as _;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
 
-    use crate::toolchain::{ArmFinding, GateId, declaration};
+    use crate::toolchain::{ArmFinding, GateId, declaration, exclusive_scratch_root};
     use sill::{
         Acquisition, Cancellation, CancellationToken, Deadlines, LockFile, RestartDisposition,
         WaitPolicy,
@@ -272,8 +271,6 @@ mod tests {
     fn build_root_lock(root: &Path) -> Result<LockFile, String> {
         held_root::held_root_lock(root, RUST_LOCK, RUST_LABEL)
     }
-
-    static NEXT_RUST_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     /// The manifest of a workspace whose only crate is the planted one.
     const FIXTURE_MANIFEST: &str = "\
@@ -482,14 +479,7 @@ mod tests {
 
     impl RustFixture {
         fn new(label: &str) -> Self {
-            let sequence = NEXT_RUST_FIXTURE.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "gate-rust-{label}-{}-{sequence}",
-                std::process::id()
-            ));
-            if root.exists() {
-                fs::remove_dir_all(&root).expect("remove stale native fixture");
-            }
+            let root = exclusive_scratch_root(&format!("gate-rust-{label}"));
             fs::create_dir_all(root.join("src")).expect("create native fixture tree");
             fs::write(root.join("Cargo.toml"), FIXTURE_MANIFEST).expect("write fixture manifest");
             fs::write(root.join("Cargo.lock"), FIXTURE_LOCK).expect("write fixture lock");
