@@ -256,25 +256,29 @@ fn render_agent_roster(runtime: Option<&CanvasRuntime>, submissions: &Submission
             role="group"
             aria-label={format!("{} admitted agents", members.len())}
         >
-            {for members.into_iter().map(|(member, pending)| {
-                let status = member.status(pending);
-                let label = member.name.as_deref().unwrap_or_else(|| {
-                    member
-                        .worktree
-                        .rsplit('/')
-                        .find(|segment| !segment.is_empty())
-                        .unwrap_or(&member.worktree)
-                });
-                html! {
-                    <span
-                        class={classes!("brand-dot", status.key())}
-                        role="img"
-                        aria-label={format!("{label}: {}", status.label())}
-                        title={format!("{label}: {}", status.label())}
-                        data-agent-lane={member.lane.to_string()}
-                        data-agent-status={status.key()}
-                    ></span>
-                }
+            {for members.chunks(2).map(|column| html! {
+                <span class="brand-dot-column">
+                    {for column.iter().map(|(member, pending)| {
+                        let status = member.status(*pending);
+                        let label = member.name.as_deref().unwrap_or_else(|| {
+                            member
+                                .worktree
+                                .rsplit('/')
+                                .find(|segment| !segment.is_empty())
+                                .unwrap_or(&member.worktree)
+                        });
+                        html! {
+                            <span
+                                class={classes!("brand-dot", status.key())}
+                                role="img"
+                                aria-label={format!("{label}: {}", status.label())}
+                                title={format!("{label}: {}", status.label())}
+                                data-agent-lane={member.lane.to_string()}
+                                data-agent-status={status.key()}
+                            ></span>
+                        }
+                    })}
+                </span>
             })}
         </span>
     }

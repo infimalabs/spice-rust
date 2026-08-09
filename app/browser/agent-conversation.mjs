@@ -997,6 +997,19 @@ async function assertRosterPips(page, console, seated) {
     teamRoster,
     "the compact chrome roster preserves the live team identities and liveness states",
   );
+  const chromePipGrid = await brandPips.evaluateAll((pips) => pips.map((pip) => {
+    const box = pip.getBoundingClientRect();
+    return {
+      left: box.left,
+      top: box.top,
+    };
+  }));
+  assert.equal(chromePipGrid[0].left, chromePipGrid[1].left);
+  assert.ok(chromePipGrid[0].top > chromePipGrid[1].top);
+  assert.ok(chromePipGrid[2].left < chromePipGrid[0].left);
+  assert.equal(chromePipGrid[2].top, chromePipGrid[0].top);
+  assert.equal(chromePipGrid[2].left, chromePipGrid[3].left);
+  assert.equal(chromePipGrid[3].top, chromePipGrid[1].top);
   assert.equal(
     await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
     0,

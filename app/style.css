@@ -114,9 +114,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 .brand-dots {
-  display: grid;
-  grid-template-columns: repeat(2, 9px);
-  gap: 3px;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row-reverse;
+  gap: 5px;
+  justify-content: center;
+  min-width: 18px;
+}
+
+.brand-dot-column {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 4px;
 }
 
 .brand-dot {
