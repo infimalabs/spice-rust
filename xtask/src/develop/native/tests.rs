@@ -415,6 +415,127 @@ fn wait_until_image_is_observed(observed: &AtomicBool, label: &str) {
     assert!(observed.load(Ordering::Relaxed), "reader missed {label}");
 }
 
+/// A receipt refusal before the installer writes anything is already a safe
+/// terminal result. Feeding it through rollback only repeats the same refusal
+/// and hides the useful cause in `RestoreFailed`.
+#[test]
+fn an_untouched_install_refusal_does_not_enter_rollback() {
+    let fixture = Fixture::new("untouched-refusal");
+    let repository = fixture.repository();
+    let installed = install::installed_binary(&repository);
+    let first = fixture.binary("spice-first", b"first build\n");
+    let second = fixture.binary("spice-second", b"second build\n");
+
+    refresh_install(&repository, &first).expect("first install applies");
+    let drifted = repository
+        .common_dir()
+        .join(".spice-install/hooks/entry.sh");
+    fs::write(&drifted, b"operator hook replacement\n")
+        .expect("a non-binary installed asset drifts");
+    let parked = park(&repository, &installed)
+        .expect("the installed executable is parked")
+        .expect("an installed executable exists to park");
+    let before = snapshot_install(&repository, &installed).expect("install state snapshots");
+    let refusal = refresh_install(&repository, &second)
+        .expect_err("non-binary drift refuses before publication");
+    assert!(matches!(
+        &refusal,
+        InstallError::Drift { path, .. } if path == ".spice-install/hooks/entry.sh"
+    ));
+
+    let mut output = Vec::new();
+    let reported = restore_if_changed(
+        &repository,
+        &Rollback {
+            installed: &installed,
+            executable: Some(&parked),
+            published: None,
+            restart: false,
+        },
+        &before,
+        &mut output,
+        refusal,
+    );
+
+    assert!(
+        matches!(&reported, RefreshError::Install(InstallError::Drift { path, .. })
+            if path == ".spice-install/hooks/entry.sh"),
+        "the original refusal was replaced: {reported:?}"
+    );
+    assert_eq!(
+        snapshot_install(&repository, &installed).expect("install state reads back"),
+        before
+    );
+    let output = String::from_utf8_lossy(&output);
+    assert!(
+        !output.contains("restoring previous executable")
+            && !output.contains("restarting previous resident"),
+        "an untouched refusal entered rollback: {output}"
+    );
+}
+
+/// The default developer refresh stops a published resident before install.
+/// An unchanged install refusal skips executable rollback but must still
+/// restore that service boundary before returning the original refusal.
+#[test]
+fn an_untouched_install_refusal_restarts_the_resident_it_stopped() {
+    let fixture = Fixture::new("untouched-resident-refusal");
+    let repository = fixture.repository();
+    let installed = install::installed_binary(&repository);
+    let first = fixture.binary("spice-first", b"#!/bin/sh\nexit 3\n");
+    let second = fixture.binary("spice-second", b"second build\n");
+
+    refresh_install(&repository, &first).expect("first install applies");
+    fs::write(
+        repository
+            .common_dir()
+            .join(".spice-install/hooks/entry.sh"),
+        b"operator hook replacement\n",
+    )
+    .expect("a non-binary installed asset drifts");
+    let parked = park(&repository, &installed)
+        .expect("the installed executable is parked")
+        .expect("an installed executable exists to park");
+    let before = snapshot_install(&repository, &installed).expect("install state snapshots");
+    let refusal = refresh_install(&repository, &second)
+        .expect_err("non-binary drift refuses before publication");
+
+    let mut output = Vec::new();
+    let reported = restore_if_changed(
+        &repository,
+        &Rollback {
+            installed: &installed,
+            executable: Some(&parked),
+            published: Some("http://127.0.0.1:8767"),
+            restart: true,
+        },
+        &before,
+        &mut output,
+        refusal,
+    );
+    let output = String::from_utf8_lossy(&output);
+
+    assert!(matches!(
+        &reported,
+        RefreshError::Install(InstallError::Drift { path, .. })
+            if path == ".spice-install/hooks/entry.sh"
+    ));
+    assert_eq!(
+        snapshot_install(&repository, &installed).expect("install state reads back"),
+        before
+    );
+    assert!(
+        !output.contains("restoring previous executable"),
+        "an unchanged executable was reinstalled: {output}"
+    );
+    assert!(
+        output.contains("restarting previous resident")
+            && output
+                .contains("previous resident did not come back: resident exited with status 3"),
+        "the stopped resident was not restored: {output}"
+    );
+}
+
 /// A refresh that fails after the executable moved puts the previous one back
 /// and still reports the failure that forced it.
 #[test]

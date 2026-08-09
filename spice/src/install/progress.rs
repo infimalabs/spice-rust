@@ -87,9 +87,15 @@ fn prepare_loaded(
     if record.status == InstallStatus::Complete && rebuilt_binary(&record.plan, spice_binary)? {
         // The refresh transaction: one record swap from the complete install to
         // the plan that supersedes it, then in-place replacement of each
-        // destination. Nothing is reversed, so nothing is ever absent.
-        verify_progress(repository, &record)?;
-        let plan = build_plan_over(repository, spice_binary, Some(&record.plan))?;
+        // destination. A binary-only drift is admitted as the exact image this
+        // plan replaces; every other destination remains receipt-strict.
+        let binary_superseded = verify_refresh_progress(repository, &record)?;
+        let plan = build_plan_over(
+            repository,
+            spice_binary,
+            Some(&record.plan),
+            binary_superseded.as_ref(),
+        )?;
         admit_digest(&plan, expected)?;
         return Ok((InstallRecord::new(plan)?, Some(loaded.generation), true));
     }
@@ -307,6 +313,52 @@ pub(super) fn verify_progress(
         }
     }
     Ok(())
+}
+
+/// Verify a completed install before deriving a rebuilt-binary refresh.
+///
+/// Every receipt-owned destination remains strict except the executable. A
+/// regular executable under the same recorded parent may carry different
+/// bytes or mode: the returned image becomes the exact superseded side of the
+/// refresh plan, so its digest admits that reconciliation and apply still
+/// compare-and-swaps against what preview observed.
+pub(super) fn verify_refresh_progress(
+    repository: &Repository,
+    record: &InstallRecord,
+) -> Result<Option<GeneratedImage>, InstallError> {
+    record.validate_for_repository(repository)?;
+    if record.status != InstallStatus::Complete {
+        verify_progress(repository, record)?;
+        return Ok(None);
+    }
+
+    let mut binary_superseded = None;
+    for (index, operation) in record.plan.operations.iter().enumerate() {
+        let (observed, parent) = observe_bound(
+            operation.location.root(repository),
+            &operation.destination,
+            &operation.parent,
+        )?;
+        if installed_matches(
+            observed.as_ref(),
+            operation,
+            record.installed[index],
+            parent,
+            record.installed_parents[index],
+        ) {
+            continue;
+        }
+        if operation.asset == Asset::Binary
+            && parent == record.installed_parents[index]
+            && parent.is_some()
+            && let Some(observed) = observed.as_ref()
+        {
+            binary_superseded = Some(observed.generated());
+            continue;
+        }
+        return Err(drift(operation, observed));
+    }
+    Ok(binary_superseded)
 }
 
 fn admit_digest(plan: &InstallPlan, expected: &Digest) -> Result<(), InstallError> {

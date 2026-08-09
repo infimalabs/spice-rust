@@ -41,6 +41,7 @@ pub(super) fn perform(
     let built = build(request.release, output)?;
     let installed = install::installed_binary(&repository);
     let rollback = park(&repository, &installed)?;
+    let before = snapshot_install(&repository, &installed)?;
     let published = read_endpoint(&repository);
     let endpoint = requested_endpoint(request, published.as_deref());
 
@@ -56,7 +57,15 @@ pub(super) fn perform(
     }
     let digest = match refresh_install(&repository, &built) {
         Ok(digest) => digest,
-        Err(error) => return Err(restore(&repository, &unwind, output, error)),
+        Err(error) => {
+            return Err(restore_if_changed(
+                &repository,
+                &unwind,
+                &before,
+                output,
+                error,
+            ));
+        }
     };
     writeln!(output, "installed {} plan={digest}", installed.display())?;
 
@@ -151,6 +160,60 @@ fn park(repository: &Repository, installed: &Path) -> Result<Option<PathBuf>, Re
     Ok(Some(rollback))
 }
 
+/// Exact receipt and executable state immediately before one refresh attempt.
+#[derive(Debug, Eq, PartialEq)]
+struct InstallSnapshot {
+    receipt: PathSnapshot,
+    executable: PathSnapshot,
+}
+
+/// Comparison surface for one install path, including Unix permission drift.
+#[derive(Debug, Eq, PartialEq)]
+enum PathSnapshot {
+    Missing,
+    Regular {
+        bytes: Vec<u8>,
+        readonly: bool,
+        #[cfg(unix)]
+        mode: u32,
+    },
+    Other,
+}
+
+fn snapshot_install(
+    repository: &Repository,
+    installed: &Path,
+) -> Result<InstallSnapshot, RefreshError> {
+    let state = repository.admit_state().map_err(InstallError::from)?;
+    Ok(InstallSnapshot {
+        receipt: snapshot_path(state.install_record())?,
+        executable: snapshot_path(installed)?,
+    })
+}
+
+fn snapshot_path(path: &Path) -> Result<PathSnapshot, std::io::Error> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PathSnapshot::Missing);
+        }
+        Err(error) => return Err(error),
+    };
+    if !metadata.file_type().is_file() {
+        return Ok(PathSnapshot::Other);
+    }
+    let permissions = metadata.permissions();
+    Ok(PathSnapshot::Regular {
+        bytes: fs::read(path)?,
+        readonly: permissions.readonly(),
+        #[cfg(unix)]
+        mode: {
+            use std::os::unix::fs::PermissionsExt as _;
+            permissions.mode() & 0o777
+        },
+    })
+}
+
 /// What a failed refresh needs to put the appliance back the way it found it.
 struct Rollback<'a> {
     /// Published executable a restored resident is started from.
@@ -161,6 +224,25 @@ struct Rollback<'a> {
     published: Option<&'a str>,
     /// Whether this refresh was the kind that stops and starts a resident.
     restart: bool,
+}
+
+/// Return an untouched refusal directly; reinstall only when the receipt or
+/// executable changed, while still bringing back a resident this attempt
+/// stopped before the installer refused.
+fn restore_if_changed(
+    repository: &Repository,
+    rollback: &Rollback<'_>,
+    before: &InstallSnapshot,
+    output: &mut impl Write,
+    cause: impl Into<RefreshError>,
+) -> RefreshError {
+    let cause = cause.into();
+    if snapshot_install(repository, rollback.installed).is_ok_and(|after| after == *before) {
+        restore_resident(repository, rollback, output);
+        cause
+    } else {
+        restore(repository, rollback, output, cause)
+    }
 }
 
 /// Reinstall the parked executable, restart what was running, and report the
