@@ -13,7 +13,10 @@ pub use authority::{
     AuthorityError, GitCommand, GitMutation, RefState, ReleaseAuthority, ReleaseRefs,
     admit_authority, admit_workspace_publish_policy, current_authority,
 };
-pub use notes::{NotesError, release_notes};
+pub use notes::{
+    HIGHLIGHTS_PLACEHOLDER, INVENTORY_OPEN, Landing, NotesError, NotesInput, curated_release_notes,
+    release_notes,
+};
 pub use pins::{PinError, PinName, RequiredPins};
 pub use stage::{
     BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError, Publisher, StageError,

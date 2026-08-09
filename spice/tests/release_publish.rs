@@ -49,6 +49,7 @@ struct Fixture {
     journal: PathBuf,
     canvas: PathBuf,
     manifest: Digest,
+    notes: PathBuf,
 }
 
 impl Fixture {
@@ -58,8 +59,29 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir_all(root.join(".git")).expect("fixture Git directory");
+        fs::create_dir_all(&root).expect("fixture root");
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["config", "user.name", "Spice Test"]);
+        git(&root, &["config", "user.email", "spice@example.test"]);
         staged_app::seed(&root);
+        git(&root, &["add", "dist/stage-app"]);
+        git(
+            &root,
+            &[
+                "commit",
+                "-m",
+                concat!(
+                    "fixture: Seed staged release app\n\n",
+                    "Task-Project: fixture.release\nTask-Key: fixture\n",
+                ),
+            ],
+        );
+        let notes = root.join("release-notes.md");
+        fs::write(
+            &notes,
+            "## Highlights\n\n- Published one proof-bound Rust release.\n",
+        )
+        .expect("curated notes write");
         let runtime = root.join(".git/.spice-rs");
         let journal = runtime.join("data/spicejournal.sqlite3");
         let canvas = runtime.join("canvas");
@@ -70,6 +92,7 @@ impl Fixture {
             journal,
             canvas,
             manifest,
+            notes,
         }
     }
 
@@ -170,7 +193,8 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let fixture = Fixture::new("durable");
     let resident = Resident::start(&fixture);
 
-    let text = fixture.invoke(&["release", "publish"]);
+    let notes = fixture.notes.to_str().expect("notes path is UTF-8");
+    let text = fixture.invoke(&["release", "publish", "--notes-file", notes]);
     assert!(
         text.status.success(),
         "text preview failed: {}",
@@ -179,8 +203,18 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let text_plan: ReleasePlan = wire::decode(&text.stdout).expect("text body is a release plan");
     assert_eq!(text_plan.manifest, fixture.manifest);
     assert_eq!(text_plan.targets.len(), 2);
+    let draft = fixture.invoke(&["--json", "release", "notes"]);
+    let Outcome::Reply(draft) =
+        wire::decode::<Outcome<wire::ReleaseNotes>>(&draft.stdout).expect("draft is typed")
+    else {
+        panic!("release notes did not reply")
+    };
+    let candidate = fs::read_to_string(&fixture.notes).expect("curated notes read");
+    let expected_notes =
+        dist::curated_release_notes(&candidate, &draft.body).expect("notes are curated");
+    assert_eq!(text_plan.notes, expected_notes.identity);
 
-    let json = fixture.invoke(&["--json", "release", "publish"]);
+    let json = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
     assert!(
         json.status.success(),
         "JSON preview failed: {}",
@@ -195,7 +229,14 @@ fn publication_plans_commits_replays_and_survives_restart() {
     assert_eq!(json_plan.body, text_plan);
 
     let apply = format!("--apply={}", text_plan.key);
-    let first = fixture.invoke(&["--json", "release", "publish", &apply]);
+    let first = fixture.invoke(&[
+        "--json",
+        "release",
+        "publish",
+        "--notes-file",
+        notes,
+        &apply,
+    ]);
     assert!(
         first.status.success(),
         "first apply failed: {}",
@@ -204,7 +245,7 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let first = recognition(&first);
     assert!(first.1.fresh);
 
-    let replay = fixture.invoke(&["release", "publish", &apply]);
+    let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, &apply]);
     assert!(
         replay.status.success(),
         "text replay failed: {}",
@@ -226,7 +267,14 @@ fn publication_plans_commits_replays_and_survives_restart() {
     );
 
     let restarted = Resident::start(&fixture);
-    let after_restart = fixture.invoke(&["--json", "release", "publish", &apply]);
+    let after_restart = fixture.invoke(&[
+        "--json",
+        "release",
+        "publish",
+        "--notes-file",
+        notes,
+        &apply,
+    ]);
     assert!(
         after_restart.status.success(),
         "restart replay failed: {}",
@@ -246,7 +294,15 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
 
     let stale = Digest::compute(Domain::DistReleasePlan, b"stale plan");
     let apply = format!("--apply={stale}");
-    let stale = fixture.invoke(&["--json", "release", "publish", &apply]);
+    let notes = fixture.notes.to_str().expect("notes path is UTF-8");
+    let stale = fixture.invoke(&[
+        "--json",
+        "release",
+        "publish",
+        "--notes-file",
+        notes,
+        &apply,
+    ]);
     assert_eq!(stale.status.code(), Some(REFUSAL_EXIT));
     let Outcome::Refusal(refusal) =
         wire::decode::<Outcome<RecognitionAnswer>>(&stale.stderr).expect("stale refusal is typed")
@@ -257,7 +313,7 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
 
     fs::remove_file(fixture.receipt_path(1)).expect("remove one detached receipt");
 
-    let missing = fixture.invoke(&["--json", "release", "publish"]);
+    let missing = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
     assert_eq!(missing.status.code(), Some(REFUSAL_EXIT));
     let Outcome::Refusal(refusal) = wire::decode::<Outcome<ReleasePlan>>(&missing.stderr)
         .expect("missing evidence refusal is typed")
@@ -267,6 +323,29 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
     assert_eq!(refusal.reason, "release::manifest-refused");
     assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 0);
     resident.stop(&fixture);
+}
+
+#[test]
+fn publication_refuses_every_uncurated_notes_shape_before_resident_work() {
+    let fixture = Fixture::new("uncurated");
+
+    let untouched = fixture.invoke(&["--json", "release", "publish"]);
+    assert_notes_refusal(&untouched);
+
+    fs::write(
+        &fixture.notes,
+        format!("## Highlights\n\n{}\n", dist::HIGHLIGHTS_PLACEHOLDER),
+    )
+    .expect("placeholder notes write");
+    let notes = fixture.notes.to_str().expect("notes path is UTF-8");
+    let placeholder = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
+    assert_notes_refusal(&placeholder);
+
+    fs::write(&fixture.notes, "> draft banner\n\n## Highlights\n")
+        .expect("heading-only notes write");
+    let heading_only = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
+    assert_notes_refusal(&heading_only);
+    assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 0);
 }
 
 fn publish_stage(root: &Path) -> Digest {
@@ -421,6 +500,16 @@ fn recognition(output: &Output) -> (ReplyPosition, RecognitionAnswer) {
     (reply.position, reply.body)
 }
 
+fn assert_notes_refusal(output: &Output) {
+    assert_eq!(output.status.code(), Some(REFUSAL_EXIT));
+    let Outcome::<ReleasePlan>::Refusal(refusal) =
+        wire::decode(&output.stderr).expect("notes refusal is typed")
+    else {
+        panic!("uncurated notes did not refuse: {}", spoken(output))
+    };
+    assert_eq!(refusal.reason, "release::notes-refused");
+}
+
 fn facts(fixture: &Fixture) -> journal::FactSnapshot {
     journal::JournalReader::open(&fixture.journal)
         .expect("journal reader opens")
@@ -434,6 +523,21 @@ fn kind_count(snapshot: &journal::FactSnapshot, kind: FactKind) -> usize {
         .iter()
         .filter(|fact| fact.fact.kind() == kind)
         .count()
+}
+
+fn git(root: &Path, arguments: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(arguments)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("Git launches");
+    assert!(output.status.success(), "{}", spoken(&output));
+    String::from_utf8(output.stdout)
+        .expect("Git stdout is UTF-8")
+        .trim()
+        .to_owned()
 }
 
 fn spoken(output: &Output) -> String {

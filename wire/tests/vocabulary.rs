@@ -76,6 +76,7 @@ const TASTE_CONFIRMED: &str = r#"{
 const RELEASE_PUBLISHED: &str = r#"{
   "kind": "release::published",
   "manifest": "4a1b9c2d3e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef",
+  "notes": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "targets": [
     {
       "target": "aarch64-apple-darwin",

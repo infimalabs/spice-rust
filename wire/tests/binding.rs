@@ -230,7 +230,8 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::ReleasePublish,
         r#"{
   "key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-  "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "notes": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 }"#,
     ),
     (CommandKind::UpChange, r#"{ "state": "quiescing" }"#),
@@ -300,6 +301,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         "body": {
           "handle": "SPICE-aBcD",
           "uuid": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+          "queue_origin": 2,
           "description": "One task spelled through every field the shape carries.",
           "acceptance": ["the row decodes", "the row re-encodes unchanged"],
           "project": "wire.binding",
@@ -326,6 +328,11 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         "body": {
           "actor": "operator",
           "fact": 4,
+          "claimed": 4,
+          "cell": {
+            "project": "wire.binding",
+            "phase": "todo"
+          },
           "lane": "018f82d4-6f59-7d06-92e3-bce9131163c5",
           "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c6",
           "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",

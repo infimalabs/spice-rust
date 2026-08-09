@@ -366,32 +366,50 @@ pub struct ThreadReport {
     pub entries: Packed<Envelope<AnyFact>>,
 }
 
-/// One fully admitted target named in deterministic release notes.
+/// One task-level change derived from first-parent landing history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReleaseNotesTarget {
-    /// Supported Rust target tuple.
-    pub target: ReleaseTarget,
-    /// Canonical receipt-free target-payload identity.
-    pub payload: Digest,
-    /// Detached proof-receipt identity that admitted the payload.
-    pub proof_receipt: Digest,
-    /// Complete gate-receipt identity that admitted the source for this target.
-    pub gate_receipt: Digest,
+pub struct ReleaseNotesEntry {
+    /// Project declared by the landing commit, or `general` when absent.
+    pub project: String,
+    /// Latest landing wording after structural subject cleanup.
+    pub subject: String,
+    /// Stable task identity shared by repeated phase landings, when declared.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub task: Option<String>,
+    /// Every first-parent landing reference contributing to this entry.
+    pub references: Vec<String>,
 }
 
-/// Deterministic release facts derived from one canonical evidence document.
+/// Deterministic release-note draft or publication document derived from history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseNotes {
     /// Sole release-note document schema emitted by this build.
     pub version: u16,
-    /// Domain-separated identity of the exact canonical input document.
+    /// Domain-separated identity of the exact rendered note bytes.
     pub identity: Digest,
-    /// Exact source identity shared by both admitted targets.
-    pub source: Digest,
-    /// Both proof- and gate-admitted supported targets in declaration order.
-    pub targets: Vec<ReleaseNotesTarget>,
+    /// Version the release page names.
+    pub release_version: String,
+    /// Fully resolved commit whose first-parent ledger was folded.
+    pub release_commit: String,
+    /// Highest-versioned reachable prior release tag, when one exists.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub previous_tag: Option<String>,
+    /// True when absence of a prior tag forced the explicit recent-history window.
+    pub bounded_recent_window: bool,
+    /// Task-level entries in first-landing order.
+    pub entries: Vec<ReleaseNotesEntry>,
+    /// Exact Markdown bytes rendered for review or publication.
+    pub document: String,
 }
 
 /// Verified identities returned by both daemonless proof leaves.
@@ -424,6 +442,8 @@ pub struct ReleasePlan {
     pub manifest: Digest,
     /// Source identity shared by both target payloads.
     pub source: Digest,
+    /// Identity of the exact curated release-note bytes approved by this plan.
+    pub notes: Digest,
     /// Exact target payload and detached-receipt identities to publish.
     pub targets: Vec<crate::body::PublishedTarget>,
 }
