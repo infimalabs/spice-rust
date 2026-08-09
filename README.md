@@ -89,12 +89,16 @@ formatting, Clippy, native and browser-target builds, deterministic app
 verification, workspace tests, doctests, the machine-readable
 contract-landing check. The checked gate manifest maps each of the 25 retired
 standard policy checks to one compiled gate arm, and workspace tests exercise
-the exact mapping and production executor. Verification prints each command
-before execution and names the first command and exit status when it fails. The
-native commit-msg hook preserves the current fixed message-hygiene law and
-additionally requires every committed `Spice-Origin` line to use the exact v1
-grammar. The native reference-transaction hook refuses a current-branch update
-that would abandon commits already merged into its upstream.
+the exact mapping and production executor. Verification emits flushed start
+and terminal lifecycle records for every child-process and in-process action,
+including its exact identity, monotonic elapsed time, responsible family, and
+exit disposition. A still-running action reports every 30 seconds; the records
+mark the 60-, 120-, and 180-second operator policy bands without advancing to a
+later action. The native commit-msg hook preserves the current fixed
+message-hygiene law and additionally requires every committed `Spice-Origin`
+line to use the exact v1 grammar. The native reference-transaction hook refuses
+a current-branch update that would abandon commits already merged into its
+upstream.
 
 ## Workspace verification
 

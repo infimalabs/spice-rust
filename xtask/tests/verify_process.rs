@@ -289,18 +289,23 @@ fn assert_bounded_refusal(output: &std::process::Output, selected: &BatteryArmRe
         "a refusing human verifier emitted a complete canonical BatteryReport: {}",
         streams(output)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout)
-            .matches("[verify] canonical Rust gate battery")
-            .count(),
-        1
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout)
-            .matches("[verify] npm run test:canvas (BROWSER-1kKSWhZk guard)")
-            .count(),
-        1
-    );
+    let lifecycle = String::from_utf8_lossy(&output.stdout);
+    for identity in [
+        "canonical Rust gate battery",
+        "npm run test:canvas (BROWSER-1kKSWhZk guard)",
+    ] {
+        assert_eq!(
+            lifecycle
+                .lines()
+                .filter(|line| {
+                    line.contains("stage=start") && line.contains(&format!("identity={identity:?}"))
+                })
+                .count(),
+            1,
+            "action {identity:?} did not start exactly once: {}",
+            streams(output)
+        );
+    }
 }
 
 fn install_file_shape_overrun(fixture: &Fixture) {
@@ -381,18 +386,17 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
         .join(", ");
     assert!(stdout.contains(&format!("[verify] scoped gate arms skipped: {skipped}\n")));
     for full_only in [
-        concat!(
-            "[verify] rustfmt --edition <workspace> --check --files-with-diff ",
-            "<gate::formatter_sources>"
-        ),
-        "[verify] cargo clippy --locked --workspace --all-targets -- -D warnings",
-        "[verify] cargo check --locked --workspace --target wasm32-unknown-unknown",
-        "[verify] npm run test:canvas (BROWSER-1kKSWhZk guard)",
-        "[verify] canonical Rust gate battery",
-        "[verify] contract landing",
+        FORMAT_ACTION,
+        "cargo clippy --locked --workspace --all-targets -- -D warnings",
+        "cargo check --locked --workspace --target wasm32-unknown-unknown",
+        "npm run test:canvas (BROWSER-1kKSWhZk guard)",
+        "canonical Rust gate battery",
+        "contract landing",
     ] {
         assert!(
-            !stdout.lines().any(|line| line == full_only),
+            !stdout.lines().any(|line| {
+                line.contains("stage=") && line.contains(&format!("identity={full_only:?}"))
+            }),
             "scoped verifier executed full-only action {full_only}: {stdout}"
         );
     }
