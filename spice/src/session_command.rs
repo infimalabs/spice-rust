@@ -371,31 +371,67 @@ mod tests {
         }
     }
 
+    /// The refusal a worker earns by never completing, having resolved `resolved`.
+    ///
+    /// The resolved-input event is queued before the wait begins, so the wait
+    /// observes it by construction rather than by a worker thread being
+    /// scheduled inside a one-millisecond budget. A held worker thread used to
+    /// send it while the clock ran, and losing that race surfaced two ways: a
+    /// send that beat the dropped receiver but not the budget left the refusal
+    /// naming requested inputs instead of resolved ones, and a send arriving
+    /// after the drop panicked the worker, which stranded the release this
+    /// helper then sent it. Nothing here sends after the wait starts, so
+    /// neither remains reachable.
+    ///
+    /// `sender` stays live across the wait because a dropped one turns the
+    /// budget into a disconnected-worker refusal, which is a different path
+    /// from the timeout these tests exist to pin.
     fn timeout(context: &DeadlineContext, resolved: Option<&[&str]>) -> Refusal {
-        let resolved = resolved.map(|inputs| {
-            inputs
-                .iter()
-                .map(|input| (*input).to_owned())
-                .collect::<Vec<_>>()
-        });
-        let (release, held) = std::sync::mpsc::channel();
-        let result = run_deadline(
-            context,
-            std::time::Instant::now(),
-            move |sender: std::sync::mpsc::Sender<DeadlineEvent<Report>>| {
-                if let Some(resolved) = resolved {
-                    sender
-                        .send(DeadlineEvent::Resolved(resolved))
-                        .expect("the resolved-input event reaches the deadline receiver");
-                }
-                held.recv()
-                    .expect("the test releases its held worker after the deadline");
-            },
+        let (sender, receiver) = std::sync::mpsc::channel::<DeadlineEvent<Report>>();
+        if let Some(resolved) = resolved {
+            sender
+                .send(DeadlineEvent::Resolved(
+                    resolved.iter().map(|input| (*input).to_owned()).collect(),
+                ))
+                .expect("the resolved-input event reaches the deadline receiver");
+        }
+        let refusal = wait_for_deadline(context, std::time::Instant::now(), receiver)
+            .expect_err("an open worker with no complete event exceeds its budget");
+        // Dropping here rather than at the end of scope is what makes that
+        // liveness a compile error to break: handing `sender` to a worker above
+        // would leave this reading a moved value.
+        drop(sender);
+        refusal
+    }
+
+    /// A worker spawned by `run_deadline` hands its report back to the caller.
+    ///
+    /// The timeout helper builds its own channel and waits directly, so this is
+    /// the only test that drives the spawn, the sender handed to the worker, and
+    /// the completion branch that returns the value the worker sent. Its budget is
+    /// the default thirty seconds against a worker whose whole body is one send,
+    /// so reaching the completion branch does not turn on scheduling latency the
+    /// way a one-millisecond budget would.
+    #[test]
+    fn a_worker_completing_inside_its_budget_returns_the_report_it_built() {
+        let context = context(
+            "sweep",
+            &["thread-identity"],
+            std::time::Duration::from_secs(30),
         );
-        release
-            .send(())
-            .expect("the timed-out test worker remains held until release");
-        result.expect_err("an open worker with no complete event exceeds its budget")
+        let built = Report::Sweep {
+            sources: Vec::new(),
+            windows: Vec::new(),
+            residues: Vec::new(),
+        };
+        let sent = built.clone();
+        let returned = run_deadline(&context, std::time::Instant::now(), move |sender| {
+            sender
+                .send(DeadlineEvent::Complete(Ok(sent), std::time::Instant::now()))
+                .expect("the completion event reaches the deadline receiver");
+        })
+        .expect("a worker completing inside its budget is not refused");
+        assert_eq!(returned, built);
     }
 
     #[test]
