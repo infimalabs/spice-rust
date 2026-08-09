@@ -165,8 +165,9 @@ never got there reports that log's last line, because the refusal explaining it
 nowhere else.
 
 `.spice-install` lives under the Git common directory, so an upgrade is
-repository-wide: every linked worktree sees the new executable at once, and the
-hooks are withdrawn for as long as the plan is being replaced. Re-run
+repository-wide: every linked worktree sees the new executable at once, and no
+worktree sees it missing, because the refresh replaces each published file in
+place rather than withdrawing the plan and reinstalling it. Re-run
 `cargo xtask activate-hooks` when the hook assets or the verifier guard change
 — `cargo xtask verify` refuses while the published copy is not the running
 build's, and names the command. An upgrade stops nothing outside this

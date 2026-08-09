@@ -4,12 +4,11 @@
 //! `.spice-install/bin/spice` through the digest-bound installer, and restarts
 //! the resident on the endpoint it had already published.
 //!
-//! The installer refuses to derive a plan while a completed receipt names
-//! different executable bytes, so `install` and `install --apply` alone cannot
-//! express a refresh: both answer `install::input-refused` with
-//! `Spice executable selection differs from the recorded plan` the moment the
-//! tree is rebuilt. A refresh is therefore `unapply` then `plan` then `apply`,
-//! and [`refresh_install`] is the only place that sequence is spelled.
+//! The installer derives a refresh when a completed receipt names different
+//! executable bytes, so a rebuilt tree needs nothing withdrawn: [`refresh_install`]
+//! is `plan` then `apply`, and every destination is exchanged in place. What
+//! this command adds over those two calls is the rest of the loop — building
+//! the tree, and stopping and restarting the resident on its own endpoint.
 
 use std::fmt;
 use std::fs;
@@ -106,15 +105,12 @@ pub fn refresh(
 
 /// Republish the installed executable from `binary` under one fresh plan.
 ///
-/// A completed receipt pins the executable bytes it installed, so the plan must
-/// be withdrawn before a rebuilt binary can derive a new one. Every published
-/// file still crosses through the installer's own atomic rename, and the
-/// receipt names the exact digest applied.
+/// A rebuilt binary over a completed receipt derives a refresh, so there is no
+/// plan to withdraw first: every published file is exchanged in place through
+/// the installer's own atomic rename, and the receipt names the exact digest
+/// applied. Nothing here is ever absent, which is what lets a hook fire and a
+/// worktree resolve `.spice-install/bin/spice` for the whole of a refresh.
 pub fn refresh_install(repository: &Repository, binary: &Path) -> Result<Digest, InstallError> {
-    match install::unapply(repository) {
-        Ok(_) | Err(InstallError::RecordMissing) => {}
-        Err(error) => return Err(error),
-    }
     let plan = install::plan(repository, Some(binary))?;
     let preview = InstallPreview::from_plan(plan)?;
     let digest = preview.digest().clone();

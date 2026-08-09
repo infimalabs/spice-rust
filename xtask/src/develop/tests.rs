@@ -1,4 +1,8 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::BTreeSet;
+use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread;
 
 use super::*;
 
@@ -166,41 +170,79 @@ fn a_resident_that_exits_before_readiness_is_reported_as_an_exit() {
     );
 }
 
-/// The refusal `cargo xtask install` exists to answer, and the refresh that
-/// answers it.
+/// The refresh `cargo xtask install` performs, and the withdrawal it must not.
 ///
-/// A completed receipt pins the executable bytes it installed, so the plan
-/// behind `spice install` and `spice install --apply` cannot be derived at all
-/// once the tree is rebuilt. The bare plan is asserted to refuse first, because
-/// a refresh that merely worked would not show that anything was wrong.
+/// A rebuilt binary over a completed receipt derives a refresh rather than
+/// refusing, so this command has nothing to withdraw first: it applies the very
+/// plan a bare preview would show. Reading the installed executable throughout
+/// proves the difference is observable rather than merely structural, because
+/// reversing first would leave that path absent for a whole transaction.
 #[test]
-fn a_rebuilt_binary_refuses_a_bare_plan_and_refreshes_through_one_command() {
+fn the_one_command_refresh_applies_a_bare_plan_without_withdrawing_anything() {
     let fixture = Fixture::new("rebuild");
     let repository = fixture.repository();
     let installed = install::installed_binary(&repository);
-    let first = fixture.binary("spice-first", b"first build\n");
-    let second = fixture.binary("spice-second", b"second build\n");
+    // Large enough that a withdrawal would be wide open to the reader below,
+    // rather than a race it could miss between two polls.
+    let first_image = vec![0x5a_u8; 512 * 1024];
+    let second_image = vec![0xa5_u8; 512 * 1024];
+    let first = fixture.binary("spice-first", &first_image);
+    let second = fixture.binary("spice-second", &second_image);
 
     let first_digest = refresh_install(&repository, &first).expect("first install applies");
     assert_eq!(
         fs::read(&installed).expect("installed executable reads"),
-        b"first build\n"
+        first_image
     );
 
-    let refused = install::plan(&repository, Some(&second));
-    assert!(
-        matches!(refused, Err(InstallError::BinaryContextChanged)),
-        "a bare plan admitted a rebuilt binary: {refused:?}"
-    );
+    let planned = install::plan(&repository, Some(&second))
+        .expect("a rebuilt binary plans a refresh rather than refusing");
+    let previewed = planned.digest().expect("the refresh plan is canonical");
 
+    let stop = Arc::new(AtomicBool::new(false));
+    let reader = {
+        let stop = Arc::clone(&stop);
+        let installed = installed.clone();
+        thread::spawn(move || {
+            let mut absences = 0_usize;
+            let mut images = BTreeSet::new();
+            while !stop.load(Ordering::Relaxed) {
+                match fs::read(&installed) {
+                    Ok(bytes) => {
+                        images.insert(bytes);
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => absences += 1,
+                    Err(error) => panic!("the installed executable stopped reading: {error}"),
+                }
+            }
+            (absences, images)
+        })
+    };
     let second_digest = refresh_install(&repository, &second).expect("refresh applies");
+    stop.store(true, Ordering::Relaxed);
+    let (absences, images) = reader.join().expect("the reading thread joins");
+
+    assert_eq!(
+        absences, 0,
+        "the installed executable was absent during a refresh"
+    );
+    // Without this the absence count is vacuous: a reader that ran entirely
+    // before or after the swap would report the same nothing.
+    assert!(
+        images.contains(&first_image) && images.contains(&second_image),
+        "the reader never straddled the swap, so it never had a withdrawal to miss"
+    );
+    assert_eq!(
+        second_digest, previewed,
+        "the command applied a plan a bare preview would not have shown"
+    );
     assert_ne!(
         first_digest, second_digest,
         "a refreshed plan reused the previous identity"
     );
     assert_eq!(
         fs::read(&installed).expect("installed executable reads"),
-        b"second build\n"
+        second_image
     );
 }
 
