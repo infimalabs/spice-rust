@@ -84,6 +84,17 @@ fn prepare_loaded(
         admit_digest(&plan, expected)?;
         return Ok((InstallRecord::new(plan)?, Some(loaded.generation), true));
     }
+    if record.status == InstallStatus::Complete
+        && verify_binary_context(&record.plan, spice_binary).is_err()
+    {
+        // The refresh transaction: one record swap from the complete install to
+        // the plan that supersedes it, then in-place replacement of each
+        // destination. Nothing is reversed, so nothing is ever absent.
+        verify_progress(repository, &record)?;
+        let plan = build_plan_over(repository, spice_binary, Some(&record.plan))?;
+        admit_digest(&plan, expected)?;
+        return Ok((InstallRecord::new(plan)?, Some(loaded.generation), true));
+    }
     verify_binary_context(&record.plan, spice_binary)?;
     if &record.plan_digest != expected {
         return Err(InstallError::DigestMismatch {
@@ -130,7 +141,7 @@ fn apply_operation(
             )?,
             parent.ok_or_else(|| InstallError::ParentChanged(operation.destination(repository)))?,
         )
-    } else if images_match(current.as_ref(), operation.previous.as_ref()) {
+    } else if operation.expects_in_place(current.as_ref()) {
         publish_operation(repository, operation, generated)?
     } else {
         return Err(drift(operation, current));
@@ -244,7 +255,7 @@ pub(super) fn verify_progress(
         let valid = match record.status {
             InstallStatus::Applying => record.installed[index].map_or_else(
                 || {
-                    images_match(observed.as_ref(), operation.previous.as_ref())
+                    operation.expects_in_place(observed.as_ref())
                         || (index == record.completed
                             && matches_generated(observed.as_ref(), operation))
                 },

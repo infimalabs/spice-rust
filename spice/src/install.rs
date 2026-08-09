@@ -271,6 +271,18 @@ pub struct Operation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     previous: Option<ObservedFile>,
     generated: GeneratedImage,
+    /// Installed image this operation replaces, when it refreshes a completed
+    /// install rather than introducing one.
+    ///
+    /// `previous` never moves: it stays the pre-install state a reversal
+    /// restores, so refreshing repeatedly still uninstalls to the tree the
+    /// first apply found. What a refresh needs beyond that is the image it
+    /// expects to *find* in place, which is the superseded build's output
+    /// rather than `previous`. Absent for a first install, and skipped from the
+    /// canonical bytes then, so plans that introduce an install keep the digest
+    /// they had before refreshing existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    superseded: Option<GeneratedImage>,
     introduced_parents: Vec<String>,
 }
 
@@ -306,6 +318,26 @@ impl Operation {
     #[must_use]
     pub const fn generated(&self) -> &GeneratedImage {
         &self.generated
+    }
+
+    /// Installed image a refresh replaces, absent when this install introduces it.
+    #[must_use]
+    pub const fn superseded(&self) -> Option<&GeneratedImage> {
+        self.superseded.as_ref()
+    }
+
+    /// Whether `observed` is the exact state this operation may publish over.
+    ///
+    /// A first install may publish only over the image it planned against. A
+    /// refresh may publish only over the build it supersedes, because the
+    /// destination already holds an installed image rather than `previous`.
+    fn expects_in_place(&self, observed: Option<&ObservedFile>) -> bool {
+        match &self.superseded {
+            Some(superseded) => {
+                observed.is_some_and(|observed| &observed.generated() == superseded)
+            }
+            None => images_match(observed, self.previous.as_ref()),
+        }
     }
 
     /// Parent directories absent when the plan was derived, outermost first.
@@ -470,7 +502,7 @@ impl InstallPlan {
                 ));
             }
             let observed = observe(&operation.destination(repository))?;
-            if !images_match(observed.as_ref(), operation.previous.as_ref()) {
+            if !operation.expects_in_place(observed.as_ref()) {
                 return Err(drift(operation, observed));
             }
         }
@@ -563,6 +595,15 @@ pub fn plan(
             verify_progress(repository, &record)?;
             return build_plan(repository, spice_binary);
         }
+        if record.status == InstallStatus::Complete
+            && verify_binary_context(&record.plan, spice_binary).is_err()
+        {
+            // A rebuilt executable over a complete install is a refresh, not a
+            // conflict. Proving the installed tree intact first is what lets
+            // the derived plan treat every destination as replaceable in place.
+            verify_progress(repository, &record)?;
+            return build_plan_over(repository, spice_binary, Some(&record.plan));
+        }
         verify_binary_context(&record.plan, spice_binary)?;
         verify_progress(repository, &record)?;
         return Ok(record.plan);
@@ -588,21 +629,35 @@ fn build_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
+    build_plan_over(repository, spice_binary, None)
+}
+
+/// Derive the plan that installs this build over `installed`, or from nothing.
+///
+/// Passing a completed plan makes this a refresh: every operation keeps that
+/// plan's reversal image and names its generated image as superseded, so apply
+/// replaces each destination in place instead of reversing the install first.
+fn build_plan_over(
+    repository: &Repository,
+    spice_binary: Option<&Path>,
+    installed: Option<&InstallPlan>,
+) -> Result<InstallPlan, InstallError> {
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
 
-    let (exclude_bound, exclude_previous) =
+    let (exclude_bound, observed_exclude) =
         destination_state(repository, Location::CommonGit, EXCLUDE_PATH)?;
+    let (exclude_previous, exclude_superseded) =
+        reversal_context(installed, Asset::Exclusions, observed_exclude);
     let exclude_image = exclude_previous.as_ref().map(|previous| &previous.image);
     let exclude_bytes = exclusions(exclude_image.map(FileImage::bytes))?;
     let exclude_mode = exclude_image.map_or(DATA_MODE, FileImage::mode);
     operations.push(operation(
         &mut virtual_directories,
         Asset::Exclusions,
-        Location::CommonGit,
-        EXCLUDE_PATH,
         exclude_bound,
         exclude_previous,
+        exclude_superseded,
         GeneratedImage::new(exclude_mode, &exclude_bytes),
     )?);
 
@@ -639,28 +694,28 @@ fn build_plan(
         ),
         (Asset::Skill, SKILL_PATH, SKILL.as_bytes(), DATA_MODE),
     ] {
-        let (bound, previous) = destination_state(repository, Location::CommonGit, path)?;
+        let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
+        let (previous, superseded) = reversal_context(installed, asset, observed);
         operations.push(operation(
             &mut virtual_directories,
             asset,
-            Location::CommonGit,
-            path,
             bound,
             previous,
+            superseded,
             GeneratedImage::new(mode, bytes),
         )?);
     }
 
     if let Some(binary) = spice_binary {
         let bytes = read_binary(binary)?;
-        let (bound, previous) = destination_state(repository, Location::CommonGit, BINARY_PATH)?;
+        let (bound, observed) = destination_state(repository, Location::CommonGit, BINARY_PATH)?;
+        let (previous, superseded) = reversal_context(installed, Asset::Binary, observed);
         operations.push(operation(
             &mut virtual_directories,
             Asset::Binary,
-            Location::CommonGit,
-            BINARY_PATH,
             bound,
             previous,
+            superseded,
             GeneratedImage::new(EXECUTABLE_MODE, &bytes),
         )?);
     }
@@ -676,15 +731,40 @@ fn build_plan(
     Ok(plan)
 }
 
+/// Reversal image and superseded build for one asset of `installed`.
+///
+/// A first install reverses to what it observed. A refresh reverses to whatever
+/// the install it supersedes reversed to, because the destination it observes
+/// now is that install's own output rather than operator state.
+fn reversal_context(
+    installed: Option<&InstallPlan>,
+    asset: Asset,
+    observed: Option<ObservedFile>,
+) -> (Option<ObservedFile>, Option<GeneratedImage>) {
+    match installed.and_then(|plan| {
+        plan.operations
+            .iter()
+            .find(|operation| operation.asset == asset)
+    }) {
+        Some(superseded) => (
+            superseded.previous.clone(),
+            Some(superseded.generated.clone()),
+        ),
+        None => (observed, None),
+    }
+}
+
 fn operation(
     virtual_directories: &mut BTreeSet<(Location, String)>,
     asset: Asset,
-    location: Location,
-    path: &str,
     bound: BoundDestination,
     previous: Option<ObservedFile>,
+    superseded: Option<GeneratedImage>,
     generated: GeneratedImage,
 ) -> Result<Operation, InstallError> {
+    // The asset fixes where it lands; `validate_operation_contract` refuses any
+    // operation whose location and path disagree with this same contract.
+    let (location, path, _) = asset_contract(asset);
     let mut introduced_parents = Vec::new();
     for parent in bound.introduced_parents {
         let key = (location, parent.clone());
@@ -700,6 +780,7 @@ fn operation(
         parent: bound.parent,
         previous,
         generated,
+        superseded,
         introduced_parents,
     })
 }
@@ -817,6 +898,10 @@ fn validate_operation_contract(
             .previous
             .as_ref()
             .is_some_and(|observed| !observed.image.validate())
+        || operation
+            .superseded
+            .as_ref()
+            .is_some_and(|superseded| !superseded.validate())
     {
         return Err(InstallError::InvalidRecord(
             "install operation carries an invalid file image".to_owned(),
@@ -927,6 +1012,15 @@ fn validate_introduced_parents(
     if operation.previous.is_some() && !operation.introduced_parents.is_empty() {
         return Err(InstallError::InvalidRecord(
             "an existing target cannot have introduced parent directories".to_owned(),
+        ));
+    }
+    // A refresh is derived only over a verified-complete install, so every
+    // parent it needs is already there and already owned by the plan it
+    // supersedes. Claiming to introduce one would hand the same directory to
+    // two reversals.
+    if operation.superseded.is_some() && !operation.introduced_parents.is_empty() {
+        return Err(InstallError::InvalidRecord(
+            "a refreshed target cannot have introduced parent directories".to_owned(),
         ));
     }
     let mut minimum_parent = 0;
