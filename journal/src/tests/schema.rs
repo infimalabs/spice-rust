@@ -153,10 +153,15 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         Some(Vec::new()),
         "the step creates the new table empty; a schema-1 authority has no head to carry"
     );
-    for table in ["steering_heads", "steering_misses", "steering_index"] {
+    for table in [
+        "steering_heads",
+        "steering_misses",
+        "steering_index",
+        "claim_index",
+    ] {
         assert!(
             after.remove(table).is_some(),
-            "the migration chain must add schema-7 table {table}"
+            "the migration chain must add indexed authority table {table}"
         );
     }
     // Compared one table at a time so a failure prints the unrelated table
