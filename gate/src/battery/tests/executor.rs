@@ -245,6 +245,58 @@ fn one_capture_reads_every_authority_and_runs_each_family_once() {
 }
 
 #[test]
+fn admitted_cross_process_receipt_never_reinvokes_compilers() {
+    let fixture = Fixture::new();
+    let repository = compiler_fixture_repository(&fixture);
+    let (programs, cargo_log, trunk_log) = install_compiler_programs(&fixture);
+    let capture = |actor: &str| {
+        crate::BatteryCapture::capture(
+            &repository,
+            &crate::Selector::staged(),
+            crate::ClaimCapture::Idle,
+            acting(actor),
+            crate::RimCapture::new(
+                &repository,
+                Some(OsString::from(programs.as_os_str())),
+                Vec::new(),
+            )
+            .expect("absolute compiler rim"),
+            crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
+        )
+        .expect("capture compiler fixture")
+    };
+    let producer = capture("compiler-producer");
+    let (_, evidence) = compiler_evidence(&producer, Vec::new());
+    let authority = b"cross-process receipt fixture authority";
+    let receipt =
+        crate::encode_verifier_compiler_receipt(&evidence, authority).expect("encode receipt");
+    fs::remove_file(&cargo_log).expect("clear producer Cargo trace");
+
+    let mut consumer = capture("compiler-consumer");
+    assert_ne!(producer.root(), consumer.root());
+    let contracts = [GateId::RustTypecheck, GateId::CanvasWebTypecheck].map(|gate_id| {
+        consumer
+            .verifier_compiler_contract(gate_id, Vec::new())
+            .expect("consumer verifier contract")
+    });
+    let admitted = crate::admit_verifier_compiler_receipt(&receipt, &contracts, authority)
+        .expect("fresh receipt admits against consumer capture");
+
+    consumer
+        .execute_with_verifier_evidence(&admitted, Vec::new())
+        .expect("receipt-backed battery executes");
+
+    assert!(
+        !cargo_log.exists(),
+        "receipt-backed battery reinvoked Cargo inside the consumer"
+    );
+    assert!(
+        !trunk_log.exists(),
+        "receipt-backed battery reinvoked Trunk inside the consumer"
+    );
+}
+
+#[test]
 fn stale_verifier_evidence_runs_both_real_compiler_arms() {
     let fixture = Fixture::new();
     let repository = compiler_fixture_repository(&fixture);

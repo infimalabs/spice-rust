@@ -2,8 +2,9 @@
 
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead as _, BufReader, Write as _};
+use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -24,6 +25,8 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: usize = 1024 * 1024;
+const RECEIPT_LIMIT: usize = 1024 * 1024;
+const AUTHORITY_SIZE: usize = 32;
 
 const _: () = assert!(
     WORK_RUNTIME.as_secs()
@@ -96,33 +99,52 @@ struct WorkerFiles {
     root: PathBuf,
     progress: PathBuf,
     terminal: PathBuf,
+    receipt: PathBuf,
+    authority: PathBuf,
     armed: bool,
 }
 
 impl WorkerFiles {
-    fn create() -> io::Result<Self> {
+    fn create(receipt_document: &[u8], authority_document: &[u8]) -> io::Result<Self> {
+        if receipt_document.len() > RECEIPT_LIMIT {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "verifier compiler receipt exceeds its bounded artifact limit",
+            ));
+        }
+        if authority_document.len() != AUTHORITY_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "verifier compiler receipt authority has an invalid size",
+            ));
+        }
         let root = env::temp_dir().join(format!(
             "spice-commit-gate-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4().simple(),
         ));
-        fs::create_dir(&root)?;
+        DirBuilder::new().mode(0o700).create(&root)?;
         let progress = root.join("progress.jsonl");
         let terminal = root.join("terminal.bin");
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&progress)?;
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&terminal)?;
-        Ok(Self {
+        let receipt = root.join("compiler-receipt.json");
+        let authority = root.join("compiler-authority.bin");
+        let files = Self {
             root,
             progress,
             terminal,
+            receipt,
+            authority,
             armed: true,
-        })
+        };
+        drop(create_private_file(&files.progress)?);
+        drop(create_private_file(&files.terminal)?);
+        let mut receipt_file = create_private_file(&files.receipt)?;
+        receipt_file.write_all(receipt_document)?;
+        receipt_file.flush()?;
+        let mut authority_file = create_private_file(&files.authority)?;
+        authority_file.write_all(authority_document)?;
+        authority_file.flush()?;
+        Ok(files)
     }
 
     fn cleanup(mut self) -> io::Result<()> {
@@ -130,6 +152,14 @@ impl WorkerFiles {
         self.armed = false;
         Ok(())
     }
+}
+
+fn create_private_file(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
 }
 
 impl Drop for WorkerFiles {
@@ -141,11 +171,54 @@ impl Drop for WorkerFiles {
 }
 
 pub(super) fn run() -> Outcome<BatteryReport> {
-    let files = match WorkerFiles::create() {
+    run_with(prepare_compilers, supervise)
+}
+
+struct CompilerPreparation {
+    cargo_jobs: usize,
+    receipt: Vec<u8>,
+    authority: Vec<u8>,
+}
+
+fn prepare_compilers() -> Result<CompilerPreparation, WorkerFailure> {
+    let cargo_jobs = std::thread::available_parallelism()
+        .map_err(|error| WorkerFailure {
+            reason: "gate::pre-commit-parallelism-unavailable".to_owned(),
+            detail: error.to_string(),
+            fault: true,
+        })?
+        .get();
+    let authority = fresh_authority();
+    let receipt =
+        spice::gate::verifier_compiler_receipt(Selector::staged(), cargo_jobs, &authority)
+            .map_err(run_error_failure)?;
+    Ok(CompilerPreparation {
+        cargo_jobs,
+        receipt,
+        authority,
+    })
+}
+
+fn fresh_authority() -> Vec<u8> {
+    let mut authority = Vec::with_capacity(AUTHORITY_SIZE);
+    authority.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    authority.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    authority
+}
+
+fn run_with(
+    compiler: impl FnOnce() -> Result<CompilerPreparation, WorkerFailure>,
+    supervisor: impl FnOnce(&WorkerFiles, usize) -> Outcome<BatteryReport>,
+) -> Outcome<BatteryReport> {
+    let prepared = match compiler() {
+        Ok(prepared) => prepared,
+        Err(error) => return worker_failure(error),
+    };
+    let files = match WorkerFiles::create(&prepared.receipt, &prepared.authority) {
         Ok(files) => files,
         Err(error) => return fault("gate::pre-commit-supervisor-unavailable", error),
     };
-    let answer = supervise(&files);
+    let answer = supervisor(&files, prepared.cargo_jobs);
     match files.cleanup() {
         Ok(()) => answer,
         Err(error) => fault("gate::pre-commit-cleanup-failed", error),
@@ -165,20 +238,43 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         eprintln!("commit-gate worker requires a terminal path");
         return Some(1);
     };
+    let Some(receipt) = arguments.next() else {
+        eprintln!("commit-gate worker requires a compiler receipt path");
+        return Some(1);
+    };
+    let Some(authority) = arguments.next() else {
+        eprintln!("commit-gate worker requires a compiler authority path");
+        return Some(1);
+    };
+    let Some(cargo_jobs) = arguments
+        .next()
+        .and_then(|argument| argument.to_string_lossy().parse::<usize>().ok())
+    else {
+        eprintln!("commit-gate worker requires a numeric Cargo job cap");
+        return Some(1);
+    };
     if arguments.next().is_some() {
         eprintln!("commit-gate worker received trailing arguments");
         return Some(1);
     }
-    Some(match worker(Path::new(&progress), Path::new(&terminal)) {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("commit-gate worker failed to publish its terminal: {error}");
-            1
-        }
-    })
+    Some(
+        match worker(
+            Path::new(&progress),
+            Path::new(&terminal),
+            Path::new(&receipt),
+            Path::new(&authority),
+            cargo_jobs,
+        ) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("commit-gate worker failed to publish its terminal: {error}");
+                1
+            }
+        },
+    )
 }
 
-fn supervise(files: &WorkerFiles) -> Outcome<BatteryReport> {
+fn supervise(files: &WorkerFiles, cargo_jobs: usize) -> Outcome<BatteryReport> {
     let executable = match env::current_exe() {
         Ok(executable) => executable,
         Err(error) => return fault("gate::pre-commit-executable-unavailable", error),
@@ -189,6 +285,9 @@ fn supervise(files: &WorkerFiles) -> Outcome<BatteryReport> {
             OsString::from(WORKER_ARGUMENT),
             files.progress.as_os_str().to_owned(),
             files.terminal.as_os_str().to_owned(),
+            files.receipt.as_os_str().to_owned(),
+            files.authority.as_os_str().to_owned(),
+            OsString::from(cargo_jobs.to_string()),
         ],
         ProcessBounds::production(),
     ) {
@@ -271,21 +370,61 @@ fn terminal(path: &Path, progress: &Path) -> Outcome<BatteryReport> {
     }
 }
 
-fn worker(progress: &Path, terminal: &Path) -> io::Result<()> {
+fn worker(
+    progress: &Path,
+    terminal: &Path,
+    receipt_path: &Path,
+    authority_path: &Path,
+    cargo_jobs: usize,
+) -> io::Result<()> {
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
+    let receipt = match read_receipt(receipt_path) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            return write_failure(
+                terminal,
+                &WorkerFailure {
+                    reason: "gate::verifier-receipt-unavailable".to_owned(),
+                    detail: error.to_string(),
+                    fault: true,
+                },
+            );
+        }
+    };
+    let authority = match read_authority(authority_path) {
+        Ok(authority) => authority,
+        Err(error) => {
+            return write_failure(
+                terminal,
+                &WorkerFailure {
+                    reason: "gate::verifier-receipt-authority-unavailable".to_owned(),
+                    detail: error.to_string(),
+                    fault: true,
+                },
+            );
+        }
+    };
+    fs::remove_file(receipt_path)?;
+    fs::remove_file(authority_path)?;
     let mut progress = OpenOptions::new().append(true).open(progress)?;
     write_phase(&mut progress, &WorkerPhase::Capture)?;
     let mut phase_failure = None;
-    let result = spice::gate::run_traced(Selector::staged(), &mut |event| {
-        let Some(phase) = WorkerPhase::from_event(event) else {
-            return;
-        };
-        if phase_failure.is_none()
-            && let Err(error) = write_phase(&mut progress, &phase)
-        {
-            phase_failure = Some(error);
-        }
-    });
+    let result = spice::gate::run_traced_with_verifier_receipt(
+        Selector::staged(),
+        &receipt,
+        cargo_jobs,
+        &authority,
+        &mut |event| {
+            let Some(phase) = WorkerPhase::from_event(event) else {
+                return;
+            };
+            if phase_failure.is_none()
+                && let Err(error) = write_phase(&mut progress, &phase)
+            {
+                phase_failure = Some(error);
+            }
+        },
+    );
     if let Some(error) = phase_failure {
         return write_failure(
             terminal,
@@ -311,6 +450,39 @@ fn worker(progress: &Path, terminal: &Path) -> io::Result<()> {
             },
         ),
     }
+}
+
+fn read_receipt(path: &Path) -> io::Result<Vec<u8>> {
+    let receipt = read_bounded(path, RECEIPT_LIMIT)?;
+    if receipt.len() > RECEIPT_LIMIT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "verifier compiler receipt exceeds its bounded artifact limit",
+        ));
+    }
+    Ok(receipt)
+}
+
+fn read_authority(path: &Path) -> io::Result<Vec<u8>> {
+    let authority = read_bounded(path, AUTHORITY_SIZE)?;
+    if authority.len() != AUTHORITY_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "verifier compiler receipt authority has an invalid size",
+        ));
+    }
+    Ok(authority)
+}
+
+fn read_bounded(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+    let read_limit = u64::try_from(limit)
+        .map_err(io::Error::other)?
+        .saturating_add(1);
+    let mut document = Vec::with_capacity(limit.min(4096));
+    File::open(path)?
+        .take(read_limit)
+        .read_to_end(&mut document)?;
+    Ok(document)
 }
 
 fn write_phase(file: &mut File, phase: &WorkerPhase) -> io::Result<()> {
@@ -344,6 +516,14 @@ fn worker_failure(failure: WorkerFailure) -> Outcome<BatteryReport> {
                 "repair the named capture input; the Rust battery is the sole execution path",
             ),
         ))
+    }
+}
+
+fn run_error_failure(error: spice::gate::RunError) -> WorkerFailure {
+    WorkerFailure {
+        reason: error.reason().to_owned(),
+        detail: error.detail().to_owned(),
+        fault: error.is_fault(),
     }
 }
 
@@ -468,8 +648,12 @@ fn ambient_environment() -> Result<Environment, sill::SpecError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::thread;
     use std::time::Instant;
+
+    const TEST_AUTHORITY: [u8; AUTHORITY_SIZE] = [0x5a; AUTHORITY_SIZE];
 
     #[test]
     fn fixed_envelope_reserves_cleanup_inside_180_seconds() {
@@ -480,8 +664,94 @@ mod tests {
     }
 
     #[test]
+    fn compiler_preparation_and_receipt_publication_precede_supervision() {
+        let phase = Cell::new(0);
+        let answer = run_with(
+            || {
+                assert_eq!(phase.get(), 0);
+                phase.set(1);
+                Ok(CompilerPreparation {
+                    cargo_jobs: 3,
+                    receipt: b"source-bound compiler receipt".to_vec(),
+                    authority: TEST_AUTHORITY.to_vec(),
+                })
+            },
+            |files, cargo_jobs| {
+                assert_eq!(phase.get(), 1);
+                assert_eq!(cargo_jobs, 3);
+                assert_eq!(
+                    fs::read(&files.receipt).expect("read published compiler receipt"),
+                    b"source-bound compiler receipt"
+                );
+                assert_eq!(
+                    fs::read(&files.authority).expect("read receipt authority"),
+                    TEST_AUTHORITY
+                );
+                phase.set(2);
+                fault("gate::supervisor-fixture", "bounded supervisor entered")
+            },
+        );
+
+        assert_eq!(phase.get(), 2);
+        let Outcome::Fault(fault) = answer else {
+            panic!("fixture supervisor returns its typed marker fault");
+        };
+        assert_eq!(fault.reason, "gate::supervisor-fixture");
+    }
+
+    #[test]
+    fn compiler_receipt_artifact_is_private_and_size_bounded() {
+        let document = b"source-bound compiler receipt";
+        let files =
+            WorkerFiles::create(document, &TEST_AUTHORITY).expect("create private receipt files");
+        assert_eq!(
+            fs::metadata(&files.root)
+                .expect("receipt root metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        for path in [
+            &files.progress,
+            &files.terminal,
+            &files.receipt,
+            &files.authority,
+        ] {
+            assert_eq!(
+                fs::metadata(path)
+                    .expect("worker artifact metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        assert_eq!(
+            read_receipt(&files.receipt).expect("read receipt"),
+            document
+        );
+        assert_eq!(
+            read_authority(&files.authority).expect("read receipt authority"),
+            TEST_AUTHORITY
+        );
+        fs::write(&files.receipt, vec![0; RECEIPT_LIMIT + 1])
+            .expect("write oversized receipt fixture");
+        assert!(read_receipt(&files.receipt).is_err());
+        fs::write(&files.authority, [0; AUTHORITY_SIZE + 1])
+            .expect("write oversized authority fixture");
+        assert!(read_authority(&files.authority).is_err());
+        files.cleanup().expect("remove private receipt files");
+
+        let oversized = vec![0; RECEIPT_LIMIT + 1];
+        assert!(WorkerFiles::create(&oversized, &TEST_AUTHORITY).is_err());
+        assert!(WorkerFiles::create(document, &TEST_AUTHORITY[..AUTHORITY_SIZE - 1]).is_err());
+    }
+
+    #[test]
     fn deadline_terminates_the_worker_group_and_names_its_last_phase() {
-        let files = WorkerFiles::create().expect("create deadline worker files");
+        let files = WorkerFiles::create(b"receipt fixture", &TEST_AUTHORITY)
+            .expect("create deadline worker files");
         let pid = files.root.join("descendant.pid");
         let script = concat!(
             "printf '%s\\n' '{\"phase\":\"family\",\"family\":\"toolchain\"}' >> \"$1\"; ",
@@ -541,7 +811,8 @@ mod tests {
 
     #[test]
     fn abnormal_worker_exit_is_typed_and_retains_the_last_exact_phase() {
-        let files = WorkerFiles::create().expect("create lost-worker files");
+        let files = WorkerFiles::create(b"receipt fixture", &TEST_AUTHORITY)
+            .expect("create lost-worker files");
         let script = concat!(
             "printf '%s\\n' ",
             "'{\"phase\":\"arm\",\"ordinal\":12,\"gate_id\":\"rust-typecheck\",",

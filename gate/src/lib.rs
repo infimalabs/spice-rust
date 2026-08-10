@@ -172,7 +172,8 @@ pub use toolchain::{
 pub use toolchain::{
     RimCapture, RimDirectoryError, ToolchainSource, VerifierCompilerContract,
     VerifierCompilerEvidence, VerifierCompilerProcessEvidence, VerifierCompilerRun,
-    VerifierCompilerStage, acquire_toolchain, formatter_edition, formatter_sources,
+    VerifierCompilerStage, acquire_toolchain, admit_verifier_compiler_receipt,
+    encode_verifier_compiler_receipt, formatter_edition, formatter_sources,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};

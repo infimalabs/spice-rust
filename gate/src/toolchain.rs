@@ -237,7 +237,8 @@ pub use declarations::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use verifier_evidence::{
     VerifierCompilerContract, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
-    VerifierCompilerRun, VerifierCompilerStage,
+    VerifierCompilerRun, VerifierCompilerStage, admit_verifier_compiler_receipt,
+    encode_verifier_compiler_receipt,
 };
 
 /// Extensions selected by the compiled prose scanner, without their leading dot.

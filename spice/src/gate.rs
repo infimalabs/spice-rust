@@ -14,7 +14,8 @@ use std::process::Command;
 use ::gate::{
     ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport, ClaimCapture,
     FocusedArmReport, GateId, HygieneConfiguration, KillRun, RepositoryExecutionEvent, RimCapture,
-    Selector, VerifierCompilerContract, VerifierCompilerEvidence,
+    Selector, VerifierCompilerContract, VerifierCompilerEvidence, admit_verifier_compiler_receipt,
+    encode_verifier_compiler_receipt,
 };
 use wire::Digest;
 
@@ -144,6 +145,110 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery, RunError> {
         verifier_environment,
         cargo_jobs: None,
     })
+}
+
+/// Compile every reusable verifier stage and encode its source-bound receipt.
+///
+/// This operation is intentionally separate from the bounded commit worker.
+/// The later consumer admits the receipt against a fresh capture and never
+/// falls back to compiler execution when the artifact is absent or stale.
+///
+/// # Errors
+///
+/// Returns capture, compiler, completeness, or receipt-encoding failures.
+pub fn verifier_compiler_receipt(
+    selector: Selector,
+    cargo_jobs: usize,
+    authority: &[u8],
+) -> Result<Vec<u8>, RunError> {
+    let mut battery = prepare(selector)?;
+    let mut evidence = Vec::new();
+    for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
+        let contract = battery.verifier_compiler_contract(gate_id, cargo_jobs)?;
+        let mut processes = Vec::new();
+        for stage in contract.stages() {
+            let run = contract
+                .run(*stage)
+                .map_err(|error| RunError::fault("gate::verifier-compiler-unavailable", error))?;
+            if !run.success() {
+                return Err(RunError::refusal(
+                    "gate::verifier-compiler-refused",
+                    verifier_compiler_failure(*stage, &run),
+                ));
+            }
+            processes.push(run.into_evidence().ok_or_else(|| {
+                RunError::fault(
+                    "gate::verifier-compiler-evidence-missing",
+                    format!("successful {stage:?} run minted no compiler evidence"),
+                )
+            })?);
+        }
+        evidence.push(
+            contract
+                .complete(&processes)
+                .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))?,
+        );
+    }
+    encode_verifier_compiler_receipt(&evidence, authority)
+        .map_err(|error| RunError::fault("gate::verifier-receipt-unavailable", error))
+}
+
+/// Execute a traced battery using only a fresh, exact compiler receipt.
+///
+/// Receipt admission occurs before battery execution. Missing, stale, partial,
+/// or mismatched evidence is a refusal and never invokes a compiler here.
+///
+/// # Errors
+///
+/// Returns capture, receipt-admission, or canonical battery failures.
+pub fn run_traced_with_verifier_receipt(
+    selector: Selector,
+    receipt: &[u8],
+    cargo_jobs: usize,
+    authority: &[u8],
+    trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
+) -> Result<BatteryReport, RunError> {
+    let mut environment = verifier_environment();
+    let mut bound = None;
+    bind_cargo_jobs(&mut environment, &mut bound, cargo_jobs)?;
+    let mut capture = capture(selector, None, Some(trace))?;
+    let contracts = [GateId::RustTypecheck, GateId::CanvasWebTypecheck]
+        .into_iter()
+        .map(|gate_id| {
+            capture
+                .verifier_compiler_contract(gate_id, environment.clone())
+                .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let evidence = admit_verifier_compiler_receipt(receipt, &contracts, authority)
+        .map_err(|error| RunError::refusal("gate::verifier-receipt-refused", error))?;
+    capture
+        .execute_with_verifier_evidence(&evidence, environment)
+        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+}
+
+fn verifier_compiler_failure(
+    stage: ::gate::VerifierCompilerStage,
+    run: &::gate::VerifierCompilerRun,
+) -> String {
+    let completion = if run.cancelled() {
+        "cancelled"
+    } else if run.timed_out() {
+        "timed-out"
+    } else {
+        "exited"
+    };
+    format!(
+        "stage={stage:?}; completion={completion}; code={:?}; stderr={}",
+        run.code(),
+        bounded_compiler_output(run.stderr()),
+    )
+}
+
+fn bounded_compiler_output(bytes: &[u8]) -> String {
+    const LIMIT: usize = 16 * 1024;
+    let start = bytes.len().saturating_sub(LIMIT);
+    String::from_utf8_lossy(&bytes[start..]).trim().to_owned()
 }
 
 #[expect(
