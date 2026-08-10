@@ -206,6 +206,35 @@ fn build_lane_stage_is_byte_identical_or_still_absent_after_the_precondition_gua
 }
 
 #[test]
+fn build_lane_fixture_can_seed_a_read_only_selected_tree_root() {
+    let fixture = Fixture::new();
+    let root = fixture.root("read-only-selected-source");
+    fs::create_dir(&root).expect("create selected-source fixture root");
+    let dist = root.join("dist");
+    fs::create_dir(&dist).expect("create selected-source dist crate directory");
+    for directory in [&root, &dist] {
+        let mut permissions = fs::metadata(directory)
+            .expect("read selected-source fixture permissions")
+            .permissions();
+        permissions.set_mode(0o500);
+        fs::set_permissions(directory, permissions)
+            .expect("make selected-source fixture read-only");
+    }
+
+    staged_app::seed(&root);
+
+    let app = canvas::AppSource::resolve(&root).expect("seeded selected source app resolves");
+    let generation = app
+        .current_generation()
+        .expect("selected source generation resolves");
+    for asset in canvas::APP.assets() {
+        generation.served(*asset).unwrap_or_else(|error| {
+            panic!("selected source seed omitted {}: {error}", asset.file())
+        });
+    }
+}
+
+#[test]
 fn staged_app_seed_callers_are_fully_inventoried() {
     let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
     let marker = ["staged_app", "::seed("].concat();
