@@ -156,15 +156,26 @@ impl ReleaseAuthority {
         ))
     }
 
+    /// Observe the configured remote through the authenticated Git transport.
+    #[must_use]
+    pub fn remote_visibility(&self) -> GitCommand {
+        visibility_command(&self.document.remote, None)
+    }
+
+    /// Observe one exact ref through the authenticated Git transport.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a noncanonical Git reference spelling.
+    pub fn reference_visibility(&self, reference: &str) -> Result<GitCommand, AuthorityError> {
+        validate_ref(reference)?;
+        Ok(visibility_command(&self.document.remote, Some(reference)))
+    }
+
     /// Observe one exact package ref through the authenticated Git transport.
     #[must_use]
     pub fn package_visibility(&self, version: &ProductVersion) -> GitCommand {
-        GitCommand::new([
-            "ls-remote".to_owned(),
-            "--refs".to_owned(),
-            self.document.remote.clone(),
-            self.refs(version).package,
-        ])
+        visibility_command(&self.document.remote, Some(&self.refs(version).package))
     }
 
     /// Converge the package ref without overwriting another release object.
@@ -513,6 +524,18 @@ fn push_command(
     GitCommand::new(arguments)
 }
 
+fn visibility_command(remote: &str, reference: Option<&str>) -> GitCommand {
+    let mut arguments = vec![
+        "ls-remote".to_owned(),
+        "--refs".to_owned(),
+        remote.to_owned(),
+    ];
+    if let Some(reference) = reference {
+        arguments.push(reference.to_owned());
+    }
+    GitCommand::new(arguments)
+}
+
 /// Why the external release authority was refused.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorityError {
@@ -651,6 +674,17 @@ mod tests {
                 "origin",
                 "1111111111111111111111111111111111111111:refs/heads/main",
             ]
+        );
+        assert_eq!(
+            authority.remote_visibility().arguments(),
+            ["ls-remote", "--refs", "origin"]
+        );
+        assert_eq!(
+            authority
+                .reference_visibility("refs/tags/v1.2.3")
+                .expect("reference visibility")
+                .arguments(),
+            ["ls-remote", "--refs", "origin", "refs/tags/v1.2.3"]
         );
         assert_eq!(
             authority.package_visibility(&version).arguments(),

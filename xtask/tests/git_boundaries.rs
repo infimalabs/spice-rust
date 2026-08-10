@@ -64,9 +64,11 @@ const CONTROL_PLANE_SOURCES: [&str; 3] = [
 const NETWORK_CALL_SITES: [(&str, &str, usize); 16] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
-    // control-plane boundary after authored release approval.
-    ("dist/src/authority.rs", "ls-remote", 2),
-    ("dist/src/authority.rs", "push", 3),
+    // control-plane boundary after authored release approval. Each count
+    // covers the single production constructor plus its co-located exact-argv
+    // assertions.
+    ("dist/src/authority.rs", "ls-remote", 4),
+    ("dist/src/authority.rs", "push", 4),
     // The whole of GIT-01's production surface: one fetch, one push, both in
     // the control-plane module and both reached only through a boundary.
     ("spice/src/task_git.rs", "fetch", 1),
