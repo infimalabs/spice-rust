@@ -29,13 +29,13 @@ const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 /// Keeping this capture alive is what makes every compiler token and the later
 /// battery execution name one immutable selected source rather than two
 /// independently materialized readings of the index.
-pub struct PreparedBattery {
-    capture: BatteryCapture<'static>,
+pub struct PreparedBattery<'trace> {
+    capture: BatteryCapture<'trace>,
     verifier_environment: Vec<(OsString, OsString)>,
     cargo_jobs: Option<usize>,
 }
 
-impl PreparedBattery {
+impl PreparedBattery<'_> {
     /// Identity of the immutable selected source retained by this preparation.
     #[must_use]
     pub const fn source(&self) -> &Digest {
@@ -137,9 +137,30 @@ fn bind_cargo_jobs(
 /// # Errors
 ///
 /// Returns the same rim and capture failures as [`run`].
-pub fn prepare(selector: Selector) -> Result<PreparedBattery, RunError> {
+pub fn prepare(selector: Selector) -> Result<PreparedBattery<'static>, RunError> {
     let verifier_environment = verifier_environment();
     capture(selector, None, None).map(|capture| PreparedBattery {
+        capture,
+        verifier_environment,
+        cargo_jobs: None,
+    })
+}
+
+/// Capture the selected source once while exposing execution progress.
+///
+/// The returned preparation retains the trace for its lifetime, so test
+/// selection and the later battery execution can share one immutable source
+/// without losing the supervisor's exact family/arm cursor.
+///
+/// # Errors
+///
+/// Returns the same rim and capture failures as [`prepare`].
+pub fn prepare_traced<'trace>(
+    selector: Selector,
+    trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
+) -> Result<PreparedBattery<'trace>, RunError> {
+    let verifier_environment = verifier_environment();
+    capture(selector, None, Some(trace)).map(|capture| PreparedBattery {
         capture,
         verifier_environment,
         cargo_jobs: None,
@@ -219,10 +240,7 @@ pub fn run_traced(
     selector: Selector,
     trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<BatteryReport, RunError> {
-    let mut capture = capture(selector, None, Some(trace))?;
-    capture
-        .execute()
-        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    prepare_traced(selector, trace)?.execute(&[])
 }
 
 fn capture<'trace>(

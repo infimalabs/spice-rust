@@ -180,7 +180,8 @@ fn analyses(events: &[RepositoryExecutionEvent]) -> Vec<(GateId, ArmFamily)> {
                 Some((*gate_id, *family))
             }
             RepositoryExecutionEvent::ArmInvoked { .. }
-            | RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+            | RepositoryExecutionEvent::FamilyInvoked { .. }
+            | RepositoryExecutionEvent::ToolchainAnalysisCompleted { .. } => None,
         })
         .collect()
 }
@@ -193,7 +194,8 @@ fn invoked_arms(events: &[RepositoryExecutionEvent]) -> Vec<(GateId, ArmFamily)>
                 gate_id, family, ..
             } => Some((*gate_id, *family)),
             RepositoryExecutionEvent::FamilyInvoked { .. }
-            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+            | RepositoryExecutionEvent::AnalysisInvoked { .. }
+            | RepositoryExecutionEvent::ToolchainAnalysisCompleted { .. } => None,
         })
         .collect()
 }
@@ -204,7 +206,8 @@ fn invoked_families(events: &[RepositoryExecutionEvent]) -> Vec<ArmFamily> {
         .filter_map(|event| match event {
             RepositoryExecutionEvent::FamilyInvoked { family } => Some(*family),
             RepositoryExecutionEvent::ArmInvoked { .. }
-            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+            | RepositoryExecutionEvent::AnalysisInvoked { .. }
+            | RepositoryExecutionEvent::ToolchainAnalysisCompleted { .. } => None,
         })
         .collect()
 }

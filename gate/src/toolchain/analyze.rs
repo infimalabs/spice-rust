@@ -51,7 +51,7 @@ use build_root::{CanvasSource, CanvasWorkspace};
 
 pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
 pub(super) use csharp::csharp_unused;
-pub(super) use rust::rust_typecheck;
+pub(super) use rust::{rust_analysis_workspace, rust_typecheck};
 
 /// What one compiled analysis observed about one arm.
 ///

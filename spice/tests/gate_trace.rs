@@ -26,7 +26,8 @@ fn shared_rim_invokes_each_compiled_arm_and_family_once_in_order() {
                 family,
             } => Some((*position, *gate_id, *family)),
             RepositoryExecutionEvent::FamilyInvoked { .. }
-            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+            | RepositoryExecutionEvent::AnalysisInvoked { .. }
+            | RepositoryExecutionEvent::ToolchainAnalysisCompleted { .. } => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(arms.len(), GateId::BATTERY.len());
@@ -48,7 +49,8 @@ fn shared_rim_invokes_each_compiled_arm_and_family_once_in_order() {
             .filter_map(|event| match event {
                 RepositoryExecutionEvent::FamilyInvoked { family } => Some(*family),
                 RepositoryExecutionEvent::ArmInvoked { .. }
-                | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+                | RepositoryExecutionEvent::AnalysisInvoked { .. }
+                | RepositoryExecutionEvent::ToolchainAnalysisCompleted { .. } => None,
             })
             .collect::<Vec<_>>(),
         [
