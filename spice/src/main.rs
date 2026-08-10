@@ -577,7 +577,7 @@ fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> 
     }
 }
 
-/// Emits any pending direction and hands the caller's command through.
+/// Emits pending direction to this wrapper's stderr and waits on its one child.
 #[cfg(not(target_arch = "wasm32"))]
 fn run(command: Vec<OsString>) -> ! {
     let (program, arguments) = command

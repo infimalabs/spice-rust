@@ -81,14 +81,15 @@ pre_commit = [
 # rather than a set of literals accumulating across crates.
 #
 # Session forensics reads the live Codex or Claude identity and the selected
-# agent vendor. `steer` owns the four hook/session names. Interception exports
-# the proof and reads the geometry back: the hooks directory it sources its
-# static stage from, the rendered direction it writes to stderr, and the lane
-# a shell is bound to. `gate` owns the mutation seed and attempt number it
-# repeats into every bounded cargo-mutants process. Its hygiene acquisition
-# fixture passes the captured repository and execution-tripwire marker to an
-# isolated copy of the current test process, and fixes `TMPDIR` at private
-# writable scratch so that isolation remains valid on a read-only proof host.
+# agent vendor. `steer` owns the four hook/session names. A supervised launch
+# separates the installed outer shell from the native shell restored by its
+# inner stage, while the wrapper reads the lane's rendered inbox and lane-bound
+# commands carry that lane identity. `gate` owns the mutation seed and attempt
+# number it repeats into every bounded cargo-mutants process. Its hygiene
+# acquisition fixture passes the captured repository and execution-tripwire
+# marker to an isolated copy of the current test process, and fixes `TMPDIR` at
+# private writable scratch so that isolation remains valid on a read-only proof
+# host.
 #
 # Eight foreign environment names are admitted here. The installed pre-commit
 # hook unsets Git's three local-environment names before it execs verify, and
@@ -132,7 +133,7 @@ env_names = [
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
-    "SPICE_PROOF",
+    "SPICE_NATIVE_SHELL",
     "TMPDIR",
 ]
 

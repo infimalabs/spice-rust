@@ -74,20 +74,25 @@ only move the unsealed bootstrap and add another binary identity.
 ## `steer/hooks/entry.sh`
 
 Caller: The installed shell startup hook embedded by `steer::hook` and
-published by `spice::install`.
+published by `spice::install`; supervised agent launches set this executable as
+their outer `SHELL`.
 
 Disposition: Irreducible glue.
 
-Reason: It must either source the static stage into the current shell or
-replace that shell with `spice run`; a child Rust process cannot source or
-replace its parent shell.
+Reason: It receives the shell tool's complete argument vector before the native
+command shell exists, then replaces itself with `spice run` and the separately
+packaged inner stage. A Rust child cannot replace the shell process that chose
+to start it.
 
 ## `steer/hooks/static/stage.sh`
 
-Caller: Sourced by `steer/hooks/entry.sh` in every already-activated descendant
-shell.
+Caller: Executed by `spice run` as its one immediate child for every supervised
+top-level shell command.
 
 Disposition: Irreducible glue.
 
-Reason: It must `return` to the shell that sourced it after rendering the lane
-inbox. A Rust child cannot return control from a sourced parent-shell frame.
+Reason: It removes the packaged routing variables, restores `SHELL` to the
+user's native shell, and replaces itself with that shell. This preserves the
+wrapper's child process identity across `exec` while ensuring executed scripts
+and descendant shells start natively; a Rust child cannot mutate its own
+process environment and then replace itself on the caller's behalf.

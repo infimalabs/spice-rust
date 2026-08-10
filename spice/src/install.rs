@@ -1126,6 +1126,18 @@ pub fn installed_git_hooks(repository: &Repository) -> PathBuf {
     repository.common_dir().join(".spice-install/git-hooks")
 }
 
+/// Installed outer shell used for every supervised top-level command.
+#[must_use]
+pub fn installed_shell(repository: &Repository) -> PathBuf {
+    repository.common_dir().join(ENTRY_PATH)
+}
+
+/// Installed directory containing both structural shell stages.
+#[must_use]
+pub fn installed_shell_hooks(repository: &Repository) -> PathBuf {
+    repository.common_dir().join(".spice-install/hooks")
+}
+
 fn drift(operation: &Operation, observed: Option<ObservedFile>) -> InstallError {
     InstallError::Drift {
         path: operation.path.clone(),
