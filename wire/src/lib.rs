@@ -68,9 +68,9 @@ pub use command::{
 pub use config::{ConfigSource, DurationWord, DurationWordError, Provenance};
 pub use doctor::{
     DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorExtension,
-    DoctorExtensionNamespace, DoctorLocations, DoctorObservation, DoctorReport, DoctorTarget,
-    DoctorTool, DoctorToolBounds, DoctorToolCancellation, DoctorToolMode, DoctorToolNetwork,
-    DoctorToolRequirement, DoctorToolSource, SpiceVariable,
+    DoctorExtensionNamespace, DoctorLocations, DoctorObservation, DoctorReport, DoctorSubsystem,
+    DoctorSubsystemDiagnosis, DoctorTarget, DoctorTool, DoctorToolBounds, DoctorToolCancellation,
+    DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, SpiceVariable,
 };
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
