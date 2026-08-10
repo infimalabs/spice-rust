@@ -7,7 +7,8 @@ use crate::ConfigSource;
 /// Every ambient variable owned by Spice.
 ///
 /// Doctor reports only whether these names are present. Their values never
-/// enter the report.
+/// enter the report. Variants remain in serialized-name order because derived
+/// [`Ord`] ranks them by this declaration order.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum SpiceVariable {
     /// Claude session identity selected for transcript forensics.
