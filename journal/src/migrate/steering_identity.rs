@@ -558,6 +558,7 @@ fn rewrite_receipts(
         let mut response = decode("command_receipts", &command, &response)?;
         let mut changed = rewrite_value(&mut request, by_key, by_directive);
         changed |= rewrite_value(&mut response, by_key, by_directive);
+        changed |= rewrite_refusal(&mut response, &command)?;
         // Schema 3 exposed `steer::resend` only as the recovery command. Schema
         // 4 gives live re-delivery that name and moves recovery to its own kind,
         // so successful and refused historical receipts must both be renamed.
@@ -583,6 +584,39 @@ fn rewrite_receipts(
         });
     }
     Ok(updates)
+}
+
+fn rewrite_refusal(response: &mut Value, row: &str) -> Result<bool, OpenError> {
+    let outcome = response
+        .as_object_mut()
+        .and_then(|object| object.get_mut("outcome"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid("command_receipts", row, "response.outcome is not an object"))?;
+    if outcome.get("kind").and_then(Value::as_str) != Some("refusal")
+        || outcome.contains_key("form")
+    {
+        return Ok(false);
+    }
+
+    let reason = outcome.remove("reason").ok_or_else(|| {
+        invalid(
+            "command_receipts",
+            row,
+            "historical refusal reason is missing",
+        )
+    })?;
+    let mut diagnostic = Map::from_iter([("reason".to_owned(), reason)]);
+    for field in ["witness", "expected", "observed"] {
+        if let Some(value) = outcome.remove(field) {
+            diagnostic.insert(field.to_owned(), value);
+        }
+    }
+    if let Some(remedy) = outcome.remove("remedy") {
+        diagnostic.insert("detail".to_owned(), remedy);
+    }
+    outcome.insert("form".to_owned(), Value::String("bare".to_owned()));
+    outcome.insert("diagnostic".to_owned(), Value::Object(diagnostic));
+    Ok(true)
 }
 
 fn rewrite_value(

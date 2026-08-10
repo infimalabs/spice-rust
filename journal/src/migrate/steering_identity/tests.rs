@@ -199,7 +199,12 @@ fn refused_old_recovery_receipt_is_renamed_without_a_committed_fact_range() {
     let wire::Outcome::Refusal(refusal) = response.outcome else {
         panic!("receipt remains a refusal");
     };
-    assert_eq!(refusal.reason, "steer::recovery-live");
+    assert_eq!(refusal.reason(), "steer::recovery-live");
+    assert_eq!(
+        refusal.explanation(),
+        "recover only a lapsed directive",
+        "the historical remedy becomes non-runnable diagnostic detail"
+    );
 }
 
 #[test]
