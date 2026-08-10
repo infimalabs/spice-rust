@@ -593,6 +593,16 @@ impl InstallReceipt {
     }
 }
 
+/// Inspect the current strict installation receipt without deriving a plan or
+/// acquiring mutation authority.
+pub fn inspect(repository: &Repository) -> Result<Option<InstallReceipt>, InstallError> {
+    let Some(loaded) = read_record(repository)? else {
+        return Ok(None);
+    };
+    verify_progress(repository, &loaded.record)?;
+    Ok(Some(loaded.record.receipt()))
+}
+
 /// Inspect one repository and derive the exact Spice installation plan.
 pub fn plan(
     repository: &Repository,

@@ -63,6 +63,7 @@ fn every_crossing_type_obeys_the_identity_law() {
 /// Closed Doctor report states and metadata spellings.
 fn cover_doctor_vocabularies(covered: &mut BTreeSet<String>) {
     spelling_law(covered, "SpiceVariable", SpiceVariable::ALL);
+    ranked_law(covered, "DoctorSubsystem", DoctorSubsystem::ALL);
     spelling_law(covered, "DoctorToolMode", DoctorToolMode::ALL);
     ranked_law(covered, "DoctorToolRequirement", DoctorToolRequirement::ALL);
     ranked_law(covered, "DoctorToolSource", DoctorToolSource::ALL);

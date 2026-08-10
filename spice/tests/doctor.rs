@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use spice::config::Root;
 use spice::placeholder::PlaceholderReason;
 use wire::{
-    ConfigSource, DoctorCommand, DoctorObservation, DoctorReport, DoctorToolSource, Outcome,
-    ReplyPosition, SpiceVariable,
+    ConfigSource, DoctorCommand, DoctorObservation, DoctorReport, DoctorSubsystem,
+    DoctorSubsystemDiagnosis, DoctorToolSource, Outcome, ReplyPosition, SpiceVariable,
 };
 
 const SECRET: &str = "doctor-must-not-render-this-value";
@@ -103,6 +103,14 @@ fn command<'a>(report: &'a DoctorReport<Root>, name: &str) -> &'a DoctorCommand 
         .unwrap_or_else(|| panic!("Doctor omitted command {name:?}"))
 }
 
+fn subsystem(report: &DoctorReport<Root>, name: DoctorSubsystem) -> &DoctorSubsystemDiagnosis {
+    report
+        .subsystems
+        .iter()
+        .find(|row| row.subsystem == name)
+        .unwrap_or_else(|| panic!("Doctor omitted subsystem {name:?}"))
+}
+
 fn non_ready_reason(observation: &DoctorObservation) -> Option<&str> {
     match observation {
         DoctorObservation::Ready {} => None,
@@ -119,6 +127,8 @@ struct HealthyFixture {
     bin: PathBuf,
     marker: PathBuf,
     journal: PathBuf,
+    install: PathBuf,
+    canvas: PathBuf,
     before: BTreeMap<PathBuf, Entry>,
 }
 
@@ -132,6 +142,30 @@ fn healthy_fixture() -> HealthyFixture {
         .path()
         .join(".git/.spice-rs/data/spicejournal.sqlite3");
     fs::write(&journal, b"not an opened journal\n").expect("write authority sentinel");
+    let install = repository.path().join(".git/.spice-rs/install.json");
+    fs::write(&install, b"not an install receipt\n").expect("write install sentinel");
+    let canvas = repository.path().join(".git/.spice-rs/canvas");
+    fs::write(&canvas, b"not a discovery document\n").expect("write transport sentinel");
+    fs::set_permissions(&canvas, fs::Permissions::from_mode(0o600))
+        .expect("secure transport sentinel");
+
+    for (relative, bytes) in [
+        (
+            ".git/.spice/hooks/pre-commit",
+            b"hook sentinel\n".as_slice(),
+        ),
+        (".git/.spice-rs/inbox/steering", b"steering sentinel\n"),
+        (
+            ".git/.spice-rs/artifacts/tasks/projection",
+            b"projection sentinel\n",
+        ),
+        (".spice/team", b"team sentinel\n"),
+    ] {
+        let path = repository.path().join(relative);
+        fs::create_dir_all(path.parent().expect("sentinel parent"))
+            .expect("create state sentinel parent");
+        fs::write(path, bytes).expect("write state sentinel");
+    }
 
     let bin = repository.path().join("fixture-bin");
     fs::create_dir(&bin).expect("create fixture executable directory");
@@ -155,6 +189,8 @@ fn healthy_fixture() -> HealthyFixture {
         bin,
         marker,
         journal,
+        install,
+        canvas,
         before,
     }
 }
@@ -172,6 +208,14 @@ fn same_report(text: &Spoken, json: &Spoken) -> DoctorReport<Root> {
 }
 
 fn assert_task_metadata(report: &DoctorReport<Root>) {
+    assert_eq!(
+        report
+            .subsystems
+            .iter()
+            .map(|row| row.subsystem)
+            .collect::<Vec<_>>(),
+        DoctorSubsystem::ALL,
+    );
     assert_eq!(
         report.configuration.tasks().stems(),
         [
@@ -409,6 +453,12 @@ fn assert_tool_posture_and_text(report: &DoctorReport<Root>, text: &[u8]) {
                 .iter()
                 .filter_map(|tool| non_ready_reason(&tool.observation))
         }))
+        .chain(
+            report
+                .subsystems
+                .iter()
+                .filter_map(|row| non_ready_reason(&row.observation)),
+        )
     {
         assert!(text.contains(reason), "text omitted {reason:?}");
     }
@@ -449,6 +499,33 @@ fn both_forms_report_the_same_read_only_state_without_executing_rtk_or_leaking_e
     assert_locations_configuration_and_provenance(&report, fixture.repository.path());
     assert_environment_presence(&report);
     assert_tool_posture_and_text(&report, &text.out);
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Journal).observation,
+        DoctorObservation::Unavailable { .. }
+    ));
+    for name in [
+        DoctorSubsystem::Board,
+        DoctorSubsystem::Steering,
+        DoctorSubsystem::Lane,
+        DoctorSubsystem::Release,
+    ] {
+        assert!(matches!(
+            subsystem(&report, name).observation,
+            DoctorObservation::Unavailable { .. }
+        ));
+    }
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Fold).observation,
+        DoctorObservation::NotApplicable { .. }
+    ));
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Transport).observation,
+        DoctorObservation::Unavailable { .. }
+    ));
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Installation).observation,
+        DoctorObservation::Unavailable { .. }
+    ));
 
     assert!(
         !fixture.marker.exists(),
@@ -458,7 +535,97 @@ fn both_forms_report_the_same_read_only_state_without_executing_rtk_or_leaking_e
         fs::read(&fixture.journal).expect("read authority sentinel"),
         b"not an opened journal\n"
     );
+    assert_eq!(
+        fs::read(&fixture.install).expect("read install sentinel"),
+        b"not an install receipt\n"
+    );
+    assert_eq!(
+        fs::read(&fixture.canvas).expect("read transport sentinel"),
+        b"not a discovery document\n"
+    );
     assert_eq!(directory_state(fixture.repository.path()), fixture.before);
+}
+
+#[test]
+fn initialized_authority_and_folds_are_diagnosed_without_writing_any_state() {
+    let repository = Scratch::repository("initialized-state");
+    repository.tracked("");
+    let journal_path = repository
+        .path()
+        .join(".git/.spice-rs/data/spicejournal.sqlite3");
+    let journal = journal::Journal::open(&journal_path).expect("initialize journal fixture");
+    assert_eq!(
+        journal.schema_version().expect("fixture schema"),
+        journal::SCHEMA_VERSION
+    );
+    drop(journal);
+    let folds_path = repository
+        .path()
+        .join(".git/.spice-rs/data/spicefolds.sqlite3");
+    drop(fold::Store::open(&folds_path).expect("initialize fold fixture"));
+    let epoch: wire::CanonicalUuid = "00000000-0000-4000-8000-000000000051"
+        .parse()
+        .expect("fixture epoch");
+    let resident_path = repository.path().join(".git/.spice-rs/resident");
+    let lock = sill::LockFile::new(
+        sill::LockName::new("resident").expect("fixture lock name"),
+        &resident_path,
+    );
+    let sill::Acquisition::Acquired(publisher) =
+        lock.try_acquire().expect("acquire fixture resident lock")
+    else {
+        panic!("fixture resident lock must be available");
+    };
+    publisher
+        .rewrite_record(
+            spice::resident_lock::holder_record(std::process::id(), Some(epoch)).as_bytes(),
+        )
+        .expect("publish fixture holder record");
+    canvas::Discovery {
+        endpoint: "http://127.0.0.1:1".to_owned(),
+        capability: "00000000-0000-4000-8000-000000000052"
+            .parse()
+            .expect("fixture capability"),
+        epoch,
+    }
+    .publish(repository.path().join(".git/.spice-rs/canvas"))
+    .expect("publish fixture discovery");
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+    let before = directory_state(repository.path());
+
+    let text = invoke(repository.path(), &["doctor"], empty_path.as_os_str(), &[]);
+    let json = invoke(
+        repository.path(),
+        &["--json", "doctor"],
+        empty_path.as_os_str(),
+        &[],
+    );
+    let report = same_report(&text, &json);
+
+    for name in [
+        DoctorSubsystem::Board,
+        DoctorSubsystem::Journal,
+        DoctorSubsystem::Fold,
+        DoctorSubsystem::Steering,
+        DoctorSubsystem::Transport,
+    ] {
+        assert!(matches!(
+            subsystem(&report, name).observation,
+            DoctorObservation::Ready {}
+        ));
+    }
+    for name in [
+        DoctorSubsystem::Lane,
+        DoctorSubsystem::Installation,
+        DoctorSubsystem::Release,
+    ] {
+        assert!(matches!(
+            subsystem(&report, name).observation,
+            DoctorObservation::NotApplicable { .. }
+        ));
+    }
+    assert_eq!(directory_state(repository.path()), before);
 }
 
 #[test]

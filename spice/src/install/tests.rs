@@ -222,6 +222,30 @@ fn apply_is_idempotent_and_unapply_is_exact() {
     assert!(record_path(&repository).unwrap().is_file());
 }
 
+#[test]
+fn inspection_admits_only_a_current_receipt_and_its_exact_destinations() {
+    let scratch = Scratch::new("inspect");
+    let repository = scratch.repository();
+    assert_eq!(inspect(&repository).expect("inspect absent receipt"), None);
+
+    let planned = plan(&repository, None).expect("plan install");
+    let receipt = apply(&repository, None, &planned.digest().unwrap()).expect("apply install");
+    assert_eq!(
+        inspect(&repository).expect("inspect current install"),
+        Some(receipt)
+    );
+
+    fs::write(
+        repository.common_dir().join(ENTRY_PATH),
+        b"operator hook replacement\n",
+    )
+    .expect("drift installed hook");
+    assert!(matches!(
+        inspect(&repository).expect_err("inspection refuses drift"),
+        InstallError::Drift { path, .. } if path == ENTRY_PATH
+    ));
+}
+
 /// A terminal receipt may describe fixed bytes from the build that removed them.
 ///
 /// The recorded skill identity is changed to stand for that earlier build and
