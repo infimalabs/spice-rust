@@ -19,6 +19,9 @@ pub(crate) fn recent_compaction_horizon(
     count: usize,
     end: Option<&str>,
 ) -> Result<CompactionHorizon, Refusal> {
+    if count == 0 {
+        return Ok(CompactionHorizon { start: None });
+    }
     let mut markers = Vec::new();
     for source in sources {
         markers.extend(read_recent_compaction_markers(source, count, end)?);
