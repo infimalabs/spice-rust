@@ -102,6 +102,13 @@ fn every_command_names_the_witnesses_it_requires() {
     }
 }
 
+#[test]
+fn recovery_requires_the_exact_recoverable_directive_predicate() {
+    let law = CommandKind::SteerRecover.law();
+    assert_eq!(law.required, &[WitnessKind::Recoverable]);
+    assert!(law.optional.is_empty());
+}
+
 /// Lane lifecycle is the operator's move alone, and this row is the only place
 /// that is enforced: `Command::admit` refuses every non-operator actor before a
 /// handler runs, so the resident's own import path deliberately carries no
@@ -415,6 +422,7 @@ fn sample_witnesses() -> Vec<Witness> {
             steer: lane,
             disposition: Disposition::Live,
         },
+        Witness::Recoverable { steer: lane },
         Witness::Consent {
             request: lane,
             answer: Answer::Asked,

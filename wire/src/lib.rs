@@ -55,6 +55,7 @@ pub mod manifest;
 mod optional;
 pub mod packed;
 pub mod reply;
+pub mod steering;
 pub mod stream;
 pub mod witness;
 

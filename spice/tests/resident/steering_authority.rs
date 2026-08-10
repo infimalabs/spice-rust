@@ -31,10 +31,7 @@ fn a_lane_cannot_recover_operator_direction() {
         id: request,
         epoch: discovery.epoch,
         kind: wire::CommandKind::SteerRecover,
-        expected: vec![wire::Witness::Directive {
-            steer: directive,
-            disposition: wire::Disposition::Lapsed,
-        }],
+        expected: vec![wire::Witness::Recoverable { steer: directive }],
         body: wire::intent::DirectiveRef { directive },
     };
     socket

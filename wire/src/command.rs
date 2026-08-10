@@ -374,9 +374,9 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// Exact lapsed directive disposition for identity-preserving recovery.
+    /// Exact directive identity in either recoverable failure state.
     pub const RECOVER: Self = Self {
-        required: &[WitnessKind::Directive],
+        required: &[WitnessKind::Recoverable],
         optional: &[],
         authority: Authority::Operator,
     };

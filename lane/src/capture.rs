@@ -44,6 +44,15 @@ pub struct CaptureFailure {
     pub failure: ObservationFailure,
 }
 
+/// Kernel-backed child exit notification for one supervised occupant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CaptureExit {
+    /// Lane whose child exited.
+    pub lane: CanonicalUuid,
+    /// Exact occupant observed by the process watcher.
+    pub occupant: CanonicalUuid,
+}
+
 /// Resident-facing bounded report sink.
 pub trait CaptureReporter: Send + Sync + 'static {
     /// Deliver one durable decoded record without blocking the capture worker.
@@ -56,6 +65,9 @@ pub trait CaptureReporter: Send + Sync + 'static {
 
     /// Deliver the single terminal failure after SILL cleanup completes.
     fn failed(&self, failure: CaptureFailure);
+
+    /// Deliver the child process exit without polling its process group.
+    fn exited(&self, _exit: CaptureExit) {}
 }
 
 /// A resident-facing report channel refused or lost a record.
@@ -154,6 +166,13 @@ impl RecordObserver for LaneObserver {
             failure: failure.clone(),
         });
     }
+
+    fn exited(&self) {
+        self.reporter.exited(CaptureExit {
+            lane: self.lane,
+            occupant: self.occupant,
+        });
+    }
 }
 
 #[cfg(test)]
@@ -162,7 +181,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use super::{CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter, observation};
+    use super::{
+        CaptureExit, CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter,
+        observation,
+    };
     use journal::crossing::CanonicalUuid;
     use listen::{Decoded, ResidueKind};
     use sill::{
@@ -177,6 +199,7 @@ mod tests {
     struct Reports {
         records: Mutex<Vec<CaptureRecord>>,
         failures: Mutex<Vec<CaptureFailure>>,
+        exits: Mutex<Vec<CaptureExit>>,
     }
 
     impl CaptureReporter for Reports {
@@ -193,6 +216,10 @@ mod tests {
                 .lock()
                 .expect("failure reports lock")
                 .push(failure);
+        }
+
+        fn exited(&self, exit: CaptureExit) {
+            self.exits.lock().expect("exit reports lock").push(exit);
         }
     }
 
@@ -255,6 +282,10 @@ mod tests {
             Decoded::Residue(residue) if residue.kind == ResidueKind::Truncated
         ));
         assert!(reports.failures.lock().expect("failures lock").is_empty());
+        assert_eq!(
+            *reports.exits.lock().expect("exits lock"),
+            vec![CaptureExit { lane, occupant }],
+        );
         drop(records);
         fs::remove_dir_all(root).expect("capture fixture cleanup");
     }

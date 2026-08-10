@@ -322,12 +322,15 @@ pub(in crate::resident) fn recover(
     let Some(directive) = snapshot.ledger.directive(recover.directive) else {
         return refusal(
             "steer::recovery-missing",
-            Some("one durable lapsed directive".to_owned()),
+            Some("one durable lapsed or deadlettered directive".to_owned()),
             Some(recover.directive.to_string()),
             "inspect durable steering history and name its exact directive identity",
         );
     };
-    if directive.disposition() != Disposition::Lapsed {
+    if !matches!(
+        directive.disposition(),
+        Disposition::Lapsed | Disposition::DeadLettered
+    ) {
         let reason = if directive.disposition() == Disposition::Live {
             "steer::recovery-live"
         } else {
@@ -335,22 +338,16 @@ pub(in crate::resident) fn recover(
         };
         return refusal(
             reason,
-            Some("lapsed".to_owned()),
+            Some("lapsed or deadlettered".to_owned()),
             Some(format!("{:?}", directive.disposition()).to_lowercase()),
-            "recover only a durable directive that has lapsed",
+            "recover only a durable directive that lapsed or was deadlettered",
         );
     }
-    let expected = [Witness::Directive {
+    let witness = Witness::Recoverable {
         steer: recover.directive,
-        disposition: Disposition::Lapsed,
-    }];
-    if command.expected() != expected {
-        return refusal(
-            "steer::witness-moved",
-            Some(format!("{expected:?}")),
-            Some(format!("{:?}", command.expected())),
-            "read the failed directive again before recovering it",
-        );
+    };
+    if command.expected() != [witness.clone()] {
+        return witness_refusal(command.expected(), &witness);
     }
     let at = match current_instant() {
         Ok(at) => at,
@@ -374,6 +371,7 @@ pub(in crate::resident) fn recover(
         key.clone(),
         lane,
         lapsed_at,
+        directive.disposition(),
     ));
     if let Err(error) = proposal.fact(
         wire::body::SteerRecovered {
