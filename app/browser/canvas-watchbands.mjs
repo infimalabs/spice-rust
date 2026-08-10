@@ -20,8 +20,6 @@ import {
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 
-const nestedQuotePreview = "The author words belong in the composer band.";
-
 async function settleLatestSystemSpeech(page, event = "end") {
   await page.evaluate((event) => {
     const utterance = window.__speechUtterances.at(-1);

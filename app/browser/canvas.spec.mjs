@@ -7,11 +7,8 @@ import { fileURLToPath } from "node:url";
 import { installActivityReplay } from "./activity-replay.mjs";
 import { assertAgesTickWhileTheResidentIsSilent } from "./age-ticker.mjs";
 import {
-  assertAgentConversation,
-  assertMosaicLattice,
-  entirelyQuotedMessage,
-  nestedQuoteMessage,
-  seatAgentTeam,
+  assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
+  nestedQuoteMessage, nestedQuotePreview, seatAgentTeam,
 } from "./agent-conversation.mjs";
 import { assertComposerShards } from "./composer-shards.mjs";
 import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
