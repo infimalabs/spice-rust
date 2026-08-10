@@ -1,4 +1,7 @@
 //! Task, claim, document, and task-effort command DTOs.
+//!
+//! Creation bodies carry authored causal authority only; the server resolves
+//! an omitted authority at the creation boundary.
 
 use serde::{Deserialize, Serialize};
 
