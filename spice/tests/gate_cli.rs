@@ -407,12 +407,13 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
         summary.contains("git commit"),
         "the pre-commit refusal names how a merge is recorded: {summary}"
     );
-    let pre_commit_report = BatteryReport::decode(evidence.as_bytes())
-        .expect("pre-commit refusal carries a canonical report");
+    let pre_commit_report = BatteryReport::decode(evidence.as_bytes()).unwrap_or_else(|error| {
+        panic!("pre-commit refusal carries a canonical report: {error}; evidence={evidence:?}")
+    });
     assert_eq!(
         pre_commit_report.refusal_fold().as_str(),
         report.refusal_fold().as_str(),
-        "the commit surface renders the same complete failure projection as the canonical report",
+        "the commit surface renders the same complete failure fold as the canonical report",
     );
     let receipt = receipt_body(&invoke_with_path(
         &["gate", "receipt"],

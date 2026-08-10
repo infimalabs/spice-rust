@@ -18,7 +18,7 @@ use sill::{
     ObserveError, ObservedRecord, Output, OutputStream, ProcessGroup, RecordObserver, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
 };
-use syn::{Expr, Item, Lit, Meta};
+use syn::{Expr, Item, Lit, LitStr, Meta};
 
 use crate::WORKSPACE_TEST_CONCURRENCY_CAP;
 
@@ -28,9 +28,9 @@ use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
 };
 #[cfg(test)]
-use coordinator::{LastTest, target_arguments};
+use coordinator::{LastTest, isolate_shard_outputs, target_arguments};
 
-const TARGETS_PER_SHARD: usize = 12;
+const TARGETS_PER_SHARD: usize = 24;
 const SHARD_DEADLINE: Duration = Duration::from_secs(180);
 const COORDINATOR_DEADLINE: Duration = Duration::from_secs(180);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
@@ -44,6 +44,7 @@ const RECORD_FRAME_LIMIT: usize = 256 * 1024;
 const RECORD_QUEUE_CAPACITY: usize = 4_096;
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
+const TEST_WRITABLE_ROOT: &str = "SPICE_WORKSPACE_TEST_WRITABLE_ROOT"; // env-policy: allow
 const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
@@ -76,9 +77,7 @@ impl WorkspaceTestExecution {
     }
 
     /// Join canonical target execution with authoritative per-test coverage.
-    ///
-    /// Complete coverage must include every executed target. It may also name
-    /// unexecuted suite targets so the graph can expose a suite-seam reach edge.
+    /// Complete coverage includes every executed target and may name unexecuted suite targets.
     pub fn publish(
         &self,
         source: wire::Digest,
@@ -210,6 +209,7 @@ pub fn run_at(
 ) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
     let policy = RunPolicy::production(concurrency)?;
     let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
+    let environment = inventory.execution_environment(environment, root, root, true)?;
     let execution = WorkspaceTestExecution::from_inventory(&inventory);
     let shards = partition(&inventory);
     validate_partition(&inventory, &shards)?;
@@ -415,6 +415,10 @@ impl Inventory {
         entries.insert(
             OsString::from(CARGO_BUILD_BUILD_DIR),
             build.into_os_string(),
+        );
+        entries.insert(
+            OsString::from(TEST_WRITABLE_ROOT),
+            writable_root.into_os_string(),
         );
         Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
     }
@@ -716,65 +720,7 @@ fn target_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
             .any(|declared| declared == source)
 }
 
-/// Acquire exact `#[path]` module sources once with their Cargo target.
-fn declared_path_sources(target_source: &Path) -> Result<Vec<PathBuf>, WorkspaceTestError> {
-    let document = match fs::read_to_string(target_source) {
-        Ok(document) => document,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => {
-            return Err(WorkspaceTestError::new(format!(
-                "read Cargo target source {} while resolving staged test reach: {error}",
-                target_source.display()
-            )));
-        }
-    };
-    let syntax = syn::parse_file(&document).map_err(|error| {
-        WorkspaceTestError::new(format!(
-            "parse Cargo target source {} while resolving staged test reach: {error}",
-            target_source.display()
-        ))
-    })?;
-    let parent = target_source.parent().ok_or_else(|| {
-        WorkspaceTestError::new(format!(
-            "Cargo target source {} has no parent",
-            target_source.display()
-        ))
-    })?;
-    let mut declared = Vec::new();
-    for item in syntax.items {
-        let Item::Mod(module) = item else {
-            continue;
-        };
-        for attribute in module
-            .attrs
-            .iter()
-            .filter(|attribute| attribute.path().is_ident("path"))
-        {
-            let Meta::NameValue(pair) = &attribute.meta else {
-                return Err(WorkspaceTestError::new(format!(
-                    "Cargo target source {} has a non-value path attribute",
-                    target_source.display()
-                )));
-            };
-            let Expr::Lit(expression) = &pair.value else {
-                return Err(WorkspaceTestError::new(format!(
-                    "Cargo target source {} has a non-literal path attribute",
-                    target_source.display()
-                )));
-            };
-            let Lit::Str(path) = &expression.lit else {
-                return Err(WorkspaceTestError::new(format!(
-                    "Cargo target source {} has a non-string path attribute",
-                    target_source.display()
-                )));
-            };
-            declared.push(parent.join(path.value()));
-        }
-    }
-    declared.sort();
-    declared.dedup();
-    Ok(declared)
-}
+include!("workspace_tests/source_reach.rs");
 
 fn target_is_library(target: &TargetIdentity) -> bool {
     target.kind.split('+').any(|kind| {

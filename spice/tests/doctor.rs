@@ -307,21 +307,25 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
     // accounts the ones its fixtures and Git shadow use. The gate's name ledger
     // is pinned separately in wire/tests/environment_vocabulary.rs.
     const UNOWNED: [&str; 14] = [
-        "GIT_CONFIG_COUNT",              // env-policy: allow
-        "GIT_CONFIG_SYSTEM",             // env-policy: allow
-        "GIT_DIR",                       // env-policy: allow
-        "GIT_EDITOR",                    // env-policy: allow
-        "GIT_INDEX_FILE",                // env-policy: allow
-        "GIT_WORK_TREE",                 // env-policy: allow
-        "SPICE_CANVAS_BINARY",           // env-policy: allow
-        "SPICE_HOOKS",                   // env-policy: allow
-        "SPICE_INBOX",                   // env-policy: allow
-        "SPICE_INSTALL_TEST_EXECUTABLE", // env-policy: allow
-        "SPICE_LANE",                    // env-policy: allow
-        "SPICE_NATIVE_SHELL",            // env-policy: allow
-        "SPICE_PROOF",                   // env-policy: allow
-        "TMPDIR",                        // env-policy: allow
+        "GIT_CONFIG_COUNT",                   // env-policy: allow
+        "GIT_CONFIG_SYSTEM",                  // env-policy: allow
+        "GIT_DIR",                            // env-policy: allow
+        "GIT_EDITOR",                         // env-policy: allow
+        "GIT_INDEX_FILE",                     // env-policy: allow
+        "GIT_WORK_TREE",                      // env-policy: allow
+        "SPICE_CANVAS_BINARY",                // env-policy: allow
+        "SPICE_HOOKS",                        // env-policy: allow
+        "SPICE_INBOX",                        // env-policy: allow
+        "SPICE_LANE",                         // env-policy: allow
+        "SPICE_NATIVE_SHELL",                 // env-policy: allow
+        "SPICE_PROOF",                        // env-policy: allow
+        "SPICE_WORKSPACE_TEST_WRITABLE_ROOT", // env-policy: allow
+        "TMPDIR",                             // env-policy: allow
     ];
+    assert!(
+        UNOWNED.windows(2).all(|pair| pair[0] < pair[1]),
+        "Doctor's foreign environment vocabulary stays canonical and duplicate-free"
+    );
     let vocabulary = report.configuration.policy().env_names();
     assert_eq!(
         vocabulary

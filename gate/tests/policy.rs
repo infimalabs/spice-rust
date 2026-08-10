@@ -655,10 +655,10 @@ fn migration_diagnostics_name_the_exact_source_field() {
         (
             concat!(
                 "[policy.markdown_depth_budget]\nextensions = []\n",
-                "[[policy.rules]]\nscopes = { drivers = [\"codex\"] }\n",
+                "[[policy.rules]]\nscopes = { vendors = [\"codex\"] }\n",
                 "unlimited = true\n"
             ),
-            "policy.rules[1].scopes.drivers",
+            "policy.rules[1].scopes.vendors",
             "support only paths and extensions",
         ),
         (

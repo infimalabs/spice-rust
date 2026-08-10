@@ -1,4 +1,4 @@
-//! Available-phase aggregation for the task-effort projection.
+//! Available-phase aggregation for the task-effort fold.
 
 use std::collections::BTreeMap;
 

@@ -7,6 +7,7 @@ use wire::ConfigSource;
 
 const COMPLETE: &str = r#"
 [commands]
+"report.inspect" = ["tool", "report", "inspect"]
 release = ["tool", "release"]
 
 [tasks]
@@ -264,7 +265,10 @@ fn root_is_exactly_the_sixteen_typed_domains() {
                 )
             })
             .collect::<Vec<_>>(),
-        [("release", vec!["tool", "release"])]
+        [
+            ("release", vec!["tool", "release"]),
+            ("report.inspect", vec!["tool", "report", "inspect"]),
+        ]
     );
     assert_eq!(root.judge().enabled(), Some(true));
     assert_eq!(

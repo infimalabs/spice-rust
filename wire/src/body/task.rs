@@ -1,7 +1,7 @@
 //! Task and claim lifecycle fact bodies.
 //!
 //! Every task reference here is the durable inception stamp. Public handles
-//! belong to projections and commands; no fact can make a rendered stem
+//! belong to folds and commands; no fact can make a rendered stem
 //! authoritative again.
 
 use super::*;

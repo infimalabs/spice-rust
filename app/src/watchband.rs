@@ -65,7 +65,7 @@ pub struct Standing {
     pub life: String,
     /// Current lane disposition.
     pub disposition: String,
-    /// Current supervised live/quiet projection.
+    /// Current supervised live/quiet fold.
     pub liveness: wire::intent::LaneLiveness,
     /// Directives waiting for the lane.
     pub pending: usize,
@@ -88,7 +88,7 @@ pub struct Standing {
     pub accent: usize,
 }
 
-/// Complete driver and session detail shown by a standing's hover title.
+/// Complete vendor and session detail shown by a standing's hover title.
 ///
 /// A launch recorded before model and effort became durable names that state
 /// explicitly. It does not borrow the vendor, session, or another lane as a
@@ -96,10 +96,10 @@ pub struct Standing {
 #[must_use]
 pub fn standing_title(standing: &Standing) -> String {
     let vendor = match standing.vendor.as_str() {
-        "claude" => "Claude driver",
-        "codex" => "Codex driver",
-        "openai" => "OpenAI driver",
-        _ => "Agent driver",
+        "claude" => "Claude vendor",
+        "codex" => "Codex vendor",
+        "openai" => "OpenAI vendor",
+        _ => "Agent vendor",
     };
     let mut parts = vec![vendor.to_owned()];
     parts.push(format!(
