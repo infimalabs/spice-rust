@@ -5,10 +5,10 @@ use clap::ArgMatches;
 use wire::Refusal;
 
 use super::model::{
-    ActivityView, CommandAudit, CommandRecord, CommandView, CommitView, CompactionRecord,
-    CompactionView, Dataset, DialogueLine, MessageRecord, MessageView, PhaseExample, PhaseView,
-    PruningView, RecallWindow, Report, SliceView, SourceView, ThreadView, TimelineView,
-    TokenRecord, TokenView, TurnRecord, TurnView,
+    ActivityView, BriefingAuthorities, CommandAudit, CommandRecord, CommandView, CommitView,
+    CompactionRecord, CompactionView, Dataset, DialogueLine, MessageRecord, MessageView,
+    PhaseExample, PhaseView, PruningView, RecallWindow, Report, SliceView, SourceView, ThreadView,
+    TimelineView, TokenRecord, TokenView, TurnRecord, TurnView,
 };
 
 // Two report families are split out by `mod` rather than left inline, following
@@ -164,6 +164,7 @@ pub(crate) fn recall(
     dataset: &Dataset,
     matches: &ArgMatches,
     filters: &Filters,
+    authorities: BriefingAuthorities,
 ) -> Result<Report, Refusal> {
     filters.validate_turn_ids(dataset)?;
     let max_lines = number(matches, "max-lines", DEFAULT_RECALL_MAX_LINES)?;
@@ -199,6 +200,7 @@ pub(crate) fn recall(
         .to_owned(),
         requested_compactions: DEFAULT_HORIZON_COMPACTIONS,
         selected_compactions: plan.selected.len(),
+        authorities,
         window,
         pruning: PruningView {
             max_lines,
@@ -660,6 +662,7 @@ fn turn_view(turn: &TurnRecord, full: bool, max_text: usize) -> TurnView {
         errors: turn.error_count,
         web_searches: turn.web_search_count,
         compactions: turn.compaction_count,
+        touched_paths: turn.touched_files.iter().cloned().collect(),
         dialogue: turn
             .messages
             .iter()

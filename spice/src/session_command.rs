@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::ArgMatches;
 use wire::{Outcome, Refusal, Reply, ReplyPosition};
 
+mod authority;
 mod dataset;
 pub(crate) mod learnings;
 mod model;
@@ -170,7 +171,7 @@ fn deadline_worker(
         return;
     }
     let path = path.iter().map(String::as_str).collect::<Vec<_>>();
-    let result = build_resolved(&matches, &path, &action, sources);
+    let result = build_resolved(&matches, &path, &action, sources, &environment);
     let _ = sender.send(DeadlineEvent::Complete(result, std::time::Instant::now()));
 }
 
@@ -290,7 +291,7 @@ fn build(
 
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
-    build_resolved(matches, path, action, sources)
+    build_resolved(matches, path, action, sources, environment)
 }
 
 fn build_resolved(
@@ -298,6 +299,7 @@ fn build_resolved(
     path: &[&str],
     action: &str,
     sources: Vec<source::ResolvedSource>,
+    environment: &Environment,
 ) -> Result<Report, Refusal> {
     let filters = project::Filters::from_matches(matches)?;
     let data = if matches!(action, "briefing" | "sweep") {
@@ -309,7 +311,10 @@ fn build_resolved(
         dataset::load(&sources)?
     };
     match action {
-        "briefing" => project::recall(&data, matches, &filters),
+        "briefing" => {
+            let authorities = authority::observe(&sources, environment);
+            project::recall(&data, matches, &filters, authorities)
+        }
         "sweep" => project::sweep(&data, matches, &filters),
         "summary" => project::summary(&data, matches),
         "tokens" => Ok(project::tokens(&data, matches)),

@@ -107,6 +107,7 @@ pub(crate) struct TurnView {
     pub(crate) errors: u64,
     pub(crate) web_searches: u64,
     pub(crate) compactions: u64,
+    pub(crate) touched_paths: Vec<String>,
     pub(crate) dialogue: Vec<DialogueLine>,
 }
 
@@ -299,6 +300,74 @@ pub(crate) struct PruningView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct AuthorityFoldView {
+    pub(crate) mode: String,
+    pub(crate) probes: Vec<String>,
+    pub(crate) writes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DecisionPriorityView {
+    pub(crate) order: Vec<String>,
+    pub(crate) end_pruning_preserves: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OutstandingAskView {
+    pub(crate) lane: String,
+    pub(crate) directive: String,
+    pub(crate) key: String,
+    pub(crate) stage: String,
+    pub(crate) text: String,
+    pub(crate) authored: String,
+    pub(crate) expires: String,
+    pub(crate) preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HeldClaimView {
+    pub(crate) handle: String,
+    pub(crate) project: String,
+    pub(crate) phase: String,
+    pub(crate) status: String,
+    pub(crate) title: String,
+    pub(crate) lease_expiry: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HeldWorkView {
+    pub(crate) thread: Option<String>,
+    pub(crate) lane: Option<String>,
+    pub(crate) own_claim: Option<HeldClaimView>,
+    pub(crate) peer_claims: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AuthorityUnknown {
+    pub(crate) authority: String,
+    pub(crate) probe: String,
+    pub(crate) detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BriefingAuthorities {
+    pub(crate) fold: AuthorityFoldView,
+    pub(crate) priority: DecisionPriorityView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) asks: Vec<OutstandingAskView>,
+    pub(crate) held_work: HeldWorkView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unknowns: Vec<AuthorityUnknown>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ThreadView {
     pub(crate) id: String,
     pub(crate) vendor: Vendor,
@@ -318,6 +387,7 @@ pub(crate) enum Report {
         horizon_basis: String,
         requested_compactions: usize,
         selected_compactions: usize,
+        authorities: BriefingAuthorities,
         window: RecallWindow,
         pruning: PruningView,
         residues: Vec<Residue>,
