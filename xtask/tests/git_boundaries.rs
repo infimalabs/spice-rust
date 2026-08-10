@@ -43,20 +43,30 @@ const NETWORK_SUBCOMMANDS: [&str; 5] = ["fetch", "push", "pull", "clone", "ls-re
 /// Network subcommands no production source may name at all.
 ///
 /// The two the control plane does use are bounded by call site below. These
-/// three have no sanctioned use anywhere outside a fixture: `pull` is the one
-/// GIT-01 names outright, and `clone` and `ls-remote` would each be a new way
-/// for a lane to reach a remote without going through a boundary.
-const UNSANCTIONED: [&str; 3] = ["pull", "clone", "ls-remote"];
+/// two have no sanctioned use anywhere outside a fixture: `pull` is the one
+/// GIT-01 names outright, and `clone` would be a new way for a lane to reach a
+/// remote without going through a boundary. The release authority may name
+/// `ls-remote`, but only as inert argv returned to its parent control plane.
+const UNSANCTIONED: [&str; 2] = ["pull", "clone"];
 
 /// The only production sources allowed to name a network subcommand.
-const CONTROL_PLANE_SOURCES: [&str; 2] = ["spice/src/task_git.rs", "spice/src/task_git/command.rs"];
+const CONTROL_PLANE_SOURCES: [&str; 3] = [
+    "dist/src/authority.rs",
+    "spice/src/task_git.rs",
+    "spice/src/task_git/command.rs",
+];
 
 /// Every occurrence of a network subcommand literal in the tracked Rust set.
 ///
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 14] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 16] = [
+    // The external release authority constructs exact inert Git argv but owns
+    // no process runner. Its parent executes these operations at an existing
+    // control-plane boundary after authored release approval.
+    ("dist/src/authority.rs", "ls-remote", 2),
+    ("dist/src/authority.rs", "push", 3),
     // The whole of GIT-01's production surface: one fetch, one push, both in
     // the control-plane module and both reached only through a boundary.
     ("spice/src/task_git.rs", "fetch", 1),

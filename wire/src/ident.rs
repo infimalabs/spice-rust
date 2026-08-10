@@ -370,6 +370,39 @@ impl<'de> Deserialize<'de> for Digest {
     }
 }
 
+/// Exact release-note identity or explicit absence migrated from schema 4.
+///
+/// The exact state keeps the canonical digest string already used by current
+/// publication commands and facts. The historical state spells JSON `null`.
+/// This is deliberately not `Option<Digest>`: the containing `notes` key is
+/// required, while ordinary optional wire fields omit their key and refuse
+/// `null`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReleaseNotesIdentity {
+    /// Exact curated release-note bytes.
+    Exact(Digest),
+    /// A schema-4 row written before release-note identities existed.
+    HistoricalAbsent,
+}
+
+impl ReleaseNotesIdentity {
+    /// The exact digest, absent only for a migrated schema-4 row.
+    #[must_use]
+    pub const fn digest(&self) -> Option<&Digest> {
+        match self {
+            Self::Exact(digest) => Some(digest),
+            Self::HistoricalAbsent => None,
+        }
+    }
+}
+
+impl From<Digest> for ReleaseNotesIdentity {
+    fn from(digest: Digest) -> Self {
+        Self::Exact(digest)
+    }
+}
+
 /// A UUID with exactly one admitted spelling.
 ///
 /// [`uuid::Uuid::parse_str`] accepts braces, upper case, compact text, and
@@ -455,8 +488,6 @@ impl<'de> Deserialize<'de> for CanonicalUuid {
 pub struct Instant(jiff::Timestamp);
 
 impl Instant {
-    /// The canonical zero instant.
-    pub const UNIX_EPOCH: Self = Self(jiff::Timestamp::UNIX_EPOCH);
     /// Fractional digits the one admitted spelling carries.
     const MILLIS: u8 = 3;
     /// Byte length of the one admitted spelling, `MILLIS` digits included.

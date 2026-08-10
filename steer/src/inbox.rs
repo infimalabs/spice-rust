@@ -34,8 +34,9 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
     let mut rendered = format!("<{seal}>\n");
     for directive in pending {
         rendered.push_str(&format!(
-            "key={} expires={}",
+            "key={} stage={} expires={}",
             directive.key(),
+            directive.stage(),
             directive.expires()
         ));
         if let Some(control) = directive.control() {

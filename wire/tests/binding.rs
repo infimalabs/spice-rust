@@ -122,7 +122,15 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (CommandKind::SteerInbox, r#"{}"#),
     (
+        CommandKind::SteerRepair,
+        r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2" }"#,
+    ),
+    (
         CommandKind::SteerResend,
+        r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
+    ),
+    (
+        CommandKind::SteerRecover,
         r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
     ),
     (
@@ -412,6 +420,19 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
 }"#,
     ),
     (
+        AnswerShape::Delivery,
+        r#"{
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "delivery": {
+    "standing": "parked",
+    "source": 41,
+    "keys": ["1kJJP87B"],
+    "failure": "steer::inbox-unwritable: inbox directory blocked",
+    "repair": "spice steer repair 018f82d4-6f59-7d06-92e3-bce9131163c2"
+  }
+}"#,
+    ),
+    (
         AnswerShape::Inbox,
         r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
@@ -424,6 +445,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
       "text": "drain the queue",
       "preview": "drain the queue",
       "authored": "2026-08-01T06:07:19.000Z",
+      "stage": "published",
       "expires": "2026-08-01T07:07:19.000Z"
     }]
   }]
@@ -654,7 +676,18 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "provenance": {
       "kind": "steering",
       "key": "1kJJP87B",
-      "disposition": "acked"
+      "disposition": "acked",
+      "stage": "overdue",
+      "escalations": [{
+        "stage": "reminded",
+        "at": "2026-08-06T03:00:02.000Z"
+      }, {
+        "stage": "escalated",
+        "at": "2026-08-06T03:01:00.000Z"
+      }, {
+        "stage": "overdue",
+        "at": "2026-08-06T03:05:00.000Z"
+      }]
     }
   }]
 }"#,
@@ -974,6 +1007,32 @@ fn a_body_spelled_for_another_kind_is_refused() {
 }
 
 #[test]
+fn release_publication_requires_an_explicit_current_or_historical_note_state() {
+    let shape = CommandKind::ReleasePublish.binding().body;
+    let missing = r#"{
+        "key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }"#;
+    assert!(
+        shape.decode(missing.as_bytes()).is_err(),
+        "unmigrated publication intent must not enter the current decoder"
+    );
+
+    let historical = r#"{
+        "key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "notes": null
+    }"#;
+    let Intent::ReleasePublish(publish) = shape
+        .decode(historical.as_bytes())
+        .expect("migrated historical absence decodes")
+    else {
+        panic!("release body decoded as another intent")
+    };
+    assert_eq!(publish.notes, wire::ReleaseNotesIdentity::HistoricalAbsent);
+}
+
+#[test]
 fn every_declared_shape_is_bound_by_some_kind() {
     // A shape no kind selects is dead vocabulary, and an answer no kind
     // returns is a reply that can never be sent.
@@ -1046,6 +1105,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::DocApply,
     BodyShape::SteerSend,
     BodyShape::SteerInbox,
+    BodyShape::SteerRepair,
     BodyShape::DirectiveRef,
     BodyShape::SteerDispose,
     BodyShape::ConsentDecide,
@@ -1073,6 +1133,7 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Claim,
     AnswerShape::Doc,
     AnswerShape::Directive,
+    AnswerShape::Delivery,
     AnswerShape::Inbox,
     AnswerShape::Consent,
     AnswerShape::ConsentQueue,
