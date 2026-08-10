@@ -9,6 +9,7 @@
 # Sourcing remains an operation inside that native command shell and therefore
 # shares its functions and options without crossing another process boundary.
 
+# These handoff reads are the complete environment contract this stage consumes.
 native_shell=${SPICE_NATIVE_SHELL:?spice native shell} # env-policy: allow
 unset SPICE_HOOKS SPICE_NATIVE_SHELL # env-policy: allow
 SHELL=$native_shell # env-policy: allow

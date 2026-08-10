@@ -183,7 +183,10 @@ fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
         "exec spice run -- \"${SPICE_HOOKS:?spice hooks directory}/static/stage.sh\" \"$@\""
     ));
     assert!(!entry.contains("spice agent run"));
-    assert!(!entry.contains("SPICE_PROOF")); // env-policy: allow
+    assert!(
+        !entry.contains("SPICE_PROOF"), // env-policy: allow
+        "entry stage no longer carries proof routing"
+    );
     assert!(!entry.contains("if ["));
 }
 
