@@ -120,6 +120,41 @@ pub(super) fn recognize(
     )
 }
 
+fn has_authored_prose(record: &lane::capture::CaptureRecord) -> bool {
+    record.decoded.events().iter().any(|event| {
+        let listen::Event::Prose(prose) = event else {
+            return false;
+        };
+        authored_prose(prose).is_some()
+    })
+}
+
+fn applicability_context(
+    residency: &ResidencyHead,
+    record: &lane::capture::CaptureRecord,
+) -> CommandResult<gate::PolicyContext> {
+    let row = residency
+        .lanes
+        .iter()
+        .find(|row| row.lane == record.lane && row.occupant == Some(record.occupant))
+        .ok_or_else(|| {
+            store_fault(
+                "taste::occupant-moved",
+                "the reminder capture no longer belongs to the current occupant",
+            )
+        })?;
+    let mut context = gate::PolicyContext::new().with_vendor(row.vendor.as_str());
+    if let Some(model) = row
+        .session
+        .as_ref()
+        .and_then(|session| session.launch.as_ref())
+        .map(|launch| launch.model.as_str())
+    {
+        context = context.with_model(model);
+    }
+    Ok(context)
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the test seam names both durable commit and disposable publication"
@@ -139,7 +174,12 @@ where
     C: FnMut(&Bus, &[Opening], JournalWrite) -> CommandResult<JournalCommit>,
     P: FnMut(&Bus, &RuntimePaths, &ResidencyHead, CanonicalUuid) -> CommandResult<()>,
 {
-    let candidates = candidates(bag, record)?;
+    if !bag.tastes().iter().any(taste::Taste::enabled) || !has_authored_prose(record) {
+        return Ok(());
+    }
+    let observed = current_residency(bus, epoch)?;
+    let context = applicability_context(observed.body(), record)?;
+    let candidates = candidates(bag, &context, record)?;
     if candidates.is_empty() {
         return Ok(());
     }
@@ -406,6 +446,7 @@ fn resident_origin(epoch: CanonicalUuid) -> CommandResult<wire::Origin> {
 
 fn candidates(
     bag: &taste::Bag,
+    context: &gate::PolicyContext,
     record: &lane::capture::CaptureRecord,
 ) -> CommandResult<Vec<Candidate>> {
     if bag.tastes().is_empty() {
@@ -417,15 +458,9 @@ fn candidates(
         let listen::Event::Prose(prose) = decoded else {
             continue;
         };
-        let classified = classify(&prose.text);
-        let Some(authored) = classified.authored else {
+        let Some(authored) = authored_prose(prose) else {
             continue;
         };
-        // Echo classification precedes bag matching. No trigger can make a
-        // resident-authored reminder become a candidate again.
-        if taste::is_reminder_echo(&authored) {
-            continue;
-        }
         let authored = listen::Event::Prose(listen::Prose {
             role: prose.role,
             text: authored,
@@ -435,7 +470,10 @@ fn candidates(
             locus: prose.locus,
         });
         let event = checked_locus(event)?;
-        for hit in bag.hits(&authored) {
+        let hits = bag
+            .hits(&authored, context)
+            .map_err(|error| store_fault("taste::applicability-refused", &error.to_string()))?;
+        for hit in hits {
             let content = taste::reminder_identity(hit.taste(), hit.context());
             if candidates
                 .iter()
@@ -463,6 +501,13 @@ fn candidates(
         }
     }
     Ok(candidates)
+}
+
+fn authored_prose(prose: &listen::Prose) -> Option<String> {
+    let authored = classify(&prose.text).authored?;
+    // Echo classification precedes bag matching. No trigger can make a
+    // resident-authored reminder become a candidate again.
+    (!taste::is_reminder_echo(&authored)).then_some(authored)
 }
 
 fn adjudicate_candidates(

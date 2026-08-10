@@ -13,6 +13,10 @@ mod fold;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+fn taste_context() -> gate::PolicyContext {
+    gate::PolicyContext::new().with_vendor("claude")
+}
+
 struct Fixture {
     root: std::path::PathBuf,
     paths: RuntimePaths,
@@ -25,6 +29,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
+        Self::with_vendor(name, "claude")
+    }
+
+    fn with_vendor(name: &str, vendor: &str) -> Self {
+        let vendor = vendor.parse::<wire::Name>().expect("vendor name");
         let root = std::env::temp_dir().join(format!(
             "spice-taste-runtime-{name}-{}-{}",
             std::process::id(),
@@ -69,7 +78,7 @@ impl Fixture {
                     name: None,
                     worktree: worktree.clone(),
                     life: "drive".to_owned(),
-                    vendor: "claude".parse().expect("vendor name"),
+                    vendor: vendor.clone(),
                 },
                 FactCause::Existing(observed.position()),
             )
@@ -95,7 +104,7 @@ impl Fixture {
                 name: None,
                 worktree,
                 life: "drive".to_owned(),
-                vendor: "claude".parse().expect("vendor name"),
+                vendor,
                 occupant: Some(occupant),
                 lineage: vec![occupant],
                 capabilities: vec![capability],
@@ -281,6 +290,35 @@ fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
     assert!(rendered.contains("[TASTE] polling: Wait for the terminal event."));
     assert!(rendered.contains("[TASTE] fallbacks: Keep one current path."));
     fixture.finish();
+}
+
+#[test]
+fn driver_scoped_tastes_follow_the_durable_lane_vendor() {
+    let bag = taste::configured(
+        r#"
+[taste.polling]
+words = ["poll*"]
+message = "Wait for the terminal event."
+scopes = { vendors = ["codex"] }
+"#,
+    )
+    .expect("driver-scoped bag");
+    let codex = Fixture::with_vendor("scoped-codex", "codex");
+    let claude = Fixture::with_vendor("scoped-claude", "claude");
+
+    codex.recognize(
+        &bag,
+        &prose_record(codex.lane, codex.occupant, "Polling is not completion."),
+    );
+    claude.recognize(
+        &bag,
+        &prose_record(claude.lane, claude.occupant, "Polling is not completion."),
+    );
+
+    assert_eq!(codex.reminders().len(), 1);
+    assert!(claude.reminders().is_empty());
+    codex.finish();
+    claude.finish();
 }
 
 #[test]
@@ -488,7 +526,9 @@ fn taste_framings_are_complete_and_deterministically_shuffled() {
     let candidate = (0..128)
         .find_map(|index| {
             let record = prose_record(uuid(2), uuid(3), &format!("polling candidate {index}"));
-            let candidate = candidates(&bag, &record).expect("candidate scan").remove(0);
+            let candidate = candidates(&bag, &taste_context(), &record)
+                .expect("candidate scan")
+                .remove(0);
             let order = judge_prompts(&candidate)
                 .iter()
                 .map(crate::judge::Prompt::framing)
@@ -593,7 +633,11 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
             ],
         },
     );
-    assert!(candidates(&bag, &typed).expect("typed scan").is_empty());
+    assert!(
+        candidates(&bag, &taste_context(), &typed)
+            .expect("typed scan")
+            .is_empty()
+    );
     let residue = record(
         fixture.lane,
         fixture.occupant,
@@ -605,7 +649,11 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
             },
         }),
     );
-    assert!(candidates(&bag, &residue).expect("residue scan").is_empty());
+    assert!(
+        candidates(&bag, &taste_context(), &residue)
+            .expect("residue scan")
+            .is_empty()
+    );
     assert!(fixture.reminders().is_empty());
     fixture.finish();
 }
@@ -636,21 +684,25 @@ fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
         "*** Begin Patch\n+polling forever\n*** End Patch\nPolling after the patch is authored.",
     );
 
-    assert!(candidates(&bag, &patch).expect("patch scans").is_empty());
     assert!(
-        candidates(&bag, &mixed)
+        candidates(&bag, &taste_context(), &patch)
+            .expect("patch scans")
+            .is_empty()
+    );
+    assert!(
+        candidates(&bag, &taste_context(), &mixed)
             .expect("mixed diff scans")
             .is_empty()
     );
     assert_eq!(
-        candidates(&bag, &authored)
+        candidates(&bag, &taste_context(), &authored)
             .expect("authored prefix scans")
             .len(),
         1,
         "only the authored prefix remains eligible"
     );
     assert_eq!(
-        candidates(&bag, &tail)
+        candidates(&bag, &taste_context(), &tail)
             .expect("post-patch authored tail scans")
             .len(),
         1,

@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+use gate::{Applicability, PolicyContext, PolicyResolveError, RuleId, ScopeSelector};
 use listen::{Event, Locus};
 use wire::{Digest, Domain, Name};
 
@@ -138,10 +139,11 @@ pub fn reminder_identity(taste: &Name, prose: &str) -> Digest {
     Digest::compute(Domain::TasteProse, &framed)
 }
 
-/// Canonical identity of one complete ordered active taste bag.
+/// Canonical identity of one complete ordered configured taste bag.
 ///
-/// Names, triggers, and drivers are length-framed in their admitted order, so
-/// any policy movement produces a new identity without a second serializer.
+/// Names, selectors, triggers, and drivers are length-framed in their admitted
+/// order, and enablement is one fixed byte, so any policy movement produces a
+/// new identity without a second serializer.
 #[must_use]
 pub fn bag_identity(bag: &Bag) -> Digest {
     let mut framed = Vec::new();
@@ -153,6 +155,19 @@ pub fn bag_identity(bag: &Bag) -> Digest {
             frame_text(&mut framed, trigger.as_str());
         }
         frame_text(&mut framed, &taste.message);
+        framed.push(u8::from(taste.enabled));
+        for values in [
+            taste.applicability.selector().paths(),
+            taste.applicability.selector().extensions(),
+            taste.applicability.selector().vendors(),
+            taste.applicability.selector().models(),
+            taste.applicability.selector().phases(),
+        ] {
+            frame_count(&mut framed, values.len());
+            for value in values {
+                frame_text(&mut framed, value);
+            }
+        }
     }
     Digest::compute(Domain::TasteBag, &framed)
 }
@@ -237,6 +252,8 @@ pub struct Taste {
     name: Name,
     triggers: Vec<Trigger>,
     message: String,
+    enabled: bool,
+    applicability: Applicability,
 }
 
 impl Taste {
@@ -246,6 +263,20 @@ impl Taste {
     ///
     /// Refuses an empty bag, an empty message, or any invalid trigger.
     pub fn new<I, S>(name: Name, words: I, message: impl Into<String>) -> Result<Self, BagError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self::configured(name, words, message, true, &ScopeSelector::default())
+    }
+
+    pub(crate) fn configured<I, S>(
+        name: Name,
+        words: I,
+        message: impl Into<String>,
+        enabled: bool,
+        scopes: &ScopeSelector,
+    ) -> Result<Self, BagError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
@@ -261,10 +292,17 @@ impl Taste {
         if message.trim().is_empty() {
             return Err(BagError::EmptyMessage(name.to_string()));
         }
+        let subject = name
+            .as_str()
+            .parse::<RuleId>()
+            .expect("every admitted taste name is a valid selector subject");
+        let applicability = Applicability::compile(subject, scopes)?;
         Ok(Self {
             name,
             triggers,
             message,
+            enabled,
+            applicability,
         })
     }
 
@@ -285,16 +323,28 @@ impl Taste {
     pub fn message(&self) -> &str {
         &self.message
     }
+
+    /// Whether this named tracked row participates in matching.
+    #[must_use]
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Canonical shared selector constraining this taste.
+    #[must_use]
+    pub const fn scopes(&self) -> &ScopeSelector {
+        self.applicability.selector()
+    }
 }
 
-/// A closed active set of tracked tastes.
+/// A closed configured set of tracked tastes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bag {
     tastes: Vec<Taste>,
 }
 
 impl Bag {
-    /// Admit an active set with one row per taste name.
+    /// Admit a configured set with one row per taste name.
     ///
     /// # Errors
     ///
@@ -309,43 +359,52 @@ impl Bag {
         Ok(Self { tastes })
     }
 
-    /// Active tastes in tracked order.
+    /// Named tracked tastes in tracked order, including disabled rows.
     #[must_use]
     pub fn tastes(&self) -> &[Taste] {
         &self.tastes
     }
 
-    /// Select configured candidates from one typed listening event.
+    /// Select applicable configured candidates from one typed listening event.
     ///
     /// Only [`Event::Prose`] is readable here. Reasoning, tools, usage,
     /// compaction, and failure events produce no candidates, and this API has
     /// no vendor-byte input to parse.
-    #[must_use]
-    pub fn hits(&self, event: &Event) -> Vec<Hit> {
+    /// # Errors
+    ///
+    /// Refuses malformed context or any selector axis the caller did not
+    /// supply.
+    pub fn hits(
+        &self,
+        event: &Event,
+        context: &PolicyContext,
+    ) -> Result<Vec<Hit>, PolicyResolveError> {
         let Event::Prose(prose) = event else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let (tokens, loci) = prose_tokens(&prose.text);
-        self.tastes
-            .iter()
-            .flat_map(|taste| {
-                taste.triggers.iter().flat_map(|trigger| {
-                    trigger.spans(&tokens).into_iter().map(|span| {
-                        let (line, column) = loci[span.first];
-                        Hit {
-                            taste: taste.name.clone(),
-                            trigger: trigger.source.clone(),
-                            message: taste.message.clone(),
-                            span,
-                            context: prose.text.clone(),
-                            locus: prose.locus,
-                            line,
-                            column,
-                        }
-                    })
-                })
-            })
-            .collect()
+        let mut hits = Vec::new();
+        for taste in self.tastes.iter().filter(|taste| taste.enabled) {
+            if !taste.applicability.matches(context)? {
+                continue;
+            }
+            for trigger in &taste.triggers {
+                for span in trigger.spans(&tokens) {
+                    let (line, column) = loci[span.first];
+                    hits.push(Hit {
+                        taste: taste.name.clone(),
+                        trigger: trigger.source.clone(),
+                        message: taste.message.clone(),
+                        span,
+                        context: prose.text.clone(),
+                        locus: prose.locus,
+                        line,
+                        column,
+                    });
+                }
+            }
+        }
+        Ok(hits)
     }
 }
 
@@ -353,6 +412,7 @@ impl Bag {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BagError {
     Trigger(TriggerError),
+    Applicability(gate::PolicyCompileError),
     EmptyWords(String),
     EmptyMessage(String),
     Duplicate(String),
@@ -362,6 +422,7 @@ impl fmt::Display for BagError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Trigger(error) => error.fmt(formatter),
+            Self::Applicability(error) => error.fmt(formatter),
             Self::EmptyWords(name) => write!(formatter, "taste {name} has an empty word bag"),
             Self::EmptyMessage(name) => write!(formatter, "taste {name} has an empty message"),
             Self::Duplicate(name) => write!(formatter, "taste {name} is declared more than once"),
@@ -373,6 +434,7 @@ impl Error for BagError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Trigger(error) => Some(error),
+            Self::Applicability(error) => Some(error),
             Self::EmptyWords(_) | Self::EmptyMessage(_) | Self::Duplicate(_) => None,
         }
     }
@@ -381,6 +443,12 @@ impl Error for BagError {
 impl From<TriggerError> for BagError {
     fn from(error: TriggerError) -> Self {
         Self::Trigger(error)
+    }
+}
+
+impl From<gate::PolicyCompileError> for BagError {
+    fn from(error: gate::PolicyCompileError) -> Self {
+        Self::Applicability(error)
     }
 }
 
