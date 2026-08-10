@@ -80,6 +80,7 @@ pub(crate) fn observe(
             key: directive.key().to_string(),
             stage: format!("{:?}", directive.stage()).to_ascii_lowercase(),
             text: directive.text().to_owned(),
+            attachments: directive.attachments().to_vec(),
             authored: directive
                 .published()
                 .map_or_else(String::new, |at| at.to_string()),

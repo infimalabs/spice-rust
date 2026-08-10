@@ -48,16 +48,59 @@ fn a_rendering_carries_one_lane_sealed() {
     let rendered = fs::read_to_string(inbox::path(&inbox_root, lane)).expect("rendering readable");
     assert_eq!(
         rendered,
-        "\
+        format!(
+            "\
 <1kJK6N3R>
-key=1kJK6M0V stage=published expires=2026-08-01T07:07:19.000Z control=drive-drain-queue
+directive={} key=1kJK6M0V stage=published expires=2026-08-01T07:07:19.000Z control=drive-drain-queue
 DRAIN QUEUE ASAP
-key=1kJK7Sqy stage=published expires=2026-08-01T08:07:19.000Z
+directive={} key=1kJK7Sqy stage=published expires=2026-08-01T08:07:19.000Z
 feed the board
 </1kJK6N3R>
-"
+",
+            directive("1kJK6M0V"),
+            directive("1kJK7Sqy"),
+        )
     );
     scratch.remove();
+}
+
+#[test]
+fn typed_media_reaches_the_lane_once_with_its_directive_identity() {
+    let attachment = wire::Media::from_base64("operator-capture.png", "image/png", "iVBORw0KGgo=")
+        .expect("fixture attachment admits");
+    let canonical_markdown = attachment.markdown().expect("fixture Markdown renders");
+    let cases = [
+        "inspect this capture".to_owned(),
+        format!("inspect this capture\n\n{canonical_markdown}"),
+    ];
+
+    for text in cases {
+        let body = SteerSent {
+            directive: directive("1kJK6M0V"),
+            key: "1kJK6M0V".to_owned(),
+            lane: lane(LANE),
+            text,
+            control: None,
+            attachments: vec![attachment.clone()],
+            expires: "2026-08-01T07:07:19.000Z".parse().expect("instant"),
+        };
+        let mut ledger = Ledger::new();
+        ledger
+            .absorb(Steering::Sent(&body))
+            .expect("typed attachment enters standing");
+
+        let rendered = inbox::render(&seal(), &ledger.pending(lane(LANE)));
+        assert!(
+            rendered.contains(&format!("directive={}", body.directive)),
+            "lane rendering lost the durable directive identity: {rendered}",
+        );
+        assert_eq!(
+            rendered.matches(&attachment.data_url).count(),
+            1,
+            "the same canonical bytes must reach the lane exactly once: {rendered}",
+        );
+        assert!(rendered.contains(&canonical_markdown));
+    }
 }
 
 /// A lane owed nothing is rendered empty rather than sealed around nothing, and

@@ -105,6 +105,48 @@ impl Media {
             .map(|bytes| Digest::compute(Domain::MediaContent, &bytes))
     }
 
+    /// Render the admitted value as one canonical Markdown image block.
+    ///
+    /// # Errors
+    ///
+    /// Returns an admission error rather than rendering a forged value.
+    pub fn markdown(&self) -> Result<String, MediaError> {
+        self.validate()?;
+        let name = self.name.replace('\\', "\\\\").replace(']', "\\]");
+        Ok(format!("![{name}]({})", self.data_url))
+    }
+
+    /// Whether authored text already carries these canonical media bytes.
+    ///
+    /// Admitted media has one canonical data URL spelling and its observed byte
+    /// signature fixes its media type, so finding that URL is equivalent to
+    /// finding this value's decoded-byte identity in authored Markdown.
+    ///
+    /// # Errors
+    ///
+    /// Returns an admission error rather than comparing a forged value.
+    pub fn is_embedded_in(&self, text: &str) -> Result<bool, MediaError> {
+        self.validate()?;
+        let mut remaining = text;
+        while let Some(start) = remaining.find("![") {
+            remaining = &remaining[start + 2..];
+            let Some(label_end) = remaining.find("](") else {
+                break;
+            };
+            let name = &remaining[..label_end];
+            remaining = &remaining[label_end + 2..];
+            let Some(url_end) = remaining.find(')') else {
+                break;
+            };
+            let url = &remaining[..url_end];
+            remaining = &remaining[url_end + 1..];
+            if url == self.data_url && Self::admit(name, &self.content_type, url).is_ok() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn decoded(&self) -> Result<Vec<u8>, MediaError> {
         if self.name.is_empty()
             || self.name.len() > MAX_MEDIA_NAME_BYTES
@@ -267,6 +309,33 @@ mod tests {
         let media = Media::from_base64("capture.png", "image/png", PNG).unwrap();
         assert_eq!(media.identity().unwrap(), media.identity().unwrap());
         assert_eq!(media.data_url, format!("data:image/png;base64,{PNG}"));
+        assert_eq!(
+            media.markdown().unwrap(),
+            format!("![capture.png](data:image/png;base64,{PNG})")
+        );
+        assert!(media.is_embedded_in(&media.markdown().unwrap()).unwrap());
+        assert!(
+            !media
+                .is_embedded_in(&format!("raw URL only: {}", media.data_url))
+                .unwrap(),
+            "a bare URL is not browsable authored Markdown",
+        );
+    }
+
+    #[test]
+    fn markdown_escapes_operator_facing_alt_text_without_changing_identity() {
+        let media = Media::from_base64(r"capture\].png", "image/png", PNG).unwrap();
+        assert_eq!(
+            media.markdown().unwrap(),
+            format!(r"![capture\\\].png](data:image/png;base64,{PNG})")
+        );
+        assert_eq!(
+            media.identity().unwrap(),
+            Media::from_base64("other-name.png", "image/png", PNG)
+                .unwrap()
+                .identity()
+                .unwrap(),
+        );
     }
 
     #[test]

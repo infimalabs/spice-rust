@@ -49,6 +49,27 @@ pub(super) fn seed_lane_in_lineage(
     lineage_id: CanonicalUuid,
     occupant: CanonicalUuid,
 ) {
+    seed_lane_in_lineage_at(bus, epoch, lane, lineage_id, occupant, "/fixture");
+}
+
+pub(super) fn seed_lane_in_worktree(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    worktree: &str,
+) {
+    seed_lane_in_lineage_at(bus, epoch, lane, lane, occupant, worktree);
+}
+
+fn seed_lane_in_lineage_at(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    lineage_id: CanonicalUuid,
+    occupant: CanonicalUuid,
+    worktree: &str,
+) {
     let current = current_residency(bus, epoch).expect("current residency");
     let mut head = current.body().clone();
     head.topology_revision = head
@@ -59,7 +80,7 @@ pub(super) fn seed_lane_in_lineage(
         lane,
         lineage_id,
         name: None,
-        worktree: "/fixture".to_owned(),
+        worktree: worktree.to_owned(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
         occupant: Some(occupant),
@@ -92,7 +113,7 @@ pub(super) fn seed_lane_in_lineage(
                 lineage_id,
                 capability: test_uuid(9),
                 name: None,
-                worktree: "/fixture".to_owned(),
+                worktree: worktree.to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
             },
@@ -648,7 +669,7 @@ fn assert_tool_media_and_prose_activity(
     let result = updates.try_recv().expect("tool result publishes once");
     assert_eq!(result.activity, wire::AgentActivityKind::Tool);
     assert_eq!(result.text, "Bash: git status --short succeeded");
-    assert_eq!(result.media, [media.clone()]);
+    assert_eq!(result.media.as_slice(), std::slice::from_ref(media));
     assert_eq!(
         result.locus,
         wire::MessageLocus {
