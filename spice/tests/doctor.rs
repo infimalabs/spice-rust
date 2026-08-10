@@ -538,11 +538,11 @@ fn malformed_and_unknown_configuration_are_typed_refusals_from_both_exact_paths(
         let Outcome::Refusal(refusal) = outcome else {
             panic!("{label} must refuse: {outcome:?}");
         };
-        assert_eq!(refusal.reason, "doctor::configuration-refused", "{label}");
+        assert_eq!(refusal.reason(), "doctor::configuration-refused", "{label}");
         assert!(
             refusal
-                .observed
-                .as_deref()
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
                 .is_some_and(|observed| observed.contains(expected)),
             "{label}: {refusal:?}"
         );

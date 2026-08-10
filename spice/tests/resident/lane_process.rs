@@ -316,7 +316,7 @@ fn refusal_reason(output: &Output) -> String {
     let Outcome::Refusal(refusal) = outcome(output) else {
         panic!("fixture command must return a refusal");
     };
-    refusal.reason
+    refusal.reason().to_owned()
 }
 
 fn assert_session_binding(
@@ -566,7 +566,7 @@ fn seat_and_recall(fixture: &Fixture) -> (wire::intent::LaneChangeAnswer, wire::
     let Outcome::Refusal(refusal) = outcome(&contended) else {
         panic!("a second lane in one worktree must refuse");
     };
-    assert_eq!(refusal.reason, "lane::worktree-occupied");
+    assert_eq!(refusal.reason(), "lane::worktree-occupied");
     let capability = durable_capability(fixture);
     let journal = journal::Journal::open(fixture.journal()).expect("lane journal opens");
     let facts = journal.fact_snapshot().expect("lane facts read");
@@ -664,7 +664,7 @@ fn drain_and_restart(
     let Outcome::Refusal(refusal) = outcome(&repeated) else {
         panic!("draining a vacant lane must refuse");
     };
-    assert_eq!(refusal.reason, "lane::already-vacant");
+    assert_eq!(refusal.reason(), "lane::already-vacant");
     let down = invoke(fixture, "down");
     assert!(
         down.status.success(),
@@ -709,7 +709,7 @@ fn wake_and_finish(fixture: &Fixture, resident: RunningResident, lane: wire::Can
     let Outcome::Refusal(refusal) = outcome(&repeated) else {
         panic!("waking an occupied lane must refuse");
     };
-    assert_eq!(refusal.reason, "lane::already-occupied");
+    assert_eq!(refusal.reason(), "lane::already-occupied");
     let text = invoke_args(fixture, &["recall", &lane.to_string()], false, None);
     assert!(
         text.status.success(),

@@ -16,7 +16,7 @@ use wire::body::{ConsentAsked, ConsentGranted, ConsentQueueCause, ConsentQueued}
 use wire::intent::{ConsentAnswer, ConsentPolicyAnswer, ConsentQueueAnswer};
 use wire::{
     Actor, CanonicalUuid, Command as WireCommand, CommandKind, FactKind, Instant, Outcome,
-    Producer, Refusal, ReplyPosition, Response, WireVersion, Witness,
+    Producer, ReplyPosition, Response, WireVersion, Witness,
 };
 
 #[path = "support/readiness.rs"]
@@ -241,7 +241,7 @@ fn consent_queue_rulings_reconnects_and_restart_are_durable() {
     else {
         panic!("duplicate decision did not refuse")
     };
-    assert_eq!(refusal.reason, "consent::request-not-held");
+    assert_eq!(refusal.reason(), "consent::request-not-held");
 
     resident.stop(&fixture);
     let restarted = Resident::start(&fixture);
@@ -420,10 +420,10 @@ fn mismatched_ruling(fixture: &Fixture) {
     );
     let response: Response<serde_json::Value> = receive(&mut socket);
     assert_eq!(response.id, id);
-    let Outcome::Refusal(Refusal { reason, .. }) = response.outcome else {
+    let Outcome::Refusal(refusal) = response.outcome else {
         panic!("mismatched ruling did not refuse")
     };
-    assert_eq!(reason, "consent::witness-moved");
+    assert_eq!(refusal.reason(), "consent::witness-moved");
 }
 
 fn send<T: serde::Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) {

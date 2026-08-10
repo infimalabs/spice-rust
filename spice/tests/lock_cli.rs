@@ -851,7 +851,7 @@ fn malformed_names_shards_and_configuration_refuse_without_running_a_child() {
         let Outcome::Refusal(refusal) = outcome else {
             panic!("invalid lock request must refuse: {outcome:?}");
         };
-        assert_eq!(refusal.reason, reason);
+        assert_eq!(refusal.reason(), reason);
     }
     assert!(!fixture.lock_root().exists());
 
@@ -870,7 +870,7 @@ fn malformed_names_shards_and_configuration_refuse_without_running_a_child() {
         let Outcome::Refusal(invalid) = invalid else {
             panic!("invalid config must refuse: {invalid:?}");
         };
-        assert_eq!(invalid.reason, "lock::configuration-refused");
+        assert_eq!(invalid.reason(), "lock::configuration-refused");
         assert!(!fixture.root.join("outside.lock").exists());
     }
 }
@@ -906,7 +906,7 @@ fn assert_contention(spoken: Spoken, code: i32, reason: &str) {
     let Outcome::Refusal(refusal) = outcome else {
         panic!("lock contention must refuse: {outcome:?}");
     };
-    assert_eq!(refusal.reason, reason);
+    assert_eq!(refusal.reason(), reason);
 }
 
 #[test]

@@ -174,8 +174,13 @@ fn malformed_locus_is_a_typed_refusal_without_selector_fallthrough() {
     let Outcome::Refusal(refusal) = decoded else {
         panic!("malformed selector must refuse: {decoded:?}");
     };
-    assert_eq!(refusal.reason, "retro::selector");
-    assert_eq!(refusal.observed.as_deref(), Some("one:two:three"));
+    assert_eq!(refusal.reason(), "retro::selector");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        Some("one:two:three")
+    );
 }
 
 #[test]
@@ -374,17 +379,24 @@ fn version_refuses_unfinalized_and_incompatible_schema_without_mutation() {
         let Outcome::Refusal(refusal) = decoded else {
             panic!("{name} schema refuses: {decoded:?}");
         };
-        assert_eq!(refusal.reason, "journal::schema-refused", "{name}");
+        assert_eq!(refusal.reason(), "journal::schema-refused", "{name}");
         assert!(
             refusal
-                .observed
-                .as_deref()
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
                 .is_some_and(|observed| observed.contains(expected)),
             "{name} did not preserve the schema error: {refusal:?}",
         );
         assert_eq!(
             utf8(text.err),
-            format!("spice: {}; {}\n", refusal.reason, refusal.remedy),
+            format!(
+                "spice: {}; {}\n",
+                refusal.reason(),
+                refusal
+                    .diagnostic()
+                    .and_then(wire::RefusalDiagnostic::detail)
+                    .expect("schema refusal carries detail")
+            ),
             "{name}",
         );
         assert_eq!(directory_state(repository.path()), before, "{name}");

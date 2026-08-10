@@ -725,15 +725,17 @@ fn refusal<B>(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<B> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("tracked-taste-set".to_owned()),
-        expected,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("tracked-taste-set".to_owned()),
+            expected,
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn fault<B>(class: FaultClass, reason: &str, detail: String) -> Outcome<B> {

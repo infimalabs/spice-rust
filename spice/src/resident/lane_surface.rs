@@ -919,22 +919,24 @@ fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> 
     let repository = Repository::discover(worktree)
         .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
     if repository.common_dir() != paths.common {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lane::foreign-worktree".to_owned(),
-            witness: Some("git-common-directory".to_owned()),
-            expected: Some(paths.common.display().to_string()),
-            observed: Some(repository.common_dir().display().to_string()),
-            remedy: "choose one existing worktree from the resident repository".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::foreign-worktree".to_owned(),
+                Some("git-common-directory".to_owned()),
+                Some(paths.common.display().to_string()),
+                Some(repository.common_dir().display().to_string()),
+            ),
+        )));
     }
     if repository.worktree_root() != Path::new(worktree) {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lane::worktree-not-root".to_owned(),
-            witness: Some("worktree".to_owned()),
-            expected: Some(repository.worktree_root().display().to_string()),
-            observed: Some(worktree.to_owned()),
-            remedy: "name the canonical root of one existing worktree".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::worktree-not-root".to_owned(),
+                Some("worktree".to_owned()),
+                Some(repository.worktree_root().display().to_string()),
+                Some(worktree.to_owned()),
+            ),
+        )));
     }
     Ok(())
 }

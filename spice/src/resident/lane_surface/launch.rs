@@ -121,21 +121,22 @@ fn launch_plan(
         .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?;
     let environment = launch_environment(paths, repository, &executable, lane)?;
     let Some(vendor) = spice::extension::vendor(name.as_str()) else {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lane::vendor-unsupported".to_owned(),
-            witness: Some("lane.vendor".to_owned()),
-            expected: Some(
-                spice::extension::registry()
-                    .expect("compiled extension declarations are validated by the test gate")
-                    .vendors()
-                    .into_iter()
-                    .map(|vendor| vendor.name())
-                    .collect::<Vec<_>>()
-                    .join(" or "),
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::vendor-unsupported".to_owned(),
+                Some("lane.vendor".to_owned()),
+                Some(
+                    spice::extension::registry()
+                        .expect("compiled extension declarations are validated by the test gate")
+                        .vendors()
+                        .into_iter()
+                        .map(|vendor| vendor.name())
+                        .collect::<Vec<_>>()
+                        .join(" or "),
+                ),
+                Some(name.as_str().to_owned()),
             ),
-            observed: Some(name.as_str().to_owned()),
-            remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
-        }));
+        )));
     };
     let prompt = vendor.neutral_launch_prompt(&spice::install::installed_skill(repository));
     spice::agent_launch::compose(
@@ -151,21 +152,22 @@ fn launch_plan(
         },
     )
     .map_err(|error| match error {
-        spice::agent_launch::ComposeError::UnsupportedVendor(other) => Outcome::Refusal(Refusal {
-            reason: "lane::vendor-unsupported".to_owned(),
-            witness: Some("lane.vendor".to_owned()),
-            expected: Some(
-                spice::extension::registry()
-                    .expect("compiled extension declarations are validated by the test gate")
-                    .vendors()
-                    .into_iter()
-                    .map(|vendor| vendor.name())
-                    .collect::<Vec<_>>()
-                    .join(" or "),
-            ),
-            observed: Some(other),
-            remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
-        }),
+        spice::agent_launch::ComposeError::UnsupportedVendor(other) => {
+            Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+                "lane::vendor-unsupported".to_owned(),
+                Some("lane.vendor".to_owned()),
+                Some(
+                    spice::extension::registry()
+                        .expect("compiled extension declarations are validated by the test gate")
+                        .vendors()
+                        .into_iter()
+                        .map(|vendor| vendor.name())
+                        .collect::<Vec<_>>()
+                        .join(" or "),
+                ),
+                Some(other),
+            )))
+        }
         other => store_fault("lane::launch-invalid", &other.to_string()),
     })
 }
@@ -259,13 +261,10 @@ fn launch_process(
 }
 
 pub(super) fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: "lane::configuration-refused".to_owned(),
-        witness: Some("effective-configuration".to_owned()),
-        expected: Some(
-            "tracked and local inputs admitted by the configuration registry".to_owned(),
-        ),
-        observed: Some(error.diagnostic()),
-        remedy: "correct the named configuration inputs before launching the lane".to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        "lane::configuration-refused".to_owned(),
+        Some("effective-configuration".to_owned()),
+        Some("tracked and local inputs admitted by the configuration registry".to_owned()),
+        Some(error.diagnostic()),
+    )))
 }

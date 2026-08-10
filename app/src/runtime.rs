@@ -764,7 +764,11 @@ impl CanvasRuntime {
             // so applying it changes none.
             StreamFrame::Pong { .. } => Vec::new(),
             StreamFrame::Refusal { refusal, .. } => {
-                self.push_event("refusal", refusal.reason.clone(), refusal.remedy.clone());
+                self.push_event(
+                    "refusal",
+                    refusal.reason().to_owned(),
+                    refusal.explanation().to_owned(),
+                );
                 Vec::new()
             }
             StreamFrame::Fault { fault, .. } => {
@@ -1014,7 +1018,11 @@ impl CanvasRuntime {
                 self.push_event("reply", title, detail);
             }
             Outcome::Refusal(refusal) => {
-                self.push_event("refusal", refusal.reason.clone(), refusal.remedy.clone());
+                self.push_event(
+                    "refusal",
+                    refusal.reason().to_owned(),
+                    refusal.explanation().to_owned(),
+                );
             }
             Outcome::Fault(fault) => {
                 self.push_event("fault", fault.reason.clone(), fault.detail.clone());

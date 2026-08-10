@@ -795,7 +795,7 @@ fn apply_lineage_configuration(
         wire::Outcome::Refusal(refusal) => {
             lineage_controls.dispatch(LineageControlAction::SettleIssue {
                 lineage,
-                issue: format!("{}: {}", refusal.reason, refusal.remedy),
+                issue: format!("{}: {}", refusal.reason(), refusal.explanation()),
             });
             true
         }

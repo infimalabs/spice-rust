@@ -1160,9 +1160,11 @@ fn restore_lane_submissions(
 fn outcome_issue<T>(action: &str, outcome: &wire::Outcome<T>) -> Option<String> {
     match outcome {
         wire::Outcome::Reply(_) => None,
-        wire::Outcome::Refusal(refusal) => {
-            Some(format!("{action}: {}. {}", refusal.reason, refusal.remedy))
-        }
+        wire::Outcome::Refusal(refusal) => Some(format!(
+            "{action}: {}. {}",
+            refusal.reason(),
+            refusal.explanation()
+        )),
         wire::Outcome::Fault(fault) => {
             Some(format!("{action}: {}. {}", fault.reason, fault.detail))
         }

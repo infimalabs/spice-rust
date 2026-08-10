@@ -975,12 +975,14 @@ fn clip(value: &str, max_chars: usize) -> String {
     clipped
 }
 
-fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Refusal {
-    Refusal {
-        reason: reason.to_owned(),
-        witness: Some("session-query".to_owned()),
-        expected: Some("one admitted bounded transcript query".to_owned()),
-        observed,
-        remedy: remedy.to_owned(),
-    }
+fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {
+    Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("session-query".to_owned()),
+            Some("one admitted bounded transcript query".to_owned()),
+            observed,
+        )
+        .with_detail(detail),
+    )
 }

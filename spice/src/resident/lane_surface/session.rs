@@ -34,7 +34,7 @@ pub(in crate::resident) enum SessionProofError {
 
 impl SessionProofError {
     pub(in crate::resident) fn refusal(&self) -> Refusal {
-        let (reason, expected, observed, remedy) = match self {
+        let (reason, expected, observed, detail) = match self {
             Self::Missing(witness) => (
                 "lane::session-missing",
                 Some("one current selected-stream session declaration".to_owned()),
@@ -78,13 +78,15 @@ impl SessionProofError {
                 "emit the initialization declaration exactly once",
             ),
         };
-        Refusal {
-            reason: reason.to_owned(),
-            witness: Some("session-declaration".to_owned()),
-            expected,
-            observed,
-            remedy: remedy.to_owned(),
-        }
+        Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                reason.to_owned(),
+                Some("session-declaration".to_owned()),
+                expected,
+                observed,
+            )
+            .with_detail(detail),
+        )
     }
 
     pub(in crate::resident) fn outcome(&self) -> Outcome<CommandAnswer> {
@@ -523,15 +525,17 @@ fn session_head_refusal(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("lane-session-head".to_owned()),
-        expected,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("lane-session-head".to_owned()),
+            expected,
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }
 
 #[cfg(test)]

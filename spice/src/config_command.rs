@@ -187,13 +187,14 @@ fn set(
         )
     })?;
     if applied != plan.digest {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "config::plan-moved".to_owned(),
-            witness: Some("config-plan".to_owned()),
-            expected: Some(plan.digest.to_string()),
-            observed: Some(applied.to_string()),
-            remedy: "preview the current mutation and apply its new exact digest".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "config::plan-moved".to_owned(),
+                Some("config-plan".to_owned()),
+                Some(plan.digest.to_string()),
+                Some(applied.to_string()),
+            ),
+        )));
     }
     let receipt = publish(&documents, &plan, candidate.as_bytes())?;
     report(resolved, Some(key), Some(plan), Some(receipt))
@@ -1031,14 +1032,10 @@ fn map_outcome<B>(outcome: Outcome<()>) -> Outcome<B> {
     }
 }
 
-fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: None,
-        expected: None,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Outcome<()> {
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(reason.to_owned(), None, None, observed).with_detail(detail),
+    ))
 }
 
 fn environment_fault(reason: &str, detail: &str) -> Outcome<()> {
@@ -1098,7 +1095,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            Outcome::Refusal(Refusal { reason, .. }) if reason == "config::source-moved"
+            Outcome::Refusal(ref refusal) if refusal.reason() == "config::source-moved"
         ));
         assert!(fs::read_dir(&parked).unwrap().next().is_none());
         assert!(fs::read_dir(&outside).unwrap().next().is_none());

@@ -375,8 +375,13 @@ fn an_arrangement_that_is_not_a_faithful_restatement_of_the_lane_table_is_refuse
         let Outcome::Refusal(refusal) = outcome else {
             panic!("{reason} must refuse rather than commit: {outcome:?}");
         };
-        assert_eq!(refusal.reason, reason);
-        assert_eq!(refusal.witness.as_deref(), Some("lane"));
+        assert_eq!(refusal.reason(), reason);
+        assert_eq!(
+            refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::witness),
+            Some("lane")
+        );
         assert_eq!(
             fixture.durable_membership(),
             seated,
