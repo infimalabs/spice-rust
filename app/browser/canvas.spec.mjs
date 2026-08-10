@@ -1203,6 +1203,10 @@ async function assertHalfOpenSocket(browser, endpoint, epoch, fixture, seeded) {
   const monitor = monitorPage(page);
   const route = await routeCanvasSocket(page);
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
+  // Online names the admitted handshake, not the end of the descending packed
+  // backlog. Close that continuation before withholding frames, or reconnect
+  // can resume a partial surface after its oldest page and retain facts 3..N.
+  await assertPackedHistory(page, fixture, await journalExtent(fixture));
   let advanced;
   await assertHalfOpenSocketRecovers(page, monitor, route, epoch, async () => {
     await reply(fixture, ["task", "note", seeded.task, "written while the socket was half open"]);
