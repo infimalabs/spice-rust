@@ -27,7 +27,10 @@ fn schema_eight_vocabulary_moves_forward_once_across_every_authority_carrier() {
         journal.migration().map(|step| (step.from(), step.to())),
         Some((8, SCHEMA_VERSION))
     );
-    assert_eq!(journal.schema_version().expect("schema version"), 9);
+    assert_eq!(
+        journal.schema_version().expect("schema version"),
+        SCHEMA_VERSION
+    );
 
     let head_bytes: Vec<u8> = journal
         .connection

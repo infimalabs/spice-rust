@@ -496,6 +496,48 @@ fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
     mining_fixture::assert_recurring_operator_corrections();
 }
 
+#[test]
+fn unavailable_mining_evidence_faults_without_filing_or_editing_policy() {
+    let fixture = Fixture::new();
+    let unavailable = mining_fixture::seed_unavailable_placeholder(&fixture);
+    let tracked_before = fs::read_to_string(fixture.root.join("spice-rust.toml")).unwrap();
+    let resident = Resident::start(&fixture);
+    mining_fixture::rewrite_unavailable_ack(&fixture, unavailable);
+
+    let output = fixture.invoke(&["--json", "taste", "mine"]);
+    assert!(!output.status.success(), "{}", spoken(&output));
+    let Outcome::Fault(fault) =
+        wire::decode::<Outcome<serde_json::Value>>(&output.stderr).expect("fault is typed")
+    else {
+        panic!("unavailable evidence did not fault: {}", spoken(&output))
+    };
+    assert_eq!(fault.reason, "taste::mining-evidence-invalid");
+    assert!(
+        fault
+            .detail
+            .contains("unavailable operator steering directive")
+    );
+    let facts = journal::JournalReader::open(&fixture.journal)
+        .unwrap()
+        .fact_snapshot()
+        .unwrap();
+    assert_eq!(
+        facts
+            .facts()
+            .iter()
+            .filter_map(|fact| fact.fact.read::<wire::body::TaskAdded>())
+            .filter(|added| added.project.starts_with(".maxim_proposal.taste."))
+            .count(),
+        0
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("spice-rust.toml")).unwrap(),
+        tracked_before
+    );
+    mining_fixture::restore_unavailable_placeholder(&fixture, unavailable);
+    resident.stop(&fixture);
+}
+
 fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
     assert_eq!(report["provenance"]["source"], "tracked");
     assert_eq!(report["provenance"]["present"], true);
@@ -843,6 +885,7 @@ fn uuid(tail: u8) -> CanonicalUuid {
 
 fn locus(line: u32) -> TranscriptLocus {
     TranscriptLocus {
+        source: None,
         member: 1,
         offset: 40,
         length: 80,
@@ -852,8 +895,9 @@ fn locus(line: u32) -> TranscriptLocus {
     }
 }
 
-fn mining_locus(index: u32) -> TranscriptLocus {
+fn mining_locus(source: u8, index: u32) -> TranscriptLocus {
     TranscriptLocus {
+        source: Some(uuid(source)),
         member: 5,
         offset: u64::from(index) * 100,
         length: 90,

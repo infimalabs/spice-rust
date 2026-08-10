@@ -152,6 +152,17 @@ pub struct SteerRecovered {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TranscriptLocus {
+    /// Opaque identity of the durable tape generation carrying this record.
+    ///
+    /// Legacy facts predate source-aware transcript evidence. Consumers must
+    /// treat an absent source as lane-scoped rather than guessing that equal
+    /// numeric coordinates came from one tape.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub source: Option<CanonicalUuid>,
     /// Tape member containing the complete vendor record.
     pub member: u64,
     /// Byte offset of the record within its member.
