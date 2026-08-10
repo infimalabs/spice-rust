@@ -577,40 +577,38 @@ fn bundle_failure(error: journal::BackupVerifyError) -> Failure {
 
     match error {
         missing @ (BackupVerifyError::Missing { .. } | BackupVerifyError::Incomplete { .. }) => {
-            Failure::Refusal(Refusal {
-                reason: "restore::bundle-incomplete".to_owned(),
-                witness: Some("backup-inventory".to_owned()),
-                expected: Some("one complete manifest-bound bundle".to_owned()),
-                observed: Some(missing.to_string()),
-                remedy: "restore every member named by the canonical backup manifest".to_owned(),
-            })
+            Failure::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+                "restore::bundle-incomplete".to_owned(),
+                Some("backup-inventory".to_owned()),
+                Some("one complete manifest-bound bundle".to_owned()),
+                Some(missing.to_string()),
+            )))
         }
-        version @ BackupVerifyError::UnsupportedVersion { .. } => Failure::Refusal(Refusal {
-            reason: "restore::bundle-version".to_owned(),
-            witness: Some("backup-schema".to_owned()),
-            expected: Some(wire::manifest::JOURNAL_BACKUP_VERSION.to_string()),
-            observed: Some(version.to_string()),
-            remedy: "verify the bundle with the Spice release that owns its backup schema"
-                .to_owned(),
-        }),
-        version @ BackupVerifyError::UnsupportedWire { .. } => Failure::Refusal(Refusal {
-            reason: "restore::wire-version".to_owned(),
-            witness: Some("wire-schema".to_owned()),
-            expected: Some(wire::WireVersion::CURRENT.to_string()),
-            observed: Some(version.to_string()),
-            remedy: "verify the bundle with the Spice release that owns its wire schema".to_owned(),
-        }),
+        version @ BackupVerifyError::UnsupportedVersion { .. } => {
+            Failure::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+                "restore::bundle-version".to_owned(),
+                Some("backup-schema".to_owned()),
+                Some(wire::manifest::JOURNAL_BACKUP_VERSION.to_string()),
+                Some(version.to_string()),
+            )))
+        }
+        version @ BackupVerifyError::UnsupportedWire { .. } => {
+            Failure::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+                "restore::wire-version".to_owned(),
+                Some("wire-schema".to_owned()),
+                Some(wire::WireVersion::CURRENT.to_string()),
+                Some(version.to_string()),
+            )))
+        }
         schema @ (BackupVerifyError::ForwardSchema { .. }
         | BackupVerifyError::Authority(journal::OpenError::Migration(
             journal::MigrationError::ForwardSchema { .. },
-        ))) => Failure::Refusal(Refusal {
-            reason: "restore::schema-forward".to_owned(),
-            witness: Some("journal-schema".to_owned()),
-            expected: Some(journal::SCHEMA_VERSION.to_string()),
-            observed: Some(schema.to_string()),
-            remedy: "verify the bundle with the Spice release that owns its journal schema"
-                .to_owned(),
-        }),
+        ))) => Failure::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "restore::schema-forward".to_owned(),
+            Some("journal-schema".to_owned()),
+            Some(journal::SCHEMA_VERSION.to_string()),
+            Some(schema.to_string()),
+        ))),
         unreadable @ BackupVerifyError::Io { .. } => Failure::Fault(Fault {
             class: FaultClass::Environment,
             reason: "restore::bundle-unreadable".to_owned(),
@@ -671,15 +669,17 @@ fn refusal(
     reason: impl Into<String>,
     expected: impl Into<String>,
     observed: impl Into<String>,
-    remedy: impl Into<String>,
+    detail: impl Into<String>,
 ) -> Failure {
-    Failure::Refusal(Refusal {
-        reason: reason.into(),
-        witness: None,
-        expected: Some(expected.into()),
-        observed: Some(observed.into()),
-        remedy: remedy.into(),
-    })
+    Failure::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.into(),
+            None,
+            Some(expected.into()),
+            Some(observed.into()),
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn fault(class: FaultClass, reason: impl Into<String>, detail: impl Into<String>) -> Failure {

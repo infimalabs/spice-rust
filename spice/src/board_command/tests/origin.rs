@@ -74,10 +74,10 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
     );
     assert!(matches!(
         refused,
-        Outcome::Refusal(Refusal { ref reason, ref remedy, .. })
-            if reason == "task::origin-required"
-                && remedy.contains("--origin ack:<steering-key>")
-                && remedy.contains("task:<parent-handle>")
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "task::origin-required"
+                && refusal.explanation().contains("--origin ack:<steering-key>")
+                && refusal.explanation().contains("task:<parent-handle>")
     ));
     assert!(
         board(bus, epoch, Actor::Operator)
@@ -111,9 +111,12 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
     let self_origin_text = self_origin.to_string();
     assert!(matches!(
         refused,
-        Outcome::Refusal(Refusal { ref reason, ref observed, .. })
-            if reason == "task::origin-self"
-                && observed.as_deref() == Some(self_origin_text.as_str())
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "task::origin-self"
+                && refusal
+                    .diagnostic()
+                    .and_then(wire::RefusalDiagnostic::observed)
+                    == Some(self_origin_text.as_str())
     ));
     assert!(
         board(bus, epoch, Actor::Operator)

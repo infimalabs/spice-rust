@@ -439,15 +439,17 @@ pub(super) fn lane_refusal(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("lane".to_owned()),
-        expected,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("lane".to_owned()),
+            expected,
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }
 
 pub(super) fn typed_environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {

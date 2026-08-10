@@ -527,13 +527,12 @@ fn a_reply_a_refusal_and_a_fault_reach_the_pane_as_three_distinct_outcomes() {
     );
     let refusal = response(
         COMMAND,
-        Outcome::Refusal(Refusal {
-            reason: "task::absent".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "name a task that exists".to_owned(),
-        }),
+        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "task::absent".to_owned(),
+            None,
+            None,
+            None,
+        ))),
     );
     let fault = response(
         COMMAND,
@@ -576,13 +575,12 @@ fn an_answer_to_another_command_faults_rather_than_being_shown() {
     let command = noted(&lane);
     let elsewhere = response(
         OTHER_COMMAND,
-        Outcome::Refusal(Refusal {
-            reason: "claim::held".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "wait for the lease to lapse".to_owned(),
-        }),
+        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "claim::held".to_owned(),
+            None,
+            None,
+            None,
+        ))),
     );
 
     let fault = settled(&command, &elsewhere).expect_err("an answer to another command faults");
@@ -952,13 +950,12 @@ fn a_refused_answer_leaves_the_provenance_the_pane_already_had() {
         WireVersion::CURRENT,
         uuid(COMMAND),
         uuid(EPOCH),
-        Outcome::<Derived<Row>>::Refusal(Refusal {
-            reason: "fold::rebuilding".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "read again once the generation settles".to_owned(),
-        }),
+        Outcome::<Derived<Row>>::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "fold::rebuilding".to_owned(),
+            None,
+            None,
+            None,
+        ))),
     );
     let refusal: Admitted<Response<Derived<Row>>> = operator_session()
         .admit_frame(&bytes)

@@ -338,19 +338,19 @@ fn a_winner_that_was_never_the_selection_refuses_the_allocator_write() {
 
 /// The reason the guard itself refused, from inside the outer refusal.
 fn guard_refusal(outcome: Outcome<CommandAnswer>) -> String {
-    let Outcome::Refusal(Refusal {
-        reason,
-        observed: Some(observed),
-        ..
-    }) = outcome
-    else {
+    let Outcome::Refusal(refusal) = outcome else {
         panic!("expected the claim commit to refuse, found {outcome:?}");
     };
     assert_eq!(
-        reason, "board::witness-moved",
+        refusal.reason(),
+        "board::witness-moved",
         "every guard refusal reaches the caller under this one outer reason"
     );
-    observed
+    refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::observed)
+        .expect("guard refusal carries its comparison")
+        .to_owned()
 }
 
 /// The `task next` command a lane sends for the winner it just read.

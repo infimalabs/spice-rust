@@ -52,14 +52,11 @@ pub(crate) fn decide(
         .parse::<CanonicalUuid>()
     {
         Ok(request) => request,
-        Err(error) => {
-            return Outcome::Refusal(Refusal {
-                reason: "consent::request-invalid".to_owned(),
-                witness: Some("ID".to_owned()),
-                expected: Some("one canonical UUID".to_owned()),
-                observed: Some(error.to_string()),
-                remedy: "copy the exact request ID from the current consent queue".to_owned(),
-            });
+        Err(_) => {
+            return Outcome::Refusal(Refusal::invocation(
+                "consent::request-invalid",
+                "spice consent allow ID and spice consent deny ID require the exact canonical UUID printed by spice consent",
+            ));
         }
     };
     let canvas = match canvas_path() {
@@ -84,14 +81,15 @@ pub(crate) fn decide(
         .iter()
         .find(|pending| pending.request == request)
     else {
-        return Outcome::Refusal(Refusal {
-            reason: "consent::request-not-held".to_owned(),
-            witness: Some(request.to_string()),
-            expected: Some("a request in the current consent queue".to_owned()),
-            observed: Some("absent or terminal".to_owned()),
-            remedy: "re-read the consent queue and decide a request that is still pending"
-                .to_owned(),
-        });
+        return Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "consent::request-not-held".to_owned(),
+                Some(request.to_string()),
+                Some("a request in the current consent queue".to_owned()),
+                Some("absent or terminal".to_owned()),
+            )
+            .with_detail("re-read the consent queue and decide a request that is still pending"),
+        ));
     };
     let expected = match consent::decision_witnesses(pending, answer) {
         Ok(expected) => expected,

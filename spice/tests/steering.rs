@@ -647,7 +647,7 @@ fn cancellation_race(
     };
     assert!(
         matches!(
-            loser.reason.as_str(),
+            loser.reason(),
             "steer::directive-retired"
                 | "steer::directive-moved"
                 | "steer::witness-moved"
@@ -826,7 +826,7 @@ fn assert_refusal(output: &Output, reason: &str) {
     else {
         panic!("command must refuse: {:?}", output.stderr);
     };
-    assert_eq!(refusal.reason, reason);
+    assert_eq!(refusal.reason(), reason);
 }
 
 fn assert_text_refusal(output: &Output, reason: &str) {

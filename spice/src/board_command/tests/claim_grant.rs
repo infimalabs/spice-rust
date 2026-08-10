@@ -20,7 +20,7 @@ use super::*;
 /// before reading it.
 fn grant_reason<T>(result: Result<T, Outcome<CommandAnswer>>) -> String {
     match result {
-        Err(Outcome::Refusal(Refusal { reason, .. })) => reason,
+        Err(Outcome::Refusal(refusal)) => refusal.reason().to_owned(),
         Err(Outcome::Fault(Fault { reason, .. })) => reason,
         Err(Outcome::Reply(_)) => panic!("a refused claim step answered with a reply"),
         Ok(_) => panic!("expected the claim step to refuse, found it resolved"),

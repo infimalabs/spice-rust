@@ -387,11 +387,12 @@ fn replay_inner(
     let selected = selected
         .map(|name| {
             name.parse::<FoldId>().map_err(|error| {
-                Failure::refusal(
+                Failure::repairable(
                     "fold::selection-refused",
                     "one fold from the closed inventory",
                     error.to_string(),
-                    "run `spice fold` to list every admitted fold name",
+                    wire::SpiceCommand::new("fold", std::iter::empty::<&str>())
+                        .expect("the static fold recovery command is valid"),
                 )
             })
         })
@@ -713,11 +714,12 @@ fn fold_failure(error: fold::StoreError) -> Failure {
     match error {
         fold::StoreError::Corrupt { .. }
         | fold::StoreError::Refused(_)
-        | fold::StoreError::SchemaVersion { .. } => Failure::refusal(
+        | fold::StoreError::SchemaVersion { .. } => Failure::repairable(
             "fold::materialization-refused",
             "one current deterministic materialization",
             error.to_string(),
-            "run `spice journal replay` to rebuild disposable folds",
+            wire::SpiceCommand::new("journal", ["replay"])
+                .expect("the static journal replay recovery command is valid"),
         ),
         _ => Failure::store("fold::store-failed", error.to_string()),
     }
@@ -1012,19 +1014,38 @@ enum Failure {
 }
 
 impl Failure {
+    fn repairable(
+        reason: impl Into<String>,
+        expected: impl Into<String>,
+        observed: impl Into<String>,
+        command: wire::SpiceCommand,
+    ) -> Self {
+        Self::Refusal(Refusal::repairable(
+            command,
+            wire::RefusalDiagnostic::new(
+                reason.into(),
+                None,
+                Some(expected.into()),
+                Some(observed.into()),
+            ),
+        ))
+    }
+
     fn refusal(
         reason: impl Into<String>,
         expected: impl Into<String>,
         observed: impl Into<String>,
-        remedy: impl Into<String>,
+        detail: impl Into<String>,
     ) -> Self {
-        Self::Refusal(Refusal {
-            reason: reason.into(),
-            witness: None,
-            expected: Some(expected.into()),
-            observed: Some(observed.into()),
-            remedy: remedy.into(),
-        })
+        Self::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                reason.into(),
+                None,
+                Some(expected.into()),
+                Some(observed.into()),
+            )
+            .with_detail(detail),
+        ))
     }
 
     fn environment(reason: impl Into<String>, detail: impl Into<String>) -> Self {

@@ -100,22 +100,26 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
         spice::repository::StateError::Linked { .. }
         | spice::repository::StateError::NotDirectory { .. }
         | spice::repository::StateError::NotRegularFile { .. }
-        | spice::repository::StateError::RetiredState { .. } => StateFailure::Refusal(Refusal {
-            reason: "repository::state-path-refused".to_owned(),
-            witness: Some("repository-state-root".to_owned()),
-            expected: Some(
-                "real fixed components beneath the canonical Git-common .spice-rs directory"
-                    .to_owned(),
-            ),
-            observed: Some(error.to_string()),
-            remedy: format!(
-                concat!(
-                    "follow the named archive/remove action or repair the malformed state ",
-                    "component at {}"
-                ),
-                error.path().display()
-            ),
-        }),
+        | spice::repository::StateError::RetiredState { .. } => {
+            StateFailure::Refusal(Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "repository::state-path-refused".to_owned(),
+                    Some("repository-state-root".to_owned()),
+                    Some(
+                        "real fixed components beneath the canonical Git-common .spice-rs directory"
+                            .to_owned(),
+                    ),
+                    Some(error.to_string()),
+                )
+                .with_detail(format!(
+                    concat!(
+                        "follow the named archive/remove action or repair the malformed state ",
+                        "component at {}"
+                    ),
+                    error.path().display()
+                )),
+            ))
+        }
     }
 }
 
@@ -406,13 +410,14 @@ fn not_landed_from(path: &[&str], landing: cli::Landing) -> Outcome<()> {
                 path.join(" ")
             ),
         }),
-        cli::Landing::GapOwned(owner) => Outcome::Refusal(Refusal {
-            reason: PlaceholderReason::NotLanded.to_reason(),
-            witness: Some("landing-owner".to_owned()),
-            expected: Some(owner.to_owned()),
-            observed: Some(path.join(" ")),
-            remedy: format!("complete the owning task {owner}"),
-        }),
+        cli::Landing::GapOwned(owner) => {
+            Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+                PlaceholderReason::NotLanded.to_reason(),
+                Some("landing-owner".to_owned()),
+                Some(owner.to_owned()),
+                Some(path.join(" ")),
+            )))
+        }
         cli::Landing::Unaccounted => Outcome::Fault(Fault {
             class: FaultClass::Protocol,
             reason: PlaceholderReason::LandingUnaccounted.to_reason(),
@@ -457,13 +462,15 @@ fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
         Some(value) => match RetroSelector::parse(value) {
             Ok(selector) => selector,
             Err(error) => {
-                let refusal: Outcome<()> = Outcome::Refusal(Refusal {
-                    reason: "retro::selector".to_owned(),
-                    witness: None,
-                    expected: Some("LANE, M:O:L, or PATH".to_owned()),
-                    observed: Some(value.clone()),
-                    remedy: error.to_string(),
-                });
+                let refusal: Outcome<()> = Outcome::Refusal(Refusal::bare(
+                    wire::RefusalDiagnostic::new(
+                        "retro::selector".to_owned(),
+                        None,
+                        Some("LANE, M:O:L, or PATH".to_owned()),
+                        Some(value.clone()),
+                    )
+                    .with_detail(error.to_string()),
+                ));
                 deliver(&refusal, form);
             }
         },
@@ -559,20 +566,21 @@ fn version_outcome() -> Outcome<wire::Version> {
 #[cfg(not(target_arch = "wasm32"))]
 fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> {
     match error {
-        journal::OpenError::Migration(migration) => Outcome::Refusal(Refusal {
-            reason: "journal::schema-refused".to_owned(),
-            witness: None,
-            expected: Some(format!(
-                "finalized journal schema {}",
-                journal::SCHEMA_VERSION
-            )),
-            observed: Some(migration.to_string()),
-            remedy: concat!(
+        journal::OpenError::Migration(migration) => Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "journal::schema-refused".to_owned(),
+                None,
+                Some(format!(
+                    "finalized journal schema {}",
+                    journal::SCHEMA_VERSION
+                )),
+                Some(migration.to_string()),
+            )
+            .with_detail(concat!(
                 "finish or replace the unfinalized or incompatible authority ",
                 "before asking for version"
-            )
-            .to_owned(),
-        }),
+            )),
+        )),
         error => Outcome::Fault(Fault {
             class: FaultClass::Store,
             reason: "version::journal-unreadable".to_owned(),
@@ -977,13 +985,12 @@ mod tests {
     }
 
     fn refusal() -> Outcome<()> {
-        Outcome::Refusal(Refusal {
-            reason: "command::refused".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "change the request".to_owned(),
-        })
+        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "command::refused".to_owned(),
+            None,
+            None,
+            None,
+        )))
     }
 
     fn fault() -> Outcome<()> {
@@ -1033,12 +1040,13 @@ mod tests {
         ) else {
             panic!("an owned gap must remain one visible refusal");
         };
-        assert_eq!(owned.reason, PlaceholderReason::NotLanded.as_str());
+        assert_eq!(owned.reason(), PlaceholderReason::NotLanded.as_str());
+        let diagnostic = owned.diagnostic().expect("owned gap is diagnostic");
         // The witness serializes beside the reason, so it is a string an
         // operator matches on rather than private naming.
-        assert_eq!(owned.witness.as_deref(), Some("landing-owner"));
-        assert_eq!(owned.expected.as_deref(), Some("FIXTURE-owner01"));
-        assert_eq!(owned.observed.as_deref(), Some("fixture owned"));
+        assert_eq!(diagnostic.witness(), Some("landing-owner"));
+        assert_eq!(diagnostic.expected(), Some("FIXTURE-owner01"));
+        assert_eq!(diagnostic.observed(), Some("fixture owned"));
 
         let Outcome::Fault(unaccounted) =
             not_landed_from(&["fixture", "unknown"], cli::Landing::Unaccounted)

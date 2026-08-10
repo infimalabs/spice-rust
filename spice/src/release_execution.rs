@@ -856,55 +856,67 @@ fn execute_outcome(error: dist::ExecuteError) -> Outcome<wire::intent::Recogniti
     match error {
         dist::ExecuteError::Effect(effect) => effect_outcome(effect),
         dist::ExecuteError::Journal(detail) => journal_fault(detail),
-        other => Outcome::Refusal(Refusal {
-            reason: "release::external-plan-moved".to_owned(),
-            witness: Some("external-release-plan".to_owned()),
-            expected: Some(
-                "the exact previewed repository, release, evidence, and operations".to_owned(),
-            ),
-            observed: Some(other.to_string()),
-            remedy: "preview the release again and apply only its new digest".to_owned(),
-        }),
+        other => Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::external-plan-moved".to_owned(),
+                Some("external-release-plan".to_owned()),
+                Some(
+                    "the exact previewed repository, release, evidence, and operations".to_owned(),
+                ),
+                Some(other.to_string()),
+            )
+            .with_detail("preview the release again and apply only its new digest"),
+        )),
     }
 }
 
 fn effect_outcome(error: dist::EffectError) -> Outcome<wire::intent::RecognitionAnswer> {
     match error {
-        dist::EffectError::Moved(detail) => Outcome::Refusal(Refusal {
-            reason: "release::external-plan-moved".to_owned(),
-            witness: Some("external-release-plan".to_owned()),
-            expected: Some("the exact previewed release evidence".to_owned()),
-            observed: Some(detail),
-            remedy: "restore the previewed evidence or generate and apply a new plan".to_owned(),
-        }),
+        dist::EffectError::Moved(detail) => Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::external-plan-moved".to_owned(),
+                Some("external-release-plan".to_owned()),
+                Some("the exact previewed release evidence".to_owned()),
+                Some(detail),
+            )
+            .with_detail("restore the previewed evidence or generate and apply a new plan"),
+        )),
         dist::EffectError::Environment(detail) => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: "release::environment-failed".to_owned(),
             detail,
         }),
-        dist::EffectError::Interrupted => Outcome::Refusal(Refusal {
-            reason: "release::operator-interrupted".to_owned(),
-            witness: Some("release-operation".to_owned()),
-            expected: Some("resume the same plan digest".to_owned()),
-            observed: Some("operator interruption".to_owned()),
-            remedy: "repeat apply with the same digest; durable receipts prevent duplicate effects"
-                .to_owned(),
-        }),
-        dist::EffectError::GateRefused(detail) => Outcome::Refusal(Refusal {
-            reason: "release::gate-refused".to_owned(),
-            witness: Some("correctness-gate".to_owned()),
-            expected: Some("one clean full-gate receipt".to_owned()),
-            observed: Some(detail),
-            remedy: "repair the gate finding, rebuild evidence, and preview again".to_owned(),
-        }),
-        dist::EffectError::RemoteRefused(detail) => Outcome::Refusal(Refusal {
-            reason: "release::remote-refused".to_owned(),
-            witness: Some("external-release-authority".to_owned()),
-            expected: Some("one absent or already-converged immutable release ref".to_owned()),
-            observed: Some(detail),
-            remedy: "inspect the remote authority, then resume only if it still names this release"
-                .to_owned(),
-        }),
+        dist::EffectError::Interrupted => Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::operator-interrupted".to_owned(),
+                Some("release-operation".to_owned()),
+                Some("resume the same plan digest".to_owned()),
+                Some("operator interruption".to_owned()),
+            )
+            .with_detail(
+                "repeat apply with the same digest; durable receipts prevent duplicate effects",
+            ),
+        )),
+        dist::EffectError::GateRefused(detail) => Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::gate-refused".to_owned(),
+                Some("correctness-gate".to_owned()),
+                Some("one clean full-gate receipt".to_owned()),
+                Some(detail),
+            )
+            .with_detail("repair the gate finding, rebuild evidence, and preview again"),
+        )),
+        dist::EffectError::RemoteRefused(detail) => Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::remote-refused".to_owned(),
+                Some("external-release-authority".to_owned()),
+                Some("one absent or already-converged immutable release ref".to_owned()),
+                Some(detail),
+            )
+            .with_detail(
+                "inspect the remote authority, then resume only if it still names this release",
+            ),
+        )),
     }
 }
 
@@ -944,7 +956,7 @@ mod tests {
             let Outcome::Refusal(refusal) = effect_outcome(error) else {
                 panic!("{expected} must remain an operator refusal")
             };
-            assert_eq!(refusal.reason, expected);
+            assert_eq!(refusal.reason(), expected);
         }
 
         let Outcome::Fault(fault) =

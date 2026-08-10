@@ -161,15 +161,12 @@ fn resolve_vendor(
 }
 
 fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: "lane::configuration-refused".to_owned(),
-        witness: Some("effective-configuration".to_owned()),
-        expected: Some(
-            "tracked and local inputs admitted by the configuration registry".to_owned(),
-        ),
-        observed: Some(error.diagnostic()),
-        remedy: "correct the named configuration inputs before seating the lane".to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        "lane::configuration-refused".to_owned(),
+        Some("effective-configuration".to_owned()),
+        Some("tracked and local inputs admitted by the configuration registry".to_owned()),
+        Some(error.diagnostic()),
+    )))
 }
 
 fn state(
@@ -275,15 +272,17 @@ fn refusal(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("worktree".to_owned()),
-        expected,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("worktree".to_owned()),
+            expected,
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {

@@ -38,7 +38,13 @@ fn withdrawal(task: &TaskHandle, reason: &str, force_claimed: bool) -> TaskDelet
 
 fn refused_as(outcome: &Outcome<CommandAnswer>) -> (String, Option<String>) {
     match outcome {
-        Outcome::Refusal(refusal) => (refusal.reason.clone(), refusal.observed.clone()),
+        Outcome::Refusal(refusal) => (
+            refusal.reason().to_owned(),
+            refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
+                .map(str::to_owned),
+        ),
         other => panic!("expected a refusal, got {other:?}"),
     }
 }

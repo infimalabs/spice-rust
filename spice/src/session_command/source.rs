@@ -456,14 +456,16 @@ pub(crate) fn canonical_thread(value: &str) -> Option<String> {
         .then_some(compact)
 }
 
-fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Refusal {
-    Refusal {
-        reason: reason.to_owned(),
-        witness: Some("session-transcript".to_owned()),
-        expected: Some("immutable transcript evidence readable as JSONL".to_owned()),
-        observed,
-        remedy: remedy.to_owned(),
-    }
+fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {
+    Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("session-transcript".to_owned()),
+            Some("immutable transcript evidence readable as JSONL".to_owned()),
+            observed,
+        )
+        .with_detail(detail),
+    )
 }
 
 #[cfg(test)]

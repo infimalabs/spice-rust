@@ -326,8 +326,8 @@ fn assert_reindex(fixture: &Fixture) {
     };
     assert!(
         refusal
-            .observed
-            .as_deref()
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
             .is_some_and(|observed| observed.contains("Thread")),
         "verification omitted the named thread defect: {refusal:?}"
     );
@@ -343,6 +343,46 @@ fn assert_reindex(fixture: &Fixture) {
     let reader = journal::JournalReader::open(&fixture.authority).expect("rebuilt authority opens");
     reader.verify().expect("rebuilt authority verifies");
     assert_eq!(reader.thread("2").expect("rebuilt thread").entries.len(), 2);
+}
+
+#[test]
+fn unknown_fold_refusal_puts_its_executable_recovery_first() {
+    let fixture = Fixture::new();
+    let resident = fixture.start();
+    let arguments = ["journal", "replay", "not::a-registered-fold"];
+
+    let json = fixture.invoke(&arguments);
+    assert_eq!(
+        json.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    assert!(json.stdout.is_empty());
+    let Outcome::<FoldReport>::Refusal(refusal) =
+        wire::decode(&json.stderr).expect("fold refusal is typed")
+    else {
+        panic!("unknown fold did not refuse")
+    };
+    let wire::Refusal::Repairable {
+        command,
+        diagnostic,
+    } = refusal
+    else {
+        panic!("unknown fold must carry one executable recovery")
+    };
+    assert_eq!(command.arguments(), ["fold"]);
+    assert_eq!(diagnostic.reason(), "fold::selection-refused");
+
+    let text = fixture.invoke_form(&arguments, false);
+    assert_eq!(text.status.code(), Some(2));
+    assert!(text.stdout.is_empty());
+    let document = std::str::from_utf8(&text.stderr).expect("text refusal is UTF-8");
+    assert!(
+        document.starts_with("spice fold\nspice: fold::selection-refused\n"),
+        "recovery command did not precede the diagnostic: {document:?}"
+    );
+    resident.terminate(&fixture);
 }
 
 fn assert_backup(fixture: &Fixture) {
@@ -505,7 +545,7 @@ fn active_writer_refuses_maintenance_in_a_typed_envelope() {
     else {
         panic!("contended backup did not return a refusal")
     };
-    assert_eq!(refusal.reason, "journal::writer-active");
+    assert_eq!(refusal.reason(), "journal::writer-active");
     assert!(!fixture.bundle.exists(), "contended backup created output");
 }
 
@@ -606,7 +646,7 @@ fn assert_refusal(output: &Output, reason: &str) {
     else {
         panic!("recovery did not refuse")
     };
-    assert_eq!(refusal.reason, reason);
+    assert_eq!(refusal.reason(), reason);
 }
 
 #[cfg(unix)]

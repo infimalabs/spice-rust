@@ -146,22 +146,26 @@ pub(in crate::resident) fn wake_automatic(
             )
         })?;
     if row.occupant.is_some() || seats.occupied(lane) {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lifecycle::wake-capacity-moved".to_owned(),
-            witness: Some("lane".to_owned()),
-            expected: Some(VACANT.to_owned()),
-            observed: Some(row.disposition.clone()),
-            remedy: "reconcile after observing the current occupant".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lifecycle::wake-capacity-moved".to_owned(),
+                Some("lane".to_owned()),
+                Some(VACANT.to_owned()),
+                Some(row.disposition.clone()),
+            )
+            .with_detail("reconcile after observing the current occupant"),
+        )));
     }
     if row.life == "drain" {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lifecycle::wake-life-ended".to_owned(),
-            witness: Some("lane.life".to_owned()),
-            expected: Some("steer or drive".to_owned()),
-            observed: Some(row.life.clone()),
-            remedy: "seat new capacity instead of re-seating a terminal lane".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lifecycle::wake-life-ended".to_owned(),
+                Some("lane.life".to_owned()),
+                Some("steer or drive".to_owned()),
+                Some(row.life.clone()),
+            )
+            .with_detail("seat new capacity instead of re-seating a terminal lane"),
+        )));
     }
     super::super::steering::lane_capability(&row)?;
     let claim = automatic_claim_authority(bus, decision, lane)?;
