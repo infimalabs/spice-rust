@@ -34,6 +34,7 @@ pub struct PreparedBattery<'trace> {
     capture: BatteryCapture<'trace>,
     verifier_environment: Vec<(OsString, OsString)>,
     cargo_jobs: Option<usize>,
+    verifier_receipt_admitted: bool,
 }
 
 impl PreparedBattery<'_> {
@@ -102,8 +103,10 @@ impl PreparedBattery<'_> {
             .into_iter()
             .map(|gate_id| self.verifier_compiler_contract(gate_id, cargo_jobs))
             .collect::<Result<Vec<_>, _>>()?;
-        admit_verifier_compiler_receipt(receipt, &contracts, authority)
-            .map_err(|error| RunError::refusal("gate::verifier-receipt-refused", error))
+        let evidence = admit_verifier_compiler_receipt(receipt, &contracts, authority)
+            .map_err(|error| RunError::refusal("gate::verifier-receipt-refused", error))?;
+        self.verifier_receipt_admitted = true;
+        Ok(evidence)
     }
 
     /// Execute this retained capture with any completed compiler evidence.
@@ -115,9 +118,16 @@ impl PreparedBattery<'_> {
         &mut self,
         evidence: &[VerifierCompilerEvidence],
     ) -> Result<BatteryReport, RunError> {
-        self.capture
-            .execute_with_verifier_evidence(evidence, self.verifier_environment.clone())
-            .map_err(|error| RunError::refusal("gate::battery-refused", error))
+        let result = if self.verifier_receipt_admitted {
+            self.capture.execute_with_required_verifier_evidence(
+                evidence,
+                self.verifier_environment.clone(),
+            )
+        } else {
+            self.capture
+                .execute_with_verifier_evidence(evidence, self.verifier_environment.clone())
+        };
+        result.map_err(|error| RunError::refusal("gate::battery-refused", error))
     }
 }
 
@@ -163,6 +173,7 @@ pub fn prepare(selector: Selector) -> Result<PreparedBattery<'static>, RunError>
         capture,
         verifier_environment,
         cargo_jobs: None,
+        verifier_receipt_admitted: false,
     })
 }
 
@@ -274,6 +285,7 @@ pub fn prepare_traced<'trace>(
         capture,
         verifier_environment,
         cargo_jobs: None,
+        verifier_receipt_admitted: false,
     })
 }
 
