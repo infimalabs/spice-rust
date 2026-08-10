@@ -5,18 +5,15 @@ fn add_and_claim_causal_parent(
     epoch: CanonicalUuid,
     seat: &Seat,
 ) -> (TaskHandle, Actor, wire::Origin) {
-    let parent = "ORIGIN-parent1"
-        .parse::<TaskHandle>()
-        .expect("parent handle");
+    let parent_stamp = stamp("ORIGIN-parent1");
+    let parent = TaskHandle::for_project("board.origin", &parent_stamp);
     let ack: wire::Origin = "ack:1kLGp2NJ".parse().expect("steering origin");
     assert_committed(issue(
         bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
-        vec![Witness::Absence {
-            task: parent.clone(),
-        }],
+        vec![Witness::Absence { task: parent_stamp }],
         &TaskAdd {
             title: "Materialize one steering directive".to_owned(),
             project: Some("board.origin".to_owned()),
@@ -51,16 +48,15 @@ fn add_and_claim_causal_parent(
 }
 
 fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
-    let ungrounded = "ORIGIN-ground00"
-        .parse::<TaskHandle>()
-        .expect("ungrounded handle");
+    let ungrounded_stamp = stamp("ORIGIN-ground00");
+    let ungrounded = TaskHandle::for_project("board.origin", &ungrounded_stamp);
     let refused = issue(
         bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
         vec![Witness::Absence {
-            task: ungrounded.clone(),
+            task: ungrounded_stamp,
         }],
         &TaskAdd {
             title: "Refuse synthetic lineage".to_owned(),
@@ -82,7 +78,12 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             .explanation()
             .contains("--origin ack:<steering-key>")
     );
-    assert!(refusal.explanation().contains("task:<parent-handle>"));
+    assert!(
+        refusal
+            .explanation()
+            .contains("task:<parent-inception-stamp>"),
+        "causal guidance names durable task identity rather than a rendered handle"
+    );
     assert!(
         board(bus, epoch, Actor::Operator)
             .tasks
@@ -90,17 +91,16 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             .all(|task| task.statement.body.handle != ungrounded)
     );
 
-    let self_referential = "ORIGIN-self000"
-        .parse::<TaskHandle>()
-        .expect("self-referential handle");
-    let self_origin = task_origin(&self_referential).expect("task forms its own origin");
+    let self_referential_stamp = stamp("ORIGIN-self000");
+    let self_referential = TaskHandle::for_project("board.origin", &self_referential_stamp);
+    let self_origin = task_origin(&self_referential_stamp).expect("task forms its own origin");
     let refused = issue(
         bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
         vec![Witness::Absence {
-            task: self_referential.clone(),
+            task: self_referential_stamp,
         }],
         &TaskAdd {
             title: "Refuse a caller-authored self edge".to_owned(),
@@ -143,17 +143,14 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
         Some("todo,review"),
     );
     let (parent, lane, ack) = add_and_claim_causal_parent(&bus, epoch, &seats[0]);
-    let child = "ORIGIN-child01"
-        .parse::<TaskHandle>()
-        .expect("child handle");
+    let child_stamp = stamp("ORIGIN-child01");
+    let child = TaskHandle::for_project("board.origin", &child_stamp);
     assert_committed(issue(
         &bus,
         epoch,
         lane,
         CommandKind::TaskAdd,
-        vec![Witness::Absence {
-            task: child.clone(),
-        }],
+        vec![Witness::Absence { task: child_stamp }],
         &TaskAdd {
             title: "Create causal child".to_owned(),
             project: Some("board.origin".to_owned()),
@@ -164,7 +161,12 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
             depends: vec![dependency.clone()],
         },
     ));
-    let causal: wire::Origin = format!("task:{parent}").parse().expect("parent origin");
+    let causal = task_origin(
+        &parent
+            .incepted()
+            .expect("parent handle carries an inception stamp"),
+    )
+    .expect("parent origin");
     let current = board(&bus, epoch, Actor::Operator);
     assert_eq!(at(&current, &parent).statement.body.provenance, ack);
     assert_eq!(creation_fact_origin(&bus, &parent), ack);
@@ -172,7 +174,9 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
     assert_eq!(creation_fact_origin(&bus, &child), causal);
     assert_eq!(
         at(&current, &child).statement.body.dependencies,
-        [dependency],
+        [dependency
+            .incepted()
+            .expect("dependency handle carries an inception stamp")],
         "causal provenance was inferred from a scheduling edge"
     );
     assert_invalid_creation_origins_refuse(&bus, epoch);

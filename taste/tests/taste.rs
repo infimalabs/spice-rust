@@ -1,7 +1,7 @@
 use listen::{Event, Locus, Prose, ProseRole, Usage};
 use taste::{
-    Bag, REMINDER_MARKER, Taste, Trigger, TriggerError, is_reminder_echo, normalize_prose,
-    reminder_identity, reminder_text,
+    Bag, REMINDER_MARKER, Taste, Trigger, TriggerError, bag_identity, is_reminder_echo,
+    normalize_prose, reminder_identity, reminder_text,
 };
 use wire::FactKind;
 
@@ -82,6 +82,29 @@ fn reminder_identity_frames_taste_and_whole_normalized_prose() {
 }
 
 #[test]
+fn bag_identity_covers_ordered_names_triggers_and_drivers() {
+    let original = Bag::new(vec![fallback_taste()]).expect("bag");
+    let same = Bag::new(vec![fallback_taste()]).expect("same bag");
+    let changed = Bag::new(vec![
+        Taste::new(
+            "fallbacks".parse().expect("taste name"),
+            ["fall back", "fallback*", "poll*"],
+            "Use a different driver.",
+        )
+        .expect("changed taste"),
+    ])
+    .expect("changed bag");
+
+    assert_eq!(bag_identity(&original), bag_identity(&same));
+    assert_ne!(bag_identity(&original), bag_identity(&changed));
+    assert_ne!(
+        bag_identity(&original),
+        reminder_identity(&"fallbacks".parse().expect("taste name"), BEHAVIOR),
+        "bag and prose identities occupy distinct domains"
+    );
+}
+
+#[test]
 fn the_reserved_marker_classifies_echo_before_matching_and_leads_rendering() {
     let taste: wire::Name = "fallbacks".parse().expect("taste name");
     let message = "Keep one deterministic path.";
@@ -141,18 +164,18 @@ fn a_harmless_mention_still_selects_a_candidate_the_runtime_must_weigh() {
         .next()
         .expect("mention still selects a candidate");
 
-    // The bag is a selector, not a verdict. A mention costs one reminder that
-    // the operator may decline; that interruption is the design cost recorded
-    // in TASTES.md, and it is why nothing here adjudicates the candidate.
+    // The bag is a selector, not a verdict. Runtime policy decides whether the
+    // candidate reaches direct steering or the optional resident adjudicator.
     assert_eq!(hit.taste().as_str(), "fallbacks");
     assert_eq!(hit.context(), MENTION);
 }
 
 #[test]
-fn one_live_reminder_and_two_historical_kinds_have_their_domain_contracts() {
+fn direct_reminders_and_judgments_have_distinct_producer_contracts() {
     let expected = [
         FactKind::TasteConfirmed,
         FactKind::TasteCleared,
+        FactKind::TasteJudged,
         FactKind::TasteReminded,
     ];
     assert!(
@@ -163,13 +186,17 @@ fn one_live_reminder_and_two_historical_kinds_have_their_domain_contracts() {
     assert_eq!(
         FactKind::TasteReminded.producer(),
         wire::Producer::ResidentRecognition,
-        "the one current runtime law is judge-free resident recognition"
+        "the disabled path remains resident recognition"
     );
-    for historical in [FactKind::TasteConfirmed, FactKind::TasteCleared] {
+    for judged in [
+        FactKind::TasteConfirmed,
+        FactKind::TasteCleared,
+        FactKind::TasteJudged,
+    ] {
         assert_eq!(
-            historical.producer(),
+            judged.producer(),
             wire::Producer::Judge,
-            "historical curation evidence keeps the producer it was written with"
+            "all durable verdicts belong to the judge producer"
         );
     }
 }

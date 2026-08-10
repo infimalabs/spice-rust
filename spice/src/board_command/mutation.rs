@@ -21,6 +21,7 @@ pub(super) struct ValidatedSnapshot {
 
 struct PreparedTask {
     task: TaskHandle,
+    incepted: wire::TaskStamp,
     project: String,
     flow: Vec<wire::Phase>,
     phase: wire::Phase,
@@ -119,17 +120,6 @@ pub(super) fn taste_proposal_add(
             );
         }
     };
-    let expected = super::taste_proposal_handle(&add.occurrence);
-    if !command
-        .expected()
-        .iter()
-        .any(|witness| matches!(witness, Witness::Absence { task } if task == &expected))
-    {
-        return protocol_fault(
-            "taste::proposal-witness-invalid",
-            "taste proposal occurrence does not match its deterministic absent handle",
-        );
-    }
     let normalized = TaskAdd {
         title: add.title.clone(),
         project: None,
@@ -190,14 +180,13 @@ fn create_task<B: serde::Serialize>(
     guard(&mut write, command.expected().to_vec());
     let added = match write.fact(
         body::TaskAdded {
-            task: prepared.task.clone(),
-            uuid: command.id(),
+            task: prepared.incepted.clone(),
             title: add.title.clone(),
             description: add.description.clone(),
             acceptance: add.acceptance.clone(),
             project: prepared.project,
             tags: Vec::new(),
-            depends: add.depends.clone(),
+            depends: prepared.statement.dependencies.clone(),
             flow: prepared.flow,
             phase: prepared.phase,
             revision: 1,
@@ -213,8 +202,8 @@ fn create_task<B: serde::Serialize>(
         revision: position,
         ..statement
     });
-    write.workflow_head(prepared.task.clone(), added, move |_| prepared.workflow);
-    if let Err(outcome) = add_oops_note(&mut write, &project, add, &prepared.task, added) {
+    write.workflow_head(prepared.incepted.clone(), added, move |_| prepared.workflow);
+    if let Err(outcome) = add_oops_note(&mut write, &project, add, &prepared.incepted, added) {
         return outcome;
     }
     let answer = wire::intent::TaskAnswer {
@@ -251,11 +240,11 @@ fn prepare_task(
     let [task] = handles.as_slice() else {
         return Err(protocol_fault(
             "task::add-witness-invalid",
-            "task add requires exactly one intended absent handle",
+            "task add requires exactly one intended absent inception stamp",
         ));
     };
-    let task = task.clone();
-    if origin == task_origin(&task)? {
+    let incepted = task.clone();
+    if origin == task_origin(&incepted)? {
         return Err(refusal(
             "task::origin-self",
             Some(origin.to_string()),
@@ -263,19 +252,30 @@ fn prepare_task(
         ));
     }
     let project_text = project.as_str().to_owned();
+    let task = TaskHandle::for_project(&project_text, &incepted);
     let flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
     let phase = flow[0].clone();
     let at = current_instant()?;
     let statement = TaskHead {
-        handle: task.clone(),
-        uuid: command.id(),
+        incepted: incepted.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: add.title.clone(),
         description: add.description.clone(),
         acceptance: add.acceptance.clone(),
         project: project_text.clone(),
         tags: Vec::new(),
-        dependencies: add.depends.clone(),
+        dependencies: add
+            .depends
+            .iter()
+            .map(TaskHandle::incepted)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| {
+                refusal(
+                    "task::dependency-invalid",
+                    Some(error.to_string()),
+                    "name dependencies carrying canonical inception stamps",
+                )
+            })?,
         provenance: origin.clone(),
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
@@ -297,6 +297,7 @@ fn prepare_task(
     }
     Ok(PreparedTask {
         task,
+        incepted,
         project: project_text,
         flow,
         phase,
@@ -311,7 +312,7 @@ fn add_oops_note(
     write: &mut JournalWrite,
     project: &Project,
     add: &TaskAdd,
-    task: &TaskHandle,
+    task: &wire::TaskStamp,
     added: PendingFact,
 ) -> Result<(), Outcome<CommandAnswer>> {
     if project.visibility().hidden_stem() == Some("oops")
@@ -343,7 +344,7 @@ pub(super) fn task_note(
     let Some(entry) = snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == note.task)
+        .find(|entry| entry.handle() == &note.task)
     else {
         return refusal(
             "task::unknown",
@@ -356,7 +357,7 @@ pub(super) fn task_note(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&note.task) {
+    let origin = match task_origin(entry.incepted()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -364,7 +365,7 @@ pub(super) fn task_note(
     guard(&mut write, command.expected().to_vec());
     if let Err(error) = write.fact(
         body::TaskNoted {
-            task: note.task.clone(),
+            task: entry.incepted().clone(),
             note: note.note.clone(),
         },
         FactCause::Root,
@@ -436,11 +437,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.statement().handle == *task)
-    else {
+    let Some(entry) = snapshot.entries.iter().find(|entry| entry.handle() == task) else {
         return refusal(
             "task::unknown",
             Some(task.to_string()),
@@ -462,7 +459,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(task) {
+    let origin = match task_origin(entry.incepted()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -471,13 +468,18 @@ fn change_deferral<B: serde::Serialize + Clone>(
     let fact = if let Some(until) = deferral {
         write.fact(
             body::TaskDeferred {
-                task: task.clone(),
+                task: entry.incepted().clone(),
                 until,
             },
             FactCause::Root,
         )
     } else {
-        write.fact(body::TaskWoken { task: task.clone() }, FactCause::Root)
+        write.fact(
+            body::TaskWoken {
+                task: entry.incepted().clone(),
+            },
+            FactCause::Root,
+        )
     };
     let fact = match fact {
         Ok(fact) => fact,
@@ -485,7 +487,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
     };
     let mut workflow = entry.workflow().clone();
     workflow.deferral = deferral;
-    write.workflow_head(task.clone(), fact, move |_| workflow);
+    write.workflow_head(entry.incepted().clone(), fact, move |_| workflow);
     let status = if deferral.is_some() {
         "deferred"
     } else {
@@ -531,7 +533,7 @@ pub(super) fn task_delete(
     let Some(entry) = snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == delete.task)
+        .find(|entry| entry.handle() == &delete.task)
     else {
         return refusal(
             "task::unknown",
@@ -580,7 +582,7 @@ pub(super) fn task_delete(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&delete.task) {
+    let origin = match task_origin(entry.incepted()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -588,7 +590,7 @@ pub(super) fn task_delete(
     guard(&mut write, command.expected().to_vec());
     let deleted = match write.fact(
         body::TaskDeleted {
-            task: delete.task.clone(),
+            task: entry.incepted().clone(),
             reason: delete.reason.clone(),
             claimed: claimed.clone(),
         },
@@ -601,11 +603,11 @@ pub(super) fn task_delete(
     workflow.status = "deleted".to_owned();
     workflow.completion = Some(at);
     workflow.assignment = None;
-    write.workflow_head(delete.task.clone(), deleted, move |_| workflow);
+    write.workflow_head(entry.incepted().clone(), deleted, move |_| workflow);
     if claimed.is_some() {
         let mut claim = entry.claim().expect("a held claim was just read").clone();
         claim.disposition = ClaimDisposition::Freed;
-        write.claim_head(delete.task.clone(), deleted, move |fact| ClaimHead {
+        write.claim_head(entry.incepted().clone(), deleted, move |fact| ClaimHead {
             fact,
             ..claim
         });
@@ -643,7 +645,7 @@ pub(super) fn task_depends(
     let Some(entry) = snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == depends.task)
+        .find(|entry| entry.handle() == &depends.task)
     else {
         return refusal(
             "task::unknown",
@@ -660,25 +662,27 @@ pub(super) fn task_depends(
     }
     let mut statement = entry.statement().clone();
     for after in &depends.after {
-        if after == &depends.task || statement.dependencies.contains(after) {
+        let Some(prerequisite) = snapshot
+            .entries
+            .iter()
+            .find(|candidate| candidate.handle() == after)
+        else {
+            return refusal(
+                "task::dependency-unknown",
+                Some(after.to_string()),
+                "read board and name an existing prerequisite",
+            );
+        };
+        if prerequisite.incepted() == entry.incepted()
+            || statement.dependencies.contains(prerequisite.incepted())
+        {
             return refusal(
                 "task::dependency-refused",
                 Some(format!("{} after {after}", depends.task)),
                 "name a distinct dependency edge that is not already present",
             );
         }
-        if !snapshot
-            .entries
-            .iter()
-            .any(|candidate| candidate.statement().handle == *after)
-        {
-            return refusal(
-                "task::dependency-unknown",
-                Some(after.to_string()),
-                "read board and name an existing prerequisite",
-            );
-        }
-        statement.dependencies.push(after.clone());
+        statement.dependencies.push(prerequisite.incepted().clone());
     }
     let post = match Entry::new(
         statement.clone(),
@@ -701,7 +705,7 @@ pub(super) fn task_depends(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&depends.task) {
+    let origin = match task_origin(entry.incepted()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -712,7 +716,7 @@ pub(super) fn task_depends(
         .saturating_add(1);
     let edited = match write.fact(
         body::TaskEdited {
-            task: depends.task.clone(),
+            task: entry.incepted().clone(),
             revision,
         },
         FactCause::Root,
@@ -760,7 +764,7 @@ pub(super) fn task_edit(
     let Some(entry) = snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == edit.task)
+        .find(|entry| entry.handle() == &edit.task)
     else {
         return refusal(
             "task::unknown",
@@ -901,7 +905,7 @@ fn publish_correction(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&edit.task) {
+    let origin = match task_origin(&statement.incepted) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -909,7 +913,7 @@ fn publish_correction(
     guard(&mut write, command.expected().to_vec());
     let edited = match write.fact(
         body::TaskEdited {
-            task: edit.task.clone(),
+            task: statement.incepted.clone(),
             revision,
         },
         FactCause::Root,
@@ -917,12 +921,13 @@ fn publish_correction(
         Ok(fact) => fact,
         Err(error) => return store_fault("task::edit-build", &error.to_string()),
     };
+    let rendered = TaskHandle::for_project(&statement.project, &statement.incepted);
     write.task_head(edited, move |position| TaskHead {
         revision: position,
         ..statement
     });
     let answer = wire::intent::TaskAnswer {
-        task: edit.task.clone(),
+        task: rendered,
         status: "edited".to_owned(),
         learning: None,
         next,

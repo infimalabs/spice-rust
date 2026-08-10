@@ -17,6 +17,7 @@ const REPORT_SOURCES: &[&str] = &[
     "src/report/render.rs",
     "src/camp.rs",
     "src/ratchet.rs",
+    "src/test_evidence.rs",
     "src/verdict.rs",
 ];
 
@@ -33,7 +34,16 @@ fn decoded_reports_expose_no_executable_reconstruction_authority() {
         scan_file(relative, &file, &mut retained, &mut violations);
     }
 
-    for required in ["GateReport", "KillReport", "CampReport", "Verdict"] {
+    for required in [
+        "GateReport",
+        "KillReport",
+        "CampReport",
+        "SuiteSeamReport",
+        "MutationCoverageReport",
+        "TestSubsumptionReport",
+        "TestEvidenceReport",
+        "Verdict",
+    ] {
         assert!(
             retained.iter().any(|name| name == required),
             "authority scan did not inspect {required}"

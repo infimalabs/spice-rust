@@ -98,14 +98,8 @@ pub(in crate::resident) fn configure(
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
-    // A policy-only change moves no member, so it names no lane and crosses no
-    // lane's attribution; the empty read is the honest answer rather than a
-    // skipped one.
-    let moved: Vec<CanonicalUuid> = membership
-        .as_ref()
-        .map(|change| change.member)
-        .into_iter()
-        .collect();
+    // A policy-only change crosses no lane boundary, so an empty read is authoritative.
+    let moved: Vec<_> = membership.iter().map(|change| change.member).collect();
     let sources = match bus.lane_source_boundaries(&moved) {
         Ok(sources) => sources,
         Err(error) => {

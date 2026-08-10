@@ -275,7 +275,7 @@ mod tests {
             "[verify] scoped full actions skipped: {skipped_actions}\n"
         )));
         assert!(output.contains("[verify] scoped gate arms run: none\n"));
-        let skipped_arms = gate::GateId::ALL
+        let skipped_arms = gate::GateId::BATTERY
             .into_iter()
             .map(|gate_id| gate_id.as_str())
             .collect::<Vec<_>>()

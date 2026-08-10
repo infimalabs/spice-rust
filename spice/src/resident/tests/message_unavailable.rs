@@ -61,9 +61,9 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
             epoch,
             &mut seats,
             &surfaces,
+            None,
             &record,
-            &mut previews,
-            &mut diagnostics,
+            CaptureViews::new(&mut previews, &mut diagnostics),
         )
         .expect("a failed Canvas view leaves the capture handler live");
     }

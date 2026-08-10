@@ -199,7 +199,16 @@ fn refused_old_recovery_receipt_is_renamed_without_a_committed_fact_range() {
     let wire::Outcome::Refusal(refusal) = response.outcome else {
         panic!("receipt remains a refusal");
     };
-    assert_eq!(refusal.reason(), "steer::recovery-live");
+    assert_eq!(
+        refusal.reason(),
+        "steer::recovery-live",
+        "migration preserves the refusal code through its semantic accessor"
+    );
+    assert_eq!(
+        refusal.explanation(),
+        "recover only a lapsed directive",
+        "the historical remedy becomes non-runnable diagnostic detail"
+    );
 }
 
 #[test]
@@ -307,6 +316,7 @@ fn fixture() -> Connection {
     connection
         .execute_batch(super::super::BASELINE_SQL)
         .expect("current baseline");
+    crate::tests::downgrade_task_identity_to_five(&connection);
     connection
         .execute(
             "UPDATE journal_schema SET version = 3 WHERE singleton = 1",

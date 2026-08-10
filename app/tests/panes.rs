@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use wire::{
     Accepted, Answer, Authority, CanonicalUuid, Command, CommandKind, Derived, Digest, Fault,
     FaultClass, FoldName, Name, Outcome, Overflow, Packed, Refusal, Reply, ReplyPosition, Response,
-    Seq, SeqRange, TaskHandle, TrustState, WireVersion, Witness, WitnessKind,
+    Seq, SeqRange, TrustState, WireVersion, Witness, WitnessKind,
 };
 
 mod support;
@@ -123,7 +123,7 @@ fn answered() -> BrowserState<Row> {
 /// The one witness `task::note` requires.
 fn existence() -> Vec<Witness> {
     vec![Witness::Existence {
-        task: "SPICE-aBcD".parse::<TaskHandle>().expect("fixture handle"),
+        task: "1kKRRsDP".parse().expect("fixture task stamp"),
     }]
 }
 

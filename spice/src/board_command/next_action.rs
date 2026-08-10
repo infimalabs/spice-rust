@@ -36,7 +36,7 @@ pub(super) fn next_action(
     let entries = snapshot
         .entries
         .iter()
-        .filter(|entry| entry.statement().handle != post.statement().handle)
+        .filter(|entry| entry.incepted() != post.incepted())
         .cloned()
         .chain(std::iter::once(post.clone()))
         .collect::<Vec<_>>();
@@ -45,7 +45,7 @@ pub(super) fn next_action(
         learn_project_created_by_principal(&mut residency, &snapshot.answer.principal, post);
     }
     accepted_transition(&snapshot.answer.principal, &residency, &entries, post)
-        .command(&post.statement().handle)
+        .command(post.handle())
 }
 
 pub(super) fn accepted_transition(

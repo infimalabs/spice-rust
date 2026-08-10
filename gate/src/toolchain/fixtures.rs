@@ -337,7 +337,7 @@ fn fixture_report_result_with(
 
 #[test]
 fn declarations_are_closed_ordered_explicit_and_never_python_wrappers() {
-    let expected = &GateId::ALL[8..18];
+    let expected = &GateId::BATTERY[8..18];
     assert_eq!(
         TOOLCHAIN_ARMS.map(|arm| arm.id).as_slice(),
         expected,

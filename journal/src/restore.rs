@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
 
 use wire::manifest::JournalBackupManifest;
-use wire::{Digest, Domain, RestoreVerification, TaskHandle, WireVersion};
+use wire::{Digest, Domain, RestoreVerification, TaskStamp, WireVersion};
 
 use crate::{JournalReader, OpenError, VerifyError};
 
@@ -37,7 +37,7 @@ pub struct RestoreCapture {
     authority: Vec<u8>,
     authority_path: String,
     members: Vec<RestoreMember>,
-    tasks: Vec<TaskHandle>,
+    tasks: Vec<TaskStamp>,
 }
 
 /// One authenticated regular file captured from a restore bundle.
@@ -93,9 +93,9 @@ impl RestoreCapture {
         &self.members
     }
 
-    /// Every task in the captured journal head set, ordered by handle.
+    /// Every task in the captured journal head set, ordered by inception.
     #[must_use]
-    pub fn tasks(&self) -> &[TaskHandle] {
+    pub fn tasks(&self) -> &[TaskStamp] {
         &self.tasks
     }
 
@@ -405,7 +405,7 @@ fn authenticate_member(
 fn verify_authority(
     authority: &[u8],
     manifest_schema: u32,
-) -> Result<(crate::Verification, Vec<TaskHandle>), BackupVerifyError> {
+) -> Result<(crate::Verification, Vec<TaskStamp>), BackupVerifyError> {
     let reader = JournalReader::from_serialized(authority).map_err(BackupVerifyError::Authority)?;
     let schema = reader
         .schema_version()
@@ -421,7 +421,7 @@ fn verify_authority(
         .read(|read| read.task_heads())
         .map_err(BackupVerifyError::AuthorityView)?
         .into_iter()
-        .map(|heads| heads.statement().body().handle.clone())
+        .map(|heads| heads.statement().body().incepted.clone())
         .collect();
     Ok((verified, tasks))
 }

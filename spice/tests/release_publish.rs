@@ -239,17 +239,58 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let fixture = Fixture::new("durable");
     let resident = Resident::start(&fixture);
 
-    let notes = fixture.notes.to_str().expect("notes path is UTF-8");
-    let text = fixture.invoke(&["release", "publish", "--notes-file", notes]);
+    // Keep the lifecycle phases explicit so a failure identifies whether
+    // preview, application, recovery, or durable replay broke its contract.
+    let (notes, plan) = preview_publication(&fixture);
+    let (apply, first) = apply_publication(&fixture, &notes, &plan);
+    recover_publication(&fixture, &notes);
+    replay_and_stop(&fixture, &notes, &apply, resident);
+    replay_after_restart(&fixture, &notes, &apply, &first);
+}
+
+fn preview_publication(fixture: &Fixture) -> (String, ReleasePlan) {
+    let notes = fixture
+        .notes
+        .to_str()
+        .expect("notes path is UTF-8")
+        .to_owned();
+    let text = fixture.invoke(&["release", "publish", "--notes-file", &notes]);
     assert!(
         text.status.success(),
         "text preview failed: {}",
         spoken(&text)
     );
     let text_plan: ReleasePlan = wire::decode(&text.stdout).expect("text body is a release plan");
-    assert_initial_preview(&fixture, &text_plan);
+    assert_eq!(text_plan.manifest, fixture.manifest);
+    assert_eq!(text_plan.targets.len(), 2);
+    assert_eq!(text_plan.action, "publish");
+    assert_eq!(text_plan.requested_version.as_str(), "0.0.0");
+    assert_eq!(text_plan.source_commit.len(), 40);
+    assert_eq!(text_plan.release_commit.len(), 40);
+    assert_eq!(text_plan.package_object.len(), 40);
+    assert!(text_plan.observations.clean);
+    assert!(text_plan.observations.bump_claimed);
+    assert!(text_plan.observations.credentials_valid);
+    assert_eq!(text_plan.observations.unrecorded_local_commits, 0);
+    assert!(text_plan.observations.registry.is_none());
+    assert_eq!(text_plan.operations, publish_operations());
+    let draft = fixture.invoke(&["--json", "release", "notes"]);
+    let Outcome::Reply(draft) =
+        wire::decode::<Outcome<wire::ReleaseNotes>>(&draft.stdout).expect("draft is typed")
+    else {
+        panic!("release notes did not reply")
+    };
+    let candidate = fs::read_to_string(&fixture.notes).expect("curated notes read");
+    let expected_notes =
+        dist::curated_release_notes(&candidate, &draft.body).expect("notes are curated");
+    assert_eq!(text_plan.notes, expected_notes.identity);
+    assert_eq!(text_plan.notes_document, expected_notes.document);
+    assert!(
+        remote_refs(fixture).is_empty(),
+        "preview changed remote refs"
+    );
 
-    let json = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
+    let json = fixture.invoke(&["--json", "release", "publish", "--notes-file", &notes]);
     assert!(
         json.status.success(),
         "JSON preview failed: {}",
@@ -262,8 +303,15 @@ fn publication_plans_commits_replays_and_survives_restart() {
     };
     assert_eq!(json_plan.position, ReplyPosition::Direct {});
     assert_eq!(json_plan.body, text_plan);
+    (notes, text_plan)
+}
 
-    let apply = format!("--apply={}", text_plan.key);
+fn apply_publication(
+    fixture: &Fixture,
+    notes: &str,
+    plan: &ReleasePlan,
+) -> (String, (ReplyPosition, RecognitionAnswer)) {
+    let apply = format!("--apply={}", plan.key);
     let first = fixture.invoke(&[
         "--json",
         "release",
@@ -279,107 +327,7 @@ fn publication_plans_commits_replays_and_survives_restart() {
     );
     let first = recognition(&first);
     assert!(first.1.fresh);
-    assert_published(&fixture, &text_plan);
-    assert_recovery(&fixture, notes);
-
-    let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, &apply]);
-    assert!(
-        replay.status.success(),
-        "text replay failed: {}",
-        spoken(&replay)
-    );
-    let replay_answer: RecognitionAnswer =
-        wire::decode(&replay.stdout).expect("text replay body is typed");
-    assert!(!replay_answer.fresh);
-    let snapshot = facts(&fixture);
-    assert_eq!(kind_count(&snapshot, FactKind::ReleasePublished), 1);
-    resident.stop(&fixture);
-    assert_eq!(
-        journal::Journal::open(&fixture.journal)
-            .expect("journal opens")
-            .verify()
-            .expect("authority verifies")
-            .receipts,
-        1
-    );
-
-    let restarted = Resident::start(&fixture);
-    let after_restart = fixture.invoke(&[
-        "--json",
-        "release",
-        "publish",
-        "--notes-file",
-        notes,
-        &apply,
-    ]);
-    assert!(
-        after_restart.status.success(),
-        "restart replay failed: {}",
-        spoken(&after_restart)
-    );
-    let after_restart = recognition(&after_restart);
-    assert!(!after_restart.1.fresh);
-    assert_eq!(after_restart.0, first.0);
-    assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 1);
-    restarted.stop(&fixture);
-}
-
-fn assert_initial_preview(fixture: &Fixture, plan: &ReleasePlan) {
-    assert_eq!(plan.manifest, fixture.manifest);
-    assert_eq!(plan.targets.len(), 2);
-    assert_eq!(plan.action, "publish");
-    assert_eq!(plan.requested_version.as_str(), "0.0.0");
-    assert_eq!(plan.source_commit.len(), 40);
-    assert_eq!(plan.release_commit.len(), 40);
-    assert_eq!(plan.package_object.len(), 40);
-    assert!(plan.observations.clean);
-    assert!(plan.observations.bump_claimed);
-    assert!(plan.observations.credentials_valid);
-    assert_eq!(plan.observations.unrecorded_local_commits, 0);
-    assert!(plan.observations.registry.is_none());
-    assert_eq!(
-        plan.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "run-correctness-gate",
-            "bump-and-verify-version",
-            "create-release-commit",
-            "rebuild-artifacts",
-            "install-and-probe-artifacts",
-            "rehearse-upload",
-            "publish-source",
-            "upload-package",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
-    );
-    let draft = fixture.invoke(&["--json", "release", "notes"]);
-    let Outcome::Reply(draft) =
-        wire::decode::<Outcome<wire::ReleaseNotes>>(&draft.stdout).expect("draft is typed")
-    else {
-        panic!("release notes did not reply")
-    };
-    let candidate = fs::read_to_string(&fixture.notes).expect("curated notes read");
-    let expected = dist::curated_release_notes(&candidate, &draft.body).expect("notes are curated");
-    assert_eq!(plan.notes, expected.identity);
-    assert_eq!(plan.notes_document, expected.document);
-    assert!(
-        remote_refs(fixture).is_empty(),
-        "preview changed remote refs"
-    );
-}
-
-fn assert_published(fixture: &Fixture, plan: &ReleasePlan) {
-    assert_eq!(
-        remote_refs(fixture),
-        [
-            "refs/heads/main",
-            "refs/spice/packages/v0.0.0",
-            "refs/spice/releases/v0.0.0",
-            "refs/tags/v0.0.0",
-        ]
-    );
+    assert_eq!(remote_refs(fixture), published_refs());
     assert_eq!(
         remote_object_type(fixture, "refs/spice/packages/v0.0.0"),
         "tree"
@@ -388,24 +336,34 @@ fn assert_published(fixture: &Fixture, plan: &ReleasePlan) {
         remote_object(fixture, "refs/spice/packages/v0.0.0"),
         plan.package_object
     );
-    let path = fixture
+    let operation_journal = fixture
         .journal
         .parent()
         .expect("journal data directory")
         .join("release-operations")
         .join(format!("{}.json", plan.key));
-    let journal: serde_json::Value =
-        serde_json::from_slice(&fs::read(path).expect("external operation journal exists"))
-            .expect("external operation journal is typed JSON");
-    for key in ["accepted", "receipts"] {
-        assert_eq!(
-            journal[key].as_array().expect("operation rows").len(),
-            plan.operations.len()
-        );
-    }
+    let operation_journal: serde_json::Value = serde_json::from_slice(
+        &fs::read(operation_journal).expect("external operation journal exists"),
+    )
+    .expect("external operation journal is typed JSON");
+    assert_eq!(
+        operation_journal["accepted"]
+            .as_array()
+            .expect("accepted operation rows")
+            .len(),
+        plan.operations.len()
+    );
+    assert_eq!(
+        operation_journal["receipts"]
+            .as_array()
+            .expect("operation receipt rows")
+            .len(),
+        plan.operations.len()
+    );
+    (apply, first)
 }
 
-fn assert_recovery(fixture: &Fixture, notes: &str) {
+fn recover_publication(fixture: &Fixture, notes: &str) {
     let recovery = fixture.invoke(&[
         "--json",
         "release",
@@ -436,16 +394,8 @@ fn assert_recovery(fixture: &Fixture, notes: &str) {
             .release_commit,
         recovery.body.release_commit
     );
-    assert_eq!(
-        recovery.body.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
-    );
-    let apply = format!("--apply={}", recovery.body.key);
+    assert_eq!(recovery.body.operations, recovery_operations());
+    let recovery_apply = format!("--apply={}", recovery.body.key);
     let recovered = fixture.invoke(&[
         "--json",
         "release",
@@ -454,7 +404,7 @@ fn assert_recovery(fixture: &Fixture, notes: &str) {
         notes,
         "--action",
         "tag-and-announce",
-        &apply,
+        &recovery_apply,
     ]);
     assert!(
         recovered.status.success(),
@@ -462,6 +412,50 @@ fn assert_recovery(fixture: &Fixture, notes: &str) {
         spoken(&recovered)
     );
     assert!(!recognition(&recovered).1.fresh);
+}
+
+fn replay_and_stop(fixture: &Fixture, notes: &str, apply: &str, resident: Resident) {
+    let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, apply]);
+    assert!(
+        replay.status.success(),
+        "text replay failed: {}",
+        spoken(&replay)
+    );
+    let replay_answer: RecognitionAnswer =
+        wire::decode(&replay.stdout).expect("text replay body is typed");
+    assert!(!replay_answer.fresh);
+    let snapshot = facts(fixture);
+    assert_eq!(kind_count(&snapshot, FactKind::ReleasePublished), 1);
+    resident.stop(fixture);
+    assert_eq!(
+        journal::Journal::open(&fixture.journal)
+            .expect("journal opens")
+            .verify()
+            .expect("authority verifies")
+            .receipts,
+        1
+    );
+}
+
+fn replay_after_restart(
+    fixture: &Fixture,
+    notes: &str,
+    apply: &str,
+    first: &(ReplyPosition, RecognitionAnswer),
+) {
+    let restarted = Resident::start(fixture);
+    let after_restart =
+        fixture.invoke(&["--json", "release", "publish", "--notes-file", notes, apply]);
+    assert!(
+        after_restart.status.success(),
+        "restart replay failed: {}",
+        spoken(&after_restart)
+    );
+    let after_restart = recognition(&after_restart);
+    assert!(!after_restart.1.fresh);
+    assert_eq!(after_restart.0, first.0);
+    assert_eq!(kind_count(&facts(fixture), FactKind::ReleasePublished), 1);
+    restarted.stop(fixture);
 }
 
 #[test]
@@ -523,6 +517,41 @@ fn publication_refuses_every_uncurated_notes_shape_before_resident_work() {
     let heading_only = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
     assert_notes_refusal(&heading_only);
     assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 0);
+}
+
+fn publish_operations() -> [&'static str; 12] {
+    [
+        "resolve-preconditions-and-credentials",
+        "run-correctness-gate",
+        "bump-and-verify-version",
+        "create-release-commit",
+        "rebuild-artifacts",
+        "install-and-probe-artifacts",
+        "rehearse-upload",
+        "publish-source",
+        "upload-package",
+        "await-registry-visibility",
+        "create-immutable-tag",
+        "announce",
+    ]
+}
+
+fn recovery_operations() -> [&'static str; 4] {
+    [
+        "resolve-preconditions-and-credentials",
+        "await-registry-visibility",
+        "create-immutable-tag",
+        "announce",
+    ]
+}
+
+fn published_refs() -> [&'static str; 4] {
+    [
+        "refs/heads/main",
+        "refs/spice/packages/v0.0.0",
+        "refs/spice/releases/v0.0.0",
+        "refs/tags/v0.0.0",
+    ]
 }
 
 fn publish_stage(root: &Path) -> Digest {

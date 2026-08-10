@@ -116,7 +116,7 @@ fn selected_production_arms_execute_alone_and_match_their_full_rows() {
                 .detail()
                 .contains("cannot execute a complete battery")
         );
-        let sibling = GateId::ALL
+        let sibling = GateId::BATTERY
             .into_iter()
             .find(|candidate| *candidate != gate_id)
             .expect("the battery contains a sibling arm");

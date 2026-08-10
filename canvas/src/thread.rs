@@ -164,7 +164,7 @@ mod tests {
         let cause = cause.map(|value| wire::Seq::new(value).expect("non-zero cause"));
         let cause = cause.map_or_else(String::new, |value| format!(r#", "cause": {value}"#));
         let document = format!(
-            r#"{{"v":1,"seq":{seq},"at":"2026-08-01T00:00:00.000Z","actor":"operator","origin":"{origin}"{cause},"fact":{{"kind":"task::woken","task":"SPICE-aBcD"}}}}"#
+            r#"{{"v":1,"seq":{seq},"at":"2026-08-01T00:00:00.000Z","actor":"operator","origin":"{origin}"{cause},"fact":{{"kind":"task::woken","task":"1kKRRsDP"}}}}"#
         );
         wire::decode(document.as_bytes()).expect("canonical envelope fixture")
     }
@@ -176,10 +176,10 @@ mod tests {
     #[test]
     fn a_walk_follows_one_cause_chain_and_names_overflow() {
         let snapshot = snapshot(vec![
-            envelope(1, None, "task:SPICE-aBcD"),
-            envelope(2, Some(1), "task:SPICE-aBcD"),
-            envelope(3, Some(2), "task:SPICE-aBcD"),
-            envelope(4, None, "task:SPICE-zYxW"),
+            envelope(1, None, "task:1kKRRsDP"),
+            envelope(2, Some(1), "task:1kKRRsDP"),
+            envelope(3, Some(2), "task:1kKRRsDP"),
+            envelope(4, None, "task:1kKRRsDQ"),
         ]);
         let index = ThreadIndex::from_snapshot(&snapshot).expect("valid causal index");
         let walked = index
@@ -207,8 +207,8 @@ mod tests {
     #[test]
     fn a_cause_cannot_cross_origins() {
         let snapshot = snapshot(vec![
-            envelope(1, None, "task:SPICE-aBcD"),
-            envelope(2, Some(1), "task:SPICE-zYxW"),
+            envelope(1, None, "task:1kKRRsDP"),
+            envelope(2, Some(1), "task:1kKRRsDQ"),
         ]);
 
         assert_eq!(

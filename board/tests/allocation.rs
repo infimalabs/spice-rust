@@ -5,8 +5,8 @@ use board::allocate::{Mint, mint};
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, FactKind, Instant, LaneResidency, LeaseHead,
-    Origin, Phase, Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead, WorkflowHead,
-    body,
+    Origin, Phase, Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead, TaskStamp,
+    WorkflowHead, body,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -25,8 +25,15 @@ fn phase(text: &str) -> Phase {
     text.parse().expect("fixture phase")
 }
 
+fn stamp(text: &str) -> TaskStamp {
+    let value = text.bytes().fold(0_i64, |value, byte| {
+        (value * 131 + i64::from(byte)) % 10_000_000_000_000
+    });
+    TaskStamp::for_millis(value).expect("fixture name fits the task stamp codec")
+}
+
 fn handle(text: &str) -> TaskHandle {
-    text.parse().expect("fixture handle")
+    TaskHandle::for_project("board.allocate", &stamp(text))
 }
 
 fn projects() -> board::ProjectPolicy {
@@ -88,17 +95,16 @@ fn fixture() -> Journal {
         Producer::CommandDoor,
     );
     let tasks = [
-        ("BOARD-b2", uuid(2), "priority:medium"),
-        ("BOARD-a1", uuid(1), "priority:high"),
+        ("BOARD-b2", "priority:medium"),
+        ("BOARD-a1", "priority:high"),
     ];
-    for (index, (name, identity, priority)) in tasks.into_iter().enumerate() {
-        let task = handle(name);
+    for (index, (name, priority)) in tasks.into_iter().enumerate() {
+        let task = stamp(name);
         let flow = workflow();
         let fact = write
             .fact(
                 body::TaskAdded {
                     task: task.clone(),
-                    uuid: identity,
                     title: format!("Allocate {name}"),
                     description: None,
                     acceptance: Vec::new(),
@@ -115,8 +121,7 @@ fn fixture() -> Journal {
         let statement_task = task.clone();
         let statement_origin = origin.clone();
         write.task_head(fact, move |position| TaskHead {
-            handle: statement_task,
-            uuid: identity,
+            incepted: statement_task,
             queue_origin: position,
             title: format!("Allocate {name}"),
             description: None,
@@ -158,7 +163,7 @@ fn source_boundary(lane: CanonicalUuid) -> body::SourceBoundary {
 
 /// Open a transaction on the fixture's task and mint one claim into it.
 fn minted(journal: &mut Journal, git: Option<body::GitBoundary>, source: body::SourceBoundary) {
-    let task = handle("BOARD-a1");
+    let task = stamp("BOARD-a1");
     let actor = Actor::Lane(uuid(20));
     let mut write = JournalWrite::new(
         actor.clone(),
@@ -231,7 +236,7 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
     let entry = snapshot
         .entries()
         .iter()
-        .find(|entry| entry.statement().handle == handle("BOARD-a1"))
+        .find(|entry| entry.handle() == &handle("BOARD-a1"))
         .expect("the claimed task is on the board");
     let ClaimHead {
         actor,

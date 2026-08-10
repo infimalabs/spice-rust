@@ -37,9 +37,13 @@ mod journal_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod journal_lock;
 #[cfg(not(target_arch = "wasm32"))]
+mod judge;
+#[cfg(not(target_arch = "wasm32"))]
 mod lane_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod message_shape;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_command;
@@ -124,6 +128,10 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
 }
 
 fn main() {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(code) = gate_command::pre_commit_worker_entry(std::env::args_os()) {
+        terminate_code(code);
+    }
     let matches = cli::command().get_matches();
     #[cfg(not(target_arch = "wasm32"))]
     {

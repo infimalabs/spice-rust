@@ -11,6 +11,10 @@ use wire::{
     TaskHead, TranscriptSourceHead, WireVersion, Witness, WorkflowHead, body, intent,
 };
 
+fn incepted() -> wire::TaskStamp {
+    "1kKRRsDP".parse().expect("fixture task stamp")
+}
+
 fn uuid(last: u8) -> CanonicalUuid {
     format!("018f82d4-6f59-7d06-92e3-bce9131164{last:02}")
         .parse()
@@ -24,7 +28,7 @@ fn instant(minute: u8) -> Instant {
 }
 
 fn task() -> TaskHandle {
-    "BOARD-a1".parse().expect("fixture task")
+    TaskHandle::for_project("board.possession", &incepted())
 }
 
 fn projects() -> board::ProjectPolicy {
@@ -77,21 +81,21 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
         .expect("heads before the claim");
     let selected = heads
         .iter()
-        .find(|heads| heads.statement().body().handle == task())
+        .find(|heads| heads.statement().body().incepted == incepted())
         .expect("the fixture task is on the board");
     let workflow = selected.workflow().body().clone();
     let expected = vec![
         Witness::Task {
-            task: task(),
+            task: incepted(),
             head: selected.statement().position(),
         },
         Witness::Workflow {
-            task: task(),
+            task: incepted(),
             head: selected.workflow().position(),
             phase: workflow.phase.clone(),
         },
         Witness::Claim {
-            task: task(),
+            task: incepted(),
             head: selected.claim().map(journal::JournalHead::position),
         },
         Witness::Eligibility {
@@ -113,7 +117,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
     mint(
         &mut write,
         Mint {
-            task: &task(),
+            task: &incepted(),
             actor: &actor,
             workflow: &workflow,
             project: "board.possession",
@@ -163,17 +167,17 @@ fn possession(journal: &Journal) -> (ClaimHead, LeaseHead, Vec<Witness>) {
         .expect("heads before the possession change");
     let selected = heads
         .iter()
-        .find(|heads| heads.statement().body().handle == task())
+        .find(|heads| heads.statement().body().incepted == incepted())
         .expect("the fixture task is on the board");
     let claim = selected.claim().expect("the fixture task is claimed");
     let lease = selected.lease().expect("an active claim carries its lease");
     let witnesses = vec![
         Witness::Claim {
-            task: task(),
+            task: incepted(),
             head: Some(claim.position()),
         },
         Witness::Lease {
-            task: task(),
+            task: incepted(),
             head: lease.position(),
         },
         Witness::Residency {
@@ -203,7 +207,7 @@ fn free(journal: &mut Journal, command: u8) {
     let freed = write
         .fact(
             body::ClaimFreed {
-                task: task(),
+                task: incepted(),
                 actor: actor.clone(),
             },
             FactCause::Root,
@@ -211,7 +215,7 @@ fn free(journal: &mut Journal, command: u8) {
         .expect("release fact");
     let mut next = claim;
     next.disposition = ClaimDisposition::Freed;
-    write.claim_head(task(), freed, move |fact| ClaimHead { fact, ..next });
+    write.claim_head(incepted(), freed, move |fact| ClaimHead { fact, ..next });
     write
         .command_result(
             Command {
@@ -251,7 +255,7 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
     let renewed = write
         .fact(
             body::ClaimRenewed {
-                task: task(),
+                task: incepted(),
                 epoch: uuid(22),
                 until: instant(until),
                 maximum: lease.maximum,
@@ -262,7 +266,7 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
     let mut next = lease;
     next.renewal = instant(10);
     next.expiry = instant(until);
-    write.lease_head(task(), renewed, move |_| next);
+    write.lease_head(incepted(), renewed, move |_| next);
     write
         .command_result(
             Command {
@@ -324,8 +328,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
     let fact = write
         .fact(
             body::TaskAdded {
-                task: task(),
-                uuid: uuid(1),
+                task: incepted(),
                 title: "Lapse possession".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
@@ -341,8 +344,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
         .expect("task fact");
     let statement_origin = origin;
     write.task_head(fact, move |position| TaskHead {
-        handle: task(),
-        uuid: uuid(1),
+        incepted: incepted(),
         queue_origin: position,
         title: "Lapse possession".to_owned(),
         description: None,
@@ -353,7 +355,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
         provenance: statement_origin,
         revision: position,
     });
-    write.workflow_head(task(), fact, move |_| WorkflowHead {
+    write.workflow_head(incepted(), fact, move |_| WorkflowHead {
         flow: vec![phase.clone()],
         phase,
         status: "pending".to_owned(),
@@ -438,7 +440,10 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
     let cases = [
         {
             let mut request = lapse_request(40, 20);
-            request.intent.task = "BOARD-missing".parse().expect("missing task");
+            request.intent.task = TaskHandle::for_project(
+                "board.possession",
+                &"1kKRRsDQ".parse().expect("missing task stamp"),
+            );
             let expected = Refusal::MissingTask(request.intent.task.clone());
             (request, expected)
         },
@@ -505,7 +510,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
     let fact = write
         .fact(
             body::ClaimWon {
-                task: task(),
+                task: incepted(),
                 actor: actor.clone(),
                 lane: uuid(20),
                 occupant: uuid(21),
@@ -521,7 +526,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
             FactCause::Root,
         )
         .expect("claim fact");
-    write.claim_head(task(), fact, move |position| ClaimHead {
+    write.claim_head(incepted(), fact, move |position| ClaimHead {
         actor,
         fact: position,
         claimed: position,
@@ -584,7 +589,7 @@ fn drift_lease(journal: &mut Journal, epoch: CanonicalUuid, drift: impl FnOnce(&
     let fact = write
         .fact(
             body::ClaimRenewed {
-                task: task(),
+                task: incepted(),
                 epoch,
                 until: lease.expiry,
                 maximum: lease.maximum,
@@ -594,7 +599,7 @@ fn drift_lease(journal: &mut Journal, epoch: CanonicalUuid, drift: impl FnOnce(&
         .expect("drifted renewal fact");
     let mut next = lease;
     drift(&mut next);
-    write.lease_head(task(), fact, move |_| next);
+    write.lease_head(incepted(), fact, move |_| next);
     journal.apply(write).expect("the drifted lease commits");
 }
 
@@ -936,10 +941,13 @@ fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
                 kind: CommandKind::ClaimRenew,
                 expected: vec![
                     Witness::Claim {
-                        task: task(),
+                        task: incepted(),
                         head: Some(head),
                     },
-                    Witness::Lease { task: task(), head },
+                    Witness::Lease {
+                        task: incepted(),
+                        head,
+                    },
                     Witness::Residency {
                         lane: uuid(20),
                         occupant: uuid(21),

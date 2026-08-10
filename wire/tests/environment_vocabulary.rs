@@ -38,7 +38,7 @@ struct EnvironmentPolicy {
 /// configuration references, and the hygiene acquisition fixture fixes
 /// `TMPDIR` at private writable scratch. The verifier passes Canvas its binary
 /// inside an isolated build root. Those references oblige the ledger to account
-/// all eight names. They are named here rather than added to [`SpiceVariable`],
+/// all nine names. They are named here rather than added to [`SpiceVariable`],
 /// because Doctor reports the variables Spice owns and a row for one of these
 /// would claim ownership Spice does not have.
 ///
@@ -54,6 +54,7 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "GIT_INDEX_FILE",      // env-policy: allow
     "GIT_WORK_TREE",       // env-policy: allow
     "SPICE_CANVAS_BINARY", // env-policy: allow
+    "SPICE_PROOF",         // env-policy: allow
     "TMPDIR",              // env-policy: allow
 ];
 

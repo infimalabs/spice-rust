@@ -59,7 +59,8 @@ project_max_depth = 3
 enabled = true
 
 [policy]
-# The installed predecessor owns the hook but not a second Python battery.
+# The repository declares its complete pre-commit command below; do not run the
+# installed predecessor's built-in Rust gate a second time around it.
 pre_commit_builtins = false
 
 # The native Git publisher runs this cheap repository load over every
@@ -111,7 +112,7 @@ pre_commit = [
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the names Spice owns, so these seven are the
+# again. Doctor reports only the names Spice owns, so these nine are the
 # difference wire pins between this manifest and SpiceVariable.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
@@ -137,6 +138,7 @@ env_names = [
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
     "SPICE_NATIVE_SHELL",
+    "SPICE_PROOF",
     "TMPDIR",
 ]
 

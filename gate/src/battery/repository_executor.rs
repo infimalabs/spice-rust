@@ -254,6 +254,17 @@ impl<'trace> RepositoryExecutor<'trace> {
         self.tree.root()
     }
 
+    /// Exact changed paths captured at the command rim for this selected source.
+    #[must_use]
+    pub(super) fn changes(&self) -> &[String] {
+        self.rim.changes()
+    }
+
+    /// Run the canonical mutation profile against this executor's selected tree.
+    pub(super) fn execute_kill(&self) -> Result<crate::KillRun, crate::KillError> {
+        self.contract.execute_kill(self.tree.root())
+    }
+
     /// Capture the exact compiler/tool contract the full verifier may execute.
     pub(super) fn verifier_compiler_contract(
         &self,

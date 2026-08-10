@@ -233,7 +233,7 @@ impl Law {
 /// under the same predicates whether it is carried, renewed, freed, or
 /// lapsed. Every doc comment restates the row it implements.
 impl Law {
-    /// Intended handle is absent and every dependency handle exists at its
+    /// Intended inception stamp is absent and every dependency exists at its
     /// named workflow head.
     pub const ADD: Self = Self {
         required: &[WitnessKind::Absence],
@@ -302,7 +302,7 @@ impl Law {
     };
     /// The review path is the one that always carries the assignment, and the
     /// only one that may also carry follow-up tracking: the absence of each
-    /// handle it mints and of each edge it wires, exactly the predicates
+    /// stamp it mints and of each edge it wires, exactly the predicates
     /// [`Self::ADD`] and [`Self::DEPENDS`] require of those moves alone.
     pub const REVIEW: Self = Self {
         required: &[

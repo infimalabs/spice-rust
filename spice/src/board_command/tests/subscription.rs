@@ -64,7 +64,7 @@ pub(super) fn selectable_handles(answer: &BoardAnswer, actor: &Actor) -> BTreeSe
     entries
         .iter()
         .filter(|entry| board::selectable_entry(&entries, entry, actor, subscription))
-        .map(|entry| entry.statement().handle.to_string())
+        .map(|entry| entry.handle().to_string())
         .collect()
 }
 

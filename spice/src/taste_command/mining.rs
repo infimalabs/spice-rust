@@ -71,6 +71,7 @@ struct Candidate {
 #[derive(Clone, Debug)]
 struct PriorProposal {
     handle: TaskHandle,
+    occurrence: Digest,
     recurrence: usize,
     completed: bool,
 }
@@ -124,7 +125,6 @@ pub(crate) fn mine(contract: &Contract) -> Outcome<TasteMiningReport> {
         excluded,
         cursor,
         &candidates,
-        &board,
         &priors,
     )
 }
@@ -194,29 +194,18 @@ fn file_candidates(
     excluded: usize,
     cursor: Seq,
     candidates: &[Candidate],
-    board: &wire::intent::BoardAnswer,
     priors: &BTreeMap<Digest, Vec<PriorProposal>>,
 ) -> Outcome<TasteMiningReport> {
     let mut findings = Vec::new();
     let mut position = ReplyPosition::Snapshot(cursor);
     for candidate in candidates {
-        let expected = crate::board_command::taste_proposal_handle(&candidate.occurrence);
-        if let Some(existing) = board
-            .tasks
-            .iter()
-            .find(|task| task.statement.body.handle == expected)
-        {
-            let standing = if existing.workflow.body.completion.is_some() {
-                ProposalStanding::ReusedCompleted
-            } else {
-                ProposalStanding::ReusedActive
-            };
-            findings.push(report_finding(candidate, expected, standing));
-            continue;
-        }
-        let (handle, standing, predecessor) = plan(candidate, priors);
+        let (standing, handle, predecessor) = plan(candidate, priors);
         if standing != ProposalStanding::Filed {
-            findings.push(report_finding(candidate, handle, standing));
+            findings.push(report_finding(
+                candidate,
+                handle.expect("a reused proposal carries its projected handle"),
+                standing,
+            ));
             continue;
         }
         let oldest = candidate
@@ -562,8 +551,11 @@ fn prior_proposals(
         .iter()
         .map(|task| {
             (
-                task.statement.body.handle.clone(),
-                task.workflow.body.completion.is_some(),
+                task.statement.body.incepted.clone(),
+                (
+                    task.statement.body.handle.clone(),
+                    task.workflow.body.completion.is_some(),
+                ),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -575,20 +567,29 @@ fn prior_proposals(
         let Some(finding_text) = added.project.strip_prefix(".maxim_proposal.taste.") else {
             continue;
         };
+        let fallback = TaskHandle::for_project(&added.project, &added.task);
         let finding = finding_text
             .parse::<Digest>()
-            .map_err(|_| EvidenceError::ProposalFinding(added.task.clone()))?;
+            .map_err(|_| EvidenceError::ProposalFinding(fallback.clone()))?;
+        let (handle, completed) = completion
+            .get(&added.task)
+            .cloned()
+            .ok_or_else(|| EvidenceError::ProposalStanding(fallback.clone()))?;
+        let description = added
+            .description
+            .as_deref()
+            .ok_or_else(|| EvidenceError::ProposalDescription(handle.clone()))?;
+        let occurrence = parse_occurrence(description)
+            .ok_or_else(|| EvidenceError::ProposalDescription(handle.clone()))?;
         let recurrence = added
             .description
             .as_deref()
             .and_then(parse_recurrence)
-            .ok_or_else(|| EvidenceError::ProposalDescription(added.task.clone()))?;
+            .ok_or_else(|| EvidenceError::ProposalDescription(handle.clone()))?;
         proposals.entry(finding).or_default().push(PriorProposal {
-            completed: completion
-                .get(&added.task)
-                .copied()
-                .ok_or_else(|| EvidenceError::ProposalStanding(added.task.clone()))?,
-            handle: added.task,
+            completed,
+            handle,
+            occurrence,
             recurrence,
         });
     }
@@ -602,27 +603,40 @@ fn parse_recurrence(description: &str) -> Option<usize> {
     })
 }
 
+fn parse_occurrence(description: &str) -> Option<Digest> {
+    description.lines().find_map(|line| {
+        line.strip_prefix("Occurrence identity: ")
+            .and_then(|identity| identity.parse().ok())
+    })
+}
+
 fn plan(
     candidate: &Candidate,
     priors: &BTreeMap<Digest, Vec<PriorProposal>>,
-) -> (TaskHandle, ProposalStanding, Option<TaskHandle>) {
-    let expected = crate::board_command::taste_proposal_handle(&candidate.occurrence);
+) -> (ProposalStanding, Option<TaskHandle>, Option<TaskHandle>) {
     let Some(priors) = priors.get(&candidate.finding) else {
-        return (expected, ProposalStanding::Filed, None);
+        return (ProposalStanding::Filed, None, None);
     };
-    if let Some(prior) = priors.iter().find(|prior| prior.handle == expected) {
+    if let Some(prior) = priors
+        .iter()
+        .find(|prior| prior.occurrence == candidate.occurrence)
+    {
         return (
-            prior.handle.clone(),
             if prior.completed {
                 ProposalStanding::ReusedCompleted
             } else {
                 ProposalStanding::ReusedActive
             },
+            Some(prior.handle.clone()),
             None,
         );
     }
     if let Some(prior) = priors.iter().find(|prior| !prior.completed) {
-        return (prior.handle.clone(), ProposalStanding::ReusedActive, None);
+        return (
+            ProposalStanding::ReusedActive,
+            Some(prior.handle.clone()),
+            None,
+        );
     }
     let predecessor = priors.iter().max_by(|left, right| {
         left.recurrence
@@ -633,14 +647,14 @@ fn plan(
         && prior.recurrence >= candidate.corrections.len()
     {
         return (
-            prior.handle.clone(),
             ProposalStanding::ReusedCompleted,
+            Some(prior.handle.clone()),
             None,
         );
     }
     (
-        expected,
         ProposalStanding::Filed,
+        None,
         predecessor.map(|p| p.handle.clone()),
     )
 }
@@ -819,18 +833,19 @@ mod tests {
         let first = candidate(base.clone());
         let prior = PriorProposal {
             handle: "TASTE-0123456789abcdef".parse().unwrap(),
+            occurrence: first.occurrence.clone(),
             recurrence: 3,
             completed: true,
         };
         let priors = BTreeMap::from([(first.finding.clone(), vec![prior.clone()])]);
-        let (_, standing, dependency) = plan(&first, &priors);
+        let (standing, _, dependency) = plan(&first, &priors);
         assert_eq!(standing, ProposalStanding::ReusedCompleted);
         assert!(dependency.is_none());
 
         let mut expanded = base;
         expanded.push(correction(4, "Avoid grep and use rg for searches."));
         let later = candidate(expanded);
-        let (_, standing, dependency) = plan(&later, &priors);
+        let (standing, _, dependency) = plan(&later, &priors);
         assert_eq!(standing, ProposalStanding::Filed);
         assert_eq!(dependency, Some(prior.handle));
     }

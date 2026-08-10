@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 use rusqlite::{Connection, params};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::{MigrationError, OpenError};
@@ -17,6 +18,28 @@ const TO: u32 = 4;
 
 type QueueOrigins = BTreeMap<wire::TaskHandle, wire::Seq>;
 type ClaimOrigins = BTreeMap<wire::TaskHandle, (wire::Seq, wire::Actor, Option<wire::ClaimCell>)>;
+
+/// Exact retired schema-3 task-head shape consumed by this crossing.
+///
+/// `handle` and `uuid` are legacy inputs here, not current task authorities;
+/// the later identity crossing contracts both onto the inception stamp.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AllocatedTaskHead {
+    handle: wire::TaskHandle,
+    uuid: wire::CanonicalUuid,
+    queue_origin: wire::Seq,
+    title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    acceptance: Vec<String>,
+    project: String,
+    tags: Vec<String>,
+    dependencies: Vec<wire::TaskHandle>,
+    provenance: wire::Origin,
+    revision: wire::Seq,
+}
 
 pub(super) fn migrate(connection: &Connection) -> Result<(), OpenError> {
     let (created, claimed) = allocation_facts(connection)?;
@@ -28,13 +51,17 @@ fn allocation_facts(connection: &Connection) -> Result<(QueueOrigins, ClaimOrigi
     let rows = {
         let mut statement = connection
             .prepare(
-                "SELECT seq, envelope FROM fact_envelopes \
+                "SELECT seq, kind, envelope FROM fact_envelopes \
                  WHERE kind IN ('task::added', 'claim::won') ORDER BY seq",
             )
             .map_err(OpenError::Sqlite)?;
         statement
             .query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
             })
             .map_err(OpenError::Sqlite)?
             .collect::<Result<Vec<_>, _>>()
@@ -42,18 +69,25 @@ fn allocation_facts(connection: &Connection) -> Result<(QueueOrigins, ClaimOrigi
     };
     let mut created = BTreeMap::new();
     let mut claimed = BTreeMap::new();
-    for (position, bytes) in rows {
+    for (position, indexed_kind, bytes) in rows {
         let row = position.to_string();
-        let envelope: wire::Envelope<wire::AnyFact> = wire::decode(&bytes).map_err(|error| {
-            invalid(
+        let document = decode("fact_envelopes", &row, &bytes)?;
+        let fact = document
+            .get("fact")
+            .and_then(Value::as_object)
+            .ok_or_else(|| invalid("fact_envelopes", &row, "envelope.fact is not an object"))?;
+        let kind = fact
+            .get("kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("fact_envelopes", &row, "allocator fact has no kind"))?;
+        if kind != indexed_kind {
+            return Err(invalid(
                 "fact_envelopes",
                 &row,
-                &format!("allocator fact is invalid wire: {error}"),
-            )
-        })?;
-        let task = envelope
-            .fact
-            .body()
+                "indexed kind disagrees with envelope.fact.kind",
+            ));
+        }
+        let task = fact
             .get("task")
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("fact_envelopes", &row, "allocator fact has no task"))?
@@ -65,9 +99,13 @@ fn allocation_facts(connection: &Connection) -> Result<(QueueOrigins, ClaimOrigi
                     &format!("allocator fact task is invalid: {error}"),
                 )
             })?;
-        match envelope.fact.kind() {
-            wire::FactKind::TaskAdded => {
-                if created.insert(task, envelope.seq).is_some() {
+        let position = u64::try_from(position)
+            .ok()
+            .and_then(wire::Seq::new)
+            .ok_or_else(|| invalid("fact_envelopes", &row, "fact sequence is not positive"))?;
+        match kind {
+            "task::added" => {
+                if created.insert(task, position).is_some() {
                     return Err(invalid(
                         "fact_envelopes",
                         &row,
@@ -75,10 +113,10 @@ fn allocation_facts(connection: &Connection) -> Result<(QueueOrigins, ClaimOrigi
                     ));
                 }
             }
-            wire::FactKind::ClaimWon => {
-                let body: wire::body::ClaimWon =
-                    envelope.fact.read().expect("claim::won kind was matched");
-                claimed.insert(task, (envelope.seq, body.actor, body.cell));
+            "claim::won" => {
+                let actor = value_field::<wire::Actor>(fact, "actor", &row)?;
+                let cell = optional_value_field::<wire::ClaimCell>(fact, "cell", &row)?;
+                claimed.insert(task, (position, actor, cell));
             }
             _ => unreachable!("SQL restricts allocator fact kinds"),
         }
@@ -112,7 +150,7 @@ fn migrate_task_heads(connection: &Connection, created: &QueueOrigins) -> Result
             "queue_origin",
             serde_json::to_value(queue_origin).expect("Seq serializes"),
         )?;
-        let encoded = current_head::<wire::TaskHead>("task_heads", &handle, &document)?;
+        let encoded = current_head::<AllocatedTaskHead>("task_heads", &handle, &document)?;
         connection
             .execute(
                 "UPDATE task_heads SET body = ?1 WHERE handle = ?2",
@@ -213,7 +251,7 @@ fn current_cells(
     };
     rows.into_iter()
         .map(|(handle, statement, workflow)| {
-            let statement = wire::decode::<wire::TaskHead>(&statement).map_err(|error| {
+            let statement = wire::decode::<AllocatedTaskHead>(&statement).map_err(|error| {
                 invalid(
                     "task_heads",
                     &handle,
@@ -236,6 +274,44 @@ fn current_cells(
             ))
         })
         .collect()
+}
+
+fn value_field<T>(object: &Map<String, Value>, field: &str, row: &str) -> Result<T, OpenError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let value = object
+        .get(field)
+        .ok_or_else(|| invalid("fact_envelopes", row, &format!("claim fact has no {field}")))?;
+    serde_json::from_value(value.clone()).map_err(|error| {
+        invalid(
+            "fact_envelopes",
+            row,
+            &format!("claim fact {field} is invalid: {error}"),
+        )
+    })
+}
+
+fn optional_value_field<T>(
+    object: &Map<String, Value>,
+    field: &str,
+    row: &str,
+) -> Result<Option<T>, OpenError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|error| {
+                invalid(
+                    "fact_envelopes",
+                    row,
+                    &format!("claim fact {field} is invalid: {error}"),
+                )
+            }),
+    }
 }
 
 fn text_rows(

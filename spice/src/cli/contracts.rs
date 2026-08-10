@@ -405,7 +405,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Local,
         Resident,
         [JournalMigrated, TrustPended, UpSeated],
-        [JournalLock],
+        [JournalLock, Toolful],
+        UP_TOOLS,
         Stream,
         "spice::up"
     ),

@@ -499,37 +499,26 @@ impl dist::EffectPort for SystemEffects {
                 let result = self.prior(plan, operation)?;
                 Ok((result, dist::Convergence::AlreadyConverged))
             }
-            Op::RebuildArtifacts => self.rebuild_artifacts(plan, prior),
+            Op::RebuildArtifacts => self.converge_rebuild(plan, prior),
             Op::InstallAndProbeArtifacts => self.install_and_probe(plan),
-            Op::RehearseUpload => {
-                let command = self
-                    .authority
-                    .package_rehearsal(&plan.requested_version, &plan.package_object)
-                    .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
-                self.git_owned(&command)?;
-                Ok((
-                    dist::OperationState::Package {
-                        identity: Some(plan.package.clone()),
-                        object: Some(plan.package_object.clone()),
-                    },
-                    dist::Convergence::Applied,
-                ))
-            }
-            Op::PublishSource => self.publish_source(plan, prior),
+            Op::RehearseUpload => self.converge_rehearsal(plan),
+            Op::PublishSource => self.converge_source(plan, prior),
             Op::UploadPackage | Op::CreateImmutableTag | Op::Announce => {
                 self.converge_immutable(plan, operation, prior)
             }
-            Op::AwaitRegistryVisibility => self.await_registry_visibility(plan),
+            Op::AwaitRegistryVisibility => self.await_registry(plan),
         }
     }
 }
 
 impl SystemEffects {
-    fn rebuild_artifacts(
-        &self,
+    fn converge_rebuild(
+        &mut self,
         plan: &dist::ReleasePlan,
         prior: &dist::OperationState,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        // Materialization is deterministic; convergence depends on both the
+        // reconstructed package identity and its Git-tree identity.
         let package = crate::release_package::materialize(
             &self.root,
             &plan.requested_version,
@@ -562,16 +551,28 @@ impl SystemEffects {
             dist::Convergence::Applied
         };
         Ok((
-            dist::OperationState::Package {
-                identity: Some(package.identity),
-                object: Some(package.git_tree),
-            },
+            package_state(package.identity, package.git_tree),
             convergence,
         ))
     }
 
-    fn publish_source(
-        &self,
+    fn converge_rehearsal(
+        &mut self,
+        plan: &dist::ReleasePlan,
+    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        let command = self
+            .authority
+            .package_rehearsal(&plan.requested_version, &plan.package_object)
+            .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
+        self.git_owned(&command)?;
+        Ok((
+            package_state(plan.package.clone(), plan.package_object.clone()),
+            dist::Convergence::Applied,
+        ))
+    }
+
+    fn converge_source(
+        &mut self,
         plan: &dist::ReleasePlan,
         prior: &dist::OperationState,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
@@ -616,7 +617,7 @@ impl SystemEffects {
         ))
     }
 
-    fn await_registry_visibility(
+    fn await_registry(
         &self,
         plan: &dist::ReleasePlan,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
@@ -699,6 +700,13 @@ impl SystemEffects {
 
 fn ref_state(object: Option<&str>) -> dist::RefState<'_> {
     object.map_or(dist::RefState::Absent, dist::RefState::Present)
+}
+
+fn package_state(identity: Digest, object: String) -> dist::OperationState {
+    dist::OperationState::Package {
+        identity: Some(identity),
+        object: Some(object),
+    }
 }
 
 fn stable_ref_observation(

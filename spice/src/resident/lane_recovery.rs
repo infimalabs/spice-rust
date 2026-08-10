@@ -53,7 +53,7 @@ struct ProvenOccupant {
 
 #[derive(Clone)]
 struct CarriedClaim {
-    task: wire::TaskHandle,
+    task: wire::TaskStamp,
     claim: journal::JournalHead<wire::ClaimHead>,
     lease: journal::JournalHead<wire::LeaseHead>,
     /// Accounted transcript the predecessor occupant stopped spending at.
@@ -386,7 +386,7 @@ fn observe_carried_claim(
             ));
         }
         carried = Some((
-            heads.statement().body().handle.clone(),
+            heads.statement().body().incepted.clone(),
             claim.clone(),
             lease.clone(),
         ));
