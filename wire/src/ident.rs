@@ -149,6 +149,8 @@ pub enum Domain {
     GateBatteryManifest,
     /// The complete typed result vector one battery run produced.
     GateBatteryReport,
+    /// One canonical focused gate-arm report.
+    GateFocusedReport,
     /// One stable gate finding identity projected from a typed battery report.
     GateFinding,
     /// The retained bytes of one published battery receipt, exactly as read.
@@ -214,6 +216,7 @@ impl Domain {
             | Self::GateReceipt
             | Self::GateBatteryManifest
             | Self::GateBatteryReport
+            | Self::GateFocusedReport
             | Self::GateFinding
             | Self::GateBatteryReceipt
             | Self::GateStateLedger
@@ -278,6 +281,7 @@ impl Domain {
             Self::GateReceipt => "spice.gate.receipt.v1",
             Self::GateBatteryManifest => "spice.gate.battery-manifest.v1",
             Self::GateBatteryReport => "spice.gate.battery-report.v1",
+            Self::GateFocusedReport => "spice.gate.focused-report.v1",
             Self::GateFinding => "spice.gate.finding.v1",
             Self::GateBatteryReceipt => "spice.gate.battery-receipt.v1",
             Self::GateStateLedger => "spice.gate.state-ledger.v1",

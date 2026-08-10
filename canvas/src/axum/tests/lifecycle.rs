@@ -72,6 +72,93 @@ async fn authenticated_session_routes_multiple_typed_commands_and_correlates_ans
         .expect("server stops");
 }
 
+/// Capability retirement is its own session event, even without a Bus stream.
+///
+/// The first request remains held throughout. An unrelated binding is inserted
+/// and retired before a sibling command crosses the same socket successfully,
+/// proving capability events are isolated by exact binding. Retiring the
+/// authenticating binding then closes the socket and drops the held response
+/// receiver without manufacturing a correlated command response.
+#[tokio::test(flavor = "current_thread")]
+async fn exact_capability_retirement_cancels_a_held_command_only_socket() {
+    let app = TestApp::new();
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, mut control) = Server::bind(epoch(), capabilities.clone(), app.source(), speech())
+        .await
+        .expect("server binds");
+    let address = server.local_addr().expect("address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+
+    let held_id = identity(0xa3);
+    send_recall(&mut socket, held_id, identity(0xa4)).await;
+    let held = control.recv().await.expect("held request enters Control");
+    assert_eq!(held.command().id(), held_id);
+
+    let unrelated_capability = identity(0xa5);
+    let unrelated_lane = identity(0xa6);
+    let unrelated_actor = wire::Actor::Lane(unrelated_lane);
+    capabilities
+        .insert(unrelated_capability, unrelated_actor.clone())
+        .expect("unrelated capability inserts");
+    assert!(capabilities.remove(unrelated_capability, &unrelated_actor));
+
+    let sibling_id = identity(0xa7);
+    send_recall(&mut socket, sibling_id, identity(0xa8)).await;
+    let sibling = timeout(ASSERTION_DEADLINE, control.recv())
+        .await
+        .expect("unrelated retirement leaves the socket responsive")
+        .expect("Control remains open");
+    assert_eq!(sibling.command().id(), sibling_id);
+    let sibling_sent = sibling
+        .respond(wire::Outcome::Refusal(wire::Refusal {
+            reason: "fixture::unrelated-capability-survived".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "retire the authenticating capability to close this session".to_owned(),
+        }))
+        .expect("sibling response receiver remains open");
+    assert_eq!(response(&mut socket).await.id, sibling_id);
+    sibling_sent.wait().await;
+
+    assert!(capabilities.remove(operator(), &wire::Actor::Operator));
+    let replacement = next_frame(&mut socket).await;
+    assert!(
+        wire::decode::<wire::Response<serde_json::Value>>(&replacement).is_err(),
+        "retirement must not manufacture a correlated command response"
+    );
+    assert!(matches!(
+        wire::decode::<wire::StreamFrame>(&replacement).expect("replacement fault frame"),
+        wire::StreamFrame::Fault { fault, id: None, .. }
+            if fault.reason == "stream::capability-replaced"
+    ));
+    assert_socket_terminated(&mut socket).await;
+    assert!(
+        held.respond(wire::Outcome::Refusal(wire::Refusal {
+            reason: "fixture::too-late".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "open a session with a current capability".to_owned(),
+        }))
+        .is_err(),
+        "session retirement drops every unresolved response receiver"
+    );
+
+    shutdown.send(()).expect("shutdown signals");
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+}
+
 /// A successful Dark response stays behind every earlier response on its
 /// socket, even when resident test logic answers Dark first.
 ///

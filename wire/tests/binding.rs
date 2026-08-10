@@ -49,14 +49,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::GateFindings,
         r#"{
   "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "findings": [{
-    "identity": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "severity": "high",
-    "locus": "wire/src/intent.rs:1",
-    "title": "Gate finding needs board work",
-    "description": "The explicit gate findings route files this row as deferred work.",
-    "acceptance": ["the finding has a deferred task"]
-  }]
+  "evidence": "{\"version\":1}"
 }"#,
     ),
     (
@@ -683,7 +676,18 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "provenance": {
       "kind": "steering",
       "key": "1kJJP87B",
-      "disposition": "acked"
+      "disposition": "acked",
+      "stage": "overdue",
+      "escalations": [{
+        "stage": "reminded",
+        "at": "2026-08-06T03:00:02.000Z"
+      }, {
+        "stage": "escalated",
+        "at": "2026-08-06T03:01:00.000Z"
+      }, {
+        "stage": "overdue",
+        "at": "2026-08-06T03:05:00.000Z"
+      }]
     }
   }]
 }"#,
@@ -1057,6 +1061,22 @@ fn a_kind_binds_one_body_and_one_answer() {
         // resolve to two bodies depending on when it is asked.
         assert_eq!(kind.binding(), kind.binding(), "{kind} binds unstably");
     }
+}
+
+#[test]
+fn gate_findings_accept_only_one_report_evidence_binding() {
+    let shape = CommandKind::GateFindings.binding().body;
+    let missing = br#"{
+      "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }"#;
+    let injected = br#"{
+      "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": "{}",
+      "findings": []
+    }"#;
+
+    assert!(shape.decode(missing).is_err());
+    assert!(shape.decode(injected).is_err());
 }
 
 /// Shapes a body may take, listed so an unreachable one is caught.

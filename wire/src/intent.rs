@@ -24,15 +24,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::body::{
-    ConsentQueueCause, DirectiveAttachment, Severity, SourceBoundary, TranscriptLocus,
-    TranscriptPosition,
-};
+use crate::body::{ConsentQueueCause, DirectiveAttachment, TranscriptLocus};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
 use crate::head::{ResidentState, TapeLocus, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant, ReleaseNotesIdentity};
-use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle, TaskStamp};
+use crate::witness::{Answer, Disposition, Name, TaskHandle};
 
 mod board;
 pub use board::{
@@ -42,47 +39,6 @@ pub use board::{
 
 mod task;
 pub use task::*;
-
-/// Run the eligibility query and atomically win its claim.
-///
-/// No handle appears: naming one would make this a request for a particular
-/// task rather than a query, and the query and the win share one transaction.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimWin {
-    /// Named eligibility rule the query runs.
-    pub rule: Name,
-}
-
-/// Pass possession to a successor with ancestor lineage preserved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimCarry {
-    /// Task whose possession moves.
-    pub task: TaskHandle,
-    /// Actor receiving possession.
-    pub successor: Actor,
-}
-
-/// Extend the authenticated actor's active claim within its durable maximum.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimRenew {
-    /// Task whose possession is refreshed.
-    pub task: TaskHandle,
-    /// Requested positive lease duration in whole seconds.
-    pub lease_seconds: u64,
-}
-
-/// Commit the exact normalized preview at its witnessed board barrier.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DocApply {
-    /// Digest of the normalized preview being committed.
-    pub preview: Digest,
-    /// Canonical task-document bytes whose digest was previewed.
-    pub document: String,
-}
 
 /// Append one durable directive to a lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -861,7 +817,7 @@ pub enum RecallProvenance {
     },
     /// Redacted steering lineage or disposition evidence.
     Steering {
-        /// Directive identity, absent for terminal facts whose body carries only its key.
+        /// Stable directive identity, absent only from legacy unprojected provenance.
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
@@ -872,13 +828,16 @@ pub enum RecallProvenance {
         key: String,
         /// Current disposition established by the fact.
         disposition: Disposition,
-        /// Presentation state established by this fact, when applicable.
+        /// Event-local stage, or the preserved current stage on terminal facts.
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
             deserialize_with = "crate::optional::present"
         )]
         stage: Option<crate::body::SteeringStage>,
+        /// Complete ordered presentation-transition audit retained by the stable directive.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        escalations: Vec<crate::body::SteeringTransition>,
         /// Resident generation authenticating transcript evidence, when applicable.
         #[serde(
             default,

@@ -8,21 +8,23 @@ use super::*;
 fn gate_findings_empty_dispatch_creates_no_board_work() {
     // GOV-45 / CASE 250: no requested findings means no board work is filed.
     let (root, bus, epoch, _) = fixture("gate-findings-empty", 1);
+    let report = digest("empty-report");
     let answer = assert_committed(issue_gate_findings(
         &bus,
         epoch,
         Actor::Operator,
-        GateFindings {
-            report: digest("empty-report"),
-            findings: Vec::new(),
-        },
+        report.clone(),
+        Vec::new(),
     ));
 
     assert_eq!(
         text(answer),
         format!(
-            "gate findings report={} findings=0 created=0 reused=0",
-            digest("empty-report")
+            concat!(
+                "gate findings instrument=file-shape state=clean report={} ",
+                "findings=0 created=0 reused=0"
+            ),
+            report
         )
     );
     assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
@@ -40,22 +42,24 @@ fn gate_findings_file_exact_deferred_tasks() {
         &bus,
         epoch,
         Actor::Operator,
-        GateFindings {
-            report: report.clone(),
-            findings: vec![first.clone(), second.clone()],
-        },
+        report.clone(),
+        vec![first.clone(), second.clone()],
     ));
 
     assert!(text(answer).contains("findings=2 created=2 reused=0"));
     let board = gate_board(&bus, epoch, Actor::Operator);
     let tasks = gate_tasks(&board);
     assert_eq!(tasks.len(), 2);
+    let causal: wire::Origin = format!("gate:{report}")
+        .parse()
+        .expect("gate report forms origin");
     for (task, finding) in tasks.iter().zip([first, second]) {
         assert_eq!(task.statement.body.project, "gate.findings");
         assert!(task.workflow.body.deferral.is_some());
+        assert_eq!(task.statement.body.provenance, causal);
         assert_eq!(
-            task.statement.body.provenance.to_string(),
-            format!("gate:{report}")
+            creation_fact_origin(&bus, &task.statement.body.handle),
+            causal
         );
         assert!(task.statement.body.tags.contains(&finding_tag(&finding)));
     }
@@ -71,10 +75,8 @@ fn gate_findings_reuse_one_open_task_by_identity() {
         &bus,
         epoch,
         Actor::Operator,
-        GateFindings {
-            report: digest("first-report"),
-            findings: vec![finding.clone()],
-        },
+        digest("first-report"),
+        vec![finding.clone()],
     ));
     let first = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
         .statement
@@ -86,10 +88,8 @@ fn gate_findings_reuse_one_open_task_by_identity() {
         &bus,
         epoch,
         Actor::Operator,
-        GateFindings {
-            report: digest("second-report"),
-            findings: vec![finding],
-        },
+        digest("second-report"),
+        vec![finding],
     ));
 
     assert!(text(answer).contains("findings=1 created=0 reused=1"));
@@ -108,10 +108,8 @@ fn gate_findings_recur_after_completion_with_predecessor_note() {
         &bus,
         epoch,
         Actor::Operator,
-        GateFindings {
-            report: digest("old-report"),
-            findings: vec![finding.clone()],
-        },
+        digest("old-report"),
+        vec![finding.clone()],
     ));
     let old = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))[0]
         .statement
@@ -124,10 +122,8 @@ fn gate_findings_recur_after_completion_with_predecessor_note() {
         &bus,
         epoch,
         Actor::Operator,
-        GateFindings {
-            report: digest("new-report"),
-            findings: vec![finding],
-        },
+        digest("new-report"),
+        vec![finding],
     ));
 
     assert!(text(answer).contains("findings=1 created=1 reused=0"));
@@ -176,10 +172,8 @@ fn gate_findings_use_the_active_claim_as_origin_when_present() {
         &bus,
         epoch,
         lane,
-        GateFindings {
-            report: digest("claimed-report"),
-            findings: vec![finding("claimed")],
-        },
+        digest("claimed-report"),
+        vec![finding("claimed")],
     ));
 
     let task = gate_tasks(&gate_board(&bus, epoch, Actor::Operator))
@@ -197,7 +191,111 @@ fn gate_findings_use_the_active_claim_as_origin_when_present() {
     clean(&root, bus);
 }
 
+#[test]
+fn gate_findings_refuse_changed_report_before_board_work() {
+    let (root, bus, epoch, _) = fixture("gate-findings-digest-mismatch", 1);
+    let outcome = issue_gate_findings_raw(
+        &bus,
+        epoch,
+        Actor::Operator,
+        GateFindings {
+            report: digest("different-report"),
+            evidence: "{}".to_owned(),
+        },
+    );
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(Refusal { ref reason, .. })
+            if reason == "gate::finding-report-digest-mismatch"
+    ));
+    assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_refuse_invalid_focused_report_before_board_work() {
+    let (root, bus, epoch, _) = fixture("gate-findings-report-invalid", 1);
+    let evidence = "{}".to_owned();
+    let outcome = issue_gate_findings_raw(
+        &bus,
+        epoch,
+        Actor::Operator,
+        GateFindings {
+            report: Digest::compute(Domain::GateFocusedReport, evidence.as_bytes()),
+            evidence,
+        },
+    );
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(Refusal { ref reason, .. })
+            if reason == "gate::finding-report-invalid"
+    ));
+    assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
+    clean(&root, bus);
+}
+
+#[test]
+fn gate_findings_refuse_fold_state_disagreement_before_board_work() {
+    let (root, bus, epoch, _) = fixture("gate-findings-fold-mismatch", 1);
+    let body = GateFindings {
+        report: digest("fold-mismatch"),
+        evidence: "{}".to_owned(),
+    };
+    let command = fixture_command(
+        epoch,
+        Actor::Operator,
+        CommandKind::GateFindings,
+        Vec::new(),
+        &body,
+    );
+    let outcome = gate_findings_folded(
+        &bus,
+        &command,
+        &body,
+        &[finding("injected")],
+        gate::GateId::FileShape,
+        true,
+        &gate_projects(),
+        &board::NextConfig::default(),
+    );
+
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(Refusal { ref reason, .. })
+            if reason == "gate::finding-report-fold-mismatch"
+    ));
+    assert!(gate_tasks(&gate_board(&bus, epoch, Actor::Operator)).is_empty());
+    clean(&root, bus);
+}
+
 fn issue_gate_findings(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    report: Digest,
+    findings: Vec<FindingRow>,
+) -> Outcome<CommandAnswer> {
+    let body = GateFindings {
+        report,
+        evidence: "{}".to_owned(),
+    };
+    let command = fixture_command(epoch, actor, CommandKind::GateFindings, Vec::new(), &body);
+    let admits = findings.is_empty();
+    gate_findings_folded(
+        bus,
+        &command,
+        &body,
+        &findings,
+        gate::GateId::FileShape,
+        admits,
+        &gate_projects(),
+        &board::NextConfig::default(),
+    )
+}
+
+fn issue_gate_findings_raw(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
@@ -262,10 +360,10 @@ fn gate_tasks(board: &BoardAnswer) -> Vec<BoardTask> {
     tasks
 }
 
-fn finding(name: &str) -> wire::intent::GateFindingWork {
-    wire::intent::GateFindingWork {
+fn finding(name: &str) -> FindingRow {
+    FindingRow {
         identity: digest(name),
-        severity: body::Severity::High,
+        severity: "high".to_owned(),
         locus: format!("gate=file-shape metric=file.lines key=path=\"src/{name}.rs\""),
         title: format!("Gate finding {name}"),
         description: format!("Finding {name} exceeded its bound"),
@@ -273,7 +371,7 @@ fn finding(name: &str) -> wire::intent::GateFindingWork {
     }
 }
 
-fn finding_tag(finding: &wire::intent::GateFindingWork) -> String {
+fn finding_tag(finding: &FindingRow) -> String {
     format!("gate-finding:{}", finding.identity)
 }
 

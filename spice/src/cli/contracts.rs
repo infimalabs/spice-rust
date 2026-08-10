@@ -308,7 +308,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["gate", "findings"],
-        "gate findings [--at REV]",
+        "gate findings INSTRUMENT [--at REV]",
         OperatorOrLane,
         Command,
         [GateFindingsFiled, TaskAdded, TaskDeferred],
@@ -521,7 +521,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "capture"],
-        "task capture [HANDLE] [--title TITLE] [--project PROJECT] [--steal]",
+        "task capture [HANDLE] [--title TITLE] [--project PROJECT] [--origin ORIGIN] [--steal]",
         OperatorOrLane,
         Command,
         [ClaimWon],
@@ -595,7 +595,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "oops"],
-        "task oops TEXT",
+        "task oops TEXT [--origin ORIGIN]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskNoted],

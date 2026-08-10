@@ -1,10 +1,8 @@
 //! Replayable claim-to-terminal task effort.
 //!
-//! Facts are consumed once, in journal order. Task lifecycle facts construct
-//! phase attempts; transcript batches prove the byte ranges inside their
-//! recorded source boundaries; lane session and lineage facts attribute those
-//! ranges. Anything the evidence cannot prove stays visible as an unavailable
-//! row and never contributes to an aggregate.
+//! Facts are consumed once in journal order: lifecycle facts form phase attempts; transcript
+//! batches prove source-bound byte ranges; lane session and lineage facts attribute them.
+//! Unproven effort remains visible as unavailable and never enters an aggregate.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -453,11 +451,9 @@ fn finish(
             ));
         }
     } else {
-        // The cut list is what reads each boundary, and there is none to build
-        // without a closing fact, so the opening bound is recorded here. This
-        // is the only path that reads it directly: once a cut list exists the
-        // opening is its first cut and recording it here as well would leave
-        // one bound checked twice, where severing either check still withholds.
+        // No closing fact means no cut list, so record the opening bound here. Once cuts exist,
+        // the first cut owns it; recording it twice would let either duplicate check be severed
+        // while the other still withholds.
         record_incomplete_boundary(&open.opening_boundary, open.opening, &mut reasons);
         push_reason(
             &mut reasons,

@@ -1,6 +1,11 @@
 //! Task, claim, gate-finding, and effort command contracts.
 
-use super::*;
+use serde::{Deserialize, Serialize};
+
+use crate::body::{SourceBoundary, TranscriptPosition};
+use crate::envelope::{Actor, Origin, Seq};
+use crate::ident::{CanonicalUuid, Digest, Instant};
+use crate::witness::{Name, Phase, TaskHandle, TaskStamp};
 
 /// Add one task as direct intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +30,7 @@ pub struct TaskAdd {
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
-    /// Caller-authored creation provenance, or the new task itself when absent.
+    /// Caller-authored creation provenance, or server-resolved causal authority.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -55,34 +60,26 @@ pub struct TaskOopsAdd {
     pub title: String,
     /// Durable detail attached as the first note.
     pub description: String,
+    /// Explicit causal authority when no active claim owns the filing.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub origin: Option<Origin>,
 }
 
-/// File the exact findings projected by one registered gate run.
+/// File the exact findings folded from one registered gate run.
+///
+/// No caller-authored finding rows cross this boundary; the resident decodes
+/// `evidence` and folds every row from that report itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GateFindings {
-    /// Digest of the complete typed battery report that produced these rows.
+    /// Digest of the canonical focused report bytes.
     pub report: Digest,
-    /// Findings projected from that report, in gate order.
-    pub findings: Vec<GateFindingWork>,
-}
-
-/// One gate finding ready to become deferred board work.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GateFindingWork {
-    /// Stable gate-side finding identity.
-    pub identity: Digest,
-    /// Finding severity.
-    pub severity: Severity,
-    /// Evidence locus the finding cites.
-    pub locus: String,
-    /// Board task title.
-    pub title: String,
-    /// Board task description.
-    pub description: String,
-    /// Criteria that decide whether the filed task is done.
-    pub acceptance: Vec<String>,
+    /// Canonical focused report JSON admitted by Gate before folding.
+    pub evidence: String,
 }
 
 /// Replace an unsettled task statement.
@@ -565,4 +562,45 @@ pub struct ClaimWarning {
     pub lane: CanonicalUuid,
     /// Exact normalized acceptance terms shared by both tasks.
     pub surface: Vec<String>,
+}
+
+/// Run the eligibility query and atomically win its claim.
+///
+/// No handle appears: naming one would make this a request for a particular
+/// task rather than a query, and the query and the win share one transaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimWin {
+    /// Named eligibility rule the query runs.
+    pub rule: Name,
+}
+
+/// Pass possession to a successor with ancestor lineage preserved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimCarry {
+    /// Task whose possession moves.
+    pub task: TaskHandle,
+    /// Actor receiving possession.
+    pub successor: Actor,
+}
+
+/// Extend the authenticated actor's active claim within its durable maximum.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimRenew {
+    /// Task whose possession is refreshed.
+    pub task: TaskHandle,
+    /// Requested positive lease duration in whole seconds.
+    pub lease_seconds: u64,
+}
+
+/// Commit the exact normalized preview at its witnessed board barrier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocApply {
+    /// Digest of the normalized preview being committed.
+    pub preview: Digest,
+    /// Canonical task-document bytes whose digest was previewed.
+    pub document: String,
 }

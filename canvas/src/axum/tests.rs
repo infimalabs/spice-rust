@@ -823,12 +823,15 @@ fn every_source_ready() -> (
 /// decay into a test that passes because nothing was ever ready.
 #[tokio::test(flavor = "current_thread")]
 async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
-    use super::socket::{CommandCompletion, Event, Lead, PendingCommands, next_event};
+    use super::socket::{
+        CommandCompletion, Event, Lead, PendingCommands, SessionSignals, next_event,
+    };
 
     let (bus, _publisher, mut broadcasts, mut messages) = every_source_ready();
     let (_closed, mut closed) = tokio::sync::watch::channel(false);
     let mut inbound = ReadyInbound;
     let mut lead = Lead::Journal;
+    let retired = CancellationToken::new();
     let mut commands = PendingCommands::new();
     for _ in 0..8 {
         commands.push(Box::pin(async { CommandCompletion::Closed }));
@@ -838,7 +841,7 @@ async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
         let event = next_event(
             &mut lead,
             &mut inbound,
-            &mut closed,
+            SessionSignals::new(&mut closed, &retired),
             &mut broadcasts,
             &mut messages,
             &mut commands,
@@ -847,6 +850,7 @@ async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
         .await;
         let served = match event {
             Event::Closed(_) => "closed",
+            Event::Retired => "retired",
             Event::Journal(notice) => {
                 notice.expect("the journal source stayed ready");
                 "journal"
@@ -870,20 +874,25 @@ async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
     bus.shutdown().expect("bus shuts down");
 }
 
-/// Close outranks every work source, so fairness is not bought with a late exit.
+/// Global close outranks retirement and every work source.
 ///
 /// Fairness is bought by rotating the work sources, and the risk of that is
 /// trading a starvation bug for a close-ordering one. Shutdown is re-signalled
 /// before each step because a watch marks its value seen once observed, so each
-/// step is a fresh race between a ready close and three ready work sources.
+/// step is a fresh race between a ready close, capability retirement, and four
+/// ready work sources.
 #[tokio::test(flavor = "current_thread")]
 async fn close_outranks_every_ready_work_source_on_every_lead() {
-    use super::socket::{CommandCompletion, Event, Lead, PendingCommands, next_event};
+    use super::socket::{
+        CommandCompletion, Event, Lead, PendingCommands, SessionSignals, next_event,
+    };
 
     let (bus, _publisher, mut broadcasts, mut messages) = every_source_ready();
     let (shutdown, mut closed) = tokio::sync::watch::channel(false);
     let mut inbound = ReadyInbound;
     let mut lead = Lead::Journal;
+    let retired = CancellationToken::new();
+    retired.cancel();
     let mut commands = PendingCommands::new();
     for _ in 0..8 {
         commands.push(Box::pin(async { CommandCompletion::Closed }));
@@ -898,7 +907,7 @@ async fn close_outranks_every_ready_work_source_on_every_lead() {
                 next_event(
                     &mut lead,
                     &mut inbound,
-                    &mut closed,
+                    SessionSignals::new(&mut closed, &retired),
                     &mut broadcasts,
                     &mut messages,
                     &mut commands,
@@ -907,7 +916,7 @@ async fn close_outranks_every_ready_work_source_on_every_lead() {
                 .await,
                 Event::Closed(Ok(()))
             ),
-            "close must lead this rotation step even with every work source ready"
+            "global close must lead even with retirement and every work source ready"
         );
     }
 
@@ -952,7 +961,6 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
     let _ = stream_frame(&mut socket).await;
 
     assert!(capabilities.remove(operator(), &wire::Actor::Operator));
-    commit_stream(&bus, "replacement boundary", false);
     let frame = stream_frame(&mut socket).await;
     assert!(matches!(
         frame,
