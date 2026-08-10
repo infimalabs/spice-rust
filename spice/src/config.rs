@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use wire::ConfigSource;
 
 mod load;
+mod mounts;
 mod pre_commit;
 mod resolve;
 mod task_migration;
@@ -19,6 +20,7 @@ pub use load::{
     AcquisitionIssue, AcquisitionKind, CaptureGeneration, LoadError, Loaded, Locations,
     capture_repository, load, load_repository, locations,
 };
+pub use mounts::CommandMounts;
 pub use pre_commit::{PreCommitScopes, PreCommitStep, predecessor_bridge};
 pub use resolve::{
     ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,
@@ -36,6 +38,7 @@ pub use task_migration::{
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Root {
+    commands: CommandMounts,
     tasks: TaskMetadata,
     judge: JudgeConfig,
     policy: WorkspacePolicy,
@@ -54,6 +57,12 @@ pub struct Root {
 }
 
 impl Root {
+    /// Repository-owned commands mounted beneath the generated CLI namespace.
+    #[must_use]
+    pub const fn commands(&self) -> &CommandMounts {
+        &self.commands
+    }
+
     /// Shared task scheduler declarations.
     #[must_use]
     pub const fn tasks(&self) -> &TaskMetadata {
@@ -770,6 +779,13 @@ macro_rules! registry {
 }
 
 registry! {
+    named "commands.<name>" {
+        kind: StringList,
+        builtin: None,
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "tasks.stems" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),
