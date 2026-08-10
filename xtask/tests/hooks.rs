@@ -88,6 +88,7 @@ fn activation_refuses_predecessor_hooks_before_any_publication_or_config_change(
 
     let repository_config = image(&scratch.join(".git/config"));
     let worktree_config = image(&scratch.join(".git/worktrees/predecessor/config.worktree"));
+    let installed_hooks = ACTIVE_HOOKS.map(|hook| image(&common_hooks(&scratch).join(hook)));
     let published = published_entry_point(scratch.path());
     let published_before = image(&published);
     let replacement = scratch.executable("replacement-xtask", b"#!/bin/sh\nexit 0\n");
@@ -114,6 +115,10 @@ fn activation_refuses_predecessor_hooks_before_any_publication_or_config_change(
         worktree_config
     );
     assert_eq!(image(&published), published_before);
+    assert_eq!(
+        ACTIVE_HOOKS.map(|hook| image(&common_hooks(&scratch).join(hook))),
+        installed_hooks
+    );
     assert_eq!(configured_hooks(&scratch), ".githooks");
     assert_eq!(configured_hooks_at(&predecessor), ".spice/hooks");
     assert_eq!(
