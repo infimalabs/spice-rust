@@ -55,9 +55,9 @@ pub enum SpiceVariable {
     /// Pin document sealed into the native proof runner as it is built.
     #[serde(rename = "SPICE_NATIVE_PINS")] // env-policy: allow
     NativePins,
-    /// Lane identity proving shell interception activated.
-    #[serde(rename = "SPICE_PROOF")] // env-policy: allow
-    Proof,
+    /// User shell restored behind the structural command wrapper.
+    #[serde(rename = "SPICE_NATIVE_SHELL")] // env-policy: allow
+    NativeShell,
 }
 
 impl SpiceVariable {
@@ -78,7 +78,7 @@ impl SpiceVariable {
         Self::MutationAttempt,
         Self::MutationSeed,
         Self::NativePins,
-        Self::Proof,
+        Self::NativeShell,
     ];
 
     /// Exact process-environment spelling.
@@ -110,7 +110,7 @@ impl SpiceVariable {
             Self::MutationAttempt => "SPICE_MUTATION_ATTEMPT", // env-policy: allow
             Self::MutationSeed => "SPICE_MUTATION_SEED", // env-policy: allow
             Self::NativePins => "SPICE_NATIVE_PINS", // env-policy: allow
-            Self::Proof => "SPICE_PROOF", // env-policy: allow
+            Self::NativeShell => "SPICE_NATIVE_SHELL", // env-policy: allow
         }
     }
 }

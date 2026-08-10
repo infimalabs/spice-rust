@@ -39,20 +39,12 @@ pub(crate) fn findings(matches: &clap::ArgMatches, contract: &Contract) -> Outco
         .into_iter()
         .find(|candidate| candidate.as_str() == instrument)
     else {
-        return Outcome::Refusal(Refusal {
-            reason: "gate::instrument-unregistered".to_owned(),
-            witness: None,
-            expected: Some("one exact registered gate instrument".to_owned()),
-            observed: Some(instrument.clone()),
-            remedy: format!(
-                "select one of: {}",
-                GateId::BATTERY
-                    .into_iter()
-                    .map(GateId::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ")
+        return Outcome::Refusal(Refusal::invocation(
+            "gate::instrument-unregistered",
+            format!(
+                "spice gate findings INSTRUMENT requires one registered instrument; `{instrument}` is not registered"
             ),
-        });
+        ));
     };
     let selector = matches
         .get_one::<String>("at")
@@ -90,13 +82,11 @@ fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport>
         Err(error) => return Failure::run("gate::run-refused", error).outcome(),
     };
     if report.standing() == Standing::Refused {
-        return Outcome::Refusal(Refusal {
-            reason: "gate::regressed".to_owned(),
-            witness: Some(report.verdict().digest().to_string()),
-            expected: Some("every current gate finding to hold or shrink".to_owned()),
-            observed: Some(report.render()),
-            remedy: "remove the regression; never lower baseline.toml to admit it".to_owned(),
-        });
+        return Outcome::Refusal(Refusal::evidence(
+            "gate::regressed",
+            report.render(),
+            "remove the regression; never lower baseline.toml to admit it",
+        ));
     }
     direct(report)
 }
@@ -105,17 +95,33 @@ fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport>
 pub(crate) fn pre_commit() -> Outcome<BatteryReport> {
     match spice::gate::run(Selector::staged()) {
         Ok(report) if report.admits() => direct(report),
-        Ok(report) => Outcome::Refusal(Refusal {
-            reason: "gate::battery-regressed".to_owned(),
-            witness: Some(report.gate_set().to_string()),
-            expected: Some("every canonical Rust battery result to admit publication".to_owned()),
-            observed: Some(report.refusal_fold().to_string()),
-            remedy: "repair the typed failing results; never launch a predecessor gate. A \
-                     merge is recorded by plain git commit like any other commit: the gate \
-                     measures each file against the parent that carries it, so what refuses \
-                     here is what this merge itself wrote"
-                .to_owned(),
-        }),
+        Ok(report) => {
+            let bytes = match report.encode() {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return Outcome::Fault(Fault {
+                        class: FaultClass::Protocol,
+                        reason: "gate::battery-report-unencodable".to_owned(),
+                        detail: error.to_string(),
+                    });
+                }
+            };
+            let evidence = match String::from_utf8(bytes) {
+                Ok(evidence) => evidence,
+                Err(error) => {
+                    return Outcome::Fault(Fault {
+                        class: FaultClass::Protocol,
+                        reason: "gate::battery-report-non-utf8".to_owned(),
+                        detail: error.to_string(),
+                    });
+                }
+            };
+            Outcome::Refusal(Refusal::evidence(
+                "gate::battery-regressed",
+                evidence,
+                "repair the typed failing results; never launch a predecessor gate. A merge is recorded by plain git commit like any other commit: the gate measures each file against the parent that carries it, so what refuses here is what this merge itself wrote",
+            ))
+        }
         Err(error) => battery_failure(error),
     }
 }
@@ -160,16 +166,10 @@ fn kill_report(report: KillReport) -> Outcome<KillReport> {
         | ReportMutationMovement::Shrank { .. }
         | ReportMutationMovement::Unbaselined { .. } => None,
     };
-    let Some((reason, expected, remedy)) = refusal else {
+    let Some((reason, _expected, summary)) = refusal else {
         return direct(report);
     };
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: None,
-        expected: Some(expected.to_owned()),
-        observed: Some(report.render()),
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::evidence(reason, report.render(), summary))
 }
 
 /// Freshly adjudicate the captured index and return its complete receipt.
@@ -188,26 +188,29 @@ fn battery_failure<B>(error: spice::gate::RunError) -> Outcome<B> {
             detail: error.detail().to_owned(),
         });
     }
-    Outcome::Refusal(Refusal {
-        reason: error.reason().to_owned(),
-        witness: None,
-        expected: Some("one complete canonical Rust battery capture".to_owned()),
-        observed: Some(error.detail().to_owned()),
-        remedy: "repair the named capture input; the Rust battery is the sole execution path"
-            .to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            error.reason().to_owned(),
+            None,
+            Some("one complete canonical Rust battery capture".to_owned()),
+            Some(error.detail().to_owned()),
+        )
+        .with_detail("repair the named capture input; the Rust battery is the sole execution path"),
+    ))
 }
 
 fn focused_failure<B>(error: spice::gate::RunError, gate_id: GateId) -> Outcome<B> {
-    Outcome::Refusal(Refusal {
-        reason: "gate::instrument-cannot-run".to_owned(),
-        witness: None,
-        expected: Some(format!(
-            "registered gate instrument {gate_id} to complete one focused run"
-        )),
-        observed: Some(format!("{}: {}", error.reason(), error.detail())),
-        remedy: "repair the named capture input, then rerun this registered instrument".to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            "gate::instrument-cannot-run".to_owned(),
+            None,
+            Some(format!(
+                "registered gate instrument {gate_id} to complete one focused run"
+            )),
+            Some(format!("{}: {}", error.reason(), error.detail())),
+        )
+        .with_detail("repair the named capture input, then rerun this registered instrument"),
+    ))
 }
 
 fn direct<B>(body: B) -> Outcome<B> {
@@ -277,13 +280,13 @@ impl SelectedContract {
                 reason: "gate::selection-refused",
                 expected: "one stable captured index or one immutable commit".to_owned(),
                 observed: error.to_string(),
-                remedy: "resolve the named Git source before running the gate".to_owned(),
+                detail: "resolve the named Git source before running the gate".to_owned(),
             })?;
         let contract = gate::Contract::load(tree.root()).map_err(|error| Failure::Refusal {
             reason: "gate::contract-refused",
             expected: "one complete current tracked gate contract".to_owned(),
             observed: error.to_string(),
-            remedy: "repair the selected spice.toml, baseline.toml, or compiled tool".to_owned(),
+            detail: "repair the selected spice.toml, baseline.toml, or compiled tool".to_owned(),
         })?;
         Ok(Self { tree, contract })
     }
@@ -298,7 +301,7 @@ enum Failure {
         reason: &'static str,
         expected: String,
         observed: String,
-        remedy: String,
+        detail: String,
     },
     Fault {
         reason: &'static str,
@@ -312,7 +315,7 @@ impl Failure {
             reason,
             expected: "one complete bounded current gate result".to_owned(),
             observed: error.to_string(),
-            remedy: "restore the declared inputs and tools, then run the gate again".to_owned(),
+            detail: "restore the declared inputs and tools, then run the gate again".to_owned(),
         }
     }
 
@@ -322,14 +325,16 @@ impl Failure {
                 reason,
                 expected,
                 observed,
-                remedy,
-            } => Outcome::Refusal(Refusal {
-                reason: reason.to_owned(),
-                witness: None,
-                expected: Some(expected),
-                observed: Some(observed),
-                remedy,
-            }),
+                detail,
+            } => Outcome::Refusal(Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    reason.to_owned(),
+                    None,
+                    Some(expected),
+                    Some(observed),
+                )
+                .with_detail(detail),
+            )),
             Self::Fault { reason, detail } => Outcome::Fault(Fault {
                 class: FaultClass::Environment,
                 reason: reason.to_owned(),

@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use listen::{EventKind, Mode, Observation, StreamOutcome};
 use rusqlite::{Connection, params};
@@ -174,8 +174,13 @@ fn malformed_locus_is_a_typed_refusal_without_selector_fallthrough() {
     let Outcome::Refusal(refusal) = decoded else {
         panic!("malformed selector must refuse: {decoded:?}");
     };
-    assert_eq!(refusal.reason, "retro::selector");
-    assert_eq!(refusal.observed.as_deref(), Some("one:two:three"));
+    assert_eq!(refusal.reason(), "retro::selector");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        Some("one:two:three")
+    );
 }
 
 #[test]
@@ -374,17 +379,24 @@ fn version_refuses_unfinalized_and_incompatible_schema_without_mutation() {
         let Outcome::Refusal(refusal) = decoded else {
             panic!("{name} schema refuses: {decoded:?}");
         };
-        assert_eq!(refusal.reason, "journal::schema-refused", "{name}");
+        assert_eq!(refusal.reason(), "journal::schema-refused", "{name}");
         assert!(
             refusal
-                .observed
-                .as_deref()
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
                 .is_some_and(|observed| observed.contains(expected)),
             "{name} did not preserve the schema error: {refusal:?}",
         );
         assert_eq!(
             utf8(text.err),
-            format!("spice: {}; {}\n", refusal.reason, refusal.remedy),
+            format!(
+                "spice: {}; {}\n",
+                refusal.reason(),
+                refusal
+                    .diagnostic()
+                    .and_then(wire::RefusalDiagnostic::detail)
+                    .expect("schema refusal carries detail")
+            ),
             "{name}",
         );
         assert_eq!(directory_state(repository.path()), before, "{name}");
@@ -533,6 +545,315 @@ fn run_preserves_the_childs_argument_vector() {
     assert_eq!(spoken.code, Some(0));
     assert_eq!(spoken.out, b"<two words>\n<--json>\n<>\n");
     assert!(spoken.err.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the integration fixture acquires ambient PATH at its process boundary"
+)]
+fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new("structural-shell-boundary");
+    let hooks = steer::hook::Hooks::new(scratch.path().join("hooks"));
+    hooks.install().expect("structural stages install");
+    let inbox = scratch.path().join("inbox");
+    fs::write(&inbox, b"<steering>\none wrapper\n</steering>\n")
+        .expect("steering rendering writes");
+
+    let arguments = scratch.path().join("native-arguments");
+    let native = scratch.path().join("native-shell");
+    fs::write(
+        &native,
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\0' \"$@\" > \"$BOUNDARY_ARGUMENTS\"\n",
+            "exec /bin/sh \"$@\"\n",
+        ),
+    )
+    .expect("native-shell fixture writes");
+    fs::set_permissions(&native, fs::Permissions::from_mode(0o700))
+        .expect("native-shell fixture is executable");
+
+    let sourced = scratch.path().join("sourced.sh");
+    fs::write(
+        &sourced,
+        "printf 'sourced=<%s>:<%s>\\n' \"$(boundary_function)\" \"$-\"\n",
+    )
+    .expect("sourced fixture writes");
+    let executed = scratch.path().join("executed.sh");
+    fs::write(
+        &executed,
+        concat!(
+            "#!/bin/sh\n",
+            "printf 'executed=<%s>:<%s>:<%s>\\n' \"$SHELL\" ",
+            "\"${SPICE_HOOKS-unset}\" \"${SPICE_NATIVE_SHELL-unset}\"\n",
+            "printf 'hidden descendant stderr\\n' >&2\n",
+        ),
+    )
+    .expect("executed fixture writes");
+    fs::set_permissions(&executed, fs::Permissions::from_mode(0o700))
+        .expect("executed fixture is executable");
+
+    let complete = format!(
+        "boundary_function() {{ printf shared; }}; set -u; . {}; {} 2>/dev/null",
+        sourced.display(),
+        executed.display()
+    );
+    let binary = Path::new(env!("CARGO_BIN_EXE_spice"));
+    let path = [binary
+        .parent()
+        .expect("spice binary has a directory")
+        .to_path_buf()];
+    let output = Command::new(hooks.stage(steer::hook::STAGES[0]))
+        .args(["-c", &complete])
+        .env(
+            "PATH",
+            std::env::join_paths(path).expect("fixture PATH joins"),
+        )
+        .env(steer::hook::HOOKS, hooks.root())
+        .env(steer::hook::NATIVE_SHELL, &native)
+        .env(steer::hook::INBOX, &inbox)
+        .env("BOUNDARY_ARGUMENTS", &arguments)
+        .output()
+        .expect("outer structural shell runs");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("command output is UTF-8");
+    assert!(stdout.contains("sourced=<shared>:<"));
+    assert!(
+        stdout
+            .lines()
+            .find(|line| line.starts_with("sourced="))
+            .and_then(|line| line.rsplit_once(":<"))
+            .is_some_and(|(_, options)| options.contains('u')),
+        "sourced script did not share nounset shell option: {stdout:?}"
+    );
+    assert!(stdout.contains(&format!("executed=<{}>:<unset>:<unset>", native.display())));
+    assert_eq!(
+        output.stderr, b"<steering>\none wrapper\n</steering>\n",
+        "descendant stderr redirection captured or duplicated wrapper steering"
+    );
+    assert_eq!(
+        fs::read(&arguments).expect("native shell captured its arguments"),
+        [b"-c\0".as_slice(), complete.as_bytes(), b"\0"].concat(),
+        "the complete command string did not cross the wrapper exactly once"
+    );
+    scratch.remove();
+}
+
+#[test]
+#[cfg(unix)]
+fn steering_follows_the_wrappers_own_stderr_redirection() {
+    let scratch = Scratch::new("run-stderr");
+    let inbox = scratch.path().join("inbox");
+    let redirected = scratch.path().join("wrapper-stderr");
+    fs::write(&inbox, b"wrapper steering\n").expect("inbox writes");
+    let stderr = fs::File::create(&redirected).expect("redirect target creates");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args([
+            "run",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf child-output; printf hidden-child-error >&2",
+        ])
+        .env(steer::hook::INBOX, &inbox)
+        .stderr(Stdio::from(stderr))
+        .output()
+        .expect("wrapper runs with redirected stderr");
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"child-output");
+    assert!(output.stderr.is_empty(), "stderr was redirected at spawn");
+    assert_eq!(
+        fs::read(&redirected).expect("redirected stderr reads"),
+        b"wrapper steering\nhidden-child-error"
+    );
+    scratch.remove();
+}
+
+#[test]
+#[cfg(unix)]
+fn run_waits_through_exec_and_closes_capture_while_an_unredirected_descendant_lives() {
+    let scratch = Scratch::new("run-child-identity");
+    let before = scratch.path().join("before-pid");
+    let after = scratch.path().join("after-pid");
+    let replacement = format!(
+        "printf '%s' $$ > {}; (exit 0) & wait; exec /bin/sh -c 'printf \"%s\" $$ > {}; exit 9'",
+        before.display(),
+        after.display()
+    );
+    let replaced = invoke(&["run", "--", "/bin/sh", "-c", &replacement]);
+    assert_eq!(replaced.code, Some(9));
+    assert_eq!(fs::read(&before).unwrap(), fs::read(&after).unwrap());
+
+    let descendant = scratch.path().join("descendant-pid");
+    let backgrounded = format!(
+        "sleep 30 & printf '%s' $! > {}; printf child-output; printf child-error >&2",
+        descendant.display()
+    );
+    let started = Instant::now();
+    let returned = invoke(&["run", "--", "/bin/sh", "-c", &backgrounded]);
+    assert_eq!(returned.code, Some(0));
+    assert_eq!(returned.out, b"child-output");
+    assert_eq!(returned.err, b"child-error");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "wrapper waited for a descendant after its immediate child exited"
+    );
+    let pid = fs::read_to_string(&descendant).expect("descendant pid was published");
+    let pid = pid.trim();
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-0", pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-TERM", pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    scratch.remove();
+}
+
+const RELAY_PAYLOAD_BYTES: usize = 512 * 1024;
+
+#[test]
+#[cfg(unix)]
+fn run_drains_complete_foreground_output_under_backpressure() {
+    let scratch = Scratch::new("run-relay-backpressure");
+    let descendant = scratch.path().join("descendant-pid");
+    let helper = std::env::current_exe().expect("locate CLI test executable");
+    let mut wrapper = Command::new(env!("CARGO_BIN_EXE_spice"));
+    wrapper
+        .args(["run", "--"])
+        .arg(helper)
+        .args([
+            "--exact",
+            "relay_backpressure_child_fixture",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env_remove(steer::hook::INBOX)
+        .current_dir(scratch.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let started = Instant::now();
+    let mut wrapper = wrapper.spawn().expect("relayed wrapper launches");
+    let stdout = slow_capture(
+        wrapper
+            .stdout
+            .take()
+            .expect("relayed wrapper stdout is captured"),
+    );
+    let stderr = slow_capture(
+        wrapper
+            .stderr
+            .take()
+            .expect("relayed wrapper stderr is captured"),
+    );
+    let status = wrapper.wait().expect("relayed wrapper exits");
+    let elapsed = started.elapsed();
+    let stdout = stdout.join().expect("slow stdout reader joins");
+    let stderr = stderr.join().expect("slow stderr reader joins");
+
+    assert!(status.success(), "relayed wrapper failed with {status}");
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "wrapper waited {elapsed:?} for its ten-second descendant"
+    );
+    assert_eq!(
+        stdout.iter().filter(|byte| **byte == 0).count(),
+        RELAY_PAYLOAD_BYTES,
+        "foreground stdout was truncated behind the throttled capture"
+    );
+    assert_eq!(
+        stderr.iter().filter(|byte| **byte == u8::MAX).count(),
+        RELAY_PAYLOAD_BYTES,
+        "foreground stderr was truncated behind the throttled capture"
+    );
+
+    let pid = fs::read_to_string(&descendant).expect("descendant pid was published");
+    let pid = pid.trim();
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-0", pid])
+            .status()
+            .expect("descendant liveness probe runs")
+            .success(),
+        "descendant ended before the wrapper returned"
+    );
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-TERM", pid])
+            .status()
+            .expect("descendant termination runs")
+            .success(),
+        "descendant could not be terminated"
+    );
+    scratch.remove();
+}
+
+#[cfg(unix)]
+fn slow_capture(mut stream: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut captured = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let read = stream.read(&mut buffer).expect("capture remains readable");
+            if read == 0 {
+                return captured;
+            }
+            captured.extend_from_slice(&buffer[..read]);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    })
+}
+
+#[test]
+#[ignore = "launched as the direct child of the relay backpressure test"]
+#[cfg(unix)]
+fn relay_backpressure_child_fixture() {
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    socket2::SockRef::from(&stdout)
+        .set_send_buffer_size(1024 * 1024)
+        .expect("stdout socket buffer grows");
+    socket2::SockRef::from(&stderr)
+        .set_send_buffer_size(1024 * 1024)
+        .expect("stderr socket buffer grows");
+    let descendant = Command::new("/bin/sleep")
+        .arg("10")
+        .spawn()
+        .expect("background descendant launches");
+    let pid_path = std::env::current_dir()
+        .expect("helper working directory resolves")
+        .join("descendant-pid");
+    fs::write(pid_path, descendant.id().to_string()).expect("descendant pid publishes");
+    drop(descendant);
+
+    let stdout = std::thread::spawn(|| {
+        std::io::stdout()
+            .lock()
+            .write_all(&vec![0; RELAY_PAYLOAD_BYTES])
+            .expect("foreground stdout writes")
+    });
+    let stderr = std::thread::spawn(|| {
+        std::io::stderr()
+            .lock()
+            .write_all(&vec![u8::MAX; RELAY_PAYLOAD_BYTES])
+            .expect("foreground stderr writes")
+    });
+    stdout.join().expect("foreground stdout writer joins");
+    stderr.join().expect("foreground stderr writer joins");
 }
 
 #[test]

@@ -35,6 +35,96 @@ pub(super) use transitions::{cancel, dispose, recover, resend, send};
 use transitions::{evidence_refusal, miss_recorded};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DeadLetter {
+    pub(super) directive: CanonicalUuid,
+    pub(super) key: String,
+    pub(super) requeue: String,
+}
+
+/// Park every pending directive on a lane after one terminal start failure.
+pub(super) fn dead_letter_pending(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    cursor: Seq,
+    failure: &Outcome<()>,
+) -> CommandResult<Vec<DeadLetter>> {
+    let snapshot = bus.task_snapshot().map_err(|error| {
+        store_fault("steer::dead-letter-snapshot-unreadable", &error.to_string())
+    })?;
+    if snapshot.cursor() != Some(cursor) {
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "steer::dead-letter-snapshot-moved".to_owned(),
+                Some("task-snapshot-cursor".to_owned()),
+                Some(cursor.to_string()),
+                snapshot.cursor().map(|observed| observed.to_string()),
+            )
+            .with_detail("reconcile pending inbox standing before parking it"),
+        )));
+    }
+    let ledger = steer::Ledger::from_snapshot(snapshot.facts())
+        .map_err(|error| store_fault("steer::dead-letter-replay-invalid", &error.to_string()))?;
+    let pending = ledger.pending(lane);
+    if pending.is_empty() {
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "steer::dead-letter-standing-moved".to_owned(),
+                Some("pending-inbox".to_owned()),
+                Some(lane.to_string()),
+                Some("empty".to_owned()),
+            )
+            .with_detail("reconcile the current pending-inbox arm"),
+        )));
+    }
+    let reason = lifecycle_failure_reason(failure);
+    let mut parked = Vec::with_capacity(pending.len());
+    let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    proposal.guard(JournalGuard::new(move |read| {
+        if read.cursor()? == Some(cursor) {
+            Ok(())
+        } else {
+            Err(GuardError::refused("steer::dead-letter-snapshot-moved"))
+        }
+    }));
+    for directive in pending {
+        let requeue = format!("spice steer recover {}", directive.directive());
+        let (_, cause) = directive_cause(snapshot.facts(), directive.directive());
+        proposal
+            .fact(
+                wire::steering::SteerDeadLettered {
+                    directive: directive.directive(),
+                    key: directive.key().to_string(),
+                    lane,
+                    reason: reason.clone(),
+                    requeue: requeue.clone(),
+                },
+                FactCause::Existing(cause),
+            )
+            .map_err(|error| store_fault("steer::dead-letter-fact-invalid", &error.to_string()))?;
+        parked.push(DeadLetter {
+            directive: directive.directive(),
+            key: directive.key().to_string(),
+            requeue,
+        });
+    }
+    commit(bus, proposal)?;
+    if let Some(residency) = snapshot.residency() {
+        let _rendering = publish_inbox(bus, paths, residency.body(), lane);
+    }
+    Ok(parked)
+}
+
+fn lifecycle_failure_reason(failure: &Outcome<()>) -> String {
+    match failure {
+        Outcome::Refusal(refusal) => refusal.reason().to_owned(),
+        Outcome::Fault(fault) => fault.reason.clone(),
+        Outcome::Reply(_) => unreachable!("a successful lifecycle start was not dead-lettered"),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SteeringDeadline {
     pub(super) directive: CanonicalUuid,
     pub(super) key: steer::Key,
@@ -523,15 +613,17 @@ fn refusal(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("steering-standing".to_owned()),
-        expected,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("steering-standing".to_owned()),
+            expected,
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {
@@ -741,6 +833,7 @@ fn recovery_guard(
     key: steer::Key,
     lane: CanonicalUuid,
     lapsed_at: Instant,
+    disposition: Disposition,
 ) -> JournalGuard {
     JournalGuard::new(move |read| {
         let snapshot = read
@@ -753,7 +846,7 @@ fn recovery_guard(
                 if current.key() == &key
                     && current.lane() == lane
                     && current.expires() == lapsed_at
-                    && current.disposition() == Disposition::Lapsed =>
+                    && current.disposition() == disposition =>
             {
                 Ok(())
             }

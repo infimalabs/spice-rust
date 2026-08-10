@@ -180,6 +180,21 @@ pub fn build_package(input: PackageInput<'_>) -> Result<PackageTree, PackageErro
     Ok(tree)
 }
 
+/// Build and admit only the canonical external package index.
+///
+/// This verifies the same manifest, payload, proof, executable, target-order,
+/// and notes bindings as [`build_package`] without cloning the (potentially
+/// large) executable members into a package tree. Release preview uses this
+/// consequence-free form because it needs the exact package identity, while
+/// the later rebuild/upload operation owns materializing the tree.
+///
+/// # Errors
+///
+/// Returns the same evidence and binding refusals as [`build_package`].
+pub fn build_package_index(input: PackageInput<'_>) -> Result<AdmittedPackage, PackageError> {
+    assemble_package_index(&input)
+}
+
 /// Re-admit a package tree from only its regular-file closure.
 ///
 /// # Errors
@@ -216,56 +231,7 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
 }
 
 fn assemble_package(input: PackageInput<'_>) -> Result<PackageTree, PackageError> {
-    let manifest: ReleaseManifest = canonical(input.manifest, "release manifest")?;
-    let manifest_identity = Digest::compute(Domain::DistReleaseManifest, input.manifest);
-    admit_manifest_shape(&manifest)?;
-    if input.targets.len() != TARGETS.len() {
-        return Err(PackageError::TargetCount(input.targets.len()));
-    }
-    let mut package_targets = Vec::with_capacity(TARGETS.len());
-    for (index, ((target, expected), sealed)) in input
-        .targets
-        .iter()
-        .zip(TARGETS)
-        .zip(&manifest.targets)
-        .enumerate()
-    {
-        if target.target != expected || sealed.target != expected {
-            return Err(PackageError::TargetOrder {
-                index,
-                expected,
-                input: target.target,
-                manifest: sealed.target,
-            });
-        }
-        let admitted = admit_target(target, sealed, &manifest.source, index)?;
-        package_targets.push(ReleasePackageTarget {
-            target: expected,
-            executable_path: executable_path(expected),
-            executable: admitted.executable,
-            payload: admitted.payload,
-            proof: admitted.proof,
-        });
-    }
-    let document = ReleasePackage {
-        schema: RELEASE_PACKAGE_VERSION,
-        package: PACKAGE_NAME.to_owned(),
-        product_version: input.version.clone(),
-        source: manifest.source.clone(),
-        manifest: manifest_identity,
-        notes: input.notes_identity,
-        notes_content: Digest::compute(Domain::DistReleaseNotesContent, input.notes),
-        targets: package_targets,
-    };
-    let bytes = wire::encode(&document).map_err(|error| PackageError::Encode {
-        label: "release package",
-        detail: error.to_string(),
-    })?;
-    let package = AdmittedPackage {
-        identity: Digest::compute(Domain::DistReleasePackage, &bytes),
-        document,
-        bytes,
-    };
+    let package = assemble_package_index(&input)?;
     let mut members = vec![
         member(
             MANIFEST_PATH,
@@ -310,6 +276,59 @@ fn assemble_package(input: PackageInput<'_>) -> Result<PackageTree, PackageError
     }
     members.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(PackageTree { package, members })
+}
+
+fn assemble_package_index(input: &PackageInput<'_>) -> Result<AdmittedPackage, PackageError> {
+    let manifest: ReleaseManifest = canonical(input.manifest, "release manifest")?;
+    let manifest_identity = Digest::compute(Domain::DistReleaseManifest, input.manifest);
+    admit_manifest_shape(&manifest)?;
+    if input.targets.len() != TARGETS.len() {
+        return Err(PackageError::TargetCount(input.targets.len()));
+    }
+    let mut package_targets = Vec::with_capacity(TARGETS.len());
+    for (index, ((target, expected), sealed)) in input
+        .targets
+        .iter()
+        .zip(TARGETS)
+        .zip(&manifest.targets)
+        .enumerate()
+    {
+        if target.target != expected || sealed.target != expected {
+            return Err(PackageError::TargetOrder {
+                index,
+                expected,
+                input: target.target,
+                manifest: sealed.target,
+            });
+        }
+        let admitted = admit_target(target, sealed, &manifest.source, index)?;
+        package_targets.push(ReleasePackageTarget {
+            target: expected,
+            executable_path: executable_path(expected),
+            executable: admitted.executable,
+            payload: admitted.payload,
+            proof: admitted.proof,
+        });
+    }
+    let document = ReleasePackage {
+        schema: RELEASE_PACKAGE_VERSION,
+        package: PACKAGE_NAME.to_owned(),
+        product_version: input.version.clone(),
+        source: manifest.source.clone(),
+        manifest: manifest_identity,
+        notes: input.notes_identity.clone(),
+        notes_content: Digest::compute(Domain::DistReleaseNotesContent, input.notes),
+        targets: package_targets,
+    };
+    let bytes = wire::encode(&document).map_err(|error| PackageError::Encode {
+        label: "release package",
+        detail: error.to_string(),
+    })?;
+    Ok(AdmittedPackage {
+        identity: Digest::compute(Domain::DistReleasePackage, &bytes),
+        document,
+        bytes,
+    })
 }
 
 #[derive(Debug)]
@@ -626,7 +645,9 @@ mod tests {
     #[test]
     fn canonical_package_tree_round_trips_as_one_closed_identity() {
         let fixture = fixture();
+        let index = build_package_index(fixture.input()).expect("fixture index builds");
         let tree = build_package(fixture.input()).expect("fixture package builds");
+        assert_eq!(index, *tree.package());
         assert_eq!(tree.members().len(), 9);
         assert!(
             tree.members()

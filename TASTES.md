@@ -73,10 +73,12 @@ ships no named tastes. From that point the operator owns the set outright.
 Adding, editing, renaming, or removing a taste requires an operator commit.
 Deletion is the only disablement.
 
-`spice taste add` prepares an admission proposal with the recurring evidence
-that motivated it. It does not activate the taste. Admission requires the
-authoring checks, the paired confirm-and-clear fixtures, and an operator commit
-of the exact entry.
+`spice taste add` and `spice taste drop` prepare curation proposals from the
+evidence that motivated them. A proposal inherits the operator's active task,
+or names its steering or parent cause explicitly with `--origin`; an ungrounded
+filing is refused. A proposal does not change the tracked set. Admission or
+retirement requires the authoring checks, the paired confirm-and-clear
+fixtures, and an operator commit of the exact entry.
 
 Every fire preserves its locus. The curation view is derived from the journal
 at one snapshot: recent reminders per taste and per driver, how each was

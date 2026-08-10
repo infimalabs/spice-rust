@@ -97,6 +97,7 @@ const FINDING: &str = r#"{
 const RESIDENCY: &str = r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
   "state": "seated",
+  "topology_revision": 9,
   "subscriptions": [{
     "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
     "policy": "drive"
@@ -130,6 +131,7 @@ const RESIDENCY: &str = r#"{
 const RESIDENCY_WITH_UNRECORDED_LAUNCH: &str = r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
   "state": "seated",
+  "topology_revision": 0,
   "subscriptions": [{
     "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
     "policy": "drive"
@@ -211,7 +213,16 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
         FINDING,
         &["identity", "locus", "owner", "receipt", "severity", "state"],
     );
-    assert_fields::<ResidencyHead>(RESIDENCY, &["epoch", "lanes", "state", "subscriptions"]);
+    assert_fields::<ResidencyHead>(
+        RESIDENCY,
+        &[
+            "epoch",
+            "lanes",
+            "state",
+            "subscriptions",
+            "topology_revision",
+        ],
+    );
     assert_fields::<CursorHead>(CURSOR, &["seq", "wake"]);
 
     let residency: serde_json::Value =

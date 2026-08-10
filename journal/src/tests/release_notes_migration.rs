@@ -19,9 +19,12 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
         journal
             .migration()
             .map(|migration| (migration.from(), migration.to())),
-        Some((4, 5))
+        Some((4, SCHEMA_VERSION))
     );
-    assert_eq!(version_records(&journal.connection), (5, 5));
+    assert_eq!(
+        version_records(&journal.connection),
+        (SCHEMA_VERSION, SCHEMA_VERSION)
+    );
     let snapshot = journal.fact_snapshot().expect("migrated snapshot opens");
     let published: wire::body::ReleasePublished = snapshot
         .facts()
@@ -60,7 +63,7 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
     );
     drop(reader);
 
-    let reopened = Journal::open(&path).expect("schema-five authority reopens");
+    let reopened = Journal::open(&path).expect("migrated authority reopens");
     assert_eq!(
         reopened.migration(),
         None,

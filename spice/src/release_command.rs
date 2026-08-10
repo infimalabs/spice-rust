@@ -4,9 +4,11 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use clap::ArgMatches;
 use wire::body::{ProofSealed, PublishedTarget, ReleasePublished};
+use wire::manifest::ProductVersion;
 use wire::{
     Digest, Domain, Fault, FaultClass, Outcome, Refusal, ReleaseNotes, ReleasePlan, Reply,
     ReplyPosition, Seq,
@@ -15,14 +17,18 @@ use wire::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AdmittedRelease {
     published: proof::PublishedManifest,
-    key: Digest,
+    key: Option<Digest>,
     notes: Digest,
+    native: Digest,
     targets: Vec<PublishedTarget>,
+    external: Option<dist::ReleasePlan>,
 }
 
 impl AdmittedRelease {
-    pub(crate) const fn key(&self) -> &Digest {
-        &self.key
+    pub(crate) fn key(&self) -> &Digest {
+        self.key
+            .as_ref()
+            .expect("release stage is bound to exactly one external plan")
     }
 
     pub(crate) const fn manifest(&self) -> &Digest {
@@ -37,6 +43,10 @@ impl AdmittedRelease {
         self.targets.iter().map(|target| &target.receipt)
     }
 
+    pub(crate) fn targets(&self) -> &[PublishedTarget] {
+        &self.targets
+    }
+
     pub(crate) fn fact(&self) -> ReleasePublished {
         ReleasePublished {
             manifest: self.published.digest.clone(),
@@ -46,13 +56,69 @@ impl AdmittedRelease {
     }
 
     fn plan(&self) -> ReleasePlan {
+        let external = self
+            .external
+            .as_ref()
+            .expect("operator preview binds the admitted stage to an external plan");
         ReleasePlan {
-            key: self.key.clone(),
+            key: self.key().clone(),
+            repository: external.repository.clone(),
+            action: external.action.as_str().to_owned(),
+            requested_version: external.requested_version.clone(),
+            source_commit: external.source_commit.clone(),
+            release_commit: external.release_commit.clone(),
             manifest: self.published.digest.clone(),
             source: self.published.manifest.source.clone(),
             notes: self.notes.clone(),
+            notes_document: String::from_utf8(external.notes.clone())
+                .expect("curated release notes were admitted from UTF-8"),
+            package: external.package.clone(),
+            package_object: external.package_object.clone(),
+            installed_artifact: external.installed_artifact.clone(),
             targets: self.targets.clone(),
+            operations: external
+                .operations
+                .iter()
+                .map(|operation| operation.as_str().to_owned())
+                .collect(),
+            observations: wire::ReleasePlanObservations {
+                head: external.observations.head.clone(),
+                clean: external.observations.clean,
+                bump_claimed: external.observations.bump_claimed,
+                unrecorded_local_commits: external.observations.unrecorded_local_commits,
+                source_version: external.observations.source_version.clone(),
+                release_version: external.observations.release_version.clone(),
+                credentials_valid: external.observations.credentials_valid,
+                source_ref: external.observations.source_ref.clone(),
+                package_ref: external.observations.package_ref.clone(),
+                tag_ref: external.observations.tag_ref.clone(),
+                announcement_ref: external.observations.announcement_ref.clone(),
+                registry: external.observations.registry.as_ref().map(|evidence| {
+                    wire::ReleaseRegistryEvidence {
+                        version: evidence.version.clone(),
+                        release_commit: evidence.release_commit.clone(),
+                        package: evidence.package.clone(),
+                    }
+                }),
+            },
         }
+    }
+
+    fn bind_external(mut self, plan: dist::ReleasePlan) -> Self {
+        self.key = Some(plan.key.clone());
+        self.external = Some(plan);
+        self
+    }
+
+    pub(crate) fn with_key(mut self, key: Digest) -> Self {
+        self.key = Some(key);
+        self
+    }
+
+    pub(crate) fn external_plan(&self) -> &dist::ReleasePlan {
+        self.external
+            .as_ref()
+            .expect("operator apply carries the previewed external plan")
     }
 }
 
@@ -72,41 +138,51 @@ impl PublicationState {
 }
 
 pub(crate) enum RunResult {
-    Plan(Outcome<ReleasePlan>),
+    Plan(Box<Outcome<ReleasePlan>>),
     Published(Outcome<wire::intent::RecognitionAnswer>),
 }
 
 pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunResult {
     let prepared = match prepare(matches) {
         Ok(prepared) => prepared,
-        Err(outcome) => return RunResult::Plan(*outcome),
+        Err(outcome) => return RunResult::Plan(outcome),
     };
     let Some(apply) = matches.get_one::<String>("apply") else {
-        return RunResult::Plan(Outcome::Reply(Reply {
+        return RunResult::Plan(Box::new(Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
             body: prepared.release.plan(),
-        }));
+        })));
     };
     let applied = match apply.parse::<Digest>() {
         Ok(applied) => applied,
         Err(error) => {
-            return RunResult::Published(Outcome::Refusal(Refusal {
-                reason: "release::apply-digest-refused".to_owned(),
-                witness: Some("publication-plan".to_owned()),
-                expected: Some(prepared.release.key().to_string()),
-                observed: Some(error.to_string()),
-                remedy: "preview the current release and apply its exact key".to_owned(),
-            }));
+            return RunResult::Published(Outcome::Refusal(Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "release::apply-digest-refused".to_owned(),
+                    Some("publication-plan".to_owned()),
+                    Some(prepared.release.key().to_string()),
+                    Some(error.to_string()),
+                ),
+            )));
         }
     };
     if applied != *prepared.release.key() {
-        return RunResult::Published(Outcome::Refusal(Refusal {
-            reason: "release::plan-moved".to_owned(),
-            witness: Some("publication-plan".to_owned()),
-            expected: Some(prepared.release.key().to_string()),
-            observed: Some(applied.to_string()),
-            remedy: "preview the current sealed manifest and apply its new key".to_owned(),
-        }));
+        return RunResult::Published(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::plan-moved".to_owned(),
+                Some("publication-plan".to_owned()),
+                Some(prepared.release.key().to_string()),
+                Some(applied.to_string()),
+            ),
+        )));
+    }
+    if let Err(outcome) = crate::release_execution::execute(
+        &prepared.worktree,
+        &prepared.operation_journal,
+        prepared.release.external_plan(),
+        &applied,
+    ) {
+        return RunResult::Published(outcome);
     }
     let outcome = crate::command_client::execute(
         &prepared.canvas,
@@ -123,6 +199,8 @@ struct Prepared {
     release: AdmittedRelease,
     state: PublicationState,
     canvas: PathBuf,
+    worktree: PathBuf,
+    operation_journal: PathBuf,
 }
 
 fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
@@ -143,6 +221,7 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
         matches
             .get_one::<String>("release-commit")
             .map(String::as_str),
+        matches.get_one::<String>("version").map(String::as_str),
     )
     .map_err(|error| {
         Box::new(notes_refusal::<ReleasePlan>(
@@ -165,6 +244,17 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
             &error,
         ))
     })?;
+    let external = resolve_external_preconditions(
+        repository.worktree_root(),
+        matches,
+        &canonical.release_commit,
+    )
+    .map_err(|error| {
+        Box::new(refusal::<ReleasePlan>(
+            "release::external-plan-refused",
+            &error,
+        ))
+    })?;
     let app = app_digest(repository.worktree_root())
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::app-stage-refused", &error)))?;
     let release = admit_stage(
@@ -173,6 +263,19 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
         &notes.identity,
     )
     .map_err(|error| Box::new(refusal::<ReleasePlan>("release::manifest-refused", &error)))?;
+    let release = bind_external_plan(
+        repository.worktree_root(),
+        &canonical.release_commit,
+        &notes.document,
+        release,
+        external,
+    )
+    .map_err(|error| {
+        Box::new(refusal::<ReleasePlan>(
+            "release::external-plan-refused",
+            &error,
+        ))
+    })?;
     let state_paths = repository
         .admit_state()
         .map_err(|error| Box::new(crate::state_failure(&error).outcome()))?;
@@ -194,6 +297,8 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
         release,
         state,
         canvas: state_paths.canvas().to_path_buf(),
+        worktree: repository.worktree_root().to_path_buf(),
+        operation_journal: state_paths.data().join("release-operations"),
     })
 }
 
@@ -243,19 +348,6 @@ mod tests {
         assert_eq!(fault.class, FaultClass::Protocol);
         assert_eq!(fault.reason, "release::answer-shape");
     }
-
-    #[test]
-    fn the_plan_key_binds_the_notes_identity_as_well_as_the_manifest() {
-        let manifest = b"canonical manifest";
-        let first = Digest::compute(Domain::DistReleaseNotes, b"first notes");
-        let second = Digest::compute(Domain::DistReleaseNotes, b"second notes");
-
-        assert_ne!(plan_key(manifest, &first), plan_key(manifest, &second));
-        assert_ne!(
-            plan_key(manifest, &first),
-            plan_key(b"other manifest", &first)
-        );
-    }
 }
 
 pub(crate) fn app_digest(worktree: &Path) -> Result<Digest, String> {
@@ -278,7 +370,6 @@ pub(crate) fn admit_stage(
     let target = proof::compiled_target().map_err(ReleaseError::UnsupportedHost)?;
     let published =
         proof::admit_manifest(root, app, target, &native).map_err(ReleaseError::Manifest)?;
-    let key = plan_key(&published.bytes, notes);
     let targets = published
         .manifest
         .targets
@@ -291,19 +382,283 @@ pub(crate) fn admit_stage(
         .collect();
     Ok(AdmittedRelease {
         published,
-        key,
+        key: None,
         notes: notes.clone(),
+        native,
         targets,
+        external: None,
     })
 }
 
-fn plan_key(manifest: &[u8], notes: &Digest) -> Digest {
-    let notes = notes.to_string();
-    let mut binding = Vec::with_capacity(8 + manifest.len() + notes.len());
-    binding.extend_from_slice(&(manifest.len() as u64).to_be_bytes());
-    binding.extend_from_slice(manifest);
-    binding.extend_from_slice(notes.as_bytes());
-    Digest::compute(Domain::DistReleasePlan, &binding)
+struct ExternalPreconditions {
+    requested_version: ProductVersion,
+    source_commit: String,
+    action: dist::ReleaseAction,
+    repository: Digest,
+    head: String,
+    clean: bool,
+    bump_claimed: bool,
+    unrecorded_local_commits: u64,
+    source_version: ProductVersion,
+    release_version: ProductVersion,
+    source_ref: Option<String>,
+    package_ref: Option<String>,
+    tag_ref: Option<String>,
+    announcement_ref: Option<String>,
+}
+
+fn resolve_external_preconditions(
+    root: &Path,
+    matches: &ArgMatches,
+    release_commit: &str,
+) -> Result<ExternalPreconditions, String> {
+    let requested = matches
+        .get_one::<String>("version")
+        .map_or(env!("CARGO_PKG_VERSION"), String::as_str);
+    let requested_version = ProductVersion::parse(requested).map_err(|error| error.to_string())?;
+    let source_version =
+        ProductVersion::parse(env!("CARGO_PKG_VERSION")).map_err(|error| error.to_string())?;
+    let release_version_text = fs::read_to_string(root.join("dist/VERSION"))
+        .map_err(|error| format!("cannot read dist/VERSION: {error}"))?;
+    let release_version =
+        ProductVersion::parse(release_version_text.trim()).map_err(|error| error.to_string())?;
+    let head = git_required(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let release_subject = git_required(root, &["show", "-s", "--format=%s", release_commit])?;
+    let bump_claimed = source_version == requested_version
+        || release_subject == format!("release: bump to {requested_version}");
+    let unrecorded_local_commits = git_required(
+        root,
+        &["rev-list", "--count", &format!("{release_commit}..HEAD")],
+    )?
+    .parse::<u64>()
+    .map_err(|error| format!("Git returned an invalid local commit count: {error}"))?;
+    let source_commit = if release_subject.starts_with("release: bump to ") {
+        git_optional(
+            root,
+            &["rev-parse", "--verify", &format!("{release_commit}^")],
+        )?
+        .unwrap_or_else(|| release_commit.to_owned())
+    } else {
+        release_commit.to_owned()
+    };
+    let clean = tracked_worktree_clean(root)?;
+    if !clean {
+        return Err("the release worktree is dirty".to_owned());
+    }
+    if source_version != release_version && !bump_claimed {
+        return Err("the observed version bump is not claimed by this release".to_owned());
+    }
+    if unrecorded_local_commits != 0 {
+        return Err(format!(
+            "{unrecorded_local_commits} local commits have not been recorded on the \
+             publication baseline"
+        ));
+    }
+    if release_version != requested_version {
+        return Err(format!(
+            "requested version {requested_version} disagrees with observed release version \
+             {release_version}"
+        ));
+    }
+    if head != release_commit {
+        return Err(format!(
+            "release commit {release_commit} is not HEAD {head}"
+        ));
+    }
+    let action = match matches.get_one::<String>("action").map(String::as_str) {
+        None | Some("publish") => dist::ReleaseAction::Publish,
+        Some("tag-and-announce") => dist::ReleaseAction::TagAndAnnounce,
+        Some(other) => return Err(format!("unsupported release action {other:?}")),
+    };
+    let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
+    let refs = authority.refs(&requested_version);
+    git_required(root, &["ls-remote", "--refs", authority.remote()])?;
+    let source_ref = normalize_source_ref(
+        remote_ref(root, authority.remote(), refs.source())?,
+        &source_commit,
+        release_commit,
+    );
+    let package_ref = remote_ref(root, authority.remote(), refs.package())?;
+    let tag_ref = normalize_converged_ref(
+        remote_ref(root, authority.remote(), refs.tag())?,
+        release_commit,
+    );
+    let announcement_ref = normalize_converged_ref(
+        remote_ref(root, authority.remote(), refs.announcement())?,
+        release_commit,
+    );
+    if let Some(object) = &source_ref {
+        return Err(format!(
+            "the source ref names {object}, not {release_commit}"
+        ));
+    }
+    if let Some(object) = &tag_ref {
+        return Err(format!("the tag ref names {object}, not {release_commit}"));
+    }
+    if let Some(object) = &announcement_ref {
+        return Err(format!(
+            "the announcement ref names {object}, not {release_commit}"
+        ));
+    }
+    Ok(ExternalPreconditions {
+        requested_version,
+        source_commit,
+        action,
+        repository: repository_identity(root, authority.remote())?,
+        head,
+        clean,
+        bump_claimed,
+        unrecorded_local_commits,
+        source_version,
+        release_version,
+        source_ref,
+        package_ref,
+        tag_ref,
+        announcement_ref,
+    })
+}
+
+fn bind_external_plan(
+    root: &Path,
+    release_commit: &str,
+    notes: &str,
+    release: AdmittedRelease,
+    external: ExternalPreconditions,
+) -> Result<AdmittedRelease, String> {
+    let package = crate::release_package::preview(
+        root,
+        &external.requested_version,
+        release.notes.clone(),
+        notes.as_bytes(),
+        &release.published.bytes,
+    )
+    .map_err(|error| error.to_string())?;
+    let package_ref = normalize_converged_ref(external.package_ref.clone(), &package.git_tree);
+    let registry = if external.action == dist::ReleaseAction::TagAndAnnounce {
+        let visible = external.package_ref.ok_or_else(|| {
+            format!(
+                "package v{} is not visible at the release authority",
+                external.requested_version
+            )
+        })?;
+        if visible != package.git_tree {
+            return Err(format!(
+                "package v{} names {visible}, not {}",
+                external.requested_version, package.git_tree
+            ));
+        }
+        Some(dist::RegistryEvidence {
+            version: external.requested_version.clone(),
+            release_commit: release_commit.to_owned(),
+            package: package.identity.clone(),
+        })
+    } else {
+        None
+    };
+    let observations = dist::ReleaseObservations {
+        head: external.head,
+        clean: external.clean,
+        bump_claimed: external.bump_claimed,
+        unrecorded_local_commits: external.unrecorded_local_commits,
+        source_version: external.source_version,
+        release_version: external.release_version,
+        credentials_valid: true,
+        source_ref: external.source_ref,
+        package_ref,
+        tag_ref: external.tag_ref,
+        announcement_ref: external.announcement_ref,
+        registry,
+    };
+    let plan = dist::plan_release(dist::PlanInput {
+        repository: external.repository,
+        action: external.action,
+        requested_version: external.requested_version,
+        source_commit: external.source_commit,
+        release_commit: release_commit.to_owned(),
+        notes: notes.as_bytes().to_vec(),
+        manifest: release.published.digest.clone(),
+        package: package.identity,
+        package_object: package.git_tree,
+        installed_artifact: release.native.clone(),
+        targets: release
+            .targets
+            .iter()
+            .map(|target| dist::SealedTarget {
+                target: target.target.clone(),
+                artifact: target.artifact.clone(),
+                receipt: target.receipt.clone(),
+            })
+            .collect(),
+        observations,
+    })
+    .map_err(|error| error.to_string())?;
+    Ok(release.bind_external(plan))
+}
+
+fn tracked_worktree_clean(root: &Path) -> Result<bool, String> {
+    Ok(git_required(root, &["status", "--porcelain=v1", "--untracked-files=no"])?.is_empty())
+}
+
+pub(super) fn repository_identity(root: &Path, remote: &str) -> Result<Digest, String> {
+    let key = format!("remote.{remote}.url");
+    let repository = git_optional(root, &["config", "--get", &key])?
+        .unwrap_or_else(|| root.to_string_lossy().into_owned());
+    Ok(Digest::compute(
+        Domain::DistSourceCommit,
+        repository.as_bytes(),
+    ))
+}
+
+fn remote_ref(root: &Path, remote: &str, reference: &str) -> Result<Option<String>, String> {
+    let output = git_required(root, &["ls-remote", "--refs", remote, reference])?;
+    let mut fields = output.split_whitespace();
+    Ok(fields.next().map(str::to_owned))
+}
+
+fn normalize_converged_ref(observed: Option<String>, release: &str) -> Option<String> {
+    observed.filter(|object| object != release)
+}
+
+fn normalize_source_ref(
+    observed: Option<String>,
+    source_commit: &str,
+    release_commit: &str,
+) -> Option<String> {
+    observed.filter(|object| object != source_commit && object != release_commit)
+}
+
+fn git_required(root: &Path, arguments: &[&str]) -> Result<String, String> {
+    git_output(root, arguments).and_then(|(success, output)| {
+        if success {
+            Ok(output)
+        } else {
+            Err(format!("git {} refused: {output}", arguments.join(" ")))
+        }
+    })
+}
+
+fn git_optional(root: &Path, arguments: &[&str]) -> Result<Option<String>, String> {
+    git_output(root, arguments).map(|(success, output)| success.then_some(output))
+}
+
+fn git_output(root: &Path, arguments: &[&str]) -> Result<(bool, String), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(arguments)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|error| format!("could not launch git: {error}"))?;
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| format!("git stdout is not UTF-8: {error}"))?;
+    let stderr = String::from_utf8(output.stderr)
+        .map_err(|error| format!("git stderr is not UTF-8: {error}"))?;
+    let detail = [stdout.trim(), stderr.trim()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok((output.status.success(), detail))
 }
 
 pub(crate) fn observe(
@@ -407,14 +762,12 @@ impl fmt::Display for ObservationError {
 impl Error for ObservationError {}
 
 fn refusal<B>(reason: &str, error: &impl fmt::Display) -> Outcome<B> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("sealed-release".to_owned()),
-        expected: Some("one current complete two-target proof and manifest chain".to_owned()),
-        observed: Some(error.to_string()),
-        remedy: "restore and recognize the exact current sealed release before publishing"
-            .to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        reason.to_owned(),
+        Some("sealed-release".to_owned()),
+        Some("one current complete two-target proof and manifest chain".to_owned()),
+        Some(error.to_string()),
+    )))
 }
 
 fn environment<B>(reason: &str, detail: &str) -> Outcome<B> {
@@ -443,6 +796,7 @@ pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
         matches
             .get_one::<String>("release-commit")
             .map(String::as_str),
+        None,
     ) {
         Ok(body) => Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
@@ -453,15 +807,13 @@ pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
 }
 
 fn notes_refusal<B>(reason: &str, error: &impl fmt::Display) -> Outcome<B> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("first-parent-release-notes".to_owned()),
-        expected: Some(
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        reason.to_owned(),
+        Some("first-parent-release-notes".to_owned()),
+        Some(
             "reachable release history and curated highlights above the generated inventory"
                 .to_owned(),
         ),
-        observed: Some(error.to_string()),
-        remedy: "generate a fresh release notes draft, curate Highlights, and retry its file"
-            .to_owned(),
-    })
+        Some(error.to_string()),
+    )))
 }

@@ -16,13 +16,12 @@ fn committed(position: u64) -> ReplyPosition {
 
 /// The refusal the reply frames reuse, carrying every optional field.
 fn stale_witness() -> Refusal {
-    Refusal {
-        reason: "witness::stale".to_owned(),
-        witness: Some("task".to_owned()),
-        expected: Some("48190".to_owned()),
-        observed: Some("48213".to_owned()),
-        remedy: "re-read the task head and retry".to_owned(),
-    }
+    Refusal::bare(wire::RefusalDiagnostic::new(
+        "witness::stale".to_owned(),
+        Some("task".to_owned()),
+        Some("48190".to_owned()),
+        Some("48213".to_owned()),
+    ))
 }
 
 /// The fault the reply frames reuse.
@@ -527,12 +526,14 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
             ResidencyHead {
                 epoch: first_uuid,
                 state: ResidentState::Seated,
+                topology_revision: 2,
                 lanes: vec![occupied],
                 subscriptions: vec![drive],
             },
             ResidencyHead {
                 epoch: second_uuid,
                 state: ResidentState::Dark,
+                topology_revision: 7,
                 lanes: vec![empty],
                 subscriptions: vec![steer],
             },
@@ -909,6 +910,11 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
                 steer: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
                 disposition: Disposition::Live,
             },
+            // Recovery names the same stable subject without collapsing its
+            // lapsed and dead-lettered states into one false disposition.
+            Witness::Recoverable {
+                steer: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+            },
             Witness::Consent {
                 request: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 answer: Answer::Asked,
@@ -983,16 +989,47 @@ fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
     );
     law(
         covered,
+        "RefusalDiagnostic",
+        &[
+            wire::RefusalDiagnostic::new("wire::mismatch", None, None, None),
+            wire::RefusalDiagnostic::new(
+                "witness::stale",
+                Some("task".to_owned()),
+                Some("48190".to_owned()),
+                Some("48213".to_owned()),
+            )
+            .with_detail("read the current task"),
+        ],
+    );
+    law(
+        covered,
+        "SpiceCommand",
+        &[
+            wire::SpiceCommand::new("fold", std::iter::empty::<&str>())
+                .expect("fixture command is valid"),
+            wire::SpiceCommand::new("task", ["show", "CLAIM-1kFixture"])
+                .expect("fixture command is valid"),
+        ],
+    );
+    law(
+        covered,
         "Refusal",
         &[
-            Refusal {
-                reason: "wire::mismatch".to_owned(),
-                witness: None,
-                expected: None,
-                observed: None,
-                remedy: "reconnect with the resident's current wire".to_owned(),
-            },
+            Refusal::repairable(
+                wire::SpiceCommand::new("task", ["show", "CLAIM-1kFixture"])
+                    .expect("fixture command is valid"),
+                wire::RefusalDiagnostic::new("claim::not-held", None, None, None),
+            ),
             stale_witness(),
+            Refusal::invocation(
+                "gate::instrument-unregistered",
+                "spice gate findings INSTRUMENT requires one registered instrument",
+            ),
+            Refusal::evidence(
+                "gate::regressed",
+                "file-shape: regressed",
+                "repair the reported regression",
+            ),
         ],
     );
     law(
@@ -1139,6 +1176,7 @@ fn cover_fold_reply_frames(covered: &mut BTreeSet<String>) {
 
 fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
     cover_release_note_frames(covered);
+    cover_release_plan_observations(covered);
     cover_proof_evidence_frames(covered);
     law(
         covered,
@@ -1209,6 +1247,43 @@ fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
                 id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 outcome: Outcome::Fault(moved_epoch()),
+            },
+        ],
+    );
+}
+
+fn cover_release_plan_observations(covered: &mut BTreeSet<String>) {
+    let version = ProductVersion::parse("1.2.3").expect("release version");
+    let base = ReleasePlanObservations {
+        head: "1".repeat(40),
+        clean: true,
+        bump_claimed: true,
+        unrecorded_local_commits: 0,
+        source_version: version.clone(),
+        release_version: version.clone(),
+        credentials_valid: true,
+        source_ref: None,
+        package_ref: None,
+        tag_ref: None,
+        announcement_ref: None,
+        registry: None,
+    };
+    law(
+        covered,
+        "ReleasePlanObservations",
+        &[
+            base.clone(),
+            ReleasePlanObservations {
+                source_ref: Some("2".repeat(40)),
+                package_ref: Some("3".repeat(40)),
+                tag_ref: Some("4".repeat(40)),
+                announcement_ref: Some("5".repeat(40)),
+                registry: Some(ReleaseRegistryEvidence {
+                    version,
+                    release_commit: "6".repeat(40),
+                    package: digest("9"),
+                }),
+                ..base
             },
         ],
     );

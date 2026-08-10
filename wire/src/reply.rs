@@ -432,54 +432,396 @@ pub struct ProofEvidence {
     pub replay: Digest,
 }
 
+/// Exact registry observation rendered by a recovery preview.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseRegistryEvidence {
+    /// Canonical semantic version observed at the package authority.
+    pub version: crate::manifest::ProductVersion,
+    /// Exact release commit named by the package authority.
+    pub release_commit: String,
+    /// Canonical package identity made visible by that commit.
+    pub package: Digest,
+}
+
+/// Complete no-effect observations resolved before a release plan is sealed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleasePlanObservations {
+    /// Fully resolved HEAD commit.
+    pub head: String,
+    /// Whether tracked worktree state is clean.
+    pub clean: bool,
+    /// Whether any version transition belongs to the selected release commit.
+    pub bump_claimed: bool,
+    /// Number of commits after the selected release commit.
+    pub unrecorded_local_commits: u64,
+    /// Product version compiled into the source executable.
+    pub source_version: crate::manifest::ProductVersion,
+    /// Product version read from the selected release tree.
+    pub release_version: crate::manifest::ProductVersion,
+    /// Whether the configured remote accepted a no-effect authenticated read.
+    pub credentials_valid: bool,
+    /// Unexpected source-ref object, absent when unpublished or converged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub source_ref: Option<String>,
+    /// Unexpected package-ref object, absent when unpublished or converged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub package_ref: Option<String>,
+    /// Unexpected tag object, absent when unpublished or converged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub tag_ref: Option<String>,
+    /// Unexpected announcement object, absent when unpublished or converged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub announcement_ref: Option<String>,
+    /// Exact package visibility required by tag-and-announce recovery.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub registry: Option<ReleaseRegistryEvidence>,
+}
+
 /// One operator-previewed publication of a complete sealed release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasePlan {
     /// Digest the apply command must re-present.
     pub key: Digest,
+    /// Identity of the repository authority observed by the planner.
+    pub repository: Digest,
+    /// Closed release action: `publish` or `tag-and-announce`.
+    pub action: String,
+    /// Canonical semantic version requested by the operator.
+    pub requested_version: crate::manifest::ProductVersion,
+    /// Immutable source commit from which release preparation began.
+    pub source_commit: String,
+    /// Exact release commit all external refs must name.
+    pub release_commit: String,
     /// Canonical identity of the sealed two-target manifest.
     pub manifest: Digest,
     /// Source identity shared by both target payloads.
     pub source: Digest,
     /// Identity of the exact curated release-note bytes approved by this plan.
     pub notes: Digest,
+    /// Exact curated bytes, not merely a digest reconstructed at apply time.
+    pub notes_document: String,
+    /// Canonical identity of the complete installable package closure.
+    pub package: Digest,
+    /// Exact Git tree object published at the immutable package ref.
+    pub package_object: String,
+    /// Exact independently installed executable identity the probe must return.
+    pub installed_artifact: Digest,
     /// Exact target payload and detached-receipt identities to publish.
     pub targets: Vec<crate::body::PublishedTarget>,
+    /// Sole ordered operation inventory shared by preview and execution.
+    pub operations: Vec<String>,
+    /// Exact no-effect preconditions and authority observations bound by `key`.
+    pub observations: ReleasePlanObservations,
 }
 
-/// An answer about an event that did not occur.
-///
-/// A refusal is never a fact. It causes no journal or head mutation; the bus
-/// writes a bounded telemetry row instead.
+/// Structured diagnostic shared by refusal forms that report a failed predicate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Refusal {
+pub struct RefusalDiagnostic {
     /// Stable reason, suitable for matching rather than display alone.
-    pub reason: String,
+    reason: String,
     /// Failed predicate name, when a witness is what failed.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub witness: Option<String>,
+    witness: Option<String>,
     /// Value the predicate required.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub expected: Option<String>,
+    expected: Option<String>,
     /// Value the predicate observed.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub observed: Option<String>,
-    /// Actionable next step for the caller.
-    pub remedy: String,
+    observed: Option<String>,
+    /// Human diagnostic detail that is not itself a recovery command.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    detail: Option<String>,
+}
+
+impl RefusalDiagnostic {
+    /// Build one diagnostic from the exact predicate evidence available.
+    #[must_use]
+    pub fn new(
+        reason: impl Into<String>,
+        witness: Option<String>,
+        expected: Option<String>,
+        observed: Option<String>,
+    ) -> Self {
+        Self {
+            reason: reason.into(),
+            witness,
+            expected,
+            observed,
+            detail: None,
+        }
+    }
+
+    /// Attach human detail without claiming it is a runnable recovery.
+    #[must_use]
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    /// Stable machine reason.
+    #[must_use]
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    /// Failed predicate name, when present.
+    #[must_use]
+    pub fn witness(&self) -> Option<&str> {
+        self.witness.as_deref()
+    }
+
+    /// Required predicate value, when present.
+    #[must_use]
+    pub fn expected(&self) -> Option<&str> {
+        self.expected.as_deref()
+    }
+
+    /// Observed predicate value, when present.
+    #[must_use]
+    pub fn observed(&self) -> Option<&str> {
+        self.observed.as_deref()
+    }
+
+    /// Human diagnostic detail, when present.
+    #[must_use]
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
+    }
+
+    /// Replace the observed predicate value while retaining the same refusal form.
+    pub fn replace_observed(&mut self, observed: Option<String>) -> Option<String> {
+        std::mem::replace(&mut self.observed, observed)
+    }
+}
+
+/// One runnable Spice recovery command.
+///
+/// The executable is structural rather than caller-authored: every value runs
+/// `spice` with these exact arguments, and construction requires one concrete
+/// top-level subcommand rather than an absent or prose-only remedy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "Vec<String>", into = "Vec<String>")]
+pub struct SpiceCommand {
+    arguments: Vec<String>,
+}
+
+impl SpiceCommand {
+    /// Bind a required top-level command and exact trailing arguments to the
+    /// one Spice executable.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an empty or option-shaped top-level command. This keeps a
+    /// repair arm from carrying `spice` alone or a dummy global option.
+    pub fn new<I, S, T>(command: S, arguments: I) -> Result<Self, &'static str>
+    where
+        I: IntoIterator<Item = T>,
+        S: Into<String>,
+        T: Into<String>,
+    {
+        let arguments: Vec<String> = std::iter::once(command.into())
+            .chain(arguments.into_iter().map(Into::into))
+            .collect();
+        Self::try_from(arguments)
+    }
+
+    /// Exact arguments following the `spice` executable.
+    #[must_use]
+    pub fn arguments(&self) -> &[String] {
+        &self.arguments
+    }
+}
+
+impl TryFrom<Vec<String>> for SpiceCommand {
+    type Error = &'static str;
+
+    fn try_from(arguments: Vec<String>) -> Result<Self, Self::Error> {
+        let Some(command) = arguments.first() else {
+            return Err("a recovery command requires one Spice subcommand");
+        };
+        if command.is_empty()
+            || command.starts_with('-')
+            || command.chars().any(char::is_whitespace)
+        {
+            return Err("a recovery command requires one non-option Spice subcommand token");
+        }
+        if arguments.iter().any(|argument| argument.contains('\0')) {
+            return Err("a recovery command cannot contain a NUL byte");
+        }
+        Ok(Self { arguments })
+    }
+}
+
+impl From<SpiceCommand> for Vec<String> {
+    fn from(command: SpiceCommand) -> Self {
+        command.arguments
+    }
+}
+
+/// An answer about an event that did not occur.
+///
+/// A refusal is never a fact. It causes no journal or head mutation; the bus
+/// writes a bounded telemetry row instead. Its semantic form is explicit, so
+/// absence of a runnable recovery cannot be encoded as an empty remedy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "form", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Refusal {
+    /// A caller can repair the refusal by running one exact Spice command.
+    Repairable {
+        /// Runnable command rendered before the diagnostic.
+        command: SpiceCommand,
+        /// Predicate that refused the operation.
+        diagnostic: Box<RefusalDiagnostic>,
+    },
+    /// No runnable recovery exists; render only the diagnostic.
+    Bare {
+        /// Predicate that refused the operation.
+        diagnostic: Box<RefusalDiagnostic>,
+    },
+    /// Invocation syntax itself was invalid; render its one contract statement.
+    Invocation {
+        /// Stable machine reason.
+        reason: String,
+        /// Complete invocation-contract statement.
+        contract: String,
+    },
+    /// A gate refused with authoritative evidence that must precede its summary.
+    Evidence {
+        /// Stable machine reason.
+        reason: String,
+        /// Complete gate evidence.
+        evidence: String,
+        /// Human summary following the evidence.
+        summary: String,
+    },
+}
+
+impl Refusal {
+    /// Construct a repairable refusal with one structurally runnable command.
+    #[must_use]
+    pub fn repairable(command: SpiceCommand, diagnostic: RefusalDiagnostic) -> Self {
+        Self::Repairable {
+            command,
+            diagnostic: Box::new(diagnostic),
+        }
+    }
+
+    /// Construct a refusal for which no runnable recovery exists.
+    #[must_use]
+    pub fn bare(diagnostic: RefusalDiagnostic) -> Self {
+        Self::Bare {
+            diagnostic: Box::new(diagnostic),
+        }
+    }
+
+    /// Construct one invocation-contract refusal statement.
+    #[must_use]
+    pub fn invocation(reason: impl Into<String>, contract: impl Into<String>) -> Self {
+        Self::Invocation {
+            reason: reason.into(),
+            contract: contract.into(),
+        }
+    }
+
+    /// Construct one evidence-first gate refusal.
+    #[must_use]
+    pub fn evidence(
+        reason: impl Into<String>,
+        evidence: impl Into<String>,
+        summary: impl Into<String>,
+    ) -> Self {
+        Self::Evidence {
+            reason: reason.into(),
+            evidence: evidence.into(),
+            summary: summary.into(),
+        }
+    }
+
+    /// Stable machine reason shared by every refusal form.
+    #[must_use]
+    pub fn reason(&self) -> &str {
+        match self {
+            Self::Repairable { diagnostic, .. } | Self::Bare { diagnostic } => diagnostic.reason(),
+            Self::Invocation { reason, .. } | Self::Evidence { reason, .. } => reason,
+        }
+    }
+
+    /// Human explanation suitable for non-CLI surfaces that retain reason and
+    /// detail as separate fields.
+    #[must_use]
+    pub fn explanation(&self) -> &str {
+        match self {
+            Self::Repairable { diagnostic, .. } | Self::Bare { diagnostic } => diagnostic
+                .detail()
+                .or_else(|| diagnostic.observed())
+                .or_else(|| diagnostic.expected())
+                .unwrap_or_else(|| diagnostic.reason()),
+            Self::Invocation { contract, .. } => contract,
+            Self::Evidence { summary, .. } => summary,
+        }
+    }
+
+    /// Predicate diagnostic carried by repairable and bare forms.
+    #[must_use]
+    pub fn diagnostic(&self) -> Option<&RefusalDiagnostic> {
+        match self {
+            Self::Repairable { diagnostic, .. } | Self::Bare { diagnostic } => {
+                Some(diagnostic.as_ref())
+            }
+            Self::Invocation { .. } | Self::Evidence { .. } => None,
+        }
+    }
+
+    /// Mutably narrow to the predicate diagnostic carried by diagnostic forms.
+    #[must_use]
+    pub fn diagnostic_mut(&mut self) -> Option<&mut RefusalDiagnostic> {
+        match self {
+            Self::Repairable { diagnostic, .. } | Self::Bare { diagnostic } => {
+                Some(diagnostic.as_mut())
+            }
+            Self::Invocation { .. } | Self::Evidence { .. } => None,
+        }
+    }
 }
 
 /// The plane in which a defect was detected.

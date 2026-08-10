@@ -57,7 +57,7 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
         .expect_err("moved single capture must refuse startup");
     assert!(matches!(
         refused,
-        Outcome::Refusal(ref refusal) if refusal.reason == "trust::surface-moved"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "trust::surface-moved"
     ));
     assert_eq!(
         bus.fact_snapshot().expect("refused authority reads"),
@@ -116,7 +116,7 @@ fn policy_movement_after_pend_refuses_seating_and_retry_pends_the_new_digest() {
     .expect_err("moved policy must refuse seating");
     assert!(matches!(
         refused,
-        Outcome::Refusal(ref refusal) if refusal.reason == "trust::surface-moved"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "trust::surface-moved"
     ));
     let after_refusal = bus.fact_snapshot().expect("refused startup facts read");
     assert_eq!(trust_pend_digests(&after_refusal), [first_digest]);
@@ -171,7 +171,7 @@ fn equal_byte_replacement_with_an_existing_head_refuses_zero_write_seating() {
     .expect_err("same-byte generation replacement must refuse");
     assert!(matches!(
         refused,
-        Outcome::Refusal(ref refusal) if refusal.reason == "trust::surface-moved"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "trust::surface-moved"
     ));
     assert_eq!(
         bus.fact_snapshot().expect("authority after refusal"),
@@ -217,7 +217,7 @@ fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
     });
     assert!(matches!(
         refused,
-        Outcome::Refusal(ref refusal) if refusal.reason == "trust::surface-moved"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "trust::surface-moved"
     ));
     assert_eq!(
         bus.fact_snapshot().expect("facts after refused grant"),
@@ -252,7 +252,7 @@ fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
     });
     assert!(matches!(
         refused,
-        Outcome::Refusal(ref refusal) if refusal.reason == "trust::surface-moved"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "trust::surface-moved"
     ));
     assert_eq!(
         bus.fact_snapshot().expect("facts after refused revoke"),

@@ -78,7 +78,7 @@ pub(crate) enum SelectedCommand<'a> {
     SteerCancel { directive: CanonicalUuid },
     /// The operator re-presents one live directive at the urgency now due.
     SteerResend { directive: CanonicalUuid },
-    /// The operator restores one exact lapsed directive.
+    /// The operator restores one exact lapsed or dead-lettered directive.
     SteerRecover { directive: CanonicalUuid },
     /// The authenticated principal reads visible pending direction.
     SteerInbox { lane: Option<CanonicalUuid> },
@@ -1089,15 +1089,17 @@ fn capability_disclosed() -> Outcome<CommandAnswer> {
 fn steering_refusal(
     reason: &str,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("steering-inbox".to_owned()),
-        expected: Some("one live directive in the authenticated lane".to_owned()),
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("steering-inbox".to_owned()),
+            Some("one live directive in the authenticated lane".to_owned()),
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {

@@ -5,6 +5,12 @@ use crate::{
     Reversibility, Rule, Ruling, Spend,
 };
 
+fn diagnostic(refusal: &wire::Refusal) -> &wire::RefusalDiagnostic {
+    refusal
+        .diagnostic()
+        .expect("consent refusals carry predicate diagnostics")
+}
+
 #[test]
 fn the_first_matching_rule_answers_and_later_matches_do_not() {
     let policy = table(vec![
@@ -97,7 +103,7 @@ fn a_rule_that_never_grants_cannot_carry_a_grant_budget() {
 }
 
 #[test]
-fn every_admission_refusal_names_a_remedy_in_the_one_refusal_shape() {
+fn every_admission_refusal_names_diagnostic_detail_in_the_bare_shape() {
     let refused = [
         Rule::new("", "read", Answer::Allow, None).expect_err("unnamed rule"),
         Rule::new(POSTURE, "read", Answer::Allow, None).expect_err("reserved name"),
@@ -116,16 +122,19 @@ fn every_admission_refusal_names_a_remedy_in_the_one_refusal_shape() {
 
     for error in refused {
         let refusal = error.refusal();
-        assert!(!refusal.reason.is_empty(), "{error:?} states no reason");
-        assert!(!refusal.remedy.is_empty(), "{error:?} offers no remedy");
+        assert!(!refusal.reason().is_empty(), "{error:?} states no reason");
+        let detail = diagnostic(&refusal)
+            .detail()
+            .expect("policy errors carry explanatory detail");
+        assert!(!detail.is_empty(), "{error:?} offers no detail");
         assert_eq!(
-            refusal.witness.as_deref(),
+            diagnostic(&refusal).witness(),
             error.rule(),
             "{error:?} disagrees with its own refusal about the rule at fault",
         );
         assert!(
-            error.to_string().contains(&refusal.remedy),
-            "{error:?} displays without its remedy",
+            error.to_string().contains(detail),
+            "{error:?} displays without its detail",
         );
     }
 }
@@ -242,9 +251,9 @@ fn renewal_uses_the_exact_held_request_and_changes_no_other_budget_or_hold() {
     let refused = actuator
         .renew(unknown)
         .expect_err("an unheld request cannot name a budget to renew");
-    assert_eq!(refused.reason, "consent::request-not-held");
+    assert_eq!(refused.reason(), "consent::request-not-held");
     assert_eq!(
-        refused.witness.as_deref(),
+        diagnostic(&refused).witness(),
         Some(unknown.to_string().as_str())
     );
     assert_eq!(actuator, before_unknown, "a refusal changes no seat state");
@@ -272,7 +281,7 @@ fn renewal_uses_the_exact_held_request_and_changes_no_other_budget_or_hold() {
     let repeated = actuator
         .renew(exhausted_write.request)
         .expect_err("one request cannot renew its budget twice");
-    assert_eq!(repeated.reason, "consent::request-not-held");
+    assert_eq!(repeated.reason(), "consent::request-not-held");
     assert_eq!(
         actuator, after_write_renewal,
         "a repeated renewal neither restores the budget again nor mints another grant",
@@ -331,8 +340,8 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
     let refused = actuator
         .renew(request.request)
         .expect_err("a policy queue is resolved directly rather than renewed");
-    assert_eq!(refused.reason, "consent::renewal-not-required");
-    assert_eq!(refused.witness.as_deref(), Some("pushes"));
+    assert_eq!(refused.reason(), "consent::renewal-not-required");
+    assert_eq!(diagnostic(&refused).witness(), Some("pushes"));
     assert!(actuator.pending().holds(request.request));
 
     let held = actuator
@@ -470,8 +479,11 @@ fn a_request_the_operator_refused_never_proceeds_and_owes_its_refusal() {
     );
     assert!(
         refused.refusal().is_some_and(|refusal| {
-            refusal.witness.as_deref() == Some(OPERATOR)
-                && !refusal.remedy.contains("change that rule")
+            diagnostic(&refusal).witness() == Some(OPERATOR)
+                && !diagnostic(&refusal)
+                    .detail()
+                    .expect("denials carry detail")
+                    .contains("change that rule")
         }),
         "a refusal the operator made cannot advise changing a rule that did not make it",
     );
@@ -545,8 +557,8 @@ fn a_held_request_cannot_be_queued_twice_or_answered_both_ways() {
     let replay = actuator
         .decide(&request, Reversibility::Irreversible)
         .expect_err("an identity already in the queue cannot queue again");
-    assert_eq!(replay.reason, "consent::request-already-known");
-    assert_eq!(replay.observed.as_deref(), Some("held"));
+    assert_eq!(replay.reason(), "consent::request-already-known");
+    assert_eq!(diagnostic(&replay).observed(), Some("held"));
     assert_eq!(actuator, held, "rejecting a replay changes no seat state");
 
     assert!(matches!(
@@ -557,7 +569,7 @@ fn a_held_request_cannot_be_queued_twice_or_answered_both_ways() {
     let replay = actuator
         .decide(&request, Reversibility::Irreversible)
         .expect_err("a denied identity must be asked again under a new UUID");
-    assert_eq!(replay.observed.as_deref(), Some("denied"));
+    assert_eq!(diagnostic(&replay).observed(), Some("denied"));
     assert!(
         actuator.release(request.request, Ruling::Allow).is_none(),
         "the denied identity cannot later mint a grant",
@@ -593,7 +605,7 @@ fn an_operator_grant_cannot_be_replayed_into_a_denial() {
     let replay = actuator
         .decide(&request, Reversibility::Irreversible)
         .expect_err("a granted identity must not be decided again");
-    assert_eq!(replay.observed.as_deref(), Some("granted"));
+    assert_eq!(diagnostic(&replay).observed(), Some("granted"));
     assert!(actuator.release(request.request, Ruling::Deny).is_none());
     assert!(actuator.renew(request.request).is_err());
     assert_eq!(actuator, granted);
@@ -685,7 +697,7 @@ fn a_queue_holds_each_request_under_its_own_identity() {
             ConsentQueueCause::Policy {},
         )
         .expect_err("a held identity cannot mint another queue fact");
-    assert_eq!(replay.observed.as_deref(), Some("held"));
+    assert_eq!(diagnostic(&replay).observed(), Some("held"));
     assert_eq!(pending, two_held);
     let held = pending.get(second.request).expect("second request is held");
     assert_eq!(held.rule(), "writes");
@@ -710,7 +722,7 @@ fn a_queue_holds_each_request_under_its_own_identity() {
             ConsentQueueCause::Policy {},
         )
         .expect_err("a granted identity cannot return to the queue");
-    assert_eq!(replay.observed.as_deref(), Some("granted"));
+    assert_eq!(diagnostic(&replay).observed(), Some("granted"));
     assert!(pending.proceeds(first.request, Reversibility::Irreversible));
 }
 
@@ -734,12 +746,15 @@ fn a_denial_refuses_loudly_and_a_grant_or_a_queue_does_not_refuse_at_all() {
     );
     let refusal = denied.refusal().expect("a denial refuses");
 
-    assert_eq!(refusal.witness.as_deref(), Some("blocked"));
+    assert_eq!(diagnostic(&refusal).witness(), Some("blocked"));
     assert!(
-        refusal.remedy.contains("blocked"),
-        "a refusal names the rule in its remedy, not only in its witness: {refusal:?}",
+        diagnostic(&refusal)
+            .detail()
+            .expect("denials carry detail")
+            .contains("blocked"),
+        "a refusal names the rule in its detail, not only in its witness: {refusal:?}",
     );
-    assert!(!refusal.reason.is_empty());
+    assert!(!refusal.reason().is_empty());
 
     assert_eq!(
         decide(&mut actuator, &asked("read"), Reversibility::Reversible).refusal(),
@@ -783,7 +798,7 @@ fn policy_answers_are_terminal_without_spending_twice_on_replay() {
     let replay = actuator
         .decide(&granted_request, Reversibility::Irreversible)
         .expect_err("the rule already granted this identity");
-    assert_eq!(replay.observed.as_deref(), Some("granted"));
+    assert_eq!(diagnostic(&replay).observed(), Some("granted"));
     assert_eq!(
         actuator, granted,
         "the duplicate grant neither emits a fact nor spends the budget twice",
@@ -799,7 +814,7 @@ fn policy_answers_are_terminal_without_spending_twice_on_replay() {
     let replay = actuator
         .decide(&denied_request, Reversibility::Irreversible)
         .expect_err("the rule already denied this identity");
-    assert_eq!(replay.observed.as_deref(), Some("denied"));
+    assert_eq!(diagnostic(&replay).observed(), Some("denied"));
     assert_eq!(actuator, denied);
     assert!(!actuator.proceeds(denied_request.request, Reversibility::Irreversible));
 }

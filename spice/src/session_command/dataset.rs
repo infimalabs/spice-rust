@@ -982,12 +982,14 @@ fn sort_dataset(dataset: &mut Dataset) {
         .sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
 }
 
-fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Refusal {
-    Refusal {
-        reason: reason.to_owned(),
-        witness: Some("session-transcript".to_owned()),
-        expected: Some("one current typed transcript evidence stream".to_owned()),
-        observed,
-        remedy: remedy.to_owned(),
-    }
+fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {
+    Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("session-transcript".to_owned()),
+            Some("one current typed transcript evidence stream".to_owned()),
+            observed,
+        )
+        .with_detail(detail),
+    )
 }

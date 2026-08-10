@@ -14,9 +14,23 @@
 
 use std::ffi::OsStr;
 use std::fs;
+#[cfg(unix)]
+use std::io::Read;
 use std::io::{self, Write};
+#[cfg(unix)]
+use std::net::Shutdown;
+#[cfg(unix)]
+use std::os::fd::OwnedFd;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::path::Path;
+#[cfg(unix)]
+use std::process::Stdio;
 use std::process::{Command, ExitStatus};
+#[cfg(unix)]
+use std::sync::mpsc::{self, Receiver, Sender};
+#[cfg(unix)]
+use std::thread::{self, JoinHandle};
 
 /// Writes a lane's rendered direction to the stream, reporting whether anything
 /// was waiting.
@@ -43,11 +57,13 @@ pub fn emit(rendering: &Path, stream: &mut impl Write) -> io::Result<bool> {
     Ok(true)
 }
 
-/// Runs the wrapped command and waits for it.
+/// Runs the wrapped command and waits for that immediate child.
 ///
-/// The command's own streams are inherited: this hands the operator's command
-/// through rather than capturing it, so what the caller sees is what the
-/// command wrote.
+/// The command's output is relayed through private sockets, so descendants
+/// cannot retain the wrapper's own external streams after its immediate child
+/// exits. Waiting on the spawned process identity survives that process
+/// replacing itself with `exec`; it ends when that identity exits, regardless
+/// of any separately living descendants it created.
 ///
 /// # Errors
 ///
@@ -57,5 +73,104 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new(program).args(arguments).status()
+    #[cfg(unix)]
+    return hand_relayed(program, arguments);
+
+    #[cfg(not(unix))]
+    {
+        let mut child = Command::new(program).args(arguments).spawn()?;
+        child.wait()
+    }
+}
+
+#[cfg(unix)]
+fn hand_relayed<I, S>(program: &OsStr, arguments: I) -> io::Result<ExitStatus>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let (stdout_read, stdout_write) = UnixStream::pair()?;
+    let (stderr_read, stderr_write) = UnixStream::pair()?;
+    // `shutdown(Write)` is shared by every duplicate of one socket endpoint.
+    // Retaining these parent clones therefore gives the immediate-child wait a
+    // structural way to revoke descendant writers without closing the read
+    // endpoints or discarding bytes the child already committed.
+    let stops = [stdout_write.try_clone()?, stderr_write.try_clone()?];
+    let mut child = Command::new(program)
+        .args(arguments)
+        .stdout(Stdio::from(OwnedFd::from(stdout_write)))
+        .stderr(Stdio::from(OwnedFd::from(stderr_write)))
+        .spawn()?;
+    let (sender, receiver) = mpsc::channel();
+    let relays = [
+        spawn_relay(stdout_read, RelayTarget { stderr: false }, sender.clone()),
+        spawn_relay(stderr_read, RelayTarget { stderr: true }, sender),
+    ];
+    let status = child.wait();
+    let relayed = close_descendant_writers(&stops).and_then(|()| finish_relays(&receiver, relays));
+    match (status, relayed) {
+        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        (Ok(status), Ok(())) => Ok(status),
+    }
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct RelayTarget {
+    stderr: bool,
+}
+
+#[cfg(unix)]
+fn spawn_relay(
+    source: UnixStream,
+    target: RelayTarget,
+    sender: Sender<io::Result<()>>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let _ = sender.send(relay(source, target));
+    })
+}
+
+#[cfg(unix)]
+fn relay(mut source: UnixStream, target: RelayTarget) -> io::Result<()> {
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = source.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        if target.stderr {
+            io::stderr().lock().write_all(&buffer[..read])?;
+        } else {
+            io::stdout().lock().write_all(&buffer[..read])?;
+        }
+    }
+}
+
+#[cfg(unix)]
+fn close_descendant_writers(stops: &[UnixStream; 2]) -> io::Result<()> {
+    for stop in stops {
+        stop.shutdown(Shutdown::Write)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn finish_relays(
+    receiver: &Receiver<io::Result<()>>,
+    relays: [JoinHandle<()>; 2],
+) -> io::Result<()> {
+    let mut results = std::vec::Vec::with_capacity(2);
+    while results.len() < 2 {
+        results.push(receiver.recv().map_err(|_| relay_panic())?);
+    }
+    for relay in relays {
+        relay.join().map_err(|_| relay_panic())?;
+    }
+    results.into_iter().collect()
+}
+
+#[cfg(unix)]
+fn relay_panic() -> io::Error {
+    io::Error::other("command output relay ended without reporting its result")
 }

@@ -454,7 +454,13 @@ fn assert_bounded_refusal(output: &std::process::Output, selected: &BatteryArmRe
     let fold_start = stdout
         .find(&first_arm)
         .unwrap_or_else(|| panic!("verifier emits the refusal fold: {}", streams(output)));
-    let fold = &stdout.as_bytes()[fold_start..];
+    let summary_start = stdout
+        .rfind("battery refusal summary:")
+        .expect("verifier closes its refusal fold with a summary");
+    let summary_end = stdout[summary_start..]
+        .find('\n')
+        .map_or(stdout.len(), |end| summary_start + end + 1);
+    let fold = &stdout.as_bytes()[fold_start..summary_end];
     assert!(
         fold.len() <= BATTERY_REFUSAL_FOLD_MAX_BYTES,
         "battery diagnostic is {} bytes, limit is {}",

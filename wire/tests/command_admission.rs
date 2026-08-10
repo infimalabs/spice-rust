@@ -81,11 +81,10 @@ fn lane_cannot_submit_an_operator_command() {
         .admit(&accepted(Actor::Lane(uuid(4))))
         .expect_err("lane authority refuses");
 
-    assert!(matches!(
-        rejection,
-        CommandRejection::Refusal(wire::Refusal { ref reason, .. })
-            if reason == "command::authority"
-    ));
+    let CommandRejection::Refusal(refusal) = rejection else {
+        panic!("lane authority must refuse");
+    };
+    assert_eq!(refusal.reason(), "command::authority");
 }
 
 #[test]
@@ -101,11 +100,10 @@ fn task_creation_routes_are_closed_over_distinct_body_contracts() {
 fn missing_witness_and_wrong_body_stop_before_business_logic() {
     let mut missing = dark(uuid(1));
     missing.expected.clear();
-    assert!(matches!(
-        missing.admit(&accepted(Actor::Operator)),
-        Err(CommandRejection::Refusal(wire::Refusal { ref reason, .. }))
-            if reason == "command::witness-law"
-    ));
+    let Err(CommandRejection::Refusal(refusal)) = missing.admit(&accepted(Actor::Operator)) else {
+        panic!("a missing witness must refuse");
+    };
+    assert_eq!(refusal.reason(), "command::witness-law");
 
     let mut malformed = dark(uuid(1));
     malformed.body = serde_json::json!({ "task": "SPICE-aBcD" });

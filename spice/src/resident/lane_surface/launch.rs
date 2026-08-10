@@ -44,7 +44,7 @@ pub(in crate::resident) fn occupant_launch(
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
-    let plan = launch_plan(&repository, &resolved, name, lane, resume)?;
+    let plan = launch_plan(paths, &repository, &resolved, name, lane, resume)?;
     let model = plan.launch().model.clone();
     let effort = plan.launch().effort.as_str().to_owned();
     let record = plan
@@ -110,6 +110,7 @@ fn launch_repository(paths: &RuntimePaths, worktree: &str) -> CommandResult<Repo
 
 /// Compose the vendor launch plan this lane's configuration admits.
 fn launch_plan(
+    paths: &RuntimePaths,
     repository: &Repository,
     resolved: &spice::config::Resolved,
     name: &wire::Name,
@@ -118,23 +119,24 @@ fn launch_plan(
 ) -> CommandResult<spice::agent_launch::Plan> {
     let executable = std::env::current_exe()
         .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?;
-    let environment = launch_environment(repository, &executable)?;
+    let environment = launch_environment(paths, repository, &executable, lane)?;
     let Some(vendor) = spice::extension::vendor(name.as_str()) else {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lane::vendor-unsupported".to_owned(),
-            witness: Some("lane.vendor".to_owned()),
-            expected: Some(
-                spice::extension::registry()
-                    .expect("compiled extension declarations are validated by the test gate")
-                    .vendors()
-                    .into_iter()
-                    .map(|vendor| vendor.name())
-                    .collect::<Vec<_>>()
-                    .join(" or "),
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::vendor-unsupported".to_owned(),
+                Some("lane.vendor".to_owned()),
+                Some(
+                    spice::extension::registry()
+                        .expect("compiled extension declarations are validated by the test gate")
+                        .vendors()
+                        .into_iter()
+                        .map(|vendor| vendor.name())
+                        .collect::<Vec<_>>()
+                        .join(" or "),
+                ),
+                Some(name.as_str().to_owned()),
             ),
-            observed: Some(name.as_str().to_owned()),
-            remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
-        }));
+        )));
     };
     let prompt = vendor.neutral_launch_prompt(&spice::install::installed_skill(repository));
     spice::agent_launch::compose(
@@ -150,21 +152,22 @@ fn launch_plan(
         },
     )
     .map_err(|error| match error {
-        spice::agent_launch::ComposeError::UnsupportedVendor(other) => Outcome::Refusal(Refusal {
-            reason: "lane::vendor-unsupported".to_owned(),
-            witness: Some("lane.vendor".to_owned()),
-            expected: Some(
-                spice::extension::registry()
-                    .expect("compiled extension declarations are validated by the test gate")
-                    .vendors()
-                    .into_iter()
-                    .map(|vendor| vendor.name())
-                    .collect::<Vec<_>>()
-                    .join(" or "),
-            ),
-            observed: Some(other),
-            remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
-        }),
+        spice::agent_launch::ComposeError::UnsupportedVendor(other) => {
+            Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+                "lane::vendor-unsupported".to_owned(),
+                Some("lane.vendor".to_owned()),
+                Some(
+                    spice::extension::registry()
+                        .expect("compiled extension declarations are validated by the test gate")
+                        .vendors()
+                        .into_iter()
+                        .map(|vendor| vendor.name())
+                        .collect::<Vec<_>>()
+                        .join(" or "),
+                ),
+                Some(other),
+            )))
+        }
         other => store_fault("lane::launch-invalid", &other.to_string()),
     })
 }
@@ -177,11 +180,37 @@ fn launch_plan(
 /// predecessor also installs a program named `spice`, and inheriting its
 /// earlier ambient entry would send agent-shell inbox and acknowledgment
 /// commands to the wrong runtime.
-fn launch_environment(repository: &Repository, executable: &Path) -> CommandResult<Environment> {
-    let mut values = ["HOME", "SHELL", "TMPDIR", "USER"]
+fn launch_environment(
+    paths: &RuntimePaths,
+    repository: &Repository,
+    executable: &Path,
+    lane: CanonicalUuid,
+) -> CommandResult<Environment> {
+    let native_shell = crate::bootstrap_environment("SHELL").ok_or_else(|| {
+        store_fault(
+            "lane::native-shell-unavailable",
+            "the supervised environment has no native SHELL to restore behind interception",
+        )
+    })?;
+    let mut values = ["HOME", "TMPDIR", "USER"]
         .into_iter()
         .filter_map(|key| crate::bootstrap_environment(key).map(|value| (key.into(), value)))
         .collect::<Vec<(OsString, OsString)>>();
+    values.extend([
+        (
+            OsString::from("SHELL"),
+            spice::install::installed_shell(repository).into_os_string(),
+        ),
+        (
+            OsString::from(steer::hook::HOOKS),
+            spice::install::installed_shell_hooks(repository).into_os_string(),
+        ),
+        (OsString::from(steer::hook::NATIVE_SHELL), native_shell),
+        (
+            OsString::from(steer::hook::INBOX),
+            steer::inbox::path(&paths.inbox, lane).into_os_string(),
+        ),
+    ]);
     values.push(("PATH".into(), appliance_path(executable)?));
     let environment = Environment::new(values)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
@@ -232,13 +261,10 @@ fn launch_process(
 }
 
 pub(super) fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: "lane::configuration-refused".to_owned(),
-        witness: Some("effective-configuration".to_owned()),
-        expected: Some(
-            "tracked and local inputs admitted by the configuration registry".to_owned(),
-        ),
-        observed: Some(error.diagnostic()),
-        remedy: "correct the named configuration inputs before launching the lane".to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        "lane::configuration-refused".to_owned(),
+        Some("effective-configuration".to_owned()),
+        Some("tracked and local inputs admitted by the configuration registry".to_owned()),
+        Some(error.diagnostic()),
+    )))
 }

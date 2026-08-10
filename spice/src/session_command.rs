@@ -359,14 +359,16 @@ fn deadline_duration_value(
     })
 }
 
-fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Refusal {
-    Refusal {
-        reason: reason.to_owned(),
-        witness: Some("session-query".to_owned()),
-        expected: Some("one registered read-only transcript query".to_owned()),
-        observed,
-        remedy: remedy.to_owned(),
-    }
+fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {
+    Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("session-query".to_owned()),
+            Some("one registered read-only transcript query".to_owned()),
+            observed,
+        )
+        .with_detail(detail),
+    )
 }
 
 #[cfg(test)]
@@ -449,17 +451,21 @@ mod tests {
         let budget = std::time::Duration::from_millis(1);
         let discovering = context("sweep", &["thread-identity"], budget);
         let discovery_refusal = timeout(&discovering, None);
-        assert_eq!(discovery_refusal.reason, "session::deadline-exceeded");
+        assert_eq!(discovery_refusal.reason(), "session::deadline-exceeded");
         assert_eq!(
-            discovery_refusal.observed.as_deref(),
+            discovery_refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed),
             Some("action=sweep inputs=requested[\"thread-identity\"] budget=0.001s")
         );
 
         let rendering = context("briefing", &["input.jsonl"], budget);
         let render_refusal = timeout(&rendering, Some(&["/canonical/input.jsonl"]));
-        assert_eq!(render_refusal.reason, "session::deadline-exceeded");
+        assert_eq!(render_refusal.reason(), "session::deadline-exceeded");
         assert_eq!(
-            render_refusal.observed.as_deref(),
+            render_refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed),
             Some("action=briefing inputs=resolved[\"/canonical/input.jsonl\"] budget=0.001s")
         );
     }
@@ -480,12 +486,15 @@ mod tests {
             std::time::Duration::from_millis(1),
         );
         let refusal = timeout(&context, Some(&["/private/session.jsonl"]));
-        let observed = refusal.observed.expect("the deadline carries its witness");
+        let diagnostic = refusal.diagnostic().expect("deadline is diagnostic");
+        let observed = diagnostic
+            .observed()
+            .expect("the deadline carries its witness");
         assert!(observed.contains("/private/session.jsonl"));
         assert!(!observed.contains("verbatim transcript secret"));
-        assert_eq!(refusal.witness.as_deref(), Some("session-query"));
+        assert_eq!(diagnostic.witness(), Some("session-query"));
         assert_eq!(
-            refusal.expected.as_deref(),
+            diagnostic.expected(),
             Some("one registered read-only transcript query")
         );
     }

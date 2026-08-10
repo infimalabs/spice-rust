@@ -22,6 +22,17 @@ use crate::state::{BrowserState, ChainWalk};
 
 const EVENT_LIMIT: usize = 32;
 
+/// Whether a topology mutation response leaves Canvas owing an authoritative read.
+///
+/// Successful topology replies already carry the new table. A refusal or
+/// fault carries no replacement table, so the browser must re-pull rather
+/// than continue rendering the revision the rejected gesture observed.
+#[cfg(any(target_arch = "wasm32", test))]
+#[must_use]
+pub(crate) const fn topology_mutation_requires_refresh<T>(outcome: &Outcome<T>) -> bool {
+    !matches!(outcome, Outcome::Reply(_))
+}
+
 /// One fact envelope projected to fields that are safe and useful to render.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FactRow {
@@ -117,6 +128,8 @@ pub struct LaneView {
     pub epoch: CanonicalUuid,
     /// Current resident state.
     pub state: wire::ResidentState,
+    /// Monotonic authority for these exact team rows and policies.
+    pub topology_revision: u64,
     /// Safe current lane rows.
     pub lanes: Vec<LaneRow>,
 }
@@ -285,6 +298,7 @@ impl From<&LaneAnswer> for LaneView {
         Self {
             epoch: answer.epoch,
             state: answer.state,
+            topology_revision: answer.topology_revision,
             lanes: lineages,
         }
     }
@@ -764,7 +778,11 @@ impl CanvasRuntime {
             // so applying it changes none.
             StreamFrame::Pong { .. } => Vec::new(),
             StreamFrame::Refusal { refusal, .. } => {
-                self.push_event("refusal", refusal.reason.clone(), refusal.remedy.clone());
+                self.push_event(
+                    "refusal",
+                    refusal.reason().to_owned(),
+                    refusal.explanation().to_owned(),
+                );
                 Vec::new()
             }
             StreamFrame::Fault { fault, .. } => {
@@ -1014,7 +1032,11 @@ impl CanvasRuntime {
                 self.push_event("reply", title, detail);
             }
             Outcome::Refusal(refusal) => {
-                self.push_event("refusal", refusal.reason.clone(), refusal.remedy.clone());
+                self.push_event(
+                    "refusal",
+                    refusal.reason().to_owned(),
+                    refusal.explanation().to_owned(),
+                );
             }
             Outcome::Fault(fault) => {
                 self.push_event("fault", fault.reason.clone(), fault.detail.clone());
@@ -1132,6 +1154,7 @@ const fn disposition_label(disposition: wire::Disposition) -> &'static str {
         wire::Disposition::Acked => "acked",
         wire::Disposition::Declined => "declined",
         wire::Disposition::Lapsed => "lapsed",
+        wire::Disposition::DeadLettered => "deadlettered",
         wire::Disposition::Canceled => "canceled",
     }
 }
@@ -1296,4 +1319,29 @@ pub fn stale_reads(admitted: &Admitted<StreamFrame>) -> Stale {
         _ => {}
     }
     stale
+}
+
+#[cfg(test)]
+mod topology_tests {
+    use super::*;
+
+    #[test]
+    fn a_stale_topology_refusal_requires_an_authoritative_refresh() {
+        let stale = Outcome::<()>::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::topology-moved",
+                Some("topology_revision".to_owned()),
+                Some("7".to_owned()),
+                Some("8".to_owned()),
+            )
+            .with_detail("read the lane table"),
+        ));
+        assert!(topology_mutation_requires_refresh(&stale));
+
+        let current = Outcome::Reply(wire::Reply {
+            position: wire::ReplyPosition::Direct {},
+            body: (),
+        });
+        assert!(!topology_mutation_requires_refresh(&current));
+    }
 }

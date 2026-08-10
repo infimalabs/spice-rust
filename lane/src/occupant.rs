@@ -230,6 +230,7 @@ impl Error for SeatError {
 #[derive(Debug, Default)]
 pub struct Seats {
     occupied: BTreeMap<CanonicalUuid, Occupant>,
+    started: BTreeMap<CanonicalUuid, Activity>,
     activity: BTreeMap<CanonicalUuid, Activity>,
 }
 
@@ -239,6 +240,7 @@ impl Seats {
     pub const fn new() -> Self {
         Self {
             occupied: BTreeMap::new(),
+            started: BTreeMap::new(),
             activity: BTreeMap::new(),
         }
     }
@@ -259,6 +261,12 @@ impl Seats {
     #[must_use]
     pub fn activity(&self, lane: CanonicalUuid) -> Option<Activity> {
         self.activity.get(&lane).copied()
+    }
+
+    /// Immutable seating instant for the supervised occupant.
+    #[must_use]
+    pub fn started(&self, lane: CanonicalUuid) -> Option<Activity> {
+        self.started.get(&lane).copied()
     }
 
     /// Advance activity with one selected record from the exact supervised occupant.
@@ -359,13 +367,15 @@ impl Seats {
             occupant,
             running,
         });
-        self.activity
-            .insert(lane, Activity::new(occupant.occupant, Monotonic::now()));
+        let seated = Activity::new(occupant.occupant, Monotonic::now());
+        self.started.insert(lane, seated);
+        self.activity.insert(lane, seated);
         Ok(occupant)
     }
 
     /// Releases a seat, handing back the group so it can be waited on.
     pub fn vacate(&mut self, lane: CanonicalUuid) -> Option<Occupant> {
+        self.started.remove(&lane);
         self.activity.remove(&lane);
         self.occupied.remove(&lane)
     }
@@ -424,6 +434,18 @@ mod tests {
         assert!(seats.occupied(uuid(1)));
         assert_eq!(seats.len(), 1);
         assert_eq!(seats.lanes(), vec![uuid(1)]);
+        let started = seats.started(uuid(1)).expect("seating is timed");
+        let selected = started.at() + Duration::from_secs(1);
+        assert!(seats.observe_activity(uuid(1), uuid(3), selected));
+        assert_eq!(
+            seats.started(uuid(1)),
+            Some(started),
+            "selected records must not rewrite the occupant lifetime baseline",
+        );
+        assert_eq!(
+            seats.activity(uuid(1)).expect("activity is timed").at(),
+            selected,
+        );
 
         seats
             .vacate(uuid(1))
@@ -431,6 +453,8 @@ mod tests {
             .wait()
             .expect("the group ends");
         assert!(seats.is_empty());
+        assert_eq!(seats.started(uuid(1)), None);
+        assert_eq!(seats.activity(uuid(1)), None);
     }
 
     /// A second seating is refused, and refused without opening the door.

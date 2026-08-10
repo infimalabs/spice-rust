@@ -9,12 +9,14 @@ pub(super) fn propose_seat(
     observed: &journal::JournalHead<wire::ResidencyHead>,
     epoch: CanonicalUuid,
     prepared: &PreparedSeat,
+    answer: LaneChangeAnswer,
 ) -> CommandResult<JournalWrite> {
     let capability = prepared.capability;
     let occupant = prepared.proven.occupant;
     let group = prepared.proven.group;
     let session = &prepared.proven.session;
     let mut next = observed.body().clone();
+    next.topology_revision = answer.topology_revision;
     if subscription_policy(observed.body(), request.lineage_id)?.is_none() {
         if observed
             .body()
@@ -91,18 +93,7 @@ pub(super) fn propose_seat(
         )
         .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
     write.residency_head(started, move |_| next);
-    command_result(
-        &mut write,
-        command,
-        request.clone(),
-        epoch,
-        LaneChangeAnswer {
-            lane: request.lane,
-            from: "absent".to_owned(),
-            to: OCCUPIED.to_owned(),
-            git: Some(prepared.proven.git.clone().into_boxed_str()),
-        },
-    )?;
+    command_result(&mut write, command, request.clone(), epoch, answer)?;
     Ok(write)
 }
 
@@ -123,38 +114,20 @@ pub(super) fn propose_drain(
         .find(|row| row.lane == request.lane)
         .expect("observed lane remains in its cloned head");
     row.occupant = None;
-    row.disposition = VACANT.to_owned();
+    row.disposition = evidence.disposition().to_owned();
     let mut write = write(
         command.actor().clone(),
         epoch,
         Producer::ResidentRecognition,
     )?;
     guard_residency(&mut write, observed);
-    let fact = match evidence {
-        StopEvidence::Drained => write.fact(
-            wire::body::LaneDrained {
-                lane: request.lane,
-                occupant,
-            },
-            FactCause::Existing(observed.position()),
-        ),
-        StopEvidence::Exited(code) => write.fact(
-            wire::body::LaneExited {
-                lane: request.lane,
-                occupant,
-                code,
-            },
-            FactCause::Existing(observed.position()),
-        ),
-        StopEvidence::Killed => write.fact(
-            wire::body::LaneKilled {
-                lane: request.lane,
-                occupant,
-            },
-            FactCause::Existing(observed.position()),
-        ),
-    }
-    .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
+    let fact = ending_fact(
+        &mut write,
+        request.lane,
+        occupant,
+        &evidence,
+        FactCause::Existing(observed.position()),
+    )?;
     write.residency_head(fact, move |_| next);
     command_result(&mut write, command, request.clone(), epoch, answer)?;
     Ok(write)

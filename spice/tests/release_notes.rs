@@ -239,7 +239,7 @@ fn an_unknown_release_commit_is_one_typed_refusal() {
     else {
         panic!("unknown release commit did not refuse")
     };
-    assert_eq!(refusal.reason, "release::history-refused");
+    assert_eq!(refusal.reason(), "release::history-refused");
 }
 
 fn git(root: &Path, arguments: &[&str]) -> String {

@@ -5,6 +5,21 @@ static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 const WORKTREE: &str = "/worktrees/resumed";
 const IDENTITY: &str = "018f7777-7777-7444-8888-999999999999";
 
+#[derive(Default)]
+struct ExitSink(std::sync::Mutex<Vec<CaptureExit>>);
+
+impl CaptureReporter for ExitSink {
+    fn record(&self, _record: CaptureRecord) -> Result<(), CaptureReportError> {
+        Ok(())
+    }
+
+    fn failed(&self, _failure: CaptureFailure) {}
+
+    fn exited(&self, exit: CaptureExit) {
+        self.0.lock().expect("exit sink lock").push(exit);
+    }
+}
+
 /// One isolated durable root. Resuming a lane reads a session head and a tape
 /// and nothing else, so these tests need neither a bus nor a repository.
 struct Fixture {
@@ -93,6 +108,37 @@ fn head(row: &mut wire::LaneResidency) -> &mut wire::LaneSession {
         .expect("fixture row declares session authority")
 }
 
+#[test]
+fn declaration_reporter_forwards_the_kernel_exit_to_its_resident_sink() {
+    let lane = uuid(1);
+    let occupant = uuid(2);
+    let inner = Arc::new(ExitSink::default());
+    let (reply, _session) = mpsc::sync_channel(1);
+    let reporter = DeclarationReporter {
+        inner: inner.clone(),
+        lane,
+        occupant,
+        worktree: WORKTREE.to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
+        model: "sonnet".to_owned(),
+        effort: "high".to_owned(),
+        git: "skipped:test".to_owned(),
+        epoch: uuid(3),
+        stream: vendor::RecordStream::Stdout,
+        expected: None,
+        state: Arc::new(Mutex::new(DeclarationState {
+            reply,
+            seen: None,
+            witness: DeclarationWitness::default(),
+        })),
+    };
+    let exit = CaptureExit { lane, occupant };
+
+    reporter.exited(exit);
+
+    assert_eq!(*inner.0.lock().expect("exit sink lock"), vec![exit]);
+}
+
 /// One Claude initialization record, in the words the dialect actually reads.
 fn declaration(identity: &str) -> Vec<u8> {
     format!(r#"{{"type":"system","subtype":"init","session_id":"{identity}"}}"#).into_bytes()
@@ -124,7 +170,7 @@ fn refusal(fixture: &Fixture, row: &wire::LaneResidency) -> Refusal {
 }
 
 fn reason(fixture: &Fixture, row: &wire::LaneResidency) -> String {
-    refusal(fixture, row).reason
+    refusal(fixture, row).reason().to_owned()
 }
 
 #[test]
@@ -147,7 +193,9 @@ fn a_refused_resume_witnesses_the_durable_session_head() {
     let mut row = row(&fixture);
     row.session = None;
     assert_eq!(
-        refusal(&fixture, &row).witness.as_deref(),
+        refusal(&fixture, &row)
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::witness),
         Some("lane-session-head")
     );
     finish(fixture);
@@ -258,8 +306,13 @@ fn resume_refuses_a_locus_naming_a_record_that_declares_no_session() {
         br#"{"type":"system","subtype":"compact_boundary"}"#,
     );
     let refusal = refusal(&fixture, &row);
-    assert_eq!(refusal.reason, "lane::session-tape-moved");
-    assert_eq!(refusal.observed, None);
+    assert_eq!(refusal.reason(), "lane::session-tape-moved");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        None
+    );
     finish(fixture);
 }
 
@@ -273,9 +326,11 @@ fn resume_refuses_a_locus_declaring_an_identity_the_head_never_named() {
         &declaration("018f0000-0000-7000-8000-000000000000"),
     );
     let refusal = refusal(&fixture, &row);
-    assert_eq!(refusal.reason, "lane::session-tape-moved");
+    assert_eq!(refusal.reason(), "lane::session-tape-moved");
     assert_eq!(
-        refusal.observed.as_deref(),
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
         Some("018f0000-0000-7000-8000-000000000000")
     );
     finish(fixture);

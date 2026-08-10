@@ -137,7 +137,10 @@ fn distill(
         Err(error) => {
             return skipped(
                 "missing_transcript",
-                error.observed.as_deref().unwrap_or(""),
+                error
+                    .diagnostic()
+                    .and_then(wire::RefusalDiagnostic::observed)
+                    .unwrap_or(""),
             );
         }
     };
@@ -146,7 +149,15 @@ fn distill(
     }
     let data = match dataset::load(&[resolved]) {
         Ok(data) => data,
-        Err(error) => return skipped("extract_error", error.observed.as_deref().unwrap_or("")),
+        Err(error) => {
+            return skipped(
+                "extract_error",
+                error
+                    .diagnostic()
+                    .and_then(wire::RefusalDiagnostic::observed)
+                    .unwrap_or(""),
+            );
+        }
     };
     let extracted = extract(&data, context);
     if extracted.is_empty() {

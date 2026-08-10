@@ -63,6 +63,21 @@ impl Fixture {
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["config", "user.name", "Spice Test"]);
         git(&root, &["config", "user.email", "spice@example.test"]);
+        seed_release_authority(&root);
+        let remote = root.join("remote.git");
+        git(
+            &root,
+            &["init", "--bare", remote.to_str().expect("remote path")],
+        );
+        git(
+            &root,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote.to_str().expect("remote path"),
+            ],
+        );
         staged_app::seed(&root);
         git(&root, &["add", "dist/stage-app"]);
         git(
@@ -115,6 +130,37 @@ impl Fixture {
             pointer.targets[target].receipt
         ))
     }
+}
+
+fn seed_release_authority(root: &Path) {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("spice is one workspace member");
+    fs::copy(workspace.join("Cargo.toml"), root.join("Cargo.toml"))
+        .expect("copy workspace manifest");
+    let manifest = toml::from_str::<toml::Value>(
+        &fs::read_to_string(workspace.join("Cargo.toml")).expect("read workspace manifest"),
+    )
+    .expect("workspace manifest decodes");
+    for member in manifest["workspace"]["members"]
+        .as_array()
+        .expect("workspace members")
+    {
+        let member = member.as_str().expect("member path");
+        fs::create_dir_all(root.join(member)).expect("fixture member directory");
+        fs::copy(
+            workspace.join(member).join("Cargo.toml"),
+            root.join(member).join("Cargo.toml"),
+        )
+        .expect("copy member manifest");
+    }
+    fs::copy(
+        workspace.join("dist/release-authority.json"),
+        root.join("dist/release-authority.json"),
+    )
+    .expect("copy release authority");
+    fs::copy(workspace.join("dist/VERSION"), root.join("dist/VERSION"))
+        .expect("copy product version");
 }
 
 impl Drop for Fixture {
@@ -203,6 +249,33 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let text_plan: ReleasePlan = wire::decode(&text.stdout).expect("text body is a release plan");
     assert_eq!(text_plan.manifest, fixture.manifest);
     assert_eq!(text_plan.targets.len(), 2);
+    assert_eq!(text_plan.action, "publish");
+    assert_eq!(text_plan.requested_version.as_str(), "0.0.0");
+    assert_eq!(text_plan.source_commit.len(), 40);
+    assert_eq!(text_plan.release_commit.len(), 40);
+    assert_eq!(text_plan.package_object.len(), 40);
+    assert!(text_plan.observations.clean);
+    assert!(text_plan.observations.bump_claimed);
+    assert!(text_plan.observations.credentials_valid);
+    assert_eq!(text_plan.observations.unrecorded_local_commits, 0);
+    assert!(text_plan.observations.registry.is_none());
+    assert_eq!(
+        text_plan.operations,
+        [
+            "resolve-preconditions-and-credentials",
+            "run-correctness-gate",
+            "bump-and-verify-version",
+            "create-release-commit",
+            "rebuild-artifacts",
+            "install-and-probe-artifacts",
+            "rehearse-upload",
+            "publish-source",
+            "upload-package",
+            "await-registry-visibility",
+            "create-immutable-tag",
+            "announce",
+        ]
+    );
     let draft = fixture.invoke(&["--json", "release", "notes"]);
     let Outcome::Reply(draft) =
         wire::decode::<Outcome<wire::ReleaseNotes>>(&draft.stdout).expect("draft is typed")
@@ -213,6 +286,11 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let expected_notes =
         dist::curated_release_notes(&candidate, &draft.body).expect("notes are curated");
     assert_eq!(text_plan.notes, expected_notes.identity);
+    assert_eq!(text_plan.notes_document, expected_notes.document);
+    assert!(
+        remote_refs(&fixture).is_empty(),
+        "preview changed remote refs"
+    );
 
     let json = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
     assert!(
@@ -244,6 +322,104 @@ fn publication_plans_commits_replays_and_survives_restart() {
     );
     let first = recognition(&first);
     assert!(first.1.fresh);
+    assert_eq!(
+        remote_refs(&fixture),
+        [
+            "refs/heads/main",
+            "refs/spice/packages/v0.0.0",
+            "refs/spice/releases/v0.0.0",
+            "refs/tags/v0.0.0",
+        ]
+    );
+    assert_eq!(
+        remote_object_type(&fixture, "refs/spice/packages/v0.0.0"),
+        "tree"
+    );
+    assert_eq!(
+        remote_object(&fixture, "refs/spice/packages/v0.0.0"),
+        text_plan.package_object
+    );
+    let operation_journal = fixture
+        .journal
+        .parent()
+        .expect("journal data directory")
+        .join("release-operations")
+        .join(format!("{}.json", text_plan.key));
+    let operation_journal: serde_json::Value = serde_json::from_slice(
+        &fs::read(operation_journal).expect("external operation journal exists"),
+    )
+    .expect("external operation journal is typed JSON");
+    assert_eq!(
+        operation_journal["accepted"]
+            .as_array()
+            .expect("accepted operation rows")
+            .len(),
+        text_plan.operations.len()
+    );
+    assert_eq!(
+        operation_journal["receipts"]
+            .as_array()
+            .expect("operation receipt rows")
+            .len(),
+        text_plan.operations.len()
+    );
+
+    let recovery = fixture.invoke(&[
+        "--json",
+        "release",
+        "publish",
+        "--notes-file",
+        notes,
+        "--action",
+        "tag-and-announce",
+    ]);
+    assert!(
+        recovery.status.success(),
+        "recovery preview failed: {}",
+        spoken(&recovery)
+    );
+    let Outcome::Reply(recovery) =
+        wire::decode::<Outcome<ReleasePlan>>(&recovery.stdout).expect("recovery preview is typed")
+    else {
+        panic!("recovery preview did not reply")
+    };
+    assert_eq!(recovery.body.action, "tag-and-announce");
+    assert_eq!(
+        recovery
+            .body
+            .observations
+            .registry
+            .as_ref()
+            .expect("recovery binds registry evidence")
+            .release_commit,
+        recovery.body.release_commit
+    );
+    assert_eq!(
+        recovery.body.operations,
+        [
+            "resolve-preconditions-and-credentials",
+            "await-registry-visibility",
+            "create-immutable-tag",
+            "announce",
+        ]
+    );
+    let recovery_apply = format!("--apply={}", recovery.body.key);
+    let recovered = fixture.invoke(&[
+        "--json",
+        "release",
+        "publish",
+        "--notes-file",
+        notes,
+        "--action",
+        "tag-and-announce",
+        &recovery_apply,
+    ]);
+    assert!(
+        recovered.status.success(),
+        "recovery apply failed: {}",
+        spoken(&recovered)
+    );
+    assert!(!recognition(&recovered).1.fresh);
 
     let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, &apply]);
     assert!(
@@ -309,7 +485,7 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
     else {
         panic!("stale apply did not refuse")
     };
-    assert_eq!(refusal.reason, "release::plan-moved");
+    assert_eq!(refusal.reason(), "release::plan-moved");
 
     fs::remove_file(fixture.receipt_path(1)).expect("remove one detached receipt");
 
@@ -320,7 +496,7 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
     else {
         panic!("missing evidence did not refuse")
     };
-    assert_eq!(refusal.reason, "release::manifest-refused");
+    assert_eq!(refusal.reason(), "release::manifest-refused");
     assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 0);
     resident.stop(&fixture);
 }
@@ -377,6 +553,18 @@ fn publish_stage(root: &Path) -> Digest {
         } else {
             Digest::compute(Domain::DistArtifact, target.as_str().as_bytes())
         };
+        let executable = if target == current {
+            fs::read(env!("CARGO_BIN_EXE_spice")).expect("current spice binary")
+        } else {
+            target.as_str().as_bytes().to_vec()
+        };
+        let executable_path = stage
+            .join("targets")
+            .join(target.as_str())
+            .join("bin/spice");
+        fs::create_dir_all(executable_path.parent().expect("executable parent"))
+            .expect("target executable directory");
+        fs::write(&executable_path, executable).expect("target executable bytes");
         let inventory = vec![
             inventory("app/app.wasm", 0o644, &app),
             inventory("bin/spice", 0o755, &target_native),
@@ -507,7 +695,7 @@ fn assert_notes_refusal(output: &Output) {
     else {
         panic!("uncurated notes did not refuse: {}", spoken(output))
     };
-    assert_eq!(refusal.reason, "release::notes-refused");
+    assert_eq!(refusal.reason(), "release::notes-refused");
 }
 
 fn facts(fixture: &Fixture) -> journal::FactSnapshot {
@@ -538,6 +726,50 @@ fn git(root: &Path, arguments: &[&str]) -> String {
         .expect("Git stdout is UTF-8")
         .trim()
         .to_owned()
+}
+
+fn remote_refs(fixture: &Fixture) -> Vec<String> {
+    let remote = fixture.root.join("remote.git");
+    git(
+        &fixture.root,
+        &[
+            "--git-dir",
+            remote.to_str().expect("remote path"),
+            "for-each-ref",
+            "--format=%(refname)",
+        ],
+    )
+    .lines()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn remote_object(fixture: &Fixture, reference: &str) -> String {
+    let remote = fixture.root.join("remote.git");
+    git(
+        &fixture.root,
+        &[
+            "--git-dir",
+            remote.to_str().expect("remote path"),
+            "rev-parse",
+            "--verify",
+            reference,
+        ],
+    )
+}
+
+fn remote_object_type(fixture: &Fixture, reference: &str) -> String {
+    let remote = fixture.root.join("remote.git");
+    git(
+        &fixture.root,
+        &[
+            "--git-dir",
+            remote.to_str().expect("remote path"),
+            "cat-file",
+            "-t",
+            reference,
+        ],
+    )
 }
 
 fn spoken(output: &Output) -> String {

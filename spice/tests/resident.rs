@@ -658,13 +658,12 @@ fn send_capability_echo<S: Read + Write>(
 ) {
     send_server(
         socket,
-        &wire::Refusal {
-            reason: "hello::fixture".to_owned(),
-            witness: None,
-            expected: None,
-            observed: Some(capability.to_string()),
-            remedy: "read current discovery".to_owned(),
-        },
+        &wire::Refusal::bare(wire::RefusalDiagnostic::new(
+            "hello::fixture".to_owned(),
+            None,
+            None,
+            Some(capability.to_string()),
+        )),
     );
 }
 
@@ -838,8 +837,8 @@ fn assert_lane_session(
     assert_eq!((response.id, response.epoch), (request_id, discovery.epoch));
     assert!(matches!(
         response.outcome,
-        Outcome::Refusal(wire::Refusal { ref reason, .. })
-            if reason == "command::authority"
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "command::authority"
     ));
 }
 
@@ -1087,6 +1086,28 @@ fn wait_for_event<T>(
             }
         }
     }
+}
+
+fn wait_for_lane_exit(fixture: &Fixture, lane: wire::CanonicalUuid) {
+    wait_for_event(
+        &fixture.runtime.join("data"),
+        || {},
+        || {
+            let snapshot = journal::JournalReader::open(fixture.journal())
+                .ok()?
+                .fact_snapshot()
+                .ok()?;
+            snapshot
+                .facts()
+                .iter()
+                .any(|fact| {
+                    fact.fact.kind() == FactKind::LaneExited
+                        && fact.fact.body().get("lane")
+                            == Some(&serde_json::Value::String(lane.to_string()))
+                })
+                .then_some(())
+        },
+    );
 }
 
 fn effect_observers(path: &Path) -> Vec<readiness::filesystem_event::DirectObserver> {
@@ -1370,6 +1391,9 @@ mod lane_continuity;
 
 #[path = "resident/lane_resume.rs"]
 mod lane_resume;
+
+#[path = "resident/automatic_lifecycle.rs"]
+mod automatic_lifecycle;
 
 #[path = "resident/steering_authority.rs"]
 mod steering_authority;

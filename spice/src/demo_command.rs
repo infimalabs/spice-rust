@@ -744,6 +744,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
         ResidencyHead {
             epoch,
             state: ResidentState::Dark,
+            topology_revision: 0,
             lanes: DEMO_LANES
                 .into_iter()
                 .map(|seed| wire::LaneResidency {
@@ -1236,15 +1237,17 @@ fn refusal(
     reason: &str,
     expected: Option<&str>,
     observed: Option<&str>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<DemoAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("demo-root".to_owned()),
-        expected: expected.map(str::to_owned),
-        observed: observed.map(str::to_owned),
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("demo-root".to_owned()),
+            expected.map(str::to_owned),
+            observed.map(str::to_owned),
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn protocol_fault(reason: &str, detail: impl Into<String>) -> Outcome<DemoAnswer> {

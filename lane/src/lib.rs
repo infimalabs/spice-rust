@@ -7,51 +7,30 @@
 //! transition of it; none of them decide when to run, because a supervisor that
 //! reads a clock cannot be replayed.
 //!
-//! # Supervisor wake ownership
+//! # Resident lifecycle ownership
 //!
-//! This port permanently owns none of the prototype's nine clock-driven wake
-//! arms. They remain predecessor policy, outside this replayable reducer. The
-//! complete ownership map is:
+//! Rust owns the prototype's nine automatic wake invariants without moving a
+//! clock into this replayable crate. `spice/src/resident/lifecycle.rs` is the
+//! single process authority; durable bus commits and explicit `TaskWake` and
+//! `LaneResume` timer events call it, and this crate continues to receive time
+//! only as data. The complete ownership map is:
 //!
-//! - `LC-04` (capacity follows work) stays in
-//!   `spice/serve/launch.py::AvailableWorkWatch.evaluate` and
-//!   `spice/serve/agentapi.py::ensure_agent_for_available_work`, whose serialized
-//!   dispatch starts one lane before a later inventory pass can observe more
-//!   capacity.
-//! - `LC-05` (two-ready-task wake, excluding active claims) stays in
-//!   `spice/serve/agentapi.py::ensure_agent_for_available_work` and
-//!   `spice/tasks/alloc.py::ordered_visible_ready_rows`.
-//! - `LC-06` (lone-task starvation wake) stays in
-//!   `spice/serve/agentapi.py::available_work_next_deadline`,
-//!   `spice/tasks/readiness.py::queue_ready_epoch`, and
-//!   `spice/serve/launch.py::AvailableWorkWatch`.
-//! - `LC-07` (burst settle interval) stays in
-//!   `spice/serve/agentapi.py::available_work_settle_remaining` and
-//!   `ensure_agent_for_available_work`.
-//! - `LC-08` (one capacity/select/claim/start decision) stays under
-//!   `spice/serve/agentapi.py::_AVAILABLE_WORK_CLAIM_LOCK` in
-//!   `ensure_agent_for_available_work` and `_dispatch_available_work_candidate`.
-//! - `LC-09` (same-worktree serialization with independent siblings) stays in
-//!   `spice/serve/lifecycle.py::LifecycleReconciler._drain_target` and
-//!   `LifecycleDecisionAuthority._target_lock`.
-//! - `LC-16` (one retry-attempt bucket per lane, consulted only after cheap
-//!   declines) stays in
-//!   `spice/serve/lifecycle.py::LifecycleDecisionAuthority._attempt_due` and
-//!   `_decide_automatic_locked`, with the gate call sites in
-//!   `spice/serve/agentapi.py::ensure_agent_for_pending_inbox`,
-//!   `ensure_agent_for_held_claim`, and `ensure_agent_for_available_work`.
-//! - `LC-17` (refusal names its wake arm) stays in
-//!   `spice/serve/agentapi.py::_launch_preflight_failure`, whose callers supply
-//!   the `trigger` field.
-//! - `LC-18` (shared stop criteria) stays in
-//!   `spice/serve/agentapi.py::agent_ensure_response_payload` and
-//!   `spice/agent/lifecycle.py::ensure_agent`, including
-//!   `_refuse_restart_after_rapid_deaths`; every wake arm reaches that same
-//!   ensure path.
+//! - `LC-04`, `LC-08`, and `LC-09`: the resident event loop executes one
+//!   capacity/select/claim/start decision at a time. The board's sole selector,
+//!   allocation guard, and claim mint remain the allocator authority; a lane
+//!   waiting on its retry deadline does not block a ready sibling lane.
+//! - `LC-05`, `LC-06`, and `LC-07`: the lifecycle resolver counts selectable
+//!   unclaimed tasks and derives the two-READY, lone-task starvation, and burst
+//!   settling deadlines from the durable workflow-head transition facts.
+//! - `LC-16` and `LC-17`: all three ordered arms share one per-lane retry map;
+//!   cheap declines precede it and every refusal reports its closed trigger.
+//! - `LC-18`: every arm enters the same resident launch path. Rapid-death hold
+//!   decisions remain pure here in [`hold`], while the resident supplies their
+//!   observed deaths, current instants, and durable hold deadlines.
 //!
-//! Moving any arm here would move its wall or monotonic clock with it and turn
-//! identical fact streams into different lane states. Rust may receive the
-//! resulting deadlines and liveness facts, but it does not schedule their wake.
+//! The resident owns clocks, timer scheduling, process launch, and retries.
+//! This crate still owns only replayable reductions over explicit inputs, so
+//! identical fact streams and supplied instants produce identical lane state.
 //!
 //! The crate is the widest row in the lattice, sitting above journal, bus,
 //! vendor, tape, steer, consent, listen, fold, taste, atomic, and sill. It
@@ -90,7 +69,7 @@ mod ownership_tests {
     const SOURCE: &str = include_str!("lib.rs");
 
     #[test]
-    fn every_prototype_wake_arm_is_pinned_to_the_predecessor() {
+    fn every_prototype_wake_arm_is_owned_by_the_rust_resident() {
         for number in [4, 5, 6, 7, 8, 9, 16, 17, 18] {
             let marker = format!("`LC-{number:02}`");
             assert_eq!(
@@ -99,7 +78,9 @@ mod ownership_tests {
                 "{marker} must have exactly one ownership decision"
             );
         }
-        assert!(SOURCE.contains("This port permanently owns none"));
+        assert!(SOURCE.contains("spice/src/resident/lifecycle.rs"));
+        let predecessor_phrase = ["permanently owns ", "none"].concat();
+        assert!(!SOURCE.contains(&predecessor_phrase));
         assert!(SOURCE.contains("none of them decide when to run"));
         let forbidden_module = ["pub mod ", "supervisor"].concat();
         assert!(!SOURCE.contains(&forbidden_module));

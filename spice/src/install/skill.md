@@ -28,8 +28,10 @@ Start the shared installed appliance with `$(git rev-parse --path-format=absolut
 
 - Acquire allocator-selected work with `spice task next`. Continue calling it
   after each completed phase until it reports that the lane has no work.
-- Run external commands through `spice run -- <command>` so live steering is
-  observed while you work.
+- Run external commands normally. Supervised launches structurally route every
+  top-level shell command through the installed `spice run` boundary; invoking
+  that implementation seam yourself is unnecessary and would add a second
+  wrapper hop.
 - Handle every pending steering key promptly, then retire it with
   `spice ack <key>`. Use `spice ack <key> --decline` only for a reasoned refusal.
 - Keep durable work in the task workflow. Use the landed leaves such as

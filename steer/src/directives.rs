@@ -23,6 +23,7 @@ use wire::body::{
     DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed,
     SteerMissed, SteerRecovered, SteerSent, SteeringStage, SteeringTransition, TasteReminded,
 };
+use wire::steering::SteerDeadLettered;
 use wire::{CanonicalUuid, Disposition, Instant};
 
 use crate::ack::keys::Key;
@@ -129,6 +130,8 @@ pub enum Steering<'a> {
     Missed(&'a SteerMissed),
     /// A directive reached its expiry unheard.
     Lapsed(&'a SteerLapsed),
+    /// A directive was parked because its lane could not start.
+    DeadLettered(&'a SteerDeadLettered),
     /// The operator withdrew a directive.
     Canceled(&'a SteerCanceled),
     /// A taste fired on authored prose and opened a directive.
@@ -365,6 +368,8 @@ impl Ledger {
                 ledger.absorb_recorded(Steering::Missed(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerLapsed>() {
                 ledger.absorb_recorded(Steering::Lapsed(&body), Some(envelope.at))
+            } else if let Some(body) = fact.read::<SteerDeadLettered>() {
+                ledger.absorb_recorded(Steering::DeadLettered(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerCanceled>() {
                 ledger.absorb_recorded(Steering::Canceled(&body), Some(envelope.at))
             } else {
@@ -409,6 +414,7 @@ impl Ledger {
                 self.retire(&read("key", &body.key)?, Disposition::Canceled)
             }
             Steering::Lapsed(body) => self.lapse(body),
+            Steering::DeadLettered(body) => self.dead_letter(body),
             // A missed acknowledgment alters nothing, by law. Its key is not
             // even read: the fact exists precisely because the key was unknown,
             // malformed, quoted, or historical, so refusing it here would
@@ -593,7 +599,10 @@ impl Ledger {
                 observed: body.lane,
             });
         }
-        if directive.disposition != Disposition::Lapsed {
+        if !matches!(
+            directive.disposition,
+            Disposition::Lapsed | Disposition::DeadLettered
+        ) {
             return Err(Refusal::Retired {
                 key,
                 disposition: directive.disposition,
@@ -666,6 +675,15 @@ impl Ledger {
             });
         }
         self.retire(&key, Disposition::Lapsed)
+    }
+
+    fn dead_letter(&mut self, body: &SteerDeadLettered) -> Result<(), Refusal> {
+        self.dispose(
+            &body.key,
+            body.directive,
+            body.lane,
+            Disposition::DeadLettered,
+        )
     }
 
     /// Retire the one stable directive addressed by this key.

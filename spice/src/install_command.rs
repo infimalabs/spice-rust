@@ -54,15 +54,15 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
             let digest = match spelling.parse::<Digest>() {
                 Ok(digest) => digest,
                 Err(error) => {
-                    return Answer::Receipt(Outcome::Refusal(Refusal {
-                        reason: "install::digest-refused".to_owned(),
-                        witness: Some("install-plan".to_owned()),
-                        expected: Some("canonical install plan digest".to_owned()),
-                        observed: Some(spelling),
-                        remedy: format!(
-                            "run install without --apply and use its exact digest: {error}"
-                        ),
-                    }));
+                    return Answer::Receipt(Outcome::Refusal(Refusal::bare(
+                        wire::RefusalDiagnostic::new(
+                            "install::digest-refused".to_owned(),
+                            Some("install-plan".to_owned()),
+                            Some("canonical install plan digest".to_owned()),
+                            Some(spelling),
+                        )
+                        .with_detail(error.to_string()),
+                    )));
                 }
             };
             let executable = match executable() {
@@ -137,25 +137,29 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::RecordMissing
         | InstallError::ApplyInProgress
         | InstallError::UnapplyInProgress
-        | InstallError::Drift { .. } => Outcome::Refusal(Refusal {
-            reason: refusal_reason.to_owned(),
-            witness: Some("install-plan".to_owned()),
-            expected: Some("the exact current Spice install state".to_owned()),
-            observed: Some(detail),
-            remedy: refusal_remedy.to_owned(),
-        }),
+        | InstallError::Drift { .. } => Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                refusal_reason.to_owned(),
+                Some("install-plan".to_owned()),
+                Some("the exact current Spice install state".to_owned()),
+                Some(detail),
+            )
+            .with_detail(refusal_remedy),
+        )),
         InstallError::State(
             StateError::Linked { .. }
             | StateError::NotDirectory { .. }
             | StateError::NotRegularFile { .. }
             | StateError::RetiredState { .. },
-        ) => Outcome::Refusal(Refusal {
-            reason: refusal_reason.to_owned(),
-            witness: Some("install-state".to_owned()),
-            expected: Some("unlinked Spice repository state".to_owned()),
-            observed: Some(detail),
-            remedy: "repair the named Spice state component before retrying".to_owned(),
-        }),
+        ) => Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                refusal_reason.to_owned(),
+                Some("install-state".to_owned()),
+                Some("unlinked Spice repository state".to_owned()),
+                Some(detail),
+            )
+            .with_detail(refusal_remedy),
+        )),
         InstallError::Repository(_)
         | InstallError::State(StateError::Filesystem { .. })
         | InstallError::Io { .. } => Outcome::Fault(Fault {

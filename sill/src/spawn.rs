@@ -277,13 +277,21 @@ fn start_exit_watcher(
     pid: u32,
     waiter_wake: std::os::unix::net::UnixDatagram,
     process: Arc<ProcessState>,
+    observer: Option<Arc<dyn RecordObserver>>,
 ) {
     std::thread::spawn(move || {
         let result = wait_for_exit(pid).map_err(IoFailure::capture);
         if let Ok(mut completion) = process.completion.lock() {
-            completion.notice = Some(result);
-            process.exited.notify_all();
+            completion.notice = Some(result.clone());
         }
+        if result.is_ok()
+            && let Some(observer) = observer
+        {
+            let _reported = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                observer.exited();
+            }));
+        }
+        process.exited.notify_all();
         let _wake_result = waiter_wake.send(WAKE_BYTE);
     });
 }

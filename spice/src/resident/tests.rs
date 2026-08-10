@@ -2,12 +2,13 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant as Monotonic};
 
 use sill::{
-    Argv, Cancellation, Deadlines, Environment, ObservationFailure, Output, OutputStream,
-    ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
+    Argv, Cancellation, Deadlines, Environment, Observation, ObservationFailure, ObserveError,
+    ObservedRecord, Output, OutputStream, ProcessGroup, RecordObserver, Redaction,
+    RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 
 use super::*;
@@ -45,7 +46,7 @@ fn listen_for(argv: &[&str]) -> CommandResult<SocketAddr> {
 fn listen_refusal_for(argv: &[&str]) -> String {
     match listen_for(argv) {
         Ok(listen) => panic!("{argv:?} must not bind {listen}"),
-        Err(Outcome::Refusal(refusal)) => refusal.reason,
+        Err(Outcome::Refusal(refusal)) => refusal.reason().to_owned(),
         Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
     }
 }
@@ -68,7 +69,7 @@ fn access_refusal(argv: &[&str]) -> Refusal {
 }
 
 fn access_refusal_for(argv: &[&str]) -> String {
-    access_refusal(argv).reason
+    access_refusal(argv).reason().to_owned()
 }
 
 /// The surface listens exactly where the operator requested or at one stable default.
@@ -148,9 +149,12 @@ fn remote_listening_requires_explicit_consent_and_a_url_safe_token() {
         "--auth-token",
         "too-short-token",
     ]);
-    assert_eq!(invalid.reason, "resident::auth-token-invalid");
+    assert_eq!(invalid.reason(), "resident::auth-token-invalid");
     assert_eq!(
-        invalid.observed, None,
+        invalid
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        None,
         "a refused credential is never echoed"
     );
     assert!(
@@ -248,8 +252,11 @@ fn contended_resident_names_the_holder_while_its_record_is_rewritten() {
             let Err(Outcome::Refusal(refusal)) = ResidentLock::acquire(&paths) else {
                 panic!("the resident contender did not refuse");
             };
-            assert_eq!(refusal.reason, "resident::already-up");
-            observed = refusal.observed;
+            assert_eq!(refusal.reason(), "resident::already-up");
+            observed = refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
+                .map(str::to_owned);
             Ok(())
         })
         .expect("replacement holder lands");
@@ -686,6 +693,179 @@ fn capture_failure_vacates_and_durably_degrades_the_exact_occupant() {
     fs::remove_dir_all(root).expect("capture fixture cleanup");
 }
 
+struct ExitReporter(mpsc::SyncSender<()>);
+
+impl RecordObserver for ExitReporter {
+    fn observe(&self, _record: ObservedRecord<'_>) -> Result<(), ObserveError> {
+        Ok(())
+    }
+
+    fn exited(&self) {
+        let _sent = self.0.send(());
+    }
+}
+
+#[test]
+fn kernel_exit_event_vacates_and_records_only_the_exact_occupant() {
+    let (root, paths) = resident_fixture("occupant-exit");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface =
+        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(1);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let lane = test_uuid(2);
+    let occupant = test_uuid(3);
+    let (exited, exit_event) = mpsc::sync_channel(1);
+    let observation = Observation::new(
+        OutputStream::Stdout,
+        1024,
+        4,
+        Arc::new(ExitReporter(exited)),
+    )
+    .expect("exit observation is valid");
+    let mut spec = process_spec("exit 17", Duration::from_secs(5));
+    spec.output = Output::new(
+        StdinPolicy::Null,
+        StreamPolicy::Capture { limit: 1024 },
+        StreamPolicy::Null,
+    );
+    let mut seats = Seats::new();
+    seats
+        .seat_observed(lane, occupant, spec, observation)
+        .expect("exiting occupant starts");
+    seed_lane(&bus, epoch, lane, occupant);
+    exit_event
+        .recv_timeout(Duration::from_secs(5))
+        .expect("waitid callback reports the exit");
+
+    let exit = lane::capture::CaptureExit { lane, occupant };
+    super::lane_surface::occupant_exited(&bus, epoch, &mut seats, exit)
+        .expect("exit event commits");
+    super::lane_surface::occupant_exited(&bus, epoch, &mut seats, exit)
+        .expect("stale duplicate exit is inert");
+
+    assert!(!seats.occupied(lane));
+    let head = current_residency(&bus, epoch)
+        .expect("exit residency reads")
+        .into_body();
+    let row = head
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane)
+        .expect("exited lane remains durable");
+    assert_eq!((row.occupant, row.disposition.as_str()), (None, "vacant"));
+    let snapshot = bus.fact_snapshot().expect("exit facts read");
+    let exits = snapshot
+        .facts()
+        .iter()
+        .filter(|fact| fact.fact.kind() == wire::FactKind::LaneExited)
+        .collect::<Vec<_>>();
+    assert_eq!(exits.len(), 1, "the exact exit commits once");
+    assert_eq!(exits[0].fact.body()["code"], 17);
+    bus.shutdown().expect("fixture bus stops");
+    fs::remove_dir_all(root).expect("exit fixture cleanup");
+}
+
+#[test]
+fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
+    let (root, paths) = resident_fixture("pending-dead-letter");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface =
+        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(1);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let lane = test_uuid(2);
+    let occupant = test_uuid(3);
+    let directive = test_uuid(4);
+    seed_lane(&bus, epoch, lane, occupant);
+    let observed = current_residency(&bus, epoch).expect("occupied residency reads");
+    let mut vacant = observed.body().clone();
+    let row = vacant
+        .lanes
+        .iter_mut()
+        .find(|row| row.lane == lane)
+        .expect("fixture lane exists");
+    row.occupant = None;
+    row.disposition = "vacant".to_owned();
+    let mut ending =
+        write(Actor::Spice, epoch, Producer::ResidentRecognition).expect("ending write starts");
+    super::shutdown::guard_residency(&mut ending, &observed);
+    let exited = ending
+        .fact(
+            wire::body::LaneExited {
+                lane,
+                occupant,
+                code: 17,
+            },
+            FactCause::Existing(observed.position()),
+        )
+        .expect("exit fact is valid");
+    ending.residency_head(exited, move |_| vacant);
+    commit(&bus, ending).expect("vacancy commits");
+    let residency = current_residency(&bus, epoch).expect("vacant residency reads");
+    let expires: wire::Instant = "2026-08-10T07:07:19.000Z".parse().expect("fixture expiry");
+    let mut sent =
+        write(Actor::Operator, epoch, Producer::CommandDoor).expect("steering write starts");
+    sent.fact(
+        wire::body::SteerSent {
+            directive,
+            key: "1kJK6N3R".to_owned(),
+            lane,
+            text: "do not lose me".to_owned(),
+            control: None,
+            attachments: Vec::new(),
+            expires,
+        },
+        FactCause::Existing(residency.position()),
+    )
+    .expect("steering fact is valid");
+    commit(&bus, sent).expect("pending steering commits");
+    let cursor = bus
+        .task_snapshot()
+        .expect("task snapshot reads")
+        .cursor()
+        .expect("pending fact establishes cursor");
+    let failure = Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new("lifecycle::wake-launch-failed".to_owned(), None, None, None)
+            .with_detail("repair the vendor launch"),
+    ));
+
+    let parked = super::steering::dead_letter_pending(&bus, &paths, epoch, lane, cursor, &failure)
+        .expect("terminal start failure parks pending steering");
+
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0].key, "1kJK6N3R");
+    assert_eq!(
+        parked[0].requeue,
+        format!("spice steer recover {directive}")
+    );
+    let snapshot = bus.fact_snapshot().expect("dead-letter facts read");
+    let ledger = steer::Ledger::from_snapshot(&snapshot).expect("dead letter replays");
+    assert_eq!(
+        ledger
+            .directive(directive)
+            .expect("directive remains durable")
+            .disposition(),
+        wire::Disposition::DeadLettered,
+    );
+    let parked_fact = snapshot
+        .facts()
+        .iter()
+        .find(|fact| fact.fact.kind() == wire::FactKind::SteerDeadLettered)
+        .expect("distinct dead-letter fact exists");
+    assert_eq!(parked_fact.fact.body()["key"], "1kJK6N3R");
+    assert_eq!(
+        parked_fact.fact.body()["requeue"],
+        format!("spice steer recover {directive}")
+    );
+    bus.shutdown().expect("fixture bus stops");
+    fs::remove_dir_all(root).expect("dead-letter fixture cleanup");
+}
+
 #[test]
 fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_authority() {
     let lineage = test_uuid(2);
@@ -823,6 +1003,10 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
     seed_lane_in_lineage(&bus, epoch, second_lane, lineage, second_occupant);
 
     let request = wire::intent::LineageConfigure {
+        topology_revision: current_residency(&bus, epoch)
+            .expect("fixture residency reads")
+            .body()
+            .topology_revision,
         lineage_id: lineage,
         member: None,
         life: wire::intent::LineageLife::Drain,
@@ -905,7 +1089,14 @@ fn arrange_lane_for_test(
     lane: CanonicalUuid,
     before: CanonicalUuid,
 ) -> wire::intent::LaneAnswer {
-    let request = wire::intent::LaneArrange { lane, before };
+    let request = wire::intent::LaneArrange {
+        topology_revision: current_residency(bus, epoch)
+            .expect("fixture residency reads")
+            .body()
+            .topology_revision,
+        lane,
+        before,
+    };
     let command = Command {
         v: wire::WireVersion::CURRENT,
         id,

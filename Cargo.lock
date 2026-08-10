@@ -3141,6 +3141,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "sha1",
  "shell-words",
  "signal-hook",
  "sill",
@@ -3175,7 +3176,6 @@ dependencies = [
  "atomic",
  "journal",
  "serde",
- "sill",
  "syn 3.0.3",
  "wire",
 ]
