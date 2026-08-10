@@ -884,17 +884,17 @@ mod tests {
     fn two_ready_tasks_settle_and_one_ready_task_ages_to_starvation() {
         let mut none = Vec::new();
         assert_eq!(
-            available_from_ready_instants(&mut none).expect("empty projection resolves"),
+            available_from_ready_instants(&mut none).expect("empty fold resolves"),
             Available::None
         );
         let mut lone = vec![instant(0)];
         assert_eq!(
-            available_from_ready_instants(&mut lone).expect("lone projection resolves"),
+            available_from_ready_instants(&mut lone).expect("lone fold resolves"),
             Available::At(instant_after_minutes(3))
         );
         let mut burst = vec![instant(0), instant(7)];
         assert_eq!(
-            available_from_ready_instants(&mut burst).expect("burst projection resolves"),
+            available_from_ready_instants(&mut burst).expect("burst fold resolves"),
             Available::At(instant(10))
         );
     }

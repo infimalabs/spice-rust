@@ -242,7 +242,7 @@ pub(crate) fn acquired(repository: &Tree, claim: ClaimCapture, actor: ActorCaptu
 /// The inputs are returned unjudged because the elastic bounds an acquisition
 /// decided live on them: judging consumes the inputs to produce arm standings,
 /// and a caller reading the decisions from a report would be reading a
-/// projection rather than what the arms were held to.
+/// fold rather than what the arms were held to.
 #[allow(dead_code)]
 pub(crate) fn acquired_inputs(
     repository: &Tree,

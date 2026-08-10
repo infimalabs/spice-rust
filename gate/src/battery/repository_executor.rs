@@ -494,7 +494,7 @@ impl<'trace> RepositoryExecutor<'trace> {
     fn project(&self, arm: &CompiledArm) -> Result<ArmEvidence, BatteryError> {
         let family = self.families[family_index(arm.family())]
             .as_ref()
-            .expect("family is acquired before projection");
+            .expect("family is acquired before fold");
         match family {
             FamilyExecution::Refused(reason) => Err(BatteryError::new(format!(
                 "{:?} family refused: {}",

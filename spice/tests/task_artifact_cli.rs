@@ -1,21 +1,20 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, Retention, Store};
 use serde::de::DeserializeOwned;
 use wire::intent::TaskAnswer;
 use wire::{JournalBackup, JournalRestore, Outcome, TaskHandle, TaskStamp};
 
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 #[path = "support/readiness.rs"]
 mod readiness;
 #[path = "support/staged_app.rs"]
 mod staged_app;
 
 use readiness::Readiness;
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
@@ -24,12 +23,8 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-task-artifact-cli-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(root.join(".git")).expect("create repository fixture");
+        let root = fixture_root::claim(&std::env::temp_dir(), "task-artifact-cli");
+        fs::create_dir(root.join(".git")).expect("create repository fixture");
         staged_app::seed(&root);
         fs::write(root.join("spice-rust.toml"), "[tasks]\nstems = [\"rim\"]\n")
             .expect("write task project policy");

@@ -135,6 +135,7 @@ env_names = [
     "SPICE_RS_INBOX",
     "SPICE_RS_LANE",
     "SPICE_RS_NATIVE_SHELL",
+    "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",
     "TMPDIR",
 ]
 

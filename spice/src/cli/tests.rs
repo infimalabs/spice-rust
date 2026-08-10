@@ -969,7 +969,6 @@ fn bootstrap_configuration_owners_are_exact_top_level_leaves() {
         );
     }
 }
-
 /// A placeholder for each operand a contract requires before its command
 /// delimiter, or nothing when it admits no child command.
 ///

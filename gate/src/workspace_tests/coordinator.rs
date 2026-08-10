@@ -424,15 +424,17 @@ fn run_shard(
     let started = Instant::now();
     let targets = target_list(&shard);
     let owner = format!("workspace test package {}", shard.name);
-    let spec = shard_spec(
-        &cargo,
-        &shard,
-        &root,
-        environment,
-        cancellation,
-        policy,
-        &owner,
-    );
+    let spec = isolate_shard_target(environment, index).and_then(|environment| {
+        shard_spec(
+            &cargo,
+            &shard,
+            &root,
+            environment,
+            cancellation,
+            policy,
+            &owner,
+        )
+    });
     let outcome = spec.and_then(|spec| {
         let observation = Observation::new(
             OutputStream::Stdout,
@@ -455,6 +457,29 @@ fn run_shard(
         observer.last(),
         outcome,
     )
+}
+
+pub(super) fn isolate_shard_target(
+    environment: Environment,
+    index: usize,
+) -> Result<Environment, WorkspaceTestError> {
+    // Same-package Cargo invocations share dependency artifacts safely through
+    // the build directory, but may replace a target-level binary after releasing
+    // that build lock while another integration test executes `CARGO_BIN_EXE_*`.
+    // A stable per-shard publication root closes that launch gap without making
+    // compilation cold or reducing cross-target test concurrency.
+    let mut entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<OsString, OsString>>();
+    if let Some(target) = entries.get(OsStr::new(CARGO_TARGET_DIR)).cloned() {
+        let isolated = PathBuf::from(target)
+            .join("spice-workspace-test-shards")
+            .join(format!("shard-{}", index + 1));
+        entries.insert(OsString::from(CARGO_TARGET_DIR), isolated.into_os_string());
+    }
+    Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
 fn shard_spec(

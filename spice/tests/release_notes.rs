@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::{Outcome, ReleaseNotes, ReplyPosition};
 
 const REFUSAL_EXIT: i32 = 2;
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 
 struct Fixture {
     root: PathBuf,
@@ -15,12 +15,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-release-notes-{name}-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&root).expect("fixture directory creates");
+        let root = fixture_root::claim(&std::env::temp_dir(), &format!("release-notes-{name}"));
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["config", "user.name", "Spice Test"]);
         git(&root, &["config", "user.email", "spice@example.test"]);

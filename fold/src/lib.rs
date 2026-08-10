@@ -1,4 +1,4 @@
-//! Disposable, generation-stamped operational projections over journal facts.
+//! Disposable, generation-stamped operational folds over journal facts.
 //!
 //! The registry contains only folds whose typed reducer is also the production
 //! read path. `task::effort` is currently the sole member: the CLI and Canvas

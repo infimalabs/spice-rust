@@ -1,6 +1,6 @@
 //! What a session actually ran.
 //!
-//! The command projection reports the shell an agent issued and audits how much
+//! The command fold reports the shell an agent issued and audits how much
 //! of it went through the recorded wrapper rather than around it, which is why
 //! the pipeline reading here is structural rather than a substring search.
 

@@ -23,11 +23,7 @@ struct SeededBuildLaneApp(Option<PathBuf>);
 
 impl SeededBuildLaneApp {
     fn new() -> Self {
-        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let worktree = manifest
-            .parent()
-            .expect("spice crate has a workspace parent");
-        Self::for_worktree(worktree).unwrap_or_else(|message| panic!("{message}"))
+        Self::for_worktree(&build_lane_worktree()).unwrap_or_else(|message| panic!("{message}"))
     }
 
     fn for_worktree(worktree: &Path) -> Result<Self, String> {
@@ -190,9 +186,7 @@ fn stale_real_stage_precondition_names_the_missing_asset_without_mutating_it() {
 #[test]
 fn build_lane_stage_is_byte_identical_or_still_absent_after_the_precondition_guard() {
     let _app_lock = BUILD_LANE_APP.lock().expect("build lane app fixture lock");
-    let worktree = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("spice crate has a workspace parent");
+    let worktree = build_lane_worktree();
     let stage = worktree.join(canvas::APP_STAGE);
     let before = stage_snapshot(&stage);
 
@@ -203,6 +197,19 @@ fn build_lane_stage_is_byte_identical_or_still_absent_after_the_precondition_gua
         before,
         "the suite must preserve an existing real stage and restore an absent one to absence"
     );
+}
+
+fn build_lane_worktree() -> PathBuf {
+    option_env!("SPICE_WORKSPACE_TEST_WRITABLE_ROOT") // env-policy: allow
+        .map_or_else(
+            || {
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .expect("spice crate has a workspace parent")
+                    .to_path_buf()
+            },
+            PathBuf::from,
+        )
 }
 
 #[test]

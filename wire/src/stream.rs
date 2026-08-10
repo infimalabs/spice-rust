@@ -271,7 +271,7 @@ pub struct TrustView {
 /// One credential-free fact rendered for an authenticated canvas view.
 ///
 /// Journal facts retain their complete durable identity internally. This
-/// projection carries the same version, position, instant, actor, origin,
+/// fold carries the same version, position, instant, actor, origin,
 /// cause, kind, and non-credential body fields, but `lane::seated` deliberately
 /// omits the capability that is valid only in [`crate::Hello`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -315,7 +315,7 @@ impl StreamFact {
         self.0.cause
     }
 
-    /// Closed fact kind retained by the credential-free projection.
+    /// Closed fact kind retained by the credential-free fold.
     #[must_use]
     pub const fn kind(&self) -> FactKind {
         self.0.fact.kind

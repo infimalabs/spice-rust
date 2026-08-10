@@ -39,6 +39,21 @@ const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(7);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+fn unique_fixture_root(family: &str, name: &str) -> PathBuf {
+    loop {
+        let root = std::env::temp_dir().join(format!(
+            "spice-resident-{family}-{name}-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::create_dir(&root) {
+            Ok(()) => return root,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => panic!("fixture root {} cannot be claimed: {error}", root.display()),
+        }
+    }
+}
+
 struct Fixture {
     root: PathBuf,
     runtime: PathBuf,
@@ -47,13 +62,9 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-resident-process-{name}-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = unique_fixture_root("process", name);
         let runtime = root.join(".git/.spice-rs");
-        fs::create_dir_all(root.join(".git")).expect("fixture git directory");
+        fs::create_dir(root.join(".git")).expect("fixture git directory");
         let fixture = Self {
             cleanup: root.clone(),
             root,
@@ -64,11 +75,7 @@ impl Fixture {
     }
 
     fn linked(name: &str) -> Self {
-        let cleanup = std::env::temp_dir().join(format!(
-            "spice-resident-linked-{name}-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let cleanup = unique_fixture_root("linked", name);
         let root = cleanup.join("worktree");
         let common = cleanup.join("common.git");
         let git = common.join("worktrees/linked");
@@ -1105,6 +1112,12 @@ fn wait_for_lane_exit(fixture: &Fixture, lane: wire::CanonicalUuid) {
                 .then_some(())
         },
     );
+}
+
+#[track_caller]
+fn wait_for_vendor_exit(watch: &Path, exited: &Path) {
+    let marker = wait_for_event(watch, || {}, || recorded_stop(exited));
+    assert_eq!(marker, "exited", "vendor exit marker is complete");
 }
 
 fn effect_observers(path: &Path) -> Vec<readiness::filesystem_event::DirectObserver> {

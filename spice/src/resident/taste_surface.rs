@@ -915,7 +915,9 @@ fn judge_prompts(candidate: &Candidate) -> Vec<crate::judge::Prompt> {
         crate::judge::Prompt::new(
             2,
             format!(
-                "Classify the same proposition: the source demonstrates the behavior selected by the taste trigger and warrants its vendor. Mentions without demonstrated behavior are false.\n{subject}\nOutput one token only: YES for true, NO for false.\n"
+                "Classify the same proposition: the source demonstrates the behavior selected by \
+                 the taste trigger and warrants its vendor. Mentions without demonstrated behavior \
+                 are false.\n{subject}\nOutput one token only: YES for true, NO for false.\n"
             ),
         ),
     ];

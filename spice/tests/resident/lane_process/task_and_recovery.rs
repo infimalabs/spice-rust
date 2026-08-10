@@ -146,7 +146,7 @@ fn kernel_exit_callback_records_and_vacates_an_occupant() {
         true,
         None,
     ));
-    exited.join().expect("vendor exit is observed");
+    wait_for_vendor_exit(&fixture.root, &exited);
     wait_for_lane_exit(&fixture, added.lane);
     let journal = journal::Journal::open(fixture.journal()).expect("exited lane journal opens");
     let facts = journal.fact_snapshot().expect("exited lane facts read");
@@ -182,7 +182,7 @@ fn resident_capture_is_byte_exact_and_listenable_through_terminal_residue() {
         true,
         None,
     ));
-    exited.join().expect("recording vendor exit is observed");
+    wait_for_vendor_exit(&fixture.root, &exited);
     wait_for_lane_exit(&fixture, added.lane);
 
     let tape_root = fixture

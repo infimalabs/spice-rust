@@ -132,6 +132,25 @@ fn reusable_workspace_execution_preserves_prepared_cargo_outputs() {
 }
 
 #[test]
+fn selected_test_environment_names_the_separate_writable_fixture_root() {
+    let environment = fixture_inventory()
+        .execution_environment(
+            Environment::new(Vec::<(OsString, OsString)>::new())
+                .expect("empty fixture environment"),
+            Path::new("/workspace"),
+            Path::new("/writable"),
+            false,
+        )
+        .expect("selected test environment admits");
+
+    assert_eq!(
+        environment_value(&environment, TEST_WRITABLE_ROOT),
+        Some(&OsString::from("/writable")),
+        "fixtures receive writable authority without changing the selected source root"
+    );
+}
+
+#[test]
 fn partition_validation_names_omitted_and_duplicated_packages_and_targets() {
     let inventory = fixture_inventory();
     let exact = partition(&inventory);
@@ -194,6 +213,41 @@ fn partition_splits_large_packages_in_stable_target_order() {
     assert_eq!(shards[1].targets.len(), 1);
     assert_eq!(shards[2].name, "fixture-b");
     validate_partition(&inventory, &shards).expect("split partition remains exact");
+}
+
+#[test]
+fn shard_target_publications_are_isolated_while_the_build_cache_remains_shared() {
+    let environment = Environment::new([
+        (
+            OsString::from(CARGO_TARGET_DIR),
+            OsString::from("/workspace/target"),
+        ),
+        (
+            OsString::from(CARGO_BUILD_BUILD_DIR),
+            OsString::from("/workspace/build"),
+        ),
+    ])
+    .expect("base Cargo environment admits");
+
+    let isolated = isolate_shard_target(environment, 2).expect("shard isolation admits");
+    let entries = isolated
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(
+        entries.get(OsStr::new(CARGO_TARGET_DIR)),
+        Some(&OsString::from(
+            "/workspace/target/spice-workspace-test-shards/shard-3"
+        )),
+        "each concurrent shard owns its target-level executable publications"
+    );
+    assert_eq!(
+        entries.get(OsStr::new(CARGO_BUILD_BUILD_DIR)),
+        Some(&OsString::from("/workspace/build")),
+        "isolated publications retain the one warm Cargo build cache"
+    );
 }
 
 #[test]

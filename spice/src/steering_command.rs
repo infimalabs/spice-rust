@@ -93,8 +93,8 @@ pub(crate) fn run(
         Ok(repository) => repository,
         Err(error) => return environment_fault("steer::git-unavailable", &error.to_string()),
     };
-    let state = match repository.admit_state() {
-        Ok(state) => state,
+    let canvas = match repository.admit_resident_client() {
+        Ok(canvas) => canvas,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
     // `SelectedCommand::SteerAck` borrows its key, so the key is parsed here
@@ -107,7 +107,7 @@ pub(crate) fn run(
         Ok(selection) => selection,
         Err(outcome) => return outcome,
     };
-    execute_steering(state.canvas(), contract, selected, lane_context)
+    execute_steering(&canvas, contract, selected, lane_context)
 }
 
 /// Parse the key `ack` borrows, and nothing at all for every other contract.

@@ -548,6 +548,5 @@ fn bootstrap_leaf_selected(arguments: impl IntoIterator<Item = OsString>, leaves
     }
     false
 }
-
 #[cfg(test)]
 mod tests;

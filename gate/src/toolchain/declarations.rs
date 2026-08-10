@@ -132,6 +132,7 @@ pub const PACKAGED_ENV_PROFILE: PackagedEnvironmentProfile = PackagedEnvironment
     excludes: PACKAGED_SCANNER_EXCLUDES,
     allow_marker: "env-policy: allow",
     name_patterns: PACKAGED_ENV_NAME_PATTERNS,
+    // Immutable Python predecessor path retained by the release-0.31.0 profile.
     self_path_suffix: "studies/envpolicy.py",
     access_gate: true,
     family_suffixes: PACKAGED_ENV_FAMILY_SUFFIXES,
@@ -179,7 +180,7 @@ const RUST_TYPECHECK_TOOLS: &[ToolRequirement] = &[ToolRequirement {
     program: "cargo",
     version_argv: &["--version"],
     exact_version: "cargo 1.97.1 (c980f4866 2026-06-30)",
-    role: "native typecheck driver",
+    role: "native typecheck vendor",
 }];
 const CANVAS_TOOLS: &[ToolRequirement] = &[
     ToolRequirement {
@@ -187,7 +188,7 @@ const CANVAS_TOOLS: &[ToolRequirement] = &[
         program: "cargo",
         version_argv: &["--version"],
         exact_version: "cargo 1.97.1 (c980f4866 2026-06-30)",
-        role: "wasm32 typecheck driver",
+        role: "wasm32 typecheck vendor",
     },
     ToolRequirement {
         name: "trunk",

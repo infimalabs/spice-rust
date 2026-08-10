@@ -108,7 +108,7 @@ enum Stage {
     },
 }
 
-/// Renderable projection of all submissions not yet covered by a fresh inbox.
+/// Renderable fold of all submissions not yet covered by a fresh inbox.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Prediction {
     directive: CanonicalUuid,
@@ -195,7 +195,7 @@ impl SubmissionQueue {
         Ok(())
     }
 
-    /// Remove an enqueue whose wake could not reach the connection driver.
+    /// Remove an enqueue whose wake could not reach the connection vendor.
     pub(crate) fn rollback(&mut self, id: CanonicalUuid) -> Option<Submission> {
         let lane = self.lane_for(id)?;
         let rows = self.0.get_mut(&lane)?;

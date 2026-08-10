@@ -114,7 +114,7 @@ impl BaselineCapture {
     /// An unreachable committed tree has no baseline to offer. Selection among
     /// reachable merge parents is identical to [`CommittedTexts::baseline`],
     /// but retaining bytes lets file-shape apply its own UTF-8 parser instead
-    /// of inheriting the lossy text projection used by text-delta metrics.
+    /// of inheriting the lossy text fold used by text-delta metrics.
     #[must_use]
     pub(crate) fn baseline_bytes(&self, path: &str, current: &[u8]) -> Option<&[u8]> {
         match self {
@@ -480,9 +480,9 @@ fn collect(
     Ok(())
 }
 
-/// One committed blob's lossless identity and text projection.
+/// One committed blob's lossless identity and text fold.
 ///
-/// Bytes that are not UTF-8 are replaced only in the projection the text
+/// Bytes that are not UTF-8 are replaced only in the fold the text
 /// metrics consume. Exact bytes remain beside it for parent selection and merge
 /// inheritance; decoding both sides lossily would let different invalid byte
 /// sequences collapse to the same text and exempt a file the merge really

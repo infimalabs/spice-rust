@@ -6,7 +6,6 @@ use std::net::TcpStream;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 
 use bus::{Bus, CommitOutcome};
@@ -17,6 +16,8 @@ use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
 use wire::{Actor, FactKind, Instant, Outcome, Producer};
 
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 #[path = "support/readiness.rs"]
 mod readiness;
 #[path = "support/staged_app.rs"]
@@ -29,8 +30,6 @@ const REFUSAL_EXIT: i32 = 2;
 const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
 const SESSION_RECORD: &str =
     r#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
@@ -74,13 +73,9 @@ impl Drop for InboxPermissionBlock {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-steering-process-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = fixture_root::claim(&std::env::temp_dir(), "steering-process");
         let runtime = root.join(".git/.spice-rs");
-        fs::create_dir_all(root.join(".git")).expect("fixture git directory");
+        fs::create_dir(root.join(".git")).expect("fixture git directory");
         staged_app::seed(&root);
         let vendor = root.join("fake-claude");
         fs::write(
@@ -266,6 +261,7 @@ fn json_outcome<B: serde::de::DeserializeOwned>(output: &Output) -> Outcome<B> {
     wire::decode(bytes).expect("process speaks one command outcome")
 }
 
+#[track_caller]
 fn text_directive(output: &Output) -> wire::intent::DirectiveAnswer {
     assert!(
         output.status.success(),
@@ -275,6 +271,7 @@ fn text_directive(output: &Output) -> wire::intent::DirectiveAnswer {
     wire::decode(&output.stdout).expect("text reply carries the directive body")
 }
 
+#[track_caller]
 fn text_inbox(output: &Output) -> wire::intent::InboxAnswer {
     assert!(output.status.success(), "inbox failed: {:?}", output.stderr);
     wire::decode(&output.stdout).expect("text reply carries the inbox body")
