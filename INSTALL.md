@@ -46,6 +46,13 @@ test -x "$SPICE_BIN"
 shasum -a 256 target/debug/spice "$SPICE_BIN"
 ```
 
+The build is part of install admission, not an optional warm-up. Do not reuse
+an existing `target/debug/spice` without it: that executable can carry a retired
+planner contract from an older tree and therefore refuse state the current
+source no longer owns. `cargo run --locked -p spice -- install` is the
+single-command equivalent for preview because Cargo rebuilds before invoking
+the planner.
+
 The two hashes must match. The plan publishes the executable, the operator
 skill, and three Git hooks under the Git common directory's `.spice-install`,
 so this appliance never takes the `spice` name on `PATH`. The predecessor keeps

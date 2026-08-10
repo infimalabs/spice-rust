@@ -1,6 +1,6 @@
 //! Native rim for the digest-bound Spice installer.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use spice::install::{InstallError, InstallPreview, InstallReceipt};
 use spice::repository::Repository;
@@ -124,10 +124,7 @@ fn result<B>(result: Result<B, InstallError>) -> Outcome<B> {
 }
 
 fn failure<B>(error: InstallError) -> Outcome<B> {
-    let detail = error.to_string();
-    let refusal_reason = install_refusal_reason(&error);
-    let refusal_remedy = install_refusal_remedy(&error);
-    match error {
+    match &error {
         InstallError::PathShape(_)
         | InstallError::PathOutsideRoot(_)
         | InstallError::ParentChanged(_)
@@ -139,35 +136,27 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::RecordMissing
         | InstallError::ApplyInProgress
         | InstallError::UnapplyInProgress
-        | InstallError::Drift { .. } => Outcome::Refusal(Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                refusal_reason.to_owned(),
-                Some("install-plan".to_owned()),
-                Some("the exact current Spice install state".to_owned()),
-                Some(detail),
-            )
-            .with_detail(refusal_remedy),
-        )),
+        | InstallError::Drift { .. } => install_refusal(
+            &error,
+            "install-plan",
+            "the exact current Rust install plan and asset state",
+        ),
         InstallError::State(
             StateError::Linked { .. }
             | StateError::NotDirectory { .. }
             | StateError::NotRegularFile { .. }
             | StateError::RetiredState { .. },
-        ) => Outcome::Refusal(Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                refusal_reason.to_owned(),
-                Some("install-state".to_owned()),
-                Some("unlinked Spice repository state".to_owned()),
-                Some(detail),
-            )
-            .with_detail(refusal_remedy),
-        )),
+        ) => install_refusal(
+            &error,
+            "install-state",
+            "unlinked current-release Rust state under .spice-rs",
+        ),
         InstallError::Repository(_)
         | InstallError::State(StateError::Filesystem { .. })
         | InstallError::Io { .. } => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: "install::environment-failed".to_owned(),
-            detail,
+            detail: error.to_string(),
         }),
         InstallError::Encode(_)
         | InstallError::Decode(_)
@@ -175,9 +164,23 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::Interrupted { .. } => Outcome::Fault(Fault {
             class: FaultClass::Store,
             reason: "install::state-failed".to_owned(),
-            detail,
+            detail: error.to_string(),
         }),
     }
+}
+
+fn install_refusal<B>(error: &InstallError, witness: &str, expected: &str) -> Outcome<B> {
+    let observed = error.to_string();
+    let detail = format!("{observed}; {}", install_refusal_remedy(error));
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            install_refusal_reason(error).to_owned(),
+            Some(witness.to_owned()),
+            Some(expected.to_owned()),
+            Some(observed),
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn install_refusal_reason(error: &InstallError) -> &'static str {
@@ -196,14 +199,91 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
     }
 }
 
-fn install_refusal_remedy(error: &InstallError) -> &'static str {
+fn install_refusal_remedy(error: &InstallError) -> String {
     match error {
-        InstallError::PathOutsideRoot(_) => {
-            "repair the named symlink or record path so it stays within its permitted root"
+        InstallError::PathShape(path) => format!(
+            "inspect the Rust-owned install target with `{}` and restore it to an unlinked regular file or directory before rerunning this executable's `install` preview",
+            inspect_path(path),
+        ),
+        InstallError::PathOutsideRoot(path) => format!(
+            "inspect the escaping install path with `{}` and repair the named symlink or record path so it stays within its permitted Rust root",
+            inspect_path(path),
+        ),
+        InstallError::ParentChanged(path) => format!(
+            "inspect the changed destination parent with `{}`; rerun this executable's `install` preview and use only its newly printed digest",
+            inspect_path(path),
+        ),
+        InstallError::BinaryNotRegular(path) | InstallError::BinaryEmpty(path) => format!(
+            "inspect the selected executable with `{}`; rebuild it with `cargo build --locked -p spice`, then rerun `target/debug/spice install`",
+            inspect_path(path),
+        ),
+        InstallError::BinaryContextChanged => concat!(
+            "the `.spice-install/bin/spice` asset was planned from another executable; preview ",
+            "and apply through the same freshly built executable: run ",
+            "`cargo build --locked -p spice`, rerun `target/debug/spice install`, then pass ",
+            "that preview's digest to `target/debug/spice install --apply=<digest>`",
+        )
+        .to_owned(),
+        InstallError::DigestMismatch { .. } => concat!(
+            "rerun this executable's `install` preview and pass its newly printed digest to ",
+            "the same executable as `install --apply=<digest>`; do not reuse the refused digest",
+        )
+        .to_owned(),
+        InstallError::LegacyRecord { path, owner } => format!(
+            "inspect the {owner}-owned record with `{}`; run that retired release's own executable with `install --unapply` before retrying the current preview",
+            inspect_path(path),
+        ),
+        InstallError::RecordMissing => concat!(
+            "the Rust-owned `.spice-rs/install.json` record is absent; omit `--unapply` and ",
+            "run this executable's `install` preview instead",
+        )
+        .to_owned(),
+        InstallError::ApplyInProgress => concat!(
+            "the Rust-owned `.spice-rs/install.json` records an interrupted apply; rerun this ",
+            "executable's `install` preview, finish `install --apply=<printed-digest>`, then retry `--unapply`",
+        )
+        .to_owned(),
+        InstallError::UnapplyInProgress => concat!(
+            "the Rust-owned `.spice-rs/install.json` records an interrupted reversal; rerun this ",
+            "executable with `install --unapply` to completion before previewing another install",
+        )
+        .to_owned(),
+        InstallError::Drift { path, .. } => format!(
+            "resolve the asset root with `git rev-parse --path-format=absolute --git-common-dir`, inspect its Rust-owned target with `ls -ld -- <printed-common-git>/{path}`, and preserve the operator replacement or restore the recorded installed image before retrying reversal",
+        ),
+        InstallError::State(StateError::Linked { path }) => format!(
+            "inspect the Rust state link with `{}` and replace it with the fixed unlinked state component before retrying preview",
+            inspect_path(path),
+        ),
+        InstallError::State(StateError::NotDirectory { path }) => format!(
+            "inspect the Rust state parent with `{}` and restore that fixed component as a directory before retrying preview",
+            inspect_path(path),
+        ),
+        InstallError::State(StateError::NotRegularFile { path }) => format!(
+            "inspect the Rust state leaf with `{}` and restore that fixed component as a regular file before retrying preview",
+            inspect_path(path),
+        ),
+        InstallError::State(StateError::RetiredState { path, release }) => format!(
+            "inspect the {release}-owned tree with `{}`; preserve its evidence and archive it under an operator-chosen path before retrying the current preview",
+            inspect_path(path),
+        ),
+        InstallError::Repository(_)
+        | InstallError::State(StateError::Filesystem { .. })
+        | InstallError::Encode(_)
+        | InstallError::Decode(_)
+        | InstallError::Io { .. }
+        | InstallError::InvalidRecord(_)
+        | InstallError::Interrupted { .. } => {
+            unreachable!("fault-only install errors never construct refusal guidance")
         }
-        InstallError::ParentChanged(_) => {
-            "rerun install preview against the current parent generation before applying"
-        }
-        _ => "inspect the current plan and repair the named state before retrying",
     }
+}
+
+fn inspect_path(path: &Path) -> String {
+    shell_words::join([
+        "ls".to_owned(),
+        "-ld".to_owned(),
+        "--".to_owned(),
+        path.to_string_lossy().into_owned(),
+    ])
 }
