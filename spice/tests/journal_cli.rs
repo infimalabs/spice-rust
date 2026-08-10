@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
@@ -14,14 +13,14 @@ use wire::{
     JournalRestore, JournalVerification, Origin, Outcome, Seq, ThreadReport, WireVersion,
 };
 
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 #[path = "support/readiness.rs"]
 mod readiness;
 #[path = "support/staged_app.rs"]
 mod staged_app;
 
 use readiness::Readiness;
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
@@ -32,11 +31,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-journal-cli-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = fixture_root::claim(&std::env::temp_dir(), "journal-cli");
         let data = root.join(".git/.spice-rs/data");
         let authority = data.join("spicejournal.sqlite3");
         let folds = data.join("spicefolds.sqlite3");
@@ -763,7 +758,8 @@ fn seed_authority(path: &Path) {
             "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                 (1, 'task:1kKRRsDP', NULL, 1, 0),
                 (2, 'task:1kKRRsDP', 1, 1, 1);
-             UPDATE cursor_head SET seq = 2, wake = 1 WHERE singleton = 1;",
+             UPDATE cursor_head SET seq = 2, wake = 1 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 2 WHERE singleton = 1;",
         )
         .expect("insert index and cursor fixture");
 }
@@ -814,6 +810,12 @@ fn append_note_facts(path: &Path, through: u64) {
             [i64::try_from(through).expect("fixture cursor fits")],
         )
         .expect("advance bounded-report cursor");
+    connection
+        .execute(
+            "UPDATE steering_index SET indexed_seq = ?1 WHERE singleton = 1",
+            [i64::try_from(through).expect("fixture cursor fits")],
+        )
+        .expect("advance bounded-report steering cursor");
 }
 
 fn append_note_fact(path: &Path, seq: u64, cause: u64) {
@@ -859,6 +861,12 @@ fn append_note_fact(path: &Path, seq: u64, cause: u64) {
             [i64::try_from(seq).expect("fixture cursor fits")],
         )
         .expect("advance cursor for one note fact");
+    connection
+        .execute(
+            "UPDATE steering_index SET indexed_seq = ?1 WHERE singleton = 1",
+            [i64::try_from(seq).expect("fixture cursor fits")],
+        )
+        .expect("advance steering cursor for one note fact");
 }
 
 fn fact(

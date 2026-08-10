@@ -32,8 +32,8 @@ fn edited_status(outcome: Outcome<CommandAnswer>) -> String {
 
 /// Facts recording a correction of this task, in journal order.
 fn edit_facts(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, u64)> {
-    let incepted = task
-        .incepted()
+    let born = task
+        .born()
         .expect("fixture handle carries an inception stamp");
     bus.fact_snapshot()
         .expect("edit facts read")
@@ -46,7 +46,7 @@ fn edit_facts(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, u64)> {
                     .body()
                     .get("task")
                     .and_then(serde_json::Value::as_str)
-                    == Some(incepted.as_str())
+                    == Some(born.as_str())
         })
         .map(|fact| {
             (
@@ -74,11 +74,11 @@ fn rehoming_rerenders_the_handle_without_migrating_identity() {
         "board.alpha",
         Some("todo"),
     );
-    let incepted = original
-        .incepted()
+    let born = original
+        .born()
         .expect("filed handle carries its sole identity");
 
-    let expected = TaskHandle::for_project("board.beta", &incepted);
+    let expected = TaskHandle::for_project("board.beta", &born);
     let CommandAnswer::Task(edited) = assert_committed(correct(
         &bus,
         epoch,
@@ -99,7 +99,7 @@ fn rehoming_rerenders_the_handle_without_migrating_identity() {
 
     let answer = board(&bus, epoch, Actor::Operator);
     let moved = at(&answer, &expected);
-    assert_eq!(moved.statement.body.incepted, incepted);
+    assert_eq!(moved.statement.body.born, born);
     assert_eq!(moved.statement.body.handle, expected);
     assert!(task_heads(&answer, &original).is_err());
     let stored = statement_head(&bus, &expected);
@@ -195,7 +195,7 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
     );
     assert_eq!(after.body.project, before.body.project);
     assert_eq!(
-        after.body.incepted, before.body.incepted,
+        after.body.born, before.body.born,
         "a correction edits the task rather than replacing it",
     );
     assert!(
@@ -396,8 +396,8 @@ fn statement_head(bus: &Bus, task: &TaskHandle) -> Positioned<TaskHead> {
         .tasks()
         .iter()
         .find(|heads| {
-            task.incepted()
-                .is_ok_and(|stamp| heads.statement().body().incepted == stamp)
+            task.born()
+                .is_ok_and(|stamp| heads.statement().body().born == stamp)
         })
         .expect("the journal carries this task");
     positioned(heads.statement())
@@ -740,7 +740,7 @@ fn a_corrected_project_moves_the_row_out_of_the_editors_own_subscription() {
     let moved_handle = TaskHandle::for_project(
         "rim.elsewhere",
         &task
-            .incepted()
+            .born()
             .expect("fixture handle carries an inception stamp"),
     );
     assert_eq!(
@@ -844,5 +844,5 @@ fn a_priority_or_project_correction_records_its_revision_and_editor() {
         corrected.body.title, filed.body.title,
         "a widened correction carries the prose it did not name forward",
     );
-    assert_eq!(corrected.body.incepted, filed.body.incepted);
+    assert_eq!(corrected.body.born, filed.body.born);
 }

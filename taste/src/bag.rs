@@ -140,7 +140,7 @@ pub fn reminder_identity(taste: &Name, prose: &str) -> Digest {
 
 /// Canonical identity of one complete ordered active taste bag.
 ///
-/// Names, triggers, and drivers are length-framed in their admitted order, so
+/// Names, triggers, and vendors are length-framed in their admitted order, so
 /// any policy movement produces a new identity without a second serializer.
 #[must_use]
 pub fn bag_identity(bag: &Bag) -> Digest {

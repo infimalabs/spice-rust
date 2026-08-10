@@ -10,7 +10,6 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bus::{Bus, CommitOutcome};
@@ -44,7 +43,8 @@ const RELEASE_VERSION: &str = "0.0.1";
 /// states what the client grants; a client that grants less reports the
 /// elapsed bound here rather than an unexplained transport failure.
 const PUBLICATION_ANSWER: Duration = Duration::from_secs(20);
-static NEXT: AtomicU64 = AtomicU64::new(0);
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 
 struct Fixture {
     root: PathBuf,
@@ -58,12 +58,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(label: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-release-publish-{label}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&root).expect("fixture root");
+        let root = fixture_root::claim(&std::env::temp_dir(), &format!("release-publish-{label}"));
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["config", "user.name", "Spice Test"]);
         git(&root, &["config", "user.email", "spice@example.test"]);

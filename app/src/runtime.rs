@@ -158,7 +158,7 @@ pub struct LaneMember {
     pub occupant: Option<CanonicalUuid>,
     pub session: Option<String>,
     pub disposition: String,
-    /// Dynamic supervised live/quiet projection supplied by the resident.
+    /// Dynamic supervised live/quiet fold supplied by the resident.
     pub liveness: LaneLiveness,
     /// Whether a resumable session was ever declared for this seat.
     pub bound: bool,

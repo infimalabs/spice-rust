@@ -25,6 +25,8 @@ const PREDECESSOR_STATE: &[(&str, &[u8])] = &[
     ("data/taskchampion.sqlite3", b"taskchampion pages"),
     ("data/spiceacks.sqlite3", b"ack pages"),
     ("data/spicemaxims.sqlite3", b"maxim pages"),
+    // Immutable predecessor-owned input: this historical filename and payload
+    // must survive coexistence without becoming a live Rust vocabulary name.
     ("data/spiceprojections.sqlite3", b"projection pages"),
     ("data/spiceteams.sqlite3", b"team pages"),
     (
@@ -200,10 +202,10 @@ fn runtime_environment_names_are_rust_specific() {
     assert_eq!(
         rust_environment,
         [
-            "SPICE_RS_HOOKS",
-            "SPICE_RS_INBOX",
-            "SPICE_RS_LANE",
-            "SPICE_RS_NATIVE_SHELL",
+            "SPICE_RS_HOOKS",        // env-policy: not-an-env SPICE_RS_HOOKS
+            "SPICE_RS_INBOX",        // env-policy: not-an-env SPICE_RS_INBOX
+            "SPICE_RS_LANE",         // env-policy: not-an-env SPICE_RS_LANE
+            "SPICE_RS_NATIVE_SHELL", // env-policy: not-an-env SPICE_RS_NATIVE_SHELL
         ]
     );
     assert_eq!(SpiceVariable::Hooks.as_str(), steer::hook::HOOKS);
@@ -410,8 +412,8 @@ fn repository_lookalikes_cannot_replace_or_stage_inbox_and_ack_authority() {
     git(&fixture.root, &["commit", "-qm", "tracked lookalikes"]);
 
     let paths = fixture.paths();
-    assert!(!paths.inbox().starts_with(&fixture.root.join(".spice-rs")));
-    assert!(!paths.journal().starts_with(&fixture.root.join(".spice-rs")));
+    assert!(!paths.inbox().starts_with(fixture.root.join(".spice-rs")));
+    assert!(!paths.journal().starts_with(fixture.root.join(".spice-rs")));
     let mut ledger = Ledger::new();
     ledger
         .absorb(Steering::Sent(&SteerSent {

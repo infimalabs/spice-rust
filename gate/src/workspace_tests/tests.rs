@@ -142,6 +142,41 @@ fn partition_splits_large_packages_in_stable_target_order() {
 }
 
 #[test]
+fn shard_target_publications_are_isolated_while_the_build_cache_remains_shared() {
+    let environment = Environment::new([
+        (
+            OsString::from(CARGO_TARGET_DIR),
+            OsString::from("/workspace/target"),
+        ),
+        (
+            OsString::from(CARGO_BUILD_BUILD_DIR),
+            OsString::from("/workspace/build"),
+        ),
+    ])
+    .expect("base Cargo environment admits");
+
+    let isolated = isolate_shard_target(environment, 2).expect("shard isolation admits");
+    let entries = isolated
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(
+        entries.get(OsStr::new(CARGO_TARGET_DIR)),
+        Some(&OsString::from(
+            "/workspace/target/spice-workspace-test-shards/shard-3"
+        )),
+        "each concurrent shard owns its target-level executable publications"
+    );
+    assert_eq!(
+        entries.get(OsStr::new(CARGO_BUILD_BUILD_DIR)),
+        Some(&OsString::from("/workspace/build")),
+        "isolated publications retain the one warm Cargo build cache"
+    );
+}
+
+#[test]
 fn cargo_target_arguments_preserve_library_binary_and_integration_semantics() {
     let targets = [
         target_identity("lib", "fixture"),
@@ -253,23 +288,37 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
     );
 }
 
-/// A nested file named by `#[path]` belongs to that integration target without
-/// making its same-directory peers part of the selection.
+/// Explicit, conventional, and included nested sources belong to one integration target without
+/// making same-directory peers part of the selection.
 #[test]
 fn staged_path_module_selects_only_its_declaring_integration_target() {
     let root = fixture_root("workspace-path-module-selection");
     let tests = root.join("fixture/tests");
-    fs::create_dir_all(tests.join("resident")).expect("create path-module fixture");
+    fs::create_dir_all(tests.join("resident/lane_continuity")).expect("create path-module fixture");
     fs::write(
         tests.join("resident.rs"),
-        "#[path = \"resident/lane_continuity.rs\"]\nmod lane_continuity;\n",
+        concat!(
+            "#[path = \"resident/lane_continuity.rs\"]\n",
+            "mod lane_continuity;\n",
+            "include!(\"resident/tail.rs\");\n",
+        ),
     )
     .expect("write declaring integration target");
     fs::write(
         tests.join("resident/lane_continuity.rs"),
-        "#[test]\nfn continuity() {}\n",
+        "mod nested;\n#[test]\nfn continuity() {}\n",
     )
     .expect("write declared path module");
+    fs::write(
+        tests.join("resident/lane_continuity/nested.rs"),
+        "#[test]\nfn nested() {}\n",
+    )
+    .expect("write conventionally nested module");
+    fs::write(
+        tests.join("resident/tail.rs"),
+        "#[test]\nfn included() {}\n",
+    )
+    .expect("write included test tail");
     fs::write(tests.join("other.rs"), "#[test]\nfn other() {}\n")
         .expect("write unrelated integration target");
     fs::write(
@@ -312,16 +361,28 @@ fn staged_path_module_selects_only_its_declaring_integration_target() {
         &inventory,
         &root,
         wire::Digest::compute(wire::Domain::GateTree, b"declared path module"),
-        &["fixture/tests/resident/lane_continuity.rs".to_owned()],
+        &[
+            "fixture/tests/resident/lane_continuity.rs".to_owned(),
+            "fixture/tests/resident/lane_continuity/nested.rs".to_owned(),
+            "fixture/tests/resident/tail.rs".to_owned(),
+        ],
     )
     .expect("declared path module maps to its integration target");
 
     assert!(report.admits());
     assert_eq!(report.tests(), ["fixture::test:resident"]);
-    assert_eq!(report.edges().len(), 1);
+    assert_eq!(report.edges().len(), 3);
     assert_eq!(
-        report.edges()[0].source(),
-        "fixture/tests/resident/lane_continuity.rs"
+        report
+            .edges()
+            .iter()
+            .map(crate::TestSelectionEdge::source)
+            .collect::<Vec<_>>(),
+        [
+            "fixture/tests/resident/lane_continuity.rs",
+            "fixture/tests/resident/lane_continuity/nested.rs",
+            "fixture/tests/resident/tail.rs",
+        ]
     );
     fs::remove_dir_all(root).expect("remove path-module fixture");
 }
@@ -549,20 +610,12 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
     let vendor = executable(
         &root,
         "vendor",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/vendor.pid\"\n",
-            "exec /usr/bin/tail -f /dev/null\n",
-        ),
+        concat!("#!/bin/sh\n", "exec /usr/bin/tail -f /dev/null\n",),
     );
     let waiter = executable(
         &root,
         "fifo-waiter",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/waiter.pid\"\n",
-            "exec /bin/cat \"$PID_ROOT/resident.fifo\"\n",
-        ),
+        concat!("#!/bin/sh\n", "exec /bin/cat \"$PID_ROOT/resident.fifo\"\n",),
     );
     let test_binary = executable(
         &root,
@@ -570,9 +623,7 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
         concat!(
             "#!/bin/sh\n",
             "printf '%s\\n' \"$$\" > \"$PID_ROOT/test.pid\"\n",
-            "\"$VENDOR\" &\n",
-            "\"$WAITER\" &\n",
-            "wait\n",
+            "exec /usr/bin/tail -f /dev/null\n",
         ),
     );
     let cargo = executable(
@@ -584,6 +635,11 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
             "printf '     Running tests/resident.rs (fixture)\\n' >&2\n",
             "printf 'test resident::fifo_wait ... '\n",
             "\"$TEST_BINARY\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/test.pid\"\n",
+            "\"$VENDOR\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/vendor.pid\"\n",
+            "\"$WAITER\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/waiter.pid\"\n",
             "wait\n",
         ),
     );
@@ -795,267 +851,4 @@ impl Write for FailingOutput {
     }
 }
 
-struct ReportingProcessFixture {
-    root: PathBuf,
-    cargo: PathBuf,
-    environment: Environment,
-}
-
-impl Drop for ReportingProcessFixture {
-    fn drop(&mut self) {
-        // The shards this fixture launches outlive their coordinator by design:
-        // that abandonment is the defect under test. An assertion that fires
-        // before the coordinator reaps them would otherwise strand `tail -f` and
-        // a FIFO reader forever, so the fixture owns every pid it recorded and
-        // signals them all here, where a panic unwinding through also arrives.
-        for role in ["a", "b"] {
-            for path in process_pid_paths(&self.root, role) {
-                // A role that never started left no pid file, and one the
-                // coordinator already reaped is gone. The second case is the
-                // normal one, so the signal is sent through `output` to capture
-                // the "no such process" the passing run would otherwise print.
-                if let Some(pid) = fs::read_to_string(&path)
-                    .ok()
-                    .and_then(|pid| pid.trim().parse::<u32>().ok())
-                {
-                    let _ = Command::new("/bin/kill")
-                        .args(["-KILL", &pid.to_string()])
-                        .output();
-                }
-            }
-        }
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn reporting_process_fixture(label: &str) -> ReportingProcessFixture {
-    let root = fixture_root(&format!("report-failure-{label}"));
-    fs::create_dir_all(&root).expect("reporting fixture root creates");
-    std::process::Command::new("/usr/bin/mkfifo")
-        .arg(root.join("resident.fifo"))
-        .status()
-        .expect("reporting fixture mkfifo launches")
-        .success()
-        .then_some(())
-        .expect("reporting fixture mkfifo succeeds");
-    let vendor = executable(
-        &root,
-        "report-vendor",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$ROLE.vendor.pid\"\n",
-            "exec /usr/bin/tail -f /dev/null\n",
-        ),
-    );
-    let waiter = executable(
-        &root,
-        "report-waiter",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$ROLE.waiter.pid\"\n",
-            "exec /bin/cat \"$PID_ROOT/resident.fifo\"\n",
-        ),
-    );
-    let test_binary = executable(
-        &root,
-        "report-test",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$ROLE.test.pid\"\n",
-            "ROLE=\"$ROLE\" \"$VENDOR\" &\n",
-            "ROLE=\"$ROLE\" \"$WAITER\" &\n",
-            "wait\n",
-        ),
-    );
-    let cargo = executable(
-        &root,
-        "report-cargo",
-        concat!(
-            "#!/bin/sh\n",
-            "case \"$*\" in\n",
-            "  *quick-id*)\n",
-            "    printf '     Running tests/quick.rs (fixture)\\n' >&2\n",
-            "    printf 'test quick::done ... ok\\n'\n",
-            "    exit 0\n",
-            "    ;;\n",
-            "  *fixture-a-id*) role=a ;;\n",
-            "  *fixture-b-id*) role=b ;;\n",
-            "  *) exit 64 ;;\n",
-            "esac\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$role.cargo.pid\"\n",
-            "printf '     Running tests/%s.rs (fixture)\\n' \"$role\" >&2\n",
-            "printf 'test %s::fifo_wait ... ' \"$role\"\n",
-            "ROLE=\"$role\" \"$TEST_BINARY\" &\n",
-            "wait\n",
-        ),
-    );
-    let environment = Environment::new([
-        (OsString::from("PID_ROOT"), root.clone().into_os_string()),
-        (OsString::from("TEST_BINARY"), test_binary.into_os_string()),
-        (OsString::from("VENDOR"), vendor.into_os_string()),
-        (OsString::from("WAITER"), waiter.into_os_string()),
-        (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
-    ])
-    .expect("reporting fixture environment admits");
-    ReportingProcessFixture {
-        root,
-        cargo,
-        environment,
-    }
-}
-
-fn process_pid_paths(root: &Path, role: &str) -> Vec<PathBuf> {
-    ["cargo", "test", "vendor", "waiter"]
-        .map(|process| root.join(format!("{role}.{process}.pid")))
-        .to_vec()
-}
-
-fn wait_for_pid_paths(paths: &[PathBuf]) -> io::Result<()> {
-    let started = Instant::now();
-    while paths.iter().any(|path| !pid_path_ready(path))
-        && started.elapsed() < Duration::from_secs(10)
-    {
-        thread::sleep(Duration::from_millis(5));
-    }
-    let missing = paths
-        .iter()
-        .filter(|path| !pid_path_ready(path))
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!("reporting fixture did not start {}", missing.join(", ")),
-        ))
-    }
-}
-
-fn pid_path_ready(path: &Path) -> bool {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|pid| pid.trim().parse::<u32>().ok())
-        .is_some()
-}
-
-fn quick_package() -> PackageInventory {
-    PackageInventory {
-        id: "quick-id".to_owned(),
-        name: "quick".to_owned(),
-        root: PathBuf::from("/workspace/quick"),
-        targets: vec![TargetIdentity {
-            package: "quick-id".to_owned(),
-            kind: "test".to_owned(),
-            name: "quick".to_owned(),
-            source: PathBuf::from("/workspace/quick/tests/quick.rs"),
-            declared_path_sources: Vec::new(),
-        }],
-    }
-}
-
-fn fixture_inventory() -> Inventory {
-    Inventory {
-        target_directory: PathBuf::from("/workspace/target"),
-        build_directory: PathBuf::from("/workspace/target/cargo-build"),
-        packages: vec![
-            PackageInventory {
-                id: "fixture-a-id".to_owned(),
-                name: "fixture-a".to_owned(),
-                root: PathBuf::from("/workspace/fixture-a"),
-                targets: vec![TargetIdentity {
-                    package: "fixture-a-id".to_owned(),
-                    kind: "lib".to_owned(),
-                    name: "fixture-a".to_owned(),
-                    source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
-                    declared_path_sources: Vec::new(),
-                }],
-            },
-            PackageInventory {
-                id: "fixture-b-id".to_owned(),
-                name: "fixture-b".to_owned(),
-                root: PathBuf::from("/workspace/fixture-b"),
-                targets: vec![TargetIdentity {
-                    package: "fixture-b-id".to_owned(),
-                    kind: "bin".to_owned(),
-                    name: "fixture-b".to_owned(),
-                    source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
-                    declared_path_sources: Vec::new(),
-                }],
-            },
-        ],
-    }
-}
-
-fn target(name: &str, kind: &[&str], test: bool) -> MetadataTarget {
-    let source = match kind.first().copied() {
-        Some("lib") => "/workspace/src/lib.rs".to_owned(),
-        Some("bin") => "/workspace/src/main.rs".to_owned(),
-        _ => format!("/workspace/tests/{name}.rs"),
-    };
-    MetadataTarget {
-        name: name.to_owned(),
-        kind: kind.iter().map(|kind| (*kind).to_owned()).collect(),
-        test,
-        src_path: PathBuf::from(source),
-    }
-}
-
-fn target_identity(kind: &str, name: &str) -> TargetIdentity {
-    TargetIdentity {
-        package: "fixture-id".to_owned(),
-        kind: kind.to_owned(),
-        name: name.to_owned(),
-        source: PathBuf::from(format!("/workspace/{kind}/{name}.rs")),
-        declared_path_sources: Vec::new(),
-    }
-}
-
-fn fixture_root(name: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    env::temp_dir().join(format!(
-        "spice-{name}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ))
-}
-
-fn executable(root: &Path, name: &str, body: &str) -> PathBuf {
-    let path = root.join(name);
-    fs::write(&path, body).expect("fixture executable writes");
-    let mut permissions = fs::metadata(&path)
-        .expect("fixture executable metadata reads")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&path, permissions).expect("fixture executable becomes executable");
-    path
-}
-
-fn read_pid(path: &Path) -> u32 {
-    fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("fixture pid {} reads: {error}", path.display()))
-        .trim()
-        .parse()
-        .expect("fixture pid parses")
-}
-
-fn assert_process_terminal(pid: u32, role: &str) {
-    let started = Instant::now();
-    while process_live(pid) && started.elapsed() < Duration::from_secs(2) {
-        thread::sleep(Duration::from_millis(20));
-    }
-    assert!(!process_live(pid), "{role} process {pid} survived timeout");
-}
-
-fn process_live(pid: u32) -> bool {
-    let output = Command::new("/bin/ps")
-        .args(["-p", &pid.to_string(), "-o", "stat="])
-        .output()
-        .expect("process state probe launches");
-    output.status.success()
-        && String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .chars()
-            .next()
-            .is_some_and(|state| state != 'Z')
-}
+include!("tests/process_support.rs");

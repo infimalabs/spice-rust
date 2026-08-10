@@ -241,7 +241,7 @@ impl Law {
         authority: Authority::Connected,
     };
     /// Gate finding dispatch derives its task witnesses inside the resident
-    /// transaction from one typed gate report projection.
+    /// transaction from one typed gate report fold.
     pub const GATE_FINDINGS: Self = Self {
         required: &[],
         optional: &[],

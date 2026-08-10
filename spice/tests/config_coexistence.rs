@@ -12,6 +12,9 @@ use std::path::PathBuf;
 use spice::config::{Document, Inputs, descriptors, locations, resolve};
 use wire::ConfigSource;
 
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
+
 /// Root tables `spice/config/schema.py` declares, as `CONFIG_SCHEMA.children`.
 ///
 /// The list is transcribed because the predecessor checkout is not a test
@@ -55,17 +58,25 @@ fn roots_the_predecessor_refuses(document: &str) -> Vec<String> {
 
 #[test]
 fn rust_and_python_tracked_configuration_paths_are_distinct() {
-    let root = workspace();
-    let repository = spice::repository::Repository::discover(&root).expect("workspace discovers");
-    let rust = locations(&repository);
-
-    assert_eq!(rust.tracked(), root.join("spice-rust.toml"));
-    assert_ne!(rust.tracked(), python_configuration());
-    assert!(rust.tracked().is_file(), "Rust tracked policy is present");
+    assert_ne!(rust_configuration(), python_configuration());
+    assert!(
+        rust_configuration().is_file(),
+        "Rust tracked policy is present"
+    );
     assert!(
         python_configuration().is_file(),
         "Python tracked policy is present"
     );
+
+    let scratch = fixture_root::claim(&std::env::temp_dir(), "config-coexistence");
+    fs::create_dir(scratch.join(".git")).expect("create isolated repository fixture");
+    let root = fs::canonicalize(&scratch).expect("canonical fixture root");
+    let repository = spice::repository::Repository::discover(&root).expect("fixture discovers");
+    let rust = locations(&repository);
+
+    assert_eq!(rust.tracked(), root.join("spice-rust.toml"));
+    assert_ne!(rust.tracked(), root.join("spice.toml"));
+    fs::remove_dir_all(&scratch).expect("remove isolated repository fixture");
 }
 
 #[test]

@@ -52,9 +52,9 @@ fn gate_findings_file_exact_deferred_tasks() {
             task.statement
                 .body
                 .handle
-                .incepted()
+                .born()
                 .expect("derived finding handle carries its inception stamp"),
-            task.statement.body.incepted,
+            task.statement.body.born,
         );
         assert!(task.workflow.body.deferral.is_some());
         assert_eq!(task.statement.body.provenance, causal);
@@ -62,7 +62,7 @@ fn gate_findings_file_exact_deferred_tasks() {
             creation_fact_origin(&bus, &task.statement.body.handle),
             causal
         );
-        assert!(task.statement.body.tags.contains(&finding_tag(&finding)));
+        assert!(task.statement.body.tags.contains(&finding_tag(finding)));
         assert_eq!(task.statement.body.acceptance, finding.acceptance);
         let description = task
             .statement
@@ -207,7 +207,7 @@ fn gate_findings_use_the_active_claim_as_origin_when_present() {
         format!(
             "task:{}",
             parent
-                .incepted()
+                .born()
                 .expect("parent handle carries an inception stamp")
         )
     );
@@ -521,7 +521,7 @@ fn text(answer: CommandAnswer) -> String {
 fn complete(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
     let before = gate_board(bus, epoch, Actor::Operator);
     let current = task_heads(&before, task).expect("task exists before completion");
-    let incepted = current.statement.body.incepted.clone();
+    let born = current.statement.body.born.clone();
     let at = Instant::new(jiff::Timestamp::now()).expect("completion instant");
     let origin = format!("task:{task}").parse().expect("task origin");
     let mut workflow = current.workflow.body.clone();
@@ -532,7 +532,7 @@ fn complete(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
     let done = write
         .fact(
             body::TaskDone {
-                task: incepted.clone(),
+                task: born.clone(),
                 validation: "fixture completion".to_owned(),
                 git: None,
                 source: body::SourceBoundary::unrecorded(),
@@ -540,7 +540,7 @@ fn complete(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
             FactCause::Root,
         )
         .expect("completion fact builds");
-    write.workflow_head(incepted, done, move |_| workflow);
+    write.workflow_head(born, done, move |_| workflow);
     assert!(matches!(
         bus.commit(write).expect("completion commits"),
         CommitOutcome::Committed(_)

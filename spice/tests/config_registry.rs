@@ -6,6 +6,9 @@ use toml::Value;
 use wire::ConfigSource;
 
 const COMPLETE: &str = r#"
+[commands]
+"report.inspect" = ["tool", "report", "inspect"]
+
 [tasks]
 stems = ["app", "board"]
 hidden_stems = ["oops", "sandbox", "sandbox"]
@@ -236,7 +239,7 @@ fn sample_path(template: &str) -> Vec<OwnedSegment> {
 }
 
 #[test]
-fn root_is_exactly_the_fifteen_typed_domains() {
+fn root_is_exactly_the_sixteen_typed_domains() {
     let root = decode(&complete()).expect("the complete root decodes");
     let round_trip = decode(&toml::to_string_pretty(&root).expect("root renders"))
         .expect("rendered root decodes");
@@ -270,8 +273,8 @@ fn root_is_exactly_the_fifteen_typed_domains() {
     assert_eq!(
         table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         BTreeSet::from([
-            "tasks", "judge", "policy", "taste", "consent", "gate", "board", "lane", "steer",
-            "vendor", "listen", "lock", "canvas", "say", "proof",
+            "commands", "tasks", "judge", "policy", "taste", "consent", "gate", "board", "lane",
+            "steer", "vendor", "listen", "lock", "canvas", "say", "proof",
         ])
     );
 
@@ -414,6 +417,7 @@ fn registry_builtins_are_the_typed_root_defaults() {
 /// registry as declared, so a row that moves is a visible change even when the
 /// set is unchanged.
 const EXPECTED_TEMPLATES: &[&str] = &[
+    "commands.<name>",
     "tasks.stems",
     "tasks.hidden_stems",
     "tasks.project_min_depth",

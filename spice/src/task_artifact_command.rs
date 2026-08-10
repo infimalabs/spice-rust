@@ -47,7 +47,7 @@ fn run_inner(
             let created_at = now()?;
             let artifact = store
                 .add(AddRequest {
-                    task: &selected.incepted,
+                    task: &selected.born,
                     source: Path::new(source),
                     name: matches.get_one::<String>("name").map(String::as_str),
                     media_type: matches.get_one::<String>("type").map(String::as_str),
@@ -65,7 +65,7 @@ fn run_inner(
         }
         ["task", "artifact", "list"] => {
             let selected = selected_task(matches, &snapshot)?;
-            let artifacts = store.list(&selected.incepted).map_err(artifact_failure)?;
+            let artifacts = store.list(&selected.born).map_err(artifact_failure)?;
             Ok((
                 position,
                 ArtifactAnswer::Listed {
@@ -80,7 +80,7 @@ fn run_inner(
                 .get_one::<String>("ARTIFACT")
                 .expect("generated artifact show parser requires ARTIFACT");
             let (artifact, bytes) = store
-                .show(&selected.incepted, artifact_id)
+                .show(&selected.born, artifact_id)
                 .map_err(artifact_failure)?;
             let content = if artifact.media_type.is_text() {
                 ArtifactContent::Text {
@@ -88,7 +88,7 @@ fn run_inner(
                 }
             } else {
                 ArtifactContent::Binary {
-                    path: payload_path(store.root(), &selected.incepted, &artifact.digest)
+                    path: payload_path(store.root(), &selected.born, &artifact.digest)
                         .display()
                         .to_string(),
                 }
@@ -180,7 +180,7 @@ fn snapshot() -> Result<Snapshot, Failure> {
                 )
             })?;
         statuses.insert(
-            entry.incepted().clone(),
+            entry.born().clone(),
             (entry.handle().clone(), entry.workflow().status.clone()),
         );
     }
@@ -199,7 +199,7 @@ fn task_project_policy(repository: &Repository) -> Result<board::ProjectPolicy, 
 
 struct SelectedTask {
     handle: TaskHandle,
-    incepted: TaskStamp,
+    born: TaskStamp,
 }
 
 fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<SelectedTask, Failure> {
@@ -214,7 +214,7 @@ fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<Sele
             "read board and pass the exact task handle",
         )
     })?;
-    let incepted = task.incepted().map_err(|error| {
+    let born = task.born().map_err(|error| {
         Failure::refusal(
             "artifact::task-invalid",
             "one current handle carrying a canonical inception stamp",
@@ -222,11 +222,8 @@ fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<Sele
             "read board and pass the exact current task handle",
         )
     })?;
-    match snapshot.statuses.get(&incepted) {
-        Some((current, _)) if current == &task => Ok(SelectedTask {
-            handle: task,
-            incepted,
-        }),
+    match snapshot.statuses.get(&born) {
+        Some((current, _)) if current == &task => Ok(SelectedTask { handle: task, born }),
         _ => Err(Failure::refusal(
             "artifact::task-unknown",
             "one canonical current task handle",

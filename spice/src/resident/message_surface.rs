@@ -38,7 +38,7 @@ impl<'a, P> CaptureSurfaces<'a, P> {
     }
 }
 
-/// Mutable per-record projection state at the admitted capture boundary.
+/// Mutable per-record fold state at the admitted capture boundary.
 pub(super) struct CaptureViews<'a> {
     previews: &'a mut CallPreviews,
     diagnostic: &'a mut dyn io::Write,

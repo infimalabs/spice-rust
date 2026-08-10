@@ -83,14 +83,14 @@ fn reminder_identity_frames_taste_and_whole_normalized_prose() {
 }
 
 #[test]
-fn bag_identity_covers_ordered_names_triggers_and_drivers() {
+fn bag_identity_covers_ordered_names_triggers_and_vendors() {
     let original = Bag::new(vec![fallback_taste()]).expect("bag");
     let same = Bag::new(vec![fallback_taste()]).expect("same bag");
     let changed = Bag::new(vec![
         Taste::new(
             "fallbacks".parse().expect("taste name"),
             ["fall back", "fallback*", "poll*"],
-            "Use a different driver.",
+            "Use a different vendor.",
         )
         .expect("changed taste"),
     ])

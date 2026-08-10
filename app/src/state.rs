@@ -455,7 +455,7 @@ impl<T> BrowserState<T> {
         }
     }
 
-    /// Retain one packed projection derived from an admitted stream frame.
+    /// Retain one packed fold derived from an admitted stream frame.
     ///
     /// This stays crate-private because only the runtime knows how a strict
     /// stream variant projects to a pane row. The admission receipt supplies

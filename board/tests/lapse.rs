@@ -11,7 +11,7 @@ use wire::{
     TaskHead, TranscriptSourceHead, WireVersion, Witness, WorkflowHead, body, intent,
 };
 
-fn incepted() -> wire::TaskStamp {
+fn born() -> wire::TaskStamp {
     "1kKRRsDP".parse().expect("fixture task stamp")
 }
 
@@ -28,7 +28,7 @@ fn instant(minute: u8) -> Instant {
 }
 
 fn task() -> TaskHandle {
-    TaskHandle::for_project("board.possession", &incepted())
+    TaskHandle::for_project("board.possession", &born())
 }
 
 fn projects() -> board::ProjectPolicy {
@@ -81,21 +81,21 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
         .expect("heads before the claim");
     let selected = heads
         .iter()
-        .find(|heads| heads.statement().body().incepted == incepted())
+        .find(|heads| heads.statement().body().born == born())
         .expect("the fixture task is on the board");
     let workflow = selected.workflow().body().clone();
     let expected = vec![
         Witness::Task {
-            task: incepted(),
+            task: born(),
             head: selected.statement().position(),
         },
         Witness::Workflow {
-            task: incepted(),
+            task: born(),
             head: selected.workflow().position(),
             phase: workflow.phase.clone(),
         },
         Witness::Claim {
-            task: incepted(),
+            task: born(),
             head: selected.claim().map(journal::JournalHead::position),
         },
         Witness::Eligibility {
@@ -117,7 +117,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
     mint(
         &mut write,
         Mint {
-            task: &incepted(),
+            task: &born(),
             actor: &actor,
             workflow: &workflow,
             project: "board.possession",
@@ -167,17 +167,17 @@ fn possession(journal: &Journal) -> (ClaimHead, LeaseHead, Vec<Witness>) {
         .expect("heads before the possession change");
     let selected = heads
         .iter()
-        .find(|heads| heads.statement().body().incepted == incepted())
+        .find(|heads| heads.statement().body().born == born())
         .expect("the fixture task is on the board");
     let claim = selected.claim().expect("the fixture task is claimed");
     let lease = selected.lease().expect("an active claim carries its lease");
     let witnesses = vec![
         Witness::Claim {
-            task: incepted(),
+            task: born(),
             head: Some(claim.position()),
         },
         Witness::Lease {
-            task: incepted(),
+            task: born(),
             head: lease.position(),
         },
         Witness::Residency {
@@ -207,7 +207,7 @@ fn free(journal: &mut Journal, command: u8) {
     let freed = write
         .fact(
             body::ClaimFreed {
-                task: incepted(),
+                task: born(),
                 actor: actor.clone(),
             },
             FactCause::Root,
@@ -215,7 +215,7 @@ fn free(journal: &mut Journal, command: u8) {
         .expect("release fact");
     let mut next = claim;
     next.disposition = ClaimDisposition::Freed;
-    write.claim_head(incepted(), freed, move |fact| ClaimHead { fact, ..next });
+    write.claim_head(born(), freed, move |fact| ClaimHead { fact, ..next });
     write
         .command_result(
             Command {
@@ -255,7 +255,7 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
     let renewed = write
         .fact(
             body::ClaimRenewed {
-                task: incepted(),
+                task: born(),
                 epoch: uuid(22),
                 until: instant(until),
                 maximum: lease.maximum,
@@ -266,7 +266,7 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
     let mut next = lease;
     next.renewal = instant(10);
     next.expiry = instant(until);
-    write.lease_head(incepted(), renewed, move |_| next);
+    write.lease_head(born(), renewed, move |_| next);
     write
         .command_result(
             Command {
@@ -328,7 +328,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
     let fact = write
         .fact(
             body::TaskAdded {
-                task: incepted(),
+                task: born(),
                 title: "Lapse possession".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
@@ -344,7 +344,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
         .expect("task fact");
     let statement_origin = origin;
     write.task_head(fact, move |position| TaskHead {
-        incepted: incepted(),
+        born: born(),
         queue_origin: position,
         title: "Lapse possession".to_owned(),
         description: None,
@@ -355,7 +355,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
         provenance: statement_origin,
         revision: position,
     });
-    write.workflow_head(incepted(), fact, move |_| WorkflowHead {
+    write.workflow_head(born(), fact, move |_| WorkflowHead {
         flow: vec![phase.clone()],
         phase,
         status: "pending".to_owned(),
@@ -510,7 +510,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
     let fact = write
         .fact(
             body::ClaimWon {
-                task: incepted(),
+                task: born(),
                 actor: actor.clone(),
                 lane: uuid(20),
                 occupant: uuid(21),
@@ -526,7 +526,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
             FactCause::Root,
         )
         .expect("claim fact");
-    write.claim_head(incepted(), fact, move |position| ClaimHead {
+    write.claim_head(born(), fact, move |position| ClaimHead {
         actor,
         fact: position,
         claimed: position,
@@ -589,7 +589,7 @@ fn drift_lease(journal: &mut Journal, epoch: CanonicalUuid, drift: impl FnOnce(&
     let fact = write
         .fact(
             body::ClaimRenewed {
-                task: incepted(),
+                task: born(),
                 epoch,
                 until: lease.expiry,
                 maximum: lease.maximum,
@@ -599,7 +599,7 @@ fn drift_lease(journal: &mut Journal, epoch: CanonicalUuid, drift: impl FnOnce(&
         .expect("drifted renewal fact");
     let mut next = lease;
     drift(&mut next);
-    write.lease_head(incepted(), fact, move |_| next);
+    write.lease_head(born(), fact, move |_| next);
     journal.apply(write).expect("the drifted lease commits");
 }
 
@@ -903,118 +903,4 @@ fn an_opening_boundary_survives_renewals_that_record_none_of_their_own() {
     }
 }
 
-/// A task command whose transaction appends no fact is refused, not receipted.
-///
-/// A journal write can carry a command receipt without carrying a fact, because
-/// the receipt is assembled without one. That shape is unrepresentable: a
-/// receipt records the span of facts it caused, and a write with no fact has no
-/// span to name, so the commit path reaches for a first and last position that
-/// are not there. Removing this refusal does not make such a write succeed
-/// quietly -- it aborts the process inside position assignment. What the
-/// refusal buys is a typed refusal a producer can report at the door instead of
-/// a panic underneath it, and it has to come from the transaction itself,
-/// because every producer assembles its receipt before it can know whether its
-/// facts survived the guards.
-///
-/// The witness positions are fixture values. Command law admits a witness list
-/// by kind rather than by position, and this transaction is refused before any
-/// guard reads, so nothing here depends on which position they name.
-#[test]
-fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
-    let mut journal = claimed();
-    let before = journal.fact_snapshot().expect("facts before").facts().len();
-    let holder = Actor::Lane(uuid(20));
-    let head = wire::Seq::new(2).expect("fixture head position");
-
-    let mut write = JournalWrite::new(
-        holder.clone(),
-        "task:BOARD-a1".parse::<Origin>().expect("origin"),
-        instant(10),
-        Producer::BusTimer,
-    );
-    write
-        .command_result(
-            Command {
-                v: WireVersion::CURRENT,
-                id: uuid(34),
-                epoch: uuid(22),
-                kind: CommandKind::ClaimRenew,
-                expected: vec![
-                    Witness::Claim {
-                        task: incepted(),
-                        head: Some(head),
-                    },
-                    Witness::Lease {
-                        task: incepted(),
-                        head,
-                    },
-                    Witness::Residency {
-                        lane: uuid(20),
-                        occupant: uuid(21),
-                        epoch: uuid(22),
-                    },
-                ],
-                body: intent::ClaimRenew {
-                    task: task(),
-                    lease_seconds: 15,
-                },
-            },
-            uuid(22),
-            intent::ClaimAnswer {
-                task: task(),
-                holder,
-                warnings: Vec::new(),
-                next: None,
-            },
-        )
-        .expect("the receipt itself is well formed");
-
-    let error = journal
-        .apply(write)
-        .expect_err("a transaction appending no fact cannot apply");
-    assert!(
-        error.to_string().contains("must append at least one fact"),
-        "a factless transaction was refused for another reason: {error}",
-    );
-    assert_eq!(
-        journal.fact_snapshot().expect("facts after").facts().len(),
-        before,
-        "a refused transaction appended a fact",
-    );
-}
-
-struct Store {
-    path: PathBuf,
-}
-
-impl Store {
-    fn new() -> Self {
-        Self {
-            path: std::env::temp_dir().join(format!(
-                "spice-board-lapse-{}-{}.sqlite",
-                std::process::id(),
-                uuid(60)
-            )),
-        }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for Store {
-    fn drop(&mut self) {
-        for path in [
-            self.path.clone(),
-            self.path.with_extension("sqlite-wal"),
-            self.path.with_extension("sqlite-shm"),
-        ] {
-            match fs::remove_file(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => panic!("remove lapse fixture: {error}"),
-            }
-        }
-    }
-}
+include!("lapse/tail.rs");

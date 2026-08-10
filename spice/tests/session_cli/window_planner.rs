@@ -215,7 +215,7 @@ fn sweep_does_not_copy_exact_boundary_starts_backward() {
 }
 
 #[test]
-fn briefing_and_sweep_ignore_surrounding_input_before_the_recent_horizon() {
+fn recall_and_sweep_ignore_surrounding_input_before_the_recent_horizon() {
     let scratch = Scratch::new("session-window-horizon");
     let base = scratch.path().join("base.jsonl");
     let surrounded = scratch.path().join("surrounded.jsonl");

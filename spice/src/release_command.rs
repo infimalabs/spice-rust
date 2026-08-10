@@ -595,18 +595,17 @@ fn resolve_local_preconditions(
             } else {
                 revision_commit.to_owned()
             };
-            let projection =
-                crate::release_commit::project(root, &source_commit, requested_version)?;
-            if subject == expected_subject && projection.commit != head {
+            let fold = crate::release_commit::project(root, &source_commit, requested_version)?;
+            if subject == expected_subject && fold.commit != head {
                 return Err(format!(
-                    "release commit {head} disagrees with deterministic projection {}",
-                    projection.commit
+                    "release commit {head} disagrees with deterministic fold {}",
+                    fold.commit
                 ));
             }
             admit_publish_progress(
                 &head,
                 &source_commit,
-                &projection.commit,
+                &fold.commit,
                 observed_version,
                 source_version,
                 requested_version,
@@ -614,7 +613,7 @@ fn resolve_local_preconditions(
             )?;
             Ok(LocalPreconditions {
                 source_commit: source_commit.clone(),
-                release_commit: projection.commit,
+                release_commit: fold.commit,
                 head: source_commit,
                 clean: true,
                 bump_claimed: false,
@@ -630,9 +629,8 @@ fn resolve_local_preconditions(
             }
             let source_commit =
                 git_required(root, &["rev-parse", "--verify", &format!("{head}^")])?;
-            let projection =
-                crate::release_commit::project(root, &source_commit, requested_version)?;
-            if projection.commit != head || observed_version != requested_version {
+            let fold = crate::release_commit::project(root, &source_commit, requested_version)?;
+            if fold.commit != head || observed_version != requested_version {
                 return Err("tag-and-announce release identity or version moved".to_owned());
             }
             Ok(LocalPreconditions {

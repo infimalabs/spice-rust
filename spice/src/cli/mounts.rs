@@ -175,6 +175,29 @@ pub enum MountLoadError {
     Registry(MountRegistryError),
 }
 
+impl MountLoadError {
+    /// Whether this refusal names authority the command-mount rim owns.
+    ///
+    /// A generated built-in still owns syntax and domain errors in unrelated
+    /// configuration. Mount collisions and structured `commands.*` issues must
+    /// instead refuse before that built-in dispatches.
+    #[must_use]
+    pub fn affects_mounts(&self) -> bool {
+        match self {
+            Self::Registry(_) => true,
+            Self::Repository(_) => false,
+            Self::Configuration(error) => error.resolution().is_some_and(|resolution| {
+                resolution.issues().iter().any(|issue| {
+                    issue.path().is_some_and(|path| {
+                        let path = path.to_string();
+                        path == "commands" || path.starts_with("commands.")
+                    })
+                })
+            }),
+        }
+    }
+}
+
 impl fmt::Display for MountLoadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

@@ -829,7 +829,7 @@ fn replayed_authority_heads_reproduce_the_canonical_ledger() {
         fact_bytes(2, SECOND, "second publication"),
     ]);
     let canonical = Ledger::from_snapshot(&snapshot).expect("canonical replay");
-    let index = Ledger::authority_index(&snapshot).expect("authority projection");
+    let index = Ledger::authority_index(&snapshot).expect("authority fold");
     let indexed = Ledger::from_authority_heads(index.heads().iter().map(|head| head.body()))
         .expect("indexed heads reduce");
 

@@ -730,7 +730,7 @@ pub struct LaneAnswerRow {
     pub bound: bool,
     /// Durable occupancy disposition.
     pub disposition: String,
-    /// Dynamic supervised live/quiet projection at this read barrier.
+    /// Dynamic supervised live/quiet fold at this read barrier.
     pub liveness: LaneLiveness,
 }
 

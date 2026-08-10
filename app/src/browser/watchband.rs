@@ -12,9 +12,10 @@ use crate::watchband::{self, Standing};
 mod composer;
 mod controls;
 mod fleet;
+#[path = "watchband/team_menu.rs"]
+mod lineage_menu;
 mod mosaic_view;
 mod state;
-mod team_menu;
 
 use composer::{
     agent_message_source_id, directive_source_id, drop_on_lane, focus_after_render,

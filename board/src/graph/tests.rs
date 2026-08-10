@@ -26,7 +26,7 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
         .parse::<Origin>()
         .expect("fixture origin");
     let statement = TaskHead {
-        incepted: task,
+        born: task,
         queue_origin: Seq::new(1).expect("nonzero sequence"),
         title: "Review history fixture".to_owned(),
         description: None,

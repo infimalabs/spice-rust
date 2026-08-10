@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(recent.lanes[0].disposition, "occupied");
         assert_eq!(
             head, unchanged,
-            "clock projection mutated durable lifecycle state"
+            "clock fold mutated durable lifecycle state"
         );
     }
 

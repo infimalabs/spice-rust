@@ -152,7 +152,7 @@ impl SpeechConfig {
         })
     }
 
-    /// Browser-safe projection that never reveals the local renderer argv.
+    /// Browser-safe fold that never reveals the local renderer argv.
     #[must_use]
     pub fn playback(&self) -> wire::SpeechPlayback {
         match self.backend {

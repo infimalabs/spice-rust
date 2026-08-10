@@ -277,7 +277,7 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
         "TaskHead",
         &[
             TaskHead {
-                incepted: task.clone(),
+                born: task.clone(),
                 queue_origin: seq(9),
                 title: "Build the gate".to_owned(),
                 description: None,
@@ -289,7 +289,7 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
                 revision: seq(10),
             },
             TaskHead {
-                incepted: task.clone(),
+                born: task.clone(),
                 queue_origin: seq(9),
                 title: "Review the gate".to_owned(),
                 description: Some("Confirm every edge".to_owned()),
@@ -698,7 +698,7 @@ fn cover_command_frames(covered: &mut BTreeSet<String>) {
 /// Both enums carry serde narrowing: the request omits an absent reconnect
 /// cursor and a fault omits an unavailable correlation id. Sampling every arm,
 /// both optional states, and both packed row types proves those renderings are
-/// the complete value rather than an identity-losing projection.
+/// the complete value rather than an identity-losing fold.
 fn cover_stream_frames(covered: &mut BTreeSet<String>) {
     let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
     let next_epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c4");

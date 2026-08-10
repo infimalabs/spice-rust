@@ -28,7 +28,7 @@ pub struct ClaimCell {
 #[serde(deny_unknown_fields)]
 pub struct TaskHead {
     /// Sole task identity, minted from its inception instant.
-    pub incepted: TaskStamp,
+    pub born: TaskStamp,
     /// Fact that first placed this task in the queue.
     pub queue_origin: Seq,
     /// Authored title.

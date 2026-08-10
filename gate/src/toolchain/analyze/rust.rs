@@ -523,8 +523,8 @@ version = \"0.0.0\"
     /// only: its `scan_item` reads `Item::Fn`'s `sig.ident` and `attrs` and
     /// never descends into `node.block`. Widening that walk is refused from
     /// inside by a law the same suite pins at line 219,
-    /// `a_local_binding_is_not_a_coined_name`, which asserts that a `let driver`
-    /// binding coins nothing while `driver` is a retired spelling; judging every
+    /// `a_local_binding_is_not_a_coined_name`, which asserts that a `let vendor`
+    /// binding coins nothing while `vendor` is a retired spelling; judging every
     /// path expression turns that law red, and judging only qualified paths
     /// still misses a bare call exactly like this one.
     ///

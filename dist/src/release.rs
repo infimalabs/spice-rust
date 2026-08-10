@@ -589,7 +589,7 @@ pub struct Execution {
     pub completed: Vec<OperationReceipt>,
 }
 
-/// Stateless driver for one journaled, resumable release transaction.
+/// Stateless vendor for one journaled, resumable release transaction.
 pub struct ReleaseExecutor;
 
 impl ReleaseExecutor {

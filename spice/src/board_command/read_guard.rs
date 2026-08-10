@@ -54,7 +54,7 @@ pub(super) fn validated_snapshot_from(
         let workflow = positioned(heads.workflow());
         let claim = heads.claim().map(positioned);
         let lease = heads.lease().map(positioned);
-        let handle = TaskHandle::for_project(&statement.body.project, &statement.body.incepted);
+        let handle = TaskHandle::for_project(&statement.body.project, &statement.body.born);
         let entry = Entry::new(
             statement.body.clone(),
             workflow.body.clone(),
@@ -70,7 +70,7 @@ pub(super) fn validated_snapshot_from(
         })?;
         let visibility = entry.project().visibility().clone();
         let origin_thread = origin_threads
-            .get(&statement.body.incepted)
+            .get(&statement.body.born)
             .cloned()
             .ok_or_else(|| {
                 protocol_fault(
@@ -696,7 +696,7 @@ pub(super) fn guard_allocation(
                 (
                     TaskHandle::for_project(
                         &task.statement().body().project,
-                        &task.statement().body().incepted,
+                        &task.statement().body().born,
                     ),
                     task.statement().position(),
                     task.workflow().position(),
@@ -757,7 +757,7 @@ pub(super) fn guard_capture(
                 (
                     TaskHandle::for_project(
                         &task.statement().body().project,
-                        &task.statement().body().incepted,
+                        &task.statement().body().born,
                     ),
                     task.statement().position(),
                     task.workflow().position(),
@@ -954,7 +954,7 @@ fn board_barrier_from_read(read: &JournalRead<'_>) -> Result<Digest, GuardError>
             (
                 TaskHandle::for_project(
                     &task.statement().body().project,
-                    &task.statement().body().incepted,
+                    &task.statement().body().born,
                 ),
                 task.statement().position(),
                 task.workflow().position(),
@@ -981,21 +981,21 @@ pub(super) fn normalize_task_origin(
     let Some(identity) = origin.as_str().strip_prefix("task:") else {
         return Ok(origin);
     };
-    let incepted = match identity.parse::<wire::TaskStamp>() {
-        Ok(incepted) => Ok(incepted),
+    let born = match identity.parse::<wire::TaskStamp>() {
+        Ok(born) => Ok(born),
         Err(stamp_error) => identity
             .parse::<TaskHandle>()
             .map_err(|handle_error| format!("{stamp_error}; {handle_error}"))
-            .and_then(|handle| handle.incepted().map_err(|error| error.to_string())),
+            .and_then(|handle| handle.born().map_err(|error| error.to_string())),
     };
-    let incepted = incepted.map_err(|error| {
+    let born = born.map_err(|error| {
         refusal(
             "task::origin-invalid",
             Some(error.to_string()),
             "name a task origin carrying one canonical inception stamp",
         )
     })?;
-    task_origin(&incepted)
+    task_origin(&born)
 }
 
 /// Resolve the causal realm for one task-creation transaction.
@@ -1027,7 +1027,7 @@ pub(super) fn resolve_creation_origin(
                 "one actor holds more than one active claim at task creation",
             ));
         }
-        return task_origin(parent.incepted());
+        return task_origin(parent.born());
     }
     if let Some(origin) = intrinsic {
         return Ok(origin);

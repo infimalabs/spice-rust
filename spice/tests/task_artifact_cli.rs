@@ -1,21 +1,20 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, Retention, Store};
 use serde::de::DeserializeOwned;
 use wire::intent::TaskAnswer;
 use wire::{JournalBackup, JournalRestore, Outcome, TaskHandle, TaskStamp};
 
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 #[path = "support/readiness.rs"]
 mod readiness;
 #[path = "support/staged_app.rs"]
 mod staged_app;
 
 use readiness::Readiness;
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
@@ -24,12 +23,8 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-task-artifact-cli-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(root.join(".git")).expect("create repository fixture");
+        let root = fixture_root::claim(&std::env::temp_dir(), "task-artifact-cli");
+        fs::create_dir(root.join(".git")).expect("create repository fixture");
         staged_app::seed(&root);
         fs::write(root.join("spice-rust.toml"), "[tasks]\nstems = [\"rim\"]\n")
             .expect("write task project policy");
@@ -167,7 +162,7 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
         .body
         .task;
     assert_ne!(rehomed, task);
-    assert_eq!(rehomed.incepted(), task.incepted());
+    assert_eq!(rehomed.born(), task.born());
     let ArtifactAnswer::Listed { artifacts, .. } = fixture
         .reply::<ArtifactAnswer>(&[
             "task".to_owned(),
@@ -232,6 +227,8 @@ fn task_artifact_refuses_opaque_binary_without_panicking_or_publishing() {
             "Opaque artifact evidence".to_owned(),
             "--project".to_owned(),
             "rim.artifact".to_owned(),
+            "--origin".to_owned(),
+            "fixture:task-artifact-cli".to_owned(),
         ])
         .body
         .task;
@@ -429,14 +426,14 @@ fn assert_backup_restore(
     second: artifact::Artifact,
 ) {
     fixture.reply::<JournalBackup>(&["backup".to_owned(), fixture.bundle.display().to_string()]);
-    let incepted = task
-        .incepted()
+    let born = task
+        .born()
         .expect("fixture handle carries its inception stamp");
     assert!(
         fixture
             .bundle
             .join(format!(
-                "artifacts/tasks/{incepted}/objects/{}/payload",
+                "artifacts/tasks/{born}/objects/{}/payload",
                 first.digest
             ))
             .is_file(),

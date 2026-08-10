@@ -506,7 +506,7 @@ pub const STRUCTURAL_ARMS: [ArmDeclaration; 4] = [
         metrics: MARKDOWN_METRICS,
         scope: scope(
             &[
-                "tracked .md paths after staged rename/delete projection",
+                "tracked .md paths after staged rename/delete fold",
                 "tracked Rust doc comments containing code-spanned .md paths",
             ],
             &[

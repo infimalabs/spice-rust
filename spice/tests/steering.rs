@@ -5,13 +5,14 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
 use wire::{Actor, FactKind, Instant, Outcome, Producer};
 
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 #[path = "support/readiness.rs"]
 mod readiness;
 #[path = "support/staged_app.rs"]
@@ -25,8 +26,6 @@ const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
 const SESSION_RECORD: &str =
     r#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
 
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-
 struct Fixture {
     root: PathBuf,
     runtime: PathBuf,
@@ -34,13 +33,9 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-steering-process-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = fixture_root::claim(&std::env::temp_dir(), "steering-process");
         let runtime = root.join(".git/.spice-rs");
-        fs::create_dir_all(root.join(".git")).expect("fixture git directory");
+        fs::create_dir(root.join(".git")).expect("fixture git directory");
         staged_app::seed(&root);
         let vendor = root.join("fake-claude");
         fs::write(
@@ -216,6 +211,7 @@ fn json_outcome<B: serde::de::DeserializeOwned>(output: &Output) -> Outcome<B> {
     wire::decode(bytes).expect("process speaks one command outcome")
 }
 
+#[track_caller]
 fn text_directive(output: &Output) -> wire::intent::DirectiveAnswer {
     assert!(
         output.status.success(),
@@ -225,6 +221,7 @@ fn text_directive(output: &Output) -> wire::intent::DirectiveAnswer {
     wire::decode(&output.stdout).expect("text reply carries the directive body")
 }
 
+#[track_caller]
 fn text_inbox(output: &Output) -> wire::intent::InboxAnswer {
     assert!(output.status.success(), "inbox failed: {:?}", output.stderr);
     wire::decode(&output.stdout).expect("text reply carries the inbox body")
@@ -993,66 +990,4 @@ fn instant(value: &str) -> Instant {
     value.parse().expect("canonical fixture instant")
 }
 
-#[test]
-fn resend_before_the_first_horizon_redelivers_one_unchanged_stable_directive() {
-    let (fixture, resident, lanes) = setup();
-    let lane = lanes.target.to_string();
-    let sent = text_directive(&invoke(
-        &fixture,
-        &["steer", &lane, "deliver this stable direction again"],
-        false,
-    ));
-    let resent = text_directive(&invoke(
-        &fixture,
-        &["steer", "resend", &sent.directive.to_string()],
-        false,
-    ));
-    assert_eq!(resent, sent);
-
-    let inbox = text_inbox(&invoke(&fixture, &["inbox", &lane], false));
-    let pending = inbox.lanes[0]
-        .pending
-        .iter()
-        .find(|pending| pending.directive == sent.directive)
-        .expect("redelivered directive remains pending");
-    assert_eq!(pending.key, sent.key);
-    assert_eq!(pending.stage, wire::body::SteeringStage::Published);
-    assert!(pending.escalations.is_empty());
-
-    let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
-    let snapshot = journal.fact_snapshot().expect("steering facts read");
-    assert!(snapshot.facts().iter().all(|envelope| {
-        envelope
-            .fact
-            .read::<wire::body::SteerEscalated>()
-            .is_none_or(|body| body.directive != sent.directive)
-    }));
-
-    let canceled = text_directive(&invoke(
-        &fixture,
-        &["steer", "cancel", &sent.directive.to_string()],
-        false,
-    ));
-    assert_eq!(canceled.directive, sent.directive);
-    assert_eq!(canceled.key, sent.key);
-    assert_eq!(canceled.disposition, wire::Disposition::Canceled);
-    stop(&fixture, resident);
-}
-
-#[test]
-fn steering_commands_preserve_principals_races_and_restart_state() {
-    let (fixture, mut resident, lanes) = setup();
-    let (acknowledged, historical_key) = acknowledgment_paths(&fixture, &mut resident, lanes);
-    let declined = decline_path(&fixture, lanes.target);
-    let (race, raced) = cancellation_race(&fixture, lanes.target);
-    assert!(matches!(
-        race,
-        wire::Disposition::Canceled | wire::Disposition::Acked
-    ));
-    cancellation_path(&fixture, lanes.target);
-    direct_input_cannot_ack(&fixture, lanes.target);
-    rendering_failure_path(&fixture, resident, lanes.target, &historical_key);
-    let mut expected = vec![acknowledged, declined];
-    expected.extend(raced);
-    verify_authority(&fixture, lanes.target, race, &expected);
-}
+include!("steering/tail.rs");

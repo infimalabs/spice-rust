@@ -8,6 +8,7 @@ use super::*;
 pub(super) fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
     let root = fixture(name);
     fs::create_dir_all(root.join(".git")).expect("git directory");
+    let root = fs::canonicalize(root).expect("fixture root canonicalizes");
     let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
     fs::create_dir_all(&paths.data).expect("data directory");
     (root, paths)
@@ -467,7 +468,13 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     let lane = test_uuid(5);
     let occupant = test_uuid(6);
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    seed_lane(&bus, epoch, lane, occupant);
+    seed_lane_in_worktree(
+        &bus,
+        epoch,
+        lane,
+        occupant,
+        root.to_str().expect("fixture worktree is UTF-8"),
+    );
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
     let publisher = source.message_publisher();
     let (record, bag) = reminder_capture(lane, occupant);

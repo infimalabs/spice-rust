@@ -493,7 +493,7 @@ fn native_task_add_carries_authored_context_through_client_add() {
 fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
     let fixture = Fixture::new();
     seed_mining_corrections(&fixture);
-    let tracked_before = fs::read_to_string(fixture.root.join("spice.toml")).unwrap();
+    let tracked_before = fs::read_to_string(fixture.root.join("spice-rust.toml")).unwrap();
     let resident = Resident::start(&fixture);
 
     let first = json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste", "mine"]));
@@ -541,7 +541,7 @@ fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
         1
     );
     assert_eq!(
-        fs::read_to_string(fixture.root.join("spice.toml")).unwrap(),
+        fs::read_to_string(fixture.root.join("spice-rust.toml")).unwrap(),
         tracked_before
     );
     let predecessor = first.body["findings"][0]["task"]
@@ -575,9 +575,9 @@ fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
     assert_eq!(proposals.len(), 2);
     let successor_add = proposals
         .iter()
-        .find(|added| added.task == successor.incepted().unwrap())
+        .find(|added| added.task == successor.born().unwrap())
         .unwrap();
-    assert_eq!(successor_add.depends, [predecessor.incepted().unwrap()]);
+    assert_eq!(successor_add.depends, [predecessor.born().unwrap()]);
     assert!(
         successor_add
             .description
@@ -586,7 +586,7 @@ fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
             .contains("Recurrence count: 4")
     );
     assert_eq!(
-        fs::read_to_string(fixture.root.join("spice.toml")).unwrap(),
+        fs::read_to_string(fixture.root.join("spice-rust.toml")).unwrap(),
         tracked_before
     );
     restarted.stop(&fixture);
@@ -744,14 +744,17 @@ fn seed_mining_corrections(fixture: &Fixture) {
         ("1kMine07", "API key secret: do not use grep."),
         ("1kMine08", "🌶️ last maxim: do not use grep; use rg."),
     ];
+    let sent_at = "2030-04-12T19:10:00.000Z".parse().unwrap();
+    let mining_origin = "taste:mining-fixture".parse::<wire::Origin>().unwrap();
     let mut sent = JournalWrite::new(
         Actor::Operator,
-        "taste:mining-fixture".parse().unwrap(),
-        "2030-04-12T19:10:00.000Z".parse().unwrap(),
+        mining_origin.clone(),
+        sent_at,
         Producer::CommandDoor,
     );
     for (key, text) in rows {
-        sent.fact(
+        indexed_sent(
+            &mut sent,
             SteerSent {
                 directive: directive(key),
                 key: key.to_owned(),
@@ -762,391 +765,59 @@ fn seed_mining_corrections(fixture: &Fixture) {
                 expires: "2031-01-01T00:00:00.000Z".parse().unwrap(),
             },
             FactCause::Root,
-        )
-        .unwrap();
+            mining_origin.clone(),
+            sent_at,
+        );
     }
     assert!(matches!(
         bus.commit(sent).unwrap(),
         CommitOutcome::Committed(_)
     ));
+    let answered_at = "2030-04-12T19:11:00.000Z".parse().unwrap();
     let mut acked = JournalWrite::new(
         Actor::Spice,
-        "taste:mining-fixture".parse().unwrap(),
-        "2030-04-12T19:11:00.000Z".parse().unwrap(),
+        mining_origin,
+        answered_at,
         Producer::AckScanner,
     );
     for (index, (key, _)) in rows.into_iter().enumerate() {
+        let current = current_steering(&bus, directive(key));
         if index == 2 {
-            acked
-                .fact(
-                    SteerDeclined {
-                        directive: directive(key),
-                        key: key.to_owned(),
-                        lane: uuid(0x20),
-                        epoch: uuid(0x2f),
-                        locus: mining_locus(index as u32 + 1),
-                        reason: "repository search should use the indexed path".to_owned(),
-                    },
-                    FactCause::Root,
-                )
-                .unwrap();
-        } else {
-            acked
-                .fact(
-                    SteerAcked {
-                        directive: directive(key),
-                        key: key.to_owned(),
-                        lane: uuid(0x20),
-                        epoch: uuid(0x2f),
-                        locus: mining_locus(index as u32 + 1),
-                    },
-                    FactCause::Root,
-                )
-                .unwrap();
-        }
-    }
-    assert!(matches!(
-        bus.commit(acked).unwrap(),
-        CommitOutcome::Committed(_)
-    ));
-    bus.shutdown().unwrap();
-}
-
-fn complete_mined_proposal(fixture: &Fixture, task: &wire::TaskHandle) {
-    let bus = open_bus(fixture);
-    let completed_at = "2030-04-12T19:12:00.000Z".parse::<Instant>().unwrap();
-    let mut write = JournalWrite::new(
-        Actor::Operator,
-        "taste:mining-review".parse().unwrap(),
-        completed_at,
-        Producer::CommandDoor,
-    );
-    let done = write
-        .fact(
-            wire::body::TaskDone {
-                task: task.incepted().unwrap(),
-                validation: "operator reviewed the first mined recurrence".to_owned(),
-                git: None,
-                source: wire::body::SourceBoundary::unrecorded(),
-            },
-            FactCause::Root,
-        )
-        .unwrap();
-    write.workflow_head(task.incepted().unwrap(), done, move |_| {
-        wire::WorkflowHead {
-            flow: vec!["todo".parse().unwrap(), "review".parse().unwrap()],
-            phase: "review".parse().unwrap(),
-            status: "completed".to_owned(),
-            review: "clean".to_owned(),
-            assignment: None,
-            deferral: None,
-            completion: Some(completed_at),
-        }
-    });
-    assert!(matches!(
-        bus.commit(write).unwrap(),
-        CommitOutcome::Committed(_)
-    ));
-    bus.shutdown().unwrap();
-}
-
-fn seed_later_mining_correction(fixture: &Fixture) {
-    let bus = open_bus(fixture);
-    let key = "1kMine09";
-    let mut sent = JournalWrite::new(
-        Actor::Operator,
-        "taste:mining-fixture".parse().unwrap(),
-        "2030-04-12T19:13:00.000Z".parse().unwrap(),
-        Producer::CommandDoor,
-    );
-    sent.fact(
-        SteerSent {
-            directive: directive(key),
-            key: key.to_owned(),
-            lane: uuid(0x20),
-            text: "Do not run grep for repository searches; choose rg.".to_owned(),
-            control: None,
-            attachments: Vec::new(),
-            expires: "2031-01-01T00:00:00.000Z".parse().unwrap(),
-        },
-        FactCause::Root,
-    )
-    .unwrap();
-    assert!(matches!(
-        bus.commit(sent).unwrap(),
-        CommitOutcome::Committed(_)
-    ));
-    let mut acked = JournalWrite::new(
-        Actor::Spice,
-        "taste:mining-fixture".parse().unwrap(),
-        "2030-04-12T19:14:00.000Z".parse().unwrap(),
-        Producer::AckScanner,
-    );
-    acked
-        .fact(
-            SteerAcked {
-                directive: directive(key),
-                key: key.to_owned(),
-                lane: uuid(0x20),
-                epoch: uuid(0x2f),
-                locus: mining_locus(9),
-            },
-            FactCause::Root,
-        )
-        .unwrap();
-    assert!(matches!(
-        bus.commit(acked).unwrap(),
-        CommitOutcome::Committed(_)
-    ));
-    bus.shutdown().unwrap();
-}
-
-/// Seed the live reminder evidence the report derives its fire rows from.
-///
-/// One lane is seated once with one vendor. `zeta` fires twice on the same
-/// prose across two occupant generations and two compaction epochs; the first
-/// directive escalates before it is acknowledged, and the second is declined.
-/// `alpha` fires once and is left live.
-fn seed_fires(fixture: &Fixture) {
-    let bus = open_bus(fixture);
-    commit(&bus, Producer::ResidentRecognition, "01", |write| {
-        write
-            .fact(seated("claude"), FactCause::Root)
-            .expect("lane seating");
-        write
-            .fact(
-                reminded(FIRST_DIRECTIVE, "zeta", uuid(0x21), REPEATED_PROSE, 10),
-                FactCause::Root,
-            )
-            .expect("first zeta reminder");
-    });
-    escalate_and_acknowledge(&bus);
-    commit(&bus, Producer::ResidentRecognition, "04", |write| {
-        write
-            .fact(
-                reminded(RENEWED_DIRECTIVE, "zeta", uuid(0x22), REPEATED_PROSE, 20),
-                FactCause::Root,
-            )
-            .expect("renewed zeta reminder");
-        write
-            .fact(
-                reminded(ALPHA_DIRECTIVE, "alpha", uuid(0x22), "keep the alias", 20),
-                FactCause::Root,
-            )
-            .expect("alpha reminder");
-    });
-    commit(&bus, Producer::AckScanner, "05", |write| {
-        write
-            .fact(
+            indexed_declined(
+                &mut acked,
+                current,
                 SteerDeclined {
-                    directive: directive(RENEWED_DIRECTIVE),
-                    key: RENEWED_DIRECTIVE.to_owned(),
+                    directive: directive(key),
+                    key: key.to_owned(),
                     lane: uuid(0x20),
                     epoch: uuid(0x2f),
-                    locus: locus(11),
-                    reason: "the wait is the observed completion event".to_owned(),
+                    locus: mining_locus(index as u32 + 1),
+                    reason: "repository search should use the indexed path".to_owned(),
                 },
                 FactCause::Root,
-            )
-            .expect("the renewed reminder is declined");
-    });
-    bus.shutdown().expect("fixture bus stops");
-}
-
-/// Escalate the first directive, then answer that same stable identity.
-fn escalate_and_acknowledge(bus: &Bus) {
-    commit(bus, Producer::BusTimer, "02", |write| {
-        write
-            .fact(
-                SteerEscalated {
-                    directive: directive(FIRST_DIRECTIVE),
-                    key: FIRST_DIRECTIVE.to_owned(),
-                    lane: uuid(0x20),
-                    stage: wire::body::SteeringStage::Reminded,
-                },
-                FactCause::Root,
-            )
-            .expect("the first directive reaches reminded presentation");
-    });
-    commit(bus, Producer::AckScanner, "03", |write| {
-        write
-            .fact(
+                answered_at,
+            );
+        } else {
+            indexed_acked(
+                &mut acked,
+                current,
                 SteerAcked {
-                    directive: directive(FIRST_DIRECTIVE),
-                    key: FIRST_DIRECTIVE.to_owned(),
+                    directive: directive(key),
+                    key: key.to_owned(),
                     lane: uuid(0x20),
                     epoch: uuid(0x2f),
-                    locus: locus(9),
+                    locus: mining_locus(index as u32 + 1),
                 },
                 FactCause::Root,
-            )
-            .expect("the stable directive is acknowledged");
-    });
-}
-
-/// Seed one reminder whose lane the durable stream never seated.
-fn seed_unseated_reminder(fixture: &Fixture) {
-    let bus = open_bus(fixture);
-    commit(&bus, Producer::ResidentRecognition, "01", |write| {
-        write
-            .fact(
-                reminded(UNSEATED_DIRECTIVE, "zeta", uuid(0x21), REPEATED_PROSE, 10),
-                FactCause::Root,
-            )
-            .expect("reminder for an unseated lane");
-    });
-    bus.shutdown().expect("fixture bus stops");
-}
-
-fn open_bus(fixture: &Fixture) -> Bus {
-    let journal = journal::Journal::open(&fixture.journal).expect("fixture journal opens");
-    Bus::start(journal).expect("fixture bus starts")
-}
-
-/// Commit one batch of facts, which is why the producer is a parameter: a
-/// registered body admits exactly one producer class, and these span three.
-fn commit(bus: &Bus, producer: Producer, minute: &str, facts: impl FnOnce(&mut JournalWrite)) {
-    let mut write = JournalWrite::new(
-        Actor::Spice,
-        "taste:fixture".parse().expect("fixture origin"),
-        format!("2030-04-12T19:{minute}:00.000Z")
-            .parse::<Instant>()
-            .expect("fixture instant"),
-        producer,
-    );
-    facts(&mut write);
+                answered_at,
+            );
+        }
+    }
     assert!(matches!(
-        bus.commit(write).expect("facts reach writer"),
+        bus.commit(acked).unwrap(),
         CommitOutcome::Committed(_)
     ));
+    bus.shutdown().unwrap();
 }
 
-fn seated(vendor: &str) -> LaneSeated {
-    LaneSeated {
-        lane: uuid(0x20),
-        lineage_id: uuid(0x20),
-        capability: uuid(0x2e),
-        name: Some("Ava".to_owned()),
-        worktree: "/worktrees/lane-a".to_owned(),
-        life: "drive".to_owned(),
-        vendor: vendor.parse().expect("fixture vendor"),
-    }
-}
-
-fn reminded(
-    key: &str,
-    taste: &str,
-    occupant: CanonicalUuid,
-    prose: &str,
-    compaction: u64,
-) -> TasteReminded {
-    TasteReminded {
-        directive: directive(key),
-        key: key.to_owned(),
-        lane: uuid(0x20),
-        taste: taste.to_owned(),
-        content: Digest::compute(Domain::TasteProse, prose.as_bytes()),
-        occupant,
-        compaction,
-        locus: locus(compaction as u32),
-        text: format!("[TASTE] {taste}"),
-        expires: "2031-01-01T00:00:00.000Z".parse().expect("fixture expiry"),
-    }
-}
-
-/// A distinct durable identity per key, so no two publications collide.
-fn directive(key: &str) -> CanonicalUuid {
-    let suffix = key.bytes().fold(0_u64, |value, byte| {
-        value.wrapping_mul(131).wrapping_add(u64::from(byte))
-    });
-    format!("00000000-0000-4000-8000-{:012x}", suffix & 0xffff_ffff_ffff)
-        .parse()
-        .expect("fixture directive UUID")
-}
-
-fn uuid(tail: u8) -> CanonicalUuid {
-    format!("018f82d4-6f59-7d06-92e3-bce9131163{tail:02x}")
-        .parse()
-        .expect("fixture UUID")
-}
-
-fn locus(line: u32) -> TranscriptLocus {
-    TranscriptLocus {
-        member: 1,
-        offset: 40,
-        length: 80,
-        event: 0,
-        line,
-        column: 1,
-    }
-}
-
-fn mining_locus(index: u32) -> TranscriptLocus {
-    TranscriptLocus {
-        member: 5,
-        offset: u64::from(index) * 100,
-        length: 90,
-        event: index,
-        line: index,
-        column: 1,
-    }
-}
-
-fn text_reply<T: DeserializeOwned>(output: &Output) -> T {
-    assert!(
-        output.status.success(),
-        "command failed: {}",
-        spoken(output)
-    );
-    wire::decode(&output.stdout).expect("text reply body is typed")
-}
-
-fn json_reply<T: DeserializeOwned>(output: &Output) -> wire::Reply<T> {
-    assert!(
-        output.status.success(),
-        "command failed: {}",
-        spoken(output)
-    );
-    let Outcome::Reply(reply) =
-        wire::decode::<Outcome<T>>(&output.stdout).expect("JSON outcome is typed")
-    else {
-        panic!("JSON command did not reply")
-    };
-    reply
-}
-
-fn kind_count(snapshot: &journal::FactSnapshot, kind: FactKind) -> usize {
-    snapshot
-        .facts()
-        .iter()
-        .filter(|fact| fact.fact.kind() == kind)
-        .count()
-}
-
-fn task_add_requests(fixture: &Fixture) -> Vec<TaskAdd> {
-    let connection = rusqlite::Connection::open(&fixture.journal).expect("receipt store opens");
-    let mut statement = connection
-        .prepare(concat!(
-            "SELECT request FROM command_receipts ",
-            "WHERE command_kind = 'task::add' ORDER BY first_seq"
-        ))
-        .expect("receipt query prepares");
-    let rows = statement
-        .query_map([], |row| row.get::<_, Vec<u8>>(0))
-        .expect("receipt query runs");
-    rows.map(|row| {
-        let request = row.expect("receipt row reads");
-        wire::decode::<wire::Command<TaskAdd>>(&request)
-            .expect("task-add receipt decodes")
-            .body
-    })
-    .collect()
-}
-
-fn spoken(output: &Output) -> String {
-    format!(
-        "stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-}
+include!("taste_cli/tail.rs");

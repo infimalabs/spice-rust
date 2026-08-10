@@ -269,7 +269,7 @@ fn content_defect_fixture() -> Journal {
         .expect("corrupt envelope fixture");
 
     let mut wrong_task = task_head();
-    wrong_task.incepted = "1kKRRsDQ".parse().expect("alternate task stamp");
+    wrong_task.born = "1kKRRsDQ".parse().expect("alternate task stamp");
     journal
         .connection
         .execute(
@@ -556,7 +556,7 @@ fn store_legacy_task_heads(connection: &Connection, rows: Vec<HeadRow>) {
         let handle = legacy_handle(&stamp);
         let mut document: Value = serde_json::from_slice(&bytes).expect("decode current task head");
         let head = document.as_object_mut().expect("task head object");
-        head.remove("incepted").expect("current task head stamp");
+        head.remove("born").expect("current task head stamp");
         head.insert("handle".to_owned(), Value::String(handle.to_string()));
         head.insert(
             "uuid".to_owned(),
@@ -853,7 +853,7 @@ fn insert_receipt(journal: &Journal) {
 
 fn task_head() -> TaskHead {
     TaskHead {
-        incepted: "1kKRRsDP".parse().expect("task stamp"),
+        born: "1kKRRsDP".parse().expect("task stamp"),
         queue_origin: Seq::new(1).expect("queue origin"),
         title: "Lay journal baseline".to_owned(),
         description: None,
@@ -1125,18 +1125,18 @@ fn drop_steering_index(connection: &Connection) {
         .expect("remove post-schema-6 indexes from older fixture");
 }
 
-fn admit_empty_steering_projection(journal: &mut Journal) {
+fn admit_empty_steering_fold(journal: &mut Journal) {
     let snapshot = journal.fact_snapshot().expect("migration snapshot");
     assert!(
         snapshot.facts().iter().all(|envelope| {
             crate::guard::steering_fact_identity(&envelope.fact).is_none()
                 && envelope.fact.kind() != FactKind::SteerMissed
         }),
-        "only a fixture with no steering history may publish an empty projection"
+        "only a fixture with no steering history may publish an empty fold"
     );
     journal
         .rebuild_steering_index(snapshot.horizon(), &[], &[])
-        .expect("publish migrated empty steering projection");
+        .expect("publish migrated empty steering fold");
 }
 
 fn uuid(text: &str) -> CanonicalUuid {

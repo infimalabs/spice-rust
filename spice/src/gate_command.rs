@@ -110,7 +110,20 @@ fn pre_commit_report(
     match result {
         Ok(report) if report.admits() => direct(report),
         Ok(report) => {
-            let evidence = report.refusal_fold().to_string();
+            let evidence = match report
+                .encode()
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
+            {
+                Ok(evidence) => evidence,
+                Err(detail) => {
+                    return Outcome::Fault(Fault {
+                        class: FaultClass::Protocol,
+                        reason: "gate::battery-report-unavailable".to_owned(),
+                        detail,
+                    });
+                }
+            };
             Outcome::Refusal(Refusal::evidence(
                 "gate::battery-regressed",
                 evidence,

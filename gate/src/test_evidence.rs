@@ -846,7 +846,7 @@ impl TestEvidenceGraph {
     }
 }
 
-/// One report surface retaining the shared evidence and all three projections.
+/// One report surface retaining the shared evidence and all three folds.
 ///
 /// The test and mutation executions are copied observations. They retain exact
 /// selected-source, changed-path, test, covered-line, and mutant provenance but
@@ -895,19 +895,19 @@ impl TestEvidenceReport {
         &self.waivers
     }
 
-    /// Blocking suite-seam projection.
+    /// Blocking suite-seam fold.
     #[must_use]
     pub const fn suite_seam(&self) -> &SuiteSeamReport {
         &self.suite_seam
     }
 
-    /// Blocking mutation-coverage projection.
+    /// Blocking mutation-coverage fold.
     #[must_use]
     pub const fn mutation_coverage(&self) -> &MutationCoverageReport {
         &self.mutation_coverage
     }
 
-    /// Advisory test-subsumption projection.
+    /// Advisory test-subsumption fold.
     #[must_use]
     pub const fn test_subsumption(&self) -> &TestSubsumptionReport {
         &self.test_subsumption

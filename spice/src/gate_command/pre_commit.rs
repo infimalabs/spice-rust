@@ -25,7 +25,12 @@ const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const SELECTION_RECORD: u8 = b'S';
 const HARD_DEADLINE: Duration = Duration::from_secs(180);
-const WORK_RUNTIME: Duration = Duration::from_secs(135);
+// A complete broad-source selection can legitimately spend more than 135
+// seconds in the canonical workspace coordinator on a shared machine. Keep
+// the public 180-second envelope fixed, but assign its previously unused
+// reserve to the work that produces the verdict while retaining every bounded
+// cleanup phase and five seconds of outer-envelope headroom.
+const WORK_RUNTIME: Duration = Duration::from_secs(160);
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);
@@ -679,7 +684,7 @@ mod tests {
     fn fixed_envelope_reserves_cleanup_inside_180_seconds() {
         let bounds = ProcessBounds::production();
         let envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
-        assert_eq!(envelope, Duration::from_secs(150));
+        assert_eq!(envelope, Duration::from_secs(175));
         assert!(envelope < HARD_DEADLINE);
     }
 

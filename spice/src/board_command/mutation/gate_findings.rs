@@ -318,7 +318,7 @@ fn plan_gate_findings(
         }
         let action = if let Some(entry) = open.first() {
             GateFindingAction::Reused {
-                task: entry.incepted().clone(),
+                task: entry.born().clone(),
             }
         } else {
             let predecessor = matches
@@ -372,7 +372,7 @@ fn mint_gate_finding_stamp(
     let occupied = snapshot
         .entries
         .iter()
-        .map(|entry| entry.incepted().clone())
+        .map(|entry| entry.born().clone())
         .collect::<std::collections::BTreeSet<_>>();
     let base_millis = at.get().as_millisecond();
     let mut offset = index as i64;
@@ -424,7 +424,7 @@ fn write_gate_finding_task(
         )
         .map_err(|error| store_fault("gate::finding-task-build", &error.to_string()))?;
     let statement = TaskHead {
-        incepted: task.clone(),
+        born: task.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: finding.title.clone(),
         description: Some(description),
@@ -525,7 +525,7 @@ fn current_open_gate_finding_tasks(
             heads.workflow().body().status == "pending"
                 && heads.workflow().body().completion.is_none()
         })
-        .map(|heads| heads.statement().body().incepted.clone())
+        .map(|heads| heads.statement().body().born.clone())
         .collect()
 }
 
