@@ -2,7 +2,7 @@ use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN, accent,
     arrangement, badge, elapsed_label, first_nonquoted_prose, leaf, one_line, reported_tasks,
-    short, split_team, standing_title, standings, ticker_line, topology, truncate,
+    short, split_lineage, standing_title, standings, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -682,7 +682,7 @@ fn a_split_keeps_the_source_identity_and_makes_every_member_individual() {
     ];
 
     assert_eq!(
-        split_team(&topology(&lanes), uuid(LINEAGE_ONE)),
+        split_lineage(&topology(&lanes), uuid(LINEAGE_ONE)),
         Some(vec![
             (uuid(LINEAGE_ONE), vec![uuid(LANE_A)]),
             (uuid(LANE_B), vec![uuid(LANE_B)]),
@@ -691,12 +691,12 @@ fn a_split_keeps_the_source_identity_and_makes_every_member_individual() {
         "the source remains restorable while every member becomes one team",
     );
     assert_eq!(
-        split_team(&topology(&lanes), uuid(LINEAGE_TWO)),
+        split_lineage(&topology(&lanes), uuid(LINEAGE_TWO)),
         None,
         "an individual team has nothing to split",
     );
     assert_eq!(
-        split_team(&topology(&lanes), uuid(LINEAGE_THREE)),
+        split_lineage(&topology(&lanes), uuid(LINEAGE_THREE)),
         None,
         "a retired team cannot be split from a stale menu",
     );
