@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use wire::{Digest, Domain};
 
-use super::repository_executor::RepositoryExecutor;
+use super::repository_executor::{RepositoryExecutor, VerifierContractAcquisition};
 use super::{
     BatteryArmResult, BatteryError, BatteryInputs, BatteryReceipt, BatteryReport, BatteryScope,
     BatteryToolEvidence, ConfigurationEvidence, RepositoryExecutionEvent, run_battery,
@@ -279,6 +279,25 @@ impl<'trace> BatteryCapture<'trace> {
     ) -> Result<VerifierCompilerContract, BatteryError> {
         self.executor
             .verifier_compiler_contract(gate_id, environment)
+    }
+
+    /// Capture a compiler contract only when the selected tree makes its arm applicable.
+    ///
+    /// # Errors
+    ///
+    /// Refuses selected-arm captures, foreign arms, or unusable tool evidence.
+    pub fn applicable_verifier_compiler_contract(
+        &self,
+        gate_id: crate::GateId,
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<Option<VerifierCompilerContract>, BatteryError> {
+        match self
+            .executor
+            .verifier_compiler_contract_acquisition(gate_id, environment)?
+        {
+            VerifierContractAcquisition::Applicable(contract) => Ok(Some(contract)),
+            VerifierContractAcquisition::NotApplicable(_) => Ok(None),
+        }
     }
 
     /// Run the complete battery with successful full-verifier compiler proof.
