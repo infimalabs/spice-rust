@@ -72,6 +72,82 @@ async fn authenticated_session_routes_multiple_typed_commands_and_correlates_ans
         .expect("server stops");
 }
 
+/// A successful Dark response stays behind every earlier response on its
+/// socket, even when resident test logic answers Dark first.
+///
+/// The response receipt is the production completion signal, so observing it
+/// directly proves the write attempt has not happened; no elapsed-time proxy
+/// stands in for the ordering fact.
+#[tokio::test(flavor = "current_thread")]
+async fn dark_drains_an_earlier_same_socket_response_before_closing() {
+    let app = TestApp::new();
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, mut control) = Server::bind_with_capacity(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        epoch(),
+        capabilities,
+        app.source(),
+        speech(),
+        None,
+        2,
+    )
+    .await
+    .expect("binds");
+    let address = server.local_addr().expect("local address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+
+    let first_id = identity(0xd5);
+    send_change(&mut socket, first_id, epoch(), wire::ResidentState::Seated).await;
+    let first = control.recv().await.expect("first request enters Control");
+
+    let dark_id = identity(0xd6);
+    send_change(&mut socket, dark_id, epoch(), wire::ResidentState::Dark).await;
+    let dark = control.recv().await.expect("Dark request enters Control");
+    assert_eq!(
+        (first.command().id(), dark.command().id()),
+        (first_id, dark_id)
+    );
+    let dark_receipt = dark
+        .respond(state_reply(wire::ResidentState::Dark))
+        .expect("Dark response receiver remains open");
+    let (watching, watched) = oneshot::channel();
+    let (attempted, mut observed) = oneshot::channel();
+    let attempted_task = tokio::spawn(async move {
+        let _ = watching.send(());
+        dark_receipt.wait().await;
+        let _ = attempted.send(());
+    });
+    watched.await.expect("receipt observer starts");
+    assert!(matches!(
+        observed.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+
+    let first_receipt = first
+        .respond(state_reply(wire::ResidentState::Seated))
+        .expect("first response receiver remains open");
+    assert_eq!(response(&mut socket).await.id, first_id);
+    first_receipt.wait().await;
+    assert_eq!(response(&mut socket).await.id, dark_id);
+    observed.await.expect("Dark write attempt is observed");
+    attempted_task.await.expect("receipt observer joins");
+    assert_socket_terminated(&mut socket).await;
+
+    shutdown.send(()).expect("server stops");
+    timeout(ASSERTION_DEADLINE, server_task)
+        .await
+        .expect("server stops before deadline")
+        .expect("server task")
+        .expect("server stops");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
     let app = TestApp::new();

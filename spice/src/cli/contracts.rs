@@ -766,6 +766,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "steer::cancel"
     ),
     row!(
+        ["steer", "resend"],
+        "steer resend ID",
+        Operator,
+        Command => SnapshotOrCommitted,
+        [SteerEscalated],
+        [Resident, OperatorCapability],
+        Reply,
+        "steer::resend"
+    ),
+    row!(
         ["steer", "recover"],
         "steer recover ID",
         Operator,

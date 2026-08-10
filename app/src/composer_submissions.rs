@@ -611,6 +611,8 @@ mod tests {
             control: None,
             attachments: Vec::new(),
             authored: "2030-01-01T00:00:00.000Z".parse::<Instant>().unwrap(),
+            stage: wire::body::SteeringStage::Published,
+            escalations: Vec::new(),
             expires: "2030-01-01T00:05:00.000Z".parse::<Instant>().unwrap(),
         }
     }

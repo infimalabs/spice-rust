@@ -166,7 +166,7 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
-        ["5m", "15m", "1h"]
+        ["15s", "60s", "300s"]
     );
     assert_eq!(root.vendor().claude().binary().as_str(), "claude");
     assert_eq!(root.vendor().claude().model(), vendor::DEFAULT_CLAUDE_MODEL);
@@ -204,6 +204,12 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
         ),
         ("[lane]\nlease = \"15minutes\"\n", "lane.lease"),
         ("[lane]\nvendor = \"Claude\"\n", "lane.vendor"),
+        ("[steer]\nresend = [\"15s\", \"60s\"]\n", "steer"),
+        ("[steer]\nresend = [\"15s\", \"15s\", \"300s\"]\n", "steer"),
+        (
+            "[steer]\nexpiry = \"300s\"\nresend = [\"15s\", \"60s\", \"300s\"]\n",
+            "steer",
+        ),
         ("[gate.walk]\nskip = [\"\"]\n", "gate.walk.skip[0]"),
         ("[proof]\nimage = \"proof:latest\"\n", "proof.image"),
         ("[proof]\ncontainer = \"docker\"\n", "proof.container"),

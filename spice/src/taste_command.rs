@@ -108,7 +108,7 @@ struct TasteRow {
     judgments: Vec<TasteJudgment>,
 }
 
-/// One reminder this taste opened, with the answer its lineage received.
+/// One reminder this taste opened, with the standing of its stable directive.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct TasteFire {
     position: Seq,
@@ -472,9 +472,9 @@ fn collect_fires(
             .get(&body.lane)
             .ok_or(EvidenceError::LaneUnseated(body.lane))?
             .clone();
-        // A disposition retires every rung of its lineage, so the reminder's
-        // own directive already carries the answer a later resend received.
-        // Reading it here is what counts one lineage exactly once.
+        // Escalation never replaces the reminder's identity, so this directive
+        // carries its current disposition directly. Reading it here counts one
+        // publication exactly once regardless of presentation stage.
         let standing = ledger
             .directive(body.directive)
             .ok_or(EvidenceError::DirectiveMissing(body.directive))?

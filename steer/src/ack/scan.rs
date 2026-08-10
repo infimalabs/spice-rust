@@ -83,7 +83,7 @@ impl fmt::Display for Miss {
 /// What one token a clause named actually did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// The key retired its lineage into this disposition.
+    /// The key retired its directive into this disposition.
     Retired {
         /// Key the clause named.
         key: Key,
