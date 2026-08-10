@@ -55,7 +55,7 @@ impl Arranged {
                     process_spec("sleep 0.05", Duration::from_secs(5)),
                 )
                 .expect("supervised occupant starts");
-            seed_lane_in_lineage(&bus, epoch, lane, teams[*team], occupant);
+            seed_lane_in_lineage(&bus, epoch, lane, teams[*team], occupant, &root);
             lanes.push(lane);
             occupants.push(occupant);
         }

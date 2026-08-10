@@ -125,7 +125,7 @@ pub(crate) fn adjudicate_with(
     mut invoke_prompt: impl FnMut(&str) -> Result<String, Error>,
 ) -> Result<Decision, Error> {
     if prompts.is_empty() {
-        return Err(failure(
+        return Err(failure_error(
             "judge_error",
             "an adjudication question declared no framing",
         ));
@@ -184,7 +184,7 @@ pub(crate) fn invoke(binary: &str, prompt: &str, timeout: Duration) -> Result<St
     })?;
     let Some(mut input) = child.stdin.take() else {
         stop(&mut child);
-        return Err(failure("judge_error", "judge stdin was unavailable"));
+        return Err(failure_error("judge_error", "judge stdin was unavailable"));
     };
     if let Err(error) = input.write_all(prompt.as_bytes()) {
         stop(&mut child);
@@ -197,11 +197,11 @@ pub(crate) fn invoke(binary: &str, prompt: &str, timeout: Duration) -> Result<St
 
     let Some(stdout) = child.stdout.take() else {
         stop(&mut child);
-        return Err(failure("judge_error", "judge stdout was unavailable"));
+        return Err(failure_error("judge_error", "judge stdout was unavailable"));
     };
     let Some(stderr) = child.stderr.take() else {
         stop(&mut child);
-        return Err(failure("judge_error", "judge stderr was unavailable"));
+        return Err(failure_error("judge_error", "judge stderr was unavailable"));
     };
     let stdout_reader = reader(stdout);
     let stderr_reader = reader(stderr);
@@ -324,7 +324,7 @@ pub(crate) fn compact(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub(crate) fn failure(reason: &'static str, detail: &str) -> Error {
+pub(crate) fn failure_error(reason: &'static str, detail: &str) -> Error {
     Error {
         reason,
         detail: detail.to_owned(),

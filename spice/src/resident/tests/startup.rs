@@ -1,0 +1,374 @@
+use super::*;
+
+fn listen_for(argv: &[&str]) -> CommandResult<SocketAddr> {
+    let matches = spice::cli::command()
+        .try_get_matches_from(argv)
+        .expect("declared up operands parse");
+    requested_listen(spice::cli::selected_matches(&matches))
+}
+
+fn listen_refusal_for(argv: &[&str]) -> String {
+    match listen_for(argv) {
+        Ok(listen) => panic!("{argv:?} must not bind {listen}"),
+        Err(Outcome::Refusal(refusal)) => refusal.reason().to_owned(),
+        Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
+    }
+}
+
+fn access_for(argv: &[&str]) -> CommandResult<()> {
+    let matches = spice::cli::command()
+        .try_get_matches_from(argv)
+        .expect("declared up operands parse");
+    let leaf = spice::cli::selected_matches(&matches);
+    let listen = requested_listen(leaf)?;
+    requested_access(leaf, listen).map(|_| ())
+}
+
+fn access_refusal(argv: &[&str]) -> Refusal {
+    match access_for(argv) {
+        Ok(()) => panic!("{argv:?} must not admit access"),
+        Err(Outcome::Refusal(refusal)) => refusal,
+        Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
+    }
+}
+
+fn access_refusal_for(argv: &[&str]) -> String {
+    access_refusal(argv).reason().to_owned()
+}
+
+/// The surface listens exactly where the operator requested or at one stable default.
+///
+/// Both halves are load-bearing. An operator reaching this surface from another
+/// machine has to be able to say which address it answers on, and an operator
+/// who says nothing has to get the same URL back after a restart: an ephemeral
+/// port would hand them a new address every time, which no bookmark, open tab,
+/// or written-down instruction survives.
+#[test]
+fn the_listen_address_is_what_was_asked_for_or_one_stable_default() {
+    assert_eq!(listen_for(&["spice", "up"]), Ok(DEFAULT_LISTEN));
+    assert_eq!(DEFAULT_LISTEN.port(), 8767);
+    assert_ne!(
+        DEFAULT_LISTEN.port(),
+        0,
+        "an ephemeral default port changes the URL on every restart"
+    );
+
+    assert_eq!(
+        listen_for(&["spice", "up", "--host", "0.0.0.0"]),
+        Ok(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            DEFAULT_LISTEN.port()
+        )),
+        "a named host keeps the default port"
+    );
+    assert_eq!(
+        listen_for(&["spice", "up", "--port", "9000"]),
+        Ok(SocketAddr::new(DEFAULT_LISTEN.ip(), 9000)),
+        "a named port keeps the default host"
+    );
+    assert_eq!(
+        listen_for(&["spice", "up", "--host", "10.0.0.5", "--port", "9000"]),
+        Ok("10.0.0.5:9000".parse().expect("fixture address")),
+        "both named is bound verbatim"
+    );
+}
+
+/// An address this machine cannot listen on is named rather than approximated.
+///
+/// Resolving a host name here would bind whatever the resolver answered with,
+/// which is not what the operator asked for and not something they could check
+/// afterwards, so a name is refused instead of guessed at.
+#[test]
+fn an_unbindable_listen_request_is_refused_by_name() {
+    assert_eq!(
+        listen_refusal_for(&["spice", "up", "--host", "canvas.example"]),
+        "resident::host-invalid"
+    );
+    assert_eq!(
+        listen_refusal_for(&["spice", "up", "--port", "70000"]),
+        "resident::port-invalid"
+    );
+    assert_eq!(
+        listen_refusal_for(&["spice", "up", "--port", "http"]),
+        "resident::port-invalid"
+    );
+}
+
+#[test]
+fn remote_listening_requires_explicit_consent_and_a_url_safe_token() {
+    assert_eq!(
+        access_refusal_for(&["spice", "up", "--host", "0.0.0.0"]),
+        "resident::insecure-bind-consent-required"
+    );
+    assert_eq!(
+        access_refusal_for(&["spice", "up", "--host", "0.0.0.0", "--allow-insecure-bind",]),
+        "resident::auth-token-required"
+    );
+    let invalid = access_refusal(&[
+        "spice",
+        "up",
+        "--host",
+        "0.0.0.0",
+        "--allow-insecure-bind",
+        "--auth-token",
+        "too-short-token",
+    ]);
+    assert_eq!(invalid.reason(), "resident::auth-token-invalid");
+    assert_eq!(
+        invalid
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        None,
+        "a refused credential is never echoed"
+    );
+    assert!(
+        access_for(&[
+            "spice",
+            "up",
+            "--host",
+            "0.0.0.0",
+            "--allow-insecure-bind",
+            "--auth-token",
+            "correct-horse-battery-staple",
+        ])
+        .is_ok(),
+        "explicit consent and a caller-held token admit the remote bind"
+    );
+    assert!(
+        access_for(&["spice", "up"]).is_ok(),
+        "the stable loopback default remains frictionless"
+    );
+}
+
+/// `::1` is loopback here and at the listener, because one predicate says so.
+///
+/// This gate and the canvas one both ask [`std::net::IpAddr::is_loopback`]. A
+/// narrowing on either side would split one decision in two: this side would
+/// admit `--host ::1` with no token, and the listener would refuse the address
+/// it had just admitted, telling the operator a machine-local bind is remote.
+///
+/// The wildcard cases sit beside the loopback one deliberately. An `is_ok` on
+/// `::1` alone passes just as well against a gate that admits everything, and
+/// `::` is the address that a rule reading only `Ipv4Addr` would wave through.
+#[test]
+fn ipv6_loopback_needs_no_consent_or_token_while_its_wildcard_needs_both() {
+    assert!(
+        access_for(&["spice", "up", "--host", "::1"]).is_ok(),
+        "IPv6 loopback is reachable from this machine alone"
+    );
+
+    assert_eq!(
+        access_refusal_for(&["spice", "up", "--host", "::"]),
+        "resident::insecure-bind-consent-required"
+    );
+    assert_eq!(
+        access_refusal_for(&["spice", "up", "--host", "::", "--allow-insecure-bind"]),
+        "resident::auth-token-required"
+    );
+}
+
+#[test]
+fn runtime_paths_follow_the_repository_common_directory() {
+    let root = fixture("main");
+    let nested = root.join("a/b");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    fs::create_dir_all(&nested).expect("nested directory");
+
+    let paths = RuntimePaths::discover(&nested).expect("paths resolve");
+    let common = fs::canonicalize(root.join(".git")).expect("canonical common directory");
+
+    assert_eq!(paths.runtime, common.join(".spice-rs"));
+    assert_eq!(
+        paths.journal,
+        common.join(".spice-rs/data/spicejournal.sqlite3")
+    );
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+/// A holder replacement never creates an empty observation for a contender.
+///
+/// The callback is the exact instant after the writer has prepared its one
+/// landing write and before that write occurs. The second acquisition therefore
+/// exercises the resident's real contended-refusal path while the replacement
+/// is in flight. Restoring a truncation before that callback makes this fixture
+/// observe `holder metadata unavailable` instead of the seeded holder.
+#[test]
+fn contended_resident_names_the_holder_while_its_record_is_rewritten() {
+    let root = fixture("holder-rewrite");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
+    fs::create_dir_all(&paths.runtime).expect("runtime directory");
+    let lock = LockFile::new(
+        LockName::new("resident").expect("resident lock name"),
+        &paths.resident,
+    );
+    let Acquisition::Acquired(possession) = lock.try_acquire().expect("holder acquires") else {
+        panic!("fresh resident lock unexpectedly contended");
+    };
+    let seeded = "pid=4242;epoch=seeded-holder";
+    possession
+        .rewrite_record(seeded.as_bytes())
+        .expect("seeded holder lands");
+
+    let mut observed = None;
+    possession
+        .rewrite_record_with(b"pid=4242;epoch=replacement", || {
+            let Err(Outcome::Refusal(refusal)) = ResidentLock::acquire(&paths) else {
+                panic!("the resident contender did not refuse");
+            };
+            assert_eq!(refusal.reason(), "resident::already-up");
+            observed = refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
+                .map(str::to_owned);
+            Ok(())
+        })
+        .expect("replacement holder lands");
+
+    assert_eq!(observed.as_deref(), Some(seeded));
+    assert_eq!(
+        fs::read_to_string(&paths.resident)
+            .expect("replacement holder reads")
+            .trim(),
+        "pid=4242;epoch=replacement"
+    );
+    drop(possession);
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+/// A liveness observation cannot impersonate the resident it is checking.
+///
+/// The probe hook freezes the shared observation lock after it lands. Only
+/// then does startup make its exclusive attempt; its contention hook releases
+/// the probe, proving the two operations overlapped at the kernel lock rather
+/// than merely running in nearby threads. Startup must retry that observation,
+/// while the same availability path must still distinguish its resulting live
+/// exclusive holder from the available lock after release.
+#[cfg(unix)]
+#[test]
+fn resident_start_survives_an_overlapping_liveness_probe() {
+    let root = fixture("startup-probe-overlap");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
+    fs::create_dir_all(&paths.runtime).expect("runtime directory");
+    fs::write(&paths.resident, b"stale holder record\n").expect("existing resident lock file");
+    let lock = LockFile::new(
+        LockName::new("resident").expect("resident lock name"),
+        &paths.resident,
+    );
+    let (probe_held, probe_landed) = mpsc::sync_channel(0);
+    let (release_probe, released) = mpsc::sync_channel(0);
+
+    std::thread::scope(|scope| {
+        let observed_lock = lock.clone();
+        let observer = scope.spawn(move || {
+            observed_lock
+                .availability_with(|| {
+                    probe_held.send(()).expect("announce held probe");
+                    released.recv().expect("startup releases probe");
+                })
+                .expect("probe answers")
+        });
+        probe_landed.recv().expect("probe lands before startup");
+
+        let mut release_probe = Some(release_probe);
+        let resident = ResidentLock::acquire_with(&paths, || {
+            if let Some(release) = release_probe.take() {
+                release.send(()).expect("release overlapping probe");
+            }
+        })
+        .expect("probe-width contention cannot become already-up");
+
+        assert_eq!(
+            observer.join().expect("probe thread"),
+            sill::Availability::Available
+        );
+        assert_eq!(
+            lock.availability().expect("live resident probe"),
+            sill::Availability::Held
+        );
+        drop(resident);
+        assert_eq!(
+            lock.availability().expect("released resident probe"),
+            sill::Availability::Available
+        );
+    });
+
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
+fn stale_surface_cleanup_is_idempotent_and_leaves_inbox_authority() {
+    let root = fixture("stale-surfaces");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    let paths = RuntimePaths::discover(&root).expect("paths resolve");
+    fs::create_dir_all(&paths.lane_canvas).expect("lane discovery directory");
+    fs::write(&paths.canvas, b"stale operator discovery").expect("operator discovery");
+    fs::write(paths.lane_canvas.join("lane"), b"stale lane discovery").expect("lane discovery");
+    fs::create_dir_all(&paths.inbox).expect("inbox directory");
+    fs::write(paths.inbox.join("lane"), b"durable pending direction").expect("lane inbox");
+
+    paths.clear_stale_surfaces().expect("stale surfaces clear");
+    paths
+        .clear_stale_surfaces()
+        .expect("repeated stale surface cleanup is ordinary");
+
+    assert!(!paths.canvas.exists());
+    assert!(!paths.lane_canvas.exists());
+    assert_eq!(
+        fs::read(paths.inbox.join("lane")).expect("inbox remains"),
+        b"durable pending direction"
+    );
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
+fn linked_worktrees_share_the_git_common_directory() {
+    let root = fixture("linked");
+    let worktree = root.join("worktree");
+    let common = root.join("common.git");
+    let git_dir = common.join("worktrees/linked");
+    fs::create_dir_all(&worktree).expect("worktree directory");
+    fs::create_dir_all(&git_dir).expect("git directory");
+    fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", git_dir.display()),
+    )
+    .expect("git marker");
+    fs::write(git_dir.join("commondir"), "../..\n").expect("common marker");
+
+    let paths = RuntimePaths::discover(&worktree).expect("paths resolve");
+    let common = fs::canonicalize(&common).expect("canonical common directory");
+
+    assert_eq!(paths.runtime, common.join(".spice-rs"));
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
+fn startup_surface_captures_configured_hidden_project_policy_once() {
+    let root = fixture("hidden-project-policy");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    fs::write(
+        root.join("spice-rust.toml"),
+        "[tasks]\nstems = ['board']\nhidden_stems = ['sandbox']\n",
+    )
+    .expect("tracked task metadata");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+
+    let startup = load_startup_surface(&repository).expect("startup policy resolves");
+    assert_eq!(
+        startup.config.projects.hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
+    assert_eq!(
+        startup
+            .config
+            .projects
+            .admit(".sandbox.triage_1")
+            .expect("configured hidden descendant")
+            .visibility()
+            .hidden_stem(),
+        Some("sandbox")
+    );
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
