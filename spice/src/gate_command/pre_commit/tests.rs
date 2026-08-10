@@ -54,6 +54,36 @@ fn compiler_preparation_and_receipt_publication_precede_supervision() {
 }
 
 #[test]
+fn verifier_compiler_refusal_renders_its_stage_and_output_evidence() {
+    let evidence = concat!(
+        "stage=NativeClippy; completion=exited; code=Some(101); ",
+        "stdout=compiler stdout witness; stderr=compiler stderr witness"
+    );
+    let outcome = worker_failure(WorkerFailure {
+        reason: "gate::verifier-compiler-refused".to_owned(),
+        detail: evidence.to_owned(),
+        fault: false,
+    });
+
+    let Outcome::Refusal(refusal) = &outcome else {
+        panic!("failed compiler preparation must refuse");
+    };
+    assert_eq!(
+        refusal.diagnostic().and_then(RefusalDiagnostic::observed),
+        Some(evidence)
+    );
+    let rendering = crate::render::render_commit_gate(&outcome, crate::render::Form::Text)
+        .expect("compiler refusal renders")
+        .expect("compiler refusal is visible");
+    let text = std::str::from_utf8(rendering.document()).expect("compiler refusal is UTF-8");
+    assert!(text.contains("stage=NativeClippy"), "{text}");
+    assert!(text.contains("completion=exited"), "{text}");
+    assert!(text.contains("code=Some(101)"), "{text}");
+    assert!(text.contains("stdout=compiler stdout witness"), "{text}");
+    assert!(text.contains("stderr=compiler stderr witness"), "{text}");
+}
+
+#[test]
 fn compiler_receipt_artifact_is_private_and_size_bounded() {
     let document = b"source-bound compiler receipt";
     let files =
