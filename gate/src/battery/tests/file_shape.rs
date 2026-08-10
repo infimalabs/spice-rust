@@ -513,3 +513,117 @@ fn a_latched_source_is_held_to_base_while_the_same_unlatched_source_uses_elastic
         file_shape_arm(&latched).reason()
     );
 }
+
+/// A committed base breach has already spent the next change's headroom.
+///
+/// The durable ledger is deliberately empty. The prior breach is instead the
+/// committed file the staged index is regressing from: 1,200 lines under the
+/// tracked 1,000-line base and 1,500-line configured ratchet. If acquisition
+/// consults only the ledger, the 1,201-line candidate receives a fresh elastic
+/// slice and can grow the existing debt forever without ever crossing 1,500.
+#[test]
+fn a_staged_regression_after_a_committed_base_breach_is_held_to_the_true_limit() {
+    const PATH: &str = "src/already-breached.rs";
+    const BASE_LIMIT: usize = 1_000;
+    const CONFIGURED_RATCHET_LIMIT: u64 = 1_500;
+    const COMMITTED_LINES: usize = 1_200;
+    const CANDIDATE_LINES: usize = COMMITTED_LINES + 1;
+    const IMPROVED_LINES: usize = 1_100;
+
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::write(
+        repository.join(PATH),
+        "// committed breach\n".repeat(COMMITTED_LINES),
+    )
+    .expect("committed source above the true limit");
+    fixture_git(&repository, &["add", PATH]);
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "commit existing file-loc debt"],
+    );
+
+    let unchanged = battery_report(&repository);
+    let (unchanged_lines, elastic) = measured(row_for(&unchanged, PATH, MetricId::FileLines), PATH);
+    assert_eq!(unchanged_lines, COMMITTED_LINES as u64);
+    assert_eq!(elastic.base_limit(), BASE_LIMIT as u64);
+    assert_eq!(elastic.configured_ratchet_limit(), CONFIGURED_RATCHET_LIMIT);
+    assert!(elastic.active_limit() > elastic.base_limit());
+    assert!(elastic.over_base() && !elastic.over_limit());
+    assert_eq!(elastic.transition(), "clear");
+    assert_eq!(
+        file_shape_arm(&unchanged).state(),
+        BatteryState::Passed,
+        "an unchanged committed floor keeps the elastic limit it already held"
+    );
+
+    fs::write(
+        repository.join(PATH),
+        "// staged regression\n".repeat(CANDIDATE_LINES),
+    )
+    .expect("staged source grows the committed breach");
+    fixture_git(&repository, &["add", PATH]);
+
+    let report = battery_report(&repository);
+    assert!(
+        report.context().latches().is_empty(),
+        "the committed predecessor, not a durable ledger entry, must close the elastic slice"
+    );
+    let (lines, held) = measured(row_for(&report, PATH, MetricId::FileLines), PATH);
+    assert_eq!(lines, CANDIDATE_LINES as u64);
+    assert_eq!(held.base_limit(), BASE_LIMIT as u64);
+    assert_eq!(held.configured_ratchet_limit(), CONFIGURED_RATCHET_LIMIT);
+    assert!(
+        lines < held.ratchet_limit(),
+        "the candidate must isolate the base latch by fitting the effective ratchet: \
+         {lines} against {}",
+        held.ratchet_limit()
+    );
+    assert_eq!(held.active_limit(), BASE_LIMIT as u64);
+    assert!(held.over_limit() && held.over_base() && !held.ratchet_breach());
+    assert_eq!(held.transition(), "held");
+    assert_eq!(
+        file_shape_arm(&report).state(),
+        BatteryState::Failed,
+        "a staged growth cannot mint fresh headroom after its committed predecessor breached base"
+    );
+
+    fs::write(
+        repository.join(PATH),
+        "// improved but still debt\n".repeat(IMPROVED_LINES),
+    )
+    .expect("staged source improves without reaching the true limit");
+    fixture_git(&repository, &["add", PATH]);
+
+    let improved = battery_report(&repository);
+    let (improved_lines, still_held) =
+        measured(row_for(&improved, PATH, MetricId::FileLines), PATH);
+    assert_eq!(improved_lines, IMPROVED_LINES as u64);
+    assert_eq!(still_held.active_limit(), BASE_LIMIT as u64);
+    assert!(still_held.over_limit() && still_held.over_base());
+    assert_eq!(still_held.transition(), "held");
+    assert_eq!(
+        file_shape_arm(&improved).state(),
+        BatteryState::Failed,
+        "improvement cannot lift the latch while the staged candidate remains above true limit"
+    );
+
+    fs::write(
+        repository.join(PATH),
+        "// healed to contract\n".repeat(BASE_LIMIT),
+    )
+    .expect("staged source returns to the true limit");
+    fixture_git(&repository, &["add", PATH]);
+
+    let healed = battery_report(&repository);
+    let (healed_lines, healed_latch) = measured(row_for(&healed, PATH, MetricId::FileLines), PATH);
+    assert_eq!(healed_lines, BASE_LIMIT as u64);
+    assert_eq!(healed_latch.active_limit(), BASE_LIMIT as u64);
+    assert!(!healed_latch.over_limit() && !healed_latch.over_base());
+    assert_eq!(healed_latch.transition(), "healed");
+    assert_eq!(
+        file_shape_arm(&healed).state(),
+        BatteryState::Passed,
+        "the inferred latch clears exactly at the contract-owned true limit"
+    );
+}
