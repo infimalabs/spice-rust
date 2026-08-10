@@ -26,6 +26,7 @@ mod read;
 mod release_notes_migration;
 mod schema;
 mod steering_index;
+mod steering_verification;
 mod topology_revision_migration;
 mod transcript;
 
@@ -1108,6 +1109,20 @@ fn drop_steering_index(connection: &Connection) {
              DROP TABLE steering_heads;",
         )
         .expect("remove schema-7 steering index from older fixture");
+}
+
+fn admit_empty_steering_projection(journal: &mut Journal) {
+    let snapshot = journal.fact_snapshot().expect("migration snapshot");
+    assert!(
+        snapshot.facts().iter().all(|envelope| {
+            crate::guard::steering_fact_identity(&envelope.fact).is_none()
+                && envelope.fact.kind() != FactKind::SteerMissed
+        }),
+        "only a fixture with no steering history may publish an empty projection"
+    );
+    journal
+        .rebuild_steering_index(snapshot.horizon(), &[], &[])
+        .expect("publish migrated empty steering projection");
 }
 
 fn uuid(text: &str) -> CanonicalUuid {

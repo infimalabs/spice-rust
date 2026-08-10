@@ -14,7 +14,7 @@ mod steering_index;
 pub(crate) use steering_index::{
     SteeringReadMetrics, reset_steering_read_metrics, steering_read_metrics,
 };
-use steering_index::{canonical_identity, disposition_name};
+pub(crate) use steering_index::{canonical_identity, disposition_name};
 
 /// A fact added earlier in the same guarded transaction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

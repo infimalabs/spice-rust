@@ -105,7 +105,7 @@ impl Journal {
         Ok(indexed == cursor)
     }
 
-    /// Atomically replace a lagging steering index with one canonical replay.
+    /// Atomically replace the steering index with one canonical replay.
     ///
     /// The caller must reduce the immutable snapshot before entering this
     /// method. Invalid or contradictory replay therefore performs no mutation;
@@ -272,43 +272,50 @@ fn validate_steering_updates(write: &JournalWrite) -> Result<(), CommitError> {
 }
 
 fn steering_subject(fact: &wire::AnyFact) -> Option<String> {
+    let (directive, key) = steering_fact_identity(fact)?;
+    Some(directive.map_or_else(|| format!("key:{key}"), |value| format!("directive:{value}")))
+}
+
+pub(crate) fn steering_fact_identity(
+    fact: &wire::AnyFact,
+) -> Option<(Option<wire::CanonicalUuid>, String)> {
     match fact.kind() {
         wire::FactKind::SteerSent => fact
             .read::<wire::body::SteerSent>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::TasteReminded => fact
             .read::<wire::body::TasteReminded>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::TasteJudged => {
             fact.read::<wire::body::TasteJudged>()
                 .and_then(|body| match body.decision {
-                    wire::body::TasteDecision::Confirmed { directive, .. } => {
-                        Some(format!("directive:{directive}"))
+                    wire::body::TasteDecision::Confirmed { directive, key, .. } => {
+                        Some((Some(directive), key))
                     }
                     wire::body::TasteDecision::Cleared => None,
                 })
         }
         wire::FactKind::SteerEscalated => fact
             .read::<wire::body::SteerEscalated>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerRecovered => fact
             .read::<wire::body::SteerRecovered>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerAcked => fact
             .read::<wire::body::SteerAcked>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerDeclined => fact
             .read::<wire::body::SteerDeclined>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerDeadLettered => fact
             .read::<wire::steering::SteerDeadLettered>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerLapsed => fact
             .read::<wire::body::SteerLapsed>()
-            .map(|body| format!("key:{}", body.key)),
+            .map(|body| (None, body.key)),
         wire::FactKind::SteerCanceled => fact
             .read::<wire::body::SteerCanceled>()
-            .map(|body| format!("key:{}", body.key)),
+            .map(|body| (None, body.key)),
         _ => None,
     }
 }
@@ -645,7 +652,7 @@ fn validate_head_agreement(
     }
 }
 
-fn steering_head_agrees(
+pub(crate) fn steering_head_agrees(
     fact: &wire::AnyFact,
     origin: &wire::Origin,
     at: wire::Instant,

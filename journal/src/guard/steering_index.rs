@@ -230,7 +230,7 @@ fn read_steering_columns(row: &rusqlite::Row<'_>) -> rusqlite::Result<SteeringCo
     })
 }
 
-pub(super) fn disposition_name(disposition: wire::Disposition) -> &'static str {
+pub(crate) fn disposition_name(disposition: wire::Disposition) -> &'static str {
     match disposition {
         wire::Disposition::Live => "live",
         wire::Disposition::Acked => "acked",
@@ -241,7 +241,7 @@ pub(super) fn disposition_name(disposition: wire::Disposition) -> &'static str {
     }
 }
 
-pub(super) fn canonical_identity(miss: &wire::body::SteerMissed) -> Result<String, GuardError> {
+pub(crate) fn canonical_identity(miss: &wire::body::SteerMissed) -> Result<String, GuardError> {
     #[derive(Serialize)]
     struct Identity<'a> {
         key: &'a str,

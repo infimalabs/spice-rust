@@ -35,12 +35,6 @@ pub(super) use transitions::{cancel, dispose, recover, resend, send};
 
 /// Admit or rebuild the bounded steering authority before the bus accepts work.
 pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
-    if journal
-        .steering_index_current()
-        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?
-    {
-        return Ok(());
-    }
     let snapshot = journal
         .fact_snapshot()
         .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;

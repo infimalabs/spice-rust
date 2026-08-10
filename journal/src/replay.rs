@@ -8,6 +8,8 @@ use serde::de::DeserializeOwned;
 
 use crate::{Journal, JournalReader};
 
+mod steering;
+
 /// Counts proved by a successful authority verification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Verification {
@@ -349,7 +351,8 @@ pub(crate) fn verify_connection(connection: &Connection) -> Result<Verification,
     verify_sqlite(connection, &mut violations)?;
     let facts = verify_facts(connection, &mut violations)?;
     let threads = verify_threads(connection, &facts, &mut violations)?;
-    let heads = verify_heads(connection, &mut violations)?;
+    let mut heads = verify_heads(connection, &mut violations)?;
+    heads += steering::verify(connection, &facts, &mut violations)?;
     let receipts = verify_receipts(connection, &mut violations)?;
     verify_cursor(connection, &facts, &mut violations)?;
 
@@ -409,6 +412,7 @@ fn verify_sqlite(
 struct FactRecord {
     origin: String,
     cause: Option<u64>,
+    envelope: Option<wire::Envelope<wire::AnyFact>>,
 }
 
 fn verify_facts(
@@ -444,13 +448,14 @@ fn verify_facts(
             ));
         }
         expected = row.seq.saturating_add(1);
-        verify_fact_row(&row, violations);
+        let envelope = verify_fact_row(&row, violations);
         if let Ok(seq) = u64::try_from(row.seq) {
             facts.insert(
                 seq,
                 FactRecord {
                     origin: row.origin,
                     cause: row.cause.and_then(|cause| u64::try_from(cause).ok()),
+                    envelope,
                 },
             );
         }
@@ -469,13 +474,16 @@ struct FactRow {
     envelope: Vec<u8>,
 }
 
-fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
+fn verify_fact_row(
+    row: &FactRow,
+    violations: &mut Vec<Violation>,
+) -> Option<wire::Envelope<wire::AnyFact>> {
     let subject = row.seq.to_string();
     let envelope = match decode_canonical::<wire::Envelope<wire::AnyFact>>(&row.envelope) {
         Ok(envelope) => envelope,
         Err(detail) => {
             violations.push(Violation::new(ViolationClass::Envelope, subject, detail));
-            return;
+            return None;
         }
     };
     let cause = row.cause.and_then(|cause| u64::try_from(cause).ok());
@@ -493,6 +501,7 @@ fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
             "decoded envelope does not agree with its indexed columns",
         ));
     }
+    Some(envelope)
 }
 
 fn verify_threads(

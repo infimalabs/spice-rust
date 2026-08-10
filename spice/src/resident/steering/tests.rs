@@ -1,4 +1,19 @@
-use super::{due_stage, missing_stages};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use journal::{FactCause, JournalWrite};
+use serde_json::Value;
+use wire::body::{SteerSent, SteeringStage};
+use wire::{Actor, Disposition, Origin, Producer, SteeringHead};
+
+use super::{admit_index, due_stage, missing_stages};
+
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+const DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116399";
+const OTHER_DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116398";
+const KEY: &str = "1kJK6N3R";
+const OTHER_KEY: &str = "1kJK6N3S";
 
 #[test]
 fn elapsed_time_from_publication_selects_each_named_stage_at_its_exact_horizon() {
@@ -58,4 +73,218 @@ fn repeated_delivery_appends_only_the_missing_ordered_stages() {
     assert_eq!(missing_stages(Escalated, Escalated), []);
     assert_eq!(missing_stages(Escalated, Overdue), [Overdue]);
     assert_eq!(missing_stages(Overdue, Overdue), []);
+}
+
+#[test]
+fn startup_replay_repairs_cursor_current_predicate_corruption() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("journal.sqlite3");
+    let mut journal = journal::Journal::open(&path).expect("steering authority opens");
+    journal
+        .apply(send_write(DIRECTIVE, KEY))
+        .expect("steering head applies");
+    let facts = journal
+        .fact_snapshot()
+        .expect("pre-corruption facts")
+        .facts()
+        .len();
+    drop(journal);
+
+    let connection = rusqlite::Connection::open(&path).expect("corruption fixture opens");
+    connection
+        .execute("UPDATE steering_heads SET disposition = 'canceled'", [])
+        .expect("corrupt indexed predicate");
+    drop(connection);
+
+    let mut journal = journal::Journal::open(&path).expect("corrupt authority reopens");
+    assert!(
+        journal
+            .steering_index_current()
+            .expect("cursor-current corruption reads"),
+        "cursor equality alone must not admit the projection"
+    );
+    journal
+        .verify()
+        .expect_err("verification detects predicate corruption");
+
+    admit_index(&mut journal).expect("one canonical startup replay repairs projection");
+    journal.verify().expect("repaired authority verifies");
+    let pending = journal
+        .read(|read| read.pending_steering(None))
+        .expect("repaired inbox reads");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].body().disposition, Disposition::Live);
+    assert_eq!(
+        journal
+            .fact_snapshot()
+            .expect("post-repair facts")
+            .facts()
+            .len(),
+        facts,
+        "projection repair must not append immutable history"
+    );
+}
+
+#[test]
+fn contradictory_startup_replay_refuses_without_projection_mutation() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("contradictory.sqlite3");
+    let mut journal = journal::Journal::open(&path).expect("steering authority opens");
+    journal
+        .apply(send_write(DIRECTIVE, KEY))
+        .expect("first steering head applies");
+    journal
+        .apply(send_write(OTHER_DIRECTIVE, OTHER_KEY))
+        .expect("second steering head applies");
+    drop(journal);
+
+    let connection = rusqlite::Connection::open(&path).expect("contradiction fixture opens");
+    let envelope = connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = 2",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("read second steering fact");
+    let mut document: Value = serde_json::from_slice(&envelope).expect("decode steering envelope");
+    document["fact"]["key"] = Value::String(KEY.to_owned());
+    connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = 2",
+            [serde_json::to_vec(&document).expect("encode contradictory envelope")],
+        )
+        .expect("store contradictory steering history");
+    let before = stored_projection(&connection);
+    drop(connection);
+
+    let mut journal = journal::Journal::open(&path).expect("contradictory authority reopens");
+    admit_index(&mut journal).expect_err("duplicate canonical key refuses startup replay");
+    drop(journal);
+
+    let connection = rusqlite::Connection::open(&path).expect("refused authority reopens");
+    assert_eq!(
+        stored_projection(&connection),
+        before,
+        "replay must refuse before mutating any projection row"
+    );
+}
+
+fn send_write(directive: &str, key: &str) -> JournalWrite {
+    let body = SteerSent {
+        directive: uuid(directive),
+        key: key.to_owned(),
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+        text: "repair the startup projection".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: "2030-04-12T19:44:09.271Z".parse().expect("expiry"),
+    };
+    let mut write = JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
+    let pending = write
+        .fact(body.clone(), FactCause::Root)
+        .expect("sent fact builds");
+    write.steering_head(pending, move |seq| SteeringHead {
+        directive: body.directive,
+        key: body.key,
+        lane: body.lane,
+        text: body.text,
+        control: body.control,
+        attachments: body.attachments,
+        published: instant(),
+        expires: body.expires,
+        stage: SteeringStage::Published,
+        escalations: Vec::new(),
+        disposition: Disposition::Live,
+        origin: origin(),
+        created: seq,
+        minted_millis: None,
+    });
+    write
+}
+
+fn stored_projection(connection: &rusqlite::Connection) -> StoredProjection {
+    let cursor = connection
+        .query_row("SELECT indexed_seq FROM steering_index", [], |row| {
+            row.get::<_, Option<i64>>(0)
+        })
+        .expect("read steering cursor");
+    let mut statement = connection
+        .prepare(
+            "SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
+             head_seq, body FROM steering_heads ORDER BY directive",
+        )
+        .expect("prepare steering projection read");
+    let heads = statement
+        .query_map([], |row| {
+            Ok(StoredHead {
+                directive: row.get(0)?,
+                key: row.get(1)?,
+                lane: row.get(2)?,
+                disposition: row.get(3)?,
+                created: row.get(4)?,
+                minted_millis: row.get(5)?,
+                position: row.get(6)?,
+                body: row.get(7)?,
+            })
+        })
+        .expect("read steering projection")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("decode steering projection");
+    StoredProjection { cursor, heads }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct StoredProjection {
+    cursor: Option<i64>,
+    heads: Vec<StoredHead>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct StoredHead {
+    directive: String,
+    key: String,
+    lane: String,
+    disposition: String,
+    created: i64,
+    minted_millis: Option<i64>,
+    position: i64,
+    body: Vec<u8>,
+}
+
+fn uuid(text: &str) -> wire::CanonicalUuid {
+    text.parse().expect("canonical fixture uuid")
+}
+
+fn origin() -> Origin {
+    "resident:018f82d4-6f59-7d06-92e3-bce913116304"
+        .parse()
+        .expect("fixture origin")
+}
+
+fn instant() -> wire::Instant {
+    "2030-04-12T18:44:09.271Z".parse().expect("fixture instant")
+}
+
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "spice-steering-admission-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).expect("create steering scratch");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).expect("remove steering scratch");
+    }
 }
