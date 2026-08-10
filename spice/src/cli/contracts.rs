@@ -877,7 +877,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["taste", "add"],
-        "taste add TEXT",
+        "taste add TEXT [--origin ORIGIN]",
         Operator,
         Command,
         [TaskAdded],
@@ -887,7 +887,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["taste", "drop"],
-        "taste drop NAME",
+        "taste drop NAME [--origin ORIGIN]",
         Operator,
         Command,
         [TaskAdded],

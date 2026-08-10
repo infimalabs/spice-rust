@@ -475,7 +475,10 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
         leaf.get_one::<String>("origin").map(String::as_str),
         Some("task:CLI-parent")
     );
+}
 
+#[test]
+fn task_creation_repair_origins_are_parser_owned() {
     for argv in [
         vec![
             "spice",
@@ -491,6 +494,22 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
             "task",
             "oops",
             "Unexpected origin loss",
+            "--origin",
+            "ack:1kLGp2NJ",
+        ],
+        vec![
+            "spice",
+            "taste",
+            "add",
+            "Recurring evidence",
+            "--origin",
+            "ack:1kLGp2NJ",
+        ],
+        vec![
+            "spice",
+            "taste",
+            "drop",
+            "fallbacks",
             "--origin",
             "ack:1kLGp2NJ",
         ],
