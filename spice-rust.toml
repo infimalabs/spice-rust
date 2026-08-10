@@ -101,7 +101,7 @@ admission = [
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the names Spice owns, so these thirteen are the
+# again. Doctor reports only the names Spice owns, so these fourteen are the
 # difference wire pins between this manifest and SpiceVariable. The `SPICE_RS_`
 # rows are this runtime's live handoff names; the predecessor `SPICE_` rows are
 # retained only as coexistence sentinels.
@@ -122,6 +122,7 @@ env_names = [
     "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
     "SPICE_HYGIENE_INTERPRETER_MARKER",
     "SPICE_INBOX",
+    "SPICE_INSTALL_TEST_EXECUTABLE",
     "SPICE_INSTALL_TEST_PAUSE_ACTION",
     "SPICE_INSTALL_TEST_PAUSE_CONTROL",
     "SPICE_INSTALL_TEST_PAUSE_PATH",
