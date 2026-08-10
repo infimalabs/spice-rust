@@ -223,9 +223,12 @@ pub fn verifier_compiler_receipt(
         else {
             continue;
         };
+        let compiler = contract
+            .prepare_stable()
+            .map_err(|error| RunError::fault("gate::verifier-source-unavailable", error))?;
         let mut processes = Vec::new();
-        for stage in contract.stages() {
-            let run = contract
+        for stage in compiler.stages() {
+            let run = compiler
                 .run(*stage)
                 .map_err(|error| RunError::fault("gate::verifier-compiler-unavailable", error))?;
             if !run.success() {
@@ -242,7 +245,7 @@ pub fn verifier_compiler_receipt(
             })?);
         }
         evidence.push(
-            contract
+            compiler
                 .complete(&processes)
                 .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))?,
         );

@@ -28,9 +28,13 @@ use crate::held_root::{held_root_lock, hold, remove_held_root};
 /// How the canvas arm names itself in a refusal, and names its lock.
 const CANVAS_LABEL: &str = "canvas analysis workspace";
 const CANVAS_LOCK: &str = "canvas-analysis-workspace";
-const CANVAS_SOURCE_LABEL: &str = "canvas analysis source cache";
-const CANVAS_SOURCE_LOCK: &str = "canvas-analysis-source-cache";
+pub(in crate::toolchain) const CANVAS_SOURCE_LABEL: &str = "canvas analysis source cache";
+pub(in crate::toolchain) const CANVAS_SOURCE_LOCK: &str = "canvas-analysis-source-cache";
 const CANVAS_SOURCE_DIRECTORY: &str = "target/xtask-app-source";
+
+pub(in crate::toolchain) fn canvas_source_root(repository: &Path) -> PathBuf {
+    repository.join(CANVAS_SOURCE_DIRECTORY)
+}
 
 /// The lock the canvas arm takes, so a fixture can hold the same one.
 ///
@@ -114,7 +118,7 @@ impl<'a> CanvasSource<'a> {
         repository: &Path,
         removal: &'a Cell<Option<String>>,
     ) -> Result<Self, String> {
-        let root = repository.join(CANVAS_SOURCE_DIRECTORY);
+        let root = canvas_source_root(repository);
         let Some(parent) = root.parent() else {
             return Err(format!(
                 "{CANVAS_SOURCE_LABEL} {} has no parent directory",
