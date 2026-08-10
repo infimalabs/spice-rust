@@ -448,7 +448,7 @@ const fn metric(
     }
 }
 
-/// The four named arms in the exact interval frozen by [`GateId::ALL`].
+/// The four named arms in the exact interval frozen by [`GateId::BATTERY`].
 pub const STRUCTURAL_ARMS: [ArmDeclaration; 4] = [
     ArmDeclaration {
         id: GateId::FileShape,

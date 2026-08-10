@@ -1,4 +1,4 @@
-//! The canonical compiled 26-arm gate battery.
+//! The canonical compiled 27-arm synchronous gate battery.
 //!
 //! Family modules own acquisition and decisions. This module owns only their
 //! ordered orchestration: one checked-in disposition manifest, one immutable

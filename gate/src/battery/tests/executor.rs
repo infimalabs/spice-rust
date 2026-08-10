@@ -64,8 +64,8 @@ fn runner_executes_all_27_once_in_order_with_complete_context() {
     let mut executor = RecordingExecutor::all_passed(&fixture.source);
     let report = run_battery(&inputs, &mut executor).expect("complete battery");
 
-    assert_eq!(executor.calls, GateId::ALL);
-    assert_eq!(report.results().len(), GateId::ALL.len());
+    assert_eq!(executor.calls, GateId::BATTERY);
+    assert_eq!(report.results().len(), GateId::BATTERY.len());
     assert!(report.admits());
     assert_eq!(report.context().source(), &fixture.source);
     assert_eq!(report.context().actor().source(), "active-actor");
@@ -132,7 +132,7 @@ fn runner_executes_all_27_once_in_order_with_complete_context() {
     assert_eq!(report.context().policy(), &fixture.policy_digest());
     assert_eq!(report.context().state(), &fixture.state.before().digest());
 
-    for (position, (result, expected)) in report.results().iter().zip(GateId::ALL).enumerate() {
+    for (position, (result, expected)) in report.results().iter().zip(GateId::BATTERY).enumerate() {
         assert_eq!(result.position(), position);
         assert_eq!(
             result.predecessor(),
@@ -748,7 +748,7 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
             | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
         })
         .collect();
-    assert_eq!(arm_events, GateId::ALL);
+    assert_eq!(arm_events, GateId::BATTERY);
 
     let family_events: Vec<_> = events
         .iter()
@@ -776,7 +776,7 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
             | RepositoryExecutionEvent::FamilyInvoked { .. } => None,
         })
         .collect::<Vec<_>>();
-    let mut expected = GateId::ALL.to_vec();
+    let mut expected = GateId::BATTERY.to_vec();
     analyses.sort_unstable();
     expected.sort_unstable();
     assert_eq!(analyses, expected);
@@ -784,7 +784,7 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
 
 /// Each result carries evidence its own family owns, refusals included.
 fn assert_every_family_projected_its_own_evidence(report: &BatteryReport) {
-    assert_eq!(report.results().len(), GateId::ALL.len());
+    assert_eq!(report.results().len(), GateId::BATTERY.len());
     for result in report.results() {
         match result.family() {
             ArmFamily::Core => {
@@ -1090,7 +1090,7 @@ fn executor_refusals_and_invalid_evidence_stay_visible_and_total() {
     let mut executor = RecordingExecutor::faulting(&fixture.source, 3, 4);
     let report = run_battery(&inputs, &mut executor).expect("total executor-failure report");
 
-    assert_eq!(executor.calls, GateId::ALL);
+    assert_eq!(executor.calls, GateId::BATTERY);
     assert_eq!(report.results().len(), 27);
     assert_eq!(report.results()[3].state(), BatteryState::Failed);
     assert_eq!(

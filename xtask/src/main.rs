@@ -21,7 +21,7 @@ const USAGE: &str = concat!(
 );
 
 fn help() -> String {
-    let arms = gate::GateId::ALL.map(gate::GateId::as_str).join("\n  ");
+    let arms = gate::GateId::BATTERY.map(gate::GateId::as_str).join("\n  ");
     format!(
         concat!(
             "{usage}\n\n",
@@ -165,7 +165,7 @@ fn run_gate(argument: Option<OsString>, output: &mut impl io::Write) -> CommandR
         eprintln!("{}", help());
         return Err(usage_error().into());
     };
-    let Some(gate_id) = gate::GateId::ALL
+    let Some(gate_id) = gate::GateId::BATTERY
         .into_iter()
         .find(|gate_id| gate_id.as_str() == arm)
     else {
@@ -424,7 +424,9 @@ fn workspace_tests(
         .ok_or("workspace-test concurrency is not UTF-8")?
         .parse::<usize>()?;
     let environment = ambient_environment()?;
-    xtask::run_workspace_tests(environment, concurrency, output).map_err(Into::into)
+    xtask::run_workspace_tests(environment, concurrency, output)
+        .map(|_execution| ())
+        .map_err(Into::into)
 }
 
 fn release_environment() -> xtask::ReleaseEnvironment {

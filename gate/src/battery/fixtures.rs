@@ -40,7 +40,7 @@ fn evidence(source: &Digest, nonpassing: bool) -> Vec<ArmEvidence> {
             .iter()
             .map(ArmEvidence::gate_id)
             .collect::<Vec<_>>(),
-        GateId::ALL
+        GateId::BATTERY
     );
     evidence
 }
