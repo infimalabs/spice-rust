@@ -257,7 +257,7 @@ fn client_add(
         .flatten()
         .cloned()
         .collect();
-    let origin = match authored_origin(matches) {
+    let origin = match parse_origin(matches) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -324,7 +324,7 @@ fn client_capture(
                 .get_one::<String>("title")
                 .cloned()
                 .unwrap_or(candidate.subject);
-            let origin = match authored_origin(matches) {
+            let origin = match parse_origin(matches) {
                 Ok(origin) => origin,
                 Err(outcome) => return outcome,
             };
@@ -380,7 +380,7 @@ fn client_oops(
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     let text = required(matches, "TEXT");
-    let origin = match authored_origin(matches) {
+    let origin = match parse_origin(matches) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -393,21 +393,6 @@ fn client_oops(
             origin,
         },
     )
-}
-
-fn authored_origin(matches: &ArgMatches) -> Result<Option<wire::Origin>, Outcome<CommandAnswer>> {
-    matches
-        .get_one::<String>("origin")
-        .map(|written| {
-            written.parse::<wire::Origin>().map_err(|error| {
-                refusal(
-                    "task::origin-invalid",
-                    Some(written.clone()),
-                    &error.to_string(),
-                )
-            })
-        })
-        .transpose()
 }
 
 fn client_note(

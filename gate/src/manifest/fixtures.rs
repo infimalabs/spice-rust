@@ -211,6 +211,23 @@ fn an_omitted_builtin_selects_its_compiled_id_from_the_packaged_registry_root() 
 }
 
 #[test]
+fn repository_root_false_disables_only_predecessor_builtins() {
+    let manifest = migrate("[policy]\npre_commit_builtins = false\n", "");
+
+    for declaration in manifest.gates() {
+        let provenance = declaration.enabled_provenance();
+        if declaration.id().predecessor_declared() {
+            assert!(!declaration.enabled(), "{}", declaration.id());
+            assert_eq!(provenance.layer(), OriginLayer::Repository);
+            assert_eq!(provenance.field(), ["policy", "pre_commit_builtins"]);
+        } else {
+            assert!(declaration.enabled(), "{}", declaration.id());
+            assert_eq!(provenance.layer(), OriginLayer::System);
+        }
+    }
+}
+
+#[test]
 fn every_historical_spelling_normalizes_immediately_to_one_current_id() {
     for id in GateId::ALL
         .into_iter()
@@ -540,7 +557,7 @@ fn malformed_registry_and_syntax_name_the_exact_source() {
     for (repository, kind, field) in [
         ("policy = false\n", MigrationErrorKind::Malformed, "policy"),
         (
-            "[policy]\npre_commit_builtins = false\n",
+            "[policy]\npre_commit_builtins = true\n",
             MigrationErrorKind::Malformed,
             "pre_commit_builtins",
         ),

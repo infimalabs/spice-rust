@@ -877,7 +877,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["taste", "add"],
-        "taste add TEXT",
+        "taste add TEXT [--origin ORIGIN]",
         Operator,
         Command,
         [TaskAdded],
@@ -887,7 +887,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["taste", "drop"],
-        "taste drop NAME",
+        "taste drop NAME [--origin ORIGIN]",
         Operator,
         Command,
         [TaskAdded],
@@ -1007,7 +1007,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["release", "publish"],
-        "release publish [--notes-file FILE] [--release-commit REV] [--apply=<digest>]",
+        "release publish [--notes-file FILE] [--release-commit REV] [--version VERSION] \
+         [--action publish|tag-and-announce] [--apply=<digest>]",
         Operator,
         Command,
         [ReleasePublished],

@@ -205,6 +205,13 @@ fn prepare_task(
         ));
     };
     let incepted = task.clone();
+    if origin == task_origin(&incepted)? {
+        return Err(refusal(
+            "task::origin-self",
+            Some(origin.to_string()),
+            "name the steering directive or existing parent task that caused this task",
+        ));
+    }
     let project_text = project.as_str().to_owned();
     let task = TaskHandle::for_project(&project_text, &incepted);
     let flow = task_flow(add.flow.as_deref(), &add.acceptance)?;

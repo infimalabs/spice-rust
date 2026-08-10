@@ -420,6 +420,7 @@ fn examine(
             GateId::RustTypecheck => analyze::rust_typecheck(
                 declaration,
                 source.root,
+                source.repository,
                 bounds,
                 &resolved_programs(declaration, tools),
             ),

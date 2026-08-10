@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use spice::config::Root;
+use spice::config::{Document, Inputs, PreCommitStep, predecessor_bridge, resolve};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -73,13 +73,17 @@ fn a_missing_cargo_executable_refuses_without_another_route() {
     assert!(!scratch.path().join("cargo.argv").exists());
 }
 
-fn declared_command() -> spice::config::PreCommitStep {
+fn declared_command() -> PreCommitStep {
     let document = fs::read_to_string(workspace().join("spice.toml")).unwrap();
-    let root: Root = toml::from_str(&document).expect("tracked policy loads in Rust");
-    let [command] = root.policy().pre_commit() else {
-        panic!("tracked policy must carry exactly one predecessor bridge");
-    };
-    command.clone()
+    let resolved = resolve(Inputs::new(
+        Some(Document::new("spice.toml", &document)),
+        None,
+        &[],
+    ))
+    .expect("tracked policy resolves through the current registry");
+    predecessor_bridge(resolved.root())
+        .expect("Python builtins must be off with exactly one predecessor bridge")
+        .clone()
 }
 
 fn workspace() -> PathBuf {
