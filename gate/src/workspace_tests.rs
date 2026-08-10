@@ -17,6 +17,7 @@ use sill::{
     ObserveError, ObservedRecord, Output, OutputStream, ProcessGroup, RecordObserver, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
 };
+use syn::{Expr, Item, Lit, Meta};
 
 use crate::WORKSPACE_TEST_CONCURRENCY_CAP;
 
@@ -617,11 +618,12 @@ fn selection_report(
             .max_by_key(|package| package.root.components().count());
         match owner {
             Some(package) => {
-                let direct_targets = package
-                    .targets
-                    .iter()
-                    .filter(|target| target_reaches_source(target, &absolute))
-                    .collect::<Vec<_>>();
+                let mut direct_targets = Vec::new();
+                for target in &package.targets {
+                    if target_reaches_source(target, &absolute)? {
+                        direct_targets.push(target);
+                    }
+                }
                 if direct_targets.is_empty() {
                     gaps.push(format!(
                         "changed Rust source {changed:?} reaches no direct Cargo test target"
@@ -670,11 +672,73 @@ fn selection_report(
     .map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
-fn target_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
+/// Resolve only reach that the Cargo target root or an exact Rust `#[path]`
+/// module declaration establishes; ordinary directory proximity is not reach.
+fn target_reaches_source(
+    target: &TargetIdentity,
+    source: &Path,
+) -> Result<bool, WorkspaceTestError> {
     let direct_root = target_is_library(target)
         .then(|| target.source.parent())
         .flatten();
-    source == target.source || direct_root.is_some_and(|root| source.starts_with(root))
+    if source == target.source || direct_root.is_some_and(|root| source.starts_with(root)) {
+        return Ok(true);
+    }
+    let document = match fs::read_to_string(&target.source) {
+        Ok(document) => document,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(WorkspaceTestError::new(format!(
+                "read Cargo target source {} while resolving staged test reach: {error}",
+                target.source.display()
+            )));
+        }
+    };
+    let syntax = syn::parse_file(&document).map_err(|error| {
+        WorkspaceTestError::new(format!(
+            "parse Cargo target source {} while resolving staged test reach: {error}",
+            target.source.display()
+        ))
+    })?;
+    let parent = target.source.parent().ok_or_else(|| {
+        WorkspaceTestError::new(format!(
+            "Cargo target source {} has no parent",
+            target.source.display()
+        ))
+    })?;
+    for item in syntax.items {
+        let Item::Mod(module) = item else {
+            continue;
+        };
+        for attribute in module
+            .attrs
+            .iter()
+            .filter(|attribute| attribute.path().is_ident("path"))
+        {
+            let Meta::NameValue(pair) = &attribute.meta else {
+                return Err(WorkspaceTestError::new(format!(
+                    "Cargo target source {} has a non-value path attribute",
+                    target.source.display()
+                )));
+            };
+            let Expr::Lit(expression) = &pair.value else {
+                return Err(WorkspaceTestError::new(format!(
+                    "Cargo target source {} has a non-literal path attribute",
+                    target.source.display()
+                )));
+            };
+            let Lit::Str(path) = &expression.lit else {
+                return Err(WorkspaceTestError::new(format!(
+                    "Cargo target source {} has a non-string path attribute",
+                    target.source.display()
+                )));
+            };
+            if parent.join(path.value()) == source {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn target_is_library(target: &TargetIdentity) -> bool {
