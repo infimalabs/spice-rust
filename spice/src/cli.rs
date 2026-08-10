@@ -515,14 +515,27 @@ pub fn bootstrap_json_selected(arguments: impl IntoIterator<Item = OsString>) ->
     false
 }
 
-/// Whether the raw native invocation selects the top-level Doctor command.
+/// Whether the raw native invocation selects a top-level configuration owner.
 ///
-/// Doctor owns typed configuration diagnosis, so its bootstrap path must be
-/// recognizable before repository command mounts can be loaded. Only the first
-/// non-global argument is considered; a nested or child-command `doctor` token
-/// has no authority to change mount loading.
+/// Config and Doctor own typed configuration refusal and diagnosis, so their
+/// bootstrap paths must be recognizable before repository command mounts can
+/// be loaded. Only the first non-global argument is considered; a nested or
+/// child-command token has no authority to change mount loading.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn bootstrap_configuration_owner_selected(
+    arguments: impl IntoIterator<Item = OsString>,
+) -> bool {
+    bootstrap_leaf_selected(arguments, &["config", "doctor"])
+}
+
+/// Whether the raw native invocation selects the top-level Doctor command.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bootstrap_doctor_selected(arguments: impl IntoIterator<Item = OsString>) -> bool {
+    bootstrap_leaf_selected(arguments, &["doctor"])
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn bootstrap_leaf_selected(arguments: impl IntoIterator<Item = OsString>, leaves: &[&str]) -> bool {
     let json = format!("--{JSON}");
     for argument in arguments.into_iter().skip(1) {
         if argument == OsStr::new("--") {
@@ -531,7 +544,7 @@ pub fn bootstrap_doctor_selected(arguments: impl IntoIterator<Item = OsString>) 
         if argument == OsStr::new(&json) {
             continue;
         }
-        return argument == OsStr::new("doctor");
+        return leaves.iter().any(|leaf| argument == OsStr::new(leaf));
     }
     false
 }

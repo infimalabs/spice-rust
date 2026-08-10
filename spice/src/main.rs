@@ -141,9 +141,10 @@ fn main() {
         Form::Text
     };
     #[cfg(not(target_arch = "wasm32"))]
-    let bootstrap_doctor = cli::bootstrap_doctor_selected(std::env::args_os());
+    let bootstrap_configuration_owner =
+        cli::bootstrap_configuration_owner_selected(std::env::args_os());
     #[cfg(not(target_arch = "wasm32"))]
-    let mounts = mounted_registry(bootstrap_form, bootstrap_doctor);
+    let mounts = mounted_registry(bootstrap_form, bootstrap_configuration_owner);
     #[cfg(not(target_arch = "wasm32"))]
     let matches = mounts.command().get_matches();
     #[cfg(target_arch = "wasm32")]
@@ -193,7 +194,7 @@ fn main() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn mounted_registry(form: Form, doctor_selected: bool) -> cli::MountRegistry {
+fn mounted_registry(form: Form, configuration_owner_selected: bool) -> cli::MountRegistry {
     let working_directory = std::env::current_dir().unwrap_or_else(|error| {
         deliver_fault(
             Fault {
@@ -207,7 +208,7 @@ fn mounted_registry(form: Form, doctor_selected: bool) -> cli::MountRegistry {
     match cli::MountRegistry::load(&working_directory) {
         Ok(mounts) => mounts,
         Err(cli::MountLoadError::Configuration(error))
-            if doctor_selected && !mount_configuration_error(&error) =>
+            if configuration_owner_selected && !mount_configuration_error(&error) =>
         {
             cli::MountRegistry::default()
         }

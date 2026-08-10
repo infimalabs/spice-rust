@@ -1008,23 +1008,22 @@ fn watch_environment(
 fn readiness_change(event: notify::Result<notify::Event>, journal: &Path) -> Result<(), String> {
     match event {
         Ok(_) => Ok(()),
-        Err(error) if is_missing_transient_path(&error, journal) => Ok(()),
+        Err(error) if is_missing_readiness_transient(&error, journal) => Ok(()),
         Err(error) => Err(error.to_string()),
     }
 }
 
-fn is_missing_transient_path(error: &notify::Error, journal: &Path) -> bool {
+fn is_missing_readiness_transient(error: &notify::Error, journal: &Path) -> bool {
     let notify::ErrorKind::Io(source) = &error.kind else {
         return false;
     };
-    // PollWatcher enumerates each path before reading its metadata. SQLite may
-    // remove a transient sidecar and an atomic publication may rename its
-    // staging file between those steps. No other scan error should disappear
-    // into a generic change notification.
+    // PollWatcher enumerates each path before reading its metadata. SQLite and
+    // atomic publication may remove a known transient between those steps, but
+    // no other scan error should disappear into a generic change notification.
     source.kind() == io::ErrorKind::NotFound
         && !error.paths.is_empty()
         && error.paths.iter().all(|path| {
-            (is_known_journal_sidecar(path, journal) || is_atomic_stage(path))
+            (is_known_journal_sidecar(path, journal) || atomic::is_temporary_path(path))
                 && matches!(
                     fs::symlink_metadata(path),
                     Err(source) if source.kind() == io::ErrorKind::NotFound
@@ -1038,25 +1037,6 @@ fn is_known_journal_sidecar(path: &Path, journal: &Path) -> bool {
         sidecar.push(suffix);
         path.as_os_str() == sidecar
     })
-}
-
-fn is_atomic_stage(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-    let Some(identity) = name
-        .strip_prefix(".spice-atomic-")
-        .and_then(|name| name.strip_suffix(".tmp"))
-    else {
-        return false;
-    };
-    let Some((process, sequence)) = identity.split_once('-') else {
-        return false;
-    };
-    !process.is_empty()
-        && !sequence.is_empty()
-        && process.bytes().all(|byte| byte.is_ascii_digit())
-        && sequence.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn signal_relay(signals: bool, events: Sender<Event>) -> DemoResult<Option<SignalRelay>> {

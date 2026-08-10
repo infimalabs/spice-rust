@@ -940,6 +940,36 @@ fn bootstrap_doctor_selection_names_only_the_top_level_leaf() {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn bootstrap_configuration_owners_are_exact_top_level_leaves() {
+    for argv in [
+        &["spice", "config"][..],
+        &["spice", "--json", "config"][..],
+        &["spice", "config", "lock.worker.shards", "--json"][..],
+        &["spice", "doctor"][..],
+    ] {
+        assert!(
+            bootstrap_configuration_owner_selected(
+                argv.iter().map(|argument| OsString::from(*argument))
+            ),
+            "{argv:?} selects a top-level configuration owner",
+        );
+    }
+    for argv in [
+        &["spice", "task", "config"][..],
+        &["spice", "run", "--", "config"][..],
+        &["spice", "--json", "task", "doctor"][..],
+    ] {
+        assert!(
+            !bootstrap_configuration_owner_selected(
+                argv.iter().map(|argument| OsString::from(*argument))
+            ),
+            "{argv:?} must not borrow a configuration owner's refusal path",
+        );
+    }
+}
+
 /// A placeholder for each operand a contract requires before its command
 /// delimiter, or nothing when it admits no child command.
 ///
