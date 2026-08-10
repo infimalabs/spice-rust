@@ -45,6 +45,12 @@ const REINTRODUCED: &str = "src/reintroduced.rs";
 /// A selected source whose exact bytes cannot be represented as UTF-8.
 const INVALID: &str = "src/invalid.rs";
 
+/// A source whose clean three-way result combines disjoint parent edits.
+const SYNTHESIZED: &str = "src/synthesized.rs";
+
+/// A source whose conflicting parents require merge-receiver authorship.
+const CONFLICTED: &str = "src/conflicted.rs";
+
 /// Lines that put `INHERITED` past `file_loc` however its headroom varies.
 ///
 /// The tracked policy this fixture copies caps `file_loc` at 1000 lines and
@@ -111,6 +117,13 @@ fn replacement_source() -> Vec<u8> {
     let mut source = b"pub fn invalid() {}\n".to_vec();
     source.extend("\u{fffd}\n".as_bytes());
     source
+}
+
+/// Distinct comment lines that let Git merge two non-overlapping additions.
+fn line_block(label: &str, lines: usize) -> String {
+    (0..lines)
+        .map(|line| format!("// {label} {line}\n"))
+        .collect()
 }
 
 /// One arm's result within a complete battery report.
@@ -306,6 +319,107 @@ fn invalid_merged_repository(root: &Path) -> PathBuf {
     repository
 }
 
+/// Merge two individually admissible parents into one over-limit clean result.
+fn synthesized_merged_repository(root: &Path) -> (PathBuf, String) {
+    const BASE_LINES: usize = 800;
+    const PARENT_ADDITION_LINES: usize = 600;
+    const PARENT_LINES: u64 = (BASE_LINES + PARENT_ADDITION_LINES) as u64;
+    const MERGED_LINES: usize = BASE_LINES + PARENT_ADDITION_LINES * 2;
+
+    let repository = production_repository(root);
+    let base = line_block("base", BASE_LINES);
+    fs::write(repository.join(SYNTHESIZED), &base).expect("fixture synthesis base");
+    fixture_git(&repository, &["add", SYNTHESIZED]);
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "commit synthesis base"],
+    );
+
+    fixture_git(&repository, &["checkout", "-q", "-b", "side-synthesis"]);
+    let side = format!("{base}{}", line_block("side", PARENT_ADDITION_LINES));
+    fs::write(repository.join(SYNTHESIZED), &side).expect("fixture side synthesis source");
+    fixture_git(&repository, &["add", SYNTHESIZED]);
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "side appends within its limit"],
+    );
+    let side_report = battery_report(&repository);
+    let side_row = row(
+        &side_report,
+        GateId::FileShape,
+        SYNTHESIZED,
+        MetricId::FileLines,
+    );
+    let MetricState::Measured {
+        measurement: side_measurement,
+    } = side_row.state()
+    else {
+        panic!(
+            "the side parent file measured, but carried {:?}",
+            side_row.state()
+        )
+    };
+    assert_eq!(side_measurement.value(), PARENT_LINES);
+    assert!(
+        !side_measurement
+            .latch()
+            .expect("the side parent row carries its bound")
+            .over_limit(),
+        "the side parent must fit its own active file-loc limit"
+    );
+
+    fixture_git(&repository, &["checkout", "-q", "main"]);
+    let main = format!("{}{base}", line_block("main", PARENT_ADDITION_LINES));
+    fs::write(repository.join(SYNTHESIZED), &main).expect("fixture main synthesis source");
+    fixture_git(&repository, &["add", SYNTHESIZED]);
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "main prepends within its limit"],
+    );
+    let main_report = battery_report(&repository);
+    let main_row = row(
+        &main_report,
+        GateId::FileShape,
+        SYNTHESIZED,
+        MetricId::FileLines,
+    );
+    let MetricState::Measured {
+        measurement: main_measurement,
+    } = main_row.state()
+    else {
+        panic!(
+            "the main parent file measured, but carried {:?}",
+            main_row.state()
+        )
+    };
+    assert_eq!(main_measurement.value(), PARENT_LINES);
+    assert!(
+        !main_measurement
+            .latch()
+            .expect("the main parent row carries its bound")
+            .over_limit(),
+        "the main parent must fit its own active file-loc limit"
+    );
+
+    fixture_git(
+        &repository,
+        &["merge", "--no-commit", "--no-ff", "side-synthesis"],
+    );
+    assert!(
+        repository.join(".git/MERGE_HEAD").exists(),
+        "the clean synthesis fixture must remain a pending merge"
+    );
+    let synthesized = fs::read_to_string(repository.join(SYNTHESIZED))
+        .expect("Git wrote the clean synthesis to the worktree");
+    assert_ne!(synthesized, main, "the synthesis must differ from HEAD");
+    assert_ne!(
+        synthesized, side,
+        "the synthesis must differ from MERGE_HEAD"
+    );
+    assert_eq!(synthesized.lines().count(), MERGED_LINES);
+    (repository, synthesized)
+}
+
 /// A merge is charged by no per-file arm for content it only carried.
 ///
 /// The second parent's file is past `file_loc` and holds a literal `HEAD` has
@@ -420,6 +534,130 @@ fn a_merge_is_not_charged_for_a_file_its_second_parent_already_committed() {
             id.as_str(),
         );
     }
+}
+
+/// Git-authored clean synthesis is inherited; a later byte edit is not.
+#[test]
+fn a_clean_merge_synthesis_is_exempt_but_an_edit_to_that_result_is_charged() {
+    let fixture = Fixture::new();
+    let (repository, synthesized) = synthesized_merged_repository(&fixture.root);
+
+    let inherited = battery_report(&repository);
+    let shape_row = row(
+        &inherited,
+        GateId::FileShape,
+        SYNTHESIZED,
+        MetricId::FileLines,
+    );
+    let MetricState::NotApplicable { reason } = shape_row.state() else {
+        panic!(
+            "Git's clean synthesis should be inherited, but carried {:?}",
+            shape_row.state()
+        )
+    };
+    assert!(
+        reason.contains("clean merge result"),
+        "the row must expose why the byte-distinct synthesis is inherited: {reason}"
+    );
+    assert_eq!(
+        arm(&inherited, GateId::FileShape).state(),
+        BatteryState::NotApplicable,
+        "an automatic synthesis leaves no file shape authored by the merge receiver"
+    );
+
+    fs::write(
+        repository.join(SYNTHESIZED),
+        format!("{synthesized}// merge receiver edit\n"),
+    )
+    .expect("edit the automatic synthesis");
+    fixture_git(&repository, &["add", SYNTHESIZED]);
+
+    let edited = battery_report(&repository);
+    assert!(
+        measured(
+            row(&edited, GateId::FileShape, SYNTHESIZED, MetricId::FileLines,),
+            SYNTHESIZED,
+        ) > 0,
+        "a byte-distinct edit to the clean result must be measured"
+    );
+    assert_eq!(
+        arm(&edited, GateId::FileShape).state(),
+        BatteryState::Failed,
+        "the edited over-limit synthesis remains merge-authored"
+    );
+}
+
+/// A staged manual conflict resolution cannot masquerade as clean synthesis.
+#[test]
+fn a_manual_conflict_resolution_remains_merge_authored() {
+    const PARENT_LINES: usize = 1_400;
+    const RESOLUTION_LINES: usize = 2_000;
+
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::write(repository.join(CONFLICTED), "// shared base\n").expect("fixture conflict base");
+    fixture_git(&repository, &["add", CONFLICTED]);
+    fixture_git(&repository, &["commit", "-q", "-m", "commit conflict base"]);
+
+    fixture_git(&repository, &["checkout", "-q", "-b", "side-conflict"]);
+    fs::write(
+        repository.join(CONFLICTED),
+        line_block("side conflict", PARENT_LINES),
+    )
+    .expect("fixture side conflict source");
+    fixture_git(&repository, &["add", CONFLICTED]);
+    fixture_git(&repository, &["commit", "-q", "-m", "side conflicts"]);
+
+    fixture_git(&repository, &["checkout", "-q", "main"]);
+    fs::write(
+        repository.join(CONFLICTED),
+        line_block("main conflict", PARENT_LINES),
+    )
+    .expect("fixture main conflict source");
+    fixture_git(&repository, &["add", CONFLICTED]);
+    fixture_git(&repository, &["commit", "-q", "-m", "main conflicts"]);
+
+    let output = {
+        let _fixture_git_guard = FIXTURE_GIT_BARRIER
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Command::new("/usr/bin/git")
+            .args(["merge", "--no-commit", "--no-ff", "side-conflict"])
+            .current_dir(&repository)
+            .env_clear()
+            .env("HOME", &repository)
+            .output()
+            .expect("run the deliberately conflicting fixture merge")
+    };
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "Git must identify the fixture as conflicted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(repository.join(".git/MERGE_HEAD").exists());
+
+    fs::write(
+        repository.join(CONFLICTED),
+        line_block("manual resolution", RESOLUTION_LINES),
+    )
+    .expect("stage a manual conflict resolution");
+    fixture_git(&repository, &["add", CONFLICTED]);
+
+    let report = battery_report(&repository);
+    assert_eq!(
+        measured(
+            row(&report, GateId::FileShape, CONFLICTED, MetricId::FileLines,),
+            CONFLICTED,
+        ),
+        RESOLUTION_LINES as u64,
+        "a manual resolution is measured as merge-receiver work"
+    );
+    assert_eq!(
+        arm(&report, GateId::FileShape).state(),
+        BatteryState::Failed,
+        "the over-limit manual resolution cannot use the clean-synthesis exemption"
+    );
 }
 
 /// The same merge is charged in full once it writes to that same file.
