@@ -318,11 +318,12 @@ fn fixture() -> Connection {
         .expect("current baseline");
     connection
         .execute_batch(
-            "DROP TABLE steering_index;
+            "DROP TABLE claim_index;
+             DROP TABLE steering_index;
              DROP TABLE steering_misses;
              DROP TABLE steering_heads;",
         )
-        .expect("remove schema-7 steering index from schema-3 fixture");
+        .expect("remove post-schema-6 indexes from schema-3 fixture");
     crate::tests::downgrade_task_identity_to_five(&connection);
     connection
         .execute(

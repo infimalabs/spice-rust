@@ -281,6 +281,7 @@ fn statement_views_preserve_project_family_handle_and_dependency_heads() {
 #[test]
 fn board_graph_views_render_independent_relations_in_stable_order() {
     let reviewer = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e411"));
+    let author = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e412"));
     let mut alpha_head = statement("BOARD-a1");
     alpha_head.provenance = "task:BOARD-root".parse().expect("fixture origin");
     alpha_head.dependencies.push(stamp("BOARD-b2"));
@@ -297,11 +298,19 @@ fn board_graph_views_render_independent_relations_in_stable_order() {
     let beta = entry("BOARD-b2");
     let entries = vec![beta.clone(), alpha.clone()];
     let stable_entries = vec![alpha.clone(), beta.clone()];
+    let reviews = vec![graph::ReviewEdge::new(
+        alpha.handle().clone(),
+        phase("todo"),
+        reviewer.clone(),
+        author.clone(),
+        body::Verdict::Clean,
+        seq(50),
+    )];
 
     for view in View::ALL {
         assert_eq!(
-            graph::render(view, &entries).text(),
-            graph::render(view, &stable_entries).text(),
+            graph::render(view, &entries, &reviews).text(),
+            graph::render(view, &stable_entries, &reviews).text(),
             "{} graph depends on input order",
             view.as_str()
         );
@@ -311,7 +320,9 @@ fn board_graph_views_render_independent_relations_in_stable_order() {
         ["origin", "dependencies", "review", "workflow", "claims"]
     );
 
-    let origin = graph::render(View::Origin, &entries).text().to_owned();
+    let origin = graph::render(View::Origin, &entries, &reviews)
+        .text()
+        .to_owned();
     assert!(origin.contains(&format!("task:BOARD-root -> {}", alpha.handle())));
     assert!(origin.contains(&format!(
         "{} -> {}",
@@ -320,7 +331,7 @@ fn board_graph_views_render_independent_relations_in_stable_order() {
     )));
     assert!(!origin.contains("[assigned]"));
 
-    let dependencies = graph::render(View::Dependencies, &entries)
+    let dependencies = graph::render(View::Dependencies, &entries, &reviews)
         .text()
         .to_owned();
     assert_eq!(
@@ -332,27 +343,35 @@ fn board_graph_views_render_independent_relations_in_stable_order() {
         )
     );
 
-    let review = graph::render(View::Review, &entries).text().to_owned();
+    let review = graph::render(View::Review, &entries, &reviews)
+        .text()
+        .to_owned();
     assert_eq!(
         review,
         format!(
-            "graph review\n{} -> {} [assigned]\n",
+            "graph review\n{} -> {} [{} todo clean]\n",
             reviewer,
-            alpha.handle()
+            author,
+            alpha.handle(),
         )
     );
     assert!(!review.contains("active"));
+    assert!(!review.contains("assigned"));
 
-    let workflow = graph::render(View::Workflow, &entries).text().to_owned();
+    let workflow = graph::render(View::Workflow, &entries, &reviews)
+        .text()
+        .to_owned();
     assert!(workflow.contains(&format!("{}: review [pending]\n", alpha.handle())));
     assert!(workflow.contains(&format!("{}: todo [pending]\n", beta.handle())));
     assert!(!workflow.contains(&reviewer.to_string()));
 
-    let claims = graph::render(View::Claims, &entries).text().to_owned();
+    let claims = graph::render(View::Claims, &entries, &reviews)
+        .text()
+        .to_owned();
     assert!(claims.contains(&format!("{}: {} [active]\n", alpha.handle(), Actor::Spice)));
     assert!(!claims.contains("assigned"));
 
-    let handout = handout::compose(&entries);
+    let handout = handout::compose(&entries, &reviews);
     let sections = [
         "## origin",
         "## dependencies",
@@ -1349,10 +1368,16 @@ fn diagrams_and_handout_are_stable_across_input_order() {
     let second = [prerequisite, dependent];
 
     for view in View::ALL {
-        assert_eq!(graph::render(view, &first), graph::render(view, &second));
+        assert_eq!(
+            graph::render(view, &first, &[]),
+            graph::render(view, &second, &[])
+        );
     }
-    assert_eq!(handout::compose(&first), handout::compose(&second));
-    assert!(handout::compose(&first).contains(&expected_edge));
+    assert_eq!(
+        handout::compose(&first, &[]),
+        handout::compose(&second, &[])
+    );
+    assert!(handout::compose(&first, &[]).contains(&expected_edge));
 }
 
 #[test]
