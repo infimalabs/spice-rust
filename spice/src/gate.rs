@@ -13,9 +13,10 @@ use std::process::Command;
 
 use ::gate::{
     ActorCapture, BatteryArmResult, BatteryCapture, BatteryReceipt, BatteryReport, ClaimCapture,
-    FocusedArmReport, GateId, HygieneConfiguration, RepositoryExecutionEvent, RimCapture, Selector,
-    VerifierCompilerContract, VerifierCompilerEvidence,
+    FocusedArmReport, GateId, HygieneConfiguration, KillRun, RepositoryExecutionEvent, RimCapture,
+    Selector, VerifierCompilerContract, VerifierCompilerEvidence,
 };
+use wire::Digest;
 
 use crate::repository::{Repository, StateError};
 
@@ -35,6 +36,35 @@ pub struct PreparedBattery {
 }
 
 impl PreparedBattery {
+    /// Identity of the immutable selected source retained by this preparation.
+    #[must_use]
+    pub const fn source(&self) -> &Digest {
+        self.capture.source()
+    }
+
+    /// Private selected-tree root retained for this preparation's lifetime.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        self.capture.root()
+    }
+
+    /// Exact changed paths captured at the command rim for this source.
+    #[must_use]
+    pub fn changes(&self) -> &[String] {
+        self.capture.changes()
+    }
+
+    /// Execute the existing canonical mutation profile over the retained source.
+    ///
+    /// # Errors
+    ///
+    /// Returns the canonical mutation refusal; no second selection is captured.
+    pub fn execute_kill(&self) -> Result<KillRun, RunError> {
+        self.capture
+            .execute_kill()
+            .map_err(|error| RunError::refusal("gate::kill-refused", error))
+    }
+
     /// Capture an exact compiler contract for one reusable arm.
     ///
     /// # Errors

@@ -149,6 +149,10 @@ fn suite_seam_is_binary_over_changed_sources_and_tests_that_actually_ran() {
     assert_eq!(report.findings().len(), 1);
     assert_eq!(report.findings()[0].test(), "suite::unrun");
     assert_eq!(report.findings()[0].source(), "src/shared.rs");
+    assert_eq!(
+        graph.report().instrument_admits(GateId::SuiteSeam),
+        Some(false)
+    );
 }
 
 #[test]
@@ -188,7 +192,68 @@ fn unknown_and_incomplete_coverage_are_loud_and_non_clean_in_every_fold() {
         assert!(suite.reason().unwrap().contains("coverage"));
         assert!(mutation.reason().unwrap().contains("coverage"));
         assert!(subsumption.reason().unwrap().contains("coverage"));
+        let combined = graph.report();
+        assert_eq!(combined.instrument_admits(GateId::SuiteSeam), Some(false));
+        assert_eq!(
+            combined.instrument_admits(GateId::MutationCoverage),
+            Some(false)
+        );
+        assert_eq!(
+            combined.instrument_admits(GateId::TestSubsumption),
+            Some(false)
+        );
+        let document = String::from_utf8(combined.encode().unwrap()).unwrap();
+        assert!(
+            document.contains("coverage publisher was unavailable")
+                || document.contains("2 of 3 test contexts arrived")
+        );
     }
+}
+
+#[test]
+fn one_combined_report_retains_the_shared_evidence_and_every_fold() {
+    let source = source(b"combined-report");
+    let graph = graph(
+        &source,
+        &["src/lib.rs"],
+        vec![covered("suite::one", "src/lib.rs", &[3, 8])],
+        CoverageCompleteness::Complete,
+        mutation(
+            &source,
+            Some(SurvivorRate::new(0, 1).unwrap()),
+            &[(
+                "mutant src/lib.rs:8 replace true with false",
+                "src/lib.rs",
+                MutantDisposition::ConfirmedKilled,
+            )],
+        ),
+        Vec::new(),
+    );
+
+    let report = graph.report();
+    assert_eq!(report.version(), gate::TEST_EVIDENCE_REPORT_VERSION);
+    assert_eq!(report.source(), &source);
+    assert_eq!(report.tests().tests_run(), ["suite::one"]);
+    assert_eq!(report.mutation().mutants()[0].source(), "src/lib.rs");
+    assert_eq!(report.instrument_admits(GateId::SuiteSeam), Some(true));
+    assert_eq!(
+        report.instrument_admits(GateId::MutationCoverage),
+        Some(true)
+    );
+    assert_eq!(
+        report.instrument_admits(GateId::TestSubsumption),
+        Some(true)
+    );
+    assert_eq!(report.instrument_admits(GateId::FileShape), None);
+
+    let document = String::from_utf8(report.encode().unwrap()).unwrap();
+    assert!(document.contains(source.as_str()));
+    assert!(document.contains("suite::one"));
+    assert!(document.contains("src/lib.rs"));
+    assert!(document.contains("mutant src/lib.rs:8 replace true with false"));
+    assert!(document.contains("\"suite_seam\""));
+    assert!(document.contains("\"mutation_coverage\""));
+    assert!(document.contains("\"test_subsumption\""));
 }
 
 #[test]
@@ -359,6 +424,11 @@ fn subsumption_is_advisory_deterministic_and_retains_exact_source_provenance() {
         .unwrap();
     assert_eq!(equal.contained_by(), "suite::wide-a");
     assert_eq!(equal.relation(), SubsumptionRelation::Equal);
+    assert_eq!(
+        graph.report().instrument_admits(GateId::TestSubsumption),
+        Some(true),
+        "measured subsumption findings remain advisory"
+    );
 }
 
 #[test]

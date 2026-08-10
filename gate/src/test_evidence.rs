@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+use serde::Serialize;
 use wire::Digest;
 
 use crate::kill::{KillRun, MutantDisposition, SurvivorRate};
@@ -19,8 +20,12 @@ mod fold;
 
 use fold::{rate_regressed, subsumption_findings};
 
+/// The one combined test-evidence report schema this build emits.
+pub const TEST_EVIDENCE_REPORT_VERSION: u64 = 1;
+
 /// Why coverage cannot establish a clean result.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "state")]
 pub enum CoverageCompleteness {
     /// Every known suite test published all of its covered source points.
     Complete,
@@ -55,7 +60,8 @@ impl CoverageCompleteness {
 }
 
 /// Exact executed source points attributed to one path.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CoveredSource {
     path: String,
     lines: BTreeSet<u32>,
@@ -92,7 +98,8 @@ impl CoveredSource {
 }
 
 /// Per-test coverage published for the canonical execution's selected source.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TestCoverage {
     test: String,
     sources: Vec<CoveredSource>,
@@ -137,7 +144,8 @@ impl TestCoverage {
 }
 
 /// Typed output of one canonical workspace-test execution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CanonicalTestExecution {
     source: Digest,
     changed_sources: Vec<String>,
@@ -243,7 +251,8 @@ impl CanonicalTestExecution {
 }
 
 /// One mutation at one exact production source.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MutationObservation {
     identity: String,
     source: String,
@@ -288,7 +297,8 @@ impl MutationObservation {
 }
 
 /// Typed output projected from the existing canonical mutation execution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MutationExecution {
     source: Digest,
     floor: Option<SurvivorRate>,
@@ -360,7 +370,8 @@ impl MutationExecution {
 }
 
 /// One tracked exact mutation exception with its required rationale.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct StandingMutationWaiver {
     mutant: String,
     source: String,
@@ -415,6 +426,20 @@ pub struct TestEvidenceGraph {
 }
 
 impl TestEvidenceGraph {
+    /// Join canonical test evidence directly to one completed canonical kill run.
+    ///
+    /// # Errors
+    ///
+    /// Returns malformed mutation evidence, mismatched selected sources, or
+    /// malformed/repeated waivers. The completed run grants no new execution.
+    pub fn from_kill(
+        tests: CanonicalTestExecution,
+        run: &KillRun,
+        waivers: Vec<StandingMutationWaiver>,
+    ) -> Result<Self, TestEvidenceError> {
+        Self::new(tests, MutationExecution::from_kill(run)?, waivers)
+    }
+
     /// Join canonical test and mutation executions only when they name one source.
     pub fn new(
         tests: CanonicalTestExecution,
@@ -580,10 +605,117 @@ impl TestEvidenceGraph {
         let findings = subsumption_findings(&self.tests.test_coverage);
         TestSubsumptionReport::measured(findings)
     }
+
+    /// Project the graph and all three folds into one observation-only report.
+    #[must_use]
+    pub fn report(&self) -> TestEvidenceReport {
+        TestEvidenceReport {
+            version: TEST_EVIDENCE_REPORT_VERSION,
+            source: self.source().clone(),
+            tests: self.tests.clone(),
+            mutation: self.mutation.clone(),
+            waivers: self.waivers.clone(),
+            suite_seam: self.suite_seam(),
+            mutation_coverage: self.mutation_coverage(),
+            test_subsumption: self.test_subsumption(),
+        }
+    }
+}
+
+/// One report surface retaining the shared evidence and all three projections.
+///
+/// The test and mutation executions are copied observations. They retain exact
+/// selected-source, changed-path, test, covered-line, and mutant provenance but
+/// contain no executable, environment, bound, contract, or runner authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestEvidenceReport {
+    version: u64,
+    source: Digest,
+    tests: CanonicalTestExecution,
+    mutation: MutationExecution,
+    waivers: Vec<StandingMutationWaiver>,
+    suite_seam: SuiteSeamReport,
+    mutation_coverage: MutationCoverageReport,
+    test_subsumption: TestSubsumptionReport,
+}
+
+impl TestEvidenceReport {
+    /// Current report schema.
+    #[must_use]
+    pub const fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Source identity shared by both canonical executions.
+    #[must_use]
+    pub const fn source(&self) -> &Digest {
+        &self.source
+    }
+
+    /// Canonical workspace-test evidence retained by the report.
+    #[must_use]
+    pub const fn tests(&self) -> &CanonicalTestExecution {
+        &self.tests
+    }
+
+    /// Canonical mutation evidence retained by the report.
+    #[must_use]
+    pub const fn mutation(&self) -> &MutationExecution {
+        &self.mutation
+    }
+
+    /// Exact standing mutation waivers applied by the folds.
+    #[must_use]
+    pub fn waivers(&self) -> &[StandingMutationWaiver] {
+        &self.waivers
+    }
+
+    /// Blocking suite-seam projection.
+    #[must_use]
+    pub const fn suite_seam(&self) -> &SuiteSeamReport {
+        &self.suite_seam
+    }
+
+    /// Blocking mutation-coverage projection.
+    #[must_use]
+    pub const fn mutation_coverage(&self) -> &MutationCoverageReport {
+        &self.mutation_coverage
+    }
+
+    /// Advisory test-subsumption projection.
+    #[must_use]
+    pub const fn test_subsumption(&self) -> &TestSubsumptionReport {
+        &self.test_subsumption
+    }
+
+    /// Whether one registered test-evidence instrument admits publication.
+    ///
+    /// Subsumption findings are advisory and admit; unknown subsumption evidence
+    /// does not. IDs outside the test-evidence roster have no decision here.
+    #[must_use]
+    pub fn instrument_admits(&self, gate_id: GateId) -> Option<bool> {
+        match gate_id {
+            GateId::SuiteSeam => Some(self.suite_seam.admits()),
+            GateId::MutationCoverage => Some(self.mutation_coverage.admits()),
+            GateId::TestSubsumption => Some(self.test_subsumption.admits()),
+            _ => None,
+        }
+    }
+
+    /// Encode one stable JSON document containing evidence and every fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns a serialization failure without emitting partial bytes.
+    pub fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
 }
 
 /// Common standing vocabulary for the three graph folds.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum TestEvidenceStanding {
     Clean,
     Findings,
@@ -591,7 +723,8 @@ pub enum TestEvidenceStanding {
 }
 
 /// One exact changed-source reach edge to a test the execution did not run.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SuiteSeamFinding {
     test: String,
     source: String,
@@ -612,7 +745,8 @@ impl SuiteSeamFinding {
 }
 
 /// Binary suite-seam fold.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SuiteSeamReport {
     standing: TestEvidenceStanding,
     findings: Vec<SuiteSeamFinding>,
@@ -672,7 +806,8 @@ impl SuiteSeamReport {
 }
 
 /// One unwaived confirmed survivor retained by a regressed mutation fold.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MutationCoverageFinding {
     mutant: String,
     source: String,
@@ -693,7 +828,8 @@ impl MutationCoverageFinding {
 }
 
 /// Differential mutation-coverage fold.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MutationCoverageReport {
     standing: TestEvidenceStanding,
     floor: Option<SurvivorRate>,
@@ -785,14 +921,16 @@ impl MutationCoverageReport {
 }
 
 /// Exact coverage-containment relation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SubsumptionRelation {
     Equal,
     StrictSubset,
 }
 
 /// One advisory coverage-containment candidate with source provenance.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TestSubsumptionFinding {
     test: String,
     contained_by: String,
@@ -827,7 +965,8 @@ impl TestSubsumptionFinding {
 }
 
 /// Non-blocking test-subsumption fold.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TestSubsumptionReport {
     standing: TestEvidenceStanding,
     findings: Vec<TestSubsumptionFinding>,
