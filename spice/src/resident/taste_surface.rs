@@ -141,6 +141,16 @@ pub(super) fn start_adjudication() -> CommandResult<AdjudicationRuntime> {
     start_adjudication_with(ProcessAdjudicator::with_cancellation)
 }
 
+#[cfg(test)]
+pub(super) fn start_process_adjudication(
+    binary: String,
+    timeout: std::time::Duration,
+) -> CommandResult<AdjudicationRuntime> {
+    start_adjudication_with(move |cancellation| ProcessAdjudicator {
+        process: crate::judge::Process::with_contract(binary, timeout, cancellation),
+    })
+}
+
 fn start_adjudication_with<A>(
     make_adjudicator: impl FnOnce(sill::CancellationToken) -> A + Send + 'static,
 ) -> CommandResult<AdjudicationRuntime>
@@ -199,6 +209,11 @@ where
 impl AdjudicationRuntime {
     pub(super) fn parts(&mut self) -> (&mut AdjudicationSubmitter, &mut AdjudicationCompletions) {
         (&mut self.submitter, &mut self.completions)
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_len(&self) -> usize {
+        self.submitter.pending.len()
     }
 }
 

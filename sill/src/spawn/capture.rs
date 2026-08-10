@@ -1,9 +1,11 @@
-use super::{CapturedOutput, IoFailure, ProcessState, WAKE_BYTE, fail_observation};
+use super::{CapturedOutput, IoFailure, ProcessState, WAKE_BYTE, fail_observation, platform};
 use crate::observe::{
     Observation, ObservationFailure, ObservedRecord, OutputStream, RecordBoundary, RecordObserver,
 };
 use crate::spec::ProcessGroup;
 use std::io::{self, Read};
+use std::os::fd::{AsRawFd, RawFd};
+use std::os::unix::net::UnixDatagram;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -12,6 +14,7 @@ use std::time::{Duration, Instant};
 pub(super) struct CaptureHandle {
     state: Arc<Mutex<CaptureState>>,
     failure_supervised: bool,
+    interrupt: Option<UnixDatagram>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -56,11 +59,12 @@ impl CaptureHandle {
             .lock()
             .map(|state| state.output.complete)
             .map_err(|_| io::Error::other("capture state lock is poisoned"))?;
-        // A complete reader has crossed EOF and is safe to join. An incomplete
-        // reader can only be held by a descriptor outside the supervised
-        // process group; detaching preserves the declared drain bound instead
-        // of turning cleanup into an unbounded join on foreign ownership.
-        if complete && let Some(worker) = self.worker.take() {
+        if !complete && let Some(interrupt) = &self.interrupt {
+            let _interrupt_result = interrupt.send(WAKE_BYTE);
+        }
+        if (complete || self.interrupt.is_some())
+            && let Some(worker) = self.worker.take()
+        {
             worker
                 .join()
                 .map_err(|_| io::Error::other("capture worker panicked"))?;
@@ -97,7 +101,12 @@ pub(super) struct CaptureWorker {
     pub(super) observer_wake: Option<std::os::unix::net::UnixDatagram>,
 }
 
-pub(super) fn start_capture<R>(mut reader: R, limit: usize, worker: CaptureWorker) -> CaptureHandle
+pub(super) fn start_capture<R>(
+    mut reader: R,
+    reader_descriptor: Option<RawFd>,
+    limit: usize,
+    worker: CaptureWorker,
+) -> CaptureHandle
 where
     R: Read + Send + 'static,
 {
@@ -112,6 +121,13 @@ where
     } = worker;
     let selected = observation.is_some();
     let failure_supervised = failure_observer.is_some();
+    let (interrupt, interrupt_receiver) = if selected {
+        (None, None)
+    } else {
+        let (sender, receiver) = UnixDatagram::pair()
+            .expect("capture interruption descriptors are created before the worker");
+        (Some(sender), Some(receiver))
+    };
     let state = Arc::new(Mutex::new(CaptureState {
         output: CapturedOutput {
             bytes: Vec::with_capacity(limit.min(8 * 1024)),
@@ -138,6 +154,21 @@ where
         });
         let mut buffer = [0_u8; 8 * 1024];
         loop {
+            match wait_to_read(reader_descriptor, interrupt_receiver.as_ref()) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    record_reader_failure(
+                        stream,
+                        error,
+                        &worker_state,
+                        failure_observer.as_ref(),
+                        &failure,
+                    );
+                    let _wake_result = wake.send(WAKE_BYTE);
+                    return;
+                }
+            }
             match reader.read(&mut buffer) {
                 Ok(0) => {
                     if let Some(framer) = &mut framer {
@@ -164,20 +195,13 @@ where
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                 Err(error) => {
-                    let captured = IoFailure::capture(error);
-                    if let Ok(mut state) = worker_state.lock() {
-                        state.failure = Some(captured.clone());
-                    }
-                    if let Some(observer) = &failure_observer {
-                        fail_observation(
-                            &failure,
-                            observer,
-                            ObservationFailure::Reader {
-                                stream,
-                                detail: captured.detail,
-                            },
-                        );
-                    }
+                    record_reader_failure(
+                        stream,
+                        error,
+                        &worker_state,
+                        failure_observer.as_ref(),
+                        &failure,
+                    );
                     let _wake_result = wake.send(WAKE_BYTE);
                     return;
                 }
@@ -188,11 +212,70 @@ where
     CaptureHandle {
         state,
         failure_supervised,
+        interrupt,
         // Opaque capture is wholly owned by Sill and can therefore be joined
         // after process-group cleanup. A selected capture may still be inside
         // caller-owned observer code whose separate deadline and failure path
         // deliberately prevent it from bounding process cleanup.
         worker: (!selected).then_some(worker),
+    }
+}
+
+fn wait_to_read(
+    reader_descriptor: Option<RawFd>,
+    interrupt: Option<&UnixDatagram>,
+) -> io::Result<bool> {
+    let (Some(reader_descriptor), Some(interrupt)) = (reader_descriptor, interrupt) else {
+        return Ok(true);
+    };
+    let mut descriptors = [
+        platform::PollFd::read(reader_descriptor),
+        platform::PollFd::read(interrupt.as_raw_fd()),
+    ];
+    loop {
+        let result = unsafe {
+            platform::poll(
+                descriptors.as_mut_ptr(),
+                platform::Nfds::try_from(descriptors.len()).expect("two descriptors fit"),
+                -1,
+            )
+        };
+        if result >= 0 {
+            if descriptors[1].ready() {
+                return Ok(false);
+            }
+            if descriptors[0].ready() {
+                return Ok(true);
+            }
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+fn record_reader_failure(
+    stream: OutputStream,
+    error: io::Error,
+    state: &Mutex<CaptureState>,
+    failure_observer: Option<&Arc<dyn RecordObserver>>,
+    failure: &FailureContext,
+) {
+    let captured = IoFailure::capture(error);
+    if let Ok(mut state) = state.lock() {
+        state.failure = Some(captured.clone());
+    }
+    if let Some(observer) = failure_observer {
+        fail_observation(
+            failure,
+            observer,
+            ObservationFailure::Reader {
+                stream,
+                detail: captured.detail,
+            },
+        );
     }
 }
 
