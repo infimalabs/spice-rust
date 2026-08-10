@@ -273,7 +273,10 @@ fn validate_steering_updates(write: &JournalWrite) -> Result<(), CommitError> {
 
 fn steering_subject(fact: &wire::AnyFact) -> Option<String> {
     let (directive, key) = steering_fact_identity(fact)?;
-    Some(directive.map_or_else(|| format!("key:{key}"), |value| format!("directive:{value}")))
+    Some(directive.map_or_else(
+        || format!("key:{key}"),
+        |value| format!("directive:{value}"),
+    ))
 }
 
 pub(crate) fn steering_fact_identity(
