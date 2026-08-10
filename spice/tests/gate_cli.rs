@@ -123,6 +123,10 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     let terminal = scratch.path().join("terminal.bin");
     fs::write(&progress, []).expect("create deadline progress file");
     fs::write(&terminal, []).expect("create deadline terminal file");
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the process-boundary fixture must preserve the invoking test environment"
+    )]
     let mut environment = env::vars_os().collect::<BTreeMap<_, _>>();
     environment.insert(OsString::from(PROCESS_PATH), programs.into_os_string());
     let capture = StreamPolicy::Capture { limit: 1024 * 1024 };
@@ -791,11 +795,12 @@ impl Drop for Scratch {
 }
 
 fn remove_scratch(path: &Path) -> std::io::Result<()> {
-    for attempt in 0..20 {
+    const ATTEMPTS: usize = 20;
+    for attempt in 0..ATTEMPTS {
         match fs::remove_dir_all(path) {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) if attempt == 19 => return Err(error),
+            Err(error) if attempt + 1 == ATTEMPTS => return Err(error),
             Err(_) => {
                 make_tree_writable(path);
                 thread::sleep(Duration::from_millis(25));

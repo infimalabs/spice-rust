@@ -46,6 +46,18 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
+        CommandKind::TasteProposalAdd,
+        r#"{
+  "finding": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "occurrence": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "title": "Review one mined taste candidate",
+  "description": "Finding identity: aaaa",
+  "acceptance": ["operator reviews cited evidence"],
+  "origin": "ack:1kMine01",
+  "depends": ["TASTE-aBcD"]
+}"#,
+    ),
+    (
         CommandKind::GateFindings,
         r#"{
   "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1096,6 +1108,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::EffortRead,
     BodyShape::TaskAdd,
     BodyShape::TaskOopsAdd,
+    BodyShape::TasteProposalAdd,
     BodyShape::GateFindings,
     BodyShape::TaskEdit,
     BodyShape::TaskDelete,

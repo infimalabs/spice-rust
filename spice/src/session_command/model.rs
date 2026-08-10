@@ -385,6 +385,10 @@ pub(crate) struct ThreadView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "session", rename_all = "kebab-case", deny_unknown_fields)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "each report variant is a complete typed CLI document serialized at the command boundary"
+)]
 pub(crate) enum Report {
     Recall {
         sources: Vec<SourceView>,
