@@ -166,7 +166,7 @@ async function invoke(fixture, args, lane) {
     const result = await execute(binary, ["--json", ...args], {
       cwd: fixture,
       timeout: 20_000,
-      ...(lane ? { env: { ...process.env, SPICE_LANE: lane } } : {}),
+      ...(lane ? { env: { ...process.env, SPICE_RS_LANE: lane } } : {}),
     });
     return decodeOutcome(result.stdout, result.stderr);
   } catch (error) {
@@ -185,12 +185,12 @@ export async function reply(fixture, args) {
 
 // Run a fixture command under a seated lane's own identity.
 //
-// A claim records the lane it was won by, read from SPICE_LANE
-// (`ambient_lane_identity` in spice/src/command_client.rs), and the watchband
-// joins a task to a member through exactly that edge (`held_task` in
-// app/src/watchband.rs). So a claim won by the operator never reaches a
-// rendered standing, and this is what lets a fixture put a real held handle on
-// a card the browser is looking at.
+// A claim records the lane it was won by, read from the Rust-specific
+// SPICE_RS_LANE handoff (`ambient_lane_identity` in
+// spice/src/command_client.rs), and the watchband joins a task to a member
+// through exactly that edge (`held_task` in app/src/watchband.rs). So a claim
+// won by the operator never reaches a rendered standing, and this is what lets
+// a fixture put a real held handle on a card the browser is looking at.
 export async function replyAsLane(fixture, lane, args) {
   const outcome = await invoke(fixture, args, lane);
   assert.equal(outcome.kind, "reply", `${args.join(" ")} as ${lane}: ${JSON.stringify(outcome)}`);
