@@ -192,6 +192,10 @@ pub(crate) fn add(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAnsw
             "describe the recurring evidence that motivates the proposed taste",
         );
     }
+    let origin = match crate::board_command::parse_origin(matches) {
+        Ok(origin) => origin,
+        Err(outcome) => return retag(outcome),
+    };
     let repository = match current_repository() {
         Ok(repository) => repository,
         Err(outcome) => return outcome,
@@ -223,7 +227,7 @@ pub(crate) fn add(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAnsw
                 )
                 .to_owned(),
             ],
-            origin: None,
+            origin,
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
         },
@@ -245,6 +249,10 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
                 "copy one exact name from spice taste output",
             );
         }
+    };
+    let origin = match crate::board_command::parse_origin(matches) {
+        Ok(origin) => origin,
+        Err(outcome) => return retag(outcome),
     };
     let (repository, reply) = match snapshot::<TaskAnswer>(contract) {
         Ok(snapshot) => snapshot,
@@ -324,7 +332,7 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
                 "Earlier durable judgments remain history and cannot restore deleted membership."
                     .to_owned(),
             ],
-            origin: None,
+            origin,
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
         },
