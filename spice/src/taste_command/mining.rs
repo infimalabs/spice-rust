@@ -53,6 +53,7 @@ struct Correction {
     key: String,
     excerpt: String,
     tokens: BTreeSet<String>,
+    lane: CanonicalUuid,
     locus: TranscriptLocus,
     disposition: &'static str,
     decline_reason: Option<String>,
@@ -330,6 +331,7 @@ fn corrections(
             key,
             excerpt,
             tokens,
+            lane,
             locus,
             disposition,
             decline_reason,
@@ -509,8 +511,12 @@ fn frequent_tokens(corrections: &[Correction]) -> Vec<String> {
 }
 
 fn locus_identity(correction: &Correction) -> String {
+    let source = correction.locus.source.map_or_else(
+        || format!("lane:{}", correction.lane),
+        |source| format!("source:{source}"),
+    );
     format!(
-        "{}:{}:{}:{}:{}:{}",
+        "{source}:{}:{}:{}:{}:{}:{}",
         correction.locus.member,
         correction.locus.offset,
         correction.locus.length,

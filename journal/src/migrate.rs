@@ -468,7 +468,16 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (5, MigrationStep::Rust(migrate_schema_5)),
     (6, MigrationStep::Sql(MIGRATE_6_TO_7_SQL)),
     (7, MigrationStep::Rust(claim_index::migrate)),
+    (8, MigrationStep::Sql(MIGRATE_8_TO_9_SQL)),
 ];
+
+/// Schema 8 to 9: source-aware transcript loci in immutable fact envelopes.
+///
+/// The SQL tables do not change. Legacy envelopes omit the optional source and
+/// remain byte-canonical; new envelopes may name their tape generation. The
+/// explicit schema step makes that wire expansion visible to older releases,
+/// which refuse schema 9 before trying to decode a sourced fact.
+const MIGRATE_8_TO_9_SQL: &str = "SELECT 1;";
 
 /// Schema 6 to 7: bounded current steering authority and missed-evidence index.
 ///
@@ -674,8 +683,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 8, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 9, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 8;
+PRAGMA user_version = 9;
 "#;

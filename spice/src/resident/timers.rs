@@ -709,6 +709,7 @@ mod tests {
             lane: lane_uuid(),
             epoch: epoch_uuid(),
             locus: body::TranscriptLocus {
+                source: None,
                 member: 1,
                 offset: 2,
                 length: 3,

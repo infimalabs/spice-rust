@@ -724,10 +724,14 @@ fn recurrence(fires: &[TasteFire]) -> Vec<Recurrence> {
 }
 
 fn locus_text(locus: &wire::body::TranscriptLocus) -> String {
-    format!(
+    let coordinates = format!(
         "tape {}+{} event {} line {} column {}",
         locus.member, locus.offset, locus.event, locus.line, locus.column
-    )
+    );
+    match locus.source {
+        Some(source) => format!("source {source} {coordinates}"),
+        None => coordinates,
+    }
 }
 
 fn submit_plan(repository: &Repository, contract: &Contract, plan: TaskAdd) -> Outcome<TaskAnswer> {

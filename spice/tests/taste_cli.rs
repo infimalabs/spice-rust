@@ -527,7 +527,7 @@ fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
         &right
     };
     assert_eq!(first.body["threshold"], 3);
-    assert_eq!(first.body["scanned"], 8);
+    assert_eq!(first.body["scanned"], 12);
     assert_eq!(first.body["excluded"], 5);
     assert_eq!(first.body["qualifying"], 1);
     assert_eq!(first.body["findings"][0]["recurrence"], 3);
@@ -551,6 +551,18 @@ fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
     assert!(description.contains("\"Do not use grep for repository searches; use rg instead.\""));
     assert!(description.contains("(declined)"), "{description}");
     assert!(description.contains("NACK reason"), "{description}");
+    for key in ["1kMine01", "1kMine02", "1kMine03"] {
+        assert!(description.contains(key), "{description}");
+    }
+    for key in ["1kMine0A", "1kMine0B", "1kMine0C", "1kMine0D"] {
+        assert!(!description.contains(key), "{description}");
+    }
+    for source in [uuid(0x40), uuid(0x41), uuid(0x42)] {
+        assert!(
+            description.contains(&format!("source {source}")),
+            "{description}"
+        );
+    }
     assert!(!description.contains("PRIVATE KEY"), "{description}");
     assert!(!description.contains("credential:"), "{description}");
     assert_eq!(proposals[0].acceptance.len(), 3);
@@ -583,6 +595,32 @@ fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
     resident.stop(&fixture);
 
     mining_fixture::complete_mined_proposal(&fixture, &predecessor);
+    let completed_resident = Resident::start(&fixture);
+    let completed = json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste", "mine"]));
+    assert_eq!(
+        completed.body["findings"][0]["standing"],
+        "reused-completed"
+    );
+    assert_eq!(completed.body["findings"][0]["task"], predecessor.as_str());
+    let completed_facts = journal::JournalReader::open(&fixture.journal)
+        .unwrap()
+        .fact_snapshot()
+        .unwrap();
+    assert_eq!(
+        completed_facts
+            .facts()
+            .iter()
+            .filter_map(|fact| fact.fact.read::<wire::body::TaskAdded>())
+            .filter(|added| added.project.starts_with(".maxim_proposal.taste."))
+            .count(),
+        1
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("spice-rust.toml")).unwrap(),
+        tracked_before
+    );
+    completed_resident.stop(&fixture);
+
     mining_fixture::seed_later_mining_correction(&fixture);
     let restarted = Resident::start(&fixture);
     let later = json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste", "mine"]));
@@ -621,6 +659,48 @@ fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
         tracked_before
     );
     restarted.stop(&fixture);
+}
+
+#[test]
+fn unavailable_mining_evidence_faults_without_filing_or_editing_policy() {
+    let fixture = Fixture::new();
+    let unavailable = mining_fixture::seed_unavailable_placeholder(&fixture);
+    let tracked_before = fs::read_to_string(fixture.root.join("spice-rust.toml")).unwrap();
+    let resident = Resident::start(&fixture);
+    mining_fixture::rewrite_unavailable_ack(&fixture, unavailable);
+
+    let output = fixture.invoke(&["--json", "taste", "mine"]);
+    assert!(!output.status.success(), "{}", spoken(&output));
+    let Outcome::Fault(fault) =
+        wire::decode::<Outcome<serde_json::Value>>(&output.stderr).expect("fault is typed")
+    else {
+        panic!("unavailable evidence did not fault: {}", spoken(&output))
+    };
+    assert_eq!(fault.reason, "taste::mining-evidence-invalid");
+    assert!(
+        fault
+            .detail
+            .contains("unavailable operator steering directive")
+    );
+    let facts = journal::JournalReader::open(&fixture.journal)
+        .unwrap()
+        .fact_snapshot()
+        .unwrap();
+    assert_eq!(
+        facts
+            .facts()
+            .iter()
+            .filter_map(|fact| fact.fact.read::<wire::body::TaskAdded>())
+            .filter(|added| added.project.starts_with(".maxim_proposal.taste."))
+            .count(),
+        0
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("spice-rust.toml")).unwrap(),
+        tracked_before
+    );
+    mining_fixture::restore_unavailable_placeholder(&fixture, unavailable);
+    resident.stop(&fixture);
 }
 
 fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
@@ -970,6 +1050,7 @@ fn uuid(tail: u8) -> CanonicalUuid {
 
 fn locus(line: u32) -> TranscriptLocus {
     TranscriptLocus {
+        source: None,
         member: 1,
         offset: 40,
         length: 80,
@@ -979,8 +1060,9 @@ fn locus(line: u32) -> TranscriptLocus {
     }
 }
 
-fn mining_locus(index: u32) -> TranscriptLocus {
+fn mining_locus(source: u8, index: u32) -> TranscriptLocus {
     TranscriptLocus {
+        source: Some(uuid(source)),
         member: 5,
         offset: u64::from(index) * 100,
         length: 90,
