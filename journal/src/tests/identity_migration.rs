@@ -10,6 +10,7 @@ const STAMP: &str = "1kKRRsDP";
 const FOLLOWUP_STAMP: &str = "1kKRRsDQ";
 const HANDLE: &str = "JOURNAL-1kKRRsDP";
 const FOLLOWUP_HANDLE: &str = "JOURNAL-1kKRRsDQ";
+const EMPTY_REVIEW_COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce913116326";
 
 #[test]
 fn schema_five_contracts_every_authoritative_task_carrier_once() {
@@ -124,6 +125,107 @@ fn store_bare_stamp_origin(connection: &Connection, seq: i64) {
 }
 
 #[test]
+fn schema_five_review_without_followups_migrates_as_the_canonical_empty_list() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("identity-v5-empty-review.sqlite3");
+    let journal = authority_file_fixture(&path);
+    downgrade_task_identity_to_five(&journal.connection);
+    insert_legacy_empty_review_receipt(&journal.connection);
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE journal_schema SET version = 5 WHERE singleton = 1;
+             PRAGMA user_version = 5;",
+        )
+        .expect("mark empty-review fixture as schema five");
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("omitted review follow-ups migrate");
+
+    let request = review_request(&journal.connection, EMPTY_REVIEW_COMMAND);
+    let review: Command<wire::intent::TaskReview> =
+        wire::decode(&request).expect("migrated empty review request is current wire");
+    review
+        .witnessed()
+        .expect("migrated empty review request still obeys the review command law");
+    assert!(review.body.then.is_empty());
+    let document: Value = serde_json::from_slice(&request).expect("decode migrated review request");
+    assert!(
+        document["body"].get("then").is_none(),
+        "the canonical empty list remains omitted"
+    );
+    assert_eq!(
+        review
+            .canonical_json()
+            .expect("empty review request canonicalizes")
+            .as_bytes(),
+        request
+    );
+    journal
+        .verify()
+        .expect("empty-review identity migration verifies");
+}
+
+#[test]
+fn schema_five_non_array_review_followups_refuse_and_roll_back() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("identity-v5-malformed-review.sqlite3");
+    let journal = authority_file_fixture(&path);
+    downgrade_task_identity_to_five(&journal.connection);
+    insert_legacy_empty_review_receipt(&journal.connection);
+    let request = review_request(&journal.connection, EMPTY_REVIEW_COMMAND);
+    let mut document: Value = serde_json::from_slice(&request).expect("decode legacy review");
+    document["body"]["then"] = Value::String("not-an-array".to_owned());
+    journal
+        .connection
+        .execute(
+            "UPDATE command_receipts SET request = ?1 WHERE command_id = ?2",
+            params![
+                serde_json::to_vec(&document).expect("encode malformed review"),
+                EMPTY_REVIEW_COMMAND,
+            ],
+        )
+        .expect("store malformed review");
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE journal_schema SET version = 5 WHERE singleton = 1;
+             PRAGMA user_version = 5;",
+        )
+        .expect("mark malformed-review fixture as schema five");
+    drop(journal);
+    let before = Connection::open(&path).expect("read malformed-review fixture");
+    let before_identity = legacy_identity_state(&before);
+    let before_receipt = review_receipt_state(&before, EMPTY_REVIEW_COMMAND);
+    drop(before);
+
+    let error = Journal::open(&path).expect_err("non-array review follow-ups refuse");
+
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::StoredContent {
+            from: 5,
+            to: 6,
+            table: "command_receipts",
+            ref row,
+            ..
+        }) if row == EMPTY_REVIEW_COMMAND
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("review body.then is not an array")
+    );
+    let after = Connection::open(&path).expect("reopen refused review authority");
+    assert_eq!(legacy_identity_state(&after), before_identity);
+    assert_eq!(
+        review_receipt_state(&after, EMPTY_REVIEW_COMMAND),
+        before_receipt,
+        "the failing receipt rolls back byte-for-byte with facts and heads"
+    );
+}
+
+#[test]
 fn malformed_legacy_identity_refuses_and_rolls_back_the_whole_crossing() {
     let scratch = Scratch::new();
     let path = scratch.path().join("identity-v5-invalid.sqlite3");
@@ -178,7 +280,8 @@ fn insert_legacy_review_receipt(connection: &Connection) {
     let epoch = uuid("018f82d4-6f59-7d06-92e3-bce913116321");
     let stamp: TaskStamp = STAMP.parse().expect("fixture stamp");
     let followup: TaskStamp = FOLLOWUP_STAMP.parse().expect("fixture followup stamp");
-    let expected = vec![
+    let mut expected = review_witnesses(stamp.clone());
+    expected.extend([
         Witness::Absence {
             task: followup.clone(),
         },
@@ -186,7 +289,7 @@ fn insert_legacy_review_receipt(connection: &Connection) {
             task: followup.clone(),
             after: stamp,
         },
-    ];
+    ]);
     let request = Command {
         v: WireVersion::CURRENT,
         id,
@@ -212,6 +315,9 @@ fn insert_legacy_review_receipt(connection: &Connection) {
             followup: Vec::new(),
         },
     };
+    request
+        .witnessed()
+        .expect("follow-up review request obeys the review command law");
     let mut request: Value = serde_json::from_str(
         &request
             .canonical_json()
@@ -257,6 +363,130 @@ fn insert_legacy_review_receipt(connection: &Connection) {
         wire::encode(&response).expect("review response"),
         Some((2, 2)),
     );
+}
+
+fn insert_legacy_empty_review_receipt(connection: &Connection) {
+    let id = uuid(EMPTY_REVIEW_COMMAND);
+    let epoch = uuid("018f82d4-6f59-7d06-92e3-bce913116327");
+    let expected = review_witnesses(STAMP.parse().expect("fixture stamp"));
+    let request = Command {
+        v: WireVersion::CURRENT,
+        id,
+        epoch,
+        kind: CommandKind::TaskReview,
+        expected: expected.clone(),
+        body: wire::intent::TaskReview {
+            task: HANDLE.parse().expect("fixture handle"),
+            finding: "clean".to_owned(),
+            note: None,
+            then: Vec::new(),
+            followup: Vec::new(),
+        },
+    };
+    request
+        .witnessed()
+        .expect("empty review request obeys the review command law");
+    let mut document: Value = serde_json::from_str(
+        &request
+            .canonical_json()
+            .expect("encode empty review request"),
+    )
+    .expect("decode empty review request");
+    assert!(
+        document["body"].get("then").is_none(),
+        "schema-five canonical bytes omit empty follow-ups"
+    );
+    legacy_witness_values(
+        document["expected"]
+            .as_array_mut()
+            .expect("request witnesses"),
+    );
+    document["expected"]
+        .as_array_mut()
+        .expect("request witnesses")
+        .sort_by_key(std::string::ToString::to_string);
+    let mut witnesses = serde_json::to_value(expected).expect("encode current witnesses");
+    legacy_witness_values(witnesses.as_array_mut().expect("evaluated witnesses"));
+    let response = Response {
+        v: WireVersion::CURRENT,
+        id,
+        epoch,
+        outcome: Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: Seq::new(2).expect("review first"),
+                last: Seq::new(2).expect("review last"),
+            }),
+            body: wire::intent::TaskAnswer {
+                task: HANDLE.parse().expect("fixture handle"),
+                status: "completed".to_owned(),
+                learning: None,
+                next: None,
+            },
+        }),
+    };
+    insert_receipt_row(
+        connection,
+        id,
+        epoch,
+        "task::review",
+        serde_json::to_vec(&document).expect("legacy empty review request"),
+        serde_json::to_vec(&witnesses).expect("legacy empty review witnesses"),
+        wire::encode(&response).expect("empty review response"),
+        Some((2, 2)),
+    );
+}
+
+fn review_witnesses(task: TaskStamp) -> Vec<Witness> {
+    vec![
+        Witness::Task {
+            task: task.clone(),
+            head: Seq::new(1).expect("statement head"),
+        },
+        Witness::Workflow {
+            task: task.clone(),
+            head: Seq::new(2).expect("workflow head"),
+            phase: phase("review"),
+        },
+        Witness::Claim {
+            task: task.clone(),
+            head: Seq::new(2),
+        },
+        Witness::Lease {
+            task: task.clone(),
+            head: Seq::new(2).expect("lease head"),
+        },
+        Witness::Residency {
+            lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+            occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116303"),
+            epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
+        },
+        Witness::Assignment {
+            task,
+            head: Seq::new(2).expect("assignment head"),
+            reviewer: Actor::Operator,
+        },
+    ]
+}
+
+fn review_request(connection: &Connection, command: &str) -> Vec<u8> {
+    connection
+        .query_row(
+            "SELECT request FROM command_receipts WHERE command_id = ?1",
+            [command],
+            |row| row.get(0),
+        )
+        .expect("read review request")
+}
+
+fn review_receipt_state(connection: &Connection, command: &str) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    connection
+        .query_row(
+            "SELECT request, evaluated_witnesses, response FROM command_receipts \
+             WHERE command_id = ?1",
+            [command],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read review receipt state")
 }
 
 fn insert_legacy_board_receipt(connection: &Connection) {
