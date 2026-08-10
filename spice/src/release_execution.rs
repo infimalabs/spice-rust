@@ -212,17 +212,16 @@ impl SystemEffects {
     }
 
     fn remote_ref(&self, reference: &str) -> Result<Option<String>, dist::EffectError> {
-        let output =
-            self.git_remote(&["ls-remote", "--refs", self.authority.remote(), reference])?;
+        let command = self
+            .authority
+            .reference_visibility(reference)
+            .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
+        let output = self.git_owned(&command)?;
         Ok(output.split_whitespace().next().map(str::to_owned))
     }
 
     fn git_local(&self, arguments: &[&str]) -> Result<String, dist::EffectError> {
         run(&self.root, "git", arguments).map_err(dist::EffectError::Environment)
-    }
-
-    fn git_remote(&self, arguments: &[&str]) -> Result<String, dist::EffectError> {
-        run(&self.root, "git", arguments).map_err(dist::EffectError::RemoteRefused)
     }
 
     fn git_owned(&self, command: &dist::GitCommand) -> Result<String, dist::EffectError> {

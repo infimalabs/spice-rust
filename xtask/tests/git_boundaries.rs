@@ -53,10 +53,8 @@ const NETWORK_SUBCOMMANDS: [&str; 5] = ["fetch", "push", "pull", "clone", "ls-re
 const UNSANCTIONED: [&str; 2] = ["pull", "clone"];
 
 /// The only production sources allowed to name a network subcommand.
-const CONTROL_PLANE_SOURCES: [&str; 5] = [
+const CONTROL_PLANE_SOURCES: [&str; 3] = [
     "dist/src/authority.rs",
-    "spice/src/release_command.rs",
-    "spice/src/release_execution.rs",
     "spice/src/task_git.rs",
     "spice/src/task_git/command.rs",
 ];
@@ -66,20 +64,14 @@ const CONTROL_PLANE_SOURCES: [&str; 5] = [
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 18] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 16] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
-    // control-plane boundary after authored release approval.
-    ("dist/src/authority.rs", "ls-remote", 2),
+    // control-plane boundary after authored release approval. Each count
+    // covers the single production constructor plus its co-located exact-argv
+    // assertions.
+    ("dist/src/authority.rs", "ls-remote", 4),
     ("dist/src/authority.rs", "push", 4),
-    // Release planning is the read-only half of the operator control plane.
-    // It proves remote reachability and snapshots exact refs before it emits
-    // the digest the operator may approve; it never mutates the remote.
-    ("spice/src/release_command.rs", "ls-remote", 2),
-    // Release execution is the effectful half of that same control plane. It
-    // re-reads one guarded ref while applying journaled operations that the
-    // authored release digest already admitted.
-    ("spice/src/release_execution.rs", "ls-remote", 1),
     // The whole of GIT-01's production surface: one fetch, one push, both in
     // the control-plane module and both reached only through a boundary.
     ("spice/src/task_git.rs", "fetch", 1),

@@ -186,7 +186,7 @@ fn install_full_verifier_programs(fixture: &Fixture) -> FullVerifierPrograms {
         );
     }
     let cargo_log = fixture.root.join("cargo-actions");
-    install_cargo_with_metadata(&directory, &cargo_log);
+    install_cargo_with_metadata(&directory, &cargo_log, &fixture.repository);
     let trunk_log = fixture.root.join("trunk-actions");
     executable(
         &directory.join("trunk"),
@@ -234,14 +234,16 @@ fn install_full_verifier_programs(fixture: &Fixture) -> FullVerifierPrograms {
     }
 }
 
-fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path) {
+fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path, repository: &Path) {
     let metadata = serde_json::json!({
         "packages": [{
             "id": "verify-process-fixture-id",
             "name": "verify-process-fixture",
+            "manifest_path": repository.join("Cargo.toml").display().to_string(),
             "targets": [{
                 "name": "verify_process_fixture",
                 "kind": ["lib"],
+                "src_path": repository.join("src/lib.rs").display().to_string(),
                 "test": true,
             }],
         }],
@@ -433,7 +435,7 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
     assert!(
         cargo
             .lines()
-            .any(|line| { line == "check --locked --workspace --target wasm32-unknown-unknown" }),
+            .any(|line| { line == "check --locked --package app --target wasm32-unknown-unknown" }),
         "canvas standalone Cargo analysis did not run: {cargo}"
     );
     let trunk = fs::read_to_string(&trunk_log).expect("read standalone Trunk trace");

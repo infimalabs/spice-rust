@@ -520,7 +520,7 @@ fn resolve_external_refs(
     release_commit: &str,
 ) -> Result<ExternalRefs, String> {
     let refs = authority.refs(requested_version);
-    git_required(root, &["ls-remote", "--refs", authority.remote()])?;
+    git_owned(root, &authority.remote_visibility())?;
     let credential_object = if commit_exists(root, release_commit)? {
         release_commit
     } else {
@@ -529,24 +529,16 @@ fn resolve_external_refs(
     let rehearsal = authority
         .source_rehearsal(credential_object)
         .map_err(|error| error.to_string())?;
-    let rehearsal_arguments = rehearsal
-        .arguments()
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    git_required(root, &rehearsal_arguments)?;
+    git_owned(root, &rehearsal)?;
     let source_ref = normalize_source_ref(
-        remote_ref(root, authority.remote(), refs.source())?,
+        remote_ref(root, authority, refs.source())?,
         source_commit,
         release_commit,
     );
-    let package_ref = remote_ref(root, authority.remote(), refs.package())?;
-    let tag_ref = normalize_converged_ref(
-        remote_ref(root, authority.remote(), refs.tag())?,
-        release_commit,
-    );
+    let package_ref = remote_ref(root, authority, refs.package())?;
+    let tag_ref = normalize_converged_ref(remote_ref(root, authority, refs.tag())?, release_commit);
     let announcement_ref = normalize_converged_ref(
-        remote_ref(root, authority.remote(), refs.announcement())?,
+        remote_ref(root, authority, refs.announcement())?,
         release_commit,
     );
     Ok(ExternalRefs {
@@ -773,10 +765,26 @@ pub(super) fn repository_identity(root: &Path, remote: &str) -> Result<Digest, S
     ))
 }
 
-fn remote_ref(root: &Path, remote: &str, reference: &str) -> Result<Option<String>, String> {
-    let output = git_required(root, &["ls-remote", "--refs", remote, reference])?;
+fn remote_ref(
+    root: &Path,
+    authority: &dist::ReleaseAuthority,
+    reference: &str,
+) -> Result<Option<String>, String> {
+    let command = authority
+        .reference_visibility(reference)
+        .map_err(|error| error.to_string())?;
+    let output = git_owned(root, &command)?;
     let mut fields = output.split_whitespace();
     Ok(fields.next().map(str::to_owned))
+}
+
+fn git_owned(root: &Path, command: &dist::GitCommand) -> Result<String, String> {
+    let arguments = command
+        .arguments()
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    git_required(root, &arguments)
 }
 
 fn normalize_converged_ref(observed: Option<String>, release: &str) -> Option<String> {
