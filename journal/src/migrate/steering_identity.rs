@@ -644,7 +644,7 @@ fn rewrite_expected_witnesses(
 fn rewrite_witness_array(
     witnesses: &mut Value,
     by_directive: &BTreeMap<String, Node>,
-    remove_lineage: bool,
+    recovery: bool,
     row: &str,
 ) -> Result<bool, OpenError> {
     let values = witnesses.as_array_mut().ok_or_else(|| {
@@ -664,19 +664,35 @@ fn rewrite_witness_array(
                 "a steering witness is not an object",
             )
         })?;
-        let kind = object.get("kind").and_then(Value::as_str).ok_or_else(|| {
-            invalid(
-                "command_receipts",
-                row,
-                "a steering witness kind is missing",
-            )
-        })?;
-        if kind == "lineage" && remove_lineage {
+        let kind = object
+            .get("kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                invalid(
+                    "command_receipts",
+                    row,
+                    "a steering witness kind is missing",
+                )
+            })?
+            .to_owned();
+        if kind == "lineage" && recovery {
             values.remove(index);
             changed = true;
             continue;
         }
-        if matches!(kind, "directive" | "lineage") {
+        if kind == "directive" && recovery {
+            if object.get("disposition").and_then(Value::as_str) != Some("lapsed") {
+                return Err(invalid(
+                    "command_receipts",
+                    row,
+                    "a historical recovery witness is not lapsed",
+                ));
+            }
+            object.insert("kind".to_owned(), Value::String("recoverable".to_owned()));
+            object.remove("disposition");
+            changed = true;
+        }
+        if matches!(kind.as_str(), "directive" | "lineage" | "recoverable") {
             let steer = object
                 .get_mut("steer")
                 .and_then(|value| value.as_str())
@@ -872,6 +888,13 @@ fn encode_command(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
             "command_receipts",
             row,
             &format!("migrated request is invalid: {error}"),
+        )
+    })?;
+    command.witnessed().map_err(|error| {
+        invalid(
+            "command_receipts",
+            row,
+            &format!("migrated request violates its command law: {error}"),
         )
     })?;
     command

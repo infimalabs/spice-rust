@@ -537,6 +537,10 @@ fn run_preserves_the_childs_argument_vector() {
 
 #[test]
 #[cfg(unix)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the integration fixture acquires ambient PATH at its process boundary"
+)]
 fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() {
     use std::os::unix::fs::PermissionsExt;
 
