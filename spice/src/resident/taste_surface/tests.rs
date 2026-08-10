@@ -309,15 +309,22 @@ scopes = { vendors = ["codex"] }
     .expect("driver-scoped bag");
     let codex = Fixture::with_vendor("scoped-codex", "codex");
     let claude = Fixture::with_vendor("scoped-claude", "claude");
+    let codex_record = prose_record(codex.lane, codex.occupant, "Polling is not completion.");
+    let claude_record = prose_record(claude.lane, claude.occupant, "Polling is not completion.");
 
-    codex.recognize(
-        &bag,
-        &prose_record(codex.lane, codex.occupant, "Polling is not completion."),
+    assert!(
+        prepare_judgment(&codex.bus, codex.epoch, &bag, &codex_record)
+            .expect("codex judgment preparation resolves")
+            .is_some()
     );
-    claude.recognize(
-        &bag,
-        &prose_record(claude.lane, claude.occupant, "Polling is not completion."),
+    assert!(
+        prepare_judgment(&claude.bus, claude.epoch, &bag, &claude_record)
+            .expect("claude judgment preparation resolves")
+            .is_none()
     );
+
+    codex.recognize(&bag, &codex_record);
+    claude.recognize(&bag, &claude_record);
 
     assert_eq!(codex.reminders().len(), 1);
     assert!(claude.reminders().is_empty());
