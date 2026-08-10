@@ -179,11 +179,12 @@ impl Error for KeyMintError {}
 /// `missed` is deliberately absent. A missed key names an acknowledgment that
 /// did not land and alters no directive, so it is an observation rather than a
 /// state anything retires into.
-pub const DISPOSITIONS: [(&str, Disposition); 5] = [
+pub const DISPOSITIONS: [(&str, Disposition); 6] = [
     ("live", Disposition::Live),
     ("acked", Disposition::Acked),
     ("declined", Disposition::Declined),
     ("lapsed", Disposition::Lapsed),
+    ("deadlettered", Disposition::DeadLettered),
     ("canceled", Disposition::Canceled),
 ];
 
@@ -421,6 +422,7 @@ mod tests {
             Disposition::Acked,
             Disposition::Declined,
             Disposition::Lapsed,
+            Disposition::DeadLettered,
             Disposition::Canceled,
         ] {
             let named = match admitted {
@@ -428,11 +430,12 @@ mod tests {
                 Disposition::Acked => "acked",
                 Disposition::Declined => "declined",
                 Disposition::Lapsed => "lapsed",
+                Disposition::DeadLettered => "deadlettered",
                 Disposition::Canceled => "canceled",
             };
             assert_eq!(disposition(named), Ok(admitted));
         }
-        assert_eq!(DISPOSITIONS.len(), 5);
+        assert_eq!(DISPOSITIONS.len(), 6);
     }
 
     #[test]

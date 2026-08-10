@@ -32,6 +32,9 @@ mod gate_findings;
 // is pinned apart from the scenarios that drive a claim that succeeds.
 mod claim_grant;
 
+// Automatic capacity uses the same allocator guard and mint before launch.
+mod automatic_lifecycle;
+
 fn at<'a>(answer: &'a BoardAnswer, task: &TaskHandle) -> &'a BoardTask {
     task_heads(answer, task).expect("fixture task is visible")
 }

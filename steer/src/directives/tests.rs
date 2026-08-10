@@ -6,6 +6,7 @@ use wire::body::{
     SteerEscalated, SteerLapsed, SteerMissed, SteerRecovered, SteerSent, SteeringStage,
     TasteReminded, TranscriptLocus,
 };
+use wire::steering::SteerDeadLettered;
 use wire::{CanonicalUuid, Disposition, Instant};
 
 const ROOT: &str = "1kJK6N3R";
@@ -381,6 +382,44 @@ fn a_lapse_must_name_the_expiry_the_directive_carries() {
         }))
         .expect("lapsed at its own expiry");
     assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Lapsed));
+}
+
+#[test]
+fn a_dead_letter_is_distinctly_parked_and_recovers_with_the_same_identity() {
+    let mut ledger = Ledger::new();
+    ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
+    ledger
+        .absorb(Steering::DeadLettered(&SteerDeadLettered {
+            directive: directive(ROOT),
+            key: ROOT.to_owned(),
+            lane: lane(),
+            reason: "lifecycle::wake-launch-failed".to_owned(),
+            requeue: format!("spice steer recover {}", directive(ROOT)),
+        }))
+        .expect("undeliverable directive parks");
+    assert_eq!(
+        ledger.disposition(&key(ROOT)),
+        Some(Disposition::DeadLettered)
+    );
+    assert!(ledger.pending(lane()).is_empty());
+
+    let recovered_expiry: Instant = "2026-08-01T08:07:19.000Z"
+        .parse()
+        .expect("recovery instant");
+    ledger
+        .absorb(Steering::Recovered(&SteerRecovered {
+            directive: directive(ROOT),
+            key: ROOT.to_owned(),
+            lane: lane(),
+            lapsed_at: expires(),
+            expires: recovered_expiry,
+        }))
+        .expect("dead letter requeues");
+    let recovered = ledger
+        .directive(directive(ROOT))
+        .expect("same directive identity remains");
+    assert_eq!(recovered.disposition(), Disposition::Live);
+    assert_eq!(recovered.expires(), recovered_expiry);
 }
 
 #[test]

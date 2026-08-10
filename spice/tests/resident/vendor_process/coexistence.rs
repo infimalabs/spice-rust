@@ -309,7 +309,7 @@ fn installed_spice_lifecycle_leaves_the_predecessor_system_untouched() {
     let empty_path = fixture.cleanup.join("empty-path");
     fs::create_dir(&empty_path).expect("empty PATH directory");
     assert_coexistence_allocation(&fixture, &installed_binary, &empty_path, &lanes, &created);
-    let directive_keys = assert_coexistence_steering(
+    let directives = assert_coexistence_steering(
         &fixture,
         &rig,
         &installed_binary,
@@ -325,6 +325,7 @@ fn installed_spice_lifecycle_leaves_the_predecessor_system_untouched() {
         &installed_binary,
         &empty_path,
         &lanes,
+        &directives,
         resident,
     );
     predecessor.assert_unchanged("stop");
@@ -341,8 +342,8 @@ fn installed_spice_lifecycle_leaves_the_predecessor_system_untouched() {
         fixture.journal().display(),
         created[0],
         created[1],
-        directive_keys[0],
-        directive_keys[1],
+        directives[0].key,
+        directives[1].key,
         predecessor.pid,
         predecessor.state.len() + 1,
         resident_tools[0].display(),
@@ -497,6 +498,8 @@ fn add_coexistence_tasks(
     installed_binary: &Path,
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
 ) -> [wire::TaskHandle; 2] {
+    // Both fields are deliberate: acceptance satisfies the task lifecycle,
+    // while origin proves Rust never borrowed the predecessor's authority.
     [
         reply_body::<wire::intent::TaskAnswer>(&lane_with(
             fixture,
@@ -508,6 +511,8 @@ fn add_coexistence_tasks(
                 "Fresh Claude coexistence work",
                 "--project",
                 "coexistence.rehearsal",
+                "--acceptance",
+                "coexistence fixture reaches clean resident shutdown",
                 "--origin",
                 "fixture:coexistence-rehearsal",
             ],
@@ -524,6 +529,8 @@ fn add_coexistence_tasks(
                 "Fresh Codex coexistence work",
                 "--project",
                 "coexistence.rehearsal",
+                "--acceptance",
+                "coexistence fixture reaches clean resident shutdown",
                 "--origin",
                 "fixture:coexistence-rehearsal",
             ],
@@ -580,7 +587,7 @@ fn assert_coexistence_steering(
     empty_path: &Path,
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
     python_same_uuid_key: &str,
-) -> [String; 2] {
+) -> [wire::intent::DirectiveAnswer; 2] {
     let [(_, claude), (_, codex)] = *lanes;
     let claude_direction = reply_body::<wire::intent::DirectiveAnswer>(&operator_with_path(
         fixture,
@@ -664,7 +671,7 @@ fn assert_coexistence_steering(
         Some(REFUSAL_EXIT),
         "Rust ACK accepted a Python inbox key for the same agent UUID"
     );
-    [claude_direction.key, codex_direction.key]
+    [claude_direction, codex_direction]
 }
 
 fn exercise_installed_surface(
@@ -705,6 +712,7 @@ fn exercise_installed_surface(
             output.stderr
         );
     }
+    fs::remove_file(native_probe).expect("native probe cleanup");
 }
 
 /// Run one bare `spice` command in the environment the resident gave an agent.
@@ -752,9 +760,42 @@ fn stop_coexisting_appliance(
     installed_binary: &Path,
     empty_path: &Path,
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
+    directives: &[wire::intent::DirectiveAnswer; 2],
     resident: RunningResident,
 ) {
+    for directive in directives {
+        let canceled = operator_with_path(
+            fixture,
+            installed_binary,
+            empty_path,
+            &["steer", "cancel", &directive.directive.to_string()],
+            true,
+        );
+        assert!(
+            canceled.status.success(),
+            "steering cancel failed: {:?}",
+            canceled.stderr
+        );
+    }
     for (_, lane) in lanes {
+        let completed = lane_command(
+            fixture,
+            installed_binary,
+            *lane,
+            empty_path,
+            &[
+                "task",
+                "done",
+                "--validation",
+                "coexistence shutdown fixture",
+            ],
+            true,
+        );
+        assert!(
+            completed.status.success(),
+            "task completion failed: {:?}",
+            completed.stderr
+        );
         let drained = operator_with_path(
             fixture,
             installed_binary,

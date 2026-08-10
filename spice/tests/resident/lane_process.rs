@@ -98,7 +98,7 @@ pub(super) fn configure_successor_worktree(fixture: &Fixture) -> PathBuf {
     successor
 }
 
-fn initialize_task_git_fixture(fixture: &Fixture) {
+pub(super) fn initialize_task_git_fixture(fixture: &Fixture) {
     fixture_git(fixture, &["init", "-b", "main"]);
     fixture_git(fixture, &["config", "user.name", "Resident Task Fixture"]);
     fixture_git(fixture, &["config", "user.email", "resident@example.test"]);

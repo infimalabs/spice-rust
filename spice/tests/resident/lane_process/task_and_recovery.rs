@@ -134,7 +134,7 @@ fn replacement_resident_reconstructs_durable_occupied_lane() {
 }
 
 #[test]
-fn drain_records_an_occupant_that_already_exited() {
+fn kernel_exit_callback_records_and_vacates_an_occupant() {
     let fixture = Fixture::new("lane-exited");
     let exited = exiting_vendor(&fixture, 7);
     let mut resident = RunningResident::spawn(&fixture);
@@ -146,16 +146,7 @@ fn drain_records_an_occupant_that_already_exited() {
         None,
     ));
     exited.join().expect("vendor exit is observed");
-    let drained = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
-        &fixture,
-        &["lane", "drain", &added.lane.to_string()],
-        true,
-        None,
-    ));
-    assert_eq!(
-        (drained.from.as_str(), drained.to.as_str()),
-        ("occupied", "vacant")
-    );
+    wait_for_lane_exit(&fixture, added.lane);
     let journal = journal::Journal::open(fixture.journal()).expect("exited lane journal opens");
     let facts = journal.fact_snapshot().expect("exited lane facts read");
     let exited = facts
@@ -191,17 +182,7 @@ fn resident_capture_is_byte_exact_and_listenable_through_terminal_residue() {
         None,
     ));
     exited.join().expect("recording vendor exit is observed");
-    let drained = invoke_args(
-        &fixture,
-        &["lane", "drain", &added.lane.to_string()],
-        true,
-        None,
-    );
-    assert!(
-        drained.status.success(),
-        "drain failed: {:?}",
-        drained.stderr
-    );
+    wait_for_lane_exit(&fixture, added.lane);
 
     let tape_root = fixture
         .root

@@ -82,8 +82,17 @@ pub trait Body: sealed::Registered + Serialize + serde::de::DeserializeOwned {
 
 /// Declare the vocabulary.
 ///
-/// Each row binds a discriminant to its wire spelling, to the body DTO of the
-/// same name in [`crate::body`], and to its producer class.
+/// Each row binds a discriminant to its wire spelling, to its registered body
+/// DTO, and to its producer class.
+macro_rules! registered_body {
+    (SteerDeadLettered) => {
+        crate::steering::SteerDeadLettered
+    };
+    ($variant:ident) => {
+        crate::body::$variant
+    };
+}
+
 macro_rules! vocabulary {
     ($(
         $(#[doc = $doc:literal])+
@@ -129,7 +138,7 @@ macro_rules! vocabulary {
                 match self {
                     $(
                         Self::$variant => {
-                            decode_registered_body::<crate::body::$variant>(body).map(drop)
+                            decode_registered_body::<registered_body!($variant)>(body).map(drop)
                         }
                     )+
                 }
@@ -137,9 +146,9 @@ macro_rules! vocabulary {
         }
 
         $(
-            impl sealed::Registered for crate::body::$variant {}
+            impl sealed::Registered for registered_body!($variant) {}
 
-            impl Body for crate::body::$variant {
+            impl Body for registered_body!($variant) {
                 const KIND: FactKind = FactKind::$variant;
             }
         )+
@@ -186,7 +195,7 @@ vocabulary! {
     SteerSent = "steer::sent" by CommandDoor;
     /// One stable directive crossed a named silence horizon.
     SteerEscalated = "steer::escalated" by BusTimer;
-    /// A lapsed directive returned to live standing under operator recovery.
+    /// A lapsed or dead-lettered directive returned to live standing under operator recovery.
     SteerRecovered = "steer::recovered" by CommandDoor;
     /// A live directive was acknowledged at a transcript locus.
     SteerAcked = "steer::acked" by AckScanner;
@@ -196,6 +205,8 @@ vocabulary! {
     SteerMissed = "steer::missed" by AckScanner;
     /// A directive reached expiry without a valid disposition.
     SteerLapsed = "steer::lapsed" by BusTimer;
+    /// A live directive was parked because its lane could not start.
+    SteerDeadLettered = "steer::deadlettered" by ResidentRecognition;
     /// The operator withdrew a live directive.
     SteerCanceled = "steer::canceled" by CommandDoor;
 

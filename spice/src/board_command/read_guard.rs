@@ -24,6 +24,15 @@ pub(super) fn validated_snapshot(
     let observed = bus
         .task_snapshot()
         .map_err(|error| store_fault("board::heads-unreadable", &error.to_string()))?;
+    validated_snapshot_from(&observed, principal, projects, allocation)
+}
+
+pub(super) fn validated_snapshot_from(
+    observed: &bus::TaskSnapshot,
+    principal: wire::Actor,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let cursor = observed.cursor().ok_or_else(|| {
         store_fault(
             "board::cursor-missing",
@@ -765,6 +774,7 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
         | Witness::Preview { .. }
         | Witness::Barrier { .. } => board_witness_holds(read, witness),
         Witness::Directive { .. }
+        | Witness::Recoverable { .. }
         | Witness::Consent { .. }
         | Witness::Rule { .. }
         | Witness::Budget { .. }

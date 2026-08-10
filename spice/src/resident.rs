@@ -31,6 +31,7 @@ mod command_surface;
 mod effort_surface;
 mod lane_recovery;
 mod lane_surface;
+mod lifecycle;
 mod message_surface;
 mod policy_surface;
 mod shutdown;
