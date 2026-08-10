@@ -28,9 +28,9 @@ use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
 };
 #[cfg(test)]
-use coordinator::{LastTest, isolate_shard_target, target_arguments};
+use coordinator::{LastTest, isolate_shard_outputs, target_arguments};
 
-const TARGETS_PER_SHARD: usize = 12;
+const TARGETS_PER_SHARD: usize = 24;
 const SHARD_DEADLINE: Duration = Duration::from_secs(180);
 const COORDINATOR_DEADLINE: Duration = Duration::from_secs(180);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);

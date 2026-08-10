@@ -199,6 +199,7 @@ fn build_lane_stage_is_byte_identical_or_still_absent_after_the_precondition_gua
     );
 }
 
+/// Resolve the writable build lane compiled into selected-tree tests, or the source workspace.
 fn build_lane_worktree() -> PathBuf {
     option_env!("SPICE_WORKSPACE_TEST_WRITABLE_ROOT") // env-policy: allow
         .map_or_else(

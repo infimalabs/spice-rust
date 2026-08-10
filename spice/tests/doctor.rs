@@ -322,6 +322,10 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
         "SPICE_WORKSPACE_TEST_WRITABLE_ROOT", // env-policy: allow
         "TMPDIR",                             // env-policy: allow
     ];
+    assert!(
+        UNOWNED.windows(2).all(|pair| pair[0] < pair[1]),
+        "Doctor's foreign environment vocabulary stays canonical and duplicate-free"
+    );
     let vocabulary = report.configuration.policy().env_names();
     assert_eq!(
         vocabulary

@@ -424,7 +424,7 @@ fn run_shard(
     let started = Instant::now();
     let targets = target_list(&shard);
     let owner = format!("workspace test package {}", shard.name);
-    let spec = isolate_shard_target(environment, index).and_then(|environment| {
+    let spec = isolate_shard_outputs(environment, index).and_then(|environment| {
         shard_spec(
             &cargo,
             &shard,
@@ -459,25 +459,32 @@ fn run_shard(
     )
 }
 
-pub(super) fn isolate_shard_target(
+/// Give one concurrent shard sole ownership of every Cargo output publication.
+///
+/// # Errors
+///
+/// Returns an environment error if the rewritten target authority is invalid.
+pub(super) fn isolate_shard_outputs(
     environment: Environment,
     index: usize,
 ) -> Result<Environment, WorkspaceTestError> {
-    // Same-package Cargo invocations share dependency artifacts safely through
-    // the build directory, but may replace a target-level binary after releasing
-    // that build lock while another integration test executes `CARGO_BIN_EXE_*`.
-    // A stable per-shard publication root closes that launch gap without making
-    // compilation cold or reducing cross-target test concurrency.
+    // Cargo 1.97 publishes executables beneath `build.build-dir` and holds one
+    // lock for that entire root. Isolating only `target-dir` therefore neither
+    // closes a `CARGO_BIN_EXE_*` replacement race nor permits parallel builds.
+    // Stable shard suffixes on both authorities provide exclusive publications
+    // and retain warm output for the same shard across repeated gate attempts.
     let mut entries = environment
         .entries()
         .iter()
         .cloned()
         .collect::<BTreeMap<OsString, OsString>>();
-    if let Some(target) = entries.get(OsStr::new(CARGO_TARGET_DIR)).cloned() {
-        let isolated = PathBuf::from(target)
-            .join("spice-workspace-test-shards")
-            .join(format!("shard-{}", index + 1));
-        entries.insert(OsString::from(CARGO_TARGET_DIR), isolated.into_os_string());
+    for variable in [CARGO_TARGET_DIR, CARGO_BUILD_BUILD_DIR] {
+        if let Some(root) = entries.get(OsStr::new(variable)).cloned() {
+            let isolated = PathBuf::from(root)
+                .join("spice-workspace-test-shards")
+                .join(format!("shard-{}", index + 1));
+            entries.insert(OsString::from(variable), isolated.into_os_string());
+        }
     }
     Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
 }

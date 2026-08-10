@@ -216,7 +216,7 @@ fn partition_splits_large_packages_in_stable_target_order() {
 }
 
 #[test]
-fn shard_target_publications_are_isolated_while_the_build_cache_remains_shared() {
+fn every_shard_output_authority_is_isolated_by_one_stable_suffix() {
     let environment = Environment::new([
         (
             OsString::from(CARGO_TARGET_DIR),
@@ -229,7 +229,7 @@ fn shard_target_publications_are_isolated_while_the_build_cache_remains_shared()
     ])
     .expect("base Cargo environment admits");
 
-    let isolated = isolate_shard_target(environment, 2).expect("shard isolation admits");
+    let isolated = isolate_shard_outputs(environment, 2).expect("shard isolation admits");
     let entries = isolated
         .entries()
         .iter()
@@ -241,12 +241,14 @@ fn shard_target_publications_are_isolated_while_the_build_cache_remains_shared()
         Some(&OsString::from(
             "/workspace/target/spice-workspace-test-shards/shard-3"
         )),
-        "each concurrent shard owns its target-level executable publications"
+        "target publications belong to exactly one concurrent shard"
     );
     assert_eq!(
         entries.get(OsStr::new(CARGO_BUILD_BUILD_DIR)),
-        Some(&OsString::from("/workspace/build")),
-        "isolated publications retain the one warm Cargo build cache"
+        Some(&OsString::from(
+            "/workspace/build/spice-workspace-test-shards/shard-3"
+        )),
+        "build publications and their lock belong to the same shard"
     );
 }
 

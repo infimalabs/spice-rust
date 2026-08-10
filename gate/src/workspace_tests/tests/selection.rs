@@ -115,6 +115,15 @@ fn staged_path_module_selects_only_its_declaring_integration_target() {
     .expect("declared path module maps to its integration target");
 
     assert!(report.admits());
+    assert_eq!(
+        report.changed_sources(),
+        [
+            "fixture/tests/resident/lane_continuity.rs",
+            "fixture/tests/resident/lane_continuity/nested.rs",
+            "fixture/tests/resident/tail.rs",
+        ],
+        "every nested source remains explicit in the selected-tree report"
+    );
     assert_eq!(report.tests(), ["fixture::test:resident"]);
     assert_eq!(report.edges().len(), 3);
     assert_eq!(

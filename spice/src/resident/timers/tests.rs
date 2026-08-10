@@ -1,4 +1,6 @@
 //! Timer runtime unit tests.
+//!
+//! The path module keeps the scheduling runtime and its full state-transition matrix reviewable.
 
 use board::Entry;
 use journal::{FactCause, Journal, JournalWrite, PendingFact, TaskHeads};

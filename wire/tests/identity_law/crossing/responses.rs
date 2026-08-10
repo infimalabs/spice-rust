@@ -1,4 +1,6 @@
 //! Reply, refusal, and packed crossing identity samples.
+//!
+//! This path module keeps the expanding response corpus separate from request-side samples.
 
 use super::*;
 
