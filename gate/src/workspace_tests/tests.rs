@@ -128,6 +128,7 @@ fn partition_splits_large_packages_in_stable_target_order() {
             kind: "test".to_owned(),
             name: format!("target-{index:02}"),
             source: PathBuf::from(format!("/workspace/tests/target-{index:02}.rs")),
+            declared_path_sources: Vec::new(),
         })
         .collect();
 
@@ -271,31 +272,41 @@ fn staged_path_module_selects_only_its_declaring_integration_target() {
     .expect("write declared path module");
     fs::write(tests.join("other.rs"), "#[test]\nfn other() {}\n")
         .expect("write unrelated integration target");
+    fs::write(
+        root.join("fixture/Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\n",
+    )
+    .expect("write path-module fixture manifest");
     let root = fs::canonicalize(root).expect("canonical path-module fixture root");
     let tests = root.join("fixture/tests");
-    let inventory = Inventory {
-        target_directory: root.join("target"),
-        build_directory: root.join("target/cargo-build"),
-        packages: vec![PackageInventory {
-            id: "fixture-id".to_owned(),
-            name: "fixture".to_owned(),
-            root: root.join("fixture"),
-            targets: vec![
-                TargetIdentity {
-                    package: "fixture-id".to_owned(),
-                    kind: "test".to_owned(),
-                    name: "other".to_owned(),
-                    source: tests.join("other.rs"),
-                },
-                TargetIdentity {
-                    package: "fixture-id".to_owned(),
-                    kind: "test".to_owned(),
-                    name: "resident".to_owned(),
-                    source: tests.join("resident.rs"),
-                },
-            ],
-        }],
-    };
+    let inventory = inventory_from_metadata(
+        Metadata {
+            workspace_members: vec!["fixture-id".to_owned()],
+            target_directory: root.join("target"),
+            build_directory: root.join("target/cargo-build"),
+            packages: vec![MetadataPackage {
+                id: "fixture-id".to_owned(),
+                name: "fixture".to_owned(),
+                manifest_path: root.join("fixture/Cargo.toml"),
+                targets: vec![
+                    MetadataTarget {
+                        name: "other".to_owned(),
+                        kind: vec!["test".to_owned()],
+                        test: true,
+                        src_path: tests.join("other.rs"),
+                    },
+                    MetadataTarget {
+                        name: "resident".to_owned(),
+                        kind: vec!["test".to_owned()],
+                        test: true,
+                        src_path: tests.join("resident.rs"),
+                    },
+                ],
+            }],
+        },
+        &root,
+    )
+    .expect("acquire path-module target inventory");
 
     let report = selection_report(
         &inventory,
@@ -323,6 +334,7 @@ fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
         kind: "test".to_owned(),
         name: "behavior".to_owned(),
         source: PathBuf::from("/workspace/fixture-a/tests/behavior.rs"),
+        declared_path_sources: Vec::new(),
     });
 
     let report = selection_report(
@@ -937,6 +949,7 @@ fn quick_package() -> PackageInventory {
             kind: "test".to_owned(),
             name: "quick".to_owned(),
             source: PathBuf::from("/workspace/quick/tests/quick.rs"),
+            declared_path_sources: Vec::new(),
         }],
     }
 }
@@ -955,6 +968,7 @@ fn fixture_inventory() -> Inventory {
                     kind: "lib".to_owned(),
                     name: "fixture-a".to_owned(),
                     source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
+                    declared_path_sources: Vec::new(),
                 }],
             },
             PackageInventory {
@@ -966,6 +980,7 @@ fn fixture_inventory() -> Inventory {
                     kind: "bin".to_owned(),
                     name: "fixture-b".to_owned(),
                     source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
+                    declared_path_sources: Vec::new(),
                 }],
             },
         ],
@@ -992,6 +1007,7 @@ fn target_identity(kind: &str, name: &str) -> TargetIdentity {
         kind: kind.to_owned(),
         name: name.to_owned(),
         source: PathBuf::from(format!("/workspace/{kind}/{name}.rs")),
+        declared_path_sources: Vec::new(),
     }
 }
 

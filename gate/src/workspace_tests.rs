@@ -343,6 +343,7 @@ struct TargetIdentity {
     kind: String,
     name: String,
     source: PathBuf,
+    declared_path_sources: Vec<PathBuf>,
 }
 
 impl TargetIdentity {
@@ -574,11 +575,13 @@ fn package_inventory(
                     selected_root.display(),
                 )));
             }
+            let declared_path_sources = declared_path_sources(&source)?;
             Ok(TargetIdentity {
                 package: package.id.clone(),
                 kind: target.kind.join("+"),
                 name: target.name,
                 source,
+                declared_path_sources,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -618,12 +621,11 @@ fn selection_report(
             .max_by_key(|package| package.root.components().count());
         match owner {
             Some(package) => {
-                let mut direct_targets = Vec::new();
-                for target in &package.targets {
-                    if target_reaches_source(target, &absolute)? {
-                        direct_targets.push(target);
-                    }
-                }
+                let direct_targets = package
+                    .targets
+                    .iter()
+                    .filter(|target| target_reaches_source(target, &absolute))
+                    .collect::<Vec<_>>();
                 if direct_targets.is_empty() {
                     gaps.push(format!(
                         "changed Rust source {changed:?} reaches no direct Cargo test target"
@@ -674,38 +676,43 @@ fn selection_report(
 
 /// Resolve only reach that the Cargo target root or an exact Rust `#[path]`
 /// module declaration establishes; ordinary directory proximity is not reach.
-fn target_reaches_source(
-    target: &TargetIdentity,
-    source: &Path,
-) -> Result<bool, WorkspaceTestError> {
+fn target_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
     let direct_root = target_is_library(target)
         .then(|| target.source.parent())
         .flatten();
-    if source == target.source || direct_root.is_some_and(|root| source.starts_with(root)) {
-        return Ok(true);
-    }
-    let document = match fs::read_to_string(&target.source) {
+    source == target.source
+        || direct_root.is_some_and(|root| source.starts_with(root))
+        || target
+            .declared_path_sources
+            .iter()
+            .any(|declared| declared == source)
+}
+
+/// Acquire exact `#[path]` module sources once with their Cargo target.
+fn declared_path_sources(target_source: &Path) -> Result<Vec<PathBuf>, WorkspaceTestError> {
+    let document = match fs::read_to_string(target_source) {
         Ok(document) => document,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
             return Err(WorkspaceTestError::new(format!(
                 "read Cargo target source {} while resolving staged test reach: {error}",
-                target.source.display()
+                target_source.display()
             )));
         }
     };
     let syntax = syn::parse_file(&document).map_err(|error| {
         WorkspaceTestError::new(format!(
             "parse Cargo target source {} while resolving staged test reach: {error}",
-            target.source.display()
+            target_source.display()
         ))
     })?;
-    let parent = target.source.parent().ok_or_else(|| {
+    let parent = target_source.parent().ok_or_else(|| {
         WorkspaceTestError::new(format!(
             "Cargo target source {} has no parent",
-            target.source.display()
+            target_source.display()
         ))
     })?;
+    let mut declared = Vec::new();
     for item in syntax.items {
         let Item::Mod(module) = item else {
             continue;
@@ -718,27 +725,27 @@ fn target_reaches_source(
             let Meta::NameValue(pair) = &attribute.meta else {
                 return Err(WorkspaceTestError::new(format!(
                     "Cargo target source {} has a non-value path attribute",
-                    target.source.display()
+                    target_source.display()
                 )));
             };
             let Expr::Lit(expression) = &pair.value else {
                 return Err(WorkspaceTestError::new(format!(
                     "Cargo target source {} has a non-literal path attribute",
-                    target.source.display()
+                    target_source.display()
                 )));
             };
             let Lit::Str(path) = &expression.lit else {
                 return Err(WorkspaceTestError::new(format!(
                     "Cargo target source {} has a non-string path attribute",
-                    target.source.display()
+                    target_source.display()
                 )));
             };
-            if parent.join(path.value()) == source {
-                return Ok(true);
-            }
+            declared.push(parent.join(path.value()));
         }
     }
-    Ok(false)
+    declared.sort();
+    declared.dedup();
+    Ok(declared)
 }
 
 fn target_is_library(target: &TargetIdentity) -> bool {
