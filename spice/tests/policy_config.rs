@@ -5,11 +5,11 @@ use spice::config::{Document, Inputs, Root};
 
 const COMPLETE: &str = r#"
 [taste.zeta]
-words = ["delay*", "poll*", "slept"]
+words = ["delay", "poll", "slept"]
 message = "Wait on the real event."
 
 [taste.alpha]
-words = ["finish*"]
+words = ["finish"]
 message = "Observe completion."
 
 [consent]
@@ -86,7 +86,7 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
             .iter()
             .map(taste::Trigger::as_str)
             .collect::<Vec<_>>(),
-        ["delay*", "poll*", "slept"]
+        ["delay", "poll", "slept"]
     );
     assert_eq!(
         decoded.consent().policy().decide("read file").answer(),
@@ -191,7 +191,7 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
 fn malformed_policy_values_are_refused_under_their_domain_paths() {
     for (document, path) in [
         (
-            "[taste.Bad]\nwords = [\"poll*\"]\nmessage = \"wait\"\n",
+            "[taste.Bad]\nwords = [\"poll\"]\nmessage = \"wait\"\n",
             "taste.Bad",
         ),
         (
@@ -347,7 +347,7 @@ fn assert_structural_policy_values(policy: &spice::config::WorkspacePolicy) {
 fn unknown_fields_name_their_domain_and_key() {
     for (document, domain) in [
         (
-            "[taste.polling]\nwords = [\"poll*\"]\nmessage = \"wait\"\nextra = 1\n",
+            "[taste.polling]\nwords = [\"poll\"]\nmessage = \"wait\"\nextra = 1\n",
             "taste.polling",
         ),
         ("[consent]\nextra = 1\n", "consent"),

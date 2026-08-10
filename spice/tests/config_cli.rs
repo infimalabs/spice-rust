@@ -32,7 +32,7 @@ impl Fixture {
         let tracked = concat!(
             "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
             "[policy]\nenv_names = []\n",
-            "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
+            "[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n",
             "[lock.worker]\ndirectory = 'locks/worker'\n",
         )
         .as_bytes()

@@ -17,56 +17,35 @@ pub const REMINDER_MARKER: &str = "[TASTE]";
 
 /// One admitted candidate selector.
 ///
-/// Matching is case-insensitive over tokens split at non-alphanumeric
-/// characters. Whitespace in a phrase is normalized before matching. A bare
-/// word matches one complete token, and one trailing `*` matches suffixes of a
-/// single token. No other glob position is admitted.
+/// Matching is case-insensitive over alphabetic words. Whitespace in a phrase
+/// is normalized before matching, and every selector word must match one
+/// complete prose word exactly.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Trigger {
     source: String,
-    matcher: Matcher,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Matcher {
-    Exact(Vec<String>),
-    Prefix(String),
+    words: Vec<String>,
 }
 
 impl Trigger {
-    /// Parse one exact word, exact phrase, or trailing-suffix glob.
+    /// Parse one exact alphabetic word or phrase.
     ///
     /// # Errors
     ///
-    /// Refuses empty selectors, punctuation, and a `*` anywhere except the
-    /// end of a single word.
+    /// Refuses empty selectors and every non-alphabetic selector term.
     pub fn parse(source: impl AsRef<str>) -> Result<Self, TriggerError> {
         let source = source.as_ref().trim();
         if source.is_empty() {
             return Err(TriggerError::Empty);
         }
 
-        let pieces = source.split_whitespace().collect::<Vec<_>>();
-        let stars = source.chars().filter(|character| *character == '*').count();
-        let glob = stars == 1 && source.ends_with('*');
-        if stars > 0 && (!glob || pieces.len() != 1) {
-            return Err(TriggerError::GlobPosition(source.to_owned()));
-        }
-
-        let words = pieces
-            .iter()
-            .map(|piece| piece.trim_end_matches('*'))
+        let words = source
+            .split_whitespace()
             .map(normalize_selector)
             .collect::<Result<Vec<_>, _>>()?;
-        let matcher = if glob {
-            Matcher::Prefix(words[0].clone())
-        } else {
-            Matcher::Exact(words)
-        };
 
         Ok(Self {
             source: source.to_owned(),
-            matcher,
+            words,
         })
     }
 
@@ -76,32 +55,26 @@ impl Trigger {
         &self.source
     }
 
-    fn spans(&self, tokens: &[String]) -> Vec<Span> {
-        match &self.matcher {
-            Matcher::Exact(words) => tokens
-                .windows(words.len())
-                .enumerate()
-                .filter(|(_, window)| *window == words.as_slice())
-                .map(|(first, _)| Span {
-                    first,
-                    end: first + words.len(),
-                })
-                .collect(),
-            Matcher::Prefix(prefix) => tokens
-                .iter()
-                .enumerate()
-                .filter(|(_, token)| token.starts_with(prefix))
-                .map(|(first, _)| Span {
-                    first,
-                    end: first + 1,
-                })
-                .collect(),
-        }
+    fn spans(&self, tokens: &[Option<String>]) -> Vec<Span> {
+        tokens
+            .windows(self.words.len())
+            .enumerate()
+            .filter(|(_, window)| {
+                window
+                    .iter()
+                    .zip(&self.words)
+                    .all(|(token, word)| token.as_deref() == Some(word))
+            })
+            .map(|(first, _)| Span {
+                first,
+                end: first + self.words.len(),
+            })
+            .collect()
     }
 }
 
 fn normalize_selector(word: &str) -> Result<String, TriggerError> {
-    if word.is_empty() || !word.chars().all(char::is_alphanumeric) {
+    if word.is_empty() || !word.chars().all(char::is_alphabetic) {
         return Err(TriggerError::NotWord(word.to_owned()));
     }
     Ok(lowercase(word))
@@ -193,10 +166,14 @@ pub fn reminder_text(taste: &Name, message: &str) -> String {
     format!("{REMINDER_MARKER} {}: {message}", taste.as_str())
 }
 
-fn prose_tokens(text: &str) -> (Vec<String>, Vec<(usize, usize)>) {
+fn prose_tokens(text: &str) -> (Vec<Option<String>>, Vec<(usize, usize)>) {
+    // A digit attached to letters makes the whole alphanumeric run inert. It
+    // remains as a barrier so `fall 2 back` cannot collapse into the phrase
+    // `fall back`, while punctuation and whitespace still delimit words.
     let mut tokens = Vec::new();
     let mut loci = Vec::new();
     let mut current = String::new();
+    let mut alphabetic = true;
     let mut line = 1;
     let mut line_start = 0;
 
@@ -204,11 +181,14 @@ fn prose_tokens(text: &str) -> (Vec<String>, Vec<(usize, usize)>) {
         if character.is_alphanumeric() {
             if current.is_empty() {
                 loci.push((line, offset - line_start + 1));
+                alphabetic = true;
             }
             current.extend(character.to_lowercase());
+            alphabetic &= character.is_alphabetic();
         } else {
             if !current.is_empty() {
-                tokens.push(std::mem::take(&mut current));
+                tokens.push(alphabetic.then(|| std::mem::take(&mut current)));
+                current.clear();
             }
             if character == '\n' {
                 line += 1;
@@ -217,7 +197,7 @@ fn prose_tokens(text: &str) -> (Vec<String>, Vec<(usize, usize)>) {
         }
     }
     if !current.is_empty() {
-        tokens.push(current);
+        tokens.push(alphabetic.then_some(current));
     }
 
     (tokens, loci)
@@ -227,7 +207,6 @@ fn prose_tokens(text: &str) -> (Vec<String>, Vec<(usize, usize)>) {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TriggerError {
     Empty,
-    GlobPosition(String),
     NotWord(String),
 }
 
@@ -235,11 +214,10 @@ impl fmt::Display for TriggerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => formatter.write_str("a taste trigger cannot be empty"),
-            Self::GlobPosition(trigger) => write!(
+            Self::NotWord(word) => write!(
                 formatter,
-                "taste trigger {trigger:?} places `*` outside one trailing word"
+                "taste trigger term {word:?} is not an alphabetic word"
             ),
-            Self::NotWord(word) => write!(formatter, "taste trigger term {word:?} is not a word"),
         }
     }
 }

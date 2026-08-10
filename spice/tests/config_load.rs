@@ -80,7 +80,7 @@ fn repository_loader_reads_current_tracked_and_local_intent_without_mutation() {
         concat!(
             "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
             "[policy]\nenv_names = []\n",
-            "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
+            "[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n",
         ),
     );
     write(

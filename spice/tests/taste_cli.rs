@@ -42,11 +42,11 @@ stems = ["taste"]
 taste_mining_threshold = 3
 
 [taste.zeta]
-words = ["wait*", "sleep*"]
+words = ["wait", "sleep"]
 message = "Observe the real completion event."
 
 [taste.alpha]
-words = ["alias*"]
+words = ["alias"]
 message = "Keep one current name."
 "#;
 
@@ -642,7 +642,7 @@ fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
     );
     assert_eq!(
         report["tastes"][0]["words"],
-        serde_json::json!(["wait*", "sleep*"])
+        serde_json::json!(["wait", "sleep"])
     );
     assert_eq!(report["tastes"][0]["judgments"][0]["verdict"], "confirmed");
     assert_eq!(report["tastes"][0]["judgments"][0]["locus"], "tape:zeta");
