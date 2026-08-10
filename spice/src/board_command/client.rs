@@ -133,6 +133,7 @@ fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandA
             &board.principal,
             subscription,
             board.allocation_band,
+            board.recent_cell.as_ref(),
         )
         .ok_or_else(|| {
             refusal(
@@ -889,6 +890,22 @@ pub(super) fn task_heads<'a>(
         })
 }
 
+fn task_heads_by_stamp<'a>(
+    board: &'a BoardAnswer,
+    task: &wire::TaskStamp,
+) -> Result<&'a BoardTask, Outcome<CommandAnswer>> {
+    board
+        .tasks
+        .iter()
+        .find(|heads| heads.statement.body.incepted == *task)
+        .ok_or_else(|| {
+            protocol_fault(
+                "task::board-incoherent",
+                "a stored dependency has no visible board task",
+            )
+        })
+}
+
 pub(super) fn statement_witness(heads: &BoardTask) -> Witness {
     Witness::Task {
         task: heads.statement.body.incepted.clone(),
@@ -1046,6 +1063,17 @@ pub(super) fn progress_witnesses(
             reviewer,
         });
     }
+    if heads.workflow.body.phase.as_str() == "plan" {
+        for dependency in &heads.statement.body.dependencies {
+            let child = task_heads_by_stamp(board, dependency)?;
+            if child.workflow.body.status == "pending"
+                && !child.statement.body.acceptance.is_empty()
+            {
+                expected.push(statement_witness(child));
+                expected.push(workflow_witness(child));
+            }
+        }
+    }
     Ok(expected)
 }
 
@@ -1132,6 +1160,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects, allocation),
         wire::intent::Intent::TaskOopsAdd(add) => {
             task_oops_add(bus, command, add, projects, allocation)
+        }
+        wire::intent::Intent::GateFindings(findings) => {
+            gate_findings(bus, command, findings, projects, allocation)
         }
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects, allocation),
         wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, projects, allocation),

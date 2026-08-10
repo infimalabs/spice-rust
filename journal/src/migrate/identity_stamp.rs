@@ -1,4 +1,4 @@
-//! Schema 3 to 4 contraction of task identity onto the inception stamp.
+//! Schema 5 to 6 contraction of task identity onto the inception stamp.
 //!
 //! The old schema indexed heads by a rendered handle and repeated a UUID in
 //! statement facts and heads. The current schema stores only the fixed-width
@@ -14,8 +14,8 @@ use serde_json::{Map, Value};
 
 use super::{MigrationError, OpenError};
 
-const FROM: u32 = 3;
-const TO: u32 = 4;
+const FROM: u32 = 5;
+const TO: u32 = 6;
 
 const TASK_FACTS: &[&str] = &[
     "task::added",
@@ -104,23 +104,23 @@ fn migrate_task_heads(connection: &Connection) -> Result<(), OpenError> {
 
     connection
         .execute_batch(
-            "CREATE TABLE task_heads_identity_v4 (
+            "CREATE TABLE task_heads_identity_v6 (
                  stamp TEXT PRIMARY KEY,
                  head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
                  body BLOB NOT NULL
              ) STRICT;
-             CREATE TABLE workflow_heads_identity_v4 (
-                 stamp TEXT PRIMARY KEY REFERENCES task_heads_identity_v4(stamp),
+             CREATE TABLE workflow_heads_identity_v6 (
+                 stamp TEXT PRIMARY KEY REFERENCES task_heads_identity_v6(stamp),
                  head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
                  body BLOB NOT NULL
              ) STRICT;
-             CREATE TABLE claim_heads_identity_v4 (
-                 stamp TEXT PRIMARY KEY REFERENCES task_heads_identity_v4(stamp),
+             CREATE TABLE claim_heads_identity_v6 (
+                 stamp TEXT PRIMARY KEY REFERENCES task_heads_identity_v6(stamp),
                  head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
                  body BLOB NOT NULL
              ) STRICT;
-             CREATE TABLE lease_heads_identity_v4 (
-                 stamp TEXT PRIMARY KEY REFERENCES task_heads_identity_v4(stamp),
+             CREATE TABLE lease_heads_identity_v6 (
+                 stamp TEXT PRIMARY KEY REFERENCES task_heads_identity_v6(stamp),
                  head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
                  body BLOB NOT NULL
              ) STRICT;",
@@ -159,7 +159,7 @@ fn migrate_task_heads(connection: &Connection) -> Result<(), OpenError> {
         let encoded = encode_task_head(&row, &document)?;
         connection
             .execute(
-                "INSERT INTO task_heads_identity_v4(stamp, head_seq, body) VALUES (?1, ?2, ?3)",
+                "INSERT INTO task_heads_identity_v6(stamp, head_seq, body) VALUES (?1, ?2, ?3)",
                 params![stamp, head_seq, encoded],
             )
             .map_err(OpenError::Sqlite)?;
@@ -168,21 +168,21 @@ fn migrate_task_heads(connection: &Connection) -> Result<(), OpenError> {
     copy_child_heads(
         connection,
         "workflow_heads",
-        "workflow_heads_identity_v4",
+        "workflow_heads_identity_v6",
         workflow_rows,
         &stamps,
     )?;
     copy_child_heads(
         connection,
         "claim_heads",
-        "claim_heads_identity_v4",
+        "claim_heads_identity_v6",
         claim_rows,
         &stamps,
     )?;
     copy_child_heads(
         connection,
         "lease_heads",
-        "lease_heads_identity_v4",
+        "lease_heads_identity_v6",
         lease_rows,
         &stamps,
     )?;
@@ -193,10 +193,10 @@ fn migrate_task_heads(connection: &Connection) -> Result<(), OpenError> {
              DROP TABLE claim_heads;
              DROP TABLE workflow_heads;
              DROP TABLE task_heads;
-             ALTER TABLE task_heads_identity_v4 RENAME TO task_heads;
-             ALTER TABLE workflow_heads_identity_v4 RENAME TO workflow_heads;
-             ALTER TABLE claim_heads_identity_v4 RENAME TO claim_heads;
-             ALTER TABLE lease_heads_identity_v4 RENAME TO lease_heads;",
+             ALTER TABLE task_heads_identity_v6 RENAME TO task_heads;
+             ALTER TABLE workflow_heads_identity_v6 RENAME TO workflow_heads;
+             ALTER TABLE claim_heads_identity_v6 RENAME TO claim_heads;
+             ALTER TABLE lease_heads_identity_v6 RENAME TO lease_heads;",
         )
         .map_err(OpenError::Sqlite)
 }

@@ -14,6 +14,11 @@ const CODEX_PROSE: &[u8] =
     br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
 const CODEX_REASONING: &[u8] =
     br#"{"type":"item.completed","item":{"id":"item-2","type":"reasoning","text":"inspect"}}"#;
+const DIALECTS: &[(&str, Dialect)] = &[
+    ("codex", Dialect::Codex),
+    ("claude", Dialect::Claude),
+    ("fixture", Dialect::Codex),
+];
 
 #[derive(Debug, Eq, PartialEq)]
 struct Entry {
@@ -110,10 +115,23 @@ fn event_count(observations: &[Observation]) -> usize {
 }
 
 #[test]
+fn a_third_declared_name_changes_discovery_only_through_the_supplied_value() {
+    let scratch = Scratch::new("third-declaration");
+    let (path, tape) = session(scratch.path(), "lane-a", "fixture");
+    let mut bytes = CODEX_PROSE.to_vec();
+    bytes.push(b'\n');
+    tape.tee(&bytes).expect("fixture record is durable");
+
+    let replay = retro(scratch.path(), RetroSelector::Path(path), DIALECTS)
+        .expect("third declaration replays");
+    assert_eq!(event_count(&replay.observations), 1);
+}
+
+#[test]
 fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_sealing() {
     let scratch = Scratch::new("watch");
     let (_, tape) = session(scratch.path(), "lane-a", "codex");
-    let mut watch = Watch::new(scratch.path());
+    let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
 
     let empty = watch.poll().expect("empty session is observed");
     assert!(matches!(
@@ -194,7 +212,7 @@ fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
     tape.tee(b"{\"type\":\"item.completed\"")
         .expect("partial trailing record is durable");
 
-    let replay = retro(scratch.path(), RetroSelector::Path(codex.clone()))
+    let replay = retro(scratch.path(), RetroSelector::Path(codex.clone()), DIALECTS)
         .expect("path replay reads preserved tape");
     assert_eq!(replay.mode, Mode::Retro);
     assert!(replay.observations.iter().any(|observation| matches!(
@@ -215,6 +233,7 @@ fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
     let missing_lane = retro(
         scratch.path(),
         RetroSelector::Lane("lane-missing".to_owned()),
+        DIALECTS,
     )
     .expect("missing lane is accounted");
     assert!(matches!(
@@ -229,6 +248,7 @@ fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
             offset: 0,
             length: 1,
         }),
+        DIALECTS,
     )
     .expect("missing locus is accounted");
     assert!(matches!(
@@ -247,6 +267,7 @@ fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
             offset: 0,
             length: 1,
         }),
+        DIALECTS,
     )
     .expect("ambiguous locus is accounted");
     assert!(matches!(
@@ -270,18 +291,18 @@ fn watch_and_retro_leave_authority_and_discovery_bytes_unchanged() {
     }
     let before = snapshot(scratch.path());
 
-    let mut watch = Watch::new(scratch.path());
+    let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
     assert_eq!(
         event_count(&watch.poll().expect("watch reads").observations),
         1
     );
-    let replay = retro(scratch.path(), RetroSelector::Path(codex)).expect("retro reads");
+    let replay = retro(scratch.path(), RetroSelector::Path(codex), DIALECTS).expect("retro reads");
     assert_eq!(event_count(&replay.observations), 1);
 
     assert_eq!(snapshot(scratch.path()), before);
 
     let missing = scratch.path().join("never-created/codex");
-    let mut missing_watch = Watch::new(&missing);
+    let mut missing_watch = Watch::new(&missing, DIALECTS.iter().copied());
     assert!(matches!(
         missing_watch
             .poll()
@@ -291,10 +312,14 @@ fn watch_and_retro_leave_authority_and_discovery_bytes_unchanged() {
         [Observation::Absent { .. }]
     ));
     assert!(matches!(
-        retro(scratch.path(), RetroSelector::Path(missing.clone()))
-            .expect("missing retro path is accounted")
-            .observations
-            .as_slice(),
+        retro(
+            scratch.path(),
+            RetroSelector::Path(missing.clone()),
+            DIALECTS
+        )
+        .expect("missing retro path is accounted")
+        .observations
+        .as_slice(),
         [Observation::Missing { .. }]
     ));
     assert!(
@@ -354,7 +379,7 @@ fn records_keep_one_typed_identity_across_sealed_member_boundaries() {
     tape.tee(&complete[second..])
         .expect("record delimiter is durable in the active member");
 
-    let mut watch = Watch::new(scratch.path());
+    let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
     let watched = watch.poll().expect("watch joins all three fragments");
     let events = watched
         .observations
@@ -392,8 +417,8 @@ fn records_keep_one_typed_identity_across_sealed_member_boundaries() {
     )));
     assert!(watch.poll().expect("cursor advances once").is_empty());
 
-    let replay =
-        retro(scratch.path(), RetroSelector::Path(codex)).expect("retro joins the same fragments");
+    let replay = retro(scratch.path(), RetroSelector::Path(codex), DIALECTS)
+        .expect("retro joins the same fragments");
     assert_eq!(event_count(&replay.observations), 1);
     assert!(replay.observations.iter().all(|observation| !matches!(
         observation,
@@ -413,7 +438,7 @@ fn a_sealed_prefix_remains_pending_until_the_active_member_completes_it() {
         .expect("record prefix is durable");
     tape.seal().expect("record prefix seals");
 
-    let mut watch = Watch::new(scratch.path());
+    let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
     let pending = watch.poll().expect("sealed prefix remains pending");
     assert!(matches!(
         pending.observations.as_slice(),
@@ -456,7 +481,7 @@ fn a_newline_before_rotation_keeps_the_next_split_record_distinct() {
     tape.tee(&second[split..])
         .expect("second record completes after rotation");
 
-    let mut watch = Watch::new(scratch.path());
+    let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
     let observed = watch.poll().expect("both records decode once");
     let events = observed
         .observations
@@ -489,7 +514,7 @@ fn finite_retro_accounts_one_terminal_partial_over_every_member() {
     tape.tee(b"\"item.completed\"")
         .expect("second incomplete fragment is durable");
 
-    let replay = retro(scratch.path(), RetroSelector::Path(codex))
+    let replay = retro(scratch.path(), RetroSelector::Path(codex), DIALECTS)
         .expect("finite retro accounts the terminal fragment");
     assert!(matches!(
         replay.observations.as_slice(),
@@ -696,7 +721,7 @@ fn an_explicit_session_symlink_is_not_discovered_as_preserved_tape() {
     fs::create_dir(alias.parent().expect("alias has a parent")).expect("alias parent exists");
     symlink(&codex, &alias).expect("fixture symlink exists");
 
-    let replay = retro(scratch.path(), RetroSelector::Path(alias))
+    let replay = retro(scratch.path(), RetroSelector::Path(alias), DIALECTS)
         .expect("a symlink is accounted without being followed");
     assert!(matches!(
         replay.observations.as_slice(),

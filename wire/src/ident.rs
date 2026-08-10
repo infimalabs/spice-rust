@@ -105,6 +105,10 @@ pub enum Domain {
     DistReleaseManifest,
     /// The complete deterministic release-note input document.
     DistReleaseNotes,
+    /// The exact operator-facing release-note bytes shipped with one package.
+    DistReleaseNotesContent,
+    /// One complete externally installable release package index.
+    DistReleasePackage,
     /// One operator-previewed publication of an exact sealed manifest.
     DistReleasePlan,
     /// The ordered command inventory one sealed proof replay consumes.
@@ -145,6 +149,8 @@ pub enum Domain {
     GateBatteryManifest,
     /// The complete typed result vector one battery run produced.
     GateBatteryReport,
+    /// One stable gate finding identity projected from a typed battery report.
+    GateFinding,
     /// The retained bytes of one published battery receipt, exactly as read.
     GateBatteryReceipt,
     /// One complete current persistent gate-state ledger.
@@ -185,6 +191,8 @@ impl Domain {
             | Self::DistSourceCommit
             | Self::DistReleaseManifest
             | Self::DistReleaseNotes
+            | Self::DistReleaseNotesContent
+            | Self::DistReleasePackage
             | Self::DistReleasePlan
             | Self::TasteProse => self.product_tag(),
             Self::ProofBattery
@@ -206,6 +214,7 @@ impl Domain {
             | Self::GateReceipt
             | Self::GateBatteryManifest
             | Self::GateBatteryReport
+            | Self::GateFinding
             | Self::GateBatteryReceipt
             | Self::GateStateLedger
             | Self::GateStateReceipt
@@ -234,6 +243,8 @@ impl Domain {
             Self::DistSourceCommit => "spice.dist.source-commit.v1",
             Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
             Self::DistReleaseNotes => "spice.dist.release-notes.v1",
+            Self::DistReleaseNotesContent => "spice.dist.release-notes-content.v1",
+            Self::DistReleasePackage => "spice.dist.release-package.v1",
             Self::DistReleasePlan => "spice.dist.release-plan.v1",
             Self::TasteProse => "spice.taste.prose.v1",
             _ => panic!("digest-domain tag partition is closed"),
@@ -267,6 +278,7 @@ impl Domain {
             Self::GateReceipt => "spice.gate.receipt.v1",
             Self::GateBatteryManifest => "spice.gate.battery-manifest.v1",
             Self::GateBatteryReport => "spice.gate.battery-report.v1",
+            Self::GateFinding => "spice.gate.finding.v1",
             Self::GateBatteryReceipt => "spice.gate.battery-receipt.v1",
             Self::GateStateLedger => "spice.gate.state-ledger.v1",
             Self::GateStateReceipt => "spice.gate.state-receipt.v1",
@@ -351,6 +363,39 @@ impl<'de> Deserialize<'de> for Digest {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = String::deserialize(deserializer)?;
         text.parse().map_err(D::Error::custom)
+    }
+}
+
+/// Exact release-note identity or explicit absence migrated from schema 4.
+///
+/// The exact state keeps the canonical digest string already used by current
+/// publication commands and facts. The historical state spells JSON `null`.
+/// This is deliberately not `Option<Digest>`: the containing `notes` key is
+/// required, while ordinary optional wire fields omit their key and refuse
+/// `null`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReleaseNotesIdentity {
+    /// Exact curated release-note bytes.
+    Exact(Digest),
+    /// A schema-4 row written before release-note identities existed.
+    HistoricalAbsent,
+}
+
+impl ReleaseNotesIdentity {
+    /// The exact digest, absent only for a migrated schema-4 row.
+    #[must_use]
+    pub const fn digest(&self) -> Option<&Digest> {
+        match self {
+            Self::Exact(digest) => Some(digest),
+            Self::HistoricalAbsent => None,
+        }
+    }
+}
+
+impl From<Digest> for ReleaseNotesIdentity {
+    fn from(digest: Digest) -> Self {
+        Self::Exact(digest)
     }
 }
 

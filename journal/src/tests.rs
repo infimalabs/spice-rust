@@ -18,10 +18,12 @@ use wire::head::TranscriptSourceHead;
 
 use crate::{Journal, JournalReader, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
 
+mod allocation_migration;
 mod boundary;
 mod identity_migration;
 mod lineage_migration;
 mod read;
+mod release_notes_migration;
 mod schema;
 mod transcript;
 
@@ -432,7 +434,7 @@ fn populate_authority(journal: Journal) -> Journal {
 /// unrelated table. Identity is the one non-additive transition, so those
 /// fixtures must also restore its old columns and bodies rather than lying
 /// about their version while retaining schema-4 content.
-pub(super) fn downgrade_task_identity_to_three(connection: &Connection) {
+pub(super) fn downgrade_task_identity_to_five(connection: &Connection) {
     downgrade_fact_identity_to_three(connection);
     downgrade_head_identity_to_three(connection);
 }
@@ -837,6 +839,7 @@ fn insert_receipt(journal: &Journal) {
 fn task_head() -> TaskHead {
     TaskHead {
         incepted: "1kKRRsDP".parse().expect("task stamp"),
+        queue_origin: Seq::new(1).expect("queue origin"),
         title: "Lay journal baseline".to_owned(),
         description: None,
         acceptance: Vec::new(),
@@ -864,6 +867,11 @@ fn claim_head() -> ClaimHead {
     ClaimHead {
         actor: Actor::Spice,
         fact: Seq::new(2).expect("claim fact"),
+        claimed: Seq::new(2).expect("claim origin"),
+        cell: wire::ClaimCell {
+            project: "journal".to_owned(),
+            phase: phase("review"),
+        },
         lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
         occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116303"),
         epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),

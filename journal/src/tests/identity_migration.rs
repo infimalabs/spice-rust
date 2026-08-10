@@ -1,4 +1,4 @@
-//! The one schema-3 to schema-4 identity crossing.
+//! The one schema-5 to schema-6 identity crossing.
 //!
 //! These fixtures are written in the retired wire shape on purpose. The test
 //! opens them only through the migration door, then every assertion decodes
@@ -12,11 +12,11 @@ const HANDLE: &str = "JOURNAL-1kKRRsDP";
 const FOLLOWUP_HANDLE: &str = "JOURNAL-1kKRRsDQ";
 
 #[test]
-fn schema_three_contracts_every_authoritative_task_carrier_once() {
+fn schema_five_contracts_every_authoritative_task_carrier_once() {
     let scratch = Scratch::new();
-    let path = scratch.path().join("identity-v3.sqlite3");
+    let path = scratch.path().join("identity-v5.sqlite3");
     let journal = authority_file_fixture(&path);
-    downgrade_task_identity_to_three(&journal.connection);
+    downgrade_task_identity_to_five(&journal.connection);
     store_bare_stamp_origin(&journal.connection, 2);
     insert_legacy_review_receipt(&journal.connection);
     insert_legacy_board_receipt(&journal.connection);
@@ -24,19 +24,19 @@ fn schema_three_contracts_every_authoritative_task_carrier_once() {
     journal
         .connection
         .execute_batch(
-            "UPDATE journal_schema SET version = 3 WHERE singleton = 1;
-             PRAGMA user_version = 3;",
+            "UPDATE journal_schema SET version = 5 WHERE singleton = 1;
+             PRAGMA user_version = 5;",
         )
-        .expect("mark legacy identity fixture as schema three");
+        .expect("mark legacy identity fixture as schema five");
     drop(journal);
 
-    let journal = Journal::open(&path).expect("schema-three identity migrates");
+    let journal = Journal::open(&path).expect("schema-five identity migrates");
 
     assert_eq!(
         journal
             .migration()
             .map(|migration| (migration.from(), migration.to())),
-        Some((3, SCHEMA_VERSION))
+        Some((5, SCHEMA_VERSION))
     );
     assert_eq!(task_key_column(&journal.connection), "stamp");
     let (stamp, head): (String, Vec<u8>) = journal
@@ -126,9 +126,9 @@ fn store_bare_stamp_origin(connection: &Connection, seq: i64) {
 #[test]
 fn malformed_legacy_identity_refuses_and_rolls_back_the_whole_crossing() {
     let scratch = Scratch::new();
-    let path = scratch.path().join("identity-v3-invalid.sqlite3");
+    let path = scratch.path().join("identity-v5-invalid.sqlite3");
     let journal = authority_file_fixture(&path);
-    downgrade_task_identity_to_three(&journal.connection);
+    downgrade_task_identity_to_five(&journal.connection);
     let bytes: Vec<u8> = journal
         .connection
         .query_row(
@@ -149,10 +149,10 @@ fn malformed_legacy_identity_refuses_and_rolls_back_the_whole_crossing() {
     journal
         .connection
         .execute_batch(
-            "UPDATE journal_schema SET version = 3 WHERE singleton = 1;
-             PRAGMA user_version = 3;",
+            "UPDATE journal_schema SET version = 5 WHERE singleton = 1;
+             PRAGMA user_version = 5;",
         )
-        .expect("mark malformed fixture as schema three");
+        .expect("mark malformed fixture as schema five");
     drop(journal);
     let before = legacy_identity_state(&Connection::open(&path).expect("read malformed fixture"));
 
@@ -161,8 +161,8 @@ fn malformed_legacy_identity_refuses_and_rolls_back_the_whole_crossing() {
     assert!(matches!(
         error,
         OpenError::Migration(MigrationError::StoredContent {
-            from: 3,
-            to: 4,
+            from: 5,
+            to: 6,
             table: "fact_envelopes",
             ref row,
             ..
@@ -285,6 +285,7 @@ fn insert_legacy_board_receipt(connection: &Connection) {
             origin_thread: "operator".to_owned(),
         },
         allocation_band: 0,
+        recent_cell: None,
         tasks: vec![wire::intent::BoardTask::from_authoritative(
             wire::intent::ProjectVisibility::Public,
             "operator".to_owned(),

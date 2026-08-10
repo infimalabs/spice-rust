@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use wire::{Actor, ClaimDisposition, LineageSubscription, TaskStamp};
+use wire::{Actor, ClaimCell, ClaimDisposition, LineageSubscription, TaskStamp};
 
 use crate::task::Entry;
 use crate::urgency::{Urgency, declared_priority};
@@ -13,6 +13,8 @@ pub struct Selection<'a> {
     effective_priority: i64,
     downstream_weight: usize,
     self_review: bool,
+    peer_occupied: bool,
+    movement: u8,
 }
 
 impl<'a> Selection<'a> {
@@ -107,16 +109,19 @@ pub fn project_subscription_history(
 ///
 /// This is the only allocation path in `board`. It derives completed
 /// dependencies from the same supplied head set, ranks peer work before the
-/// actor's own review, then effective priority, downstream weight, and urgency.
-/// Scores inside `band` are equivalent and break by ascending handle spelling.
-/// Identical heads, actor, and band always return the same task regardless of
-/// slice order.
+/// actor's own review, then effective priority and downstream weight. Queue
+/// ages within `band` of that group's oldest row admit locality: an active peer
+/// in the same project/phase cell repels, then movement from `recent_cell`
+/// costs one each for changing project and phase. Rows outside the band cannot
+/// be rescued by locality. Identical evidence always returns the same task
+/// regardless of slice order.
 #[must_use]
 pub fn select<'a>(
     entries: &'a [Entry],
     actor: &Actor,
     subscription: &LineageSubscription,
     band: u64,
+    recent_cell: Option<&ClaimCell>,
 ) -> Option<Selection<'a>> {
     let completed = satisfied_tasks(entries);
     let priorities = effective_priorities(entries);
@@ -132,14 +137,12 @@ pub fn select<'a>(
                 .unwrap_or_else(|| declared_priority(entry));
             Selection {
                 entry,
-                urgency: Urgency::from_heads_with_effective_priority(
-                    entry,
-                    &completed,
-                    effective_priority,
-                ),
+                urgency: Urgency::from_heads(entry),
                 effective_priority,
                 downstream_weight: downstream.get(entry.incepted()).copied().unwrap_or(0),
                 self_review: is_self_review(entry, actor),
+                peer_occupied: peer_occupies(entries, entry, actor),
+                movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
             }
         })
         .collect::<Vec<_>>();
@@ -166,7 +169,7 @@ pub fn select<'a>(
         })
         .map(|candidate| candidate.urgency)
         .max()?;
-    candidates
+    let in_band = candidates
         .into_iter()
         .filter(|candidate| {
             candidate.self_review != peer_class
@@ -174,7 +177,66 @@ pub fn select<'a>(
                 && candidate.downstream_weight == downstream_weight
                 && urgency.value().abs_diff(candidate.urgency.value()) <= band
         })
+        .collect::<Vec<_>>();
+    let peer_occupied = in_band
+        .iter()
+        .map(|candidate| candidate.peer_occupied)
+        .min()?;
+    let movement = in_band
+        .iter()
+        .filter(|candidate| candidate.peer_occupied == peer_occupied)
+        .map(|candidate| candidate.movement)
+        .min()?;
+    in_band
+        .into_iter()
+        .filter(|candidate| {
+            candidate.peer_occupied == peer_occupied && candidate.movement == movement
+        })
         .min_by_key(|candidate| candidate.entry.handle())
+}
+
+fn peer_occupies(entries: &[Entry], candidate: &Entry, actor: &Actor) -> bool {
+    entries.iter().any(|entry| {
+        entry.claim().is_some_and(|claim| {
+            claim.disposition == ClaimDisposition::Active
+                && &claim.actor != actor
+                && claim.cell.project == candidate.project().as_str()
+                && claim.cell.phase == candidate.workflow().phase
+        })
+    })
+}
+
+fn movement_cost(recent: &ClaimCell, candidate: &Entry) -> u8 {
+    u8::from(recent.project != candidate.project().as_str())
+        + u8::from(recent.phase != candidate.workflow().phase)
+}
+
+/// Principal's most recently claimed cell from durable claim history.
+///
+/// Schema-4 facts carry the exact claim-time cell. For the one legacy latest
+/// win whose fact predates that field, the migrated current claim head supplies
+/// its cell when it still names the same win. Older superseded legacy wins have
+/// no invented locality and therefore remain neutral.
+#[must_use]
+pub fn recent_claim_cell(
+    entries: &[Entry],
+    facts: &[wire::Envelope<wire::AnyFact>],
+    actor: &Actor,
+) -> Option<ClaimCell> {
+    let latest = facts
+        .iter()
+        .filter_map(|envelope| {
+            let won = envelope.fact.read::<wire::body::ClaimWon>()?;
+            (&won.actor == actor).then_some((envelope.seq, won.cell))
+        })
+        .max_by_key(|(claimed, _)| *claimed)?;
+    latest.1.or_else(|| {
+        entries.iter().find_map(|entry| {
+            entry.claim().and_then(|claim| {
+                (&claim.actor == actor && claim.claimed == latest.0).then(|| claim.cell.clone())
+            })
+        })
+    })
 }
 
 fn is_self_review(entry: &Entry, actor: &Actor) -> bool {

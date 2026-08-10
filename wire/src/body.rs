@@ -16,386 +16,8 @@ use crate::head::TranscriptSourceHead;
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Phase, TaskStamp};
 
-/// How a review closed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Verdict {
-    /// The reviewer found nothing to record.
-    Clean,
-    /// The reviewer recorded a finding.
-    Finding,
-}
-
-/// What returned a held lane to seating eligibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Release {
-    /// The operator woke the lane.
-    Wake,
-    /// The hold reached its deadline.
-    Expiry,
-}
-
-/// A gate finding's standing weight.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Severity {
-    /// Recorded, not blocking.
-    Low,
-    /// Worth scheduling.
-    Medium,
-    /// Blocks the surface it names.
-    High,
-    /// Blocks the release.
-    Critical,
-}
-
-/// A task statement and initial workflow head were created.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskAdded {
-    /// Sole task identity minted from the statement's inception instant.
-    pub task: TaskStamp,
-    /// Statement title.
-    pub title: String,
-    /// Longer authored context.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub description: Option<String>,
-    /// Criteria that decide whether the work is done.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub acceptance: Vec<String>,
-    /// Dotted project stem.
-    pub project: String,
-    /// Free tags carried on the statement.
-    pub tags: Vec<String>,
-    /// Tasks this one waits behind.
-    pub depends: Vec<TaskStamp>,
-    /// Ordered phases the workflow head will walk.
-    pub flow: Vec<Phase>,
-    /// Phase the initial workflow head sits in.
-    pub phase: Phase,
-    /// Statement revision the head opens at.
-    pub revision: u32,
-}
-
-/// A claimed phase completed and workflow advanced.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskPhased {
-    /// Advanced task.
-    pub task: TaskStamp,
-    /// Phase the workflow head advanced into.
-    pub phase: Phase,
-}
-
-/// Exact repository history selected at one task boundary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GitBoundary {
-    /// Lane commit that entered the boundary.
-    pub head: String,
-    /// Commit whose tree and ancestry left the boundary.
-    pub integrated: String,
-    /// Remote-tracking baseline used by the boundary, when one exists.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub upstream: Option<String>,
-    /// Exact baseline commit incorporated by the boundary, when one exists.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub upstream_head: Option<String>,
-    /// Lane commits ahead of the observed baseline when the boundary opened.
-    pub local_commits: u32,
-}
-
-/// Accounted transcript proven at one task lifecycle boundary.
-///
-/// A phase interval is bounded by two of these, and the usage spent inside it
-/// is whatever the accounted transcript advanced between them. The two states
-/// are distinct keys rather than one nullable field, for the same reason
-/// [`crate::ReplyPosition`] keeps three: a reader must never guess which one it
-/// received. [`Self::Proven`] carrying no heads is a real boundary, because a
-/// lane whose transcript has not been accounted yet opens at position zero,
-/// while [`Self::Incomplete`] is the absence of an answer. Collapsing the two
-/// would let a reducer read *no usage* where the truth is *unknown usage*.
-///
-/// The fields carrying this are not optional, so a reader always holds one of
-/// the two states and never a third *absent* one. On the wire a fact stored
-/// before boundaries were recorded is the omitted key, which decodes through
-/// [`Self::unrecorded`] and encodes back to the same omission. That round trip
-/// is not cosmetic: [`crate::AnyFact`] admits a body only when re-encoding it
-/// reproduces the supplied fields exactly, so writing the migrated value out
-/// instead would make every fact already in the journal undecodable. Absence
-/// therefore spells exactly one value, and every boundary a live producer
-/// proves is written explicitly.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SourceBoundary {
-    /// Every stream accounted for the lane when the boundary was fixed.
-    #[serde(rename = "proven")]
-    Proven {
-        /// Accounted heads, ordered by composed stream key.
-        heads: Vec<TranscriptSourceHead>,
-    },
-    /// The lane's accounted transcript could not be named at the boundary.
-    #[serde(rename = "incomplete")]
-    Incomplete {
-        /// Why the boundary could not be proven.
-        reason: String,
-    },
-}
-
-impl SourceBoundary {
-    /// Reason naming the shape a migrated boundary was decoded from.
-    pub const UNRECORDED: &'static str =
-        "recorded before task lifecycle facts carried source boundaries";
-
-    /// Migrate a fact stored without a boundary field into an explicit one.
-    ///
-    /// The journal is append-only, so a fact already written can never grow the
-    /// field; decode is the only place this migration can happen. It is a
-    /// migration rather than a fallback because it is total and because it
-    /// produces a value that states in [`Self::UNRECORDED`] what it was
-    /// migrated from.
-    ///
-    /// It is also the only producer of [`Self::Incomplete`] anywhere. Every
-    /// live producer admits a claim before it writes and a claim carries a
-    /// lane, so none of them has nothing to ask about; one that cannot read the
-    /// boundary it asked for fails loudly rather than recording *unknown*.
-    #[must_use]
-    pub fn unrecorded() -> Self {
-        Self::Incomplete {
-            reason: Self::UNRECORDED.to_owned(),
-        }
-    }
-
-    /// Whether this is the migrated stand-in for a fact stored without the field.
-    ///
-    /// Omitting the key on encode restores the exact bytes a stored fact
-    /// arrived as. The match is on the reason rather than on the variant so
-    /// that it can only ever be true of the migration's own value: an
-    /// incomplete boundary carrying any other reason encodes explicitly, and no
-    /// answer a producer actually gave can be dropped on the way back out.
-    #[must_use]
-    pub fn is_unrecorded(&self) -> bool {
-        matches!(self, Self::Incomplete { reason } if reason == Self::UNRECORDED)
-    }
-}
-
-/// A task completed under a re-proven active claim.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskDone {
-    /// Completed task.
-    pub task: TaskStamp,
-    /// Evidence the completion rests on.
-    pub validation: String,
-    /// Repository history published before the workflow advanced.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub git: Option<GitBoundary>,
-    /// Accounted transcript the completed phase closes at.
-    #[serde(
-        default = "SourceBoundary::unrecorded",
-        skip_serializing_if = "SourceBoundary::is_unrecorded"
-    )]
-    pub source: SourceBoundary,
-}
-
-/// A review verdict landed with reviewer and assignment witnesses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskReviewed {
-    /// Reviewed task.
-    pub task: TaskStamp,
-    /// Principal that reviewed.
-    pub reviewer: Actor,
-    /// How the review closed.
-    pub verdict: Verdict,
-    /// Recorded finding; absent on a clean verdict.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub finding: Option<String>,
-    /// Repository history published before the review completed.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub git: Option<GitBoundary>,
-    /// Accounted transcript the reviewed phase closes at.
-    #[serde(
-        default = "SourceBoundary::unrecorded",
-        skip_serializing_if = "SourceBoundary::is_unrecorded"
-    )]
-    pub source: SourceBoundary,
-}
-
-/// The allocator seated a reviewer under the anti-self-review witness.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskAssigned {
-    /// Assigned task.
-    pub task: TaskStamp,
-    /// Principal seated as reviewer.
-    pub reviewer: Actor,
-    /// Phase the assignment covers.
-    pub phase: Phase,
-}
-
-/// A durable task note appended.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskNoted {
-    /// Annotated task.
-    pub task: TaskStamp,
-    /// Note text.
-    pub note: String,
-}
-
-/// A task received a wakeable deferral.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskDeferred {
-    /// Deferred task.
-    pub task: TaskStamp,
-    /// Instant the deferral becomes wakeable.
-    pub until: Instant,
-}
-
-/// A task's deferral cleared.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskWoken {
-    /// Woken task.
-    pub task: TaskStamp,
-}
-
-/// An unsettled task statement changed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskEdited {
-    /// Edited task.
-    pub task: TaskStamp,
-    /// Statement revision the edit produced.
-    pub revision: u32,
-}
-
-/// A task was withdrawn from the board with a recorded reason.
-///
-/// The journal is the authority and a fact is permanent, so a withdrawal is a
-/// terminal workflow status rather than the removal of a row: the statement,
-/// its history, and this reason all stay readable. `claimed` records the
-/// possessing actor when the withdrawal overrode a live claim, so a forced
-/// removal names whose work it took away rather than reporting a bare success.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskDeleted {
-    /// Withdrawn task.
-    pub task: TaskStamp,
-    /// Operator's stated reason for the withdrawal.
-    pub reason: String,
-    /// Actor whose live claim the withdrawal overrode, when it overrode one.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub claimed: Option<Actor>,
-}
-
-/// Exclusive possession was minted from the current eligibility and claim heads.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimWon {
-    /// Possessed task.
-    pub task: TaskStamp,
-    /// Winning actor.
-    pub actor: Actor,
-    /// Lane the claim is bound to.
-    pub lane: CanonicalUuid,
-    /// Occupant holding the lane.
-    pub occupant: CanonicalUuid,
-    /// Resident epoch that minted the claim.
-    pub epoch: CanonicalUuid,
-    /// Lease expiry the possession runs to.
-    pub until: Instant,
-    /// Repository history fixed when possession was minted.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub git: Option<GitBoundary>,
-    /// Accounted transcript the possessed phase opens at.
-    #[serde(
-        default = "SourceBoundary::unrecorded",
-        skip_serializing_if = "SourceBoundary::is_unrecorded"
-    )]
-    pub source: SourceBoundary,
-}
-
-/// Possession passed to a successor with ancestor lineage preserved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimCarried {
-    /// Carried task.
-    pub task: TaskStamp,
-    /// Lane the possession stays bound to.
-    pub lane: CanonicalUuid,
-    /// Successor occupant.
-    pub occupant: CanonicalUuid,
-    /// Occupant the possession came from.
-    pub ancestor: CanonicalUuid,
-    /// Resident epoch that carried it.
-    pub epoch: CanonicalUuid,
-    /// Accounted transcript the successor occupant takes over at.
-    ///
-    /// Carrying the possession does not end the phase, so this is a boundary
-    /// *within* one interval rather than a closing one: it names the exact
-    /// source locus where one occupant's spend stops and its successor's begins.
-    #[serde(
-        default = "SourceBoundary::unrecorded",
-        skip_serializing_if = "SourceBoundary::is_unrecorded"
-    )]
-    pub source: SourceBoundary,
-}
-
-/// Possession was released and the task became eligible again.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimFreed {
-    /// Released task.
-    pub task: TaskStamp,
-    /// Actor that held the possession.
-    pub actor: Actor,
-}
-
-/// The lease deadline passed and the resident expired possession.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimLapsed {
-    /// Expired task.
-    pub task: TaskStamp,
-    /// Occupant that lost possession.
-    pub occupant: CanonicalUuid,
-    /// Lease deadline that passed.
-    pub expiry: Instant,
-}
-
-/// The resident extended a live, epoch-bound lease within its maximum.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimRenewed {
-    /// Renewed task.
-    pub task: TaskStamp,
-    /// Resident epoch permitted to advance the lease.
-    pub epoch: CanonicalUuid,
-    /// Extended expiry.
-    pub until: Instant,
-    /// Maximum the extension stayed within.
-    pub maximum: Instant,
-}
+mod task;
+pub use task::*;
 
 /// The exact normalized plan digest landed atomically at its witnessed board barrier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -445,19 +67,72 @@ pub struct DirectiveAttachment {
     pub data_url: String,
 }
 
-/// The same intent was sent again with lineage and escalation carried.
+/// How urgently one stable directive is currently presented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SteeringStage {
+    /// The original publication has not crossed its first silence horizon.
+    Published,
+    /// Silence crossed the first horizon.
+    Reminded,
+    /// Silence crossed the second horizon.
+    Escalated,
+    /// Silence crossed the final pre-expiry horizon.
+    Overdue,
+}
+
+impl SteeringStage {
+    /// Stable lowercase spelling used on operator surfaces.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Published => "published",
+            Self::Reminded => "reminded",
+            Self::Escalated => "escalated",
+            Self::Overdue => "overdue",
+        }
+    }
+
+    /// The next presentation state, absent at the last pre-expiry state.
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self {
+            Self::Published => Some(Self::Reminded),
+            Self::Reminded => Some(Self::Escalated),
+            Self::Escalated => Some(Self::Overdue),
+            Self::Overdue => None,
+        }
+    }
+}
+
+impl std::fmt::Display for SteeringStage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// One durable presentation transition in a directive's audit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteeringTransition {
+    /// State entered at this transition.
+    pub stage: SteeringStage,
+    /// Journal instant at which the transition was recorded.
+    pub at: Instant,
+}
+
+/// One stable directive crossed a named silence horizon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SteerResent {
-    /// Durable identity of the new rung.
+#[serde(deny_unknown_fields)]
+pub struct SteerEscalated {
+    /// Durable identity retained from publication.
     pub directive: CanonicalUuid,
-    /// Key of the resent directive.
+    /// Human key retained from publication.
     pub key: String,
-    /// Key this send descends from.
-    pub ancestor: String,
     /// Lane the directive addresses.
     pub lane: CanonicalUuid,
-    /// Escalation level the lineage has reached.
-    pub escalation: u32,
+    /// Named presentation state entered by this fact.
+    pub stage: SteeringStage,
 }
 
 /// A lapsed directive was restored to live standing exactly once.
@@ -567,7 +242,7 @@ pub struct SteerLapsed {
     pub expires: Instant,
 }
 
-/// The operator withdrew a live directive; the lineage retired without an agent disposition.
+/// The operator withdrew a live directive without an agent disposition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerCanceled {
     /// Withdrawn directive key.
@@ -654,429 +329,8 @@ pub struct ConsentFloored {
     pub floor: String,
 }
 
-/// A lane and its capability were created.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneSeated {
-    /// Created independently steerable member seat.
-    pub lane: CanonicalUuid,
-    /// Canvas lineage whose lane contains the member.
-    pub lineage_id: CanonicalUuid,
-    /// Capability minted with the lane.
-    pub capability: CanonicalUuid,
-    /// Operator-configured agent display name, absent on pre-field facts.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub name: Option<String>,
-    /// Worktree the lane is bound to.
-    pub worktree: String,
-    /// Closed lane-life spelling selected for the seat.
-    pub life: String,
-    /// Vendor selected for occupants of this seat.
-    pub vendor: Name,
-}
-
-/// One Canvas lineage adopted a task-subscription policy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LineageConfigured {
-    /// Stable Canvas lineage identifying the configured group.
-    pub lineage_id: CanonicalUuid,
-    /// Member moved into the configured lineage, absent for policy-only changes.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub member: Option<CanonicalUuid>,
-    /// Lineage the moved member occupied before this transaction.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub from_lineage: Option<CanonicalUuid>,
-    /// Replacement identity assigned to a source team when its host left.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub source_rekeyed_to: Option<CanonicalUuid>,
-    /// Prior task-subscription policy before this transaction.
-    pub from: crate::intent::LineageLife,
-    /// Authoritative task-subscription policy after this transaction.
-    pub life: crate::intent::LineageLife,
-    /// Prior operator-pinned project set.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub from_manual_projects: Vec<String>,
-    /// Authoritative operator-pinned project set after this transaction.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub manual_projects: Vec<String>,
-    /// Boundary for the moved member, when one moved and is actively claimed.
-    ///
-    /// Empty for a policy-only change, which moves no member and so crosses no
-    /// lane's attribution.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sources: Vec<LaneSourceBoundary>,
-}
-
-/// One Canvas lineage and the lanes it holds after an arrangement.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LineageStanding {
-    /// Stable Canvas lineage identifying the group.
-    pub lineage_id: CanonicalUuid,
-    /// Every lane this lineage holds, in the order the operator arranged them.
-    pub lanes: Vec<CanonicalUuid>,
-}
-
-/// One lane's accounted transcript boundary at a membership transition.
-///
-/// A membership transition names the lanes it moves rather than carrying a
-/// single lane of its own, so the boundary travels beside the lane it belongs
-/// to. This is what lets a reducer split attribution across the move: the spend
-/// before this locus belongs to the lineage the lane left, and the spend after
-/// it to the lineage the lane joined.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LaneSourceBoundary {
-    /// Lane whose membership the transition changed.
-    pub lane: CanonicalUuid,
-    /// Accounted transcript that lane's membership changed at.
-    pub source: SourceBoundary,
-}
-
-/// The operator rearranged the Canvas lineages.
-///
-/// Both sides are recorded because the gesture is not recoverable from the
-/// result alone: a reorder and a join leave different `from` standings behind,
-/// and a reader that only saw the outcome could not tell which one the
-/// operator performed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LineageArranged {
-    /// Lineage standings before this transaction, in their prior order.
-    pub from: Vec<LineageStanding>,
-    /// Lineage standings after this transaction, in the arranged order.
-    pub lineages: Vec<LineageStanding>,
-    /// Boundaries for the actively claimed lanes this arrangement moved.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sources: Vec<LaneSourceBoundary>,
-}
-
-/// One seated member moved to a durable position, possibly in another lineage.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneArranged {
-    /// Stable member identity that moved.
-    pub lane: CanonicalUuid,
-    /// Lineage the member occupied before the move.
-    pub from_lineage_id: CanonicalUuid,
-    /// Lineage owned by the target member after the move.
-    pub lineage_id: CanonicalUuid,
-    /// Stable member identity immediately following the moved member.
-    pub before: CanonicalUuid,
-    /// Boundary for the moved lane, when it is actively claimed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sources: Vec<LaneSourceBoundary>,
-}
-
-/// Exact model, effort, and observable Git outcome for one vendor launch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LaneLaunchIdentity {
-    /// Concrete model supplied to the vendor launch.
-    pub model: String,
-    /// Reasoning effort supplied to the vendor launch.
-    pub effort: String,
-    /// GIT-04 outcome observed before this launch read repository configuration.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub git: Option<String>,
-}
-
-impl LaneLaunchIdentity {
-    /// Build one complete recorded launch identity.
-    pub fn new(model: impl Into<String>, effort: impl Into<String>) -> Self {
-        Self {
-            model: model.into(),
-            effort: effort.into(),
-            git: None,
-        }
-    }
-
-    /// Attach the observable GIT-04 launch outcome to a current launch.
-    #[must_use]
-    pub fn with_git(mut self, git: impl Into<String>) -> Self {
-        self.git = Some(git.into());
-        self
-    }
-
-    pub(crate) fn from_parts(
-        model: Option<String>,
-        effort: Option<String>,
-        git: Option<String>,
-    ) -> Result<Option<Self>, &'static str> {
-        match (model, effort, git) {
-            (Some(model), Some(effort), git) => Ok(Some(Self { model, effort, git })),
-            (None, None, None) => Ok(None),
-            (Some(_), None, _) => Err("lane launch identity is missing effort"),
-            (None, Some(_), _) => Err("lane launch identity is missing model"),
-            (None, None, Some(_)) => Err("lane launch identity is missing model and effort"),
-        }
-    }
-
-    pub(crate) fn into_parts(
-        identity: Option<Self>,
-    ) -> (Option<String>, Option<String>, Option<String>) {
-        identity.map_or((None, None, None), |identity| {
-            (Some(identity.model), Some(identity.effort), identity.git)
-        })
-    }
-}
-
-/// A selected vendor record declared the exact resumable lane session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "LaneSessionDeclaredWire", into = "LaneSessionDeclaredWire")]
-pub struct LaneSessionDeclared {
-    /// Lane whose session was declared.
-    pub lane: CanonicalUuid,
-    /// Occupant whose selected stream emitted the declaration.
-    pub occupant: CanonicalUuid,
-    /// Canonical worktree bound to the launch.
-    pub worktree: String,
-    /// Vendor dialect that admitted the declaration.
-    pub vendor: Name,
-    /// Launch identity, absent when the declaration predates its recording.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub launch: Option<LaneLaunchIdentity>,
-    /// Resident generation that observed the declaration.
-    pub epoch: CanonicalUuid,
-    /// Selected child stream carrying records.
-    pub stream: String,
-    /// Exact resumable vendor identity.
-    pub identity: String,
-    /// Durable tape member holding the declaration.
-    pub member: u64,
-    /// Declaration offset within the member.
-    pub offset: u64,
-    /// Number of declaration bytes.
-    pub length: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LaneSessionDeclaredWire {
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    worktree: String,
-    vendor: Name,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    model: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    effort: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    git: Option<String>,
-    epoch: CanonicalUuid,
-    stream: String,
-    identity: String,
-    member: u64,
-    offset: u64,
-    length: u64,
-}
-
-impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
-    type Error = &'static str;
-
-    fn try_from(wire: LaneSessionDeclaredWire) -> Result<Self, Self::Error> {
-        Ok(Self {
-            lane: wire.lane,
-            occupant: wire.occupant,
-            worktree: wire.worktree,
-            vendor: wire.vendor,
-            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort, wire.git)?,
-            epoch: wire.epoch,
-            stream: wire.stream,
-            identity: wire.identity,
-            member: wire.member,
-            offset: wire.offset,
-            length: wire.length,
-        })
-    }
-}
-
-impl From<LaneSessionDeclared> for LaneSessionDeclaredWire {
-    fn from(declaration: LaneSessionDeclared) -> Self {
-        let (model, effort, git) = LaneLaunchIdentity::into_parts(declaration.launch);
-        Self {
-            lane: declaration.lane,
-            occupant: declaration.occupant,
-            worktree: declaration.worktree,
-            vendor: declaration.vendor,
-            model,
-            effort,
-            git,
-            epoch: declaration.epoch,
-            stream: declaration.stream,
-            identity: declaration.identity,
-            member: declaration.member,
-            offset: declaration.offset,
-            length: declaration.length,
-        }
-    }
-}
-
-/// An occupant became live under the lane.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneStarted {
-    /// Occupied lane.
-    pub lane: CanonicalUuid,
-    /// Occupant that became live.
-    pub occupant: CanonicalUuid,
-    /// Resident epoch that observed the start.
-    pub epoch: CanonicalUuid,
-    /// Process-group identity returned by the sole process door.
-    pub group: u32,
-}
-
-/// A vacant lane seat moved to a fresh linked worktree before exact-session seating.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneImported {
-    /// Lane whose lineage seat is retained.
-    pub lane: CanonicalUuid,
-    /// Latest occupant in the retained lineage.
-    pub ancestor: CanonicalUuid,
-    /// Worktree the seat was authoritatively bound to.
-    pub from_worktree: String,
-    /// Fresh linked worktree receiving the seat.
-    pub worktree: String,
-    /// Driver dialect retained by the transfer.
-    pub vendor: Name,
-    /// Exact resumable identity proved before the transfer.
-    pub identity: String,
-    /// Resident generation that admitted the transfer.
-    pub epoch: CanonicalUuid,
-}
-
-/// The resident observed the occupant end.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneExited {
-    /// Vacated lane.
-    pub lane: CanonicalUuid,
-    /// Occupant that ended.
-    pub occupant: CanonicalUuid,
-    /// Exit status the resident observed.
-    pub code: i32,
-}
-
-/// The occupant crossed a context compaction boundary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneCompacted {
-    /// Lane the occupant runs under.
-    pub lane: CanonicalUuid,
-    /// Occupant that compacted.
-    pub occupant: CanonicalUuid,
-    /// Selected child stream carrying the boundary record.
-    pub stream: String,
-    /// Durable tape member holding the boundary record.
-    pub member: u64,
-    /// Boundary-record offset within the member.
-    pub offset: u64,
-    /// Number of bytes in the boundary record.
-    pub length: u64,
-}
-
-/// A successor occupant was seated with its ancestor named.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneRenewed {
-    /// Reseated lane.
-    pub lane: CanonicalUuid,
-    /// Successor occupant.
-    pub occupant: CanonicalUuid,
-    /// Occupant the successor descends from.
-    pub ancestor: CanonicalUuid,
-    /// Resident epoch that observed the successor start.
-    pub epoch: CanonicalUuid,
-    /// Process-group identity returned by the sole process door.
-    pub group: u32,
-}
-
-/// A graceful occupant end completed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneDrained {
-    /// Drained lane.
-    pub lane: CanonicalUuid,
-    /// Occupant that ended gracefully.
-    pub occupant: CanonicalUuid,
-}
-
-/// A signal this resident sent ended an occupant.
-///
-/// Separate from [`LaneExited`] because being signalled is a different ending,
-/// not an exit status the occupant chose. A signalled process has no status of
-/// its own to report, so recording one would mean publishing the resident's
-/// substitute for a missing number as though the occupant had returned it. This
-/// kind carries no code for the same reason.
-///
-/// Both signalling stages record this, not only the kill. An occupant that never
-/// trapped the termination signal dies from that signal rather than outliving
-/// the grace, and this resident is the reason for the ending either way. What
-/// this kind separates is whose decision the ending was, not which signal
-/// carried it; the stage is already durable in the shutdown ladder facts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneKilled {
-    /// Vacated lane.
-    pub lane: CanonicalUuid,
-    /// Occupant the resident ended.
-    pub occupant: CanonicalUuid,
-}
-
-/// Work run without the resident left a marker that the next resident recognized once.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneDegraded {
-    /// Lane the daemonless work ran in.
-    pub lane: CanonicalUuid,
-    /// Marker the next resident recognized.
-    pub marker: String,
-}
-
-/// Repeated young occupant deaths paused automatic re-seating.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneHeld {
-    /// Held lane.
-    pub lane: CanonicalUuid,
-    /// Evidence the hold names.
-    pub evidence: String,
-    /// Deadline the hold names.
-    pub until: Instant,
-}
-
-/// A held lane returned to seating eligibility by operator wake or expired hold.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneResumed {
-    /// Resumed lane.
-    pub lane: CanonicalUuid,
-    /// What released the hold.
-    pub release: Release,
-}
+mod lane;
+pub use lane::*;
 
 /// The judge confirmed a taste at an evidence locus.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1234,6 +488,19 @@ pub struct GateCleared {
     pub identity: String,
     /// Evidence locus the resolution stands at.
     pub locus: String,
+}
+
+/// A requested gate finding dispatch completed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateFindingsFiled {
+    /// Digest of the complete typed battery report that was dispatched.
+    pub report: Digest,
+    /// Number of projected findings consumed.
+    pub findings: u32,
+    /// Number of deferred board tasks created.
+    pub created: u32,
+    /// Number of open board tasks reused.
+    pub reused: u32,
 }
 
 /// The one forward schema migration finalized before epoch mint.
@@ -1436,11 +703,18 @@ pub struct PublishedTarget {
     pub receipt: Digest,
 }
 
-/// The sealed release manifest digest, and each target entry's artifact digest, published.
+/// The sealed release manifest, notes, and each target artifact digest published.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleasePublished {
     /// Sealed release manifest digest.
     pub manifest: Digest,
+    /// Identity of the exact curated release-note bytes published.
+    ///
+    /// `HistoricalAbsent` is written only by the journal schema-4-to-5
+    /// migration for a publication whose pre-digest bytes cannot be
+    /// reconstructed. The field remains required on the wire, so unmigrated
+    /// schema-4 JSON does not enter the current decoder.
+    pub notes: crate::ReleaseNotesIdentity,
     /// Each target entry published under its detached proof receipt.
     pub targets: Vec<PublishedTarget>,
 }

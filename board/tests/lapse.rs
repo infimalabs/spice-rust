@@ -120,6 +120,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
             task: &incepted(),
             actor: &actor,
             workflow: &workflow,
+            project: "board.possession",
             lane: uuid(20),
             occupant: uuid(21),
             epoch: uuid(22),
@@ -344,6 +345,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
     let statement_origin = origin;
     write.task_head(fact, move |position| TaskHead {
         incepted: incepted(),
+        queue_origin: position,
         title: "Lapse possession".to_owned(),
         description: None,
         acceptance: Vec::new(),
@@ -512,6 +514,10 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
                 lane: uuid(20),
                 occupant: uuid(21),
                 epoch: uuid(22),
+                cell: Some(wire::ClaimCell {
+                    project: "board.possession".to_owned(),
+                    phase: "todo".parse().expect("phase"),
+                }),
                 until: instant(20),
                 git: None,
                 source: body::SourceBoundary::Proven { heads: Vec::new() },
@@ -522,6 +528,11 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
     write.claim_head(incepted(), fact, move |position| ClaimHead {
         actor,
         fact: position,
+        claimed: position,
+        cell: wire::ClaimCell {
+            project: "board.possession".to_owned(),
+            phase: "todo".parse().expect("phase"),
+        },
         lane: uuid(20),
         occupant: uuid(21),
         epoch: uuid(22),

@@ -365,12 +365,19 @@ fn only(task: &TaskHandle) -> TaskEdit {
 /// This is the ranking itself rather than a field read back off the row, so
 /// a correction that stored a priority the allocator never scores would
 /// leave the answer unmoved.
-pub(super) fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Option<(String, i64)> {
+pub(super) fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Option<(String, u64)> {
     let answer = board(bus, epoch, actor.clone());
     let entries = actor_entries(&answer).expect("allocation board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)
         .expect("allocation board has one lineage subscription");
-    board::select(&entries, actor, subscription, answer.allocation_band).map(|selection| {
+    board::select(
+        &entries,
+        actor,
+        subscription,
+        answer.allocation_band,
+        answer.recent_cell.as_ref(),
+    )
+    .map(|selection| {
         (
             selection.entry().handle().to_string(),
             selection.urgency().value(),
@@ -462,10 +469,9 @@ fn a_corrected_priority_moves_the_allocator_ranking_off_the_filed_order() {
         second.to_string(),
         "the correction has to outrank the filed order, not sit beside it",
     );
-    assert_eq!(
-        raised.1 - filed.1,
-        4_000,
-        "a high priority is worth exactly what the allocator scores it",
+    assert!(
+        filed.1 > raised.1,
+        "effective priority outranks the newer task's lower queue age without being folded into it",
     );
 
     // The first task overtakes it, so the ranking is following each

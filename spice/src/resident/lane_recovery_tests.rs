@@ -134,6 +134,7 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
     let task = fixture.task.clone();
     seed.task_head(added, move |position| wire::TaskHead {
         incepted: task,
+        queue_origin: position,
         title: "Carry active work".into(),
         description: None,
         acceptance: Vec::new(),
@@ -167,6 +168,10 @@ fn seed_claim(fixture: &Fixture, seed: &mut JournalWrite, added: PendingFact) {
                 lane: fixture.lane,
                 occupant: fixture.ancestor,
                 epoch: fixture.old_epoch,
+                cell: Some(wire::ClaimCell {
+                    project: "rim.recovery".into(),
+                    phase: "todo".parse().expect("fixture phase"),
+                }),
                 until: fixture.expiry,
                 git: None,
                 source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
@@ -181,6 +186,11 @@ fn seed_claim(fixture: &Fixture, seed: &mut JournalWrite, added: PendingFact) {
     seed.claim_head(task, won, move |fact| wire::ClaimHead {
         actor: Actor::Operator,
         fact,
+        claimed: fact,
+        cell: wire::ClaimCell {
+            project: "rim.recovery".into(),
+            phase: "todo".parse().expect("fixture phase"),
+        },
         lane,
         occupant,
         epoch,
@@ -762,7 +772,10 @@ fn declared(identity: &str) -> CaptureRecord {
             session: vendor::SessionId::new(identity.to_owned()).expect("fixture identity"),
             locus: locus(),
         }),
-        decoded: listen::Decoded::Events(Vec::new()),
+        decoded: listen::Decoded::Events {
+            context: Default::default(),
+            events: Vec::new(),
+        },
     }
 }
 

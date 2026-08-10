@@ -7,13 +7,13 @@ use crate::command::CommandKind;
 use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
-    ConsentRead, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger, EffortAnswer,
-    EffortRead, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall,
-    LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer, RecognitionAnswer,
-    Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox, SteerSend, TaskAdd,
-    TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote,
-    TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer, TasteRecord, TextAnswer, TrustAnswer,
-    TrustRef, UpChange,
+    ConsentRead, DeliveryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger,
+    EffortAnswer, EffortRead, GateFindings, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer,
+    LaneRead, LaneRecall, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
+    RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox,
+    SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends,
+    TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer,
+    TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -33,6 +33,8 @@ pub enum BodyShape {
     TaskAdd,
     /// [`TaskOopsAdd`], the strict body for the server-owned `.oops` route.
     TaskOopsAdd,
+    /// [`GateFindings`]
+    GateFindings,
     /// [`TaskEdit`]
     TaskEdit,
     /// [`TaskDelete`]
@@ -65,6 +67,8 @@ pub enum BodyShape {
     SteerSend,
     /// [`SteerInbox`]
     SteerInbox,
+    /// [`SteerRepair`]
+    SteerRepair,
     /// [`DirectiveRef`]
     DirectiveRef,
     /// [`SteerDispose`]
@@ -118,6 +122,8 @@ pub enum AnswerShape {
     Directive,
     /// [`InboxAnswer`]
     Inbox,
+    /// [`DeliveryAnswer`]
+    Delivery,
     /// [`ConsentAnswer`]
     Consent,
     /// [`ConsentQueueAnswer`]
@@ -160,6 +166,8 @@ pub enum CommandAnswer {
     Directive(DirectiveAnswer),
     /// [`AnswerShape::Inbox`]
     Inbox(InboxAnswer),
+    /// [`AnswerShape::Delivery`]
+    Delivery(DeliveryAnswer),
     /// [`AnswerShape::Consent`]
     Consent(ConsentAnswer),
     /// [`AnswerShape::ConsentQueue`]
@@ -196,6 +204,7 @@ impl CommandAnswer {
             Self::Doc(_) => AnswerShape::Doc,
             Self::Directive(_) => AnswerShape::Directive,
             Self::Inbox(_) => AnswerShape::Inbox,
+            Self::Delivery(_) => AnswerShape::Delivery,
             Self::Consent(_) => AnswerShape::Consent,
             Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
             Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
@@ -228,6 +237,7 @@ impl AnswerShape {
             | Self::Doc
             | Self::Directive
             | Self::Inbox
+            | Self::Delivery
             | Self::Consent
             | Self::ConsentQueue => self.decode_primary(bytes),
             Self::ConsentPolicy
@@ -251,6 +261,7 @@ impl AnswerShape {
             Self::Doc => CommandAnswer::Doc(crate::decode(bytes)?),
             Self::Directive => CommandAnswer::Directive(crate::decode(bytes)?),
             Self::Inbox => CommandAnswer::Inbox(crate::decode(bytes)?),
+            Self::Delivery => CommandAnswer::Delivery(crate::decode(bytes)?),
             Self::Consent => CommandAnswer::Consent(crate::decode(bytes)?),
             Self::ConsentQueue => CommandAnswer::ConsentQueue(crate::decode(bytes)?),
             _ => unreachable!("answer-shape decode partition is closed"),
@@ -307,6 +318,7 @@ impl CommandKind {
             | Self::EffortRead
             | Self::TaskAdd
             | Self::TaskOopsAdd
+            | Self::GateFindings
             | Self::TaskEdit
             | Self::TaskDelete
             | Self::TaskNote
@@ -325,7 +337,9 @@ impl CommandKind {
             | Self::DocApply => self.board_binding(),
             Self::SteerSend
             | Self::SteerInbox
+            | Self::SteerRepair
             | Self::SteerResend
+            | Self::SteerRecover
             | Self::SteerDispose
             | Self::SteerCancel
             | Self::ConsentRead
@@ -363,6 +377,7 @@ impl CommandKind {
             Self::EffortRead => Binding::of(B::EffortRead, A::Effort),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
+            Self::GateFindings => Binding::of(B::GateFindings, A::Text),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskDelete => Binding::of(B::TaskDelete, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
@@ -389,7 +404,10 @@ impl CommandKind {
         match self {
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
             Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
-            Self::SteerResend | Self::SteerCancel => Binding::of(B::DirectiveRef, A::Directive),
+            Self::SteerRepair => Binding::of(B::SteerRepair, A::Delivery),
+            Self::SteerResend | Self::SteerRecover | Self::SteerCancel => {
+                Binding::of(B::DirectiveRef, A::Directive)
+            }
             Self::SteerDispose => Binding::of(B::SteerDispose, A::Directive),
             Self::ConsentDecide => Binding::of(B::ConsentDecide, A::Consent),
             Self::ConsentRead => Binding::of(B::ConsentRead, A::ConsentQueue),
@@ -437,6 +455,8 @@ pub enum Intent {
     TaskAdd(TaskAdd),
     /// [`BodyShape::TaskOopsAdd`]
     TaskOopsAdd(TaskOopsAdd),
+    /// [`BodyShape::GateFindings`]
+    GateFindings(GateFindings),
     /// [`BodyShape::TaskEdit`]
     TaskEdit(TaskEdit),
     /// [`BodyShape::TaskDelete`]
@@ -469,6 +489,8 @@ pub enum Intent {
     SteerSend(SteerSend),
     /// [`BodyShape::SteerInbox`]
     SteerInbox(SteerInbox),
+    /// [`BodyShape::SteerRepair`]
+    SteerRepair(SteerRepair),
     /// [`BodyShape::DirectiveRef`]
     DirectiveRef(DirectiveRef),
     /// [`BodyShape::SteerDispose`]
@@ -517,6 +539,7 @@ impl Intent {
             | Self::EffortRead(_)
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
+            | Self::GateFindings(_)
             | Self::TaskEdit(_)
             | Self::TaskDelete(_)
             | Self::TaskNote(_)
@@ -533,6 +556,7 @@ impl Intent {
             | Self::DocApply(_) => self.board_shape(),
             Self::SteerSend(_)
             | Self::SteerInbox(_)
+            | Self::SteerRepair(_)
             | Self::DirectiveRef(_)
             | Self::SteerDispose(_)
             | Self::ConsentDecide(_)
@@ -562,6 +586,7 @@ impl Intent {
             Self::EffortRead(_) => BodyShape::EffortRead,
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
+            Self::GateFindings(_) => BodyShape::GateFindings,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
             Self::TaskDelete(_) => BodyShape::TaskDelete,
             Self::TaskNote(_) => BodyShape::TaskNote,
@@ -584,6 +609,7 @@ impl Intent {
         match self {
             Self::SteerSend(_) => BodyShape::SteerSend,
             Self::SteerInbox(_) => BodyShape::SteerInbox,
+            Self::SteerRepair(_) => BodyShape::SteerRepair,
             Self::DirectiveRef(_) => BodyShape::DirectiveRef,
             Self::SteerDispose(_) => BodyShape::SteerDispose,
             Self::ConsentDecide(_) => BodyShape::ConsentDecide,
@@ -632,6 +658,7 @@ impl BodyShape {
                 | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
+                | Self::GateFindings
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskNote
@@ -659,6 +686,7 @@ impl BodyShape {
                 | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
+                | Self::GateFindings
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskNote
@@ -680,6 +708,7 @@ impl BodyShape {
             Self::EffortRead => Intent::EffortRead(crate::decode(bytes)?),
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
+            Self::GateFindings => Intent::GateFindings(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
@@ -709,6 +738,7 @@ impl BodyShape {
             self,
             Self::SteerSend
                 | Self::SteerInbox
+                | Self::SteerRepair
                 | Self::DirectiveRef
                 | Self::SteerDispose
                 | Self::ConsentDecide
@@ -726,6 +756,7 @@ impl BodyShape {
         Ok(match self {
             Self::SteerSend => Intent::SteerSend(crate::decode(bytes)?),
             Self::SteerInbox => Intent::SteerInbox(crate::decode(bytes)?),
+            Self::SteerRepair => Intent::SteerRepair(crate::decode(bytes)?),
             Self::DirectiveRef => Intent::DirectiveRef(crate::decode(bytes)?),
             Self::SteerDispose => Intent::SteerDispose(crate::decode(bytes)?),
             Self::ConsentDecide => Intent::ConsentDecide(crate::decode(bytes)?),

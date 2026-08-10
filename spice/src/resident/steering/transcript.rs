@@ -97,8 +97,11 @@ fn scan_record(
     disposition: Disposition,
     standing: &steer::Ledger,
 ) -> Result<Option<RecordRecognition>, Outcome<CommandAnswer>> {
-    for dialect in [listen::Dialect::Claude, listen::Dialect::Codex] {
-        let decoded = listen::decode(dialect, bytes, locus).map_err(|error| {
+    let registry = spice::extension::registry().map_err(|error| {
+        typed_protocol_fault("steer::extension-registry-invalid", &error.to_string())
+    })?;
+    for vendor in registry.vendors() {
+        let decoded = vendor.decode(bytes, locus).map_err(|error| {
             typed_protocol_fault("steer::transcript-locus-invalid", &error.to_string())
         })?;
         for (event_index, event) in decoded.events().iter().enumerate().rev() {

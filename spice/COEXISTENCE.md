@@ -1,380 +1,194 @@
 # Coexistence record
 
-Every integration point between the Python predecessor and this Rust port,
-enumerated. The port runs beside the predecessor rather than after it, so the
-question this record answers is not "what is left to port" but "where do the two
-running systems touch, and which of those touches is deliberate".
+Python Spice and Rust Spice may run in the same repository, but they do not
+share writable routing state. They share only the tracked repository and the
+operator's per-worktree choice of Git hook implementation. Routing identity,
+pending direction, acknowledgments, resident discovery, sockets, configuration,
+artifacts, receipts, and Git shadow files have distinct physical names.
 
-`spice/tests/coexistence.rs` enforces the byte-identity half of the policy that
-`spice/src/repository.rs` states. This file is the map that enforcement was
-written against, and `spice/tests/coexistence_record.rs` keeps its citations
-honest.
+`spice/tests/coexistence.rs` snapshots Python's complete state tree around real
+Rust commands. The concurrent process proof is
+`spice/tests/resident/vendor_process/coexistence.rs#installed_spice_lifecycle_leaves_the_predecessor_system_untouched`.
+This record maps the policy those tests enforce; `spice/tests/coexistence_record.rs`
+keeps every local citation resolvable.
 
 ## Reading a citation
 
-A citation is written `` `path#anchor` ``: a repository-relative path, then a
-literal string that must occur in that file. The anchor is a symbol name where
-the sentence names a symbol, and a configuration key or filename where it names
-one of those, because the port declares some of these through macros that no
-symbol table would list.
+A citation is `` `path#anchor` ``: a repository-relative path followed by text
+that must still occur in that file. Paths beginning `spice-z/` name the separate
+Python checkout and are intentionally not resolved by this repository's test.
+The Python measurements below were last checked at revision
+`7380d9a09b86637ef923f3ee0c5360b8413b8319`.
 
-Anchors rather than line numbers because line numbers rot silently. Three
-generations of this record cited by line, and by the time it moved into the tree
-`spice/src/repository.rs#admit_state` had drifted from line 457 to 468 with
-nothing to notice. An anchor moves with the code it names, and a line citation
-added here is refused rather than merely discouraged.
+## Direct-call boundary
 
-A path beginning `spice-z/` names the predecessor tree, which is a separate
-checkout and not a path in this repository. Those citations are deliberately
-unresolvable from here; the test asserts they stay that way, so a predecessor
-path that ever becomes a real file here is reported rather than silently
-resolved against the wrong tree.
+Neither implementation directly invokes the other. Python's tool subprocess at
+`spice-z/spice/tasks/ops.py#run_tool_command` launches the configured `rtk`
+from `spice-z/spice/config/values.py#configured_rtk_executable`, not this port.
+Rust's `spice/src/cli.rs#Command::new("spice")` is a clap command name, not a
+process construction. The executable-name convergence still mattered through
+an inherited shell `PATH`; the routing root cause and closure are recorded
+below.
 
-Their anchors are not checked, and that is a choice rather than an oversight.
-Checking them means reading a checkout at some path outside this repository,
-which makes the suite pass or fail on how one machine is laid out. The
-predecessor is a reference to read while editing this file, not a fixture to
-build tests on. Every predecessor sentence here is therefore a hand measurement
-dated to the revision it was written against, and correcting one means opening
-that tree yourself.
+## Physical routing ledger
 
-## The two measured negatives
+| Plane | Python Spice | Rust Spice |
+| --- | --- | --- |
+| Git-common authority root | `<common>/.spice` | `<common>/.spice-rs` |
+| Lane-local context root | `<git-dir>/.spice` and `<worktree>/.spice` | Per-lane facts below `<common>/.spice-rs` |
+| Repository-local config | `<git-dir>/.spice/config/spice.toml` | `<common>/.spice-rs/config.toml` |
+| Task and message authority | `<common>/.spice/data/*.sqlite3` | `<common>/.spice-rs/data/spicejournal.sqlite3` |
+| Pending direction | `<worktree>/.spice/inbox/*.txt` | Rust journal facts and `spice/src/repository.rs#pub fn inbox` |
+| ACK authority | `<common>/.spice/data/spiceacks.sqlite3` | Rust journal facts under `.spice-rs` |
+| Resident discovery | Python state and process-unique side channel | `<common>/.spice-rs/canvas` and `<common>/.spice-rs/resident` |
+| Git shadow | `<git-dir>/agent.gitconfig` | `<git-dir>/spice-rs-agent.gitconfig` |
+| Install receipt | Python-owned namespace, if any | `<common>/.spice-rs/install.json` |
+| Published Rust appliance | none | `<common>/.spice-install` |
 
-These determine the shape of everything else: there is no direct call seam in
-either direction between this port and the predecessor. Every seam below is
-shared state, shared configuration, or Git's hook dispatch.
+The Rust root is declared once at
+`spice/src/repository.rs#pub const STATE_DIRECTORY`; its whole subtree is the
+single exclusive directory returned by
+`spice/src/repository.rs#pub fn exclusive_directories`. Gate capture uses the
+same root at `gate/src/state.rs#CURRENT_STATE_DIRECTORY`, and local configuration
+uses it at `spice/src/config/load.rs#const LOCAL_FILE`. No per-file subtraction
+from Python's root remains.
 
-**No Python code invokes this port.** The predecessor does invoke a Rust binary
--- `spice-z/spice/tasks/ops.py#run_tool_command` runs `rtk gain --project -f
-json`, where the executable comes from
-`spice-z/spice/config/values.py#configured_rtk_executable` under
-`spice-z/spice/config/values.py#RTK_KEY`, and `rtk` is Rust, installed by
-`cargo install --git` per `spice-z/tests/test_rtkdocs.py#cargo install`. So the
-negative is narrowed to this port and carries its counterexample.
+### State stores
 
-The original search terms -- `cargo`, `target/debug`, `target/release` -- could
-not have found that call, and the durable lesson is the miss rather than the
-correction. Those three strings match how a Rust program is built or located
-inside a build tree. That is sufficient evidence of an invocation and not
-necessary for one: a binary installed and then invoked under its own name,
-resolved from configuration or `PATH`, exhibits none of them. It is exactly the
-shape a predecessor-to-port call would take, since the port installs as `spice`
-under `<common>/.spice-install` with no build path involved. A negative about
-invocation is a claim about call sites, so it has to be proved by enumerating
-call sites -- `run_tool_command`, `subprocess`, `Command::new` -- and
-classifying what each runs, not by searching for build paths. Re-swept on those
-terms, no predecessor call site runs this port.
+Python declares its shared root at `spice-z/spice/paths.py#shared_state_root`,
+its durable lane-local root at `spice-z/spice/paths.py#worktree_state_root`, and
+its visible live root at
+`spice-z/spice/paths.py#worktree_runtime_state_root`.
+Its authorities include:
 
-**No Rust code launches the predecessor.** The only `Command::new("spice")` in
-the port is `spice/src/cli.rs#Command::new("spice")`, which is clap's parser
-name, identified from the surrounding `.about` and `.subcommand_required`
-builder chain rather than from the call alone.
+- `spice-z/spice/tasks/opslog.py#OPERATIONS_DB_FILENAME` for tasks;
+- `spice-z/spice/mail/ackstate.py#ACK_STATE_DATABASE_FILENAME` for ACKs;
+- `spice-z/spice/agent/maximmetrics.py#MAXIM_METRICS_DATABASE_FILENAME` for
+  maxim metrics;
+- `spice-z/spice/serve/team/projection.py#PROJECTION_DATABASE_FILENAME` for
+  projections; and
+- `spice-z/spice/serve/team/schema.py#TEAM_DATABASE_FILENAME` for teams.
 
-Two attempts to break these negatives by omission also failed, and are recorded
-so they are not re-run. The two sides share no tracked-tree token outside this
-record matching `SPICE_[A-Z0-9_]+`. To reproduce that result, run this in each
-checkout:
+Rust declares its journal through
+`spice/src/repository.rs#spicejournal.sqlite3` and its fold projection through
+`spice/src/repository.rs#spicefolds.sqlite3`. A coincident leaf filename in the
+future cannot collide because the parent roots differ. The test
+`spice/tests/coexistence.rs#state_roots_are_siblings_and_database_names_cannot_cross`
+places the same relative database name in both roots and reads both identities
+back independently.
 
-```sh
-git grep -h -o -E 'SPICE_[A-Z0-9_]+' -- ':!spice/COEXISTENCE.md' | sort -u
-```
+### Agent identity, inbox, ACK, and live delivery
 
-Save the two outputs as `port.names` and `predecessor.names`, then run `comm -12
-port.names predecessor.names`. Both input sets were nonempty and the
-intersection was empty when rechecked for this edit against the clean
-predecessor revision `7380d9a09b86637ef923f3ee0c5360b8413b8319`. Excluding
-the record keeps the command printed here from manufacturing its own match. The
-rule deliberately over-approximates environment names by retaining test
-placeholders and partial tokens too: an empty intersection over those larger
-sets proves the narrower runtime vocabularies do not overlap without a judgment
-call about which names are real. And the binary-name convergence is not a seam:
-both build a program named `spice`, but the port installs under
-`<common>/.spice-install` while the live `core.hooksPath` is `.spice/hooks`, and
-`spice-install` appears nowhere in the predecessor tree.
+Python resolves a worktree-local thread pointer at
+`spice-z/spice/agent/paths.py#THREAD_ID_FILENAME`, pending files through
+`spice-z/spice/paths.py#worktree_inbox_dir`, ACKs through
+`spice-z/spice/mail/ackstate.py#ACK_STATE_DATABASE_FILENAME`, and its live side
+channel through `spice-z/spice/agent/sidechannel.py#spice-agent-side-`.
 
-## Seam A -- the shared state root
+Rust binds a lane capability with `spice/src/agent_launch.rs#SPICE_LANE`, stores
+directions and ACK facts in its own journal, and publishes resident discovery
+below the root exposed by `spice/src/repository.rs#pub fn runtime`. A Python and
+Rust agent may carry the exact same UUID: UUID equality is data equality, not a
+filesystem or queue identity.
 
-**Deliberate, tested.** Both sides anchor at the Git common directory: the live
-value is that directory's `.spice`, which for a fleet of linked worktrees is one
-shared path rather than one per lane.
+The concurrent proof seeds Python task authority and a Python
+`.spice/inbox/<uuid>.txt`, starts a Rust lane with that same UUID, and routes a
+Rust directive to it. Rust's inbox never lists the Python item; Rust refuses an
+ACK for the Python key; Python's inbox, ACK database, thread pointer, socket
+marker, executable, hooks, and process remain unchanged. Two other live Rust
+lanes also prove that each lane sees and ACKs only its own directions.
 
-- Predecessor: `spice-z/spice/tasks/config.py#backend_root`,
-  `spice-z/spice/paths.py#shared_state_root`.
-- Port: `spice/src/repository.rs#admit_state`,
-  `gate/src/state.rs#current_state_path` taking a common Git directory,
-  `spice/src/config/load.rs#locations`.
+### Git shadow
 
-Policed by `spice/tests/coexistence.rs#this_runtime_claims_no_path_the_predecessor_owns`
-and coexistence policy point 2. The rationale is that the port anchors here
-because the worktree is unpredictable and can be force committed.
+Python owns `<git-dir>/agent.gitconfig` through
+`spice-z/spice/agent/shadow.py#AGENT_GITCONFIG_NAME`. Rust owns
+`<git-dir>/spice-rs-agent.gitconfig` through
+`spice/src/git_shadow.rs#AGENT_GITCONFIG_NAME` and
+`spice/src/git_shadow.rs#publish_shadow`. The regression
+`spice/tests/git_shadow.rs#RUST_GITCONFIG_NAME` asserts both the positive Rust
+path and the untouched Python path in ordinary and linked worktrees.
 
-## Seam B -- disjoint stores in one data directory
+### Installation and cutover from the former shared root
 
-**Deliberate, tested one-directionally.** Both sides keep their databases in
-`<common>/.spice/data/`.
+Rust publishes executable, skill, and hooks under `.spice-install`, while its
+receipt is below `.spice-rs`. `spice/src/install.rs#const RECORD_PATH` and
+`spice/src/install.rs#const EXCLUDE_BLOCK` pin those names. A same-version Rust
+receipt left at the former `.spice/install.json` location is not an alternate
+input: the new binary never inspects a path now owned by Python. An operator
+must reverse that old installation with its owning old installed binary before
+applying the renamed build. This is an explicit one-time namespace cutover, not
+an implicit bridge or fallback.
 
-Predecessor declarations, each a named constant:
+## The executable routing defect and closure
 
-- `spice-z/spice/tasks/opslog.py#OPERATIONS_DB_FILENAME` -- `taskchampion.sqlite3`
-- `spice-z/spice/mail/ackstate.py#ACK_STATE_DATABASE_FILENAME` -- `spiceacks.sqlite3`
-- `spice-z/spice/agent/maximmetrics.py#MAXIM_METRICS_DATABASE_FILENAME` -- `spicemaxims.sqlite3`
-- `spice-z/spice/serve/team/projection.py#PROJECTION_DATABASE_FILENAME` -- `spiceprojections.sqlite3`
-- `spice-z/spice/serve/team/schema.py#TEAM_DATABASE_FILENAME` -- `spiceteams.sqlite3`
+The operator attachment for ROUTING-1kLGWDWl showed one agent reporting its
+context unavailable while Python and Rust Spice were running together. The
+attachment localized the investigation; the causal trace came from code and the
+concurrent reproduction:
 
-Port: `spice/src/repository.rs#spicejournal.sqlite3` and
-`spice/src/repository.rs#spicefolds.sqlite3` declare the two stores under
-`data/`, and `spice/src/journal_command.rs#AUTHORITY_MEMBER` is the same journal
-name. The port owns two stores, not one.
+1. Python's console entry at `spice-z/spice/cli/entry.py#def main` and Rust's
+   installed skill at `spice/src/install/skill.md#spice recall` both answer to
+   the shell word `spice`.
+2. Rust already embedded its exact executable in hook and MCP launch arguments,
+   but the resident passed ambient `PATH` to the occupant. If Python's executable
+   appeared first, prose-driven Rust skill commands reached Python.
+3. Python correctly consulted its own thread, inbox, and ACK authorities. To the
+   Rust lane, correct service by the wrong runtime appeared as missing context.
 
-Live, all six predecessor-and-port files sit in that one data directory.
-`spicefolds.sqlite3` is declared and pinned but not yet materialized in this
-fleet, which is a fact about what has run here rather than a gap in the record.
+The terminal is a **root cause**: inherited executable lookup let a Rust-launched
+agent change routing identity after launch. The closure is
+`spice/src/resident/lane_surface/launch.rs#fn appliance_path`, which prepends the
+directory of the running Rust executable to the occupant's `PATH`. The
+concurrent proof deliberately places a predecessor `spice` earlier in the
+resident's ambient path; bare agent-shell commands still reach the installed
+Rust appliance, and the predecessor invocation log stays absent.
 
-The port pins the boundary: `spice/tests/resident/vendor_process.rs#assert_unchanged`
-seeds the five predecessor names with sentinel bytes and is driven by
-`spice/tests/resident/vendor_process.rs#installed_spice_lifecycle_leaves_the_predecessor_system_untouched`
-across a full install, upgrade, allocation, steering and shutdown.
+## Shared tracked configuration
 
-The reciprocal is absent **for stores specifically**, and that scope is
-load-bearing: nothing in the predecessor tree asserts anything about
-`spicejournal.sqlite3`, which is unreferenced anywhere in that tree rather than
-merely in its `.py` files. The exact non-vacuity searches and their measured
-file counts are:
+One tracked `spice.toml` is intentionally read by both systems. This is static
+repository policy, not a message or context transport. Python builds its
+configuration layers at `spice-z/spice/config/layers.py#effective_commands` and
+reads Rust source policy through `spice-z/spice/policyconfig.py#languages` and
+`spice-z/spice/policyconfig.py#file_shape`. Rust consumes its own admission key
+at `spice/src/config.rs#policy.admission`, with the gate mirror at
+`gate/src/core/config_keys.rs#policy.admission`.
 
-| Predecessor search | Files |
-| --- | ---: |
-| `git grep -l spicemaxims` | 8 |
-| `git grep -l spicemaxims -- tests/` | 3 |
-| `git grep -l spicejournal` | 0 |
+Python deliberately admits Rust-only vocabulary so the common tracked file can
+load: `spice-z/spice/config/schema.py#"admission"` and
+`spice-z/tests/test_configlayer.py#test_repository_configuration_admits_the_rust_publisher_admission_argv`
+pin that compatibility. Machine-local configuration is not shared; Rust reads
+only `.spice-rs/config.toml`.
 
-The zero is therefore the predecessor's silence about the port's store and not
-a search that cannot find anything. All three figures are measurements of a
-moving tree rather than constants, and nothing in this repository re-runs them:
-the searches are written out so the next editor can repeat them by hand against
-whatever checkout they have, which is the only place that tree exists. Read them
-as dated, like every other sentence here about the predecessor. The tree-wide
-maxim result holds for the bare token and the full `spicemaxims.sqlite3`
-filename alike, over the tracked set or over the working tree with `__pycache__`
-excluded. The tests-only result is a defensible
-search for a sentence about what the predecessor asserts, but not the search the
-preceding sentence describes; an earlier generation of this record confused
-the two. This is not a general claim that the predecessor tests nothing about
-the port. It does, about configuration vocabulary, which is Seam F.
+## Git hook selection
 
-## Seam C -- the agent gitconfig
+Git exposes one effective `core.hooksPath` per worktree, so the two hook systems
+are mutually exclusive there. Python generates its hooks from
+`spice-z/spice/hooks/initplanning.py#HOOK_ARGS` and installs them through
+`spice-z/spice/hooks/install.py#install_hooks_for_repo`. Rust publishes its
+separate hook assets from `spice/src/install.rs#GIT_PRE_COMMIT_PATH` and resolves
+them through `spice/src/install.rs#pub fn installed_git_hooks`.
 
-**Was an undocumented convergence, now closed.** Both sides write
-`<git-dir>/agent.gitconfig`.
+Activation is guarded: `xtask/src/hooks.rs#fn preflight_worktree_hooks` checks
+every worktree before writing, and `xtask/src/hooks.rs#ForeignHookPath` refuses
+to seize a worktree configured for Python. Hook choice is therefore an operator
+selection, not a cross-delivery path.
 
-- Predecessor: `spice-z/spice/agent/shadow.py#AGENT_GITCONFIG_NAME`,
-  `spice-z/spice/agent/shadow.py#config_path`, and a
-  `rev-parse --absolute-git-dir` probe in the same file.
-- Port: `spice/src/git_shadow.rs#AGENT_GITCONFIG_NAME`, the same probe, and
-  `spice/src/git_shadow.rs#publish_shadow`.
+## Validation boundary
 
-Both write the whole file and neither contributes an entry; it is the only
-shared path outside any `.spice`. Closed under EFFORT-1kKp195G in `a263f4e3`:
-the decision record in `spice/src/repository.rs#agent.gitconfig` names it, and
-`spice/tests/git_shadow.rs` pins the anchor and filename against a linked
-worktree, where `--absolute-git-dir` and `--git-common-dir` differ. The complete
-bytes for a simple branch pin the header, `[include]` then `[branch]` order, tab
-indentation and trailing newline. A real branch containing a double quote pins
-the reachable subsection escaping too; Git refuses backslashes in refnames, so
-the preceding defensive backslash replacement is recorded at the writer rather
-than covered by forging a branch Git would reject. The header pin began under
-NAMING-1kKw6pv0 because it reads as prose and says `agent`, so a naming sweep
-reaches it before it reaches anything that fails.
+The tests cover both static and running coexistence:
 
-## Seam D -- the port's own spice.toml is read by the predecessor
+- `spice/tests/coexistence.rs#this_runtime_claims_no_path_the_predecessor_owns`
+  proves the whole Rust root is exclusive and outside Python's root.
+- `spice/tests/coexistence.rs#running_this_port_leaves_predecessor_state_byte_identical`
+  and
+  `spice/tests/coexistence.rs#installing_this_port_leaves_predecessor_state_byte_identical`
+  snapshot Python's entire tree around real commands.
+- `spice/tests/resident/vendor_process/coexistence.rs#assert_coexistence_steering`
+  proves same-UUID and cross-lane inbox/ACK isolation with both systems live.
+- `spice/tests/resident/vendor_process/coexistence.rs#fn agent_shell_command`
+  reproduces bare-shell lookup through the occupant environment.
 
-**Deliberate, and the largest live seam.**
-
-- Predecessor: `spice-z/spice/config/layers.py#effective_commands` builds the
-  system, repository and worktree layers; for a port repository root the
-  repository layer resolves to the port's own tracked `spice.toml`. It consumes
-  `policy.languages` at `spice-z/spice/policyconfig.py#languages` and
-  `policy.file_shape` at `spice-z/spice/policyconfig.py#file_shape`, with
-  `spice-z/spice/policy.py#file_shape` pairing to them.
-- Port: `spice.toml#[policy.file_shape]` declares `.rs` in its
-  `source_suffixes`, and `spice.toml#[policy.languages]` declares the
-  `complexity` and `magic` language sets.
-
-Net effect: the predecessor classifies and measures Rust source using policy the
-Rust repository declares about itself. Reproduced live rather than read from the
-schema -- a layered load over a lane root returns `.rs` in
-`policy.file_shape.source_suffixes` and in `policy.languages.magic`.
-
-## Seam E -- Git's hook dispatch
-
-**Deliberate, mutually exclusive by design.**
-
-Live scope: `core.hooksPath` is set at `--worktree` scope to the relative
-`.spice/hooks`; `--local` and `--global` are both unset. Relative means Git
-resolves it per worktree, and `/.spice/` is excluded in the common directory's
-`info/exclude`. So the three hook scripts are per-lane untracked state, not one
-shared installation.
-
-The three are five-line files: shebang, blank, `set -eu`, blank, and `exec spice
-dev pre-commit` / `commit-msg "$1"` / `reference-transaction "$1"`.
-
-- Predecessor: `spice-z/spice/hooks/initplanning.py#HOOK_ARGS` is the template
-  those five-line files are generated from, verbatim;
-  `spice-z/spice/hooks/install.py#install_hooks_for_repo` writes them and points
-  `core.hooksPath` at them; `spice-z/spice/hooks/cli.py#configure_dev_parser`
-  registers the three verbs and `spice-z/spice/hooks/cli.py#handle_dev`
-  dispatches them.
-- Port: `spice/src/main.rs#gate_command::pre_commit` routes `gate pre-commit` to
-  `spice/src/gate_command.rs#pre_commit`, and `spice/src/cli.rs#landing` admits
-  the route.
-
-The port also ships its own complete hook set:
-`spice/src/install.rs#GIT_PRE_COMMIT_PATH`,
-`spice/src/install.rs#GIT_COMMIT_MESSAGE_PATH` and
-`spice/src/install.rs#GIT_REFERENCE_TRANSACTION_PATH` declare it under
-`.spice-install/git-hooks/`, `spice/src/install.rs#asset_contract` maps each to
-the common Git directory, and `spice/src/install.rs#installed_git_hooks`
-resolves them there. That directory does not exist live, so this set has never
-been installed in this fleet.
-
-Two things about it are worth the record. Its pre-commit body does not run the
-Rust gate at all -- it execs `cargo xtask verify` -- so activating it would give
-a weaker formatter check than the gate itself, since `cargo xtask verify` still
-formats through `cargo fmt` and is therefore blind to `include!` targets. And
-activation is guarded rather than eager: `xtask/src/hooks.rs` states that
-same-worktree coexistence is unsupported because `core.hooksPath` is
-single-valued per scope, that per-repository coexistence is real because
-`extensions.worktreeConfig` makes per-worktree selection work, and that one path
-dispatching to both is rejected because `reference-transaction` runs while the
-repository-global `packed-refs` lock is held.
-`xtask/src/hooks.rs#preflight_worktree_hooks` reads every worktree's effective
-value before any write, worktree overrides are cleared only after that passes,
-`--local` is then set, and the `xtask/src/hooks.rs#ForeignHookPath` refusal says
-to keep Rust and predecessor hooks in separate worktrees.
-
-So the accurate statement is not that the predecessor's hooks run on Rust
-commits. It is that two complete hook systems exist, they are mutually exclusive
-per worktree by explicit design, the port refuses to seize a foreign path, and
-only the predecessor's is activated here.
-
-## Seam F -- keys the predecessor schema permits but never reads
-
-**Deliberate, load-bearing.**
-
-`policy.admission` is declared once, as the bare key `"admission"` in the policy
-table at `spice-z/spice/config/schema.py#"admission"`, and no production Python
-reads the value. The predecessor spells the leaf rather than the dotted path, so
-that is what the anchor names. That narrow claim is the one the evidence
-supports; the key is not confined to the schema table.
-
-The predecessor carries a regression test for it:
-`spice-z/tests/test_configlayer.py#test_repository_configuration_admits_the_rust_publisher_admission_argv`.
-It writes a `spice.toml` declaring `policy.admission` as this port's own
-publisher argv -- `cargo metadata --no-deps --offline --format-version 1` --
-runs the real layered load, asserts the effective value is that six-element
-argv, and asserts its source is the repository layer specifically rather than
-any layer. Its own comment says why it is not a schema-table test: the Rust
-cutover tree sets this argv and every runtime reads the same repository
-configuration, so admitting the key has to survive the real layered load.
-Reproduced live here rather than read.
-
-That test is the reciprocal Seam B lacks for stores. The predecessor is silent
-about the port's databases and deliberately not silent about the port's
-configuration vocabulary, and the difference is the interesting part of both
-seams.
-
-The port consumes the key at `spice/src/config.rs#policy.admission`,
-`gate/src/core/config_keys.rs#policy.admission` and
-`spice/src/task_git/admission.rs#policy.admission`.
-
-The top-level taste rows are the same shape, and
-`spice-z/spice/config/schema.py#policy.taste.words` says so outright:
-`policy.taste.words` stays the predecessor's lexical map while the named rows
-are evaluated by the Rust taste judge. This class is load-bearing rather than
-cosmetic, because an unknown `spice.toml` key makes the predecessor refuse
-outright; its schema had to learn the port's vocabulary for the port to be
-usable at all.
-
-## Seam G -- maxim bags fire on Rust lanes
-
-**Incidental.** This is the seam where one side legitimately admits no line.
-
-- Predecessor: six bags from `spice-z/spice/spice.toml#[maxims.polling]`.
-- Port: none, and that absence is the evidence, so there is no port-side line to
-  give.
-
-Fleet-wide from the shared `spicemaxims.sqlite3` at one reading: 1945 fires, 702
-gate-suppressed, 1243 published, judged-confirmed and judged-rejected both 0 on
-every row. Predecessor behaviour reaching Rust lanes' prose while exercising no
-Rust path. Those counts are a live reading of a shared store that every lane
-writes; they move between one measurement and the next and are a sample, not a
-constant.
-
-## The open discovery
-
-The port declares six `[taste.NAME]` rows in `spice.toml#[taste.` and no
-`policy.taste.words`. `taste/src/config.rs` parses those rows first-class:
-`taste/src/config.rs#pub struct Config`, `taste/src/config.rs#struct Row` with
-`deny_unknown_fields`, and `taste/src/config.rs#pub fn configured`. The
-predecessor's pre-commit taste step at
-`spice-z/spice/hooks/precommit.py#taste` is the lexical map the port does not
-declare. So at commit time those six rows are read by nobody, and whether the
-resident evaluates them live remains the open question;
-`wire/tests/vocabulary.rs#taste::confirmed` and
-`app/tests/runtime/invalidation_and_chronology.rs#taste::cleared` show the
-vocabulary exists.
-
-## Candidate new trigger points
-
-Cheapest first. Every one of these changes the port's own tracked
-configuration, its own lane-local hook directory, or adds new code on the
-predecessor side of a store it already owns. Nothing requiring a change to
-operator-owned predecessor configuration was applied, and none is proposed.
-
-1. **A `[commands]` entry in the port's `spice.toml`.**
-   `spice-z/spice/config/layers.py#effective_commands` exposes named commands;
-   the port declares no `[commands]` table while the predecessor declares one.
-   Zero automatic cost, nothing runs unless invoked.
-2. **A `policy.pre_commit` row in the port's `spice.toml`** running the Rust
-   gate, scoped by paths. The mechanism is proven in the predecessor's own
-   `spice.toml`, which declares `run` plus `scopes.paths`; the port declares
-   zero rows. This is the better route than activating the port's own hook set,
-   because it adds the Rust gate to the live predecessor hook rather than
-   contesting `core.hooksPath`, and because the port's hook would run `cargo
-   xtask verify` instead of the gate. Cost: the debug binary must exist and be
-   current, a stale one refuses rather than fails open, and it adds the gate's
-   wall time to a commit already paying the predecessor's. Scope to `gate/**`
-   first.
-3. **A read-only predecessor projection over `spicejournal.sqlite3`**, the only
-   port-owned store in a directory the predecessor already uses. Strongest
-   available parity evidence short of a cutover; cost is a new reader that must
-   negotiate schema identity rather than assume a fixed shape. Journal schema 3
-   carries write-open migrations from 1 and 2, while read-only opens deliberately
-   refuse an older schema instead of mutating it.
-4. **Activating the port's hook set in a dedicated worktree**, which
-   `xtask/src/hooks.rs#extensions.worktreeConfig` explicitly supports. Highest
-   exercise value and highest risk, because `reference-transaction` runs under
-   the `packed-refs` lock; propose it last and only behind a bounded timeout.
-
-## Provenance
-
-This record was written three times as task validations before it landed here,
-and each generation superseded the last **whole**, because a completed task's
-validation cannot be amended:
-
-- EFFORT-1kKp2Hjr wrote it. **Superseded, do not read as current.**
-- EFFORT-1kKsXcb8 restated it whole to correct four citations. **Superseded, do
-  not read as current.**
-- EFFORT-1kKssls7 restated it whole again to correct two false claims, one scope
-  error and five anchors. It was the newest generation, and this file supersedes
-  it.
-
-The corrections that history records are folded in above rather than listed:
-`policy.admission` is stated in its narrow form with the predecessor's own test
-cited, the invocation negative is narrowed and carries its counterexample, Seam
-B's missing reciprocal is scoped to stores, and every anchor names a symbol
-instead of a line.
-
-EFFORT-1kKtbwdd moved the record here so the next correction is a diff rather
-than a fourth restatement. That is the whole point of the move: from here on,
-the commit that falsifies a sentence can amend it, and `git log` carries the
-generations that used to have to be carried in prose.
+The contract is intentionally asymmetric only where the repository cannot
+execute the separate Python checkout. Rust proves it never touches Python
+state. Python-side citations are dated measurements and must be rechecked in
+that checkout whenever its paths change.

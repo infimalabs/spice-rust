@@ -193,10 +193,11 @@ fn create_followup(
                 "reviewed task disappeared from the validated snapshot",
             )
         })?;
-    let flow = phases(followup.add.flow.as_deref())?;
+    let flow = task_flow(followup.add.flow.as_deref(), &followup.add.acceptance)?;
     let phase = flow[0].clone();
     let statement = TaskHead {
         incepted: followup.task.clone(),
+        queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: followup.add.title.clone(),
         description: followup.add.description.clone(),
         acceptance: followup.add.acceptance.clone(),
@@ -240,6 +241,7 @@ fn create_followup(
         )
         .map_err(|error| store_fault("review::followup-build", &error.to_string()))?;
     write.task_head(added, move |position| TaskHead {
+        queue_origin: position,
         revision: position,
         ..statement
     });

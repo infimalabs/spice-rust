@@ -52,7 +52,7 @@ impl Fixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        let runtime = root.join(".git/.spice");
+        let runtime = root.join(".git/.spice-rs");
         fs::create_dir_all(root.join(".git")).expect("fixture git directory");
         let fixture = Self {
             cleanup: root.clone(),
@@ -79,7 +79,7 @@ impl Fixture {
         fs::write(git.join("commondir"), "../..\n").expect("linked common pointer");
         let fixture = Self {
             root,
-            runtime: common.join(".spice"),
+            runtime: common.join(".spice-rs"),
             cleanup,
         };
         fixture.install_app();
@@ -902,6 +902,7 @@ fn seed_active_claim(fixture: &Fixture) {
     let origin_for_head = origin.clone();
     add.task_head(added, move |seq| TaskHead {
         incepted: task_for_head,
+        queue_origin: seq,
         title: "Preserve an active claim".to_owned(),
         description: None,
         acceptance: Vec::new(),
@@ -933,6 +934,10 @@ fn seed_active_claim(fixture: &Fixture) {
                 lane,
                 occupant,
                 epoch,
+                cell: Some(wire::ClaimCell {
+                    project: "resident".to_owned(),
+                    phase: phase.clone(),
+                }),
                 until: expiry,
                 git: None,
                 source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
@@ -945,6 +950,11 @@ fn seed_active_claim(fixture: &Fixture) {
     claim.claim_head(task.clone(), won, move |seq| ClaimHead {
         actor,
         fact: seq,
+        claimed: seq,
+        cell: wire::ClaimCell {
+            project: "resident".to_owned(),
+            phase,
+        },
         lane,
         occupant,
         epoch,

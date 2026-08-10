@@ -165,6 +165,7 @@ fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::inten
             body: wire::intent::BoardStatement {
                 handle: wire::TaskHandle::for_project(project, &incepted),
                 incepted: incepted.clone(),
+                queue_origin: seq(1),
                 description: None,
                 acceptance: Vec::new(),
                 project: project.to_owned(),
@@ -197,6 +198,7 @@ fn board_response(
 ) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
     let body = wire::intent::BoardAnswer {
         allocation_band: 2,
+        recent_cell: None,
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,

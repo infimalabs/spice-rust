@@ -656,6 +656,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
     let workflow_phase = phase.clone();
     write.task_head(added, move |revision| TaskHead {
         incepted: statement_task,
+        queue_origin: revision,
         title: DEMO_TITLE.to_owned(),
         description: None,
         acceptance: Vec::new(),

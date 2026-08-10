@@ -75,11 +75,17 @@ pub(super) fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
     let entries = actor_entries(answer).expect("allocation guard board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)
         .expect("allocation guard board has one lineage subscription");
-    board::select(&entries, actor, subscription, answer.allocation_band)
-        .expect("allocation guard fixture selects a task")
-        .entry()
-        .handle()
-        .clone()
+    board::select(
+        &entries,
+        actor,
+        subscription,
+        answer.allocation_band,
+        answer.recent_cell.as_ref(),
+    )
+    .expect("allocation guard fixture selects a task")
+    .entry()
+    .handle()
+    .clone()
 }
 
 fn guard_observation(
@@ -98,6 +104,7 @@ fn guard_observation(
         residency_position: answer.residency.position,
         projects: projects.clone(),
         band: answer.allocation_band,
+        recent_cell: answer.recent_cell.clone(),
     }
 }
 

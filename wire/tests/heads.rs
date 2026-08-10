@@ -9,6 +9,7 @@ use wire::{
 
 const TASK: &str = r#"{
   "incepted": "1kKRRsDP",
+  "queue_origin": 40,
   "title": "Bind authority heads",
   "description": "Keep complete task context on the current statement",
   "acceptance": ["Every authored field survives the head round trip"],
@@ -21,6 +22,7 @@ const TASK: &str = r#"{
 
 const TASK_WITHOUT_AUTHORED_CONTEXT: &str = r#"{
   "incepted": "1kKRRsDP",
+  "queue_origin": 40,
   "title": "Bind authority heads",
   "project": "wire",
   "tags": ["genesis", "wire"],
@@ -41,6 +43,11 @@ const WORKFLOW: &str = r#"{
 const CLAIM: &str = r#"{
   "actor": "lane:018f82d4-6f59-7d06-92e3-bce913116302",
   "fact": 42,
+  "claimed": 42,
+  "cell": {
+    "project": "wire",
+    "phase": "todo"
+  },
   "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
   "occupant": "018f82d4-6f59-7d06-92e3-bce913116303",
   "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
@@ -164,6 +171,7 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
             "incepted",
             "project",
             "provenance",
+            "queue_origin",
             "revision",
             "tags",
             "title",
@@ -182,7 +190,16 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
     );
     assert_fields::<ClaimHead>(
         CLAIM,
-        &["actor", "disposition", "epoch", "fact", "lane", "occupant"],
+        &[
+            "actor",
+            "cell",
+            "claimed",
+            "disposition",
+            "epoch",
+            "fact",
+            "lane",
+            "occupant",
+        ],
     );
     assert_fields::<LeaseHead>(LEASE, &["epoch", "expiry", "maximum", "renewal", "start"]);
     assert_fields::<WitnessHead>(WITNESS, &["head", "kind", "name", "predicate"]);
@@ -262,6 +279,7 @@ fn a_pre_extension_residency_head_has_one_visible_unrecorded_launch_state() {
 fn a_pre_context_task_head_normalizes_into_the_current_empty_context() {
     let head: TaskHead = serde_json::from_str(TASK_WITHOUT_AUTHORED_CONTEXT)
         .expect("the pre-context head has one explicit normalization");
+    assert_eq!(head.queue_origin.get(), 40);
     assert_eq!(head.description, None);
     assert_eq!(head.acceptance, Vec::<String>::new());
 }

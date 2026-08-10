@@ -249,7 +249,7 @@ mod tests {
             tape.read(records[1].locus).expect("terminal locus"),
             terminal
         );
-        assert!(matches!(records[0].decoded, Decoded::Events(_)));
+        assert!(matches!(records[0].decoded, Decoded::Events { .. }));
         assert!(matches!(
             &records[1].decoded,
             Decoded::Residue(residue) if residue.kind == ResidueKind::Truncated

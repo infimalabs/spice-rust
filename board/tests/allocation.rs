@@ -121,6 +121,7 @@ fn fixture() -> Journal {
         let statement_origin = origin.clone();
         write.task_head(fact, move |position| TaskHead {
             incepted: statement_task,
+            queue_origin: position,
             title: format!("Allocate {name}"),
             description: None,
             acceptance: Vec::new(),
@@ -175,6 +176,7 @@ fn minted(journal: &mut Journal, git: Option<body::GitBoundary>, source: body::S
             task: &task,
             actor: &actor,
             workflow: &workflow(),
+            project: "board.allocate",
             lane: uuid(20),
             occupant: uuid(21),
             epoch: uuid(22),
@@ -224,7 +226,7 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
     assert_eq!(
         written,
         BTreeSet::from([
-            "task", "actor", "lane", "occupant", "epoch", "until", "source",
+            "task", "actor", "lane", "occupant", "epoch", "cell", "until", "source",
         ]),
         "the claim fact carries exactly the fields the minter writes"
     );
@@ -242,9 +244,14 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
         occupant,
         epoch,
         disposition,
+        claimed,
+        cell,
     } = entry.claim().expect("minting writes a claim head");
     assert_eq!(actor, &Actor::Lane(uuid(20)));
     assert_eq!(*fact, claim.seq);
+    assert_eq!(*claimed, claim.seq);
+    assert_eq!(cell.project, "board.allocate");
+    assert_eq!(cell.phase, phase("todo"));
     assert_eq!(*lane, uuid(20));
     assert_eq!(*occupant, uuid(21));
     assert_eq!(*epoch, uuid(22));

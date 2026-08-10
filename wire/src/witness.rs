@@ -414,11 +414,6 @@ pub enum Witness {
         /// Disposition the command relies on.
         disposition: Disposition,
     },
-    /// The preceding directive a resend carries lineage from.
-    Lineage {
-        /// Directive this one descends from.
-        steer: CanonicalUuid,
-    },
     /// A consent request's current disposition.
     Consent {
         /// Subject request.
@@ -514,8 +509,6 @@ pub enum WitnessKind {
     Barrier,
     /// A directive's retirement state.
     Directive,
-    /// A preceding directive in a resend lineage.
-    Lineage,
     /// A consent request's disposition.
     Consent,
     /// A named consent rule.
@@ -554,7 +547,6 @@ impl WitnessKind {
         Self::Preview,
         Self::Barrier,
         Self::Directive,
-        Self::Lineage,
         Self::Consent,
         Self::Rule,
         Self::Budget,
@@ -585,7 +577,6 @@ impl Witness {
             Self::Preview { .. } => WitnessKind::Preview,
             Self::Barrier { .. } => WitnessKind::Barrier,
             Self::Directive { .. } => WitnessKind::Directive,
-            Self::Lineage { .. } => WitnessKind::Lineage,
             Self::Consent { .. } => WitnessKind::Consent,
             Self::Rule { .. } => WitnessKind::Rule,
             Self::Budget { .. } => WitnessKind::Budget,

@@ -250,7 +250,9 @@ pub(super) fn add_project_with_acceptance(
             description: None,
             acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
             origin: None,
-            flow: flow.map(str::to_owned),
+            flow: flow
+                .or_else(|| acceptance.is_empty().then_some("todo,review"))
+                .map(str::to_owned),
             depends: Vec::new(),
         },
     ));

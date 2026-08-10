@@ -76,6 +76,7 @@ const TASTE_CONFIRMED: &str = r#"{
 const RELEASE_PUBLISHED: &str = r#"{
   "kind": "release::published",
   "manifest": "4a1b9c2d3e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef",
+  "notes": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "targets": [
     {
       "target": "aarch64-apple-darwin",
@@ -184,6 +185,7 @@ fn a_nested_body_keeps_its_specified_entry_fields() {
     let fact: Fact<body::ReleasePublished> = round_trip(RELEASE_PUBLISHED);
 
     assert_eq!(fact.kind(), FactKind::ReleasePublished);
+    assert!(fact.body.notes.digest().is_some());
     let [target] = fact.body.targets.as_slice() else {
         panic!("the fixture publishes exactly one target");
     };
@@ -301,6 +303,33 @@ fn every_digest_carrying_fact_refuses_a_noncanonical_spelling() {
     assert_noncanonical_digest_refused::<body::GateFound>(GATE_FOUND, "receipt");
     assert_noncanonical_digest_refused::<body::ProofSealed>(PROOF_SEALED, "manifest");
     assert_noncanonical_digest_refused::<body::ReleasePublished>(RELEASE_PUBLISHED, "manifest");
+    assert_noncanonical_digest_refused::<body::ReleasePublished>(RELEASE_PUBLISHED, "notes");
+}
+
+#[test]
+fn historical_release_note_absence_is_explicit_and_missing_current_wire_refuses() {
+    let mut value: serde_json::Value =
+        serde_json::from_str(RELEASE_PUBLISHED).expect("release fixture is JSON");
+    value["notes"] = serde_json::Value::Null;
+    let historical: Fact<body::ReleasePublished> =
+        wire::decode(&serde_json::to_vec(&value).expect("historical fixture encodes"))
+            .expect("explicit historical absence decodes");
+    assert_eq!(
+        historical.body.notes,
+        wire::ReleaseNotesIdentity::HistoricalAbsent
+    );
+
+    value
+        .as_object_mut()
+        .expect("release fixture is an object")
+        .remove("notes");
+    assert!(
+        wire::decode::<Fact<body::ReleasePublished>>(
+            &serde_json::to_vec(&value).expect("missing fixture encodes")
+        )
+        .is_err(),
+        "unmigrated release JSON must not enter the current decoder"
+    );
 }
 
 #[test]
@@ -444,8 +473,21 @@ fn producer_assignment_follows_the_specified_enumeration() {
         );
     }
 
+    let command_gate = [FactKind::GateFindingsFiled];
+    for kind in command_gate {
+        assert_eq!(
+            kind.producer(),
+            Producer::CommandDoor,
+            "{kind} is minted by the command door"
+        );
+    }
+
     for kind in FactKind::ALL {
-        if bus_timers.contains(kind) || scanned.contains(kind) || recognized.contains(kind) {
+        if bus_timers.contains(kind)
+            || scanned.contains(kind)
+            || recognized.contains(kind)
+            || command_gate.contains(kind)
+        {
             continue;
         }
         let spelling = kind.as_str();

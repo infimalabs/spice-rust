@@ -26,7 +26,9 @@ impl MappedCommand {
             SelectedCommand::LaneState { body } => Self::lane_state(contract, body),
             SelectedCommand::LaneRecall { body } => Self::lane_recall(contract, body),
             SelectedCommand::SteerCancel { directive } => Self::steer_cancel(contract, directive),
+            SelectedCommand::SteerResend { directive } => Self::steer_resend(contract, directive),
             SelectedCommand::SteerRecover { directive } => Self::steer_recover(contract, directive),
+            SelectedCommand::SteerRepair { lane } => Self::steer_repair(contract, lane),
             SelectedCommand::SteerSend { .. }
             | SelectedCommand::SteerInbox { .. }
             | SelectedCommand::SteerAck { .. } => Err(protocol_fault(
@@ -119,6 +121,7 @@ impl MappedCommand {
             &wire::intent::ReleasePublish {
                 key: release.key().clone(),
                 manifest: release.manifest().clone(),
+                notes: release.notes().clone().into(),
             },
         )
     }
@@ -180,15 +183,35 @@ impl MappedCommand {
         Self::new(
             contract,
             &["steer", "recover"],
-            CommandKind::SteerResend,
-            vec![
-                Witness::Directive {
-                    steer: directive,
-                    disposition: Disposition::Lapsed,
-                },
-                Witness::Lineage { steer: directive },
-            ],
+            CommandKind::SteerRecover,
+            vec![Witness::Directive {
+                steer: directive,
+                disposition: Disposition::Lapsed,
+            }],
             &wire::intent::DirectiveRef { directive },
+        )
+    }
+
+    fn steer_resend(contract: &Contract, directive: CanonicalUuid) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["steer", "resend"],
+            CommandKind::SteerResend,
+            vec![Witness::Directive {
+                steer: directive,
+                disposition: Disposition::Live,
+            }],
+            &wire::intent::DirectiveRef { directive },
+        )
+    }
+
+    fn steer_repair(contract: &Contract, lane: CanonicalUuid) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["steer", "repair"],
+            CommandKind::SteerRepair,
+            Vec::new(),
+            &wire::intent::SteerRepair { lane },
         )
     }
 

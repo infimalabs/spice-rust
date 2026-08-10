@@ -83,11 +83,13 @@ fn table_census(connection: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::t
 /// which is correct, since schema 1 had nowhere to put it.
 fn schema_one_authority(path: &Path) {
     let journal = authority_file_fixture(path);
-    downgrade_task_identity_to_three(&journal.connection);
+    downgrade_task_identity_to_five(&journal.connection);
     journal
         .connection
         .execute_batch(
-            "DROP TABLE transcript_source_heads;
+            "DELETE FROM lease_heads;
+             DELETE FROM claim_heads;
+             DROP TABLE transcript_source_heads;
              UPDATE journal_schema SET version = 1 WHERE singleton = 1;
              PRAGMA user_version = 1;",
         )

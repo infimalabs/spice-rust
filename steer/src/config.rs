@@ -1,11 +1,11 @@
 //! Pure admission of tracked steering horizons.
 
+use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize};
 use wire::DurationWord;
 
 /// The defaultable tracked steering policy.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Config {
     expiry: DurationWord,
     resend: Vec<DurationWord>,
@@ -23,6 +23,16 @@ impl Config {
     pub fn resend(&self) -> &[DurationWord] {
         &self.resend
     }
+
+    /// The three absolute silence horizons from original publication.
+    #[must_use]
+    pub fn stage_horizons(&self) -> [std::time::Duration; 3] {
+        [
+            self.resend[0].get(),
+            self.resend[1].get(),
+            self.resend[2].get(),
+        ]
+    }
 }
 
 impl Default for Config {
@@ -31,10 +41,51 @@ impl Default for Config {
             expiry: "24h"
                 .parse()
                 .expect("the compiled steering expiry is valid"),
-            resend: ["5m", "15m", "1h"]
+            resend: ["15s", "60s", "300s"]
                 .into_iter()
                 .map(|word| word.parse().expect("compiled resend words are valid"))
                 .collect(),
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct RawConfig {
+    expiry: DurationWord,
+    resend: Vec<DurationWord>,
+}
+
+impl Default for RawConfig {
+    fn default() -> Self {
+        let config = Config::default();
+        Self {
+            expiry: config.expiry,
+            resend: config.resend,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawConfig::deserialize(deserializer)?;
+        let [reminded, escalated, overdue] = raw.resend.as_slice() else {
+            return Err(D::Error::custom(format!(
+                "steer.resend requires exactly three horizons, found {}",
+                raw.resend.len()
+            )));
+        };
+        if !(reminded.get() < escalated.get()
+            && escalated.get() < overdue.get()
+            && overdue.get() < raw.expiry.get())
+        {
+            return Err(D::Error::custom(
+                "steer horizons must satisfy reminded < escalated < overdue < expiry",
+            ));
+        }
+        Ok(Self {
+            expiry: raw.expiry,
+            resend: raw.resend,
+        })
     }
 }

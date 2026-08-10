@@ -907,26 +907,36 @@ fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
 }
 
 #[test]
-fn legacy_record_names_its_owning_release_and_refuses_without_mutation() {
-    for (relative, owner) in LEGACY_RECORDS {
-        let scratch = Scratch::new(owner);
-        let repository = scratch.repository();
-        let legacy = repository.common_dir().join(relative);
-        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        fs::write(&legacy, b"legacy record bytes\n").unwrap();
-        let before_exclude = fs::read(scratch.exclude()).unwrap();
-
-        let error = plan(&repository, None).unwrap_err();
-        assert!(matches!(
-            &error,
-            InstallError::LegacyRecord { path, owner: observed }
-                if path == &legacy && observed == &owner
-        ));
-        assert!(error.to_string().contains(owner));
-        assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
-        assert!(!record_path(&repository).unwrap().exists());
-        assert!(!repository.common_dir().join(ENTRY_PATH).exists());
+fn python_state_root_is_not_an_install_input() {
+    let scratch = Scratch::new("python-state");
+    let repository = scratch.repository();
+    let python = repository.common_dir().join(".spice");
+    let sentinels = [
+        python.join("install"),
+        python.join("install.json"),
+        python.join("rust/install.json"),
+    ];
+    for (index, path) in sentinels.iter().enumerate() {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, format!("python-owned-{index}\n")).unwrap();
     }
+    let before = sentinels
+        .iter()
+        .map(|path| fs::read(path).unwrap())
+        .collect::<Vec<_>>();
+
+    let preview = plan(&repository, None).expect("Python state cannot block Rust preview");
+
+    assert!(!preview.operations().is_empty());
+    assert_eq!(
+        sentinels
+            .iter()
+            .map(|path| fs::read(path).unwrap())
+            .collect::<Vec<_>>(),
+        before
+    );
+    assert!(!record_path(&repository).unwrap().exists());
+    assert!(!repository.common_dir().join(ENTRY_PATH).exists());
 }
 
 #[test]

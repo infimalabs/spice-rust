@@ -9,6 +9,7 @@ pub use canvas;
 pub mod agent_launch;
 pub mod cli;
 pub mod config;
+pub mod extension;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod gate;
 #[cfg(not(target_arch = "wasm32"))]

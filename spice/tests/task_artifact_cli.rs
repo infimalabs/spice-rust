@@ -91,7 +91,7 @@ impl Resident {
             .spawn()
             .expect("start resident");
         let mut resident = Self(Some(child));
-        let canvas = fixture.root.join(".git/.spice/canvas");
+        let canvas = fixture.root.join(".git/.spice-rs/canvas");
         let watched = canvas.parent().expect("canvas has runtime parent");
         fs::create_dir_all(watched).expect("runtime directory");
         match readiness::wait_until_ready(
@@ -273,7 +273,7 @@ fn restore_refuses_an_internally_valid_artifact_for_an_unknown_task_inertly() {
     let fixture = Fixture::new();
     let resident = Resident::start(&fixture);
     resident.stop(&fixture);
-    let runtime = fixture.root.join(".git/.spice");
+    let runtime = fixture.root.join(".git/.spice-rs");
     let authority = runtime.join("data/spicejournal.sqlite3");
     let store = Store::new(
         runtime.join("artifacts/tasks"),
