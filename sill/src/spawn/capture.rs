@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 pub(super) struct CaptureHandle {
     state: Arc<Mutex<CaptureState>>,
     failure_supervised: bool,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 #[derive(Debug)]
@@ -42,11 +43,29 @@ impl CaptureHandle {
             .map_or(Ok(()), |failure| Err(failure.error()))
     }
 
-    pub(super) fn finish(self) -> io::Result<CapturedOutput> {
+    pub(super) fn snapshot(&self) -> io::Result<CapturedOutput> {
         self.state
             .lock()
             .map(|state| state.output.clone())
             .map_err(|_| io::Error::other("capture state lock is poisoned"))
+    }
+
+    pub(super) fn finish(mut self) -> io::Result<()> {
+        let complete = self
+            .state
+            .lock()
+            .map(|state| state.output.complete)
+            .map_err(|_| io::Error::other("capture state lock is poisoned"))?;
+        // A complete reader has crossed EOF and is safe to join. An incomplete
+        // reader can only be held by a descriptor outside the supervised
+        // process group; detaching preserves the declared drain bound instead
+        // of turning cleanup into an unbounded join on foreign ownership.
+        if complete && let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| io::Error::other("capture worker panicked"))?;
+        }
+        Ok(())
     }
 }
 
@@ -103,7 +122,7 @@ where
         observer_complete: !selected,
     }));
     let worker_state = Arc::clone(&state);
-    std::thread::spawn(move || {
+    let worker = std::thread::spawn(move || {
         let mut framer = observation.map(|observation| {
             SelectedFramer::new(
                 observation,
@@ -169,6 +188,11 @@ where
     CaptureHandle {
         state,
         failure_supervised,
+        // Opaque capture is wholly owned by Sill and can therefore be joined
+        // after process-group cleanup. A selected capture may still be inside
+        // caller-owned observer code whose separate deadline and failure path
+        // deliberately prevent it from bounding process cleanup.
+        worker: (!selected).then_some(worker),
     }
 }
 

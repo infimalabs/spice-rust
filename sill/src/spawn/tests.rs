@@ -52,6 +52,71 @@ type DrainResult = Result<RecordedDrain, ObservationFailure>;
 const DRAIN_RECORD_COUNT: usize = 4_096;
 const DRAIN_COMPLETION_LIMIT: Duration = Duration::from_secs(10);
 
+#[test]
+fn one_bounded_stdin_write_is_closed_before_event_driven_completion() {
+    let mut spec = test_spec(
+        "/bin/sh",
+        ["-c", "input=$(cat); printf 'received:%s' \"$input\""],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(1),
+        StreamPolicy::Capture { limit: 64 },
+    );
+    spec.output = Output::new(
+        StdinPolicy::Pipe,
+        StreamPolicy::Capture { limit: 64 },
+        StreamPolicy::Capture { limit: 64 },
+    );
+    let mut running = spawn(spec).expect("piped-input child launches");
+
+    running
+        .write_stdin(b"one complete request")
+        .expect("request writes and closes");
+    let outcome = running.wait().expect("child completes after input EOF");
+
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+    assert_eq!(
+        outcome.stdout().expect("stdout captured").bytes(),
+        b"received:one complete request"
+    );
+}
+
+#[test]
+fn a_child_that_never_reads_stdin_cannot_pin_cleanup() {
+    let mut spec = test_spec(
+        "/bin/sh",
+        ["-c", "while :; do /bin/sleep 60; done"],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_millis(50),
+        StreamPolicy::Capture { limit: 64 },
+    );
+    spec.output = Output::new(
+        StdinPolicy::Pipe,
+        StreamPolicy::Capture { limit: 64 },
+        StreamPolicy::Capture { limit: 64 },
+    );
+    let mut running = spawn(spec).expect("non-reading child launches");
+    let request = vec![b'x'; 1024 * 1024];
+
+    running
+        .write_stdin(&request)
+        .expect("large request enters the supervised writer");
+    let started = Instant::now();
+    match running.wait() {
+        Ok(outcome) => {
+            assert!(matches!(outcome.completion(), Completion::TimedOut(_)));
+            assert!(outcome.outputs_drained());
+        }
+        Err(WaitError::Io {
+            operation: "writing stdin",
+            ..
+        }) => {}
+        Err(error) => panic!("blocked input ended through an unexpected boundary: {error}"),
+    }
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
 #[derive(Debug)]
 struct DrainObserver {
     records: Mutex<RecordedDrain>,

@@ -467,7 +467,16 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     let lane = test_uuid(5);
     let occupant = test_uuid(6);
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    seed_lane(&bus, epoch, lane, occupant);
+    seed_lane_in_worktree(
+        &bus,
+        epoch,
+        lane,
+        occupant,
+        paths
+            .worktree
+            .to_str()
+            .expect("fixture worktree path is Unicode"),
+    );
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
     let publisher = source.message_publisher();
     let (record, bag) = reminder_capture(lane, occupant);
@@ -524,23 +533,7 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
         CaptureViews::new(&mut previews, &mut diagnostics),
     )
     .expect("enabled capture reaches resident adjudication");
-    let snapshot = bus.fact_snapshot().expect("adjudicated facts read");
-    assert_eq!(
-        snapshot
-            .facts()
-            .iter()
-            .filter(|fact| fact.fact.kind() == wire::FactKind::TasteJudged)
-            .count(),
-        1,
-        "the admitted capture path persists the adjudicator verdict"
-    );
-    assert_eq!(
-        steer::Ledger::from_snapshot(&snapshot)
-            .expect("direct and judged publications replay")
-            .pending(lane)
-            .len(),
-        2,
-    );
+    assert_taste_state(&bus, lane, wire::FactKind::TasteJudged, 2);
     assert!(diagnostics.is_empty());
     seats
         .vacate(lane)
@@ -640,6 +633,26 @@ fn judged_capture(
     ])
     .expect("taste bag");
     (judged_record, judged_bag)
+}
+
+fn assert_taste_state(bus: &Bus, lane: CanonicalUuid, kind: wire::FactKind, pending: usize) {
+    let snapshot = bus.fact_snapshot().expect("taste facts read");
+    assert_eq!(
+        snapshot
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == kind)
+            .count(),
+        1,
+        "the admitted capture persists one fact of the expected kind"
+    );
+    assert_eq!(
+        steer::Ledger::from_snapshot(&snapshot)
+            .expect("taste publications replay")
+            .pending(lane)
+            .len(),
+        pending,
+    );
 }
 
 fn assert_tool_media_and_prose_activity(
