@@ -455,7 +455,7 @@ fn unavailable_judge_abandons_candidate_without_fact_or_reminder() {
     let bag = bag(&[("polling", &["poll*"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let mut judge = FunctionAdjudicator(|_: &Candidate| {
-        Err(crate::judge::failure(
+        Err(crate::judge::failure_error(
             "unavailable",
             "fixture judge is absent",
         ))

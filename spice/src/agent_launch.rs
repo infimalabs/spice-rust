@@ -13,7 +13,7 @@ use crate::config::Root;
 /// Child variable understood by Claude Code's auto-compaction boundary.
 pub const CLAUDE_AUTO_COMPACT_WINDOW: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
 /// Child variable binding every supervised Rust shell to its durable lane.
-pub const SPICE_RS_LANE: &str = steer::hook::LANE;
+pub const SPICE_RS_LANE: &str = wire::SpiceVariable::Lane.as_str();
 /// Claude's native commit attribution trailer.
 pub const CLAUDE_ATTRIBUTION_TRAILER: &str = "Co-Authored-By";
 

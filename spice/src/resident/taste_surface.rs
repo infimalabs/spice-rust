@@ -154,15 +154,7 @@ where
             .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
         let anchor = context_anchor(&snapshot, record.lane, record.occupant)
             .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
-        let mut unsuppressed = Vec::new();
-        for candidate in &candidates {
-            let already_recorded =
-                was_judged(&snapshot, &candidate.content, &candidate.bag, anchor)
-                    || was_reminded(&snapshot, &candidate.content, anchor);
-            if !already_recorded {
-                unsuppressed.push(candidate.clone());
-            }
-        }
+        let unsuppressed = unsuppressed_candidates(&candidates, &snapshot, anchor);
         if unsuppressed.is_empty() {
             return Ok(());
         }
@@ -171,96 +163,31 @@ where
             .map_err(|error| store_fault("taste::steering-invalid", &error.to_string()))?;
         let at = current_instant()?;
         let expires = expiry(at, steering_config.expiry().get())?;
-        let (openings, proposal) = if let Some(adjudicator) = judge.as_deref_mut() {
-            let decisions =
-                adjudicate_candidates(unsuppressed, anchor, &mut decision_cache, adjudicator);
-            if decisions.is_empty() {
-                return Ok(());
-            }
-            let openings = openings(
-                decisions
-                    .iter()
-                    .filter(|decision| decision.judgment.confirmed)
-                    .map(|decision| decision.candidate.clone())
-                    .collect(),
+        let proposal = if let Some(adjudicator) = judge.as_mut() {
+            judged_recognition_proposal(
+                epoch,
+                record,
+                anchor,
                 &ledger,
                 at,
-            )?;
-            let mut proposal = write(Actor::Spice, epoch, Producer::Judge)?;
-            proposal.guard(judgment_guard(
-                epoch,
-                record.lane,
-                record.occupant,
-                anchor,
-                decisions.clone(),
-                openings.clone(),
-            ));
-            for decided in &decisions {
-                let decision = if decided.judgment.confirmed {
-                    let opening = openings
-                        .iter()
-                        .find(|opening| opening.candidate.content == decided.candidate.content)
-                        .expect("every confirmed decision owns one opening");
-                    TasteDecision::Confirmed {
-                        directive: opening.directive,
-                        key: opening.key.to_string(),
-                        text: opening.candidate.text.clone(),
-                        expires,
-                    }
-                } else {
-                    TasteDecision::Cleared
-                };
-                proposal
-                    .fact(
-                        TasteJudged {
-                            lane: record.lane,
-                            occupant: record.occupant,
-                            compaction: anchor.get(),
-                            taste: decided.candidate.taste.clone(),
-                            content: decided.candidate.content.clone(),
-                            bag: decided.candidate.bag.clone(),
-                            trigger: decided.candidate.trigger.clone(),
-                            driver: decided.candidate.driver.clone(),
-                            source: decided.candidate.source.clone(),
-                            locus: decided.candidate.locus,
-                            attempts: decided.judgment.attempts.clone(),
-                            decision,
-                        },
-                        FactCause::Existing(anchor),
-                    )
-                    .map_err(|error| store_fault("taste::judgment-invalid", &error.to_string()))?;
-            }
-            (openings, proposal)
+                expires,
+                unsuppressed,
+                &mut decision_cache,
+                &mut **adjudicator,
+            )?
         } else {
-            let openings = openings(unsuppressed, &ledger, at)?;
-            let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
-            proposal.guard(reminder_guard(
+            Some(reminder_proposal(
                 epoch,
-                record.lane,
-                record.occupant,
+                record,
                 anchor,
-                openings.clone(),
-            ));
-            for opening in &openings {
-                proposal
-                    .fact(
-                        wire::body::TasteReminded {
-                            directive: opening.directive,
-                            key: opening.key.to_string(),
-                            lane: record.lane,
-                            taste: opening.candidate.taste.clone(),
-                            content: opening.candidate.content.clone(),
-                            occupant: record.occupant,
-                            compaction: anchor.get(),
-                            locus: opening.candidate.locus,
-                            text: opening.candidate.text.clone(),
-                            expires,
-                        },
-                        FactCause::Existing(anchor),
-                    )
-                    .map_err(|error| store_fault("taste::reminder-invalid", &error.to_string()))?;
-            }
-            (openings, proposal)
+                &ledger,
+                at,
+                expires,
+                unsuppressed,
+            )?)
+        };
+        let Some((openings, proposal)) = proposal else {
+            return Ok(());
         };
 
         match commit_write(bus, &openings, proposal) {
@@ -283,6 +210,156 @@ where
         }
     }
     unreachable!("the final commit attempt returns instead of retrying")
+}
+
+fn unsuppressed_candidates(
+    candidates: &[Candidate],
+    snapshot: &journal::FactSnapshot,
+    anchor: Seq,
+) -> Vec<Candidate> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            !was_judged(snapshot, &candidate.content, &candidate.bag, anchor)
+                && !was_reminded(snapshot, &candidate.content, anchor)
+        })
+        .cloned()
+        .collect()
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "proposal construction names the authority snapshot and cache boundary"
+)]
+fn judged_recognition_proposal(
+    epoch: CanonicalUuid,
+    record: &lane::capture::CaptureRecord,
+    anchor: Seq,
+    ledger: &steer::Ledger,
+    at: Instant,
+    expires: Instant,
+    unsuppressed: Vec<Candidate>,
+    decision_cache: &mut BTreeMap<(Digest, Digest, u64), Option<Judgment>>,
+    adjudicator: &mut dyn Adjudicator,
+) -> CommandResult<Option<(Vec<Opening>, JournalWrite)>> {
+    let decisions = adjudicate_candidates(unsuppressed, anchor, decision_cache, adjudicator);
+    if decisions.is_empty() {
+        return Ok(None);
+    }
+    judged_proposal(epoch, record, anchor, ledger, at, expires, decisions).map(Some)
+}
+
+fn judged_proposal(
+    epoch: CanonicalUuid,
+    record: &lane::capture::CaptureRecord,
+    anchor: Seq,
+    ledger: &steer::Ledger,
+    at: Instant,
+    expires: Instant,
+    decisions: Vec<JudgedCandidate>,
+) -> CommandResult<(Vec<Opening>, JournalWrite)> {
+    let openings = openings(
+        decisions
+            .iter()
+            .filter(|decision| decision.judgment.confirmed)
+            .map(|decision| decision.candidate.clone())
+            .collect(),
+        ledger,
+        at,
+    )?;
+    let mut proposal = write(Actor::Spice, epoch, Producer::Judge)?;
+    proposal.guard(judgment_guard(
+        epoch,
+        record.lane,
+        record.occupant,
+        anchor,
+        decisions.clone(),
+        openings.clone(),
+    ));
+    for decided in &decisions {
+        let decision = taste_decision(decided, &openings, expires);
+        proposal
+            .fact(
+                TasteJudged {
+                    lane: record.lane,
+                    occupant: record.occupant,
+                    compaction: anchor.get(),
+                    taste: decided.candidate.taste.clone(),
+                    content: decided.candidate.content.clone(),
+                    bag: decided.candidate.bag.clone(),
+                    trigger: decided.candidate.trigger.clone(),
+                    driver: decided.candidate.driver.clone(),
+                    source: decided.candidate.source.clone(),
+                    locus: decided.candidate.locus,
+                    attempts: decided.judgment.attempts.clone(),
+                    decision,
+                },
+                FactCause::Existing(anchor),
+            )
+            .map_err(|error| store_fault("taste::judgment-invalid", &error.to_string()))?;
+    }
+    Ok((openings, proposal))
+}
+
+fn taste_decision(
+    decided: &JudgedCandidate,
+    openings: &[Opening],
+    expires: Instant,
+) -> TasteDecision {
+    if decided.judgment.confirmed {
+        let opening = openings
+            .iter()
+            .find(|opening| opening.candidate.content == decided.candidate.content)
+            .expect("every confirmed decision owns one opening");
+        TasteDecision::Confirmed {
+            directive: opening.directive,
+            key: opening.key.to_string(),
+            text: opening.candidate.text.clone(),
+            expires,
+        }
+    } else {
+        TasteDecision::Cleared
+    }
+}
+
+fn reminder_proposal(
+    epoch: CanonicalUuid,
+    record: &lane::capture::CaptureRecord,
+    anchor: Seq,
+    ledger: &steer::Ledger,
+    at: Instant,
+    expires: Instant,
+    unsuppressed: Vec<Candidate>,
+) -> CommandResult<(Vec<Opening>, JournalWrite)> {
+    let openings = openings(unsuppressed, ledger, at)?;
+    let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    proposal.guard(reminder_guard(
+        epoch,
+        record.lane,
+        record.occupant,
+        anchor,
+        openings.clone(),
+    ));
+    for opening in &openings {
+        proposal
+            .fact(
+                wire::body::TasteReminded {
+                    directive: opening.directive,
+                    key: opening.key.to_string(),
+                    lane: record.lane,
+                    taste: opening.candidate.taste.clone(),
+                    content: opening.candidate.content.clone(),
+                    occupant: record.occupant,
+                    compaction: anchor.get(),
+                    locus: opening.candidate.locus,
+                    text: opening.candidate.text.clone(),
+                    expires,
+                },
+                FactCause::Existing(anchor),
+            )
+            .map_err(|error| store_fault("taste::reminder-invalid", &error.to_string()))?;
+    }
+    Ok((openings, proposal))
 }
 
 fn candidates(

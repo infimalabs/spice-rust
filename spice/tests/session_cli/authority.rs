@@ -126,48 +126,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
     let seated = write
         .fact(body::UpSeated { epoch }, FactCause::Root)
         .expect("seating fact builds");
-    let lanes = vec![
-        LaneResidency {
-            lane,
-            lineage_id: lane,
-            name: None,
-            worktree: "/fixture".to_owned(),
-            life: "drive".to_owned(),
-            vendor: "codex".parse().expect("fixture vendor"),
-            occupant: Some(occupant),
-            lineage: vec![occupant],
-            capabilities: Vec::new(),
-            session: Some(wire::LaneSession {
-                lane,
-                occupant,
-                worktree: "/fixture".to_owned(),
-                vendor: "codex".parse().expect("fixture vendor"),
-                launch: None,
-                epoch,
-                stream: "session".to_owned(),
-                identity: thread.to_owned(),
-                locus: wire::TapeLocus {
-                    member: 0,
-                    offset: 0,
-                    length: thread.len() as u64,
-                },
-            }),
-            disposition: "occupied".to_owned(),
-        },
-        LaneResidency {
-            lane: peer_lane,
-            lineage_id: peer_lane,
-            name: None,
-            worktree: "/fixture-peer".to_owned(),
-            life: "drive".to_owned(),
-            vendor: "codex".parse().expect("fixture vendor"),
-            occupant: Some(peer_occupant),
-            lineage: vec![peer_occupant],
-            capabilities: Vec::new(),
-            session: None,
-            disposition: "occupied".to_owned(),
-        },
-    ];
+    let lanes = briefing_lanes(lane, occupant, epoch, peer_lane, peer_occupant, thread);
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
@@ -227,6 +186,58 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         "spice.session",
         instant(2),
     );
+}
+
+fn briefing_lanes(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    peer_lane: CanonicalUuid,
+    peer_occupant: CanonicalUuid,
+    thread: &str,
+) -> Vec<LaneResidency> {
+    vec![
+        LaneResidency {
+            lane,
+            lineage_id: lane,
+            name: None,
+            worktree: "/fixture".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "codex".parse().expect("fixture vendor"),
+            occupant: Some(occupant),
+            lineage: vec![occupant],
+            capabilities: Vec::new(),
+            session: Some(wire::LaneSession {
+                lane,
+                occupant,
+                worktree: "/fixture".to_owned(),
+                vendor: "codex".parse().expect("fixture vendor"),
+                launch: None,
+                epoch,
+                stream: "session".to_owned(),
+                identity: thread.to_owned(),
+                locus: wire::TapeLocus {
+                    member: 0,
+                    offset: 0,
+                    length: thread.len() as u64,
+                },
+            }),
+            disposition: "occupied".to_owned(),
+        },
+        LaneResidency {
+            lane: peer_lane,
+            lineage_id: peer_lane,
+            name: None,
+            worktree: "/fixture-peer".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "codex".parse().expect("fixture vendor"),
+            occupant: Some(peer_occupant),
+            lineage: vec![peer_occupant],
+            capabilities: Vec::new(),
+            session: None,
+            disposition: "occupied".to_owned(),
+        },
+    ]
 }
 
 fn mint_claim(
@@ -318,7 +329,7 @@ fn briefing_authority_sources_asks_and_held_work_from_exact_state_authorities() 
     write_jsonl(&transcript, &codex_rows());
     let thread = uuid(0xaa).to_string().replace('-', "");
     seed_briefing_authority(&authority_path(scratch.path()), &thread);
-    let environment = [("CODEX_THREAD_ID", thread.clone())];
+    let environment = [("CODEX_THREAD_ID", thread.clone())]; // env-policy: allow
 
     let recall = reply_forms_in(
         Some(scratch.path()),

@@ -436,7 +436,7 @@ fn compiler_evidence(
 fn assert_fallback_compiler_trace(cargo_log: &Path, trunk_log: &Path) {
     let cargo = fs::read_to_string(cargo_log).expect("read fallback Cargo trace");
     assert!(cargo.contains("check --locked --workspace --all-targets"));
-    assert!(cargo.contains("check --locked --workspace --target wasm32-unknown-unknown"));
+    assert!(cargo.contains("check --locked --package app --target wasm32-unknown-unknown"));
     let trunk = fs::read_to_string(trunk_log).expect("read fallback Trunk trace");
     assert_eq!(
         trunk.trim(),

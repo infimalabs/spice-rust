@@ -261,7 +261,8 @@ const HOME_DIRECTORY: &str = concat!("HO", "ME");
 const CARGO_WASM_ARGUMENTS: &[&str] = &[
     "check",
     "--locked",
-    "--workspace",
+    "--package",
+    "app",
     "--target",
     "wasm32-unknown-unknown",
 ];

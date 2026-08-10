@@ -231,17 +231,33 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         report.configuration.tasks().project_max_depth(),
         dialect::PROJECT_MAX_DEPTH as u64
     );
+    assert_tracked_environment_vocabulary(&report);
+    for path in [
+        "tasks.stems",
+        "tasks.project_min_depth",
+        "tasks.project_max_depth",
+        "policy.env_names",
+    ] {
+        assert!(
+            report
+                .provenance
+                .iter()
+                .any(|row| { row.path == path && row.source == ConfigSource::Tracked }),
+            "missing tracked provenance for {path}"
+        );
+    }
+    assert_eq!(
+        fs::read(repository.path().join("spice-rust.toml")).unwrap(),
+        tracked
+    );
+    assert_eq!(fs::read(&hook).unwrap(), b"active operator hook sentinel\n");
+    assert_eq!(directory_state(repository.path()), before);
+}
+
+fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
     // Doctor reports the variables Spice owns, while the tracked vocabulary also
-    // accounts the ones its fixtures and Git shadow use: three local Git
-    // names, three Git configuration names, the hygiene fixture's TMPDIR, the
-    // verifier's isolated Canvas/proof binary paths, and predecessor Spice
-    // handoff names used as coexistence sentinels.
-    // The gate's name ledger accounts every name the tree references. That the
-    // manifest holds these and nothing besides Doctor's rows is stated once in
-    // wire/tests/environment_vocabulary.rs. The class is spelled again here
-    // rather than derived from the list under test, so this stays an equality
-    // rather than a containment that could not see an added row; both pins read
-    // the one document, so a copy that fell out of step reds itself.
+    // accounts the ones its fixtures and Git shadow use. The gate's name ledger
+    // is pinned separately in wire/tests/environment_vocabulary.rs.
     const UNOWNED: [&str; 13] = [
         "GIT_CONFIG_COUNT",    // env-policy: allow
         "GIT_CONFIG_SYSTEM",   // env-policy: allow
@@ -275,26 +291,6 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
             "the tracked vocabulary accounts {name}, which Doctor reports no row for"
         );
     }
-    for path in [
-        "tasks.stems",
-        "tasks.project_min_depth",
-        "tasks.project_max_depth",
-        "policy.env_names",
-    ] {
-        assert!(
-            report
-                .provenance
-                .iter()
-                .any(|row| { row.path == path && row.source == ConfigSource::Tracked }),
-            "missing tracked provenance for {path}"
-        );
-    }
-    assert_eq!(
-        fs::read(repository.path().join("spice-rust.toml")).unwrap(),
-        tracked
-    );
-    assert_eq!(fs::read(&hook).unwrap(), b"active operator hook sentinel\n");
-    assert_eq!(directory_state(repository.path()), before);
 }
 
 fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, repository: &Path) {

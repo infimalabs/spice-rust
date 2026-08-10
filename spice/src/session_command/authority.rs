@@ -17,38 +17,7 @@ pub(crate) fn observe(
     sources: &[source::ResolvedSource],
     environment: &Environment,
 ) -> BriefingAuthorities {
-    let mut briefing = BriefingAuthorities {
-        fold: AuthorityFoldView {
-            mode: "bounded-read-only".to_owned(),
-            probes: vec![
-                "transcript-thread".to_owned(),
-                "repository-state".to_owned(),
-                "configuration".to_owned(),
-                "journal-snapshot".to_owned(),
-                "steering-ledger".to_owned(),
-                "board-claims".to_owned(),
-            ],
-            writes: Vec::new(),
-        },
-        priority: DecisionPriorityView {
-            order: vec![
-                "outstanding-asks".to_owned(),
-                "held-work".to_owned(),
-                "transcript-deliveries".to_owned(),
-                "transcript-working-set".to_owned(),
-                "ambient-posture".to_owned(),
-            ],
-            end_pruning_preserves: vec!["outstanding-asks".to_owned(), "held-work".to_owned()],
-        },
-        asks: Vec::new(),
-        held_work: HeldWorkView {
-            thread: None,
-            lane: None,
-            own_claim: None,
-            peer_claims: None,
-        },
-        unknowns: Vec::new(),
-    };
+    let mut briefing = empty_briefing_authorities();
 
     let thread = exact_thread(sources, environment, &mut briefing);
     briefing.held_work.thread.clone_from(&thread);
@@ -152,6 +121,41 @@ pub(crate) fn observe(
     }
     briefing.held_work.peer_claims = Some(peer_claims);
     briefing
+}
+
+fn empty_briefing_authorities() -> BriefingAuthorities {
+    BriefingAuthorities {
+        fold: AuthorityFoldView {
+            mode: "bounded-read-only".to_owned(),
+            probes: vec![
+                "transcript-thread".to_owned(),
+                "repository-state".to_owned(),
+                "configuration".to_owned(),
+                "journal-snapshot".to_owned(),
+                "steering-ledger".to_owned(),
+                "board-claims".to_owned(),
+            ],
+            writes: Vec::new(),
+        },
+        priority: DecisionPriorityView {
+            order: vec![
+                "outstanding-asks".to_owned(),
+                "held-work".to_owned(),
+                "transcript-deliveries".to_owned(),
+                "transcript-working-set".to_owned(),
+                "ambient-posture".to_owned(),
+            ],
+            end_pruning_preserves: vec!["outstanding-asks".to_owned(), "held-work".to_owned()],
+        },
+        asks: Vec::new(),
+        held_work: HeldWorkView {
+            thread: None,
+            lane: None,
+            own_claim: None,
+            peer_claims: None,
+        },
+        unknowns: Vec::new(),
+    }
 }
 
 struct ObservedAuthorities {
