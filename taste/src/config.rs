@@ -1,4 +1,4 @@
-//! The tracked configuration document as the sole active-taste authority.
+//! The tracked configuration document as the sole taste authority.
 //!
 //! `TASTES.md` owns the curation law and the rationale for each installed
 //! seed; the tracked TOML owns which tastes are active. No taste name, trigger
@@ -15,6 +15,7 @@
 use std::error::Error;
 use std::fmt;
 
+use gate::ScopeSelector;
 use serde::de::{Deserializer, Error as _, MapAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
@@ -29,7 +30,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// The admitted active taste set.
+    /// The admitted configured taste set.
     #[must_use]
     pub const fn bag(&self) -> &Bag {
         &self.bag
@@ -65,21 +66,20 @@ impl<'de> Visitor<'de> for ConfigVisitor {
             let identity = name.parse::<Name>().map_err(|error| {
                 A::Error::custom(format!("taste.{name} does not name a taste: {error}"))
             })?;
-            tastes.push(
-                Taste::new(identity, row.words, row.message).map_err(|error| {
-                    let field = match &error {
-                        BagError::EmptyMessage(_) => "message",
-                        BagError::Trigger(_) | BagError::EmptyWords(_) => "words",
-                        BagError::Duplicate(_) => "",
-                    };
-                    let path = if field.is_empty() {
-                        format!("taste.{name}")
-                    } else {
-                        format!("taste.{name}.{field}")
-                    };
-                    A::Error::custom(format!("{path} is refused: {error}"))
-                })?,
-            );
+            tastes.push(row.into_taste(identity).map_err(|error| {
+                let field = match &error {
+                    BagError::EmptyMessage(_) => "message",
+                    BagError::Trigger(_) | BagError::EmptyWords(_) => "words",
+                    BagError::Applicability(_) => "scopes",
+                    BagError::Duplicate(_) => "",
+                };
+                let path = if field.is_empty() {
+                    format!("taste.{name}")
+                } else {
+                    format!("taste.{name}.{field}")
+                };
+                A::Error::custom(format!("{path} is refused: {error}"))
+            })?);
         }
         let bag = Bag::new(tastes)
             .map_err(|error| A::Error::custom(format!("taste is refused: {error}")))?;
@@ -98,6 +98,8 @@ impl Serialize for Config {
                     .map(|trigger| trigger.as_str().to_owned())
                     .collect(),
                 message: taste.message().to_owned(),
+                enabled: taste.enabled(),
+                scopes: taste.scopes().clone(),
             };
             map.serialize_entry(taste.name().as_str(), &row)?;
         }
@@ -124,13 +126,42 @@ struct Document {
 /// with no selectors under a name that still reads as active, which is the one
 /// failure a curated set cannot afford to take quietly.
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 struct Row {
     words: Vec<String>,
     message: String,
+    #[serde(skip_serializing_if = "enabled")]
+    enabled: bool,
+    #[serde(skip_serializing_if = "unconstrained")]
+    scopes: ScopeSelector,
 }
 
-/// Build the active set from one complete tracked configuration document.
+impl Row {
+    fn into_taste(self, name: Name) -> Result<Taste, BagError> {
+        Taste::configured(name, self.words, self.message, self.enabled, &self.scopes)
+    }
+}
+
+impl Default for Row {
+    fn default() -> Self {
+        Self {
+            words: Vec::new(),
+            message: String::new(),
+            enabled: true,
+            scopes: ScopeSelector::default(),
+        }
+    }
+}
+
+fn enabled(value: &bool) -> bool {
+    *value
+}
+
+fn unconstrained(selector: &ScopeSelector) -> bool {
+    selector == &ScopeSelector::default()
+}
+
+/// Build the configured set from one complete tracked configuration document.
 ///
 /// Rows arrive in tracked order and each one is converted through the same
 /// [`Name`], [`crate::Trigger`], [`Taste`], and [`Bag`] validation every other
@@ -156,11 +187,12 @@ pub fn configured(document: &str) -> Result<Bag, ConfigError> {
             name: name.clone(),
             error,
         })?;
-        let Row { words, message } = Row::deserialize(row).map_err(|error| ConfigError::Row {
+        let row = Row::deserialize(row).map_err(|error| ConfigError::Row {
             name: name.clone(),
             error,
         })?;
-        let taste = Taste::new(identity, words, message)
+        let taste = row
+            .into_taste(identity)
             .map_err(|error| ConfigError::Taste { name, error })?;
         tastes.push(taste);
     }
@@ -168,7 +200,7 @@ pub fn configured(document: &str) -> Result<Bag, ConfigError> {
     Bag::new(tastes).map_err(ConfigError::Set)
 }
 
-/// Why a tracked configuration document did not yield an active set.
+/// Why a tracked configuration document did not yield a configured set.
 #[derive(Debug)]
 pub enum ConfigError {
     /// The document is not well-formed TOML.
@@ -207,7 +239,7 @@ pub enum ConfigError {
         /// What the taste vocabulary refused.
         error: BagError,
     },
-    /// The rows did not form an active set.
+    /// The rows did not form a configured set.
     ///
     /// TOML already refuses two tables under one name, so this reports a
     /// duplicate only if [`Name`] ever stops being a one-to-one reading of the
@@ -233,7 +265,7 @@ impl fmt::Display for ConfigError {
                 write!(formatter, "[taste.{name}] does not name a taste: {error}")
             }
             Self::Taste { name, error } => write!(formatter, "[taste.{name}] is refused: {error}"),
-            Self::Set(error) => write!(formatter, "the active taste set is refused: {error}"),
+            Self::Set(error) => write!(formatter, "the configured taste set is refused: {error}"),
         }
     }
 }
