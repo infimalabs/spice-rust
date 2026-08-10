@@ -613,14 +613,30 @@ fn apply_heads(
             table = row.table,
             key = row.key_column,
         );
-        match row.key {
+        let claim = row.claim;
+        match &row.key {
             HeadKey::Text(key) => transaction
-                .execute(&statement, params![key, to_sql(row.seq)?, row.body])
+                .execute(&statement, params![key, to_sql(row.seq)?, &row.body])
                 .map_err(sqlite_fault)?,
             HeadKey::Singleton => transaction
-                .execute(&statement, params![1_i64, to_sql(row.seq)?, row.body])
+                .execute(&statement, params![1_i64, to_sql(row.seq)?, &row.body])
                 .map_err(sqlite_fault)?,
         };
+        if let Some(claim) = claim {
+            let HeadKey::Text(stamp) = &row.key else {
+                unreachable!("claim head construction always supplies its task stamp")
+            };
+            transaction
+                .execute(
+                    "INSERT INTO claim_index(stamp, actor, disposition, head_seq) \
+                     VALUES (?1, ?2, ?3, ?4) \
+                     ON CONFLICT(stamp) DO UPDATE SET \
+                        actor = excluded.actor, disposition = excluded.disposition, \
+                        head_seq = excluded.head_seq",
+                    params![stamp, claim.actor, claim.disposition, to_sql(row.seq)?],
+                )
+                .map_err(sqlite_fault)?;
+        }
     }
     Ok(())
 }
