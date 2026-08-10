@@ -410,8 +410,9 @@ fn repository_lookalikes_cannot_replace_or_stage_inbox_and_ack_authority() {
     git(&fixture.root, &["commit", "-qm", "tracked lookalikes"]);
 
     let paths = fixture.paths();
-    assert!(!paths.inbox().starts_with(&fixture.root.join(".spice-rs")));
-    assert!(!paths.journal().starts_with(&fixture.root.join(".spice-rs")));
+    let impostor_root = fixture.root.join(".spice-rs");
+    assert!(!paths.inbox().starts_with(&impostor_root));
+    assert!(!paths.journal().starts_with(&impostor_root));
     let mut ledger = Ledger::new();
     ledger
         .absorb(Steering::Sent(&SteerSent {
