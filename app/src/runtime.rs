@@ -1146,6 +1146,7 @@ const fn disposition_label(disposition: wire::Disposition) -> &'static str {
         wire::Disposition::Acked => "acked",
         wire::Disposition::Declined => "declined",
         wire::Disposition::Lapsed => "lapsed",
+        wire::Disposition::DeadLettered => "deadlettered",
         wire::Disposition::Canceled => "canceled",
     }
 }

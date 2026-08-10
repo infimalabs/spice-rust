@@ -93,6 +93,26 @@ impl Holds {
         self.held.get(&lane).copied()
     }
 
+    /// Earliest current hold deadline, ordered by lane when deadlines tie.
+    #[must_use]
+    pub fn next(&self) -> Option<(CanonicalUuid, Instant)> {
+        self.held
+            .iter()
+            .map(|(lane, until)| (*lane, *until))
+            .min_by_key(|(lane, until)| (*until, *lane))
+    }
+
+    /// Replay one durable hold fact into this reducer.
+    pub fn absorb_held(&mut self, held: &LaneHeld) {
+        self.young.remove(&held.lane);
+        self.held.insert(held.lane, held.until);
+    }
+
+    /// Replay one durable release fact into this reducer.
+    pub fn absorb_resumed(&mut self, resumed: &LaneResumed) {
+        self.held.remove(&resumed.lane);
+    }
+
     /// Whether the lane may be re-seated after all fact-producing releases.
     #[must_use]
     pub fn seats(&self, lane: CanonicalUuid) -> bool {
@@ -264,5 +284,21 @@ mod tests {
     #[should_panic(expected = "a hold limit of zero would hold every lane")]
     fn a_zero_limit_is_refused() {
         let _ = Holds::new(0);
+    }
+
+    #[test]
+    fn durable_hold_and_resume_facts_rebuild_the_same_state() {
+        let mut source = Holds::new(1);
+        let held = source
+            .died(lane(2), Death::Young, instant(30))
+            .expect("source holds");
+        let resumed = source.wake(lane(2)).expect("source resumes");
+        let mut replay = Holds::new(1);
+        replay.absorb_held(&held);
+        assert_eq!(replay.held(lane(2)), Some(instant(30)));
+        assert_eq!(replay.next(), Some((lane(2), instant(30))));
+        replay.absorb_resumed(&resumed);
+        assert!(replay.seats(lane(2)));
+        assert_eq!(replay.next(), None);
     }
 }

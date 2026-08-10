@@ -205,6 +205,12 @@ pub(super) fn recall_provenance(
     fact: &wire::Envelope<wire::AnyFact>,
     steering: &steer::Ledger,
 ) -> CommandResult<Option<RecallProvenance>> {
+    if let Some(provenance) = recall_live_steering_provenance(fact)? {
+        return Ok(Some(provenance));
+    }
+    if let Some(provenance) = recall_terminal_steering_provenance(fact, steering)? {
+        return Ok(Some(provenance));
+    }
     let provenance = match fact.fact.kind() {
         wire::FactKind::LaneSessionDeclared => {
             let body: wire::body::LaneSessionDeclared = recall_body(fact)?;
@@ -234,6 +240,23 @@ pub(super) fn recall_provenance(
                 },
             })
         }
+        wire::FactKind::LaneRenewed => {
+            let body: wire::body::LaneRenewed = recall_body(fact)?;
+            Some(RecallProvenance::Renewal {
+                occupant: body.occupant,
+                ancestor: body.ancestor,
+                epoch: body.epoch,
+            })
+        }
+        _ => None,
+    };
+    Ok(provenance)
+}
+
+fn recall_live_steering_provenance(
+    fact: &wire::Envelope<wire::AnyFact>,
+) -> CommandResult<Option<RecallProvenance>> {
+    let provenance = match fact.fact.kind() {
         wire::FactKind::SteerSent => {
             let body: wire::body::SteerSent = recall_body(fact)?;
             Some(steering_provenance(
@@ -276,6 +299,16 @@ pub(super) fn recall_provenance(
                 None,
             ))
         }
+        _ => None,
+    };
+    Ok(provenance)
+}
+
+fn recall_terminal_steering_provenance(
+    fact: &wire::Envelope<wire::AnyFact>,
+    steering: &steer::Ledger,
+) -> CommandResult<Option<RecallProvenance>> {
+    let provenance = match fact.fact.kind() {
         wire::FactKind::SteerAcked => {
             let body: wire::body::SteerAcked = recall_body(fact)?;
             Some(stable_terminal_provenance(
@@ -325,14 +358,6 @@ pub(super) fn recall_provenance(
                 None,
                 None,
             )?)
-        }
-        wire::FactKind::LaneRenewed => {
-            let body: wire::body::LaneRenewed = recall_body(fact)?;
-            Some(RecallProvenance::Renewal {
-                occupant: body.occupant,
-                ancestor: body.ancestor,
-                epoch: body.epoch,
-            })
         }
         _ => None,
     };

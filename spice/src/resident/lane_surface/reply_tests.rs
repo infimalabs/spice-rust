@@ -10,10 +10,19 @@ const FIRST_EXPIRY: &str = "2026-08-06T04:00:00.000Z";
 fn terminal_history_retains_the_stable_root_stage_and_complete_audit() {
     let snapshot = terminal_snapshot();
     let ledger = steer::Ledger::from_snapshot(&snapshot).expect("stable steering replay");
-    let expected_stages = [
-        wire::body::SteeringStage::Reminded,
-        wire::body::SteeringStage::Escalated,
-        wire::body::SteeringStage::Overdue,
+    let expected_escalations = [
+        wire::body::SteeringTransition {
+            stage: wire::body::SteeringStage::Reminded,
+            at: "2026-08-06T03:00:15.000Z".parse().expect("reminded at"),
+        },
+        wire::body::SteeringTransition {
+            stage: wire::body::SteeringStage::Escalated,
+            at: "2026-08-06T03:01:00.000Z".parse().expect("escalated at"),
+        },
+        wire::body::SteeringTransition {
+            stage: wire::body::SteeringStage::Overdue,
+            at: "2026-08-06T03:05:00.000Z".parse().expect("overdue at"),
+        },
     ];
 
     for (index, expected_disposition) in [
@@ -40,13 +49,7 @@ fn terminal_history_retains_the_stable_root_stage_and_complete_audit() {
         assert_eq!(key, KEY);
         assert_eq!(disposition, expected_disposition);
         assert_eq!(stage, Some(wire::body::SteeringStage::Overdue));
-        assert_eq!(
-            escalations
-                .iter()
-                .map(|transition| transition.stage)
-                .collect::<Vec<_>>(),
-            expected_stages
-        );
+        assert_eq!(escalations.as_slice(), expected_escalations.as_slice());
     }
 }
 

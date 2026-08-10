@@ -7,6 +7,7 @@
 mod authority;
 mod notes;
 mod pins;
+mod release;
 mod stage;
 
 pub use authority::{
@@ -18,6 +19,11 @@ pub use notes::{
     release_notes,
 };
 pub use pins::{PinError, PinName, RequiredPins};
+pub use release::{
+    AcceptedOperation, Convergence, EffectError, EffectPort, ExecuteError, Execution, Operation,
+    OperationReceipt, OperationState, PlanError, PlanInput, RegistryEvidence, ReleaseAction,
+    ReleaseExecutor, ReleaseJournal, ReleaseObservations, ReleasePlan, SealedTarget, plan_release,
+};
 pub use stage::{
     BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError, Publisher, StageError,
     StagedTarget,

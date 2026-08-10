@@ -5,8 +5,10 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant as Monotonic};
 
 use bus::Bus;
-use journal::{FactCause, JournalWrite};
-use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter};
+use journal::{FactCause, JournalGuard, JournalWrite, PendingFact};
+use lane::capture::{
+    CaptureExit, CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter,
+};
 use lane::occupant::{Occupant, OccupantWait, Seats};
 use sill::WaitOutcome;
 use spice::repository::Repository;
@@ -20,12 +22,17 @@ use wire::{
     ReplyPosition, ResidentState, SeqRange,
 };
 
+mod automatic;
+mod ending;
 mod launch;
 mod lineage;
 mod propose;
 mod reply;
 mod session;
 
+use automatic::wake;
+pub(super) use automatic::{AutomaticWake, wake_automatic};
+use ending::{StopEvidence, drain, ending_fact, stop_lane, stop_occupant};
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
 pub(super) use lineage::{arrange as arrange_lineages, configure};
 use propose::{commit_restored, propose_drain, propose_seat, propose_wake};
@@ -776,6 +783,55 @@ pub(super) fn capture_failed(
     commit(bus, write).map(|_| ())
 }
 
+/// Reap and durably vacate the exact occupant named by a kernel exit event.
+pub(super) fn occupant_exited(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    exit: CaptureExit,
+) -> CommandResult<()> {
+    let observed = current_residency(bus, epoch)?;
+    let Some(row) = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == exit.lane)
+    else {
+        return Ok(());
+    };
+    if row.occupant != Some(exit.occupant)
+        || !seats
+            .occupant(exit.lane)
+            .is_some_and(|occupant| occupant.occupant() == exit.occupant)
+    {
+        return Ok(());
+    }
+    let occupant = seats
+        .vacate(exit.lane)
+        .expect("the exact supervised exit remains seated");
+    let evidence = stop_occupant(occupant)
+        .map_err(|error| super::environment_fault("lane::exit-reap-failed", &error))?;
+    let mut next = observed.body().clone();
+    let row = next
+        .lanes
+        .iter_mut()
+        .find(|row| row.lane == exit.lane)
+        .expect("observed exit lane remains in its cloned head");
+    row.occupant = None;
+    row.disposition = evidence.disposition().to_owned();
+    let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    guard_residency(&mut write, &observed);
+    let fact = ending_fact(
+        &mut write,
+        exit.lane,
+        exit.occupant,
+        &evidence,
+        FactCause::Existing(observed.position()),
+    )?;
+    write.residency_head(fact, move |_| next);
+    commit(bus, write).map(|_| ())
+}
+
 /// Build a bounded continuity account under the authenticated principal.
 pub(super) fn recall(
     bus: &Bus,
@@ -875,196 +931,6 @@ pub(super) fn recall(
     })
 }
 
-fn drain(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    command: &wire::AdmittedCommand,
-    request: &LaneState,
-) -> Outcome<CommandAnswer> {
-    let observed = match current_residency(bus, epoch) {
-        Ok(head) => head,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let Some(row) = observed
-        .body()
-        .lanes
-        .iter()
-        .find(|row| row.lane == request.lane)
-    else {
-        return missing_lane(request.lane);
-    };
-    let Some(durable_occupant) = row.occupant else {
-        return lane_refusal(
-            "lane::already-vacant",
-            Some(OCCUPIED.to_owned()),
-            Some(row.disposition.clone()),
-            "wake the lane before asking it to drain again",
-        );
-    };
-    let Some(occupant) = seats.vacate(request.lane) else {
-        return typed_store_fault(
-            "lane::occupant-unowned",
-            "durable lane occupant has no process group supervised by this resident",
-        );
-    };
-    if occupant.occupant() != durable_occupant {
-        drop(occupant);
-        return typed_store_fault(
-            "lane::occupant-moved",
-            "supervised process group does not match durable residency",
-        );
-    }
-    let evidence = match stop_occupant(occupant) {
-        Ok(evidence) => evidence,
-        Err(error) => return typed_environment_fault("lane::drain-failed", &error),
-    };
-    let answer = LaneChangeAnswer {
-        lane: request.lane,
-        topology_revision: observed.body().topology_revision,
-        from: OCCUPIED.to_owned(),
-        to: VACANT.to_owned(),
-        git: None,
-    };
-    let proposal = match propose_drain(
-        command,
-        request,
-        &observed,
-        epoch,
-        durable_occupant,
-        evidence,
-        answer.clone(),
-    ) {
-        Ok(proposal) => proposal,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    match commit(bus, proposal) {
-        Ok(committed) => committed_lane_reply(committed, answer),
-        Err(outcome) => typed_outcome(outcome),
-    }
-}
-
-fn wake(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    runtime: &Runtime<'_>,
-    command: &wire::AdmittedCommand,
-    request: &LaneState,
-) -> Outcome<CommandAnswer> {
-    let observed = match current_residency(bus, epoch) {
-        Ok(head) => head,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let Some(row) = observed
-        .body()
-        .lanes
-        .iter()
-        .find(|row| row.lane == request.lane)
-    else {
-        return missing_lane(request.lane);
-    };
-    if row.occupant.is_some() || seats.occupied(request.lane) {
-        return lane_refusal(
-            "lane::already-occupied",
-            Some(VACANT.to_owned()),
-            Some(row.disposition.clone()),
-            "drain the current occupant before waking a successor",
-        );
-    }
-    if row.life == "drain" {
-        return lane_refusal(
-            "lane::life-ended",
-            Some("steer or drive".to_owned()),
-            Some(row.life.clone()),
-            "seat a new lane because drain life is terminal",
-        );
-    }
-    if let Err(outcome) = super::steering::lane_capability(row) {
-        return typed_outcome(outcome);
-    }
-    let resume = match resume_session(paths, row) {
-        Ok(resume) => resume,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let occupant = new_uuid();
-    let launch = match occupant_launch(
-        paths,
-        OccupantLaunchRequest {
-            worktree: &row.worktree,
-            vendor: &row.vendor,
-            epoch,
-            lane: row.lane,
-            occupant,
-            resume,
-        },
-        Arc::clone(&runtime.capture),
-    ) {
-        Ok(launch) => launch,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let git = launch.git;
-    let session_proof = launch.session;
-    let group = match seats.seat_observed(request.lane, occupant, launch.spec, launch.observation) {
-        Ok(occupant) => occupant.group(),
-        Err(error) => return typed_environment_fault("lane::wake-failed", &error.to_string()),
-    };
-    let session = match await_session(session_proof) {
-        Ok(session) => session,
-        Err(error) => {
-            stop_lane(seats, request.lane);
-            return error.outcome();
-        }
-    };
-    let proven = ProvenOccupant {
-        occupant,
-        group,
-        session,
-        git,
-    };
-    let answer = LaneChangeAnswer {
-        lane: request.lane,
-        topology_revision: observed.body().topology_revision,
-        from: row.disposition.clone(),
-        to: OCCUPIED.to_owned(),
-        git: Some(proven.git.clone().into_boxed_str()),
-    };
-    let proposal = propose_wake(command, request, &observed, epoch, &proven, answer.clone());
-    let proposal = match proposal {
-        Ok(proposal) => proposal,
-        Err(outcome) => {
-            stop_lane(seats, request.lane);
-            return typed_outcome(outcome);
-        }
-    };
-    match commit(bus, proposal) {
-        Ok(committed) => committed_lane_reply(committed, answer),
-        Err(outcome) => {
-            stop_lane(seats, request.lane);
-            typed_outcome(outcome)
-        }
-    }
-}
-
-/// End a lane's occupant without publishing how it ended.
-///
-/// The dropped [`StopEvidence`] is the point rather than an oversight. Every
-/// caller here is a compensation path — `await_session`, `commit_restored`,
-/// `propose_wake`, or the commit itself failed — so the seating this unwinds
-/// was never committed. An ending fact names the residency it closes, and there
-/// is no committed residency to close: publishing one would assert a lane life
-/// the journal never recorded beginning, which is a worse record than silence.
-///
-/// The distinction this discards is only owed where an occupancy was durable,
-/// which is [`stop_occupant`]'s other caller, and that one carries the evidence
-/// through to a fact.
-fn stop_lane(seats: &mut Seats, lane: CanonicalUuid) {
-    if let Some(occupant) = seats.vacate(lane) {
-        let _stopped = stop_occupant(occupant);
-    }
-}
-
 fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> {
     let repository = Repository::discover(worktree)
         .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
@@ -1087,83 +953,4 @@ fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> 
         }));
     }
     Ok(())
-}
-
-/// How an occupant's residency ended, as the resident itself observed it.
-///
-/// The three arms are three different endings, not three values of one.
-/// [`Self::Killed`] carries no code because a signal this resident sent left the
-/// occupant no status of its own to report.
-enum StopEvidence {
-    Drained,
-    Exited(i32),
-    /// A signal this resident sent ended it, at either signalling stage.
-    ///
-    /// Not only the kill: an occupant that never trapped the termination signal
-    /// dies from that signal instead, and this resident is equally the reason
-    /// for the ending in both cases.
-    Killed,
-}
-
-fn stop_occupant(occupant: Occupant) -> Result<StopEvidence, String> {
-    let occupant = match occupant
-        .wait_for(Duration::ZERO)
-        .map_err(|error| error.to_string())?
-    {
-        OccupantWait::Exited { outcome, .. } => {
-            return Ok(StopEvidence::Exited(exit_code(&outcome)));
-        }
-        OccupantWait::Running(occupant) => occupant,
-    };
-    occupant.terminate().map_err(|error| error.to_string())?;
-    let grace = occupant.termination_grace();
-    match occupant
-        .wait_for(grace)
-        .map_err(|error| error.to_string())?
-    {
-        OccupantWait::Exited { outcome, .. } => Ok(stop_evidence(&outcome)),
-        OccupantWait::Running(occupant) => {
-            occupant.kill().map_err(|error| error.to_string())?;
-            let reap = occupant.reap_bound();
-            match occupant.wait_for(reap).map_err(|error| error.to_string())? {
-                // The wait outcome is deliberately not read for a code here.
-                // This resident sent the signal that ended it, so whatever
-                // status the platform reports is a description of that signal
-                // rather than anything the occupant decided.
-                OccupantWait::Exited { .. } => Ok(StopEvidence::Killed),
-                OccupantWait::Running(_) => {
-                    Err("process group survived its configured reap bound".to_owned())
-                }
-            }
-        }
-    }
-}
-
-/// Classify an ending this resident's termination signal is responsible for.
-///
-/// The only caller is the wait that follows [`Occupant::terminate`], so every
-/// outcome reaching here was already signalled by this resident. A code means
-/// the occupant trapped the signal and chose what to report; its absence means
-/// the signal is what ended it, which is the same ending the kill stage records.
-/// Reporting that as an exit would publish a status the occupant never chose.
-fn stop_evidence(outcome: &WaitOutcome) -> StopEvidence {
-    let status = outcome.completion().status();
-    if status.success() {
-        return StopEvidence::Drained;
-    }
-    match status.code() {
-        Some(code) => StopEvidence::Exited(code),
-        None => StopEvidence::Killed,
-    }
-}
-
-/// The status of an occupant that was already gone before this resident acted.
-///
-/// This is the one place a missing code still becomes a number, and it is the
-/// one place that number says something true: nothing here had been signalled by
-/// this resident, so a signal death is one it did not cause. Since a Unix status
-/// code is 0 to 255 and never negative, the substitute cannot collide with a
-/// status an occupant chose.
-fn exit_code(outcome: &WaitOutcome) -> i32 {
-    outcome.completion().status().code().unwrap_or(-1)
 }

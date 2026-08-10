@@ -918,7 +918,7 @@ pub enum RecallProvenance {
     },
     /// Redacted steering lineage or disposition evidence.
     Steering {
-        /// Directive identity, absent for terminal facts whose body carries only its key.
+        /// Stable directive identity, absent only from legacy unprojected provenance.
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
@@ -929,7 +929,7 @@ pub enum RecallProvenance {
         key: String,
         /// Current disposition established by the fact.
         disposition: Disposition,
-        /// Presentation state established by this fact, when applicable.
+        /// Event-local stage, or the preserved current stage on terminal facts.
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",

@@ -478,6 +478,55 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
 }
 
 #[test]
+fn task_creation_repair_origins_are_parser_owned() {
+    for argv in [
+        vec![
+            "spice",
+            "task",
+            "capture",
+            "--project",
+            "task.cli",
+            "--origin",
+            "ack:1kLGp2NJ",
+        ],
+        vec![
+            "spice",
+            "task",
+            "oops",
+            "Unexpected origin loss",
+            "--origin",
+            "ack:1kLGp2NJ",
+        ],
+        vec![
+            "spice",
+            "taste",
+            "add",
+            "Recurring evidence",
+            "--origin",
+            "ack:1kLGp2NJ",
+        ],
+        vec![
+            "spice",
+            "taste",
+            "drop",
+            "fallbacks",
+            "--origin",
+            "ack:1kLGp2NJ",
+        ],
+    ] {
+        let parsed = command()
+            .try_get_matches_from(argv)
+            .expect("creation repair origin parses");
+        assert_eq!(
+            selected_matches(&parsed)
+                .get_one::<String>("origin")
+                .map(String::as_str),
+            Some("ack:1kLGp2NJ")
+        );
+    }
+}
+
+#[test]
 fn tool_postures_follow_the_closed_command_order() {
     let declared = contracts()
         .iter()

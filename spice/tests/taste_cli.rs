@@ -25,6 +25,7 @@ mod staged_app;
 use readiness::Readiness;
 
 const REFUSAL_EXIT: i32 = 2;
+const CURATION_ORIGIN: &str = "taste:curation";
 const ADD_TITLE: &str = concat!(
     "Propose tracked taste addition: Repeated alternate execution branches hide the current ",
     "path"
@@ -171,12 +172,38 @@ fn taste_reporting_and_review_plans_survive_restart() {
     assert!(matches!(json.position, ReplyPosition::Snapshot(_)));
     assert_eq!(json.body, text);
 
+    let before_ungrounded = fixture.cursor();
+    let ungrounded = fixture.invoke(&[
+        "--json",
+        "taste",
+        "add",
+        "Repeated alternate execution branches hide the current path",
+    ]);
+    assert_eq!(ungrounded.status.code(), Some(REFUSAL_EXIT));
+    let Outcome::Refusal(refusal) = wire::decode::<Outcome<serde_json::Value>>(&ungrounded.stderr)
+        .expect("ungrounded refusal is typed")
+    else {
+        panic!("ungrounded taste filing did not refuse")
+    };
+    assert_eq!(refusal.reason, "task::origin-required");
+    assert!(refusal.remedy.contains("--origin"));
+    assert_eq!(fixture.cursor(), before_ungrounded);
+
     let added = text_reply::<TaskAnswer>(&fixture.invoke(&[
         "taste",
         "add",
         "Repeated alternate execution branches hide the current path",
+        "--origin",
+        CURATION_ORIGIN,
     ]));
-    let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&["--json", "taste", "drop", "alpha"]));
+    let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&[
+        "--json",
+        "taste",
+        "drop",
+        "alpha",
+        "--origin",
+        CURATION_ORIGIN,
+    ]));
     assert!(matches!(dropped.position, ReplyPosition::Committed(_)));
 
     let before_unknown = fixture.cursor();
@@ -190,12 +217,14 @@ fn taste_reporting_and_review_plans_survive_restart() {
     assert_eq!(refusal.reason, "taste::unknown");
     assert_eq!(fixture.cursor(), before_unknown);
 
+    let causal: wire::Origin = CURATION_ORIGIN.parse().expect("curation origin");
     let current_board = board(&fixture);
-    assert_review_plan(&current_board, &added, ADD_TITLE);
+    assert_review_plan(&current_board, &added, ADD_TITLE, &causal);
     assert_review_plan(
         &current_board,
         &dropped.body,
         "Propose tracked taste retirement: alpha",
+        &causal,
     );
 
     resident.stop(&fixture);
@@ -205,17 +234,25 @@ fn taste_reporting_and_review_plans_survive_restart() {
         text
     );
     let restarted_board = board(&fixture);
-    assert_review_plan(&restarted_board, &added, ADD_TITLE);
+    assert_review_plan(&restarted_board, &added, ADD_TITLE, &causal);
     assert_review_plan(
         &restarted_board,
         &dropped.body,
         "Propose tracked taste retirement: alpha",
+        &causal,
     );
     restarted.stop(&fixture);
 
     let reader = journal::JournalReader::open(&fixture.journal).expect("final journal opens");
     let facts = reader.fact_snapshot().expect("final fact snapshot");
     assert_eq!(kind_count(&facts, FactKind::TaskAdded), 2);
+    assert!(
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == FactKind::TaskAdded)
+            .all(|fact| fact.origin == causal)
+    );
     reader.verify().expect("final authority verifies");
     let plans = task_add_requests(&fixture);
     assert_eq!(plans.len(), 2);
@@ -240,6 +277,7 @@ fn taste_reporting_and_review_plans_survive_restart() {
         plan.project.as_deref() == Some("taste.policy")
             && plan.flow.as_deref() == Some("todo,review")
             && plan.acceptance.len() == 2
+            && plan.origin.as_ref() == Some(&causal)
     }));
 }
 
@@ -297,16 +335,26 @@ fn live_fires_count_each_stable_directive_once_and_keep_one_durable_vendor() {
     assert_eq!(alpha["judgments"][0]["verdict"], "cleared");
     assert_eq!(alpha["judgments"][0]["locus"], "tape:alpha");
 
-    let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&["--json", "taste", "drop", "zeta"]));
+    let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&[
+        "--json",
+        "taste",
+        "drop",
+        "zeta",
+        "--origin",
+        CURATION_ORIGIN,
+    ]));
+    let causal = CURATION_ORIGIN.parse().expect("curation origin");
     assert_review_plan(
         &board(&fixture),
         &dropped.body,
         "Propose tracked taste retirement: zeta",
+        &causal,
     );
     let retirement = task_add_requests(&fixture)
         .into_iter()
         .find(|plan| plan.title == "Propose tracked taste retirement: zeta")
         .expect("retirement receipt is durable");
+    assert_eq!(retirement.origin, Some(causal));
     let cited = retirement
         .description
         .as_deref()
@@ -367,6 +415,8 @@ fn native_task_add_carries_authored_context_through_client_add() {
         "Description reaches the authoritative statement",
         "--acceptance",
         "Every acceptance criterion survives the client seam",
+        "--origin",
+        "ack:1kLGp2NJ",
     ]));
 
     let current = board(&fixture);
@@ -388,11 +438,13 @@ fn native_task_add_carries_authored_context_through_client_add() {
             "Every acceptance criterion survives the client seam",
         ]
     );
+    assert_eq!(statement.provenance.to_string(), "ack:1kLGp2NJ");
 
     let requests = task_add_requests(&fixture);
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].description, statement.description);
     assert_eq!(requests[0].acceptance, statement.acceptance);
+    assert_eq!(requests[0].origin, Some(statement.provenance.clone()));
 
     let listed = text_reply::<TextAnswer>(&fixture.invoke(&[
         "task",
@@ -467,7 +519,12 @@ fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
     );
 }
 
-fn assert_review_plan(board: &BoardAnswer, answer: &TaskAnswer, title: &str) {
+fn assert_review_plan(
+    board: &BoardAnswer,
+    answer: &TaskAnswer,
+    title: &str,
+    origin: &wire::Origin,
+) {
     let task = board
         .tasks
         .iter()
@@ -475,6 +532,7 @@ fn assert_review_plan(board: &BoardAnswer, answer: &TaskAnswer, title: &str) {
         .expect("planned task is on the current board");
     assert_eq!(task.presentation_title(), title);
     assert_eq!(task.statement.body.project, "taste.policy");
+    assert_eq!(&task.statement.body.provenance, origin);
     assert!(!task.visibility.is_hidden());
     assert_eq!(
         task.workflow

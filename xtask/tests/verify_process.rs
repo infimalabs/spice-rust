@@ -446,9 +446,15 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
 fn assert_bounded_refusal(output: &std::process::Output, selected: &BatteryArmResult) {
     let stdout = String::from_utf8(output.stdout.clone()).expect("verifier stdout is UTF-8");
     let fold_start = stdout
-        .find("non-authoritative battery refusal fold:")
-        .expect("verifier emits the named refusal fold");
-    let fold = &stdout.as_bytes()[fold_start..];
+        .find("arm position=")
+        .expect("verifier leads its refusal fold with arm evidence");
+    let summary_start = stdout
+        .rfind("battery refusal summary:")
+        .expect("verifier closes its refusal fold with a summary");
+    let summary_end = stdout[summary_start..]
+        .find('\n')
+        .map_or(stdout.len(), |end| summary_start + end + 1);
+    let fold = &stdout.as_bytes()[fold_start..summary_end];
     assert!(
         fold.len() <= BATTERY_REFUSAL_FOLD_MAX_BYTES,
         "battery diagnostic is {} bytes, limit is {}",

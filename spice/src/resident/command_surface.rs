@@ -6,11 +6,11 @@ use lane::occupant::Seats;
 use spice::placeholder::PlaceholderReason;
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, Intent};
-use wire::{CanonicalUuid, CommandKind, Outcome, Refusal};
+use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal};
 
 use super::{
     RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, effort_surface,
-    lane_recovery, lane_surface, policy_surface, steering,
+    lane_recovery, lane_surface, lifecycle, policy_surface, steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -189,5 +189,63 @@ impl<'a> Surface<'a> {
             }
             _ => None,
         }
+    }
+
+    pub(super) fn reconcile_lifecycle(
+        &self,
+        lifecycle: &mut lifecycle::Runtime,
+        seats: &mut Seats,
+        diagnostic: &mut dyn std::io::Write,
+    ) -> super::CommandResult<Option<lifecycle::WakeDeadline>> {
+        lifecycle.reconcile(
+            self.bus,
+            self.repository,
+            self.paths,
+            self.epoch,
+            seats,
+            &self.lane,
+            self.config,
+            diagnostic,
+        )
+    }
+
+    pub(super) fn observe_lifecycle_death(
+        &self,
+        lifecycle: &mut lifecycle::Runtime,
+        seats: &Seats,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    ) -> super::CommandResult<()> {
+        lifecycle.observe_death(
+            self.bus,
+            self.epoch,
+            seats,
+            lane,
+            occupant,
+            &self.config.lane,
+        )
+    }
+
+    pub(super) fn expire_lifecycle_hold(
+        &self,
+        lifecycle: &mut lifecycle::Runtime,
+        lane: CanonicalUuid,
+    ) -> super::CommandResult<()> {
+        lifecycle.expire_hold(self.bus, self.epoch, lane)
+    }
+
+    pub(super) fn prepare_explicit_lifecycle(
+        &self,
+        lifecycle: &mut lifecycle::Runtime,
+        command: &wire::AdmittedCommand,
+    ) -> super::CommandResult<()> {
+        if let Intent::LaneState(state) = command.body()
+            && command.actor() == &Actor::Operator
+            && state.action == wire::intent::LaneAction::Wake
+            && state.worktree.is_none()
+        {
+            lifecycle.operator_wake(self.bus, self.epoch, state.lane)?;
+        }
+        Ok(())
     }
 }

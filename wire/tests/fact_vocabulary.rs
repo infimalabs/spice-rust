@@ -78,6 +78,7 @@ const PINNED: &[(&str, &str)] = &[
     ("SteerDeclined", "steer::declined"),
     ("SteerMissed", "steer::missed"),
     ("SteerLapsed", "steer::lapsed"),
+    ("SteerDeadLettered", "steer::deadlettered"),
     ("SteerCanceled", "steer::canceled"),
     ("ConsentAsked", "consent::asked"),
     ("ConsentGranted", "consent::granted"),
@@ -158,6 +159,7 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::SteerDeclined
         | FactKind::SteerMissed
         | FactKind::SteerLapsed
+        | FactKind::SteerDeadLettered
         | FactKind::SteerCanceled => "steer",
         FactKind::ConsentAsked
         | FactKind::ConsentGranted
