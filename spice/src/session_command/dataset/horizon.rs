@@ -253,8 +253,8 @@ where
         };
         let mut ranges = Vec::new();
         let mut line_start = parse_start;
-        for index in parse_start..block.len() {
-            if block[index] == b'\n' {
+        for (index, byte) in block.iter().enumerate().skip(parse_start) {
+            if *byte == b'\n' {
                 ranges.push((line_start, index, index + 1));
                 line_start = index + 1;
             }

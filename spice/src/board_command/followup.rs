@@ -145,10 +145,16 @@ pub(super) fn record_followups(
     origin: &wire::Origin,
     projects: &ProjectPolicy,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    let context = FollowupContext {
+        command,
+        snapshot,
+        review,
+        reviewed,
+        origin,
+        projects,
+    };
     for followup in &review.then {
-        create_followup(
-            write, command, snapshot, review, followup, reviewed, origin, projects,
-        )?;
+        create_followup(write, &context, followup)?;
     }
     for handle in &review.followup {
         wire_followup_edge(write, snapshot, review, handle, reviewed, projects)?;
@@ -156,18 +162,23 @@ pub(super) fn record_followups(
     Ok(())
 }
 
+struct FollowupContext<'a> {
+    command: &'a wire::AdmittedCommand,
+    snapshot: &'a ValidatedSnapshot,
+    review: &'a TaskReview,
+    reviewed: PendingFact,
+    origin: &'a wire::Origin,
+    projects: &'a ProjectPolicy,
+}
+
 /// Add one statement that must follow the reviewed task.
 fn create_followup(
     write: &mut JournalWrite,
-    command: &wire::AdmittedCommand,
-    snapshot: &ValidatedSnapshot,
-    review: &TaskReview,
+    context: &FollowupContext<'_>,
     followup: &ReviewFollowup,
-    reviewed: PendingFact,
-    origin: &wire::Origin,
-    projects: &ProjectPolicy,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    let witnessed = command
+    let witnessed = context
+        .command
         .expected()
         .iter()
         .any(|witness| matches!(witness, Witness::Absence { task } if *task == followup.task));
@@ -178,17 +189,21 @@ fn create_followup(
         ));
     }
     let requested = followup.add.project.as_deref().unwrap_or("task.private");
-    let project = projects.admit_manual_creation(requested).map_err(|error| {
-        refusal(
-            "review::followup-refused",
-            Some(error.to_string()),
-            "name a public project for each review follow-up, or leave it private",
-        )
-    })?;
-    let reviewed_entry = snapshot
+    let project = context
+        .projects
+        .admit_manual_creation(requested)
+        .map_err(|error| {
+            refusal(
+                "review::followup-refused",
+                Some(error.to_string()),
+                "name a public project for each review follow-up, or leave it private",
+            )
+        })?;
+    let reviewed_entry = context
+        .snapshot
         .entries
         .iter()
-        .find(|entry| entry.handle() == &review.task)
+        .find(|entry| entry.handle() == &context.review.task)
         .ok_or_else(|| {
             protocol_fault(
                 "review::task-missing",
@@ -206,7 +221,7 @@ fn create_followup(
         project: project.as_str().to_owned(),
         tags: Vec::new(),
         dependencies: vec![reviewed_entry.incepted().clone()],
-        provenance: origin.clone(),
+        provenance: context.origin.clone(),
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
     let workflow = WorkflowHead {
@@ -218,7 +233,13 @@ fn create_followup(
         deferral: None,
         completion: None,
     };
-    if let Err(error) = Entry::new(statement.clone(), workflow.clone(), None, None, projects) {
+    if let Err(error) = Entry::new(
+        statement.clone(),
+        workflow.clone(),
+        None,
+        None,
+        context.projects,
+    ) {
         return Err(refusal(
             "review::followup-refused",
             Some(error.to_string()),
@@ -239,7 +260,7 @@ fn create_followup(
                 phase,
                 revision: 1,
             },
-            FactCause::Pending(reviewed),
+            FactCause::Pending(context.reviewed),
         )
         .map_err(|error| store_fault("review::followup-build", &error.to_string()))?;
     write.task_head(added, move |position| TaskHead {
