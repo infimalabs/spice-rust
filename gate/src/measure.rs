@@ -58,6 +58,20 @@ pub fn inherit_process_group() -> Result<InheritedProcessGroup, &'static str> {
         .map_err(|_| "gate process-group containment is already active")
 }
 
+/// Process group one bounded gate child must enter.
+///
+/// Ordinary callers isolate each child and supervise its whole descendant
+/// group. A commit-gate worker has a shorter outer deadline and deliberately
+/// keeps every child in the worker's existing group so that deadline remains
+/// the single containment boundary.
+pub(crate) fn bounded_process_group() -> ProcessGroup {
+    if INHERIT_PROCESS_GROUP.load(Ordering::Acquire) {
+        ProcessGroup::Inherit
+    } else {
+        ProcessGroup::New
+    }
+}
+
 /// The external program that turns a file list into one number.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parser {
@@ -186,11 +200,7 @@ impl Bounds {
             argv,
             cwd: cwd.to_path_buf(),
             environment: Environment::empty(),
-            group: if INHERIT_PROCESS_GROUP.load(Ordering::Acquire) {
-                ProcessGroup::Inherit
-            } else {
-                ProcessGroup::New
-            },
+            group: bounded_process_group(),
             deadlines: self.deadlines,
             wait: self.wait.clone(),
             output: Output::new(
