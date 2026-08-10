@@ -144,7 +144,13 @@ fn main() {
     let bootstrap_configuration_owner =
         cli::bootstrap_configuration_owner_selected(std::env::args_os());
     #[cfg(not(target_arch = "wasm32"))]
-    let mounts = mounted_registry(bootstrap_form, bootstrap_configuration_owner);
+    let bootstrap_lock = cli::bootstrap_lock_selected(std::env::args_os());
+    #[cfg(not(target_arch = "wasm32"))]
+    let mounts = mounted_registry(
+        bootstrap_form,
+        bootstrap_configuration_owner,
+        bootstrap_lock,
+    );
     #[cfg(not(target_arch = "wasm32"))]
     let matches = mounts.command().get_matches();
     #[cfg(target_arch = "wasm32")]
@@ -194,7 +200,11 @@ fn main() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn mounted_registry(form: Form, configuration_owner_selected: bool) -> cli::MountRegistry {
+fn mounted_registry(
+    form: Form,
+    configuration_owner_selected: bool,
+    lock_selected: bool,
+) -> cli::MountRegistry {
     let working_directory = std::env::current_dir().unwrap_or_else(|error| {
         deliver_fault(
             Fault {
@@ -208,7 +218,8 @@ fn mounted_registry(form: Form, configuration_owner_selected: bool) -> cli::Moun
     match cli::MountRegistry::load(&working_directory) {
         Ok(mounts) => mounts,
         Err(cli::MountLoadError::Configuration(error))
-            if configuration_owner_selected && !mount_configuration_error(&error) =>
+            if (configuration_owner_selected && !mount_configuration_error(&error))
+                || (lock_selected && lock_configuration_error(&error)) =>
         {
             cli::MountRegistry::default()
         }
@@ -230,12 +241,32 @@ fn mounted_registry(form: Form, configuration_owner_selected: bool) -> cli::Moun
 
 #[cfg(not(target_arch = "wasm32"))]
 fn mount_configuration_error(error: &spice::config::LoadError) -> bool {
+    configuration_error_at(error, "commands")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn lock_configuration_error(error: &spice::config::LoadError) -> bool {
+    error.resolution().is_some_and(|resolution| {
+        !resolution.issues().is_empty()
+            && resolution.issues().iter().all(|issue| {
+                issue.path().is_some_and(|path| {
+                    matches!(
+                        path.segments().next(),
+                        Some(spice::config::PathSegment::Key("lock"))
+                    )
+                })
+            })
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn configuration_error_at(error: &spice::config::LoadError, key: &str) -> bool {
     error.resolution().is_some_and(|resolution| {
         resolution.issues().iter().any(|issue| {
             issue.path().is_some_and(|path| {
                 matches!(
                     path.segments().next(),
-                    Some(spice::config::PathSegment::Key("commands"))
+                    Some(spice::config::PathSegment::Key(segment)) if segment == key
                 )
             })
         })

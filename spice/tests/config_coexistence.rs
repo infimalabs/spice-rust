@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::config::{Document, Inputs, descriptors, locations, resolve};
@@ -43,6 +43,50 @@ fn rust_configuration() -> PathBuf {
     workspace().join("spice-rust.toml")
 }
 
+/// Writable repository carrying the tracked files selected for this test.
+///
+/// Gate-selected source trees are deliberately read-only and omit `.git`, so
+/// repository discovery belongs in a fixture rather than mutating the source.
+struct RepositoryFixture {
+    root: PathBuf,
+}
+
+impl RepositoryFixture {
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "spice-config-coexistence-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).expect("create coexistence fixture root");
+        fs::create_dir(root.join(".git")).expect("initialize coexistence fixture repository");
+        for source in [python_configuration(), rust_configuration()] {
+            let name = source
+                .file_name()
+                .expect("tracked configuration has a name");
+            fs::copy(&source, root.join(name)).expect("copy selected tracked configuration");
+        }
+        Self {
+            root: fs::canonicalize(root).expect("canonicalize coexistence fixture root"),
+        }
+    }
+
+    fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl Drop for RepositoryFixture {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.root)
+            && !std::thread::panicking()
+        {
+            panic!("remove {}: {error}", self.root.display());
+        }
+    }
+}
+
 fn roots_the_predecessor_refuses(document: &str) -> Vec<String> {
     let parsed: toml::Table = document
         .parse()
@@ -54,44 +98,20 @@ fn roots_the_predecessor_refuses(document: &str) -> Vec<String> {
         .collect()
 }
 
-struct RepositoryFixture(PathBuf);
-
-impl RepositoryFixture {
-    fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "spice-config-coexistence-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed),
-        ));
-        fs::create_dir_all(root.join(".git")).expect("create fixture repository");
-        let root = fs::canonicalize(root).expect("canonicalize fixture repository");
-        for name in ["spice.toml", "spice-rust.toml"] {
-            fs::copy(workspace().join(name), root.join(name))
-                .unwrap_or_else(|error| panic!("copy fixture {name}: {error}"));
-        }
-        Self(root)
-    }
-}
-
-impl Drop for RepositoryFixture {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).expect("remove coexistence fixture");
-    }
-}
-
 #[test]
 fn rust_and_python_tracked_configuration_paths_are_distinct() {
-    let fixture = RepositoryFixture::new();
-    let root = &fixture.0;
-    let repository = spice::repository::Repository::discover(root).expect("fixture discovers");
+    let workspace = RepositoryFixture::new();
+    let root = workspace.root();
+    let repository = spice::repository::Repository::discover(root).expect("workspace discovers");
     let rust = locations(&repository);
-    let python = root.join("spice.toml");
 
     assert_eq!(rust.tracked(), root.join("spice-rust.toml"));
-    assert_ne!(rust.tracked(), python);
+    assert_ne!(rust.tracked(), root.join("spice.toml"));
     assert!(rust.tracked().is_file(), "Rust tracked policy is present");
-    assert!(python.is_file(), "Python tracked policy is present");
+    assert!(
+        root.join("spice.toml").is_file(),
+        "Python tracked policy is present"
+    );
 }
 
 #[test]

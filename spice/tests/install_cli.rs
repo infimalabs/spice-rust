@@ -233,7 +233,8 @@ impl Spoken {
         );
         assert!(
             self.err.is_empty(),
-            "successful install process wrote stderr: {}",
+            "successful install process wrote stderr: stdout={} stderr={}",
+            String::from_utf8_lossy(&self.out),
             String::from_utf8_lossy(&self.err),
         );
     }
