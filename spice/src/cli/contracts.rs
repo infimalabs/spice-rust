@@ -521,7 +521,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "capture"],
-        "task capture [HANDLE] [--title TITLE] [--project PROJECT] [--steal]",
+        "task capture [HANDLE] [--title TITLE] [--project PROJECT] [--origin ORIGIN] [--steal]",
         OperatorOrLane,
         Command,
         [ClaimWon],
@@ -595,7 +595,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "oops"],
-        "task oops TEXT",
+        "task oops TEXT [--origin ORIGIN]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskNoted],

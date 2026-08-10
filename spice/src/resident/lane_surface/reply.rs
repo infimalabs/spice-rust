@@ -177,17 +177,41 @@ pub(super) fn recall_provenance(
     fact: &wire::Envelope<wire::AnyFact>,
     steering: &steer::Ledger,
 ) -> CommandResult<Option<RecallProvenance>> {
+    if let Some(provenance) = recall_live_steering_provenance(fact)? {
+        return Ok(Some(provenance));
+    }
+    if let Some(provenance) = recall_terminal_steering_provenance(fact, steering)? {
+        return Ok(Some(provenance));
+    }
     let provenance = match fact.fact.kind() {
-        wire::FactKind::LaneSessionDeclared => Some(session_provenance(fact)?),
-        wire::FactKind::LaneCompacted => Some(compaction_provenance(fact)?),
-        wire::FactKind::SteerSent => Some(sent_provenance(fact)?),
-        wire::FactKind::SteerEscalated => Some(escalated_provenance(fact)?),
-        wire::FactKind::TasteReminded => Some(reminder_provenance(fact)?),
-        wire::FactKind::SteerAcked => Some(acked_provenance(fact, steering)?),
-        wire::FactKind::SteerDeclined => Some(declined_provenance(fact, steering)?),
-        wire::FactKind::SteerLapsed => Some(lapsed_provenance(fact, steering)?),
-        wire::FactKind::SteerRecovered => Some(recovered_provenance(fact, steering)?),
-        wire::FactKind::SteerCanceled => Some(canceled_provenance(fact, steering)?),
+        wire::FactKind::LaneSessionDeclared => {
+            let body: wire::body::LaneSessionDeclared = recall_body(fact)?;
+            Some(RecallProvenance::Session {
+                occupant: body.occupant,
+                worktree: body.worktree,
+                vendor: body.vendor,
+                epoch: body.epoch,
+                stream: body.stream,
+                identity: body.identity,
+                locus: wire::TapeLocus {
+                    member: body.member,
+                    offset: body.offset,
+                    length: body.length,
+                },
+            })
+        }
+        wire::FactKind::LaneCompacted => {
+            let body: wire::body::LaneCompacted = recall_body(fact)?;
+            Some(RecallProvenance::Compaction {
+                occupant: body.occupant,
+                stream: body.stream,
+                locus: wire::TapeLocus {
+                    member: body.member,
+                    offset: body.offset,
+                    length: body.length,
+                },
+            })
+        }
         wire::FactKind::LaneRenewed => {
             let body: wire::body::LaneRenewed = recall_body(fact)?;
             Some(RecallProvenance::Renewal {
@@ -201,135 +225,115 @@ pub(super) fn recall_provenance(
     Ok(provenance)
 }
 
-fn session_provenance(fact: &wire::Envelope<wire::AnyFact>) -> CommandResult<RecallProvenance> {
-    let body: wire::body::LaneSessionDeclared = recall_body(fact)?;
-    Ok(RecallProvenance::Session {
-        occupant: body.occupant,
-        worktree: body.worktree,
-        vendor: body.vendor,
-        epoch: body.epoch,
-        stream: body.stream,
-        identity: body.identity,
-        locus: wire::TapeLocus {
-            member: body.member,
-            offset: body.offset,
-            length: body.length,
-        },
-    })
+fn recall_live_steering_provenance(
+    fact: &wire::Envelope<wire::AnyFact>,
+) -> CommandResult<Option<RecallProvenance>> {
+    let provenance = match fact.fact.kind() {
+        wire::FactKind::SteerSent => {
+            let body: wire::body::SteerSent = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Live,
+                Some(wire::body::SteeringStage::Published),
+                Vec::new(),
+                None,
+                None,
+            ))
+        }
+        wire::FactKind::SteerEscalated => {
+            let body: wire::body::SteerEscalated = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Live,
+                Some(body.stage),
+                Vec::new(),
+                None,
+                None,
+            ))
+        }
+        // A reminder opens a lineage, so history reads it as the send it is.
+        //
+        // Its transcript locus is deliberately dropped here: this row's locus
+        // means where a lane answered, and a reminder's locus means where the
+        // prose that fired the taste sits. Carrying it across would read as an
+        // acknowledgment nobody made.
+        wire::FactKind::TasteReminded => {
+            let body: wire::body::TasteReminded = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Live,
+                Some(wire::body::SteeringStage::Published),
+                Vec::new(),
+                None,
+                None,
+            ))
+        }
+        _ => None,
+    };
+    Ok(provenance)
 }
 
-fn compaction_provenance(fact: &wire::Envelope<wire::AnyFact>) -> CommandResult<RecallProvenance> {
-    let body: wire::body::LaneCompacted = recall_body(fact)?;
-    Ok(RecallProvenance::Compaction {
-        occupant: body.occupant,
-        stream: body.stream,
-        locus: wire::TapeLocus {
-            member: body.member,
-            offset: body.offset,
-            length: body.length,
-        },
-    })
-}
-
-fn sent_provenance(fact: &wire::Envelope<wire::AnyFact>) -> CommandResult<RecallProvenance> {
-    let body: wire::body::SteerSent = recall_body(fact)?;
-    Ok(live_steering_provenance(
-        Some(body.directive),
-        body.key,
-        wire::body::SteeringStage::Published,
-    ))
-}
-
-fn escalated_provenance(fact: &wire::Envelope<wire::AnyFact>) -> CommandResult<RecallProvenance> {
-    let body: wire::body::SteerEscalated = recall_body(fact)?;
-    Ok(live_steering_provenance(
-        Some(body.directive),
-        body.key,
-        body.stage,
-    ))
-}
-
-// A reminder opens a lineage, so history reads it as the send it is.
-//
-// Its transcript locus is deliberately dropped here: this row's locus means
-// where a lane answered, and a reminder's locus means where the prose that
-// fired the taste sits. Carrying it across would read as an acknowledgment
-// nobody made.
-fn reminder_provenance(fact: &wire::Envelope<wire::AnyFact>) -> CommandResult<RecallProvenance> {
-    let body: wire::body::TasteReminded = recall_body(fact)?;
-    Ok(live_steering_provenance(
-        Some(body.directive),
-        body.key,
-        wire::body::SteeringStage::Published,
-    ))
-}
-
-fn acked_provenance(
+fn recall_terminal_steering_provenance(
     fact: &wire::Envelope<wire::AnyFact>,
     steering: &steer::Ledger,
-) -> CommandResult<RecallProvenance> {
-    let body: wire::body::SteerAcked = recall_body(fact)?;
-    stable_terminal_provenance(
-        steering,
-        &body.key,
-        wire::Disposition::Acked,
-        Some(body.epoch),
-        Some(body.locus),
-    )
-}
-
-fn declined_provenance(
-    fact: &wire::Envelope<wire::AnyFact>,
-    steering: &steer::Ledger,
-) -> CommandResult<RecallProvenance> {
-    let body: wire::body::SteerDeclined = recall_body(fact)?;
-    stable_terminal_provenance(
-        steering,
-        &body.key,
-        wire::Disposition::Declined,
-        Some(body.epoch),
-        Some(body.locus),
-    )
-}
-
-fn lapsed_provenance(
-    fact: &wire::Envelope<wire::AnyFact>,
-    steering: &steer::Ledger,
-) -> CommandResult<RecallProvenance> {
-    let body: wire::body::SteerLapsed = recall_body(fact)?;
-    stable_terminal_provenance(steering, &body.key, wire::Disposition::Lapsed, None, None)
-}
-
-fn recovered_provenance(
-    fact: &wire::Envelope<wire::AnyFact>,
-    steering: &steer::Ledger,
-) -> CommandResult<RecallProvenance> {
-    let body: wire::body::SteerRecovered = recall_body(fact)?;
-    stable_terminal_provenance(steering, &body.key, wire::Disposition::Live, None, None)
-}
-
-fn canceled_provenance(
-    fact: &wire::Envelope<wire::AnyFact>,
-    steering: &steer::Ledger,
-) -> CommandResult<RecallProvenance> {
-    let body: wire::body::SteerCanceled = recall_body(fact)?;
-    stable_terminal_provenance(steering, &body.key, wire::Disposition::Canceled, None, None)
-}
-
-fn live_steering_provenance(
-    directive: Option<CanonicalUuid>,
-    key: String,
-    stage: wire::body::SteeringStage,
-) -> RecallProvenance {
-    steering_provenance(
-        directive,
-        key,
-        wire::Disposition::Live,
-        Some(stage),
-        Vec::new(),
-        None,
-        None,
-    )
+) -> CommandResult<Option<RecallProvenance>> {
+    let provenance = match fact.fact.kind() {
+        wire::FactKind::SteerAcked => {
+            let body: wire::body::SteerAcked = recall_body(fact)?;
+            Some(stable_terminal_provenance(
+                steering,
+                &body.key,
+                wire::Disposition::Acked,
+                Some(body.epoch),
+                Some(body.locus),
+            )?)
+        }
+        wire::FactKind::SteerDeclined => {
+            let body: wire::body::SteerDeclined = recall_body(fact)?;
+            Some(stable_terminal_provenance(
+                steering,
+                &body.key,
+                wire::Disposition::Declined,
+                Some(body.epoch),
+                Some(body.locus),
+            )?)
+        }
+        wire::FactKind::SteerLapsed => {
+            let body: wire::body::SteerLapsed = recall_body(fact)?;
+            Some(stable_terminal_provenance(
+                steering,
+                &body.key,
+                wire::Disposition::Lapsed,
+                None,
+                None,
+            )?)
+        }
+        wire::FactKind::SteerRecovered => {
+            let body: wire::body::SteerRecovered = recall_body(fact)?;
+            Some(stable_terminal_provenance(
+                steering,
+                &body.key,
+                wire::Disposition::Live,
+                None,
+                None,
+            )?)
+        }
+        wire::FactKind::SteerCanceled => {
+            let body: wire::body::SteerCanceled = recall_body(fact)?;
+            Some(stable_terminal_provenance(
+                steering,
+                &body.key,
+                wire::Disposition::Canceled,
+                None,
+                None,
+            )?)
+        }
+        _ => None,
+    };
+    Ok(provenance)
 }
 
 /// Name one steering fact as the provenance a recall answer carries.

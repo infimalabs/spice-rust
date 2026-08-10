@@ -485,7 +485,12 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
     let text = String::from_utf8_lossy(&bytes);
     assert!(!text.contains("spice dev"));
     if hook == "pre-commit" {
-        assert_eq!(text.matches("cargo xtask verify").count(), 1);
+        assert_eq!(
+            text.matches("cargo --quiet xtask verify-action battery")
+                .count(),
+            1
+        );
+        assert!(!text.contains("cargo xtask verify"));
     }
     if hook == "reference-transaction" {
         // Git runs this one inside the transaction, holding the repository
@@ -515,7 +520,12 @@ fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
         .output()
         .expect("run pre-commit with Git's local environment exported");
     assert_success(&pre_commit_output, "pre-commit");
-    assert_eq!(fs::read_to_string(cargo_log).unwrap(), "verify\n");
+    assert!(pre_commit_output.stdout.is_empty());
+    assert!(pre_commit_output.stderr.is_empty());
+    assert_eq!(
+        fs::read_to_string(cargo_log).unwrap(),
+        "verify-action battery\n"
+    );
 }
 
 fn exercise_commit_message(scratch: &Scratch) {
@@ -706,7 +716,8 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
                 "    fi\n",
                 "done\n",
                 "printf '%s\\n' \"$*\" >> '{}'\n",
-                "if [ \"$#\" -eq 1 ] && [ \"$1\" = verify ]; then\n",
+                "if [ \"$#\" -eq 2 ] && [ \"$1\" = verify-action ] && ",
+                "[ \"$2\" = battery ]; then\n",
                 "    exit 0\n",
                 "fi\n",
                 "if [ \"$#\" -eq 2 ] && [ \"$1\" = commit-msg ]; then\n",

@@ -7,11 +7,22 @@
 //!
 //! Bodies flatten beside the discriminant, so their field names are the fact
 //! object's own keys and cannot collide with `kind`.
+
+use serde::{Deserialize, Serialize};
+
 use crate::envelope::{Actor, Seq};
 use crate::head::TranscriptSourceHead;
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Phase, TaskHandle};
-use serde::{Deserialize, Serialize};
+
+#[path = "body/transcript.rs"]
+mod transcript;
+
+pub use transcript::{JournalIngested, TranscriptPosition, TranscriptSpan, TranscriptUsage};
+
+mod publication;
+pub use publication::{ProofSealed, PublishedTarget, ReleasePublished};
+
 /// How a review closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -21,6 +32,7 @@ pub enum Verdict {
     /// The reviewer recorded a finding.
     Finding,
 }
+
 /// What returned a held lane to seating eligibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -30,6 +42,7 @@ pub enum Release {
     /// The hold reached its deadline.
     Expiry,
 }
+
 /// A gate finding's standing weight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -43,6 +56,7 @@ pub enum Severity {
     /// Blocks the release.
     Critical,
 }
+
 /// A task statement and initial workflow head were created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAdded {
@@ -75,6 +89,7 @@ pub struct TaskAdded {
     /// Statement revision the head opens at.
     pub revision: u32,
 }
+
 /// A claimed phase completed and workflow advanced.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskPhased {
@@ -83,6 +98,7 @@ pub struct TaskPhased {
     /// Phase the workflow head advanced into.
     pub phase: Phase,
 }
+
 /// Exact repository history selected at one task boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,6 +124,7 @@ pub struct GitBoundary {
     /// Lane commits ahead of the observed baseline when the boundary opened.
     pub local_commits: u32,
 }
+
 /// Accounted transcript proven at one task lifecycle boundary.
 ///
 /// A phase interval is bounded by two of these, and the usage spent inside it
@@ -143,10 +160,12 @@ pub enum SourceBoundary {
         reason: String,
     },
 }
+
 impl SourceBoundary {
     /// Reason naming the shape a migrated boundary was decoded from.
     pub const UNRECORDED: &'static str =
         "recorded before task lifecycle facts carried source boundaries";
+
     /// Migrate a fact stored without a boundary field into an explicit one.
     ///
     /// The journal is append-only, so a fact already written can never grow the
@@ -165,6 +184,7 @@ impl SourceBoundary {
             reason: Self::UNRECORDED.to_owned(),
         }
     }
+
     /// Whether this is the migrated stand-in for a fact stored without the field.
     ///
     /// Omitting the key on encode restores the exact bytes a stored fact
@@ -177,6 +197,7 @@ impl SourceBoundary {
         matches!(self, Self::Incomplete { reason } if reason == Self::UNRECORDED)
     }
 }
+
 /// A task completed under a re-proven active claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDone {
@@ -198,6 +219,7 @@ pub struct TaskDone {
     )]
     pub source: SourceBoundary,
 }
+
 /// A review verdict landed with reviewer and assignment witnesses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskReviewed {
@@ -228,6 +250,7 @@ pub struct TaskReviewed {
     )]
     pub source: SourceBoundary,
 }
+
 /// The allocator seated a reviewer under the anti-self-review witness.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAssigned {
@@ -238,6 +261,7 @@ pub struct TaskAssigned {
     /// Phase the assignment covers.
     pub phase: Phase,
 }
+
 /// A durable task note appended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskNoted {
@@ -246,6 +270,7 @@ pub struct TaskNoted {
     /// Note text.
     pub note: String,
 }
+
 /// A task received a wakeable deferral.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDeferred {
@@ -254,12 +279,14 @@ pub struct TaskDeferred {
     /// Instant the deferral becomes wakeable.
     pub until: Instant,
 }
+
 /// A task's deferral cleared.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskWoken {
     /// Woken task.
     pub task: TaskHandle,
 }
+
 /// An unsettled task statement changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEdited {
@@ -268,6 +295,7 @@ pub struct TaskEdited {
     /// Statement revision the edit produced.
     pub revision: u32,
 }
+
 /// A task was withdrawn from the board with a recorded reason.
 ///
 /// The journal is the authority and a fact is permanent, so a withdrawal is a
@@ -289,6 +317,7 @@ pub struct TaskDeleted {
     )]
     pub claimed: Option<Actor>,
 }
+
 /// Exclusive possession was minted from the current eligibility and claim heads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimWon {
@@ -327,6 +356,7 @@ pub struct ClaimWon {
     )]
     pub source: SourceBoundary,
 }
+
 /// Possession passed to a successor with ancestor lineage preserved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimCarried {
@@ -351,6 +381,7 @@ pub struct ClaimCarried {
     )]
     pub source: SourceBoundary,
 }
+
 /// Possession was released and the task became eligible again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimFreed {
@@ -359,6 +390,7 @@ pub struct ClaimFreed {
     /// Actor that held the possession.
     pub actor: Actor,
 }
+
 /// The lease deadline passed and the resident expired possession.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimLapsed {
@@ -369,6 +401,7 @@ pub struct ClaimLapsed {
     /// Lease deadline that passed.
     pub expiry: Instant,
 }
+
 /// The resident extended a live, epoch-bound lease within its maximum.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimRenewed {
@@ -381,6 +414,7 @@ pub struct ClaimRenewed {
     /// Maximum the extension stayed within.
     pub maximum: Instant,
 }
+
 /// The exact normalized plan digest landed atomically at its witnessed board barrier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocApplied {
@@ -391,6 +425,7 @@ pub struct DocApplied {
     /// Operations the plan carried.
     pub operations: u32,
 }
+
 /// A directive was created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerSent {
@@ -415,6 +450,7 @@ pub struct SteerSent {
     /// Instant the directive expires without a disposition.
     pub expires: Instant,
 }
+
 /// One exact attachment carried by a durable directive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -426,6 +462,7 @@ pub struct DirectiveAttachment {
     /// Exact opaque data URL admitted with the directive.
     pub data_url: String,
 }
+
 /// How urgently one stable directive is currently presented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -439,6 +476,7 @@ pub enum SteeringStage {
     /// Silence crossed the final pre-expiry horizon.
     Overdue,
 }
+
 impl SteeringStage {
     /// Stable lowercase spelling used on operator surfaces.
     #[must_use]
@@ -687,5 +725,211 @@ pub struct ConsentFloored {
     pub floor: String,
 }
 
+#[path = "body/lane.rs"]
 mod lane;
-pub use lane::*;
+
+pub use lane::{
+    LaneArranged, LaneCompacted, LaneDegraded, LaneDrained, LaneExited, LaneHeld, LaneImported,
+    LaneKilled, LaneLaunchIdentity, LaneRenewed, LaneResumed, LaneSeated, LaneSessionDeclared,
+    LaneSourceBoundary, LaneStarted, LineageArranged, LineageConfigured, LineageStanding,
+    TasteCleared, TasteConfirmed, TasteReminded,
+};
+
+/// An expected listening event remained absent past its armed window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanaryAlarmed {
+    /// Lane the window was armed for.
+    pub lane: CanonicalUuid,
+    /// Listening event that stayed absent.
+    pub expected: String,
+    /// End of the armed window.
+    pub window: Instant,
+}
+
+/// Listening meters disagreed: activity existed without decoded context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanaryContradicted {
+    /// Lane the meters cover.
+    pub lane: CanonicalUuid,
+    /// Activity the meters saw.
+    pub activity: u64,
+    /// Context the decoder produced from it.
+    pub decoded: u64,
+}
+
+/// An unproven vendor version first ran with residue measurement armed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VendorArmed {
+    /// Vendor that ran.
+    pub vendor: String,
+    /// Unproven version.
+    pub version: String,
+}
+
+/// An executable surface digest changed and entered quarantine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustPended {
+    /// Executable surface.
+    pub surface: String,
+    /// Digest that entered quarantine.
+    pub digest: Digest,
+    /// Digest it replaced; absent the first time the surface is seen.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub previous: Option<Digest>,
+}
+
+/// The operator approved the exact executable digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustGranted {
+    /// Executable surface.
+    pub surface: String,
+    /// Exact approved digest.
+    pub digest: Digest,
+}
+
+/// The operator withdrew approval from the exact executable digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustRevoked {
+    /// Executable surface.
+    pub surface: String,
+    /// Exact digest approval was withdrawn from.
+    pub digest: Digest,
+}
+
+/// The resident recognized a repository commit and bound its receipt verdict.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitLanded {
+    /// Recognized repository commit.
+    pub commit: String,
+    /// Receipt the commit published.
+    pub receipt: Digest,
+    /// Verdict bound to the receipt.
+    pub verdict: Verdict,
+}
+
+/// The resident recognized a new gate finding; the Finding head opened.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateFound {
+    /// Stable finding identity.
+    pub identity: String,
+    /// Finding severity.
+    pub severity: Severity,
+    /// Evidence locus the finding stands at.
+    pub locus: String,
+    /// Owner the finding is charged to.
+    pub owner: Actor,
+    /// Receipt the finding originated from.
+    pub receipt: Digest,
+}
+
+/// A standing finding resolved at its evidence; the Finding head closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateCleared {
+    /// Stable finding identity.
+    pub identity: String,
+    /// Evidence locus the resolution stands at.
+    pub locus: String,
+}
+
+/// A requested gate finding dispatch completed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateFindingsFiled {
+    /// Digest of the complete typed battery report that was dispatched.
+    pub report: Digest,
+    /// Number of projected findings consumed.
+    pub findings: u32,
+    /// Number of deferred board tasks created.
+    pub created: u32,
+    /// Number of open board tasks reused.
+    pub reused: u32,
+}
+
+/// The one forward schema migration finalized before epoch mint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JournalMigrated {
+    /// Schema the journal left.
+    pub from: u32,
+    /// Schema the journal reached.
+    pub to: u32,
+    /// Epoch minted after the migration finalized.
+    pub epoch: CanonicalUuid,
+}
+
+/// A quiesced backup bundle was produced with its enumerated tape manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JournalBacked {
+    /// Produced backup bundle.
+    pub bundle: String,
+    /// Enumerated tape manifest carried with the bundle.
+    pub manifest: Vec<String>,
+}
+
+/// A restore protocol completed and the new epoch recognized the exchanged authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JournalRestored {
+    /// Bundle the restore read.
+    pub bundle: String,
+    /// New epoch that recognized the exchange.
+    pub epoch: CanonicalUuid,
+    /// Authority the restore exchanged.
+    pub authority: Digest,
+}
+
+/// The resident acquired the kernel writer lock and minted its epoch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpSeated {
+    /// Minted resident epoch.
+    pub epoch: CanonicalUuid,
+}
+
+/// The resident stopped admission and began a graceful end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpQuiescing {
+    /// Resident epoch ending.
+    pub epoch: CanonicalUuid,
+}
+
+/// The resident began preserving or finishing admitted work and ending occupants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpDraining {
+    /// Resident epoch ending.
+    pub epoch: CanonicalUuid,
+    /// Occupants still live at the transition.
+    pub occupants: u32,
+}
+
+/// Grace expired and the resident began ending occupants that had not finished.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpTerminating {
+    /// Resident epoch ending.
+    pub epoch: CanonicalUuid,
+    /// Occupants that had not finished.
+    pub occupants: u32,
+}
+
+/// Bounded escalation began against occupants that survived termination.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpKilling {
+    /// Resident epoch ending.
+    pub epoch: CanonicalUuid,
+    /// Occupants that survived termination.
+    pub occupants: u32,
+}
+
+/// Occupants ended; the resident began verifying claims, tape seals, and residue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpVerifying {
+    /// Resident epoch ending.
+    pub epoch: CanonicalUuid,
+}
+
+/// The resident committed the verified terminal state immediately before releasing authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpDark {
+    /// Resident epoch releasing authority.
+    pub epoch: CanonicalUuid,
+}

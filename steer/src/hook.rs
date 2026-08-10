@@ -1,35 +1,23 @@
-//! Installing shell interception and proving it activated.
+//! Installing the structural shell-interception boundary.
 //!
-//! Interception is what puts the wrapper in front of an agent's commands. It is
-//! installed as two stages: a dynamic entry stage that the first shell in a
-//! worktree reexecs through, and a static stage that every descendant sources
-//! without bootstrapping the boundary again.
+//! Interception puts the wrapper in front of every agent-owned top-level shell
+//! command. It is installed as two distinct executable stages: the outer stage
+//! always enters the Rust wrapper, and the inner stage restores and execs the
+//! user's native shell. The launch environment points the agent at the outer
+//! stage; the inner stage points descendants at the native shell. Exactly-once
+//! routing is therefore structural rather than a marker descendants can forge,
+//! lose, or accidentally inherit.
 //!
 //! Both stages are published from bytes compiled into this crate, so what is on
 //! disk either matches what this build expects or is named as divergent. That
 //! matters because a stage that silently drifted would intercept in some other
 //! way than the one this code reasons about.
-//!
-//! Activation is the separate question of whether interception actually
-//! happened, and it is answered from the environment the caller hands in. This
-//! crate never reads the environment itself: ambient values are acquired at the
-//! binary rim and passed inward typed. Unproven activation refuses loudly.
-//! Deafness is a gate failure with its own durable evidence, never a refusal to
-//! run the command.
 
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-
-use wire::CanonicalUuid;
-
-/// The variable an activated shell carries, holding the lane it activated for.
-///
-/// Named here and read at the rim: this crate states the vocabulary without
-/// reaching for it.
-pub const PROOF: &str = wire::SpiceVariable::Proof.as_str();
 
 /// The variable naming the installed hooks directory.
 pub const HOOKS: &str = wire::SpiceVariable::Hooks.as_str();
@@ -39,6 +27,9 @@ pub const INBOX: &str = wire::SpiceVariable::Inbox.as_str();
 
 /// The variable naming the lane a shell is bound to.
 pub const LANE: &str = wire::SpiceVariable::Lane.as_str();
+
+/// The variable carrying the user shell restored by the inner stage.
+pub const NATIVE_SHELL: &str = wire::SpiceVariable::NativeShell.as_str();
 
 /// One interception stage and the bytes it must carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,20 +68,6 @@ pub const STAGES: [Stage; 2] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hooks {
     root: PathBuf,
-}
-
-/// What activation proved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Activation {
-    lane: CanonicalUuid,
-}
-
-impl Activation {
-    /// The lane interception activated for.
-    #[must_use]
-    pub const fn lane(&self) -> CanonicalUuid {
-        self.lane
-    }
 }
 
 impl Hooks {
@@ -138,19 +115,14 @@ impl Hooks {
         Ok(())
     }
 
-    /// Proves interception is installed as this build expects and did activate.
-    ///
-    /// The environment arrives from the caller rather than from the process, so
-    /// the same proof runs identically in a test, at the door, and under a
-    /// shell that really did reexec.
+    /// Verifies interception is installed as this build expects.
     ///
     /// # Errors
     ///
     /// Returns [`Refusal::Absent`] when a stage is missing, [`Refusal::Unread`]
-    /// when one cannot be read, [`Refusal::Divergent`] when one differs from
-    /// this build, [`Refusal::Unproven`] when the environment carries no proof,
-    /// and [`Refusal::Unnamed`] when the proof does not name a lane.
-    pub fn proof(&self, environment: &sill::Environment) -> Result<Activation, Refusal> {
+    /// when one cannot be read, and [`Refusal::Divergent`] when one differs from
+    /// this build.
+    pub fn verify(&self) -> Result<(), Refusal> {
         for stage in STAGES {
             let path = self.stage(stage);
             let found = match fs::read_to_string(&path) {
@@ -169,22 +141,7 @@ impl Hooks {
                 return Err(Refusal::Divergent { stage: path });
             }
         }
-
-        let proof = environment
-            .entries()
-            .iter()
-            .find(|(name, _)| name == PROOF)
-            .map(|(_, value)| value)
-            .ok_or(Refusal::Unproven)?;
-        let named = proof.to_str().ok_or_else(|| Refusal::Unnamed {
-            text: proof.to_string_lossy().into_owned(),
-        })?;
-        named
-            .parse::<CanonicalUuid>()
-            .map(|lane| Activation { lane })
-            .map_err(|_| Refusal::Unnamed {
-                text: named.to_owned(),
-            })
+        Ok(())
     }
 }
 
@@ -218,7 +175,7 @@ impl Error for InstallError {
     }
 }
 
-/// Why activation could not be proven.
+/// Why the installed structural stages could not be verified.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
     /// A stage is not installed.
@@ -237,13 +194,6 @@ pub enum Refusal {
     Divergent {
         /// Where the stage sits.
         stage: PathBuf,
-    },
-    /// The environment carries no activation proof.
-    Unproven,
-    /// The activation proof does not name a lane.
-    Unnamed {
-        /// The proof exactly as it arrived.
-        text: String,
     },
 }
 
@@ -264,14 +214,6 @@ impl fmt::Display for Refusal {
                 formatter,
                 "interception differs from this build: {} is not the stage it installs",
                 stage.display()
-            ),
-            Self::Unproven => write!(
-                formatter,
-                "interception did not activate: no {PROOF} in the environment"
-            ),
-            Self::Unnamed { text } => write!(
-                formatter,
-                "interception activated for no lane: {PROOF} is {text:?}"
             ),
         }
     }
@@ -298,7 +240,7 @@ fn make_executable(_path: &Path) -> Result<(), InstallError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HOOKS, INBOX, LANE, PROOF, STAGES};
+    use super::{HOOKS, NATIVE_SHELL, STAGES};
     use std::collections::BTreeSet;
 
     /// The prefix every name in this vocabulary carries.
@@ -314,7 +256,7 @@ mod tests {
     /// uses.
     #[test]
     fn the_stages_spell_the_vocabulary_this_module_declares() {
-        let declared: BTreeSet<&str> = [PROOF, HOOKS, INBOX, LANE].into_iter().collect();
+        let declared: BTreeSet<&str> = [HOOKS, NATIVE_SHELL].into_iter().collect();
         let mut spelled = BTreeSet::new();
         for stage in STAGES {
             spelled.extend(names(stage.bytes()));

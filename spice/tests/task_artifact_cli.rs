@@ -146,6 +146,8 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
         "Artifact evidence".to_owned(),
         "--project".to_owned(),
         "rim.artifact".to_owned(),
+        "--origin".to_owned(),
+        "fixture:task-artifact-cli".to_owned(),
     ]);
     let task = task_reply.body.task;
     let text = fixture.source("evidence.md", b"observed proof\n");

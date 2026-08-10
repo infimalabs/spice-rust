@@ -1,20 +1,16 @@
 #!/bin/sh
-# The static interception stage, sourced rather than executed.
+# The inner shell stage, executed exactly once by the wrapper.
 #
-# Descendant shells reach this stage with activation already proven, so it never
-# reexecs and never bootstraps the resident boundary a second time. It writes
-# the lane's rendered direction to stderr and returns, which is the whole of its
-# work.
+# This stage removes the packaged routing environment, restores the user's
+# native shell, and replaces itself with that shell. The exec preserves the
+# immediate child's process identity while every process it starts inherits the
+# native shell rather than either Spice stage.
 #
-# A rendering that is absent, empty, or stale is ordinary: disposition lives in
-# the journal and this file is only its rendering. Entering without proof is
-# not ordinary, and says so.
+# Sourcing remains an operation inside that native command shell and therefore
+# shares its functions and options without crossing another process boundary.
 
-if [ -z "${SPICE_PROOF-}" ]; then
-	printf 'spice: static stage entered without activation proof\n' >&2
-	return 1
-fi
-
-if [ -r "${SPICE_INBOX-}" ]; then
-	cat -- "${SPICE_INBOX}" >&2 # env-policy: allow
-fi
+native_shell=${SPICE_NATIVE_SHELL:?spice native shell} # env-policy: allow
+unset SPICE_HOOKS SPICE_NATIVE_SHELL # env-policy: allow
+SHELL=$native_shell # env-policy: allow
+export SHELL
+exec "$native_shell" "$@" # env-policy: allow

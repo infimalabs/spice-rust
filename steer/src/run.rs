@@ -43,11 +43,13 @@ pub fn emit(rendering: &Path, stream: &mut impl Write) -> io::Result<bool> {
     Ok(true)
 }
 
-/// Runs the wrapped command and waits for it.
+/// Runs the wrapped command and waits for that immediate child.
 ///
 /// The command's own streams are inherited: this hands the operator's command
 /// through rather than capturing it, so what the caller sees is what the
-/// command wrote.
+/// command wrote. Waiting on the spawned process identity survives that process
+/// replacing itself with `exec`; it ends when that identity exits, regardless
+/// of any separately living descendants it created.
 ///
 /// # Errors
 ///
@@ -57,5 +59,6 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new(program).args(arguments).status()
+    let mut child = Command::new(program).args(arguments).spawn()?;
+    child.wait()
 }

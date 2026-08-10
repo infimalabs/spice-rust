@@ -230,6 +230,9 @@ pub(super) fn add_project_with_acceptance(
     acceptance: &[&str],
 ) -> TaskHandle {
     let task = task.parse::<TaskHandle>().expect("fixture task handle");
+    let origin = "fixture:board-command"
+        .parse()
+        .expect("fixture origin is valid");
     assert_committed(issue(
         bus,
         epoch,
@@ -241,7 +244,7 @@ pub(super) fn add_project_with_acceptance(
             project: Some(project.to_owned()),
             description: None,
             acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
-            origin: None,
+            origin: Some(origin),
             flow: flow
                 .or_else(|| acceptance.is_empty().then_some("todo,review"))
                 .map(str::to_owned),
