@@ -63,6 +63,9 @@ pub struct TaskOopsAdd {
 }
 
 /// File the exact findings folded from one registered gate run.
+///
+/// No caller-authored finding rows cross this boundary; the resident decodes
+/// `evidence` and folds every row from that report itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GateFindings {
