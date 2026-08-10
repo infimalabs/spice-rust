@@ -288,12 +288,12 @@ fn proposal_observation(snapshot: &ValidatedSnapshot, project: &str) -> Proposal
         .answer
         .tasks
         .iter()
-        .filter(|task| task.statement.body.project == project)
-        .map(|task| {
+        .filter(|proposal_task| proposal_task.statement.body.project == project)
+        .map(|proposal_task| {
             (
-                task.statement.body.born.clone(),
-                task.statement.position,
-                task.workflow.position,
+                proposal_task.statement.body.born.clone(),
+                proposal_task.statement.position,
+                proposal_task.workflow.position,
             )
         })
         .collect();
@@ -308,12 +308,12 @@ fn guard_proposal_observation(write: &mut JournalWrite, observed: ProposalObserv
         let current = read
             .task_heads()?
             .into_iter()
-            .filter(|heads| heads.statement().body().project == observed.project)
-            .map(|heads| {
+            .filter(|proposal_heads| proposal_heads.statement().body().project == observed.project)
+            .map(|proposal_heads| {
                 (
-                    heads.statement().body().born.clone(),
-                    heads.statement().position(),
-                    heads.workflow().position(),
+                    proposal_heads.statement().body().born.clone(),
+                    proposal_heads.statement().position(),
+                    proposal_heads.workflow().position(),
                 )
             })
             .collect::<Vec<_>>();
