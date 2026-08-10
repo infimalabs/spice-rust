@@ -343,6 +343,8 @@ pub(in crate::resident) fn recover(
             "recover only a durable directive that lapsed or was deadlettered",
         );
     }
+    // The caller binds the stable directive identity and the resident binds
+    // the concrete failed disposition in the journal guard below.
     let witness = Witness::Recoverable {
         steer: recover.directive,
     };

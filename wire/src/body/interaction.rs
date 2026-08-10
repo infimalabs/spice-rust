@@ -1,4 +1,7 @@
 //! Consent, lane lifecycle, and taste fact bodies.
+//!
+//! These types retain their public `wire::body::*` paths through the parent
+//! module while keeping the core body registry below its structural ceiling.
 
 use serde::{Deserialize, Serialize};
 

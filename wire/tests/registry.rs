@@ -105,6 +105,8 @@ fn every_command_names_the_witnesses_it_requires() {
 #[test]
 fn recovery_requires_the_exact_recoverable_directive_predicate() {
     let law = CommandKind::SteerRecover.law();
+    // The predicate admits either failed standing while still making an
+    // unwitnessed mutation structurally impossible.
     assert_eq!(law.required, &[WitnessKind::Recoverable]);
     assert!(law.optional.is_empty());
 }

@@ -498,6 +498,8 @@ fn add_coexistence_tasks(
     installed_binary: &Path,
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
 ) -> [wire::TaskHandle; 2] {
+    // Both fields are deliberate: acceptance satisfies the task lifecycle,
+    // while origin proves Rust never borrowed the predecessor's authority.
     [
         reply_body::<wire::intent::TaskAnswer>(&lane_with(
             fixture,

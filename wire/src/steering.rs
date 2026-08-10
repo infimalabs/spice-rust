@@ -1,4 +1,7 @@
 //! Steering fact bodies whose lifecycle is implemented outside the core body seam.
+//!
+//! A dead letter keeps its stable identity here so recovery never needs to
+//! manufacture a replacement directive.
 
 use serde::{Deserialize, Serialize};
 
