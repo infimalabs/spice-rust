@@ -120,8 +120,8 @@ impl Authority {
                 return Self::Unavailable(format!("journal authority could not open: {error}"));
             }
         };
-        if let Err(error) = reader.schema_version() {
-            return Self::Unavailable(format!("journal schema could not be admitted: {error}"));
+        if let Err(error) = reader.verify() {
+            return Self::Unavailable(format!("journal authority verification failed: {error}"));
         }
         match reader.read_with(|read| -> Result<AuthoritySnapshot, String> {
             let _ = read
