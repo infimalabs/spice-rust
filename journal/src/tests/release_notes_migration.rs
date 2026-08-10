@@ -7,6 +7,7 @@ const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116321";
 const KEY: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const MANIFEST: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const NOTES: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const TASK_STAMP: &str = "1kKRRsDP";
 
 #[test]
 fn schema_four_publication_absence_is_materialized_once_and_remains_replayable() {
@@ -24,6 +25,14 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
     assert_eq!(
         version_records(&journal.connection),
         (SCHEMA_VERSION, SCHEMA_VERSION)
+    );
+    let heads = journal
+        .read(|read| read.task_heads())
+        .expect("combined migration task heads read");
+    assert_eq!(
+        heads[0].statement().body().incepted.as_str(),
+        TASK_STAMP,
+        "the release crossing composes through sole task identity",
     );
     let snapshot = journal.fact_snapshot().expect("migrated snapshot opens");
     let published: wire::body::ReleasePublished = snapshot

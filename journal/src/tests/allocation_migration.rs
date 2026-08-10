@@ -27,6 +27,7 @@ fn schema_three_heads_gain_durable_queue_and_claim_origins_once() {
         .read(|read| read.task_heads())
         .expect("migrated heads read");
     let task = heads.first().expect("one task");
+    assert_eq!(task.statement().body().incepted.as_str(), STAMP);
     assert_eq!(task.statement().body().queue_origin, seq(1));
     let claim = task.claim().expect("one claim").body();
     assert_eq!(claim.fact, seq(3));

@@ -141,6 +141,14 @@ fn peer_spread_reads_the_whole_board_cell_and_never_excludes_crowded_work() {
     let selected = board::select(&entries, &actor, &all_projects(), 2, None)
         .expect("an uncrowded cell is preferred");
     assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
+    assert_eq!(
+        selected.entry().handle(),
+        &wire::TaskHandle::for_project(
+            &selected.entry().statement().project,
+            selected.entry().incepted(),
+        ),
+        "selection exposes the project-sensitive rendering of the durable stamp",
+    );
 
     let second_peer = peer_entry("BOARD-peer2", other, ".oops.workflow", "board.beta", "todo");
     let all_crowded = [crowded, open, entries[2].clone(), second_peer];

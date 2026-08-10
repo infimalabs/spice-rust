@@ -368,16 +368,17 @@ fn mint_gate_finding_stamp(
     at: Instant,
     index: usize,
 ) -> wire::TaskStamp {
+    // Existing heads and tasks prepared in this write share one stamp collision domain.
     let occupied = snapshot
         .entries
         .iter()
         .map(|entry| entry.incepted().clone())
         .collect::<std::collections::BTreeSet<_>>();
+    let base_millis = at.get().as_millisecond();
     let mut offset = index as i64;
     loop {
-        let candidate =
-            wire::TaskStamp::for_millis(at.get().as_millisecond().saturating_add(offset))
-                .expect("the current timestamp fits the task stamp codec");
+        let candidate = wire::TaskStamp::for_millis(base_millis.saturating_add(offset))
+            .expect("the current timestamp fits the task stamp codec");
         if !occupied.contains(&candidate) && minted.insert(candidate.clone()) {
             return candidate;
         }

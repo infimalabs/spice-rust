@@ -55,6 +55,14 @@ fn gate_findings_file_exact_deferred_tasks() {
         .expect("gate report forms origin");
     for (task, finding) in tasks.iter().zip([first, second]) {
         assert_eq!(task.statement.body.project, "gate.findings");
+        assert_eq!(
+            task.statement
+                .body
+                .handle
+                .incepted()
+                .expect("derived finding handle carries its inception stamp"),
+            task.statement.body.incepted,
+        );
         assert!(task.workflow.body.deferral.is_some());
         assert_eq!(task.statement.body.provenance, causal);
         assert_eq!(

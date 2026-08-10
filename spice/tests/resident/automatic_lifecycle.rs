@@ -119,6 +119,8 @@ fn add_task(
         "spice.lifecycle",
         "--acceptance",
         "automatic lifecycle fixture reaches its asserted terminal state",
+        "--origin",
+        "fixture:automatic-lifecycle",
     ];
     let output = match lane {
         Some(lane) => invoke_lane(fixture, lane, &arguments),
@@ -460,7 +462,9 @@ fn rust_resident_carries_a_held_claim_to_the_successor_without_python() {
             carried.epoch,
         ),
         (
-            task.task,
+            task.task
+                .incepted()
+                .expect("claimed handle carries its inception stamp"),
             seated.lane,
             successor,
             first,
@@ -522,9 +526,13 @@ fn rust_resident_claims_one_of_two_settled_ready_tasks_without_python() {
     assert_eq!(won[0].fact.body()["lane"], serde_json::json!(seated.lane));
     assert_eq!(won[0].fact.body()["occupant"], serde_json::json!(successor));
     assert!(
-        [first_task.task, second_task.task]
-            .iter()
-            .any(|task| won[0].fact.body()["task"] == serde_json::json!(task)),
+        [first_task.task, second_task.task].iter().any(|task| {
+            won[0].fact.body()["task"]
+                == serde_json::json!(
+                    task.incepted()
+                        .expect("created handle carries its inception stamp")
+                )
+        }),
         "the automatic claim selects one of the two READY tasks",
     );
     drop(snapshot);
@@ -598,9 +606,13 @@ fn available_work_startup_failure_frees_only_its_automatic_claim() {
     assert_eq!((won.len(), freed.len()), (1, 1));
     assert_eq!(won[0].fact.body()["task"], freed[0].fact.body()["task"]);
     assert!(
-        [first_task.task, second_task.task]
-            .iter()
-            .any(|task| won[0].fact.body()["task"] == serde_json::json!(task)),
+        [first_task.task, second_task.task].iter().any(|task| {
+            won[0].fact.body()["task"]
+                == serde_json::json!(
+                    task.incepted()
+                        .expect("created handle carries its inception stamp")
+                )
+        }),
         "the released claim belongs to the selected READY task",
     );
     let row = durable_head(&fixture)

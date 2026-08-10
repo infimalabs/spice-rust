@@ -1,4 +1,8 @@
 //! Task, claim, gate-finding, and effort command contracts.
+//!
+//! Commands may name projected handles for lookup. Creation plans and durable
+//! answers cross the admission boundary with inception stamps, so a later
+//! project edit only changes presentation.
 
 use serde::{Deserialize, Serialize};
 
