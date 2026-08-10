@@ -9,6 +9,8 @@ pub(super) use claim::{
     ClaimPlan, Possession, claim_git_boundary, claim_grant, claim_plan, commit_claim,
 };
 pub(super) use gate_findings::gate_findings;
+#[cfg(test)]
+pub(super) use gate_findings::{FindingRow, gate_findings_folded};
 
 /// One actor-filtered board snapshot whose cursor and entries were validated together.
 pub(super) struct ValidatedSnapshot {
@@ -83,7 +85,7 @@ pub(super) fn task_oops_add(
         project: None,
         description: Some(add.description.clone()),
         acceptance: Vec::new(),
-        origin: None,
+        origin: add.origin.clone(),
         flow: None,
         depends: Vec::new(),
     };
@@ -107,12 +109,17 @@ fn create_task<B: serde::Serialize>(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let prepared = match prepare_task(command, add, &project, projects) {
-        Ok(prepared) => prepared,
-        Err(outcome) => return outcome,
-    };
     let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let origin =
+        match resolve_creation_origin(add.origin.as_ref(), command.actor(), &snapshot, None) {
+            Ok(origin) => origin,
+            Err(outcome) => return outcome,
+        };
+    let prepared = match prepare_task(command, add, &project, projects, origin) {
+        Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
     let post = Entry::new(
@@ -181,6 +188,7 @@ fn prepare_task(
     add: &TaskAdd,
     project: &Project,
     projects: &ProjectPolicy,
+    origin: wire::Origin,
 ) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     let handles = command
         .expected()
@@ -200,10 +208,6 @@ fn prepare_task(
     let project_text = project.as_str().to_owned();
     let flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
     let phase = flow[0].clone();
-    let origin = match add.origin.clone() {
-        Some(origin) => origin,
-        None => task_origin(&task)?,
-    };
     let at = current_instant()?;
     let statement = TaskHead {
         handle: task.clone(),

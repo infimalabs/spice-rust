@@ -86,119 +86,185 @@ pub(super) fn admit_headers<'headers>(
     Ok(host)
 }
 
+struct ActiveSession {
+    state: Arc<SurfaceState>,
+    accepted: wire::Accepted,
+    capability: wire::CanonicalUuid,
+    retired: CancellationToken,
+    subscription: Option<crate::stream::Subscription>,
+    broadcasts: Option<bus::BroadcastSubscriber>,
+    messages: Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
+    commands: PendingCommands,
+    lead: Lead,
+}
+
+impl ActiveSession {
+    fn new(
+        state: Arc<SurfaceState>,
+        accepted: wire::Accepted,
+        capability: wire::CanonicalUuid,
+        retired: CancellationToken,
+    ) -> Self {
+        let broadcasts = state.stream.as_ref().map(crate::stream::Source::subscribe);
+        let messages = state
+            .stream
+            .as_ref()
+            .map(crate::stream::Source::subscribe_messages);
+        Self {
+            state,
+            accepted,
+            capability,
+            retired,
+            subscription: None,
+            broadcasts,
+            messages,
+            commands: PendingCommands::new(),
+            lead: Lead::Journal,
+        }
+    }
+
+    async fn next(&mut self, socket: &mut WebSocket, closed: &mut watch::Receiver<bool>) -> Event {
+        let live = self
+            .subscription
+            .as_ref()
+            .is_some_and(crate::stream::Subscription::is_live);
+        next_event(
+            &mut self.lead,
+            socket,
+            SessionSignals::new(closed, &self.retired),
+            &mut self.broadcasts,
+            &mut self.messages,
+            &mut self.commands,
+            live,
+        )
+        .await
+    }
+
+    async fn route(
+        &mut self,
+        socket: &mut WebSocket,
+        closed: &watch::Receiver<bool>,
+        event: Event,
+    ) -> SessionFlow {
+        match event {
+            Event::Closed(changed) => self.route_closed(socket, closed, changed).await,
+            Event::Retired => {
+                send_replaced(
+                    socket,
+                    self.state.epoch,
+                    self.subscription
+                        .as_ref()
+                        .map(crate::stream::Subscription::id),
+                )
+                .await;
+                SessionFlow::Close
+            }
+            Event::Journal(notice) => {
+                route_broadcast(
+                    socket,
+                    &self.state,
+                    &self.accepted,
+                    self.capability,
+                    self.subscription
+                        .as_mut()
+                        .expect("live branch has a subscription"),
+                    notice,
+                )
+                .await
+            }
+            Event::Message(notice) => {
+                route_message_broadcast(
+                    socket,
+                    &self.state,
+                    &self.accepted,
+                    self.capability,
+                    self.subscription
+                        .as_ref()
+                        .expect("live branch has a subscription"),
+                    notice,
+                )
+                .await
+            }
+            Event::Command(completed) => {
+                route_command_completion(socket, &self.state, completed).await
+            }
+            Event::Inbound(message) => self.route_inbound(socket, message).await,
+        }
+    }
+
+    async fn route_closed(
+        &mut self,
+        socket: &mut WebSocket,
+        closed: &watch::Receiver<bool>,
+        changed: Result<(), watch::error::RecvError>,
+    ) -> SessionFlow {
+        if changed.is_ok() && !*closed.borrow() {
+            return SessionFlow::Continue;
+        }
+        if let Some(frame) = self
+            .subscription
+            .as_ref()
+            .and_then(crate::stream::Subscription::closing)
+        {
+            send_encoded(socket, &frame).await;
+        }
+        SessionFlow::Close
+    }
+
+    async fn route_inbound(
+        &mut self,
+        socket: &mut WebSocket,
+        message: Option<Result<Message, ::axum::Error>>,
+    ) -> SessionFlow {
+        let Some(Ok(message)) = message else {
+            return SessionFlow::Close;
+        };
+        let bytes = match message {
+            Message::Binary(bytes) => bytes.to_vec(),
+            Message::Text(text) => text.as_bytes().to_vec(),
+            Message::Ping(_) | Message::Pong(_) => return SessionFlow::Continue,
+            Message::Close(_) => return SessionFlow::Close,
+        };
+        if is_stream_request(&bytes) {
+            route_stream(
+                socket,
+                &self.state,
+                &self.accepted,
+                self.capability,
+                &bytes,
+                &mut self.subscription,
+            )
+            .await
+        } else {
+            route_inbound_command(
+                socket,
+                &self.state,
+                &self.accepted,
+                &mut self.commands,
+                &bytes,
+            )
+            .await
+        }
+    }
+}
+
 async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
     let _session = SessionGuard::enter(&state);
     let mut closed = state.closed.subscribe();
-    let Some((accepted, capability)) = open_session(&mut socket, &state, &mut closed).await else {
+    let Some((accepted, capability, retired)) =
+        open_session(&mut socket, &state, &mut closed).await
+    else {
         return;
     };
     send_encoded(&mut socket, &accepted).await;
-    let mut subscription = None;
-    let mut broadcasts = state.stream.as_ref().map(crate::stream::Source::subscribe);
-    let mut message_broadcasts = state
-        .stream
-        .as_ref()
-        .map(crate::stream::Source::subscribe_messages);
-    let mut commands = PendingCommands::new();
-    let mut lead = Lead::Journal;
+    let mut session = ActiveSession::new(state, accepted, capability, retired);
     loop {
-        let live = subscription
-            .as_ref()
-            .is_some_and(crate::stream::Subscription::is_live);
-        let event = next_event(
-            &mut lead,
-            &mut socket,
-            &mut closed,
-            &mut broadcasts,
-            &mut message_broadcasts,
-            &mut commands,
-            live,
-        )
-        .await;
-        match event {
-            Event::Closed(changed) => {
-                if changed.is_err() || *closed.borrow() {
-                    if let Some(frame) = subscription
-                        .as_ref()
-                        .and_then(crate::stream::Subscription::closing)
-                    {
-                        send_encoded(&mut socket, &frame).await;
-                    }
-                    return;
-                }
-            }
-            Event::Journal(notice) => {
-                if matches!(
-                    route_broadcast(
-                        &mut socket,
-                        &state,
-                        &accepted,
-                        capability,
-                        subscription
-                            .as_mut()
-                            .expect("live branch has a subscription"),
-                        notice,
-                    )
-                    .await,
-                    SessionFlow::Close
-                ) {
-                    return;
-                }
-            }
-            Event::Message(notice) => {
-                if matches!(
-                    route_message_broadcast(
-                        &mut socket,
-                        &state,
-                        &accepted,
-                        capability,
-                        subscription
-                            .as_ref()
-                            .expect("live branch has a subscription"),
-                        notice,
-                    )
-                    .await,
-                    SessionFlow::Close
-                ) {
-                    return;
-                }
-            }
-            Event::Command(completed) => {
-                if matches!(
-                    route_command_completion(&mut socket, &state, completed).await,
-                    SessionFlow::Close
-                ) {
-                    return;
-                }
-            }
-            Event::Inbound(message) => {
-                let Some(Ok(message)) = message else {
-                    return;
-                };
-                let bytes = match message {
-                    Message::Binary(bytes) => bytes.to_vec(),
-                    Message::Text(text) => text.as_bytes().to_vec(),
-                    Message::Ping(_) | Message::Pong(_) => continue,
-                    Message::Close(_) => return,
-                };
-                let flow = if is_stream_request(&bytes) {
-                    route_stream(
-                        &mut socket,
-                        &state,
-                        &accepted,
-                        capability,
-                        &bytes,
-                        &mut subscription,
-                    )
-                    .await
-                } else {
-                    route_inbound_command(&mut socket, &state, &accepted, &mut commands, &bytes)
-                        .await
-                };
-                if matches!(flow, SessionFlow::Close) {
-                    return;
-                }
-            }
+        let event = session.next(&mut socket, &mut closed).await;
+        if matches!(
+            session.route(&mut socket, &closed, event).await,
+            SessionFlow::Close
+        ) {
+            return;
         }
     }
 }
@@ -274,10 +340,26 @@ impl Inbound for WebSocket {
 /// One event a session acted on, named so the sources can be reordered.
 pub(super) enum Event {
     Closed(Result<(), tokio::sync::watch::error::RecvError>),
+    Retired,
     Journal(Result<bus::JournalCommit, tokio::sync::broadcast::error::RecvError>),
     Message(Result<wire::AgentMessage, tokio::sync::broadcast::error::RecvError>),
     Inbound(Option<Result<Message, ::axum::Error>>),
     Command(Option<CommandCompletion>),
+}
+
+/// The two lifecycle signals that permanently end an authenticated session.
+pub(super) struct SessionSignals<'session> {
+    closed: &'session mut tokio::sync::watch::Receiver<bool>,
+    retired: &'session CancellationToken,
+}
+
+impl<'session> SessionSignals<'session> {
+    pub(super) const fn new(
+        closed: &'session mut tokio::sync::watch::Receiver<bool>,
+        retired: &'session CancellationToken,
+    ) -> Self {
+        Self { closed, retired }
+    }
 }
 
 /// Await the next event for one session, rotating which work source leads.
@@ -298,7 +380,7 @@ pub(super) enum Event {
 pub(super) async fn next_event(
     lead: &mut Lead,
     socket: &mut impl Inbound,
-    closed: &mut tokio::sync::watch::Receiver<bool>,
+    signals: SessionSignals<'_>,
     broadcasts: &mut Option<bus::BroadcastSubscriber>,
     messages: &mut Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
     commands: &mut PendingCommands,
@@ -307,10 +389,12 @@ pub(super) async fn next_event(
     let journal = broadcasts.is_some() && live;
     let transcript = messages.is_some() && live;
     let command = !commands.is_empty();
+    let SessionSignals { closed, retired } = signals;
     match lead.take() {
         Lead::Journal => tokio::select! {
             biased;
             changed = closed.changed() => Event::Closed(changed),
+            () = retired.cancelled() => Event::Retired,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
@@ -319,6 +403,7 @@ pub(super) async fn next_event(
         Lead::Message => tokio::select! {
             biased;
             changed = closed.changed() => Event::Closed(changed),
+            () = retired.cancelled() => Event::Retired,
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
@@ -327,6 +412,7 @@ pub(super) async fn next_event(
         Lead::Inbound => tokio::select! {
             biased;
             changed = closed.changed() => Event::Closed(changed),
+            () = retired.cancelled() => Event::Retired,
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
@@ -335,6 +421,7 @@ pub(super) async fn next_event(
         Lead::Command => tokio::select! {
             biased;
             changed = closed.changed() => Event::Closed(changed),
+            () = retired.cancelled() => Event::Retired,
             completed = commands.next(), if command => Event::Command(completed),
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
@@ -481,7 +568,7 @@ async fn open_session(
     socket: &mut WebSocket,
     state: &SurfaceState,
     closed: &mut watch::Receiver<bool>,
-) -> Option<(wire::Accepted, wire::CanonicalUuid)> {
+) -> Option<(wire::Accepted, wire::CanonicalUuid, CancellationToken)> {
     let message = receive_message(socket, closed).await?;
     let bytes = match message {
         Message::Binary(bytes) => bytes.to_vec(),
@@ -489,8 +576,8 @@ async fn open_session(
         Message::Close(_) | Message::Ping(_) | Message::Pong(_) => return None,
     };
     match wire::decode::<wire::Hello>(&bytes) {
-        Ok(hello) => match state.capabilities.admit(&hello, state.epoch) {
-            Ok(accepted) => Some((accepted, hello.capability)),
+        Ok(hello) => match state.capabilities.admit_session(&hello, state.epoch) {
+            Ok(admission) => Some((admission.accepted, hello.capability, admission.retired)),
             Err(OpeningError::Refused(refusal)) => {
                 send_encoded(socket, &refusal).await;
                 None

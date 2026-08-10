@@ -1,8 +1,11 @@
 //! Task, claim, document, and task-effort command DTOs.
+//!
+//! Creation bodies carry authored causal authority only; the server resolves
+//! an omitted authority at the creation boundary.
 
 use serde::{Deserialize, Serialize};
 
-use crate::body::{Severity, SourceBoundary, TranscriptPosition};
+use crate::body::{SourceBoundary, TranscriptPosition};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Name, Phase, TaskHandle};
@@ -30,7 +33,7 @@ pub struct TaskAdd {
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
-    /// Caller-authored creation provenance, or the new task itself when absent.
+    /// Caller-authored creation provenance, or server-resolved causal authority.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -60,34 +63,26 @@ pub struct TaskOopsAdd {
     pub title: String,
     /// Durable detail attached as the first note.
     pub description: String,
+    /// Explicit causal authority when no active claim owns the filing.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub origin: Option<Origin>,
 }
 
-/// File the exact findings projected by one registered gate run.
+/// File the exact findings folded from one registered gate run.
+///
+/// No caller-authored finding rows cross this boundary; the resident decodes
+/// `evidence` and folds every row from that report itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GateFindings {
-    /// Digest of the complete typed battery report that produced these rows.
+    /// Digest of the canonical focused report bytes.
     pub report: Digest,
-    /// Findings projected from that report, in gate order.
-    pub findings: Vec<GateFindingWork>,
-}
-
-/// One gate finding ready to become deferred board work.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GateFindingWork {
-    /// Stable gate-side finding identity.
-    pub identity: Digest,
-    /// Finding severity.
-    pub severity: Severity,
-    /// Evidence locus the finding cites.
-    pub locus: String,
-    /// Board task title.
-    pub title: String,
-    /// Board task description.
-    pub description: String,
-    /// Criteria that decide whether the filed task is done.
-    pub acceptance: Vec<String>,
+    /// Canonical focused report JSON admitted by Gate before folding.
+    pub evidence: String,
 }
 
 /// Replace an unsettled task statement.

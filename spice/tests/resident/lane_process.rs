@@ -1084,7 +1084,13 @@ fn manual_hidden_task_creation_refuses_for_operator_and_lane_processes() {
 
     let system_task = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
         &fixture,
-        &["task", "oops", "System-owned oops"],
+        &[
+            "task",
+            "oops",
+            "System-owned oops",
+            "--origin",
+            "fixture:hidden-task-creation",
+        ],
         true,
         None,
     ));
@@ -1129,6 +1135,8 @@ fn add_next_action_task(
             "spice.client",
             "--acceptance",
             "typed task can advance through its fixture workflow",
+            "--origin",
+            "fixture:lane-task-principal",
         ],
         true,
         Some(lane),
@@ -1216,7 +1224,13 @@ fn finish_review(
 fn assert_oops_has_no_next(fixture: &Fixture, lane: wire::CanonicalUuid) {
     let oops = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
         fixture,
-        &["task", "oops", "next-action fixture observation"],
+        &[
+            "task",
+            "oops",
+            "next-action fixture observation",
+            "--origin",
+            "fixture:lane-task-principal",
+        ],
         true,
         Some(lane),
     ));

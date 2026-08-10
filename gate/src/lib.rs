@@ -45,9 +45,9 @@ pub use battery::{
     BatteryExecutor, BatteryInputs, BatteryManifest, BatteryManifestArm, BatteryReceipt,
     BatteryRefusalFold, BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence,
     BoundActorInputsEvidence, BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm,
-    ConfigurationEvidence, GATE_BATTERY_RECEIPT_VERSION, GATE_BATTERY_VERSION, LatchEvidence,
-    ReceiptRefusal, ResultProvenance, UnsupportedReceipt, run_battery, run_battery_arm,
-    supported_pairs,
+    ConfigurationEvidence, FocusedArmReport, GATE_BATTERY_RECEIPT_VERSION, GATE_BATTERY_VERSION,
+    GateFinding, LatchEvidence, ReceiptRefusal, ResultProvenance, UnsupportedReceipt, run_battery,
+    run_battery_arm, run_focused_arm, supported_pairs,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use battery::{BatteryCapture, RepositoryExecutionEvent};
