@@ -134,9 +134,23 @@ fn task_effort_inner(
         .materialization;
     let answer = task_effort_answer(&materialization)
         .map_err(|error| Failure::store("fold::payload-invalid", error))?;
+    let materialized_cursor = materialization.cursor.position().ok_or_else(|| {
+        Failure::store(
+            "fold::cursor-missing",
+            "task::effort returned an empty cursor for non-empty authority",
+        )
+    })?;
+    if materialized_cursor != cursor {
+        return Err(Failure::store(
+            "fold::snapshot-mismatch",
+            format!(
+                "task::effort materialization is at {materialized_cursor}, authority snapshot is at {cursor}"
+            ),
+        ));
+    }
     let selected = select_task_effort(answer, read)
         .map_err(|error| Failure::store("fold::selection-failed", error))?;
-    Ok((ReplyPosition::Snapshot(cursor), selected))
+    Ok((ReplyPosition::Snapshot(materialized_cursor), selected))
 }
 
 fn backup_inner(output: &Path) -> Result<(SeqRange, JournalBackup), Failure> {
