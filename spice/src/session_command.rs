@@ -16,29 +16,41 @@ use model::Report;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Environment {
-    codex_thread: Option<OsString>,
-    claude_session: Option<OsString>,
+    vendors: Vec<VendorEnvironment>,
     preferred_vendor: Option<OsString>,
-    codex_home: Option<PathBuf>,
-    claude_home: Option<PathBuf>,
     home: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct VendorEnvironment {
+    vendor: &'static spice::extension::Vendor,
+    identity: Option<OsString>,
+    home: Option<PathBuf>,
+}
+
+impl VendorEnvironment {
+    pub(crate) fn new(
+        vendor: &'static spice::extension::Vendor,
+        identity: Option<OsString>,
+        home: Option<OsString>,
+    ) -> Self {
+        Self {
+            vendor,
+            identity,
+            home: home.map(PathBuf::from),
+        }
+    }
 }
 
 impl Environment {
     pub(crate) fn new(
-        codex_thread: Option<OsString>,
-        claude_session: Option<OsString>,
+        vendors: Vec<VendorEnvironment>,
         preferred_vendor: Option<OsString>,
-        codex_home: Option<OsString>,
-        claude_home: Option<OsString>,
         home: Option<OsString>,
     ) -> Self {
         Self {
-            codex_thread,
-            claude_session,
+            vendors,
             preferred_vendor,
-            codex_home: codex_home.map(PathBuf::from),
-            claude_home: claude_home.map(PathBuf::from),
             home: home.map(PathBuf::from),
         }
     }
@@ -216,15 +228,13 @@ fn requested_inputs(matches: &ArgMatches, environment: &Environment) -> Vec<Stri
     if !files.is_empty() {
         return files;
     }
-    for (variable, value) in [
-        ("CODEX_THREAD_ID", environment.codex_thread.as_ref()), // env-policy: allow
-        (
-            "CLAUDE_CODE_SESSION_ID", // env-policy: allow
-            environment.claude_session.as_ref(),
-        ),
-    ] {
-        if let Some(value) = value {
-            return vec![format!("{variable}={}", value.to_string_lossy())];
+    for row in &environment.vendors {
+        if let Some(value) = &row.identity {
+            return vec![format!(
+                "{}={}",
+                row.vendor.thread_id_environment(),
+                value.to_string_lossy()
+            )];
         }
     }
     vec!["working-directory transcript discovery".to_owned()]

@@ -18,9 +18,11 @@ use wire::head::TranscriptSourceHead;
 
 use crate::{Journal, JournalReader, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
 
+mod allocation_migration;
 mod boundary;
 mod lineage_migration;
 mod read;
+mod release_notes_migration;
 mod schema;
 mod transcript;
 
@@ -611,6 +613,7 @@ fn task_head() -> TaskHead {
     TaskHead {
         handle: "JOURNAL-a1".parse::<TaskHandle>().expect("task handle"),
         uuid: uuid("018f82d4-6f59-7d06-92e3-bce913116301"),
+        queue_origin: Seq::new(1).expect("queue origin"),
         title: "Lay journal baseline".to_owned(),
         description: None,
         acceptance: Vec::new(),
@@ -638,6 +641,11 @@ fn claim_head() -> ClaimHead {
     ClaimHead {
         actor: Actor::Spice,
         fact: Seq::new(2).expect("claim fact"),
+        claimed: Seq::new(2).expect("claim origin"),
+        cell: wire::ClaimCell {
+            project: "journal".to_owned(),
+            phase: phase("review"),
+        },
         lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
         occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116303"),
         epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),

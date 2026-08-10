@@ -257,7 +257,7 @@ pub(super) fn task_done(
         Ok(entry) => entry,
         Err(outcome) => return outcome,
     };
-    let (at, lane, transition) = match done_transition(entry, command) {
+    let (at, lane, transition) = match done_transition(&snapshot, entry, command) {
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
@@ -313,6 +313,7 @@ fn done_entry<'a>(
 }
 
 fn done_transition(
+    snapshot: &ValidatedSnapshot,
     entry: &Entry,
     command: &wire::AdmittedCommand,
 ) -> Result<(Instant, wire::CanonicalUuid, board::Transition), Outcome<CommandAnswer>> {
@@ -354,7 +355,92 @@ fn done_transition(
             "complete only the currently held workflow phase",
         )
     })?;
+    admit_plan_transition(snapshot, entry, command, &transition)?;
     Ok((at, active.lane(), transition))
+}
+
+fn admit_plan_transition(
+    snapshot: &ValidatedSnapshot,
+    entry: &Entry,
+    command: &wire::AdmittedCommand,
+    transition: &board::Transition,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if entry.workflow().phase.as_str() != "plan" {
+        return Ok(());
+    }
+    let task = visible_task(snapshot, &entry.statement().handle)?;
+    require_expected(command, &statement_witness(task))?;
+    require_expected(command, &workflow_witness(task))?;
+    let completes_plan = matches!(
+        transition.kind(),
+        board::TransitionKind::Complete { phase } if phase.as_str() == "plan"
+    );
+    if !completes_plan && !entry.statement().acceptance.is_empty() {
+        return Ok(());
+    }
+    if let Some(child) = accepted_pending_child(snapshot, entry)? {
+        require_expected(command, &statement_witness(child))?;
+        require_expected(command, &workflow_witness(child))?;
+        return Ok(());
+    }
+    let remedy = if completes_plan {
+        "connect a pending child carrying acceptance before completing a plan-only flow"
+    } else {
+        "add acceptance to the task, or connect a pending child carrying acceptance, before closing the plan phase"
+    };
+    Err(refusal(
+        "task::plan-incomplete",
+        Some(entry.statement().handle.to_string()),
+        remedy,
+    ))
+}
+
+fn accepted_pending_child<'a>(
+    snapshot: &'a ValidatedSnapshot,
+    entry: &Entry,
+) -> Result<Option<&'a BoardTask>, Outcome<CommandAnswer>> {
+    for dependency in &entry.statement().dependencies {
+        let child = visible_task(snapshot, dependency)?;
+        if child.workflow.body.status == "pending" && !child.statement.body.acceptance.is_empty() {
+            return Ok(Some(child));
+        }
+    }
+    Ok(None)
+}
+
+fn visible_task<'a>(
+    snapshot: &'a ValidatedSnapshot,
+    task: &TaskHandle,
+) -> Result<&'a BoardTask, Outcome<CommandAnswer>> {
+    snapshot
+        .answer
+        .tasks
+        .iter()
+        .find(|heads| heads.statement.body.handle == *task)
+        .ok_or_else(|| {
+            protocol_fault(
+                "task::snapshot-incoherent",
+                "validated board snapshot lost a task entry",
+            )
+        })
+}
+
+fn require_expected(
+    command: &wire::AdmittedCommand,
+    witness: &Witness,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if command
+        .expected()
+        .iter()
+        .any(|expected| expected == witness)
+    {
+        return Ok(());
+    }
+    Err(refusal(
+        "task::plan-witness-missing",
+        Some(format!("{witness:?}")),
+        "read the current plan task and its accepted child before closing the plan phase",
+    ))
 }
 
 fn append_done(
@@ -599,6 +685,7 @@ struct DocTaskSpec {
     task: TaskHandle,
     title: String,
     project: String,
+    acceptance: Vec<String>,
     tags: Vec<String>,
     dependencies: Vec<TaskHandle>,
     flow: Vec<wire::Phase>,
@@ -765,7 +852,10 @@ fn commit_doc_plan(
         .iter()
         .filter(|node| node.kind != dialect::NodeKind::SyntheticRoot)
     {
-        let spec = doc_task_spec(plan, node);
+        let spec = match doc_task_spec(plan, node) {
+            Ok(spec) => spec,
+            Err(outcome) => return outcome,
+        };
         previous = match write_doc_task(&mut write, plan, spec, &origin, previous) {
             Ok(fact) => Some(fact),
             Err(outcome) => return outcome,
@@ -775,7 +865,10 @@ fn commit_doc_plan(
     finish_doc_commit(bus, command, apply, plan, write, previous, operations)
 }
 
-fn doc_task_spec(plan: &DocPlan, node: &dialect::Node) -> DocTaskSpec {
+fn doc_task_spec(
+    plan: &DocPlan,
+    node: &dialect::Node,
+) -> Result<DocTaskSpec, Outcome<CommandAnswer>> {
     let task = plan
         .handles
         .get(&node.id)
@@ -796,7 +889,7 @@ fn doc_task_spec(plan: &DocPlan, node: &dialect::Node) -> DocTaskSpec {
         .clone()
         .unwrap_or_else(|| "task.document".to_owned());
     let flow = if node.flow.is_empty() {
-        vec![phase("todo"), phase("review")]
+        task_flow(None, &node.acceptance)?
     } else {
         node.flow
             .iter()
@@ -808,15 +901,16 @@ fn doc_task_spec(plan: &DocPlan, node: &dialect::Node) -> DocTaskSpec {
     if let Some(priority) = node.priority {
         tags.push(format!("priority:{priority}"));
     }
-    DocTaskSpec {
+    Ok(DocTaskSpec {
         task,
         title: node.title.clone(),
         project,
+        acceptance: node.acceptance.clone(),
         tags,
         dependencies,
         flow,
         initial,
-    }
+    })
 }
 
 fn write_doc_task(
@@ -866,6 +960,7 @@ fn edit_doc_task(
     let mut statement = existing.statement().clone();
     statement.title = spec.title;
     statement.project = spec.project;
+    statement.acceptance = spec.acceptance;
     statement.tags = spec.tags;
     statement.dependencies = spec.dependencies;
     write.task_head(edited, move |position| TaskHead {
@@ -889,7 +984,7 @@ fn add_doc_task(
                 uuid: identity,
                 title: spec.title.clone(),
                 description: None,
-                acceptance: Vec::new(),
+                acceptance: spec.acceptance.clone(),
                 project: spec.project.clone(),
                 tags: spec.tags.clone(),
                 depends: spec.dependencies.clone(),
@@ -905,9 +1000,10 @@ fn add_doc_task(
     write.task_head(added, move |position| TaskHead {
         handle: statement_task,
         uuid: identity,
+        queue_origin: position,
         title: spec.title,
         description: None,
-        acceptance: Vec::new(),
+        acceptance: spec.acceptance,
         project: spec.project,
         tags: spec.tags,
         dependencies: spec.dependencies,

@@ -47,25 +47,31 @@ fn one_captured_band_drives_board_answer_server_selection_and_guard_replay() {
     let entries = actor_entries(&available).expect("configured board projects to entries");
     let subscription = allocation_subscription(&available.residency.body, &lane)
         .expect("fixture lane has one allocation subscription");
-    let selected = board::select(&entries, &lane, subscription, available.allocation_band)
-        .expect("configured client preselection has work");
-    assert_eq!(selected.entry().statement().handle, higher);
+    let selected = board::select(
+        &entries,
+        &lane,
+        subscription,
+        available.allocation_band,
+        available.recent_cell.as_ref(),
+    )
+    .expect("configured client preselection has work");
+    assert_eq!(selected.entry().statement().handle, lower);
 
     assert_committed(issue_with_allocation(
         &bus,
         epoch,
         lane.clone(),
         CommandKind::ClaimWin,
-        claim_expected(&available, &higher, &seats[0]),
+        claim_expected(&available, &lower, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
         },
         &allocation,
     ));
     let held = board_with_allocation(&bus, epoch, lane, &allocation);
-    assert!(at(&held, &lower).claim.is_none());
+    assert!(at(&held, &higher).claim.is_none());
     assert_eq!(
-        at(&held, &higher)
+        at(&held, &lower)
             .claim
             .as_ref()
             .expect("server and guard accepted the configured winner")
@@ -585,6 +591,368 @@ fn authored_document_apply_is_atomic_idempotent_and_barrier_bound() {
     clean(&root, bus);
 }
 
+#[test]
+fn shape_cases_415_417_insert_plan_for_bare_capture_only() {
+    let (root, bus, epoch, _) = fixture("plan-shape-cases", 0);
+    let bare = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kLGp001",
+        "Shape 415 bare capture",
+        &[],
+        None,
+    );
+    let accepted = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kLGp002",
+        "Shape 416 accepted capture",
+        &["accepted work can begin"],
+        None,
+    );
+    let explicit = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kLGp003",
+        "Shape 417 explicit flow capture",
+        &[],
+        Some("todo"),
+    );
+    let shaped = board(&bus, epoch, Actor::Operator);
+    assert_workflow(&shaped, &bare, "plan", &["plan", "todo", "review"]);
+    assert_workflow(&shaped, &accepted, "todo", &["todo", "review"]);
+    assert_workflow(&shaped, &explicit, "todo", &["todo"]);
+    clean(&root, bus);
+}
+
+#[test]
+fn shape_case_418_inserts_plan_for_bare_review_followup() {
+    let (root, bus, epoch, seats) = fixture("plan-shape-followup", 2);
+    let lane_one = Actor::Lane(seats[0].lane);
+    let lane_two = Actor::Lane(seats[1].lane);
+    let reviewed = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kLGp004",
+        "Shape 418 reviewed task",
+        &["review reaches follow-up creation"],
+        Some("todo,review"),
+    );
+    advance_task_to_review(&bus, epoch, &seats[0], &lane_one, &reviewed);
+    let assigned = board(&bus, epoch, lane_two.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane_two.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&assigned, &reviewed, &seats[1]),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+        },
+    ));
+    let assigned = board(&bus, epoch, lane_two.clone());
+    let followup: TaskHandle = "PLAN-1kLGp005".parse().expect("follow-up handle");
+    let mut expected = progress_witnesses(
+        &assigned,
+        at(&assigned, &reviewed),
+        seats[1].lane,
+        seats[1].occupant,
+        true,
+    )
+    .expect("assigned review has progress witnesses");
+    expected.push(Witness::Absence {
+        task: followup.clone(),
+    });
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane_two,
+        CommandKind::TaskReview,
+        expected,
+        &TaskReview {
+            task: reviewed,
+            finding: "review needs follow-up".to_owned(),
+            note: None,
+            then: vec![ReviewFollowup {
+                task: followup.clone(),
+                add: TaskAdd {
+                    title: "Shape 418 bare follow-up".to_owned(),
+                    project: Some("board.test".to_owned()),
+                    description: None,
+                    acceptance: Vec::new(),
+                    origin: None,
+                    flow: None,
+                    depends: Vec::new(),
+                },
+            }],
+            followup: Vec::new(),
+        },
+    ));
+    let followed = board(&bus, epoch, Actor::Operator);
+    assert_workflow(&followed, &followup, "plan", &["plan", "todo", "review"]);
+    clean(&root, bus);
+}
+
+#[test]
+fn shape_case_419_inserts_plan_and_retains_document_acceptance() {
+    let (root, bus, epoch, _) = fixture("plan-shape-document", 0);
+    let barrier = board(&bus, epoch, Actor::Operator);
+    let applied = apply_document(
+        &bus,
+        epoch,
+        "# Goal\n\n- Shape 419 bare document task\n- Shape 419 accepted document task\n  Acceptance: document acceptance is retained\n",
+        &barrier,
+    );
+    let bare_doc = titled(&applied.board, "Shape 419 bare document task");
+    let accepted_doc = titled(&applied.board, "Shape 419 accepted document task");
+    assert_workflow(
+        &applied.board,
+        &bare_doc.statement.body.handle,
+        "plan",
+        &["plan", "todo", "review"],
+    );
+    assert_workflow(
+        &applied.board,
+        &accepted_doc.statement.body.handle,
+        "todo",
+        &["todo", "review"],
+    );
+    assert_eq!(
+        accepted_doc.statement.body.acceptance,
+        ["document acceptance is retained"]
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn wk_plan_phase_requires_acceptance_before_it_advances() {
+    let (root, bus, epoch, seats) = fixture("plan-acceptance", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kLGp006",
+        "WK-16 plan needs acceptance",
+        &[],
+        None,
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &task);
+    let held = board(&bus, epoch, lane.clone());
+    let refused = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &held,
+            at(&held, &task),
+            seats[0].lane,
+            seats[0].occupant,
+            false,
+        )
+        .expect("plan task has progress witnesses"),
+        &TaskDone {
+            task: task.clone(),
+            validation: "plan is not accepted".to_owned(),
+        },
+    );
+    assert_refusal(refused, "task::plan-incomplete");
+
+    let visible = board(&bus, epoch, Actor::Operator);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![statement_witness(at(&visible, &task))],
+        &TaskEdit {
+            task: task.clone(),
+            title: None,
+            description: None,
+            acceptance: vec!["implementation has a checkable contract".to_owned()],
+            priority: None,
+            project: None,
+        },
+    ));
+    let repaired = board(&bus, epoch, lane.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &repaired,
+            at(&repaired, &task),
+            seats[0].lane,
+            seats[0].occupant,
+            false,
+        )
+        .expect("accepted plan has progress witnesses"),
+        &TaskDone {
+            task: task.clone(),
+            validation: "acceptance exists on the task".to_owned(),
+        },
+    ));
+    let advanced = board(&bus, epoch, Actor::Operator);
+    assert_workflow(&advanced, &task, "todo", &["plan", "todo", "review"]);
+    clean(&root, bus);
+}
+
+#[test]
+fn wk_plan_phase_uses_connected_child_acceptance_with_atomic_witnesses() {
+    let (root, bus, epoch, seats) = fixture("plan-child-proof", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let parent = add_raw_task(&bus, epoch, "PLAN-1kLGp007", "WK-27 parent plan", &[], None);
+    let child = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kLGp008",
+        "WK-28 accepted child",
+        &["child carries acceptance"],
+        None,
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &parent);
+    connect_child(&bus, epoch, &parent, &child);
+
+    let held = board(&bus, epoch, lane.clone());
+    let mut stale_proof = progress_witnesses(
+        &held,
+        at(&held, &parent),
+        seats[0].lane,
+        seats[0].occupant,
+        false,
+    )
+    .expect("connected child is witnessed");
+    stale_proof.retain(|witness| match witness {
+        Witness::Task { task, .. } | Witness::Workflow { task, .. } => task != &child,
+        _ => true,
+    });
+    let refused = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        stale_proof,
+        &TaskDone {
+            task: parent.clone(),
+            validation: "child proof was not guarded".to_owned(),
+        },
+    );
+    assert_refusal(refused, "task::plan-witness-missing");
+
+    let held = board(&bus, epoch, lane.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &held,
+            at(&held, &parent),
+            seats[0].lane,
+            seats[0].occupant,
+            false,
+        )
+        .expect("connected child proof is guarded"),
+        &TaskDone {
+            task: parent.clone(),
+            validation: "accepted child is connected".to_owned(),
+        },
+    ));
+    let advanced = board(&bus, epoch, Actor::Operator);
+    assert_workflow(&advanced, &parent, "todo", &["plan", "todo", "review"]);
+    clean(&root, bus);
+}
+
+#[test]
+fn wk_plan_only_flow_completes_only_with_connected_accepted_child() {
+    let (root, bus, epoch, seats) = fixture("plan-only-child", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let own_acceptance = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kLGp009",
+        "WK-29 own acceptance is not enough",
+        &["plan-only task states intent"],
+        Some("plan"),
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &own_acceptance);
+    let held = board(&bus, epoch, lane.clone());
+    let refused = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &held,
+            at(&held, &own_acceptance),
+            seats[0].lane,
+            seats[0].occupant,
+            false,
+        )
+        .expect("plan-only task has witnesses"),
+        &TaskDone {
+            task: own_acceptance.clone(),
+            validation: "own acceptance does not create implementation work".to_owned(),
+        },
+    );
+    assert_refusal(refused, "task::plan-incomplete");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimFree,
+        claim_free_witnesses(&bus, epoch, &lane, &seats[0], &own_acceptance),
+        &TaskRef {
+            task: own_acceptance,
+        },
+    ));
+    clean(&root, bus);
+
+    let (root, bus, epoch, seats) = fixture("plan-only-child-completes", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let parent = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kLGp00B",
+        "WK-30 plan-only parent",
+        &[],
+        Some("plan"),
+    );
+    let child = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kLGp00C",
+        "WK-30 accepted child",
+        &["child owns implementation acceptance"],
+        None,
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &parent);
+    connect_child(&bus, epoch, &parent, &child);
+    let held = board(&bus, epoch, lane.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &held,
+            at(&held, &parent),
+            seats[0].lane,
+            seats[0].occupant,
+            false,
+        )
+        .expect("plan-only child proof is witnessed"),
+        &TaskDone {
+            task: parent.clone(),
+            validation: "accepted child is connected".to_owned(),
+        },
+    ));
+    let completed = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&completed, &parent).workflow.body.status, "completed");
+    clean(&root, bus);
+}
+
 fn apply_document(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -727,4 +1095,122 @@ fn assert_stale_document_refused(bus: &Bus, epoch: CanonicalUuid, initial_board:
         stale,
         Outcome::Refusal(Refusal { ref reason, .. }) if reason == "doc::barrier-moved"
     ));
+}
+
+fn add_raw_task(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    task: &str,
+    title: &str,
+    acceptance: &[&str],
+    flow: Option<&str>,
+) -> TaskHandle {
+    let task = task.parse::<TaskHandle>().expect("fixture task handle");
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: task.clone() }],
+        &TaskAdd {
+            title: title.to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
+            origin: None,
+            flow: flow.map(str::to_owned),
+            depends: Vec::new(),
+        },
+    ));
+    task
+}
+
+fn assert_workflow(board: &BoardAnswer, task: &TaskHandle, phase_name: &str, flow: &[&str]) {
+    let heads = at(board, task);
+    assert_eq!(heads.workflow.body.phase.as_str(), phase_name);
+    assert_eq!(
+        heads
+            .workflow
+            .body
+            .flow
+            .iter()
+            .map(|phase| phase.as_str())
+            .collect::<Vec<_>>(),
+        flow
+    );
+}
+
+fn titled<'a>(board: &'a BoardAnswer, title: &str) -> &'a BoardTask {
+    board
+        .tasks
+        .iter()
+        .find(|task| task.presentation_title == title)
+        .expect("document task is visible by title")
+}
+
+fn assert_refusal(outcome: Outcome<CommandAnswer>, reason: &str) {
+    assert!(
+        matches!(outcome, Outcome::Refusal(Refusal { reason: ref found, .. }) if found == reason),
+        "expected refusal {reason}, got {outcome:?}",
+    );
+}
+
+fn claim_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, lane: &Actor, task: &TaskHandle) {
+    let available = board(bus, epoch, lane.clone());
+    assert_committed(issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&available, task, seat),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+        },
+    ));
+}
+
+fn connect_child(bus: &Bus, epoch: CanonicalUuid, parent: &TaskHandle, child: &TaskHandle) {
+    let visible = board(bus, epoch, Actor::Operator);
+    let parent_heads = at(&visible, parent);
+    let child_heads = at(&visible, child);
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        vec![
+            statement_witness(parent_heads),
+            workflow_witness(parent_heads),
+            statement_witness(child_heads),
+            workflow_witness(child_heads),
+            Witness::Edge {
+                task: parent.clone(),
+                after: child.clone(),
+            },
+        ],
+        &TaskDepends {
+            task: parent.clone(),
+            after: vec![child.clone()],
+        },
+    ));
+}
+
+fn claim_free_witnesses(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: &Actor,
+    seat: &Seat,
+    task: &TaskHandle,
+) -> Vec<Witness> {
+    let held = board(bus, epoch, lane.clone());
+    let heads = at(&held, task);
+    let lease = heads.lease.as_ref().expect("claimed task carries lease");
+    vec![
+        claim_witness(heads),
+        Witness::Lease {
+            task: task.clone(),
+            head: lease.position,
+        },
+        residency(&held, seat),
+    ]
 }

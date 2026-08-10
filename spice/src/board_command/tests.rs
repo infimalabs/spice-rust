@@ -25,6 +25,8 @@ use reclaim::*;
 mod allocation_guard;
 use allocation_guard::*;
 
+mod gate_findings;
+
 // The order in which one claim's preconditions refuse is documented as a
 // contract on `ClaimGrant`, and a caller sees only the first refusal, so it
 // is pinned apart from the scenarios that drive a claim that succeeds.
@@ -730,6 +732,7 @@ fn capture_claims_one_exact_eligible_non_allocator_task() {
             allocation_subscription(&available.residency.body, &lane)
                 .expect("fixture lane subscription"),
             available.allocation_band,
+            available.recent_cell.as_ref(),
         )
         .expect("allocator winner")
         .entry()

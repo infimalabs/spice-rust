@@ -132,11 +132,10 @@ where
 
         match commit_write(bus, &openings, proposal) {
             Ok(_) => {
-                // The inbox is a disposable replay rendering. Once the fact
-                // committed, an unavailable path cannot retract or duplicate
-                // the reminder; startup and the next steering transition can
-                // render it again from the journal.
-                let _rendering = publish(bus, paths, observed.body(), record.lane);
+                // The shared fold authority turns an inbox failure into durable
+                // parked progress. Only failure to record either publication
+                // or parking remains an error here.
+                publish(bus, paths, observed.body(), record.lane)?;
                 return Ok(());
             }
             Err(Outcome::Refusal(_)) if attempt + 1 < COMMIT_RETRIES => {

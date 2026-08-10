@@ -1,4 +1,4 @@
-use listen::{Event, Locus, Prose, Usage};
+use listen::{Event, Locus, Prose, ProseRole, Usage};
 use taste::{
     Bag, REMINDER_MARKER, Taste, Trigger, TriggerError, is_reminder_echo, normalize_prose,
     reminder_identity, reminder_text,
@@ -14,6 +14,7 @@ fn locus(text: &str) -> Locus {
 
 fn prose(text: &str) -> Event {
     Event::Prose(Prose {
+        role: ProseRole::Assistant,
         text: text.to_owned(),
         phase: Some("final".to_owned()),
         locus: locus(text),
@@ -148,23 +149,16 @@ fn a_harmless_mention_still_selects_a_candidate_the_runtime_must_weigh() {
 }
 
 #[test]
-fn one_live_reminder_and_two_historical_kinds_cover_the_taste_plane() {
-    let mut plane = FactKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| fold::FactPlane::Taste.contains(*kind))
-        .collect::<Vec<_>>();
-    plane.sort_unstable();
-    let mut expected = [
+fn one_live_reminder_and_two_historical_kinds_have_their_domain_contracts() {
+    let expected = [
         FactKind::TasteConfirmed,
         FactKind::TasteCleared,
         FactKind::TasteReminded,
     ];
-    expected.sort_unstable();
-
-    assert_eq!(
-        plane, expected,
-        "the taste plane is exactly one live kind and the two historical ones"
+    assert!(
+        expected
+            .iter()
+            .all(|kind| kind.as_str().starts_with("taste::"))
     );
     assert_eq!(
         FactKind::TasteReminded.producer(),

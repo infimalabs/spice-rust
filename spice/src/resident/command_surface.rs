@@ -58,24 +58,44 @@ impl<'a> Surface<'a> {
         ) {
             return outcome;
         }
+        if let Some(outcome) = self.dispatch_lane(seats, command) {
+            return outcome;
+        }
+        if let Some(outcome) = self.dispatch_controls(command) {
+            return outcome;
+        }
+        Outcome::Refusal(Refusal {
+            reason: PlaceholderReason::HandlerNotLanded.to_reason(),
+            witness: None,
+            expected: Some(command.kind().to_string()),
+            observed: None,
+            remedy: "land the registered resident handler before exposing this CLI leaf".to_owned(),
+        })
+    }
+
+    fn dispatch_lane(
+        &self,
+        seats: &mut Seats,
+        command: &wire::AdmittedCommand,
+    ) -> Option<Outcome<CommandAnswer>> {
         match (command.kind(), command.body()) {
-            (CommandKind::UpChange, Intent::UpChange(change)) => {
-                dispatch_up_change(self.bus, self.paths, self.epoch, seats, command, change)
-            }
-            (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => {
-                dispatch_release_publish(self.bus, self.paths, self.epoch, command, publish)
-            }
-            (CommandKind::LaneRead, Intent::LaneRead(_)) => {
-                lane_surface::read(self.bus, self.paths, self.epoch, seats, command)
-            }
-            (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => lane_surface::seat(
-                self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
+            (CommandKind::UpChange, Intent::UpChange(change)) => Some(dispatch_up_change(
+                self.bus, self.paths, self.epoch, seats, command, change,
+            )),
+            (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => Some(
+                dispatch_release_publish(self.bus, self.paths, self.epoch, command, publish),
             ),
-            (CommandKind::LaneArrange, Intent::LaneArrange(arrange)) => {
-                lane_surface::arrange(self.bus, self.epoch, seats, command, arrange)
-            }
+            (CommandKind::LaneRead, Intent::LaneRead(_)) => Some(lane_surface::read(
+                self.bus, self.paths, self.epoch, seats, command,
+            )),
+            (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => Some(lane_surface::seat(
+                self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
+            )),
+            (CommandKind::LaneArrange, Intent::LaneArrange(arrange)) => Some(
+                lane_surface::arrange(self.bus, self.epoch, seats, command, arrange),
+            ),
             (CommandKind::LaneState, Intent::LaneState(state)) if state.worktree.is_some() => {
-                lane_recovery::import(
+                Some(lane_recovery::import(
                     self.bus,
                     self.paths,
                     self.epoch,
@@ -83,81 +103,91 @@ impl<'a> Surface<'a> {
                     &self.recovery,
                     command,
                     state,
-                )
+                ))
             }
-            (CommandKind::LaneState, Intent::LaneState(state)) => lane_surface::state(
+            (CommandKind::LaneState, Intent::LaneState(state)) => Some(lane_surface::state(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
+            )),
+            (CommandKind::LineageArrange, Intent::LineageArrange(arrange)) => Some(
+                lane_surface::arrange_lineages(self.bus, self.epoch, seats, command, arrange),
             ),
-            (CommandKind::LineageArrange, Intent::LineageArrange(arrange)) => {
-                lane_surface::arrange_lineages(self.bus, self.epoch, seats, command, arrange)
-            }
             (CommandKind::LineageConfigure, Intent::LineageConfigure(configure)) => {
-                lane_surface::configure(
+                Some(lane_surface::configure(
                     self.bus,
                     self.epoch,
                     seats,
                     &self.config.projects,
                     command,
                     configure,
-                )
+                ))
             }
-            (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => {
-                lane_surface::recall(self.bus, self.paths, self.epoch, seats, command, recall)
-            }
-            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
-                steering::inbox(self.bus, self.epoch, command, inbox)
-            }
-            (CommandKind::SteerSend, Intent::SteerSend(send)) => steering::send(
+            (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => Some(lane_surface::recall(
+                self.bus, self.paths, self.epoch, seats, command, recall,
+            )),
+            _ => None,
+        }
+    }
+
+    fn dispatch_controls(&self, command: &wire::AdmittedCommand) -> Option<Outcome<CommandAnswer>> {
+        match (command.kind(), command.body()) {
+            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => Some(steering::inbox(
+                self.bus, self.paths, self.epoch, command, inbox,
+            )),
+            (CommandKind::SteerRepair, Intent::SteerRepair(repair)) => Some(steering::repair(
+                self.bus, self.paths, self.epoch, command, repair,
+            )),
+            (CommandKind::SteerSend, Intent::SteerSend(send)) => Some(steering::send(
                 self.bus,
                 self.paths,
                 self.epoch,
                 &self.config.steering,
                 command,
                 send,
-            ),
-            (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => {
-                steering::cancel(self.bus, self.paths, self.epoch, command, cancel)
-            }
-            (CommandKind::SteerResend, Intent::DirectiveRef(recover)) => steering::recover(
+            )),
+            (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => Some(steering::cancel(
+                self.bus, self.paths, self.epoch, command, cancel,
+            )),
+            (CommandKind::SteerResend, Intent::DirectiveRef(resend)) => Some(steering::resend(
+                self.bus,
+                self.paths,
+                self.epoch,
+                &self.config.steering,
+                command,
+                resend,
+            )),
+            (CommandKind::SteerRecover, Intent::DirectiveRef(recover)) => Some(steering::recover(
                 self.bus,
                 self.paths,
                 self.epoch,
                 &self.config.steering,
                 command,
                 recover,
-            ),
-            (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => {
-                steering::dispose(self.bus, self.paths, self.epoch, command, dispose)
-            }
+            )),
+            (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => Some(steering::dispose(
+                self.bus, self.paths, self.epoch, command, dispose,
+            )),
             (CommandKind::EffortRead, Intent::EffortRead(read)) => {
-                effort_surface::read(self.bus, self.paths, read)
+                Some(effort_surface::read(self.bus, self.paths, read))
             }
             (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
-                policy_surface::read(self.bus, &self.config.consent)
+                Some(policy_surface::read(self.bus, &self.config.consent))
             }
             (CommandKind::ConsentPolicy, Intent::ConsentPolicy(_)) => {
-                policy_surface::policy(self.bus, &self.config.consent)
+                Some(policy_surface::policy(self.bus, &self.config.consent))
             }
-            (CommandKind::ConsentDecide, Intent::ConsentDecide(decide)) => {
-                policy_surface::decide(self.bus, self.epoch, &self.config.consent, command, decide)
-            }
+            (CommandKind::ConsentDecide, Intent::ConsentDecide(decide)) => Some(
+                policy_surface::decide(self.bus, self.epoch, &self.config.consent, command, decide),
+            ),
             (CommandKind::TrustGrant | CommandKind::TrustRevoke, Intent::TrustRef(reference)) => {
-                policy_surface::trust_rule(
+                Some(policy_surface::trust_rule(
                     self.bus,
                     self.repository,
                     self.epoch,
                     command,
                     reference,
-                )
+                ))
             }
-            _ => Outcome::Refusal(Refusal {
-                reason: PlaceholderReason::HandlerNotLanded.to_reason(),
-                witness: None,
-                expected: Some(command.kind().to_string()),
-                observed: None,
-                remedy: "land the registered resident handler before exposing this CLI leaf"
-                    .to_owned(),
-            }),
+            _ => None,
         }
     }
 

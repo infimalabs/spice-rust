@@ -14,7 +14,10 @@ fn instant(text: &str) -> Instant {
 #[test]
 fn present_and_not_yet_due_kinds_do_not_alarm() {
     let window = instant("2026-08-01T06:00:00.000Z");
-    let observations = [Decoded::Events(Vec::new())];
+    let observations = [Decoded::Events {
+        context: Default::default(),
+        events: Vec::new(),
+    }];
 
     assert!(
         Canary::due_alarms(

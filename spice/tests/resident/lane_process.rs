@@ -380,7 +380,7 @@ fn assert_session_binding(
     let tape = tape::Tape::open_existing(
         fixture
             .root
-            .join(".git/.spice/tape")
+            .join(".git/.spice-rs/tape")
             .join(row.lane.to_string())
             .join(row.vendor.as_str()),
     )
@@ -415,7 +415,7 @@ fn seed_occupied_lane(
     let tape = tape::Tape::open(
         fixture
             .root
-            .join(".git/.spice/tape")
+            .join(".git/.spice-rs/tape")
             .join(lane.to_string())
             .join("claude"),
     )
@@ -1121,7 +1121,15 @@ fn add_next_action_task(
 ) -> wire::intent::TaskAnswer {
     reply_body(&invoke_args(
         fixture,
-        &["task", "add", title, "--project", "spice.client"],
+        &[
+            "task",
+            "add",
+            title,
+            "--project",
+            "spice.client",
+            "--acceptance",
+            "typed task can advance through its fixture workflow",
+        ],
         true,
         Some(lane),
     ))

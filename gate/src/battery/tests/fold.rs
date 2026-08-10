@@ -132,6 +132,34 @@ fn metric_fold_names_every_breaching_key_value_and_bound() {
     assert_eq!(fold.omitted_findings(), 0);
 }
 
+#[test]
+fn gate_findings_project_every_non_admitting_metric_key_once() {
+    // GOV-51 / CASE 256: instruments report typed findings exactly once per
+    // non-admitting evidence key; dispatch, not the instrument, decides filing.
+    let report = metric_breach_report();
+    let findings = report.findings();
+
+    assert_eq!(findings.len(), 3);
+    let identities = findings
+        .iter()
+        .map(|finding| finding.identity().clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(identities.len(), findings.len());
+    assert!(findings.iter().any(|finding| {
+        finding.locus().contains("metric=file.lines")
+            && finding.description().contains("Value: 201")
+            && finding.acceptance()[0].contains("file-shape")
+    }));
+    assert!(findings.iter().any(|finding| {
+        finding.locus().contains("metric=routine.ccn")
+            && finding.locus().contains("function=\"complicated\"")
+    }));
+    assert!(findings.iter().any(|finding| {
+        finding.locus().contains("metric=magic-number.regressions")
+            && finding.description().contains("Threshold: 10")
+    }));
+}
+
 /// The fold names where inside the refused file the breach actually is.
 ///
 /// A metric key names a file and a value says how many times it offends; before

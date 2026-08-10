@@ -26,7 +26,7 @@ use super::{Document, FlagOverride, Inputs, ResolveError, Resolved, resolve};
 use crate::repository::{Repository, ResolveError as RepositoryError};
 
 const TRACKED_FILE: &str = "spice.toml";
-const LOCAL_FILE: &str = ".spice/config.toml";
+const LOCAL_FILE: &str = ".spice-rs/config.toml";
 
 /// Exact repository configuration locations.
 #[derive(Clone, Debug, Eq, PartialEq)]

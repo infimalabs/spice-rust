@@ -20,7 +20,7 @@ fn absolute(name: &str) -> String {
 fn documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a> {
     Inputs::new(
         tracked.map(|text| Document::new("spice.toml", text)),
-        local.map(|text| Document::new(".spice/local.toml", text)),
+        local.map(|text| Document::new(".spice-rs/local.toml", text)),
         &[],
     )
 }
@@ -273,7 +273,7 @@ fn every_two_layer_precedence_pair_is_deterministic() {
     let local_and_flag = resolve(Inputs::new(
         None,
         Some(Document::new(
-            ".spice/local.toml",
+            ".spice-rs/local.toml",
             "[listen]\nwindow = \"4m\"\n",
         )),
         &[vendor_flag],
@@ -570,7 +570,7 @@ fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
             .issues()
             .iter()
             .filter(|issue| issue.kind() == IssueKind::Policy)
-            .all(|issue| issue.message().contains("Git-common .spice/config.toml"))
+            .all(|issue| issue.message().contains("Git-common .spice-rs/config.toml"))
     );
     for leaf in ["container", "runner"] {
         let entry = descriptor(&[PathSegment::Key("proof"), PathSegment::Key(leaf)])
@@ -647,7 +647,7 @@ hold = "40m"
 
 [steer]
 expiry = "12h"
-resend = ["2m"]
+resend = ["2m", "4m", "6m"]
 
 [vendor.claude]
 binary = "/opt/claude"
@@ -750,7 +750,7 @@ fn all_four_layers_use_one_leaf_order() {
             ),
         )),
         Some(Document::new(
-            ".spice/local.toml",
+            ".spice-rs/local.toml",
             "[listen]\nwindow = \"3m\"\n[lock]\nbusy = 71\n",
         )),
         &flags,
@@ -829,7 +829,7 @@ fn lists_replace_as_units_and_taste_rows_retain_declared_order() {
         Some(
             r#"
 [steer]
-resend = ["2m"]
+resend = ["2m", "4m", "6m"]
 
 [gate.walk]
 skip = ["target/**"]
@@ -855,7 +855,7 @@ message = "Done."
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
-        ["2m"]
+        ["2m", "4m", "6m"]
     );
     assert_eq!(
         resolved
@@ -1007,7 +1007,10 @@ fn syntax_positions_and_other_layer_diagnostics_are_both_returned() {
             "config/spice.toml",
             "# caf\u{e9}\n[lane]\nlease = [\n",
         )),
-        Some(Document::new(".spice/local.toml", "[unknown]\nvalue = 1\n")),
+        Some(Document::new(
+            ".spice-rs/local.toml",
+            "[unknown]\nvalue = 1\n",
+        )),
         &[],
     ))
     .expect_err("syntax and unknown table refuse");

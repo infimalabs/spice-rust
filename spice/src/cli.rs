@@ -58,6 +58,8 @@ pub enum ReplyPositionLaw {
     Snapshot,
     /// The command commits authoritative state before answering.
     Committed,
+    /// The command either re-delivers an unchanged snapshot or commits movement.
+    SnapshotOrCommitted,
 }
 
 impl JournalAccess {
@@ -140,6 +142,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::EffortRead
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
+        | CommandKind::GateFindings
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
         | CommandKind::TaskNote
@@ -158,7 +161,9 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::DocApply
         | CommandKind::SteerSend
         | CommandKind::SteerInbox
+        | CommandKind::SteerRepair
         | CommandKind::SteerResend
+        | CommandKind::SteerRecover
         | CommandKind::SteerDispose
         | CommandKind::SteerCancel
         | CommandKind::ConsentRead
@@ -249,6 +254,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["doctor"]
         | ["version"]
         | ["gate"]
+        | ["gate", "findings"]
         | ["gate", "camp"]
         | ["gate", "kill"]
         | ["gate", "pre-commit"]
@@ -286,7 +292,9 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["recall"]
         | ["steer"]
         | ["steer", "cancel"]
+        | ["steer", "resend"]
         | ["steer", "recover"]
+        | ["steer", "repair"]
         | ["inbox"]
         | ["hook"]
         | ["ack"]

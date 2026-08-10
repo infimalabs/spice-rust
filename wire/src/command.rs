@@ -40,6 +40,8 @@ pub enum CommandKind {
     TaskAdd,
     /// Add one task through the fixed server-owned `.oops` route.
     TaskOopsAdd,
+    /// File gate findings as deferred board work.
+    GateFindings,
     /// Replace an unsettled task statement.
     TaskEdit,
     /// Withdraw a task from the board with a recorded reason.
@@ -79,8 +81,12 @@ pub enum CommandKind {
     SteerSend,
     /// Read pending direction visible to the authenticated principal.
     SteerInbox,
-    /// Send the same intent again with lineage and escalation carried.
+    /// Rebuild one lane's inbox fold from current journal authority.
+    SteerRepair,
+    /// Re-deliver one live directive and catch up any due presentation stages.
     SteerResend,
+    /// Restore one lapsed directive without changing its identity.
+    SteerRecover,
     /// Retire a live directive with a typed disposition.
     SteerDispose,
     /// Withdraw a live directive as operator intent.
@@ -232,6 +238,13 @@ impl Law {
         optional: &[WitnessKind::Workflow],
         authority: Authority::Connected,
     };
+    /// Gate finding dispatch derives its task witnesses inside the resident
+    /// transaction from one typed gate report projection.
+    pub const GATE_FINDINGS: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Connected,
+    };
     /// Exact task statement head.
     pub const EDIT: Self = Self {
         required: &[WitnessKind::Task],
@@ -349,12 +362,23 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// Exact failed lineage member. Its current lapsed or dead-lettered
-    /// disposition is re-read and guarded by the resident before recovery.
-    pub const RESEND: Self = Self {
-        required: &[WitnessKind::Lineage],
+    /// Operator-owned repair of a disposable rendering from durable authority.
+    pub const REPAIR: Self = Self {
+        required: &[],
         optional: &[],
-        authority: Authority::Connected,
+        authority: Authority::Operator,
+    };
+    /// Exact live directive disposition for a time-derived re-presentation.
+    pub const RESEND: Self = Self {
+        required: &[WitnessKind::Directive],
+        optional: &[],
+        authority: Authority::Operator,
+    };
+    /// Exact directive identity in either recoverable failure state.
+    pub const RECOVER: Self = Self {
+        required: &[WitnessKind::Recoverable],
+        optional: &[],
+        authority: Authority::Operator,
     };
     /// Exact directive disposition.
     pub const DISPOSE: Self = Self {
@@ -487,6 +511,7 @@ impl CommandKind {
         Self::EffortRead,
         Self::TaskAdd,
         Self::TaskOopsAdd,
+        Self::GateFindings,
         Self::TaskEdit,
         Self::TaskDelete,
         Self::TaskNote,
@@ -505,7 +530,9 @@ impl CommandKind {
         Self::DocApply,
         Self::SteerSend,
         Self::SteerInbox,
+        Self::SteerRepair,
         Self::SteerResend,
+        Self::SteerRecover,
         Self::SteerDispose,
         Self::SteerCancel,
         Self::ConsentRead,
@@ -545,6 +572,7 @@ impl CommandKind {
             | Self::EffortRead
             | Self::TaskAdd
             | Self::TaskOopsAdd
+            | Self::GateFindings
             | Self::TaskEdit
             | Self::TaskDelete
             | Self::TaskNote
@@ -563,7 +591,9 @@ impl CommandKind {
             | Self::DocApply
             | Self::SteerSend
             | Self::SteerInbox
+            | Self::SteerRepair
             | Self::SteerResend
+            | Self::SteerRecover
             | Self::SteerDispose
             | Self::SteerCancel
             | Self::ConsentRead
@@ -598,6 +628,7 @@ impl CommandKind {
             Self::EffortRead => "effort::read",
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
+            Self::GateFindings => "gate::findings",
             Self::TaskEdit => "task::edit",
             Self::TaskDelete => "task::delete",
             Self::TaskNote => "task::note",
@@ -622,7 +653,9 @@ impl CommandKind {
             Self::DocApply => "doc::apply",
             Self::SteerSend => "steer::send",
             Self::SteerInbox => "steer::inbox",
+            Self::SteerRepair => "steer::repair",
             Self::SteerResend => "steer::resend",
+            Self::SteerRecover => "steer::recover",
             Self::SteerDispose => "steer::dispose",
             Self::SteerCancel => "steer::cancel",
             Self::ConsentRead => "consent::read",
@@ -668,6 +701,7 @@ impl CommandKind {
             Self::BoardRead | Self::BoardGraph | Self::DocLedger | Self::EffortRead => Law::READ,
             Self::BoardHandout => Law::OPERATOR_READ,
             Self::TaskAdd | Self::TaskOopsAdd => Law::ADD,
+            Self::GateFindings => Law::GATE_FINDINGS,
             Self::TaskEdit => Law::EDIT,
             Self::TaskDelete => Law::DELETE,
             Self::TaskNote => Law::NOTE,
@@ -689,7 +723,9 @@ impl CommandKind {
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
             Self::SteerInbox => Law::READ,
+            Self::SteerRepair => Law::REPAIR,
             Self::SteerResend => Law::RESEND,
+            Self::SteerRecover => Law::RECOVER,
             Self::SteerDispose => Law::DISPOSE,
             Self::SteerCancel => Law::CANCEL,
             Self::ConsentRead | Self::ConsentPolicy => Law::INSPECT,

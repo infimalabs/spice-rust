@@ -55,6 +55,7 @@ pub mod manifest;
 mod optional;
 pub mod packed;
 pub mod reply;
+pub mod steering;
 pub mod stream;
 pub mod witness;
 
@@ -64,25 +65,26 @@ pub use command::{
 };
 pub use config::{ConfigSource, DurationWord, DurationWordError, Provenance};
 pub use doctor::{
-    DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorLocations, DoctorObservation,
-    DoctorReport, DoctorTarget, DoctorTool, DoctorToolBounds, DoctorToolCancellation,
-    DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, SpiceVariable,
+    DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorExtension,
+    DoctorExtensionNamespace, DoctorLocations, DoctorObservation, DoctorReport, DoctorTarget,
+    DoctorTool, DoctorToolBounds, DoctorToolCancellation, DoctorToolMode, DoctorToolNetwork,
+    DoctorToolRequirement, DoctorToolSource, SpiceVariable,
 };
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
-    ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LaneSession,
-    LeaseHead, LineageSubscription, ResidencyHead, ResidentState, TapeLocus, TaskHead,
+    ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency,
+    LaneSession, LeaseHead, LineageSubscription, ResidencyHead, ResidentState, TapeLocus, TaskHead,
     TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
     WorkflowHead,
 };
 pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected, SpeechPlayback, SpeechRequest};
-pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
+pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, FoldReport, FoldState, JournalBackup,
     JournalReindex, JournalReport, JournalRestore, JournalVerification, Outcome, ProofEvidence,
-    Refusal, ReleaseNotes, ReleaseNotesTarget, ReleasePlan, Reply, ReplyPosition, Response,
+    Refusal, ReleaseNotes, ReleaseNotesEntry, ReleasePlan, Reply, ReplyPosition, Response,
     RestoreVerification, SeqRange, SeqRangeError, ThreadReport, Version,
 };
 pub use stream::{

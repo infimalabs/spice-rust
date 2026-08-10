@@ -134,6 +134,7 @@ fn seed_task(write: &mut JournalWrite, task: &wire::TaskHandle) -> journal::Pend
     write.task_head(added, move |position| wire::TaskHead {
         handle,
         uuid: test_uuid(70),
+        queue_origin: position,
         title: "Boundary fixture".into(),
         description: None,
         acceptance: Vec::new(),
@@ -182,6 +183,10 @@ fn seed_active_claim(
                 lane,
                 occupant,
                 epoch,
+                cell: Some(wire::ClaimCell {
+                    project: "journal.effort".into(),
+                    phase: "todo".parse().expect("fixture phase"),
+                }),
                 until: "2030-08-01T07:00:00.000Z"
                     .parse()
                     .expect("fixture claim expiry"),
@@ -194,6 +199,11 @@ fn seed_active_claim(
     write.claim_head(task, won, move |fact| wire::ClaimHead {
         actor: Actor::Operator,
         fact,
+        claimed: fact,
+        cell: wire::ClaimCell {
+            project: "journal.effort".into(),
+            phase: "todo".parse().expect("fixture phase"),
+        },
         lane,
         occupant,
         epoch,

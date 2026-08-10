@@ -41,17 +41,17 @@ impl Fixture {
             std::process::id()
         ));
         fs::create_dir_all(root.join(".git/info")).expect("create repository metadata");
-        fs::create_dir_all(root.join(".git/.spice/data"))
+        fs::create_dir_all(root.join(".git/.spice-rs/data"))
             .expect("create Spice state sentinel directory");
         let exclude_bytes = b"# operator exclusions\n/cache/\n".to_vec();
         fs::write(root.join(".git/info/exclude"), &exclude_bytes).expect("write exclusions");
         fs::write(
-            root.join(".git/.spice/data/journal.sqlite3"),
+            root.join(".git/.spice-rs/data/journal.sqlite3"),
             b"Spice state sentinel\n",
         )
         .expect("write Spice state sentinel");
         fs::write(
-            root.join(".git/.spice/config.toml"),
+            root.join(".git/.spice-rs/config.toml"),
             b"[operator]\nmode = 'native'\n",
         )
         .expect("write Spice local configuration sentinel");
@@ -140,10 +140,14 @@ impl Fixture {
     }
 
     fn assert_state_unchanged(&self) {
-        let authority = if self.root.join(".git/.spice/data/journal.sqlite3").is_file() {
-            self.root.join(".git/.spice")
+        let authority = if self
+            .root
+            .join(".git/.spice-rs/data/journal.sqlite3")
+            .is_file()
+        {
+            self.root.join(".git/.spice-rs")
         } else {
-            self.root.join(".git/.spice.parked")
+            self.root.join(".git/.spice-rs.parked")
         };
         assert_eq!(
             fs::read(self.root.join("spice.toml")).unwrap(),
@@ -174,7 +178,7 @@ impl Fixture {
     }
 
     fn record(&self) -> PathBuf {
-        self.root.join(".git/.spice/install.json")
+        self.root.join(".git/.spice-rs/install.json")
     }
 }
 
@@ -305,7 +309,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(operation_count, 8);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
-    assert!(fixture.root.join(".git/.spice").is_dir());
+    assert!(fixture.root.join(".git/.spice-rs").is_dir());
     assert_eq!(
         fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
         fixture.exclude_bytes
@@ -547,8 +551,8 @@ fn apply_record_parent_replacement_at_publication_preserves_both_trees() {
     let fixture = Fixture::new("apply-record-race");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
-    let parent = fixture.root.join(".git/.spice");
-    let parked = fixture.root.join(".git/.spice.parked");
+    let parent = fixture.root.join(".git/.spice-rs");
+    let parked = fixture.root.join(".git/.spice-rs.parked");
     let outside = fixture.root.join("outside-record");
     fs::create_dir(&outside).expect("create replacement record tree");
     let paused = fixture.spawn_paused(
@@ -691,8 +695,8 @@ fn unapply_record_parent_replacement_at_publication_preserves_both_trees() {
     let record = fixture.record();
     let record_before = fs::read(&record).unwrap();
     let binary_before = fs::read(fixture.installed_binary()).unwrap();
-    let parent = fixture.root.join(".git/.spice");
-    let parked = fixture.root.join(".git/.spice.parked");
+    let parent = fixture.root.join(".git/.spice-rs");
+    let parked = fixture.root.join(".git/.spice-rs.parked");
     let outside = fixture.root.join("outside-record");
     fs::create_dir(&outside).expect("create replacement record tree");
     let paused = fixture.spawn_paused(

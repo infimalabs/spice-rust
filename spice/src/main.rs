@@ -43,6 +43,8 @@ mod lock_command;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod release_history;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
@@ -98,7 +100,7 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
             reason: "repository::state-path-refused".to_owned(),
             witness: Some("repository-state-root".to_owned()),
             expected: Some(
-                "real fixed components beneath the canonical Git-common .spice directory"
+                "real fixed components beneath the canonical Git-common .spice-rs directory"
                     .to_owned(),
             ),
             observed: Some(error.to_string()),
@@ -182,6 +184,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["doctor"] => deliver(&doctor_outcome(), form),
         ["demo"] => deliver(&demo_command::run(leaf), form),
         ["gate"] => deliver(&gate_command::run(leaf), form),
+        ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "pre-commit"] => deliver(&gate_command::pre_commit(), form),
@@ -245,7 +248,7 @@ fn dispatch_native_repository_queries(
         ["task", "effort"] => deliver(&journal_command::task_effort(leaf, contract), form),
         ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
         ["version"] => deliver(&version_outcome(), form),
-        ["release", "notes"] => deliver(&release_command::notes(leaf), form),
+        ["release", "notes"] => deliver_release_notes(&release_command::notes(leaf), form),
         _ => {}
     }
 }
@@ -302,7 +305,13 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["task", "delete"]
         | ["doc"]
         | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
-        ["steer"] | ["steer", "cancel"] | ["steer", "recover"] | ["ack"] | ["inbox"] => deliver(
+        ["steer"]
+        | ["steer", "cancel"]
+        | ["steer", "resend"]
+        | ["steer", "recover"]
+        | ["steer", "repair"]
+        | ["ack"]
+        | ["inbox"] => deliver(
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
             form,
         ),
@@ -345,7 +354,7 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
         ),
         ["release", "notes"] => (
             "release::target-unsupported",
-            "reading the explicit release notes INPUT file is unavailable on wasm32",
+            "immutable Git history inspection for release notes is unavailable on wasm32",
         ),
         ["install"] => (
             "install::target-unsupported",
@@ -456,7 +465,8 @@ fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
         },
         None => RetroSelector::Path(PathBuf::from(".")),
     };
-    match listen::retro(".", selector) {
+    let dialects = extension_dialects();
+    match listen::retro(".", selector, &dialects) {
         Ok(outcome) => deliver_stream_once(&outcome, form),
         Err(error) => deliver_fault(surface_fault(error), form),
     }
@@ -598,7 +608,7 @@ fn run_watch(matches: &clap::ArgMatches, form: Form) -> ! {
     let root = matches
         .get_one::<String>("ROOT")
         .map_or_else(|| PathBuf::from("."), PathBuf::from);
-    let mut watch = Watch::new(&root);
+    let mut watch = Watch::new(&root, extension_dialects());
 
     if !is_real_directory(&root) {
         match poll_and_emit(&mut watch, form) {
@@ -608,6 +618,15 @@ fn run_watch(matches: &clap::ArgMatches, form: Form) -> ! {
     }
 
     follow(&root, &mut watch, form)
+}
+
+fn extension_dialects() -> Vec<(&'static str, listen::Dialect)> {
+    spice::extension::registry()
+        .expect("compiled extension declarations are validated by the test gate")
+        .vendors()
+        .into_iter()
+        .map(|vendor| (vendor.name(), vendor.dialect()))
+        .collect()
 }
 
 fn is_real_directory(path: &Path) -> bool {
@@ -800,6 +819,23 @@ fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn deliver_release_notes(outcome: &Outcome<wire::ReleaseNotes>, form: Form) -> ! {
+    if form == Form::Text
+        && let Outcome::Reply(reply) = outcome
+    {
+        let mut document = reply.body.document.as_bytes().to_vec();
+        if !document.ends_with(b"\n") {
+            document.push(b'\n');
+        }
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(&document);
+        let _ = stdout.flush();
+        terminate_code(REPLY_EXIT);
+    }
+    deliver(outcome, form)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -> ! {
     if form == Form::Text
         && let Outcome::Reply(reply) = outcome
@@ -847,12 +883,22 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn session_environment() -> session_command::Environment {
+    let vendors = spice::extension::registry()
+        .expect("compiled extension declarations are validated by the test gate")
+        .vendors()
+        .into_iter()
+        .map(|vendor| {
+            let layout = vendor.transcript_layout();
+            session_command::VendorEnvironment::new(
+                vendor,
+                bootstrap_environment(vendor.thread_id_environment()),
+                bootstrap_environment(layout.home_environment),
+            )
+        })
+        .collect();
     session_command::Environment::new(
-        bootstrap_environment("CODEX_THREAD_ID"), // env-policy: allow
-        bootstrap_environment("CLAUDE_CODE_SESSION_ID"), // env-policy: allow
+        vendors,
         bootstrap_environment("SPICE_AGENT_VENDOR"), // env-policy: allow
-        bootstrap_environment("CODEX_HOME"),
-        bootstrap_environment("CLAUDE_CONFIG_DIR"),
         bootstrap_environment("HOME"),
     )
 }

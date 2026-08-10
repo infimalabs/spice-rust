@@ -31,9 +31,16 @@ pub(crate) fn hook_document(
     answer: &CommandAnswer,
     harness: &str,
 ) -> Result<Option<Vec<u8>>, String> {
-    if !matches!(harness, "claude" | "codex") {
+    if spice::extension::vendor(harness).is_none() {
+        let expected = spice::extension::registry()
+            .map_err(|error| error.to_string())?
+            .vendors()
+            .into_iter()
+            .map(|vendor| vendor.name())
+            .collect::<Vec<_>>()
+            .join(" or ");
         return Err(format!(
-            "unsupported hook harness {harness:?}; expected claude or codex"
+            "unsupported hook harness {harness:?}; expected {expected}"
         ));
     }
     let CommandAnswer::Inbox(inbox) = answer else {
@@ -57,8 +64,8 @@ pub(crate) fn hook_document(
     for lane in &inbox.lanes {
         for directive in &lane.pending {
             context.push_str(&format!(
-                "\n\nlane={} key={}\n{}",
-                lane.lane, directive.key, directive.text
+                "\n\nlane={} key={} stage={}\n{}",
+                lane.lane, directive.key, directive.stage, directive.text
             ));
         }
     }
@@ -141,9 +148,17 @@ fn select<'a>(
             let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;
             Ok((SelectedCommand::SteerCancel { directive }, None))
         }
+        ["steer", "resend"] => {
+            let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;
+            Ok((SelectedCommand::SteerResend { directive }, None))
+        }
         ["steer", "recover"] => {
             let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;
             Ok((SelectedCommand::SteerRecover { directive }, None))
+        }
+        ["steer", "repair"] => {
+            let lane = uuid_operand(matches, "LANE", "steer::lane-invalid")?;
+            Ok((SelectedCommand::SteerRepair { lane }, None))
         }
         ["inbox"] => {
             let lane = optional_uuid_operand(matches, "LANE", "steer::lane-invalid")?;

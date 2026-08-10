@@ -60,16 +60,25 @@ fn prepare_release_publish(
     command: &wire::AdmittedCommand,
     publish: &ReleasePublish,
 ) -> Result<PreparedReleasePublish, Outcome<CommandAnswer>> {
+    let notes = current_notes(publish)?;
     let app = crate::release_command::app_digest(&paths.worktree)
         .map_err(|error| release_refusal("release::app-stage-refused", &error))?;
-    let release = crate::release_command::admit_stage(&paths.stage, &app)
+    let release = crate::release_command::admit_stage(&paths.stage, &app, notes)
         .map_err(|error| release_refusal("release::manifest-refused", &error.to_string()))?;
-    if publish.key != *release.key() || publish.manifest != *release.manifest() {
+    if publish.key != *release.key()
+        || publish.manifest != *release.manifest()
+        || notes != release.notes()
+    {
         return Err(Outcome::Refusal(Refusal {
             reason: "release::plan-moved".to_owned(),
             witness: Some("publication-plan".to_owned()),
-            expected: Some(format!("{}:{}", release.key(), release.manifest())),
-            observed: Some(format!("{}:{}", publish.key, publish.manifest)),
+            expected: Some(format!(
+                "{}:{}:{}",
+                release.key(),
+                release.manifest(),
+                release.notes()
+            )),
+            observed: Some(format!("{}:{}:{}", publish.key, publish.manifest, notes)),
             remedy: "preview the current sealed manifest and apply its exact key".to_owned(),
         }));
     }
@@ -98,6 +107,18 @@ fn prepare_release_publish(
     })
 }
 
+fn current_notes(publish: &ReleasePublish) -> Result<&wire::Digest, Outcome<CommandAnswer>> {
+    publish.notes.digest().ok_or_else(|| {
+        Outcome::Refusal(Refusal {
+            reason: "release::notes-identity-absent".to_owned(),
+            witness: Some("publication-plan".to_owned()),
+            expected: Some("the exact curated release-note digest".to_owned()),
+            observed: Some("historical schema-4 absence".to_owned()),
+            remedy: "preview the current sealed release and apply its exact plan".to_owned(),
+        })
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn propose_release_publish(
     paths: &RuntimePaths,
@@ -116,12 +137,13 @@ fn propose_release_publish(
     )
     .map_err(typed_outcome)?;
     let guarded_release = release.clone();
+    let guarded_notes = release.notes().clone();
     let guarded_stage = paths.stage.clone();
     let guarded_worktree = paths.worktree.clone();
     proposal.guard(JournalGuard::new(move |read| {
         let app = crate::release_command::app_digest(&guarded_worktree)
             .map_err(|_| GuardError::refused("release::app-stage-moved"))?;
-        let current = crate::release_command::admit_stage(&guarded_stage, &app)
+        let current = crate::release_command::admit_stage(&guarded_stage, &app, &guarded_notes)
             .map_err(|_| GuardError::refused("release::manifest-moved"))?;
         if current != guarded_release {
             return Err(GuardError::refused("release::manifest-moved"));
@@ -421,4 +443,31 @@ fn fault<B>(class: FaultClass, reason: &str, detail: &str) -> Outcome<B> {
         reason: reason.to_owned(),
         detail: detail.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_migrated_command_cannot_enter_the_current_publication_door() {
+        let publish = ReleasePublish {
+            key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .parse()
+                .expect("plan digest"),
+            manifest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                .parse()
+                .expect("manifest digest"),
+            notes: wire::ReleaseNotesIdentity::HistoricalAbsent,
+        };
+
+        let Err(Outcome::Refusal(refusal)) = current_notes(&publish) else {
+            panic!("historical note absence must refuse before stage admission")
+        };
+        assert_eq!(refusal.reason, "release::notes-identity-absent");
+        assert_eq!(
+            refusal.observed.as_deref(),
+            Some("historical schema-4 absence")
+        );
+    }
 }

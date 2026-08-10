@@ -53,9 +53,13 @@ here; reach this system through `$SPICE_BIN`.
 The installer refuses with `install::state-refused` while a retired
 release-one `.spice-rust` tree exists under the common directory. That tree is
 this port's own earlier state, not the predecessor's, and archiving it aside is
-what clears the refusal. The predecessor's `.spice` directory blocks nothing,
-and the native journal may already hold work: installing requires no empty
-authority on either side.
+what clears the refusal. Ordinary Python state in `.spice` blocks nothing. A
+same-version Rust receipt from before the namespace split at
+`.spice/install.json` is different: reverse that installation with its owning
+old installed binary before applying this build. The new binary never inspects,
+reads, or deletes that path now owned by Python, and does not treat it as an
+alternate receipt. After that one-time cutover, Rust state lives only in
+`.spice-rs`; installing requires no empty authority on either side.
 
 ## Hooks are a repository-wide choice
 
@@ -96,7 +100,7 @@ the discovery file it just published and admitting it; `--open` has it open the
 default browser too. [README.md](README.md) carries the non-loopback bind and
 its bearer token.
 
-Discovery is a single file, `$SPICE_COMMON/.spice/canvas`. A resident withdraws
+Discovery is a single file, `$SPICE_COMMON/.spice-rs/canvas`. A resident withdraws
 it on exit, `up` clears a stale one after taking the resident lock
 (`clear_stale_surfaces` in `spice/src/resident/runtime.rs`), and `down` faults
 with `canvas::release-incomplete` when a record survives the release, in that
@@ -123,9 +127,9 @@ predecessor.
 
 The board carries whatever work this system holds. It is not required to be
 empty, and it neither imports nor mirrors the predecessor's board: the two
-authorities are separate databases with disjoint filenames sharing one
-`$SPICE_COMMON/.spice/data` directory. `down` stops this resident and nothing
-else.
+authorities are in physically disjoint roots. Python owns
+`$SPICE_COMMON/.spice/data`; Rust owns
+`$SPICE_COMMON/.spice-rs/data`. `down` stops this resident and nothing else.
 
 ## Upgrade
 
@@ -203,13 +207,12 @@ process group behind it, and the `spice` entrypoint under `~/.local/bin`. If
 its state is removed rather than left in place, it also destroys the
 `spiceacks`, `spicemaxims`, `spiceprojections`, `spiceteams`, and
 `taskchampion` databases in `$SPICE_COMMON/.spice/data`. Archive that directory
-under a verified checksum before touching any of it, because this appliance's
-own journal lives beside those files.
+under a verified checksum before touching any of it. This appliance does not
+read or write that directory.
 
-Retiring this appliance destroys `spicejournal.sqlite3` in that same directory,
-the published `.spice-install` tree, the discovery record
-`$SPICE_COMMON/.spice/canvas`, and whichever `core.hooksPath` this repository
-selected.
+Retiring this appliance destroys `$SPICE_COMMON/.spice-rs`, including
+`spicejournal.sqlite3` and the discovery record, the published `.spice-install`
+tree, and whichever `core.hooksPath` this repository selected.
 
 Retiring either system means stopping its lanes, and a stopped battery leaves
 loose vendor fixtures running outside every lane's process group. Sweep those

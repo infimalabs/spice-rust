@@ -17,12 +17,12 @@ static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn startup_runtime_policy_and_trust_share_one_capture_generation() {
     const FIRST: &str = concat!(
-        "[steer]\nexpiry = \"12h\"\nresend = [\"2m\"]\n",
+        "[steer]\nexpiry = \"12h\"\nresend = [\"2m\", \"4m\", \"6m\"]\n",
         "[consent]\nposture = \"deny\"\n",
         "[taste.polling]\nwords = [\"poll*\"]\nmessage = \"Wait for completion.\"\n",
     );
     const SECOND: &str = concat!(
-        "[steer]\nexpiry = \"48h\"\nresend = [\"10m\"]\n",
+        "[steer]\nexpiry = \"48h\"\nresend = [\"10m\", \"20m\", \"30m\"]\n",
         "[consent]\nposture = \"allow\"\n",
         "[taste.fallbacks]\nwords = [\"fallback*\"]\nmessage = \"Keep one path.\"\n",
     );
@@ -288,7 +288,7 @@ fn replace_policy(path: &Path, bytes: &str) {
 }
 
 fn publish_local_policy(root: &Path, bytes: &str) {
-    let parent = root.join(".git/.spice");
+    let parent = root.join(".git/.spice-rs");
     fs::create_dir_all(&parent).expect("publish local policy parent");
     fs::write(parent.join("config.toml"), bytes).expect("publish local policy");
 }

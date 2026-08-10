@@ -97,6 +97,7 @@ fn prepare_claim(
             residency_position: snapshot.answer.residency.position,
             projects: projects.clone(),
             band: snapshot.answer.allocation_band,
+            recent_cell: snapshot.answer.recent_cell.clone(),
         },
     );
     mint_claim(
@@ -190,6 +191,7 @@ fn select_task(
         actor,
         subscription,
         snapshot.answer.allocation_band,
+        snapshot.answer.recent_cell.as_ref(),
     )
     .map(|selection| selection.entry().clone())
     .ok_or_else(|| {
@@ -257,6 +259,7 @@ fn mint_claim(
             task,
             actor,
             workflow: selected.workflow(),
+            project: selected.project().as_str(),
             lane,
             occupant,
             epoch,

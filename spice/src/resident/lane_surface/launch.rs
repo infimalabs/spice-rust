@@ -117,21 +117,33 @@ fn launch_plan(
     resume: vendor::Resume,
 ) -> CommandResult<spice::agent_launch::Plan> {
     let executable = std::env::current_exe()
-        .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?
-        .display()
-        .to_string();
-    let environment = launch_environment(repository)?;
-    let prompt = format!(
-        "[$spice](<{}>)",
-        spice::install::installed_skill(repository).display()
-    );
+        .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?;
+    let environment = launch_environment(repository, &executable)?;
+    let Some(vendor) = spice::extension::vendor(name.as_str()) else {
+        return Err(Outcome::Refusal(Refusal {
+            reason: "lane::vendor-unsupported".to_owned(),
+            witness: Some("lane.vendor".to_owned()),
+            expected: Some(
+                spice::extension::registry()
+                    .expect("compiled extension declarations are validated by the test gate")
+                    .vendors()
+                    .into_iter()
+                    .map(|vendor| vendor.name())
+                    .collect::<Vec<_>>()
+                    .join(" or "),
+            ),
+            observed: Some(name.as_str().to_owned()),
+            remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
+        }));
+    };
+    let prompt = vendor.neutral_launch_prompt(&spice::install::installed_skill(repository));
     spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
             worktree: repository.worktree_root().to_path_buf(),
             vendor: name.clone(),
             prompt,
-            executable,
+            executable: executable.display().to_string(),
             environment,
             lane,
             resume,
@@ -141,7 +153,15 @@ fn launch_plan(
         spice::agent_launch::ComposeError::UnsupportedVendor(other) => Outcome::Refusal(Refusal {
             reason: "lane::vendor-unsupported".to_owned(),
             witness: Some("lane.vendor".to_owned()),
-            expected: Some("claude or codex".to_owned()),
+            expected: Some(
+                spice::extension::registry()
+                    .expect("compiled extension declarations are validated by the test gate")
+                    .vendors()
+                    .into_iter()
+                    .map(|vendor| vendor.name())
+                    .collect::<Vec<_>>()
+                    .join(" or "),
+            ),
             observed: Some(other),
             remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
         }),
@@ -150,15 +170,39 @@ fn launch_plan(
 }
 
 /// Carry only the ambient variables a supervised occupant is admitted to see.
-fn launch_environment(repository: &Repository) -> CommandResult<Environment> {
-    let values = ["HOME", "PATH", "SHELL", "TMPDIR", "USER"]
+///
+/// The executable's directory leads `PATH` so every bare `spice` in the
+/// installed skill resolves to the same appliance that composed the exact hook
+/// and MCP commands. This is a routing boundary, not a convenience: the Python
+/// predecessor also installs a program named `spice`, and inheriting its
+/// earlier ambient entry would send agent-shell inbox and acknowledgment
+/// commands to the wrong runtime.
+fn launch_environment(repository: &Repository, executable: &Path) -> CommandResult<Environment> {
+    let mut values = ["HOME", "SHELL", "TMPDIR", "USER"]
         .into_iter()
         .filter_map(|key| crate::bootstrap_environment(key).map(|value| (key.into(), value)))
         .collect::<Vec<(OsString, OsString)>>();
+    values.push(("PATH".into(), appliance_path(executable)?));
     let environment = Environment::new(values)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
     spice::git_shadow::environment(repository, environment)
         .map_err(|error| store_fault("lane::git-shadow-unavailable", &error.to_string()))
+}
+
+/// Search path whose first `spice` is the appliance supervising this lane.
+fn appliance_path(executable: &Path) -> CommandResult<OsString> {
+    let Some(directory) = executable.parent() else {
+        return Err(store_fault(
+            "lane::executable-unresolved",
+            "running executable has no parent directory",
+        ));
+    };
+    let mut entries = vec![directory.to_path_buf()];
+    if let Some(ambient) = crate::bootstrap_environment("PATH") {
+        entries.extend(std::env::split_paths(&ambient));
+    }
+    std::env::join_paths(entries)
+        .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))
 }
 
 /// Bind the lease, wait policy, and capture bounds this lane launches under.

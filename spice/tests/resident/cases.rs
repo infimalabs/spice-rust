@@ -805,7 +805,7 @@ fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
             "local-file" => {
                 let target = fixture.root.join("outside-local");
                 fs::write(&target, "# linked local policy\n").expect("write local target");
-                symlink(&target, fixture.root.join(".git/.spice/config.toml"))
+                symlink(&target, fixture.root.join(".git/.spice-rs/config.toml"))
                     .expect("link local policy file");
             }
             _ => unreachable!("fixture names the closed linked cases"),
@@ -861,7 +861,7 @@ fn trust_fixture() -> Fixture {
         "# tracked executable policy v1\n",
     )
     .expect("tracked policy writes");
-    let local = fixture.root.join(".git/.spice/config.toml");
+    let local = fixture.root.join(".git/.spice-rs/config.toml");
     fs::create_dir_all(local.parent().expect("local policy parent"))
         .expect("local policy directory");
     fs::write(&local, "# local executable policy v1\n").expect("local policy writes");

@@ -1,42 +1,35 @@
-//! Directives as durable state: send, resend lineage, escalation, cancel, and
-//! expiry.
+//! Directives as durable state: publication, presentation, disposition, and expiry.
 //!
 //! Operator steering is state, not a message that scrolled past. A directive is
 //! appended once and then retires only through a typed disposition, so what a
 //! lane still owes is a question about facts rather than about whether a
 //! terminal happened to be watched.
 //!
-//! Silence escalates through lineage rather than through anonymous repetition.
-//! A resend is a new rung naming the rung below it, which is what lets an
-//! acknowledgment of any live rung retire the whole ladder once, and what lets
-//! an exhausted ladder be named as unheard instead of escalating forever.
+//! Silence changes the presentation of the published directive without changing
+//! its identity. Each named transition is retained in the directive's audit,
+//! while acknowledgment, refusal, cancellation, lapse, and recovery address the
+//! same UUID and human key throughout.
 //!
 //! Everything here reduces facts into standing. It appends nothing: the command
 //! door mints directives, the scanner mints retirements, and this decides what
 //! those facts mean together — which is why replaying the same facts always
 //! produces the same pending set.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
 use wire::body::{
-    DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeadLettered, SteerDeclined, SteerLapsed,
-    SteerMissed, SteerRecovered, SteerResent, SteerSent, TasteReminded,
+    DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed,
+    SteerMissed, SteerRecovered, SteerSent, SteeringStage, SteeringTransition, TasteReminded,
 };
+use wire::steering::SteerDeadLettered;
 use wire::{CanonicalUuid, Disposition, Instant};
 
 use crate::ack::keys::Key;
 use crate::ack::scan::Standing;
 
-/// Rungs one lineage may climb before its ladder is exhausted.
-///
-/// The bound exists so a deaf channel alarms by name instead of escalating
-/// forever; past the top rung the directive stops being resent and lapses on
-/// its own expiry.
-pub const LADDER: u32 = 3;
-
-/// One directive in a lineage, as the facts left it.
+/// One stable directive, as the facts left it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Directive {
     directive: CanonicalUuid,
@@ -46,13 +39,14 @@ pub struct Directive {
     control: Option<String>,
     attachments: Vec<DirectiveAttachment>,
     expires: Instant,
-    escalation: u32,
-    ancestor: Option<Key>,
+    published: Option<Instant>,
+    stage: SteeringStage,
+    escalations: Vec<SteeringTransition>,
     disposition: Disposition,
 }
 
 impl Directive {
-    /// Durable identity of this directive rung.
+    /// Durable identity of this directive.
     #[must_use]
     pub const fn directive(&self) -> CanonicalUuid {
         self.directive
@@ -94,16 +88,22 @@ impl Directive {
         self.expires
     }
 
-    /// Which rung of its ladder this directive is.
+    /// Original publication instant, present on directives replayed from a journal.
     #[must_use]
-    pub const fn escalation(&self) -> u32 {
-        self.escalation
+    pub const fn published(&self) -> Option<Instant> {
+        self.published
     }
 
-    /// The rung below this one, absent on the rung a lineage started at.
+    /// Current named presentation state.
     #[must_use]
-    pub const fn ancestor(&self) -> Option<&Key> {
-        self.ancestor.as_ref()
+    pub const fn stage(&self) -> SteeringStage {
+        self.stage
+    }
+
+    /// Complete ordered presentation-transition audit.
+    #[must_use]
+    pub fn escalations(&self) -> &[SteeringTransition] {
+        &self.escalations
     }
 
     /// The state this directive currently sits in.
@@ -118,21 +118,21 @@ impl Directive {
 pub enum Steering<'a> {
     /// A directive was appended.
     Sent(&'a SteerSent),
-    /// A live directive climbed a rung.
-    Resent(&'a SteerResent),
-    /// A lapsed or dead-lettered directive was restored to live standing.
+    /// A live directive crossed one named silence horizon.
+    Escalated(&'a SteerEscalated),
+    /// A lapsed directive was restored to live standing.
     Recovered(&'a SteerRecovered),
-    /// A lineage was heard.
+    /// A directive was heard.
     Acked(&'a SteerAcked),
-    /// A lineage was refused with a reason.
+    /// A directive was refused with a reason.
     Declined(&'a SteerDeclined),
     /// An acknowledgment did not land.
     Missed(&'a SteerMissed),
-    /// A lineage reached its expiry unheard.
+    /// A directive reached its expiry unheard.
     Lapsed(&'a SteerLapsed),
-    /// A lineage was parked because its lane could not start.
+    /// A directive was parked because its lane could not start.
     DeadLettered(&'a SteerDeadLettered),
-    /// The operator withdrew a lineage.
+    /// The operator withdrew a directive.
     Canceled(&'a SteerCanceled),
     /// A taste fired on authored prose and opened a directive.
     ///
@@ -157,7 +157,7 @@ pub enum Refusal {
         /// Key that is already taken.
         key: Key,
     },
-    /// A directive identity was already used by another rung.
+    /// A directive identity was already used by another publication.
     IdentityDuplicate {
         /// Identity that is already taken.
         directive: CanonicalUuid,
@@ -176,46 +176,62 @@ pub enum Refusal {
         /// Key nothing answers to.
         key: Key,
     },
-    /// The lineage already retired.
+    /// The directive already retired.
     Retired {
-        /// Key naming the retired lineage.
+        /// Key naming the retired directive.
         key: Key,
         /// State it retired into.
         disposition: Disposition,
     },
-    /// A resend skipped or repeated a rung.
-    Rung {
-        /// Key the resend minted.
+    /// A presentation transition skipped, repeated, or moved backward.
+    Stage {
+        /// Stable key whose presentation was moved.
         key: Key,
-        /// Rung the ladder was standing on next.
-        expected: u32,
-        /// Rung the fact claimed.
-        observed: u32,
+        /// Only state admissible next.
+        expected: SteeringStage,
+        /// State the fact claimed.
+        observed: SteeringStage,
     },
-    /// The ladder has no rung left to climb.
-    Exhausted {
-        /// Key the resend minted.
+    /// An overdue directive has no later pre-expiry presentation state.
+    FinalStage {
+        /// Stable key already at the final state.
         key: Key,
-        /// Rungs the ladder carries.
-        ladder: u32,
     },
-    /// A resend addressed a different lane than the lineage it descends from.
+    /// A presentation transition predates publication or the preceding transition.
+    Chronology {
+        /// Stable key whose audit would move backward in time.
+        key: Key,
+        /// Publication or preceding-transition instant.
+        previous: Instant,
+        /// Instant the new transition claimed.
+        observed: Instant,
+    },
+    /// A steering transition addressed a different lane than its directive.
     Lane {
-        /// Key the resend minted.
+        /// Stable key the transition carries.
         key: Key,
-        /// Lane the lineage is addressed to.
+        /// Lane the directive is addressed to.
         expected: CanonicalUuid,
         /// Lane the fact claimed.
         observed: CanonicalUuid,
     },
-    /// A lapse named an expiry the lineage does not carry.
+    /// A lapse named an expiry the directive does not carry.
     Expiry {
-        /// Key naming the lineage.
+        /// Key naming the directive.
         key: Key,
-        /// Expiry the lineage carries.
+        /// Expiry the directive carries.
         expected: Instant,
         /// Expiry the fact claimed.
         observed: Instant,
+    },
+    /// Recovery did not establish an expiry later than the lapse it reopens.
+    RecoveryExpiry {
+        /// Stable key naming the recovered directive.
+        key: Key,
+        /// Expiry at which the directive lapsed.
+        lapsed_at: Instant,
+        /// New expiry the recovery claimed.
+        expires: Instant,
     },
 }
 
@@ -243,19 +259,32 @@ impl fmt::Display for Refusal {
             Self::Unknown { key } => write!(formatter, "no directive carries {key}"),
             Self::Retired { key, disposition } => {
                 let word = disposition_word(*disposition);
-                write!(formatter, "the lineage at {key} already retired as {word}")
+                write!(
+                    formatter,
+                    "the directive at {key} already retired as {word}"
+                )
             }
-            Self::Rung {
+            Self::Stage {
                 key,
                 expected,
                 observed,
             } => write!(
                 formatter,
-                "{key} climbed to rung {observed} where rung {expected} was next"
+                "{key} moved to {observed:?} where {expected:?} was next"
             ),
-            Self::Exhausted { key, ladder } => write!(
+            Self::FinalStage { key } => {
+                write!(
+                    formatter,
+                    "{key} is already at the final overdue presentation"
+                )
+            }
+            Self::Chronology {
+                key,
+                previous,
+                observed,
+            } => write!(
                 formatter,
-                "{key} has no rung left: the ladder carries {ladder}"
+                "{key} moved at {observed} before its preceding audit instant {previous}"
             ),
             Self::Lane {
                 key,
@@ -263,7 +292,7 @@ impl fmt::Display for Refusal {
                 observed,
             } => write!(
                 formatter,
-                "{key} addressed lane {observed} where its lineage addresses {expected}"
+                "{key} addressed lane {observed} where its directive addresses {expected}"
             ),
             Self::Expiry {
                 key,
@@ -271,7 +300,15 @@ impl fmt::Display for Refusal {
                 observed,
             } => write!(
                 formatter,
-                "{key} lapsed at {observed} where its lineage expires at {expected}"
+                "{key} lapsed at {observed} where its directive expires at {expected}"
+            ),
+            Self::RecoveryExpiry {
+                key,
+                lapsed_at,
+                expires,
+            } => write!(
+                formatter,
+                "{key} recovered with expiry {expires}, which does not follow lapse {lapsed_at}"
             ),
         }
     }
@@ -316,25 +353,25 @@ impl Ledger {
             // named here exactly once, by the body type registered against it.
             let fact = &envelope.fact;
             let result = if let Some(body) = fact.read::<SteerSent>() {
-                ledger.absorb(Steering::Sent(&body))
+                ledger.absorb_recorded(Steering::Sent(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<TasteReminded>() {
-                ledger.absorb(Steering::Reminded(&body))
-            } else if let Some(body) = fact.read::<SteerResent>() {
-                ledger.absorb(Steering::Resent(&body))
+                ledger.absorb_recorded(Steering::Reminded(&body), Some(envelope.at))
+            } else if let Some(body) = fact.read::<SteerEscalated>() {
+                ledger.absorb_recorded(Steering::Escalated(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerRecovered>() {
-                ledger.absorb(Steering::Recovered(&body))
+                ledger.absorb_recorded(Steering::Recovered(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerAcked>() {
-                ledger.absorb(Steering::Acked(&body))
+                ledger.absorb_recorded(Steering::Acked(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerDeclined>() {
-                ledger.absorb(Steering::Declined(&body))
+                ledger.absorb_recorded(Steering::Declined(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerMissed>() {
-                ledger.absorb(Steering::Missed(&body))
+                ledger.absorb_recorded(Steering::Missed(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerLapsed>() {
-                ledger.absorb(Steering::Lapsed(&body))
+                ledger.absorb_recorded(Steering::Lapsed(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerDeadLettered>() {
-                ledger.absorb(Steering::DeadLettered(&body))
+                ledger.absorb_recorded(Steering::DeadLettered(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerCanceled>() {
-                ledger.absorb(Steering::Canceled(&body))
+                ledger.absorb_recorded(Steering::Canceled(&body), Some(envelope.at))
             } else {
                 continue;
             };
@@ -354,10 +391,18 @@ impl Ledger {
     /// Returns the [`Refusal`] naming what the fact contradicts. A refusal
     /// leaves standing exactly as it was, so a rejected fact cannot half-apply.
     pub fn absorb(&mut self, steering: Steering<'_>) -> Result<(), Refusal> {
+        self.absorb_recorded(steering, None)
+    }
+
+    fn absorb_recorded(
+        &mut self,
+        steering: Steering<'_>,
+        at: Option<Instant>,
+    ) -> Result<(), Refusal> {
         match steering {
-            Steering::Sent(body) => self.send(body),
-            Steering::Reminded(body) => self.remind(body),
-            Steering::Resent(body) => self.resend(body),
+            Steering::Sent(body) => self.send(body, at),
+            Steering::Reminded(body) => self.remind(body, at),
+            Steering::Escalated(body) => self.escalate(body, at),
             Steering::Recovered(body) => self.recover(body),
             Steering::Acked(body) => {
                 self.dispose(&body.key, body.directive, body.lane, Disposition::Acked)
@@ -380,41 +425,16 @@ impl Ledger {
 
     /// The directives a lane still owes an answer for, in journal order.
     ///
-    /// A lineage answers as one directive, so only its top rung is pending: the
-    /// rungs below are the same direction said again, and rendering them all
-    /// would ask a lane to acknowledge one directive several times.
+    /// Each publication answers as exactly one directive at every urgency.
     #[must_use]
     pub fn pending(&self, lane: CanonicalUuid) -> Vec<&Directive> {
-        let climbed: BTreeSet<&Key> = self
-            .directives
-            .values()
-            .filter_map(|directive| directive.ancestor.as_ref())
-            .collect();
         self.order
             .iter()
             .filter_map(|key| self.directives.get(key))
             .filter(|directive| {
-                directive.lane == lane
-                    && directive.disposition == Disposition::Live
-                    && !climbed.contains(&directive.key)
+                directive.lane == lane && directive.disposition == Disposition::Live
             })
             .collect()
-    }
-
-    /// One lineage from its first rung upward, empty when nothing carries the
-    /// key.
-    #[must_use]
-    pub fn lineage(&self, key: &Key) -> Vec<&Directive> {
-        let Some(root) = self.root(key) else {
-            return Vec::new();
-        };
-        let mut members: Vec<&Directive> = self
-            .directives
-            .values()
-            .filter(|directive| self.root(&directive.key).as_ref() == Some(&root))
-            .collect();
-        members.sort_by_key(|directive| directive.escalation);
-        members
     }
 
     /// Every directive in journal order, whatever it retired into.
@@ -434,11 +454,11 @@ impl Ledger {
             .find(|directive| directive.directive == id)
     }
 
-    /// Open standing for a directive that descends from nothing.
+    /// Open standing for one newly published directive.
     ///
-    /// Both ways a lineage can begin land here rather than each stating the
-    /// admission for itself. The two refusals are the whole of what "first rung"
-    /// means -- a key already standing, and an identity already spent -- so
+    /// Both publication paths land here rather than each stating the admission
+    /// for itself. The two refusals are the whole publication identity law -- a
+    /// key already standing, and an identity already spent -- so
     /// sharing them is what stops one origin from drifting into accepting a
     /// duplicate the other rejects.
     fn open(&mut self, opened: Directive) -> Result<(), Refusal> {
@@ -454,7 +474,7 @@ impl Ledger {
         Ok(())
     }
 
-    fn send(&mut self, body: &SteerSent) -> Result<(), Refusal> {
+    fn send(&mut self, body: &SteerSent, published: Option<Instant>) -> Result<(), Refusal> {
         let key = read("key", &body.key)?;
         self.open(Directive {
             directive: body.directive,
@@ -464,8 +484,9 @@ impl Ledger {
             control: body.control.clone(),
             attachments: body.attachments.clone(),
             expires: body.expires,
-            escalation: 0,
-            ancestor: None,
+            published,
+            stage: SteeringStage::Published,
+            escalations: Vec::new(),
             disposition: Disposition::Live,
         })
     }
@@ -481,7 +502,7 @@ impl Ledger {
     ///
     /// A reminder drives no control channel and carries no attachments. It is
     /// prose addressed to a lane, which is what an operator's plainest send is.
-    fn remind(&mut self, body: &TasteReminded) -> Result<(), Refusal> {
+    fn remind(&mut self, body: &TasteReminded, published: Option<Instant>) -> Result<(), Refusal> {
         let key = read("key", &body.key)?;
         self.open(Directive {
             directive: body.directive,
@@ -491,71 +512,70 @@ impl Ledger {
             control: None,
             attachments: Vec::new(),
             expires: body.expires,
-            escalation: 0,
-            ancestor: None,
+            published,
+            stage: SteeringStage::Published,
+            escalations: Vec::new(),
             disposition: Disposition::Live,
         })
     }
 
-    fn resend(&mut self, body: &SteerResent) -> Result<(), Refusal> {
+    fn escalate(&mut self, body: &SteerEscalated, at: Option<Instant>) -> Result<(), Refusal> {
         let key = read("key", &body.key)?;
-        if self.directive(body.directive).is_some() {
-            return Err(Refusal::IdentityDuplicate {
-                directive: body.directive,
-            });
-        }
-        let ancestor = read("ancestor", &body.ancestor)?;
-        let below = self
+        let directive = self
             .directives
-            .get(&ancestor)
-            .ok_or_else(|| Refusal::Unknown {
-                key: ancestor.clone(),
-            })?
-            .clone();
-
-        if below.disposition != Disposition::Live {
-            return Err(Refusal::Retired {
-                key: ancestor,
-                disposition: below.disposition,
+            .get_mut(&key)
+            .ok_or_else(|| Refusal::Unknown { key: key.clone() })?;
+        if directive.directive != body.directive {
+            return Err(Refusal::Identity {
+                key,
+                expected: directive.directive,
+                observed: body.directive,
             });
         }
-        if below.lane != body.lane {
+        if directive.disposition != Disposition::Live {
+            return Err(Refusal::Retired {
+                key,
+                disposition: directive.disposition,
+            });
+        }
+        if directive.lane != body.lane {
             return Err(Refusal::Lane {
                 key,
-                expected: below.lane,
+                expected: directive.lane,
                 observed: body.lane,
             });
         }
-        let next = below.escalation + 1;
-        if body.escalation != next {
-            return Err(Refusal::Rung {
+        let Some(expected) = directive.stage.next() else {
+            return Err(Refusal::FinalStage { key });
+        };
+        if body.stage != expected {
+            return Err(Refusal::Stage {
                 key,
-                expected: next,
-                observed: body.escalation,
+                expected,
+                observed: body.stage,
             });
         }
-        if next > LADDER {
-            return Err(Refusal::Exhausted {
-                key,
-                ladder: LADDER,
+        if let Some(at) = at {
+            let previous = directive
+                .escalations
+                .last()
+                .map(|transition| transition.at)
+                .or(directive.published);
+            if let Some(previous) = previous
+                && at < previous
+            {
+                return Err(Refusal::Chronology {
+                    key,
+                    previous,
+                    observed: at,
+                });
+            }
+            directive.escalations.push(SteeringTransition {
+                stage: body.stage,
+                at,
             });
         }
-        if self.directives.contains_key(&key) {
-            return Err(Refusal::Duplicate { key });
-        }
-
-        self.place(Directive {
-            directive: body.directive,
-            key,
-            lane: below.lane,
-            text: below.text,
-            control: below.control,
-            attachments: below.attachments,
-            expires: below.expires,
-            escalation: next,
-            ancestor: Some(ancestor),
-            disposition: Disposition::Live,
-        });
+        directive.stage = body.stage;
         Ok(())
     }
 
@@ -595,45 +615,19 @@ impl Ledger {
                 observed: body.lapsed_at,
             });
         }
-        let root = self
-            .root(&key)
-            .ok_or_else(|| Refusal::Unknown { key: key.clone() })?;
-        let members = self
+        if body.expires <= body.lapsed_at {
+            return Err(Refusal::RecoveryExpiry {
+                key,
+                lapsed_at: body.lapsed_at,
+                expires: body.expires,
+            });
+        }
+        let directive = self
             .directives
-            .values()
-            .filter(|member| self.root(&member.key).as_ref() == Some(&root))
-            .map(|member| member.key.clone())
-            .collect::<Vec<_>>();
-        for member in &members {
-            let directive = self
-                .directives
-                .get(member)
-                .expect("lineage member came from the directive map");
-            if !matches!(
-                directive.disposition,
-                Disposition::Lapsed | Disposition::DeadLettered
-            ) {
-                return Err(Refusal::Retired {
-                    key: member.clone(),
-                    disposition: directive.disposition,
-                });
-            }
-            if directive.expires != body.lapsed_at {
-                return Err(Refusal::Expiry {
-                    key: member.clone(),
-                    expected: directive.expires,
-                    observed: body.lapsed_at,
-                });
-            }
-        }
-        for member in members {
-            let directive = self
-                .directives
-                .get_mut(&member)
-                .expect("validated lineage member remains present");
-            directive.disposition = Disposition::Live;
-            directive.expires = body.expires;
-        }
+            .get_mut(&key)
+            .expect("validated directive remains present");
+        directive.disposition = Disposition::Live;
+        directive.expires = body.expires;
         Ok(())
     }
 
@@ -692,50 +686,20 @@ impl Ledger {
         )
     }
 
-    /// Retires a whole lineage at once.
-    ///
-    /// Any live rung answers for the ladder, so acknowledging one cancels the
-    /// escalation of the rest rather than leaving them to climb.
+    /// Retire the one stable directive addressed by this key.
     fn retire(&mut self, key: &Key, disposition: Disposition) -> Result<(), Refusal> {
-        let root = self
-            .root(key)
-            .ok_or_else(|| Refusal::Unknown { key: key.clone() })?;
-        let members: Vec<Key> = self
+        let directive = self
             .directives
-            .values()
-            .filter(|directive| self.root(&directive.key).as_ref() == Some(&root))
-            .map(|directive| directive.key.clone())
-            .collect();
-
-        if let Some(standing) = self.directives.get(&root).map(Directive::disposition)
-            && standing != Disposition::Live
-        {
+            .get_mut(key)
+            .ok_or_else(|| Refusal::Unknown { key: key.clone() })?;
+        if directive.disposition != Disposition::Live {
             return Err(Refusal::Retired {
                 key: key.clone(),
-                disposition: standing,
+                disposition: directive.disposition,
             });
         }
-        for member in members {
-            if let Some(directive) = self.directives.get_mut(&member) {
-                directive.disposition = disposition;
-            }
-        }
+        directive.disposition = disposition;
         Ok(())
-    }
-
-    /// The first rung of the lineage this key belongs to.
-    ///
-    /// The walk is bounded by the ledger's own size, so a lineage that somehow
-    /// named itself cannot spin here.
-    fn root(&self, key: &Key) -> Option<Key> {
-        let mut current = self.directives.get(key)?;
-        for _ in 0..self.directives.len() {
-            let Some(ancestor) = current.ancestor.as_ref() else {
-                return Some(current.key.clone());
-            };
-            current = self.directives.get(ancestor)?;
-        }
-        None
     }
 
     fn place(&mut self, directive: Directive) {

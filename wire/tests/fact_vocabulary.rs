@@ -72,7 +72,7 @@ const PINNED: &[(&str, &str)] = &[
     ("ClaimRenewed", "claim::renewed"),
     ("DocApplied", "doc::applied"),
     ("SteerSent", "steer::sent"),
-    ("SteerResent", "steer::resent"),
+    ("SteerEscalated", "steer::escalated"),
     ("SteerRecovered", "steer::recovered"),
     ("SteerAcked", "steer::acked"),
     ("SteerDeclined", "steer::declined"),
@@ -112,6 +112,7 @@ const PINNED: &[(&str, &str)] = &[
     ("CommitLanded", "commit::landed"),
     ("GateFound", "gate::found"),
     ("GateCleared", "gate::cleared"),
+    ("GateFindingsFiled", "gate::filed"),
     ("JournalMigrated", "journal::migrated"),
     ("JournalBacked", "journal::backed"),
     ("JournalRestored", "journal::restored"),
@@ -152,7 +153,7 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::ClaimRenewed => "claim",
         FactKind::DocApplied => "doc",
         FactKind::SteerSent
-        | FactKind::SteerResent
+        | FactKind::SteerEscalated
         | FactKind::SteerRecovered
         | FactKind::SteerAcked
         | FactKind::SteerDeclined
@@ -184,7 +185,7 @@ fn plane(kind: FactKind) -> &'static str {
         FactKind::VendorArmed => "vendor",
         FactKind::TrustPended | FactKind::TrustGranted | FactKind::TrustRevoked => "trust",
         FactKind::CommitLanded => "commit",
-        FactKind::GateFound | FactKind::GateCleared => "gate",
+        FactKind::GateFound | FactKind::GateCleared | FactKind::GateFindingsFiled => "gate",
         FactKind::JournalMigrated
         | FactKind::JournalBacked
         | FactKind::JournalRestored

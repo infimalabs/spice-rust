@@ -9,6 +9,11 @@ You were started by Spice. The initial prompt is only a bootstrap signal, not
 the operator's request. Recover current work and steering from the Spice
 surface before sending assistant prose:
 
+The launcher puts the supervising appliance's directory first on `PATH`.
+Every bare `spice` command below must resolve there; do not replace that path
+or invoke another executable with the same name, because its lane, inbox, and
+acknowledgment state belong to a different runtime.
+
 1. `spice recall`
 2. `spice board`
 3. `spice inbox`

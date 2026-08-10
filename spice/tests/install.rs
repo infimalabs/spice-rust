@@ -44,7 +44,7 @@ fn installed_spice_is_the_one_repository_local_executable() {
             .count(),
         1
     );
-    let receipt = fs::metadata(scratch.join(".git/.spice/install.json")).unwrap();
+    let receipt = fs::metadata(scratch.join(".git/.spice-rs/install.json")).unwrap();
     assert!(receipt.len() < MAX_COMPACT_RECORD_BYTES);
     assert_eq!(receipt.permissions().mode() & 0o777, 0o600);
     assert!(!scratch.join(".git/.spice/rust/install.json").exists());
@@ -110,9 +110,9 @@ fn linked_worktrees_share_one_common_install_and_receipt() {
     assert!(installed_binary(&linked_repository).is_file());
     assert!(installed_skill(&linked_repository).is_file());
     assert!(installed_git_hooks(&linked_repository).is_dir());
-    assert!(common.join(".spice/install.json").is_file());
+    assert!(common.join(".spice-rs/install.json").is_file());
     let record: serde_json::Value =
-        serde_json::from_slice(&fs::read(common.join(".spice/install.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(common.join(".spice-rs/install.json")).unwrap()).unwrap();
     assert!(record["repository"].get("worktree").is_none());
     assert!(record["plan"]["repository"].get("worktree").is_none());
     assert!(!scratch.join(".spice-install").exists());
@@ -123,7 +123,7 @@ fn linked_worktrees_share_one_common_install_and_receipt() {
         InstallStatus::Uninstalled
     );
     assert!(!installed_binary(&first_repository).exists());
-    assert!(common.join(".spice/install.json").is_file());
+    assert!(common.join(".spice-rs/install.json").is_file());
 }
 
 #[test]
@@ -443,7 +443,7 @@ impl Scratch {
     }
 
     fn record(&self) -> PathBuf {
-        self.join(".git/.spice/install.json")
+        self.join(".git/.spice-rs/install.json")
     }
 
     fn snapshot(&self) -> Snapshot {

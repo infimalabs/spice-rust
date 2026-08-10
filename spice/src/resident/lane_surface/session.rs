@@ -360,8 +360,8 @@ pub(in crate::resident) fn resume_session(
     row: &wire::LaneResidency,
 ) -> CommandResult<vendor::Resume> {
     let session = validate_session_head(row)?;
-    let dialect = session_dialect(&row.vendor)?;
-    let identity = prove_session_tape(paths, row, session, dialect)?;
+    let vendor = session_vendor(&row.vendor)?;
+    let identity = prove_session_tape(paths, row, session, vendor)?;
     Ok(vendor::Resume::Session(identity))
 }
 
@@ -428,16 +428,23 @@ fn validate_session_head(row: &wire::LaneResidency) -> CommandResult<&wire::Lane
 }
 
 /// Select the declaration dialect owned by this lane's vendor.
-fn session_dialect(vendor: &wire::Name) -> CommandResult<listen::Dialect> {
-    let Some(dialect) = super::super::ingest_dialect(vendor) else {
+fn session_vendor(vendor: &wire::Name) -> CommandResult<&'static spice::extension::Vendor> {
+    let Some(declared) = super::super::ingest_vendor(vendor) else {
+        let expected = spice::extension::registry()
+            .expect("compiled extension declarations are validated by the test gate")
+            .vendors()
+            .into_iter()
+            .map(|vendor| vendor.name())
+            .collect::<Vec<_>>()
+            .join(" or ");
         return Err(session_head_refusal(
             "lane::session-vendor-unsupported",
-            Some("claude or codex".to_owned()),
+            Some(expected),
             Some(vendor.as_str().to_owned()),
             "select a vendor with a current session declaration dialect",
         ));
     };
-    Ok(dialect)
+    Ok(declared)
 }
 
 /// Prove the durable tape still holds the exact declaration the head names.
@@ -445,7 +452,7 @@ fn prove_session_tape(
     paths: &RuntimePaths,
     row: &wire::LaneResidency,
     session: &wire::LaneSession,
-    dialect: listen::Dialect,
+    vendor: &spice::extension::Vendor,
 ) -> CommandResult<vendor::SessionId> {
     let tape = tape::Tape::open_existing(
         paths
@@ -480,12 +487,18 @@ fn prove_session_tape(
     // moved tape. A record the dialect cannot read is not an error at all: it
     // decodes to residue, declares nothing, and is refused below with every
     // other locus that no longer holds the declaration the head names.
-    let decoded =
-        listen::decode(dialect, &bytes, locus).expect("a tape read answers its exact locus length");
-    let declared = decoded.events().iter().find_map(|event| match event {
-        listen::Event::Session(declaration) => Some(declaration.identity.as_str()),
-        _ => None,
-    });
+    let decoded = vendor
+        .decode(&bytes, locus)
+        .expect("a tape read answers its exact locus length");
+    let declaration = vendor.session_declaration(&decoded).map_err(|error| {
+        session_head_refusal(
+            "lane::session-identity-invalid",
+            Some("one nonempty vendor session identity".to_owned()),
+            Some(error.to_string()),
+            "repair the durable session authority before resuming",
+        )
+    })?;
+    let declared = declaration.as_ref().map(|row| row.session.as_str());
     if declared != Some(session.identity.as_str()) {
         return Err(session_head_refusal(
             "lane::session-tape-moved",

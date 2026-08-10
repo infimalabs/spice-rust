@@ -66,6 +66,8 @@ fn every_command_names_the_witnesses_it_requires() {
     for kind in CommandKind::ALL {
         let law = kind.law();
         let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
+        let output_repair = matches!(kind, CommandKind::SteerRepair);
+        let server_projected_gate_work = matches!(kind, CommandKind::GateFindings);
         let lane_lifecycle = matches!(
             kind,
             CommandKind::LaneSeat
@@ -76,8 +78,15 @@ fn every_command_names_the_witnesses_it_requires() {
         );
         assert_eq!(
             law.required.is_empty(),
-            kind.is_read() || scanner_disposition || lane_lifecycle,
-            "only reads, lane lifecycle, and scanner dispositions may omit required witnesses",
+            kind.is_read()
+                || output_repair
+                || scanner_disposition
+                || lane_lifecycle
+                || server_projected_gate_work,
+            concat!(
+                "only reads, output repair, lane lifecycle, scanner dispositions, and ",
+                "server-projected gate work may omit required witnesses"
+            ),
         );
         if scanner_disposition {
             assert_eq!(law.optional, &[WitnessKind::Directive]);
@@ -91,6 +100,13 @@ fn every_command_names_the_witnesses_it_requires() {
             );
         }
     }
+}
+
+#[test]
+fn recovery_requires_the_exact_recoverable_directive_predicate() {
+    let law = CommandKind::SteerRecover.law();
+    assert_eq!(law.required, &[WitnessKind::Recoverable]);
+    assert!(law.optional.is_empty());
 }
 
 /// Lane lifecycle is the operator's move alone, and this row is the only place
@@ -124,13 +140,16 @@ fn lane_lifecycle_is_admitted_for_the_operator_alone() {
 /// already refuses a lane that command through `admit` itself, which pins the
 /// row more strongly than reading it.
 ///
-/// Recall and resend are the contrasts that explain the shape: their laws admit
-/// any connected actor, so their handlers are entitled to discriminate between
-/// them and keep the matches this test would otherwise make redundant.
+/// Recall is the contrast that explains the shape: its law admits any connected
+/// actor, so its handler is entitled to discriminate between principals and
+/// keep the match this test would otherwise make redundant.
 #[test]
 fn operator_only_moves_are_admitted_for_the_operator_alone() {
     for kind in [
         CommandKind::SteerSend,
+        CommandKind::SteerResend,
+        CommandKind::SteerRecover,
+        CommandKind::SteerRepair,
         CommandKind::ConsentDecide,
         CommandKind::TrustGrant,
         CommandKind::TrustRevoke,
@@ -146,11 +165,6 @@ fn operator_only_moves_are_admitted_for_the_operator_alone() {
         CommandKind::LaneRecall.law().authority,
         Authority::Connected,
         "lane recall admits a lane, which is why its handler still tells actors apart",
-    );
-    assert_eq!(
-        CommandKind::SteerResend.law().authority,
-        Authority::Connected,
-        "steering resend admits a lane, which is why its handler still tells actors apart",
     );
 }
 
@@ -408,7 +422,7 @@ fn sample_witnesses() -> Vec<Witness> {
             steer: lane,
             disposition: Disposition::Live,
         },
-        Witness::Lineage { steer: lane },
+        Witness::Recoverable { steer: lane },
         Witness::Consent {
             request: lane,
             answer: Answer::Asked,

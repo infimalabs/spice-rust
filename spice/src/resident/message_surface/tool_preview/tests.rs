@@ -34,7 +34,15 @@ fn update(name: &str, arguments: &str) -> listen::ToolMoment {
 }
 
 fn succeeded() -> listen::ToolMoment {
-    listen::ToolMoment::Result(listen::ToolResult::Succeeded)
+    result(listen::ToolResult::Succeeded)
+}
+
+fn result(outcome: listen::ToolResult) -> listen::ToolMoment {
+    listen::ToolMoment::Result(listen::ToolOutcome {
+        result: outcome,
+        output: None,
+        exit_code: None,
+    })
 }
 
 /// A call reads as the work being done, not as the tool's bare name.
@@ -95,11 +103,7 @@ fn each_reported_outcome_reaches_the_strip_beside_the_call_it_answers() {
         );
 
         assert_eq!(
-            activity(
-                lane(1),
-                &tool(VENDOR_ID, listen::ToolMoment::Result(outcome)),
-                &mut previews
-            ),
+            activity(lane(1), &tool(VENDOR_ID, result(outcome)), &mut previews),
             expected
         );
     }
@@ -116,10 +120,7 @@ fn an_uncorrelated_result_reads_as_an_anonymous_tool() {
 
     let result = activity(
         lane(1),
-        &tool(
-            VENDOR_ID,
-            listen::ToolMoment::Result(listen::ToolResult::Failed),
-        ),
+        &tool(VENDOR_ID, result(listen::ToolResult::Failed)),
         &mut previews,
     );
 

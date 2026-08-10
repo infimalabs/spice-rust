@@ -918,7 +918,7 @@ async fn run_surface(
 ) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
     let timer_commits = bus.reader().subscribe();
-    let timers = timers::Runtime::start(config.projects.clone())?;
+    let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
     let lifecycle = lifecycle::Runtime::new(&config.lane);
     let started = start_surface(bus, paths, epoch, residency.body(), config, launch).await?;
     let StartedSurface {
@@ -1103,9 +1103,8 @@ async fn drive_surface(
                     "bus::timer-events-closed",
                     "the production timer event stream closed while the resident was live",
                 ))?;
-                if let timers::Fired::LaneResume(lane) = timers.consume(bus, timer)? {
-                    command_surface.expire_lifecycle_hold(&mut lifecycle, lane)?;
-                }
+                let fired = timers.consume(bus, timer)?;
+                accept_timer_fired(bus, command_surface, &mut lifecycle, fired)?;
                 reconcile_wakes(
                     bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
                 )?;
@@ -1116,6 +1115,27 @@ async fn drive_surface(
             )?,
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
+    }
+}
+
+fn accept_timer_fired(
+    bus: &Bus,
+    command_surface: &command_surface::Surface<'_>,
+    lifecycle: &mut lifecycle::Runtime,
+    fired: timers::Fired,
+) -> CommandResult<()> {
+    match fired {
+        timers::Fired::LaneResume(lane) => command_surface.expire_lifecycle_hold(lifecycle, lane),
+        timers::Fired::Steering => {
+            let residency = bus
+                .residency_head()
+                .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
+            if let Some(residency) = residency {
+                steering::publish_inboxes(bus, command_surface.paths, residency.body())?;
+            }
+            Ok(())
+        }
+        timers::Fired::Stale | timers::Fired::ClaimLapse | timers::Fired::TaskWake(_) => Ok(()),
     }
 }
 

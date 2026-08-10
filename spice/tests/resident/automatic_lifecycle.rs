@@ -111,7 +111,15 @@ fn add_task(
     lane: Option<wire::CanonicalUuid>,
     title: &str,
 ) -> wire::intent::TaskAnswer {
-    let arguments = ["task", "add", title, "--project", "spice.lifecycle"];
+    let arguments = [
+        "task",
+        "add",
+        title,
+        "--project",
+        "spice.lifecycle",
+        "--acceptance",
+        "automatic lifecycle fixture reaches its asserted terminal state",
+    ];
     let output = match lane {
         Some(lane) => invoke_lane(fixture, lane, &arguments),
         None => invoke_args(fixture, &arguments, true),
