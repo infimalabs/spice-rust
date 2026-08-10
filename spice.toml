@@ -68,11 +68,13 @@ admission = [
     "cargo", "metadata", "--no-deps", "--offline", "--format-version", "1",
 ]
 
-# The installed predecessor still owns the active Git hook path. Its one
-# repository command crosses directly into the current-source Rust gate, which
-# admits this declaration but never dispatches it again.
+# The installed predecessor still owns the active Git hook path. Keep the
+# commit surface to the two focused typed arms that catch structural drift in
+# staged source and the repository's declared environment vocabulary; the full
+# battery remains owned by `cargo xtask verify`.
 pre_commit = [
-    { label = "Rust gate", run = ["cargo", "run", "--locked", "--package", "spice", "--", "gate", "pre-commit"] },
+    { label = "File shape", run = ["cargo", "xtask", "gate", "file-shape"] },
+    { label = "Environment ledger", run = ["cargo", "xtask", "gate", "env-name-ledger"] },
 ]
 
 # Every environment name this workspace defines, spelled once.
