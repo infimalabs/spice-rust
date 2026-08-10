@@ -204,6 +204,11 @@ fn refused_old_recovery_receipt_is_renamed_without_a_committed_fact_range() {
         "steer::recovery-live",
         "migration preserves the refusal code through its semantic accessor"
     );
+    assert_eq!(
+        refusal.explanation(),
+        "recover only a lapsed directive",
+        "the historical remedy becomes non-runnable diagnostic detail"
+    );
 }
 
 #[test]

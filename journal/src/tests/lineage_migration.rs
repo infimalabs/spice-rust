@@ -28,6 +28,11 @@ fn schema_two_pre_lineage_rows_derive_the_lane_once() {
             .map(|migration| (migration.from(), migration.to())),
         Some((2, SCHEMA_VERSION))
     );
+    assert_eq!(
+        residency_head_from(&journal.connection).topology_revision,
+        0,
+        "schema six derives the revision from the schema-two head position"
+    );
     assert_all_carriers(&journal.connection, LANE);
 }
 
@@ -157,6 +162,7 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
         shapes[2],
     );
     downgrade_task_identity_to_five(&journal.connection);
+    remove_head_topology_revision(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -166,6 +172,35 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
              PRAGMA user_version = 2;",
         )
         .expect("downgrade lineage fixture to schema 2");
+    let stored = carrier_bytes(&journal.connection);
+    let head: Value = serde_json::from_slice(&stored[0]).expect("decode schema-two head");
+    assert!(
+        head.get("topology_revision").is_none(),
+        "an authentic schema-two head predates topology revision"
+    );
+}
+
+fn remove_head_topology_revision(connection: &Connection) {
+    let bytes: Vec<u8> = connection
+        .query_row(
+            "SELECT body FROM residency_head WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read current residency head");
+    let mut document: Value =
+        serde_json::from_slice(&bytes).expect("decode current residency head");
+    document
+        .as_object_mut()
+        .expect("residency head object")
+        .remove("topology_revision")
+        .expect("current fixture carries topology revision");
+    connection
+        .execute(
+            "UPDATE residency_head SET body = ?1 WHERE singleton = 1",
+            params![serde_json::to_vec(&document).expect("encode schema-two residency head")],
+        )
+        .expect("store schema-two residency head");
 }
 
 fn seed_head_identity(connection: &Connection) {
@@ -348,6 +383,17 @@ fn lineage_payloads(connection: &Connection) -> Vec<Value> {
                 .clone()
         })
         .collect()
+}
+
+fn residency_head_from(connection: &Connection) -> ResidencyHead {
+    let bytes: Vec<u8> = connection
+        .query_row(
+            "SELECT body FROM residency_head WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read migrated residency head");
+    wire::decode(&bytes).expect("migrated residency head decodes")
 }
 
 fn version_records(connection: &Connection) -> (u32, u32) {

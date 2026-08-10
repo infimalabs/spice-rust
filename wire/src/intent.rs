@@ -36,6 +36,8 @@ pub use board::{
     BoardActorRoute, BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead,
     BoardStatement, BoardTask, DocLedger, Positioned, ProjectVisibility, TextAnswer,
 };
+mod simple_answers;
+pub use simple_answers::{RecognitionAnswer, TasteAnswer};
 
 mod task;
 pub use task::*;
@@ -895,26 +897,6 @@ pub struct RecallAnswer {
     pub residency: LaneAnswer,
     /// Most recent relevant events, newest first and explicitly bounded.
     pub recent: Vec<RecallEntry>,
-}
-
-/// The answer a taste verdict returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TasteAnswer {
-    /// Bag the verdict landed in.
-    pub name: Name,
-    /// Whether the judge confirmed the hit.
-    pub confirmed: bool,
-}
-
-/// The answer a recognition returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecognitionAnswer {
-    /// Observation key that was recognized.
-    pub key: Digest,
-    /// False when the key had already been recognized.
-    pub fresh: bool,
 }
 
 mod binding;
