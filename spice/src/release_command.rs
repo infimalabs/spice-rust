@@ -600,17 +600,19 @@ fn resolve_external_refs(
 }
 
 fn validate_external_refs(refs: &ExternalRefs, release_commit: &str) -> Result<(), String> {
-    if let Some(object) = &refs.source_ref {
+    ensure_release_ref_absent("source", &refs.source_ref, release_commit)?;
+    ensure_release_ref_absent("tag", &refs.tag_ref, release_commit)?;
+    ensure_release_ref_absent("announcement", &refs.announcement_ref, release_commit)
+}
+
+fn ensure_release_ref_absent(
+    label: &str,
+    observed: &Option<String>,
+    release_commit: &str,
+) -> Result<(), String> {
+    if let Some(object) = observed {
         return Err(format!(
-            "the source ref names {object}, not {release_commit}"
-        ));
-    }
-    if let Some(object) = &refs.tag_ref {
-        return Err(format!("the tag ref names {object}, not {release_commit}"));
-    }
-    if let Some(object) = &refs.announcement_ref {
-        return Err(format!(
-            "the announcement ref names {object}, not {release_commit}"
+            "the {label} ref names {object}, not {release_commit}"
         ));
     }
     Ok(())

@@ -335,23 +335,7 @@ fn assert_preview_plan(fixture: &Fixture, plan: &ReleasePlan) {
     assert!(plan.observations.credentials_valid);
     assert_eq!(plan.observations.unrecorded_local_commits, 0);
     assert!(plan.observations.registry.is_none());
-    assert_eq!(
-        plan.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "run-correctness-gate",
-            "bump-and-verify-version",
-            "create-release-commit",
-            "rebuild-artifacts",
-            "install-and-probe-artifacts",
-            "rehearse-upload",
-            "publish-source",
-            "upload-package",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
-    );
+    assert_eq!(plan.operations, publish_operations());
     assert_curated_release_notes(fixture, plan);
     assert!(
         remote_refs(fixture).is_empty(),
@@ -414,15 +398,7 @@ fn apply_release_plan(
 }
 
 fn assert_published_remote_refs(fixture: &Fixture, plan: &ReleasePlan) {
-    assert_eq!(
-        remote_refs(fixture),
-        [
-            "refs/heads/main",
-            "refs/spice/packages/v0.0.0",
-            "refs/spice/releases/v0.0.0",
-            "refs/tags/v0.0.0",
-        ]
-    );
+    assert_eq!(remote_refs(fixture), published_refs());
     assert_eq!(
         remote_object_type(fixture, "refs/spice/packages/v0.0.0"),
         "tree"
@@ -491,15 +467,7 @@ fn preview_recovery_plan(fixture: &Fixture, notes: &str) -> ReleasePlan {
             .release_commit,
         recovery.body.release_commit
     );
-    assert_eq!(
-        recovery.body.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
-    );
+    assert_eq!(recovery.body.operations, recovery_operations());
     recovery.body
 }
 
@@ -571,6 +539,41 @@ fn assert_replay_and_restart(
     assert_eq!(after_restart.0, first.0);
     assert_eq!(kind_count(&facts(fixture), FactKind::ReleasePublished), 1);
     restarted.stop(fixture);
+}
+
+fn publish_operations() -> [&'static str; 12] {
+    [
+        "resolve-preconditions-and-credentials",
+        "run-correctness-gate",
+        "bump-and-verify-version",
+        "create-release-commit",
+        "rebuild-artifacts",
+        "install-and-probe-artifacts",
+        "rehearse-upload",
+        "publish-source",
+        "upload-package",
+        "await-registry-visibility",
+        "create-immutable-tag",
+        "announce",
+    ]
+}
+
+fn recovery_operations() -> [&'static str; 4] {
+    [
+        "resolve-preconditions-and-credentials",
+        "await-registry-visibility",
+        "create-immutable-tag",
+        "announce",
+    ]
+}
+
+fn published_refs() -> [&'static str; 4] {
+    [
+        "refs/heads/main",
+        "refs/spice/packages/v0.0.0",
+        "refs/spice/releases/v0.0.0",
+        "refs/tags/v0.0.0",
+    ]
 }
 
 fn publish_stage(root: &Path) -> Digest {

@@ -401,10 +401,7 @@ impl SystemEffects {
             dist::Convergence::Applied
         };
         Ok((
-            dist::OperationState::Package {
-                identity: Some(package.identity),
-                object: Some(package.git_tree),
-            },
+            package_state(package.identity, package.git_tree),
             convergence,
         ))
     }
@@ -419,10 +416,7 @@ impl SystemEffects {
             .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
         self.git_owned(&command)?;
         Ok((
-            dist::OperationState::Package {
-                identity: Some(plan.package.clone()),
-                object: Some(plan.package_object.clone()),
-            },
+            package_state(plan.package.clone(), plan.package_object.clone()),
             dist::Convergence::Applied,
         ))
     }
@@ -704,6 +698,13 @@ impl SystemEffects {
 
 fn ref_state(object: Option<&str>) -> dist::RefState<'_> {
     object.map_or(dist::RefState::Absent, dist::RefState::Present)
+}
+
+fn package_state(identity: Digest, object: String) -> dist::OperationState {
+    dist::OperationState::Package {
+        identity: Some(identity),
+        object: Some(object),
+    }
 }
 
 fn stable_ref_observation(
