@@ -177,7 +177,7 @@ export async function seatAgentTeam(page, fixture, worktrees, assertInvalidVendo
   assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
   assert.equal(
     await console.locator(".team-detail-card").first().getAttribute("title"),
-    `Claude driver; model: sonnet; effort: high; thread: ${seated[0].occupant}; `
+    `Claude vendor; model: sonnet; effort: high; thread: ${seated[0].occupant}; `
       + "session: 018f7777-7777-7444-8888-999999999999",
     "the agent card tooltip carries the admitted launch and session identity",
   );
