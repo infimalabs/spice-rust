@@ -8,14 +8,14 @@ fn add_oops(bus: &Bus, epoch: CanonicalUuid, actor: Actor, task: &str, title: &s
     let value = task.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000
     });
-    let incepted = wire::TaskStamp::for_millis(value).expect("oops fixture stamp");
-    let task = TaskHandle::for_project(".oops", &incepted);
+    let born = wire::TaskStamp::for_millis(value).expect("oops fixture stamp");
+    let task = TaskHandle::for_project(".oops", &born);
     assert_committed(issue(
         bus,
         epoch,
         actor,
         CommandKind::TaskOopsAdd,
-        vec![Witness::Absence { task: incepted }],
+        vec![Witness::Absence { task: born }],
         &TaskOopsAdd {
             title: title.to_owned(),
             description: title.to_owned(),
@@ -125,9 +125,7 @@ fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() 
     let authoritative = observed
         .tasks()
         .iter()
-        .find(|heads| {
-            heads.statement().body().incepted == at(&available, &hidden).statement.body.incepted
-        })
+        .find(|heads| heads.statement().body().born == at(&available, &hidden).statement.body.born)
         .expect("hidden authoritative statement remains present");
     assert_eq!(
         authoritative.statement().body().title,
@@ -530,7 +528,7 @@ pub(super) fn seed_edit_tasks(
             task: at(&board(bus, epoch, Actor::Operator), &alpha)
                 .statement
                 .body
-                .incepted
+                .born
                 .clone(),
         }],
         &TaskNote {
@@ -613,8 +611,8 @@ pub(super) fn add_dependency(
             statement_witness(beta_heads),
             workflow_witness(beta_heads),
             Witness::Edge {
-                task: alpha_heads.statement.body.incepted.clone(),
-                after: beta_heads.statement.body.incepted.clone(),
+                task: alpha_heads.statement.body.born.clone(),
+                after: beta_heads.statement.body.born.clone(),
             },
         ],
         &TaskDepends {
@@ -650,7 +648,7 @@ pub(super) fn assert_graph_handout_and_ledger(
     let beta = visible
         .tasks
         .iter()
-        .find(|task| &task.statement.body.incepted == beta_stamp)
+        .find(|task| &task.statement.body.born == beta_stamp)
         .expect("dependency task is visible");
     assert!(
         graph
@@ -738,8 +736,8 @@ pub(super) fn assert_render_form_parity(graph: &Outcome<CommandAnswer>) {
 
 pub(super) fn assert_oops_note_exists(bus: &Bus, oops: &TaskHandle) {
     let facts = bus.fact_snapshot().expect("fixture facts read");
-    let incepted = oops
-        .incepted()
+    let born = oops
+        .born()
         .expect("fixture oops handle carries an inception stamp");
     assert!(facts.facts().iter().any(|fact| {
         fact.fact.kind() == wire::FactKind::TaskNoted
@@ -748,6 +746,6 @@ pub(super) fn assert_oops_note_exists(bus: &Bus, oops: &TaskHandle) {
                 .body()
                 .get("task")
                 .and_then(serde_json::Value::as_str)
-                == Some(incepted.as_str())
+                == Some(born.as_str())
     }));
 }

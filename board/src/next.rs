@@ -75,7 +75,7 @@ pub fn project_subscription_history(
             .ok_or_else(|| format!("{} fact has no task", envelope.fact.kind()))?;
         let entry = entries
             .iter()
-            .find(|entry| entry.incepted().as_str() == task)
+            .find(|entry| entry.born().as_str() == task)
             .ok_or_else(|| format!("subscription history task {task} has no current heads"))?;
         if entry.project().visibility().is_hidden() {
             continue;
@@ -132,14 +132,14 @@ pub fn select<'a>(
         .filter(|entry| selectable(entry, actor, subscription, &completed))
         .map(|entry| {
             let effective_priority = priorities
-                .get(entry.incepted())
+                .get(entry.born())
                 .copied()
                 .unwrap_or_else(|| declared_priority(entry));
             Selection {
                 entry,
                 urgency: Urgency::from_heads(entry),
                 effective_priority,
-                downstream_weight: downstream.get(entry.incepted()).copied().unwrap_or(0),
+                downstream_weight: downstream.get(entry.born()).copied().unwrap_or(0),
                 self_review: is_self_review(entry, actor),
                 peer_occupied: peer_occupies(entries, entry, actor),
                 movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
@@ -260,7 +260,7 @@ fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskStamp, i64> {
     for entry in entries {
         let declared = declared_priority(entry);
         priorities
-            .entry(entry.incepted().clone())
+            .entry(entry.born().clone())
             .and_modify(|current| *current = (*current).max(declared))
             .or_insert(declared);
     }
@@ -269,7 +269,7 @@ fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskStamp, i64> {
         let mut changed = false;
         for dependent in entries.iter().filter(|entry| unsettled_public(entry)) {
             let inherited = priorities
-                .get(dependent.incepted())
+                .get(dependent.born())
                 .copied()
                 .unwrap_or_else(|| declared_priority(dependent));
             for prerequisite in &dependent.statement().dependencies {
@@ -302,14 +302,14 @@ fn downstream_weights(entries: &[Entry]) -> BTreeMap<TaskStamp, usize> {
             dependents
                 .entry(prerequisite.clone())
                 .or_default()
-                .insert(dependent.incepted().clone());
+                .insert(dependent.born().clone());
         }
     }
 
     entries
         .iter()
         .map(|entry| {
-            let root = entry.incepted();
+            let root = entry.born();
             let mut downstream = BTreeSet::new();
             let mut pending = dependents
                 .get(root)
@@ -447,6 +447,6 @@ pub fn satisfied_tasks(entries: &[Entry]) -> BTreeSet<TaskStamp> {
             let status = candidate.workflow().status.as_str();
             status == "completed" || status == "deleted"
         })
-        .map(|candidate| candidate.incepted().clone())
+        .map(|candidate| candidate.born().clone())
         .collect()
 }

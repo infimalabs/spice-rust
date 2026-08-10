@@ -386,7 +386,7 @@ fn observe_carried_claim(
             ));
         }
         carried = Some((
-            heads.statement().body().incepted.clone(),
+            heads.statement().body().born.clone(),
             claim.clone(),
             lease.clone(),
         ));

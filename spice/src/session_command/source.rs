@@ -188,7 +188,7 @@ fn admit(
     let (vendor, dialect) = declared.map_or((Vendor::UNKNOWN, None), |vendor| {
         (
             Vendor::declared(vendor),
-            Some(vendor.session_study().dialect()),
+            Some(vendor.session_gate().dialect()),
         )
     });
     Ok(ResolvedSource {

@@ -12,7 +12,7 @@ pub(super) fn verify(
     facts: &BTreeMap<u64, FactRecord>,
     violations: &mut Vec<Violation>,
 ) -> Result<usize, VerifyError> {
-    let expected = expected_projection(facts, violations);
+    let expected = expected_fold(facts, violations);
     let mut count = heads::verify(connection, facts, &expected.heads, violations)?;
     count += misses::verify(connection, &expected.misses, violations)?;
     verify_cursor(connection, facts.keys().next_back().copied(), violations)?;
@@ -29,16 +29,16 @@ pub(super) struct ExpectedMiss {
     pub(super) body: wire::body::SteerMissed,
 }
 
-struct ExpectedProjection {
+struct ExpectedFold {
     heads: BTreeMap<String, ExpectedHead>,
     misses: BTreeMap<String, ExpectedMiss>,
 }
 
-fn expected_projection(
+fn expected_fold(
     facts: &BTreeMap<u64, FactRecord>,
     violations: &mut Vec<Violation>,
-) -> ExpectedProjection {
-    let mut projection = ExpectedProjection {
+) -> ExpectedFold {
+    let mut fold = ExpectedFold {
         heads: BTreeMap::new(),
         misses: BTreeMap::new(),
     };
@@ -49,26 +49,26 @@ fn expected_projection(
             remember_fact(
                 *seq,
                 &envelope.fact,
-                &mut projection,
+                &mut fold,
                 &mut key_by_directive,
                 &mut directive_by_key,
                 violations,
             );
         }
     }
-    projection
+    fold
 }
 
 fn remember_fact(
     seq: u64,
     fact: &wire::AnyFact,
-    projection: &mut ExpectedProjection,
+    fold: &mut ExpectedFold,
     key_by_directive: &mut BTreeMap<wire::CanonicalUuid, String>,
     directive_by_key: &mut BTreeMap<String, wire::CanonicalUuid>,
     violations: &mut Vec<Violation>,
 ) {
     if let Some(body) = fact.read::<wire::body::SteerMissed>() {
-        remember_miss(seq, body, &mut projection.misses, violations);
+        remember_miss(seq, body, &mut fold.misses, violations);
         return;
     }
     let Some((directive, key)) = crate::guard::steering_fact_identity(fact) else {
@@ -82,9 +82,7 @@ fn remember_fact(
         directive_by_key,
         violations,
     );
-    projection
-        .heads
-        .insert(key, ExpectedHead { seq, directive });
+    fold.heads.insert(key, ExpectedHead { seq, directive });
 }
 
 fn remember_miss(

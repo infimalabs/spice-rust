@@ -149,7 +149,7 @@ fn migrate_task_heads(connection: &Connection) -> Result<(), OpenError> {
             ));
         }
         head.remove("handle");
-        head.insert("incepted".to_owned(), Value::String(stamp.clone()));
+        head.insert("born".to_owned(), Value::String(stamp.clone()));
         remove_uuid("task_heads", &row, head)?;
         replace_handle_array("task_heads", &row, head, "dependencies")?;
         if let Some(origin) = head.get("provenance").and_then(Value::as_str) {
@@ -523,7 +523,7 @@ fn migrate_board_statement(row: &str, value: &mut Value) -> Result<(), OpenError
             .expect("validated stamp parses"),
     );
     statement.insert("handle".to_owned(), Value::String(rendered.to_string()));
-    statement.insert("incepted".to_owned(), Value::String(stamp));
+    statement.insert("born".to_owned(), Value::String(stamp));
     remove_uuid("command_receipts", row, statement)?;
     replace_handle_array("command_receipts", row, statement, "dependencies")?;
     if let Some(origin) = statement.get("provenance").and_then(Value::as_str) {
@@ -596,7 +596,7 @@ fn stamp_from_handle(table: &'static str, row: &str, handle: &str) -> Result<Str
         )
     })?;
     handle
-        .incepted()
+        .born()
         .map(|stamp| stamp.to_string())
         .map_err(|error| {
             invalid(

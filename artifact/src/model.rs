@@ -165,7 +165,7 @@ pub enum ArtifactAnswer {
 #[serde(deny_unknown_fields)]
 pub struct PruneOperation {
     pub order: u64,
-    pub incepted: TaskStamp,
+    pub born: TaskStamp,
     pub handle: TaskHandle,
     pub artifact_id: String,
     pub name: String,
@@ -176,7 +176,7 @@ pub struct PruneOperation {
 #[serde(deny_unknown_fields)]
 pub struct PruneSkip {
     pub order: u64,
-    pub incepted: TaskStamp,
+    pub born: TaskStamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle: Option<TaskHandle>,
     pub status: String,

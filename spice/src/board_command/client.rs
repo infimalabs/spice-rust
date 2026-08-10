@@ -225,11 +225,11 @@ fn client_reclaim(
             CommandKind::ClaimRenew,
             vec![
                 Witness::Claim {
-                    task: heads.statement.body.incepted.clone(),
+                    task: heads.statement.body.born.clone(),
                     head: Some(claim.position),
                 },
                 Witness::Lease {
-                    task: heads.statement.body.incepted.clone(),
+                    task: heads.statement.body.born.clone(),
                     head: lease.position,
                 },
                 residency_witness(&board, lane, occupant),
@@ -408,7 +408,7 @@ fn client_note(
         Ok((
             CommandKind::TaskNote,
             vec![Witness::Existence {
-                task: heads.statement.body.incepted.clone(),
+                task: heads.statement.body.born.clone(),
             }],
             serde_json::to_value(note).expect("typed intent encodes"),
         ))
@@ -479,7 +479,7 @@ fn client_free(
             vec![
                 claim_witness(heads),
                 Witness::Lease {
-                    task: heads.statement.body.incepted.clone(),
+                    task: heads.statement.body.born.clone(),
                     head: lease.position,
                 },
                 residency_witness(board, lane, occupant),
@@ -507,8 +507,8 @@ fn client_depends(
             expected.push(statement_witness(dependency_heads));
             expected.push(workflow_witness(dependency_heads));
             expected.push(Witness::Edge {
-                task: heads.statement.body.incepted.clone(),
-                after: dependency_heads.statement.body.incepted.clone(),
+                task: heads.statement.body.born.clone(),
+                after: dependency_heads.statement.body.born.clone(),
             });
         }
         Ok((
@@ -931,7 +931,7 @@ fn task_heads_by_stamp<'a>(
     board
         .tasks
         .iter()
-        .find(|heads| heads.statement.body.incepted == *task)
+        .find(|heads| heads.statement.body.born == *task)
         .ok_or_else(|| {
             protocol_fault(
                 "task::board-incoherent",
@@ -942,14 +942,14 @@ fn task_heads_by_stamp<'a>(
 
 pub(super) fn statement_witness(heads: &BoardTask) -> Witness {
     Witness::Task {
-        task: heads.statement.body.incepted.clone(),
+        task: heads.statement.body.born.clone(),
         head: heads.statement.position,
     }
 }
 
 pub(super) fn workflow_witness(heads: &BoardTask) -> Witness {
     Witness::Workflow {
-        task: heads.statement.body.incepted.clone(),
+        task: heads.statement.body.born.clone(),
         head: heads.workflow.position,
         phase: heads.workflow.body.phase.clone(),
     }
@@ -957,14 +957,14 @@ pub(super) fn workflow_witness(heads: &BoardTask) -> Witness {
 
 pub(super) fn claim_witness(heads: &BoardTask) -> Witness {
     Witness::Claim {
-        task: heads.statement.body.incepted.clone(),
+        task: heads.statement.body.born.clone(),
         head: heads.claim.as_ref().map(|head| head.position),
     }
 }
 
 pub(super) fn deferral_witness(heads: &BoardTask) -> Witness {
     Witness::Deferral {
-        task: heads.statement.body.incepted.clone(),
+        task: heads.statement.body.born.clone(),
         head: heads.workflow.position,
         deferred: heads.workflow.body.deferral.is_some(),
     }
@@ -1074,11 +1074,11 @@ pub(super) fn progress_witnesses(
         statement_witness(heads),
         workflow_witness(heads),
         Witness::Claim {
-            task: heads.statement.body.incepted.clone(),
+            task: heads.statement.body.born.clone(),
             head: Some(claim.position),
         },
         Witness::Lease {
-            task: heads.statement.body.incepted.clone(),
+            task: heads.statement.body.born.clone(),
             head: lease.position,
         },
         residency_witness(board, lane, occupant),
@@ -1092,7 +1092,7 @@ pub(super) fn progress_witnesses(
             )
         })?;
         expected.push(Witness::Assignment {
-            task: heads.statement.body.incepted.clone(),
+            task: heads.statement.body.born.clone(),
             head: heads.workflow.position,
             reviewer,
         });
@@ -1126,7 +1126,7 @@ pub(super) fn allocate_inception(board: &BoardAnswer, mut epoch_millis: i64) -> 
         if board
             .tasks
             .iter()
-            .all(|task| task.statement.body.incepted != candidate)
+            .all(|task| task.statement.body.born != candidate)
         {
             return candidate;
         }
@@ -1147,7 +1147,7 @@ pub(super) fn allocate_inceptions(
         epoch_millis = epoch_millis
             .checked_add(1)
             .expect("task inception collision increment fits i64");
-        if planned.iter().all(|incepted| incepted != &candidate) {
+        if planned.iter().all(|born| born != &candidate) {
             planned.push(candidate);
         }
     }

@@ -486,16 +486,16 @@ impl Entry {
         lease: Option<LeaseHead>,
         project: Project,
     ) -> Result<Self, TaskError> {
-        let handle = TaskHandle::for_project(&statement.project, &statement.incepted);
+        let handle = TaskHandle::for_project(&statement.project, &statement.born);
         let family = Family::of(&handle);
         let mut seen = BTreeSet::new();
         for dependency in &statement.dependencies {
-            if dependency == &statement.incepted {
-                return Err(TaskError::SelfDependency(statement.incepted.clone()));
+            if dependency == &statement.born {
+                return Err(TaskError::SelfDependency(statement.born.clone()));
             }
             if !seen.insert(dependency) {
                 return Err(TaskError::DuplicateDependency {
-                    task: statement.incepted.clone(),
+                    task: statement.born.clone(),
                     after: dependency.clone(),
                 });
             }
@@ -527,8 +527,8 @@ impl Entry {
 
     /// Sole durable task identity.
     #[must_use]
-    pub const fn incepted(&self) -> &TaskStamp {
-        &self.statement.incepted
+    pub const fn born(&self) -> &TaskStamp {
+        &self.statement.born
     }
 
     /// Current workflow head.
@@ -568,7 +568,7 @@ impl Entry {
             .iter()
             .cloned()
             .map(|after| Dependency {
-                task: self.statement.incepted.clone(),
+                task: self.statement.born.clone(),
                 after,
             })
     }

@@ -22,7 +22,7 @@ impl MessageShape {
     }
 }
 
-/// One classification plus the exact authored projection consumers may inspect.
+/// One classification plus the exact authored fold consumers may inspect.
 ///
 /// Mixed assistant text keeps every authored segment in order while excluding
 /// only structurally delimited generated spans.
@@ -43,7 +43,7 @@ pub(crate) fn classify(text: &str) -> MessageClassification {
     }
 
     let spans = structural_spans(text);
-    if let Some(authored) = authored_projection(text, &spans) {
+    if let Some(authored) = authored_fold(text, &spans) {
         return MessageClassification {
             shape: MessageShape::AuthoredAsk,
             authored: Some(authored),
@@ -339,7 +339,7 @@ fn merge_spans(mut spans: Vec<Span>) -> Vec<Span> {
     merged
 }
 
-fn authored_projection(text: &str, spans: &[Span]) -> Option<String> {
+fn authored_fold(text: &str, spans: &[Span]) -> Option<String> {
     if spans.is_empty() {
         return (!text.is_empty()).then(|| text.to_owned());
     }

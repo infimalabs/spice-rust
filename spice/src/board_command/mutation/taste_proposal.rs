@@ -291,7 +291,7 @@ fn proposal_observation(snapshot: &ValidatedSnapshot, project: &str) -> Proposal
         .filter(|task| task.statement.body.project == project)
         .map(|task| {
             (
-                task.statement.body.incepted.clone(),
+                task.statement.body.born.clone(),
                 task.statement.position,
                 task.workflow.position,
             )
@@ -311,7 +311,7 @@ fn guard_proposal_observation(write: &mut JournalWrite, observed: ProposalObserv
             .filter(|heads| heads.statement().body().project == observed.project)
             .map(|heads| {
                 (
-                    heads.statement().body().incepted.clone(),
+                    heads.statement().body().born.clone(),
                     heads.statement().position(),
                     heads.workflow().position(),
                 )

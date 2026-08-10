@@ -215,7 +215,7 @@ fn render_lineage(
                         type="button"
                         class="canvas-team-open"
                         onclick={Callback::from(move |_| {
-                            reopen.dispatch(LineageControlAction::OpenTeam {
+                            reopen.dispatch(LineageControlAction::OpenLineage {
                                 lineage: target,
                             });
                         })}
@@ -285,7 +285,7 @@ fn render_member(
                     type="button"
                     class="canvas-team-open"
                     onclick={Callback::from(move |_| {
-                        reopen.dispatch(LineageControlAction::OpenTeam { lineage: source });
+                        reopen.dispatch(LineageControlAction::OpenLineage { lineage: source });
                     })}
                 >{"Open team"}</button>
             }

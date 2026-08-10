@@ -534,7 +534,7 @@ fn a_moved_witness_refuses_before_any_allocator_comparison_is_reached() {
     assert!(
         refusal.contains(
             winner
-                .incepted()
+                .born()
                 .expect("fixture winner carries an inception stamp")
                 .as_str()
         ),

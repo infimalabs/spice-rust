@@ -30,7 +30,7 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
         .read(|read| read.task_heads())
         .expect("combined migration task heads read");
     assert_eq!(
-        heads[0].statement().body().incepted.as_str(),
+        heads[0].statement().body().born.as_str(),
         TASK_STAMP,
         "the release crossing composes through sole task identity",
     );
@@ -50,7 +50,7 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
         request.body.notes,
         wire::ReleaseNotesIdentity::HistoricalAbsent
     );
-    admit_empty_steering_projection(&mut journal);
+    admit_empty_steering_fold(&mut journal);
     journal.verify().expect("migrated authority verifies");
     drop(journal);
 
@@ -115,7 +115,7 @@ fn schema_four_exact_note_identities_survive_the_combined_crossing() {
             .as_deref(),
         Some(NOTES)
     );
-    admit_empty_steering_projection(&mut journal);
+    admit_empty_steering_fold(&mut journal);
     journal.verify().expect("exact migrated authority verifies");
 }
 

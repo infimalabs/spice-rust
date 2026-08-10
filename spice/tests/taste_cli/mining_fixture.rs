@@ -133,7 +133,7 @@ pub(super) fn complete_mined_proposal(fixture: &Fixture, task: &wire::TaskHandle
     let done = write
         .fact(
             wire::body::TaskDone {
-                task: task.incepted().unwrap(),
+                task: task.born().unwrap(),
                 validation: "operator reviewed the first mined recurrence".to_owned(),
                 git: None,
                 source: wire::body::SourceBoundary::unrecorded(),
@@ -141,16 +141,14 @@ pub(super) fn complete_mined_proposal(fixture: &Fixture, task: &wire::TaskHandle
             FactCause::Root,
         )
         .unwrap();
-    write.workflow_head(task.incepted().unwrap(), done, move |_| {
-        wire::WorkflowHead {
-            flow: vec!["todo".parse().unwrap(), "review".parse().unwrap()],
-            phase: "review".parse().unwrap(),
-            status: "completed".to_owned(),
-            review: "clean".to_owned(),
-            assignment: None,
-            deferral: None,
-            completion: Some(completed_at),
-        }
+    write.workflow_head(task.born().unwrap(), done, move |_| wire::WorkflowHead {
+        flow: vec!["todo".parse().unwrap(), "review".parse().unwrap()],
+        phase: "review".parse().unwrap(),
+        status: "completed".to_owned(),
+        review: "clean".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: Some(completed_at),
     });
     assert!(matches!(
         bus.commit(write).unwrap(),

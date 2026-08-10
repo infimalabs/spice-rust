@@ -21,7 +21,7 @@ fn exact_actor_and_peer_count_work_stay_constant_as_board_and_history_grow() {
         notes
             .fact(
                 TaskNoted {
-                    task: task_head().incepted,
+                    task: task_head().born,
                     note: format!("unrelated history {offset}"),
                 },
                 FactCause::Root,
@@ -209,11 +209,8 @@ fn measured_claim_authority(journal: &Journal) -> crate::guard::IndexedReadMetri
         })
         .expect("bounded claim authority reads");
     assert_eq!(
-        own.expect("fixture claim exists")
-            .statement()
-            .body()
-            .incepted,
-        task_head().incepted
+        own.expect("fixture claim exists").statement().body().born,
+        task_head().born
     );
     assert_eq!(peers, 0);
     crate::guard::indexed_read_metrics()
@@ -243,7 +240,7 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
         .expect("unrelated task fact builds");
     let statement_task = task.clone();
     write.task_head(fact, move |revision| TaskHead {
-        incepted: statement_task,
+        born: statement_task,
         queue_origin: revision,
         title,
         description: None,

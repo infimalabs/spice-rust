@@ -8,7 +8,7 @@ use wire::{
 };
 
 const TASK: &str = r#"{
-  "incepted": "1kKRRsDP",
+  "born": "1kKRRsDP",
   "queue_origin": 40,
   "title": "Bind authority heads",
   "description": "Keep complete task context on the current statement",
@@ -21,7 +21,7 @@ const TASK: &str = r#"{
 }"#;
 
 const TASK_WITHOUT_AUTHORED_CONTEXT: &str = r#"{
-  "incepted": "1kKRRsDP",
+  "born": "1kKRRsDP",
   "queue_origin": 40,
   "title": "Bind authority heads",
   "project": "wire",
@@ -168,9 +168,9 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
         TASK,
         &[
             "acceptance",
+            "born",
             "dependencies",
             "description",
-            "incepted",
             "project",
             "provenance",
             "queue_origin",

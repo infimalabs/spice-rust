@@ -357,7 +357,7 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
         calls.set(calls.get() + 1);
         assert_eq!(candidate.taste, "polling");
         assert_eq!(candidate.trigger, "poll*");
-        assert_eq!(candidate.driver, "Wait for the terminal event.");
+        assert_eq!(candidate.vendor, "Wait for the terminal event.");
         assert_eq!(candidate.source, "Polling is not completion.");
         Ok(judgment(
             true,
@@ -377,7 +377,7 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
     let evidence = &judgments[0];
     assert_eq!(evidence.bag, taste::bag_identity(&bag));
     assert_eq!(evidence.trigger, "poll*");
-    assert_eq!(evidence.driver, "Wait for the terminal event.");
+    assert_eq!(evidence.vendor, "Wait for the terminal event.");
     assert_eq!(evidence.source, "Polling is not completion.");
     assert_eq!(evidence.compaction, fixture.anchor.get());
     assert_eq!(evidence.attempts.len(), 2);
@@ -509,7 +509,7 @@ fn taste_framings_are_complete_and_deterministically_shuffled() {
     assert!(first.iter().all(|prompt| {
         prompt.text().contains(&candidate.source)
             && prompt.text().contains(&candidate.trigger)
-            && prompt.text().contains(&candidate.driver)
+            && prompt.text().contains(&candidate.vendor)
     }));
 }
 
@@ -927,7 +927,7 @@ fn append_judgment(
         content: opening.candidate.content.clone(),
         bag: opening.candidate.bag.clone(),
         trigger: opening.candidate.trigger.clone(),
-        driver: opening.candidate.driver.clone(),
+        vendor: opening.candidate.vendor.clone(),
         source: opening.candidate.source.clone(),
         locus: opening.candidate.locus,
         attempts: vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],

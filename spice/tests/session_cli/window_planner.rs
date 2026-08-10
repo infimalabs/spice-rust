@@ -215,7 +215,7 @@ fn sweep_does_not_copy_exact_boundary_starts_backward() {
 }
 
 #[test]
-fn briefing_and_sweep_ignore_surrounding_input_before_the_recent_horizon() {
+fn recall_and_sweep_ignore_surrounding_input_before_the_recent_horizon() {
     let scratch = Scratch::new("session-window-horizon");
     let base = scratch.path().join("base.jsonl");
     let surrounded = scratch.path().join("surrounded.jsonl");
@@ -224,7 +224,7 @@ fn briefing_and_sweep_ignore_surrounding_input_before_the_recent_horizon() {
     let base = base.to_string_lossy().into_owned();
     let surrounded = surrounded.to_string_lossy().into_owned();
 
-    let base_briefing = reply_forms(
+    let base_recall = reply_forms(
         &strings(&[
             "session",
             "briefing",
@@ -237,7 +237,7 @@ fn briefing_and_sweep_ignore_surrounding_input_before_the_recent_horizon() {
         &[],
         "recall",
     );
-    let surrounded_briefing = reply_forms(
+    let surrounded_recall = reply_forms(
         &strings(&[
             "session",
             "briefing",
@@ -251,11 +251,11 @@ fn briefing_and_sweep_ignore_surrounding_input_before_the_recent_horizon() {
         "recall",
     );
     assert_eq!(
-        without_sources(base_briefing["window"].clone()),
-        without_sources(surrounded_briefing["window"].clone())
+        without_sources(base_recall["window"].clone()),
+        without_sources(surrounded_recall["window"].clone())
     );
     assert_eq!(
-        surrounded_briefing["residues"].as_array().map(Vec::len),
+        surrounded_recall["residues"].as_array().map(Vec::len),
         Some(0)
     );
 

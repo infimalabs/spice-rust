@@ -900,7 +900,7 @@ fn assert_claude_identity_rows(claude: &str) {
 }
 
 #[test]
-fn provider_turn_identity_and_final_deduplication_cross_query_projections() {
+fn provider_turn_identity_and_final_deduplication_cross_query_folds() {
     let scratch = Scratch::new("provider-identity");
     let codex_path = scratch.path().join("codex.jsonl");
     let claude_path = scratch.path().join("claude.jsonl");
