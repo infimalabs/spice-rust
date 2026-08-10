@@ -388,7 +388,11 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root");
-    for path in ["spice/src/config.rs", "spice/src/extension.rs"] {
+    for path in [
+        "spice/src/config.rs",
+        "spice/src/config/pre_commit.rs",
+        "spice/src/extension.rs",
+    ] {
         let source = fs::read_to_string(workspace.join(path))
             .unwrap_or_else(|error| panic!("read current {path}: {error}"));
         repository.write(path, &source);
@@ -398,7 +402,10 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
     let evidence = false_disable_evidence(arm);
-    let expected = [config_path(&["vendor", "codex", "fast_mode"])];
+    let expected = [
+        config_path(&["policy", "pre_commit_builtins"]),
+        config_path(&["vendor", "codex", "fast_mode"]),
+    ];
 
     assert_eq!(evidence.declared(), expected);
     assert_eq!(evidence.observed(), expected);

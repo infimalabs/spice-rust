@@ -596,6 +596,7 @@ enabled = true
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+pre_commit_builtins = true
 pre_commit = [
     { label = "Rust gate", run = ["gate/pre-commit"], scopes = { paths = ["src/**"] } },
 ]
@@ -604,7 +605,6 @@ generated_paths = ["build/fixture"]
 name_cluster_threshold = 4
 test_paths = ["tests/fixture"]
 admission = ["fixture-load", "--offline"]
-
 [policy.repo_truth]
 docs = ["DOCTRINE.md"]
 

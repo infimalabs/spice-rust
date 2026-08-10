@@ -17,6 +17,7 @@ enabled = true
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+pre_commit_builtins = false
 pre_commit = [
     { label = "Rust gate", run = ["gate/pre-commit", "--fixture"], scopes = { paths = ["src/**", "tests/**"] } },
 ]
@@ -254,6 +255,7 @@ fn root_is_exactly_the_fifteen_typed_domains() {
         root.policy().env_names(),
         ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     );
+    assert!(!root.policy().pre_commit_builtins());
     let [pre_commit] = root.policy().pre_commit() else {
         panic!("the complete root must carry one pre-commit command");
     };
@@ -417,6 +419,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "tasks.project_max_depth",
     "judge.enabled",
     "policy.env_names",
+    "policy.pre_commit_builtins",
     "policy.pre_commit[].label",
     "policy.pre_commit[].run",
     "policy.pre_commit[].scopes.paths",
