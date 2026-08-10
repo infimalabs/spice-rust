@@ -223,6 +223,15 @@ pub fn plan_release(input: PlanInput) -> Result<ReleasePlan, PlanError> {
 }
 
 impl ReleasePlan {
+    /// Identity written only after this plan's full correctness gate succeeds.
+    #[must_use]
+    pub fn gate_receipt(&self) -> Digest {
+        Digest::compute(
+            Domain::GateReceipt,
+            format!("{}:{}", self.key, Operation::RunCorrectnessGate.as_str()).as_bytes(),
+        )
+    }
+
     /// Recompute and compare the complete plan identity.
     ///
     /// # Errors
@@ -236,6 +245,7 @@ impl ReleasePlan {
         validate_observations(
             self.action,
             &self.requested_version,
+            &self.source_commit,
             &self.release_commit,
             &self.package,
             &self.package_object,
@@ -290,6 +300,7 @@ fn validate_preconditions(input: &PlanInput) -> Result<(), PlanError> {
     validate_observations(
         input.action,
         &input.requested_version,
+        &input.source_commit,
         &input.release_commit,
         &input.package,
         &input.package_object,
@@ -300,6 +311,7 @@ fn validate_preconditions(input: &PlanInput) -> Result<(), PlanError> {
 fn validate_observations(
     action: ReleaseAction,
     requested_version: &ProductVersion,
+    source_commit: &str,
     release_commit: &str,
     package: &Digest,
     package_object: &str,
@@ -308,24 +320,31 @@ fn validate_observations(
     if !observed.clean {
         return Err(PlanError::Dirty);
     }
-    if observed.source_version != observed.release_version && !observed.bump_claimed {
-        return Err(PlanError::UnclaimedBump);
-    }
     if observed.unrecorded_local_commits != 0 {
         return Err(PlanError::UnrecordedLocalCommits(
             observed.unrecorded_local_commits,
         ));
     }
-    if &observed.release_version != requested_version {
+    let (expected_version, expected_head) = match action {
+        ReleaseAction::Publish => (&observed.source_version, source_commit),
+        ReleaseAction::TagAndAnnounce => (requested_version, release_commit),
+    };
+    if &observed.release_version != expected_version {
         return Err(PlanError::VersionDisagreement {
-            requested: requested_version.clone(),
+            requested: expected_version.clone(),
             observed: observed.release_version.clone(),
         });
     }
-    if observed.head != release_commit {
+    if action == ReleaseAction::TagAndAnnounce
+        && observed.source_version != observed.release_version
+        && !observed.bump_claimed
+    {
+        return Err(PlanError::UnclaimedBump);
+    }
+    if observed.head != expected_head {
         return Err(PlanError::NonHeadPublication {
             head: observed.head.clone(),
-            release: release_commit.to_owned(),
+            release: expected_head.to_owned(),
         });
     }
     if !observed.credentials_valid {
@@ -414,12 +433,12 @@ pub enum PlanError {
     UnclaimedBump,
     #[error("{0} local commits have not been recorded on the publication baseline")]
     UnrecordedLocalCommits(u64),
-    #[error("requested version {requested} disagrees with observed release version {observed}")]
+    #[error("expected version {requested} disagrees with observed release version {observed}")]
     VersionDisagreement {
         requested: ProductVersion,
         observed: ProductVersion,
     },
-    #[error("release commit {release} is not HEAD {head}")]
+    #[error("publication baseline {release} is not HEAD {head}")]
     NonHeadPublication { head: String, release: String },
     #[error("release publication credentials did not validate")]
     Credentials,
@@ -688,7 +707,7 @@ fn validate_receipt(plan: &ReleasePlan, receipt: &OperationReceipt) -> Result<()
             OperationState::Gate {
                 receipt: Some(receipt),
             },
-        ) => receipt == &plan.manifest,
+        ) => receipt == &plan.gate_receipt(),
         (Op::BumpAndVerifyVersion, OperationState::Version { version }) => {
             version == &plan.requested_version
         }

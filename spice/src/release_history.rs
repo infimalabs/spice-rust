@@ -16,15 +16,39 @@ pub(crate) fn draft(
     revision: Option<&str>,
     requested_version: Option<&str>,
 ) -> Result<ReleaseNotes, Error> {
-    let release_commit = resolve_commit(root, revision.unwrap_or("HEAD"))?;
+    draft_with_release(root, revision, requested_version, None)
+}
+
+pub(crate) fn projected_draft(
+    root: &Path,
+    history_commit: &str,
+    requested_version: Option<&str>,
+    release_commit: &str,
+) -> Result<ReleaseNotes, Error> {
+    draft_with_release(
+        root,
+        Some(history_commit),
+        requested_version,
+        Some(release_commit),
+    )
+}
+
+fn draft_with_release(
+    root: &Path,
+    revision: Option<&str>,
+    requested_version: Option<&str>,
+    projected_release: Option<&str>,
+) -> Result<ReleaseNotes, Error> {
+    let history_commit = resolve_commit(root, revision.unwrap_or("HEAD"))?;
+    let release_commit = projected_release.unwrap_or(&history_commit).to_owned();
     let release_version = requested_version
         .unwrap_or(env!("CARGO_PKG_VERSION"))
         .to_owned();
     let current_tag = format!("v{release_version}");
-    let previous_tag = reachable_tags(root, &release_commit)?
+    let previous_tag = reachable_tags(root, &history_commit)?
         .into_iter()
         .find(|tag| tag != &current_tag);
-    let landings = landings(root, previous_tag.as_deref(), &release_commit)?;
+    let landings = landings(root, previous_tag.as_deref(), &history_commit)?;
     dist::release_notes(
         NotesInput {
             release_version,
