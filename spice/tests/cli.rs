@@ -587,15 +587,10 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
         executed.display()
     );
     let binary = Path::new(env!("CARGO_BIN_EXE_spice"));
-    let mut path = vec![
-        binary
-            .parent()
-            .expect("spice binary has a directory")
-            .to_path_buf(),
-    ];
-    if let Some(ambient) = std::env::var_os("PATH") {
-        path.extend(std::env::split_paths(&ambient));
-    }
+    let path = [binary
+        .parent()
+        .expect("spice binary has a directory")
+        .to_path_buf()];
     let output = Command::new(hooks.stage(steer::hook::STAGES[0]))
         .args(["-c", &complete])
         .env(
@@ -667,7 +662,7 @@ fn steering_follows_the_wrappers_own_stderr_redirection() {
 
 #[test]
 #[cfg(unix)]
-fn run_waits_through_exec_and_returns_while_a_background_descendant_lives() {
+fn run_waits_through_exec_and_closes_capture_while_an_unredirected_descendant_lives() {
     let scratch = Scratch::new("run-child-identity");
     let before = scratch.path().join("before-pid");
     let after = scratch.path().join("after-pid");
@@ -682,12 +677,14 @@ fn run_waits_through_exec_and_returns_while_a_background_descendant_lives() {
 
     let descendant = scratch.path().join("descendant-pid");
     let backgrounded = format!(
-        "sleep 30 </dev/null >/dev/null 2>&1 & printf '%s' $! > {}",
+        "sleep 30 & printf '%s' $! > {}; printf child-output; printf child-error >&2",
         descendant.display()
     );
     let started = Instant::now();
     let returned = invoke(&["run", "--", "/bin/sh", "-c", &backgrounded]);
     assert_eq!(returned.code, Some(0));
+    assert_eq!(returned.out, b"child-output");
+    assert_eq!(returned.err, b"child-error");
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "wrapper waited for a descendant after its immediate child exited"
