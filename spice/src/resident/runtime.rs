@@ -684,15 +684,15 @@ pub(super) fn commit_startup_with<F>(
 where
     F: FnOnce(),
 {
-    let (lanes, subscriptions) = bus
+    let (lanes, subscriptions, topology_revision) = bus
         .residency_head()
         .map_err(|error| store_fault("resident::head-unreadable", &error.to_string()))?
         .map_or_else(
-            || Ok((Vec::new(), Vec::new())),
+            || Ok((Vec::new(), Vec::new(), 0)),
             |head| {
                 let head = head.into_body();
                 let subscriptions = startup_subscriptions(&head.lanes, head.subscriptions)?;
-                Ok((head.lanes, subscriptions))
+                Ok((head.lanes, subscriptions, head.topology_revision))
             },
         )?;
     let mut first = None;
@@ -765,6 +765,7 @@ where
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
+        topology_revision,
         lanes,
         subscriptions,
     });

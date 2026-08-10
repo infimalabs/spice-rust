@@ -98,8 +98,36 @@ fn answer_at(
     Ok(LaneAnswer {
         epoch: head.epoch,
         state: head.state,
+        topology_revision: head.topology_revision,
         lanes,
         subscriptions,
+    })
+}
+
+/// Admit one client-observed topology authority and derive its successor.
+///
+/// The caller still guards the exact residency head before commit. Together,
+/// this comparison and that guard make observing and advancing the logical
+/// revision one optimistic transaction rather than a per-command race check.
+pub(super) fn next_topology_revision(
+    head: &wire::ResidencyHead,
+    observed: u64,
+) -> Result<u64, Outcome<CommandAnswer>> {
+    if observed != head.topology_revision {
+        return Err(Outcome::Refusal(Refusal {
+            reason: "lane::topology-moved".to_owned(),
+            witness: Some("topology_revision".to_owned()),
+            expected: Some(observed.to_string()),
+            observed: Some(head.topology_revision.to_string()),
+            remedy: "read the authoritative lane table and retry against its topology revision"
+                .to_owned(),
+        }));
+    }
+    head.topology_revision.checked_add(1).ok_or_else(|| {
+        typed_store_fault(
+            "lane::topology-revision-exhausted",
+            "the durable topology revision cannot advance",
+        )
     })
 }
 
@@ -388,7 +416,7 @@ pub(super) fn committed_lane_reply(
             first: seq(committed.first()),
             last: seq(committed.last()),
         }),
-        body: CommandAnswer::LaneChange(answer),
+        body: CommandAnswer::LaneChange(Box::new(answer)),
     })
 }
 
@@ -500,6 +528,7 @@ mod tests {
         let head = wire::ResidencyHead {
             epoch: uuid(4),
             state: ResidentState::Seated,
+            topology_revision: 7,
             lanes: vec![row.clone()],
             subscriptions: subscriptions(),
         };
@@ -543,6 +572,7 @@ mod tests {
         let head = wire::ResidencyHead {
             epoch: uuid(4),
             state: ResidentState::Seated,
+            topology_revision: 7,
             lanes: vec![row],
             subscriptions: subscriptions(),
         };
@@ -555,6 +585,7 @@ mod tests {
             .expect("wire encoding is UTF-8");
 
         assert!(answer.lanes[0].bound);
+        assert_eq!(answer.topology_revision, 7);
         assert_eq!(answer.lanes[0].model.as_deref(), Some("sonnet"));
         assert_eq!(answer.lanes[0].effort.as_deref(), Some("high"));
         assert_eq!(answer.lanes[0].git.as_deref(), Some("current"));
@@ -571,6 +602,7 @@ mod tests {
         let head = wire::ResidencyHead {
             epoch: uuid(4),
             state: ResidentState::Seated,
+            topology_revision: 7,
             lanes: vec![row],
             subscriptions: subscriptions(),
         };
@@ -592,6 +624,7 @@ mod tests {
         let head = wire::ResidencyHead {
             epoch: uuid(4),
             state: ResidentState::Seated,
+            topology_revision: 7,
             lanes: vec![occupied()],
             subscriptions: subscriptions(),
         };
@@ -608,6 +641,7 @@ mod tests {
         let head = wire::ResidencyHead {
             epoch: uuid(4),
             state: ResidentState::Seated,
+            topology_revision: 7,
             lanes: vec![simulated()],
             subscriptions: subscriptions(),
         };
@@ -637,6 +671,7 @@ mod tests {
         let head = wire::ResidencyHead {
             epoch: uuid(4),
             state: ResidentState::Seated,
+            topology_revision: 7,
             lanes: vec![row],
             subscriptions: subscriptions(),
         };

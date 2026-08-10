@@ -108,6 +108,7 @@ fn seed_residency(fixture: &Fixture, seed: &mut JournalWrite, lanes: Vec<wire::L
     seed.residency_head(seated, move |_| wire::ResidencyHead {
         epoch,
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes,
         subscriptions: Vec::new(),
     });
@@ -467,6 +468,7 @@ fn admit_row_reason(
     let residency = wire::ResidencyHead {
         epoch: fixture.old_epoch,
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes: lanes.to_vec(),
         subscriptions: Vec::new(),
     };
@@ -631,6 +633,7 @@ fn import_refuses_a_vacant_row_whose_lane_seat_is_still_live() {
     let residency = wire::ResidencyHead {
         epoch: fixture.old_epoch,
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes: vec![row.clone()],
         subscriptions: Vec::new(),
     };
@@ -673,6 +676,7 @@ fn watchband_drain_does_not_end_a_drive_lanes_import_life() {
     let residency = wire::ResidencyHead {
         epoch: fixture.old_epoch,
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes: vec![row.clone()],
         subscriptions: vec![wire::LineageSubscription {
             lineage_id: row.lineage_id,
@@ -1145,6 +1149,7 @@ fn import_moves_seat_lineage_session_and_claim_into_the_successor_worktree() {
     let request = wake(fixture.lane, Some(SUCCESSOR));
     let answer = LaneChangeAnswer {
         lane: fixture.lane,
+        topology_revision: context.observed.body().topology_revision,
         from: context.row.worktree.clone(),
         to: context.worktree.clone(),
         git: Some("current".into()),

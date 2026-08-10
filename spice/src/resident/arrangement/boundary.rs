@@ -224,6 +224,7 @@ fn configure_member(
     member: CanonicalUuid,
 ) {
     let request = wire::intent::LineageConfigure {
+        topology_revision: fixture.head().topology_revision,
         lineage_id: lineage,
         member: Some(member),
         life: wire::intent::LineageLife::Drive,

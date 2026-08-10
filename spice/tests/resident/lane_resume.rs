@@ -67,6 +67,7 @@ fn an_operator_supplied_session_reaches_the_vendor_and_a_bare_seat_stays_fresh()
     resident.assert_ready(&fixture);
 
     let resumed = add_lane(&fixture, &["--resume", SESSION_ID]);
+    assert_eq!(resumed.topology_revision, 1);
     assert_eq!(
         launches(&fixture),
         ["resume"],
@@ -75,6 +76,7 @@ fn an_operator_supplied_session_reaches_the_vendor_and_a_bare_seat_stays_fresh()
 
     let successor = successor.display().to_string();
     let fresh = add_lane(&fixture, &[&successor]);
+    assert_eq!(fresh.topology_revision, 2);
     assert_ne!(fresh.lane, resumed.lane, "the control seat reused the lane");
     assert_eq!(
         launches(&fixture),

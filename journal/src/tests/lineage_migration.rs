@@ -51,7 +51,9 @@ fn current_rows_cross_schema_two_without_an_alternate_rewrite() {
 
     let journal = Journal::open(&path).expect("the current authority migrates");
 
-    assert_eq!(carrier_bytes(&journal.connection), before);
+    let after = carrier_bytes(&journal.connection);
+    assert_eq!(&after[..2], &before[..2]);
+    assert_eq!(without_topology_revision(&after[2]), before[2]);
     assert_all_carriers(&journal.connection, LINEAGE);
 }
 
@@ -326,7 +328,18 @@ fn carrier_bytes(connection: &Connection) -> Vec<Vec<u8>> {
             .query_row(sql, [], |row| row.get(0))
             .expect("read lineage carrier")
     })
-    .collect()
+        .collect()
+}
+
+fn without_topology_revision(bytes: &[u8]) -> Vec<u8> {
+    let mut document: Value = serde_json::from_slice(bytes).expect("decode migrated request");
+    document
+        .pointer_mut("/body")
+        .and_then(Value::as_object_mut)
+        .expect("lane seat request body")
+        .remove("topology_revision")
+        .expect("schema-six request carries topology revision");
+    serde_json::to_vec(&document).expect("encode pre-topology request")
 }
 
 fn version_records(connection: &Connection) -> (u32, u32) {

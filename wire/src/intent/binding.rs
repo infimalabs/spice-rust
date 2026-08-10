@@ -181,7 +181,7 @@ pub enum CommandAnswer {
     /// [`AnswerShape::Lane`]
     Lane(Box<LaneAnswer>),
     /// [`AnswerShape::LaneChange`]
-    LaneChange(LaneChangeAnswer),
+    LaneChange(Box<LaneChangeAnswer>),
     /// [`AnswerShape::State`]
     State(StateAnswer),
     /// [`AnswerShape::Recall`]
@@ -274,7 +274,7 @@ impl AnswerShape {
             Self::Effort => CommandAnswer::Effort(Box::new(crate::decode(bytes)?)),
             Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
             Self::Lane => CommandAnswer::Lane(Box::new(crate::decode(bytes)?)),
-            Self::LaneChange => CommandAnswer::LaneChange(crate::decode(bytes)?),
+            Self::LaneChange => CommandAnswer::LaneChange(Box::new(crate::decode(bytes)?)),
             Self::State => CommandAnswer::State(crate::decode(bytes)?),
             Self::Recall => CommandAnswer::Recall(Box::new(crate::decode(bytes)?)),
             Self::Taste => CommandAnswer::Taste(crate::decode(bytes)?),

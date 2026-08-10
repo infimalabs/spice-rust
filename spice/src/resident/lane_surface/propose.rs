@@ -9,12 +9,14 @@ pub(super) fn propose_seat(
     observed: &journal::JournalHead<wire::ResidencyHead>,
     epoch: CanonicalUuid,
     prepared: &PreparedSeat,
+    answer: LaneChangeAnswer,
 ) -> CommandResult<JournalWrite> {
     let capability = prepared.capability;
     let occupant = prepared.proven.occupant;
     let group = prepared.proven.group;
     let session = &prepared.proven.session;
     let mut next = observed.body().clone();
+    next.topology_revision = answer.topology_revision;
     if subscription_policy(observed.body(), request.lineage_id)?.is_none() {
         if observed
             .body()
@@ -91,18 +93,7 @@ pub(super) fn propose_seat(
         )
         .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
     write.residency_head(started, move |_| next);
-    command_result(
-        &mut write,
-        command,
-        request.clone(),
-        epoch,
-        LaneChangeAnswer {
-            lane: request.lane,
-            from: "absent".to_owned(),
-            to: OCCUPIED.to_owned(),
-            git: Some(prepared.proven.git.clone().into_boxed_str()),
-        },
-    )?;
+    command_result(&mut write, command, request.clone(), epoch, answer)?;
     Ok(write)
 }
 

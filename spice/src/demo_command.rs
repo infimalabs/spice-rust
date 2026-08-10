@@ -744,6 +744,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
         ResidencyHead {
             epoch,
             state: ResidentState::Dark,
+            topology_revision: 0,
             lanes: DEMO_LANES
                 .into_iter()
                 .map(|seed| wire::LaneResidency {

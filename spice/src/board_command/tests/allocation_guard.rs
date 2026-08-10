@@ -151,6 +151,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
+        topology_revision: 0,
         lanes,
         subscriptions,
     });
