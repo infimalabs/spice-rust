@@ -32,6 +32,7 @@ pub(super) fn seed(root: &Path) {
 }
 
 fn create_dir_all(root: &Path, directory: &Path) -> io::Result<()> {
+    validate_owned_path(root, directory)?;
     match fs::create_dir_all(directory) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
@@ -43,6 +44,7 @@ fn create_dir_all(root: &Path, directory: &Path) -> io::Result<()> {
 }
 
 fn write_file(root: &Path, path: &Path, bytes: impl AsRef<[u8]>) -> io::Result<()> {
+    validate_owned_path(root, path)?;
     match fs::write(path, bytes.as_ref()) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
@@ -57,17 +59,14 @@ fn write_file(root: &Path, path: &Path, bytes: impl AsRef<[u8]>) -> io::Result<(
 }
 
 fn make_existing_ancestors_writable(root: &Path, path: &Path) -> io::Result<()> {
+    validate_owned_path(root, path)?;
+    let relative = owned_relative_path(root, path)?;
     make_fixture_root_writable(root)?;
     let mut cursor = PathBuf::from(root);
-    let relative = path.strip_prefix(root).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "fixture app path escapes its owned root",
-        )
-    })?;
     for component in relative.components() {
         cursor.push(component.as_os_str());
-        match fs::metadata(&cursor) {
+        match fs::symlink_metadata(&cursor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Err(path_escape_error()),
             Ok(metadata) if metadata.is_dir() => make_fixture_root_writable(&cursor)?,
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => break,
@@ -77,11 +76,47 @@ fn make_existing_ancestors_writable(root: &Path, path: &Path) -> io::Result<()> 
     Ok(())
 }
 
+fn validate_owned_path(root: &Path, path: &Path) -> io::Result<()> {
+    let relative = owned_relative_path(root, path)?;
+    reject_symlink_if_present(root)?;
+    let mut cursor = PathBuf::from(root);
+    for component in relative.components() {
+        cursor.push(component.as_os_str());
+        match fs::symlink_metadata(&cursor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Err(path_escape_error()),
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn owned_relative_path<'a>(root: &Path, path: &'a Path) -> io::Result<&'a Path> {
+    path.strip_prefix(root).map_err(|_| path_escape_error())
+}
+
+fn reject_symlink_if_present(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(path_escape_error()),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn path_escape_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "fixture app path escapes its owned root",
+    )
+}
+
 #[cfg(target_family = "unix")]
 fn make_fixture_root_writable(directory: &Path) -> io::Result<()> {
-    let metadata = fs::metadata(directory)?;
-    if !metadata.is_dir() {
-        return Ok(());
+    let metadata = fs::symlink_metadata(directory)?;
+    if !metadata.file_type().is_dir() {
+        return Err(path_escape_error());
     }
     let mode = metadata.permissions().mode();
     fs::set_permissions(directory, fs::Permissions::from_mode(mode | 0o700))
@@ -89,7 +124,11 @@ fn make_fixture_root_writable(directory: &Path) -> io::Result<()> {
 
 #[cfg(not(target_family = "unix"))]
 fn make_fixture_root_writable(directory: &Path) -> io::Result<()> {
-    let mut permissions = fs::metadata(directory)?.permissions();
+    let metadata = fs::symlink_metadata(directory)?;
+    if !metadata.file_type().is_dir() {
+        return Err(path_escape_error());
+    }
+    let mut permissions = metadata.permissions();
     permissions.set_readonly(false);
     fs::set_permissions(directory, permissions)
 }
