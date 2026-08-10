@@ -16,6 +16,33 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 const CREATE_ATTEMPTS: usize = 128;
+const TEMPORARY_PREFIX: &str = ".spice-atomic-";
+const TEMPORARY_SUFFIX: &str = ".tmp";
+
+/// Whether a path carries the exact temporary filename emitted by this crate.
+///
+/// This recognizes the name without reading or resolving the path, so a
+/// filesystem watcher can classify a publication file that disappeared before
+/// metadata inspection.
+#[must_use]
+pub fn is_temporary_path(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(body) = name
+        .strip_prefix(TEMPORARY_PREFIX)
+        .and_then(|body| body.strip_suffix(TEMPORARY_SUFFIX))
+    else {
+        return false;
+    };
+    let Some((process, sequence)) = body.split_once('-') else {
+        return false;
+    };
+    let (Ok(process), Ok(sequence)) = (process.parse::<u32>(), sequence.parse::<u64>()) else {
+        return false;
+    };
+    name == format!("{TEMPORARY_PREFIX}{process}-{sequence}{TEMPORARY_SUFFIX}")
+}
 
 /// A destination whose parent directory has been resolved.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -416,7 +443,7 @@ fn canonical_parent(path: &Path, operation: Operation) -> Result<PathBuf, Error>
 fn temporary_name() -> OsString {
     let sequence = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
     OsString::from(format!(
-        ".spice-atomic-{}-{sequence}.tmp",
+        "{TEMPORARY_PREFIX}{}-{sequence}{TEMPORARY_SUFFIX}",
         std::process::id()
     ))
 }
@@ -649,6 +676,25 @@ mod tests {
         drop(second);
         assert_eq!(fs::read(&destination_path).unwrap(), b"old bytes");
         assert_eq!(directory.entries(), entries);
+    }
+
+    #[test]
+    fn temporary_path_recognition_accepts_only_the_generated_decimal_shape() {
+        let directory = TestDirectory::new();
+        let destination = Destination::new(directory.path().join("published")).unwrap();
+        let staged = destination.stage().unwrap();
+        assert!(is_temporary_path(staged.temporary_path()));
+
+        for name in [
+            ".spice-atomic-01-2.tmp",
+            ".spice-atomic-1-02.tmp",
+            ".spice-atomic-1-.tmp",
+            ".spice-atomic--1.tmp",
+            ".spice-atomic-1-2.tmp.extra",
+            "spice-atomic-1-2.tmp",
+        ] {
+            assert!(!is_temporary_path(Path::new(name)), "admitted {name:?}");
+        }
     }
 
     // Kept local because these are atomic unit tests. Sharing gate's integration-test
