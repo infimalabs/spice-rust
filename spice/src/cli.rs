@@ -515,5 +515,26 @@ pub fn bootstrap_json_selected(arguments: impl IntoIterator<Item = OsString>) ->
     false
 }
 
+/// Whether the raw native invocation selects the top-level Doctor command.
+///
+/// Doctor owns typed configuration diagnosis, so its bootstrap path must be
+/// recognizable before repository command mounts can be loaded. Only the first
+/// non-global argument is considered; a nested or child-command `doctor` token
+/// has no authority to change mount loading.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn bootstrap_doctor_selected(arguments: impl IntoIterator<Item = OsString>) -> bool {
+    let json = format!("--{JSON}");
+    for argument in arguments.into_iter().skip(1) {
+        if argument == OsStr::new("--") {
+            return false;
+        }
+        if argument == OsStr::new(&json) {
+            continue;
+        }
+        return argument == OsStr::new("doctor");
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests;
