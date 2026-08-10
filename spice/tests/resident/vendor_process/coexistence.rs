@@ -231,6 +231,7 @@ fn install_predecessor_state(fixture: &Fixture, worktree: &Path) -> (Vec<PathBuf
     let mut paths = [
         "spiceacks.sqlite3",
         "spicemaxims.sqlite3",
+        // Immutable predecessor-owned input retained for coexistence proof.
         "spiceprojections.sqlite3",
         "spiceteams.sqlite3",
         "taskchampion.sqlite3",
@@ -446,7 +447,7 @@ fn install_coexisting_appliance(fixture: &Fixture) -> (PathBuf, String, String) 
         "spice board",
         "spice inbox",
         "spice ack",
-        "SPICE_RS_LANE",
+        "SPICE_RS_LANE", // env-policy: not-an-env SPICE_RS_LANE
         "spice task next",
         "spice task done",
     ] {
@@ -455,7 +456,11 @@ fn install_coexisting_appliance(fixture: &Fixture) -> (PathBuf, String, String) 
             "installed skill omitted {required:?}"
         );
     }
-    for unavailable in ["SPICE_LANE", "spice agent", "spice task status"] {
+    for unavailable in [
+        "SPICE_LANE", // env-policy: not-an-env SPICE_LANE
+        "spice agent",
+        "spice task status",
+    ] {
         assert!(
             !skill.contains(unavailable),
             "installed skill named unavailable command {unavailable:?}"

@@ -42,9 +42,9 @@ impl Fixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir_all(&root).expect("fixture root");
-        fs::create_dir_all(root.join(".git")).expect("fixture git directory");
-        let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
+        fs::create_dir_all(root.join(".git")).expect("fixture Git directory");
+        let root = fs::canonicalize(root).expect("fixture root canonicalizes");
+        let paths = RuntimePaths::discover(&root).expect("fixture runtime paths resolve");
         fs::create_dir_all(&paths.data).expect("fixture data directory");
         let bus =
             Bus::start(journal::Journal::open(&paths.journal).expect("persistent journal opens"))
@@ -69,7 +69,7 @@ impl Fixture {
 
         let observed = current_residency(&bus, epoch).expect("startup residency");
         let capability = uuid(4);
-        let worktree = paths.worktree.to_string_lossy().into_owned();
+        let worktree = root.display().to_string();
         let mut lane_start = write(Actor::Spice, epoch, Producer::ResidentRecognition)
             .expect("lane proposal begins");
         let lane_seated = lane_start
@@ -97,6 +97,7 @@ impl Fixture {
                 FactCause::Pending(lane_seated),
             )
             .expect("occupant starts");
+        let head_worktree = worktree;
         lane_start.residency_head(started, move |_| ResidencyHead {
             epoch,
             state: ResidentState::Seated,
@@ -105,7 +106,7 @@ impl Fixture {
                 lane,
                 lineage_id: lane,
                 name: None,
-                worktree,
+                worktree: head_worktree,
                 life: "drive".to_owned(),
                 vendor,
                 occupant: Some(occupant),

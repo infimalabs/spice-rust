@@ -33,23 +33,37 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
     );
 }
 
-/// A nested file named by `#[path]` belongs to that integration target without
-/// making its same-directory peers part of the selection.
+/// Explicit, conventional, and included nested sources belong to one integration target without
+/// making same-directory peers part of the selection.
 #[test]
 fn staged_path_module_selects_only_its_declaring_integration_target() {
     let root = fixture_root("workspace-path-module-selection");
     let tests = root.join("fixture/tests");
-    fs::create_dir_all(tests.join("resident")).expect("create path-module fixture");
+    fs::create_dir_all(tests.join("resident/lane_continuity")).expect("create path-module fixture");
     fs::write(
         tests.join("resident.rs"),
-        "#[path = \"resident/lane_continuity.rs\"]\nmod lane_continuity;\n",
+        concat!(
+            "#[path = \"resident/lane_continuity.rs\"]\n",
+            "mod lane_continuity;\n",
+            "include!(\"resident/tail.rs\");\n",
+        ),
     )
     .expect("write declaring integration target");
     fs::write(
         tests.join("resident/lane_continuity.rs"),
-        "#[test]\nfn continuity() {}\n",
+        "mod nested;\n#[test]\nfn continuity() {}\n",
     )
     .expect("write declared path module");
+    fs::write(
+        tests.join("resident/lane_continuity/nested.rs"),
+        "#[test]\nfn nested() {}\n",
+    )
+    .expect("write conventionally nested module");
+    fs::write(
+        tests.join("resident/tail.rs"),
+        "#[test]\nfn included() {}\n",
+    )
+    .expect("write included test tail");
     fs::write(tests.join("other.rs"), "#[test]\nfn other() {}\n")
         .expect("write unrelated integration target");
     fs::write(
@@ -92,16 +106,37 @@ fn staged_path_module_selects_only_its_declaring_integration_target() {
         &inventory,
         &root,
         wire::Digest::compute(wire::Domain::GateTree, b"declared path module"),
-        &["fixture/tests/resident/lane_continuity.rs".to_owned()],
+        &[
+            "fixture/tests/resident/lane_continuity.rs".to_owned(),
+            "fixture/tests/resident/lane_continuity/nested.rs".to_owned(),
+            "fixture/tests/resident/tail.rs".to_owned(),
+        ],
     )
     .expect("declared path module maps to its integration target");
 
     assert!(report.admits());
-    assert_eq!(report.tests(), ["fixture::test:resident"]);
-    assert_eq!(report.edges().len(), 1);
     assert_eq!(
-        report.edges()[0].source(),
-        "fixture/tests/resident/lane_continuity.rs"
+        report.changed_sources(),
+        [
+            "fixture/tests/resident/lane_continuity.rs",
+            "fixture/tests/resident/lane_continuity/nested.rs",
+            "fixture/tests/resident/tail.rs",
+        ],
+        "every nested source remains explicit in the selected-tree report"
+    );
+    assert_eq!(report.tests(), ["fixture::test:resident"]);
+    assert_eq!(report.edges().len(), 3);
+    assert_eq!(
+        report
+            .edges()
+            .iter()
+            .map(crate::TestSelectionEdge::source)
+            .collect::<Vec<_>>(),
+        [
+            "fixture/tests/resident/lane_continuity.rs",
+            "fixture/tests/resident/lane_continuity/nested.rs",
+            "fixture/tests/resident/tail.rs",
+        ]
     );
     fs::remove_dir_all(root).expect("remove path-module fixture");
 }

@@ -521,6 +521,7 @@ pub fn bootstrap_json_selected(arguments: impl IntoIterator<Item = OsString>) ->
 /// bootstrap paths must be recognizable before repository command mounts can
 /// be loaded. Only the first non-global argument is considered; a nested or
 /// child-command token has no authority to change mount loading.
+/// This is only a routing hint; the generated parser remains the syntax authority.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bootstrap_configuration_owner_selected(
     arguments: impl IntoIterator<Item = OsString>,

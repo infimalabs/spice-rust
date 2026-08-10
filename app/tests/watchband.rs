@@ -411,7 +411,7 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
     assert_eq!(
         standing_title(&standing),
         format!(
-            "Codex driver; model: gpt-5.2-codex; effort: high; thread: {OCCUPANT}; \
+            "Codex vendor; model: gpt-5.2-codex; effort: high; thread: {OCCUPANT}; \
              session: session-fixture"
         )
     );
@@ -421,7 +421,7 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
     assert_eq!(
         standing_title(&standing),
         format!(
-            "Codex driver; model: unrecorded; effort: unrecorded; thread: {OCCUPANT}; \
+            "Codex vendor; model: unrecorded; effort: unrecorded; thread: {OCCUPANT}; \
              session: session-fixture"
         )
     );

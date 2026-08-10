@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
 use wire::{Digest, Domain, FaultClass, Outcome, ReplyPosition, RestoreVerification, WireVersion};
@@ -11,7 +10,8 @@ const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
 const AUTHORITY: &str = "spicejournal.sqlite3";
 
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 
 struct Fixture {
     root: PathBuf,
@@ -24,13 +24,9 @@ impl Fixture {
         let fixture_base = PathBuf::from("/tmp");
         #[cfg(not(unix))]
         let fixture_base = std::env::temp_dir();
-        let root = fixture_base.join(format!(
-            "srv-{}-{}-{name}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = fixture_root::claim(&fixture_base, &format!("srv-{name}"));
         let bundle = root.join("backup");
-        fs::create_dir_all(root.join(".git")).expect("fixture Git directory");
+        fs::create_dir(root.join(".git")).expect("fixture Git directory");
         fs::create_dir_all(bundle.join("tape")).expect("bundle directories");
         drop(
             journal::Journal::open(bundle.join(AUTHORITY))

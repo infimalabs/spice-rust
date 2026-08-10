@@ -19,6 +19,21 @@ pub(super) struct RuntimePaths {
     pub(super) stage: PathBuf,
 }
 
+struct ResidentClientPaths {
+    resident: PathBuf,
+    canvas: PathBuf,
+}
+
+impl ResidentClientPaths {
+    fn from_repository(repository: &Repository) -> CommandResult<Self> {
+        let canvas = repository
+            .admit_resident_client()
+            .map_err(|error| crate::state_failure(&error).outcome())?;
+        let resident = canvas.with_file_name("resident");
+        Ok(Self { resident, canvas })
+    }
+}
+
 pub(super) struct SurfaceConfig {
     canvas: canvas::Config,
     pub(super) steering: steer::Config,
@@ -43,7 +58,7 @@ struct SurfaceLaunch<'a> {
     endpoint: &'a mut dyn io::Write,
 }
 
-// Runtime policy and trust identity are projections of this one captured generation.
+// Runtime policy and trust identity are folds of this one captured generation.
 pub(super) struct StartupSurface {
     pub(super) config: SurfaceConfig,
     pub(super) trust: crate::trust_command::Surface,
@@ -100,7 +115,7 @@ impl RuntimePaths {
 
     fn from_repository(repository: &Repository) -> CommandResult<Self> {
         let state = repository
-            .admit_state()
+            .admit_resident_state()
             .map_err(|error| crate::state_failure(&error).outcome())?;
         Ok(Self {
             worktree: repository.worktree_root().to_path_buf(),
@@ -144,8 +159,7 @@ impl RuntimePaths {
             ));
         }
         repository
-            .admit_state()
-            .map(|state| state.inbox().to_path_buf())
+            .admit_inbox_delivery()
             .map_err(|error| crate::state_failure(&error).outcome())
     }
 
@@ -558,7 +572,7 @@ pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outc
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
     };
-    let paths = match RuntimePaths::from_repository(&repository) {
+    let paths = match ResidentClientPaths::from_repository(&repository) {
         Ok(paths) => paths,
         Err(outcome) => return outcome,
     };
@@ -576,7 +590,7 @@ pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outc
     outcome
 }
 
-fn wait_for_release(paths: &RuntimePaths) -> CommandResult<()> {
+fn wait_for_release(paths: &ResidentClientPaths) -> CommandResult<()> {
     let possession = acquire_released_resident(paths)?;
     if paths.canvas.exists() {
         return Err(environment_fault(
@@ -589,7 +603,7 @@ fn wait_for_release(paths: &RuntimePaths) -> CommandResult<()> {
 }
 
 /// Wait one client bound for the resident to surrender its runtime lock.
-fn acquire_released_resident(paths: &RuntimePaths) -> CommandResult<Possession> {
+fn acquire_released_resident(paths: &ResidentClientPaths) -> CommandResult<Possession> {
     const RELEASE_BOUND: std::time::Duration = crate::cli::answer_bound(CommandKind::UpChange);
 
     let name = LockName::new("resident").expect("resident is a non-empty lock name");
@@ -1261,7 +1275,7 @@ async fn stop_surface(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "one capture record crosses all resident-owned projection surfaces"
+    reason = "one capture record crosses all resident-owned fold surfaces"
 )]
 fn accept_record(
     bus: &Bus,

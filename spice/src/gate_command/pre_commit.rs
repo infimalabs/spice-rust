@@ -26,6 +26,8 @@ const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const SELECTION_RECORD: u8 = b'S';
 const HARD_DEADLINE: Duration = Duration::from_secs(180);
+// Stable, isolated shard output roots keep broad-source selection within this
+// work allowance while preserving fifteen seconds for bounded cleanup.
 const WORK_RUNTIME: Duration = Duration::from_secs(150);
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
@@ -365,6 +367,12 @@ fn worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
     let (selection, result) = thread::scope(|scope| -> io::Result<_> {
         let selected = scope.spawn(|| test_input.execute());
         let compiler = scope.spawn(prepare_compilers);
+        write_phase(
+            &mut progress,
+            &WorkerPhase::Family {
+                family: ArmFamily::Toolchain,
+            },
+        )?;
         let result = join_compiler(compiler.join()).and_then(|compiler| {
             prepared
                 .admit_verifier_compiler_receipt(
@@ -703,4 +711,5 @@ fn ambient_environment() -> Result<Environment, sill::SpecError> {
 }
 
 #[cfg(test)]
-mod tests;
+#[path = "pre_commit/tests.rs"]
+mod extended_tests;

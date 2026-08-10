@@ -4,7 +4,6 @@ use std::fs;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
@@ -19,6 +18,8 @@ use wire::{
     Producer, ReplyPosition, Response, WireVersion, Witness,
 };
 
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 #[path = "support/readiness.rs"]
 mod readiness;
 #[path = "support/staged_app.rs"]
@@ -27,8 +28,6 @@ mod staged_app;
 use readiness::Readiness;
 
 const REFUSAL_EXIT: i32 = 2;
-static NEXT: AtomicU64 = AtomicU64::new(0);
-
 const POLICY: &str = r#"
 [consent]
 posture = "queue"
@@ -59,12 +58,8 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-consent-process-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(root.join(".git")).expect("fixture Git directory");
+        let root = fixture_root::claim(&std::env::temp_dir(), "consent-process");
+        fs::create_dir(root.join(".git")).expect("fixture Git directory");
         staged_app::seed(&root);
         fs::write(root.join("spice-rust.toml"), POLICY).expect("tracked policy");
         let runtime = root.join(".git/.spice-rs");

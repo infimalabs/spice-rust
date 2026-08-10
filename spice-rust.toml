@@ -136,6 +136,8 @@ env_names = [
     "SPICE_RS_INBOX",
     "SPICE_RS_LANE",
     "SPICE_RS_NATIVE_SHELL",
+    # Selected-tree tests receive this compile-time writable fixture authority.
+    "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",
     "TMPDIR",
 ]
 

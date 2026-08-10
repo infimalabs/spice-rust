@@ -86,7 +86,7 @@ impl SubmissionHandle {
         // This handle is retained by the connection effect from its first
         // render. Its dereferenced value is therefore that render's snapshot,
         // not a live comparison point; comparing here suppresses transitions
-        // back to the initial empty state. Publish the queue projection
+        // back to the initial empty state. Publish the queue fold
         // unconditionally so every stage transition reaches the current tree.
         self.status.set(status);
     }
@@ -346,7 +346,7 @@ type SurfaceData = Option<CanvasRuntime>;
 
 #[derive(Clone)]
 enum ClientAction {
-    /// Wake the connection driver after a composer synchronously queues work.
+    /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
     Refresh,
     Seat {

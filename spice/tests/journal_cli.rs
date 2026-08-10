@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
@@ -14,14 +13,14 @@ use wire::{
     JournalRestore, JournalVerification, Origin, Outcome, Seq, ThreadReport, WireVersion,
 };
 
+#[path = "support/fixture_root.rs"]
+mod fixture_root;
 #[path = "support/readiness.rs"]
 mod readiness;
 #[path = "support/staged_app.rs"]
 mod staged_app;
 
 use readiness::Readiness;
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
@@ -32,11 +31,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-journal-cli-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = fixture_root::claim(&std::env::temp_dir(), "journal-cli");
         let data = root.join(".git/.spice-rs/data");
         let authority = data.join("spicejournal.sqlite3");
         let folds = data.join("spicefolds.sqlite3");

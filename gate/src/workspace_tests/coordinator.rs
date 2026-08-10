@@ -424,15 +424,17 @@ fn run_shard(
     let started = Instant::now();
     let targets = target_list(&shard);
     let owner = format!("workspace test package {}", shard.name);
-    let spec = shard_spec(
-        &cargo,
-        &shard,
-        &root,
-        environment,
-        cancellation,
-        policy,
-        &owner,
-    );
+    let spec = isolate_shard_outputs(environment, index).and_then(|environment| {
+        shard_spec(
+            &cargo,
+            &shard,
+            &root,
+            environment,
+            cancellation,
+            policy,
+            &owner,
+        )
+    });
     let outcome = spec.and_then(|spec| {
         let observation = Observation::new(
             OutputStream::Stdout,
@@ -455,6 +457,36 @@ fn run_shard(
         observer.last(),
         outcome,
     )
+}
+
+/// Give one concurrent shard sole ownership of every Cargo output publication.
+///
+/// # Errors
+///
+/// Returns an environment error if the rewritten target authority is invalid.
+pub(super) fn isolate_shard_outputs(
+    environment: Environment,
+    index: usize,
+) -> Result<Environment, WorkspaceTestError> {
+    // Cargo 1.97 publishes executables beneath `build.build-dir` and holds one
+    // lock for that entire root. Isolating only `target-dir` therefore neither
+    // closes a `CARGO_BIN_EXE_*` replacement race nor permits parallel builds.
+    // Stable shard suffixes on both authorities provide exclusive publications
+    // and retain warm output for the same shard across repeated gate attempts.
+    let mut entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<OsString, OsString>>();
+    for variable in [CARGO_TARGET_DIR, CARGO_BUILD_BUILD_DIR] {
+        if let Some(root) = entries.get(OsStr::new(variable)).cloned() {
+            let isolated = PathBuf::from(root)
+                .join("spice-workspace-test-shards")
+                .join(format!("shard-{}", index + 1));
+            entries.insert(OsString::from(variable), isolated.into_os_string());
+        }
+    }
+    Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
 fn shard_spec(

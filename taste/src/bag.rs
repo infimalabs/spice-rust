@@ -114,7 +114,7 @@ pub fn reminder_identity(taste: &Name, prose: &str) -> Digest {
 
 /// Canonical identity of one complete ordered configured taste bag.
 ///
-/// Names, selectors, triggers, and drivers are length-framed in their admitted
+/// Names, selectors, triggers, and vendors are length-framed in their admitted
 /// order, and enablement is one fixed byte, so any policy movement produces a
 /// new identity without a second serializer.
 #[must_use]

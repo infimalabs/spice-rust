@@ -47,6 +47,13 @@ fn tracked_inputs_load_one_operational_current_contract() {
          reap-ms 1000\ncancellation never\nrestart never\ngrace-ms 250\ncapture 65536\n"
     );
 
+    // Selected test execution compiles a sealed source tree with repository
+    // environment removed. The tracked inputs above remain authoritative in
+    // that tree, while live-index adjudication belongs only to a real checkout.
+    if !root.join(".git").exists() {
+        return;
+    }
+
     let run = contract
         .adjudicate(root)
         .expect("an operational contract reaches a complete verdict");

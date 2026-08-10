@@ -212,6 +212,8 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
         },
         schema: "repo-doc-character-bounds-v1",
         predecessor: predecessor(
+            // Immutable Python predecessor provenance; live Rust declarations
+            // use the current gate vocabulary everywhere else.
             "spice/studies/repodocs.py::repo_truth_doc_findings",
             "selected doctrine documents, decoded character counts, active caps and peer claims",
         ),

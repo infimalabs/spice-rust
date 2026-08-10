@@ -29,6 +29,9 @@ pub enum SpiceVariable {
     /// Interpreter-tripwire marker supplied to the isolated hygiene acquisition fixture.
     #[serde(rename = "SPICE_HYGIENE_INTERPRETER_MARKER")] // env-policy: allow
     HygieneInterpreterMarker,
+    /// Debug install fixture executable override.
+    #[serde(rename = "SPICE_INSTALL_TEST_EXECUTABLE")] // env-policy: allow
+    InstallTestExecutable,
     /// Debug install mutation-rendezvous action.
     #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_ACTION")] // env-policy: allow
     InstallTestPauseAction,
@@ -73,6 +76,7 @@ impl SpiceVariable {
         Self::AppSourceIdentity,
         Self::HygieneAcquireRepository,
         Self::HygieneInterpreterMarker,
+        Self::InstallTestExecutable,
         Self::InstallTestPauseAction,
         Self::InstallTestPauseControl,
         Self::InstallTestPausePath,
@@ -101,6 +105,9 @@ impl SpiceVariable {
                 "SPICE_HYGIENE_INTERPRETER_MARKER" // env-policy: allow
             }
             Self::Inbox => "SPICE_RS_INBOX", // env-policy: allow
+            Self::InstallTestExecutable => {
+                "SPICE_INSTALL_TEST_EXECUTABLE" // env-policy: allow
+            }
             Self::InstallTestPauseAction => {
                 "SPICE_INSTALL_TEST_PAUSE_ACTION" // env-policy: allow
             }
