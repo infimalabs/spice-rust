@@ -59,7 +59,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 51);
+    assert_eq!(missing.provenance().len(), 52);
     assert!(
         missing
             .provenance()
