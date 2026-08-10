@@ -748,7 +748,8 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
         .filter_map(|event| match event {
             RepositoryExecutionEvent::ArmInvoked { gate_id, .. } => Some(*gate_id),
             RepositoryExecutionEvent::FamilyInvoked { .. }
-            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+            | RepositoryExecutionEvent::AnalysisInvoked { .. }
+            | RepositoryExecutionEvent::ToolchainAnalysisCompleted { .. } => None,
         })
         .collect();
     assert_eq!(arm_events, GateId::BATTERY);
@@ -758,7 +759,8 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
         .filter_map(|event| match event {
             RepositoryExecutionEvent::FamilyInvoked { family } => Some(*family),
             RepositoryExecutionEvent::ArmInvoked { .. }
-            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+            | RepositoryExecutionEvent::AnalysisInvoked { .. }
+            | RepositoryExecutionEvent::ToolchainAnalysisCompleted { .. } => None,
         })
         .collect();
     assert_eq!(
@@ -776,13 +778,28 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
         .filter_map(|event| match event {
             RepositoryExecutionEvent::AnalysisInvoked { gate_id, .. } => Some(*gate_id),
             RepositoryExecutionEvent::ArmInvoked { .. }
-            | RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+            | RepositoryExecutionEvent::FamilyInvoked { .. }
+            | RepositoryExecutionEvent::ToolchainAnalysisCompleted { .. } => None,
         })
         .collect::<Vec<_>>();
     let mut expected = GateId::BATTERY.to_vec();
     analyses.sort_unstable();
     expected.sort_unstable();
     assert_eq!(analyses, expected);
+
+    let completed = events
+        .iter()
+        .filter_map(|event| match event {
+            RepositoryExecutionEvent::ToolchainAnalysisCompleted { gate_id, .. } => Some(*gate_id),
+            RepositoryExecutionEvent::ArmInvoked { .. }
+            | RepositoryExecutionEvent::FamilyInvoked { .. }
+            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        completed,
+        crate::toolchain::TOOLCHAIN_ARMS.map(|arm| arm.id())
+    );
 }
 
 /// Each result carries evidence its own family owns, refusals included.

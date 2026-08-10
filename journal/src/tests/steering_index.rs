@@ -204,7 +204,13 @@ fn indexed_read_work_is_constant_as_retired_history_grows() {
     assert_eq!(measured_lane(&journal), before_lane);
     assert_eq!(measured_all_lanes(&journal), before_all);
     assert_eq!(before_key.queries, 2, "horizon plus one keyed lookup");
+    assert_eq!(before_key.rows, 2, "horizon plus one keyed row");
     assert_eq!(before_lane.queries, 2, "horizon plus one live-lane lookup");
+    assert_eq!(before_lane.rows, 2, "horizon plus one live-lane row");
+    assert!(
+        before_lane.decoded_bytes > 0,
+        "the one selected steering body was decoded"
+    );
     let plan = journal
         .connection
         .prepare(
@@ -283,34 +289,34 @@ fn schema_six_migration_requires_one_explicit_rebuild_then_stays_current() {
     );
 }
 
-fn measured_key(journal: &Journal) -> crate::guard::SteeringReadMetrics {
-    crate::guard::reset_steering_read_metrics();
+fn measured_key(journal: &Journal) -> crate::guard::IndexedReadMetrics {
+    crate::guard::reset_indexed_read_metrics();
     let head = journal
         .read(|read| read.steering_key(TARGET_KEY))
         .expect("target key reads")
         .expect("target head exists");
     assert_eq!(head.body().directive, uuid(TARGET));
-    crate::guard::steering_read_metrics()
+    crate::guard::indexed_read_metrics()
 }
 
-fn measured_lane(journal: &Journal) -> crate::guard::SteeringReadMetrics {
-    crate::guard::reset_steering_read_metrics();
+fn measured_lane(journal: &Journal) -> crate::guard::IndexedReadMetrics {
+    crate::guard::reset_indexed_read_metrics();
     let pending = journal
         .read(|read| read.pending_steering(Some(lane())))
         .expect("live lane reads");
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].body().directive, uuid(TARGET));
-    crate::guard::steering_read_metrics()
+    crate::guard::indexed_read_metrics()
 }
 
-fn measured_all_lanes(journal: &Journal) -> crate::guard::SteeringReadMetrics {
-    crate::guard::reset_steering_read_metrics();
+fn measured_all_lanes(journal: &Journal) -> crate::guard::IndexedReadMetrics {
+    crate::guard::reset_indexed_read_metrics();
     let pending = journal
         .read(|read| read.pending_steering(None))
         .expect("all live lanes read");
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].body().directive, uuid(TARGET));
-    crate::guard::steering_read_metrics()
+    crate::guard::indexed_read_metrics()
 }
 
 #[derive(Clone, Copy)]

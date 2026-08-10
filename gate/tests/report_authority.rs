@@ -42,6 +42,7 @@ fn decoded_reports_expose_no_executable_reconstruction_authority() {
         "MutationCoverageReport",
         "TestSubsumptionReport",
         "TestEvidenceReport",
+        "TestSelectionReport",
         "Verdict",
     ] {
         assert!(

@@ -50,12 +50,16 @@ fn assistant(record: &Object, locus: Locus) -> Events {
             expected: "object",
         })?;
         match string(block, "type")? {
-            "text" => events.push(Event::Prose(Prose {
-                role: ProseRole::Assistant,
-                text: string(block, "text")?.to_owned(),
-                phase: phase.clone(),
-                locus,
-            })),
+            "text" => {
+                let text = string(block, "text")?.to_owned();
+                events.push(Event::Prose(Prose {
+                    role: ProseRole::Assistant,
+                    media: crate::media::markdown(&text)?,
+                    text,
+                    phase: phase.clone(),
+                    locus,
+                }));
+            }
             "thinking" => events.push(Event::Reasoning(Reasoning {
                 content: ReasoningContent::Plain(vec![string(block, "thinking")?.to_owned()]),
                 locus,
@@ -124,6 +128,7 @@ fn user(record: &Object, locus: Locus) -> Events {
     if let Some(text) = content.as_str() {
         return Ok(vec![Event::Prose(Prose {
             role: ProseRole::Operator,
+            media: crate::media::markdown(text)?,
             text: text.to_owned(),
             phase: Some("prompt".to_owned()),
             locus,
@@ -141,12 +146,34 @@ fn user(record: &Object, locus: Locus) -> Events {
             expected: "object",
         })?;
         match string(block, "type")? {
-            "text" => events.push(Event::Prose(Prose {
-                role: ProseRole::Operator,
-                text: string(block, "text")?.to_owned(),
-                phase: Some("prompt".to_owned()),
-                locus,
-            })),
+            "text" => {
+                let text = string(block, "text")?.to_owned();
+                events.push(Event::Prose(Prose {
+                    role: ProseRole::Operator,
+                    media: crate::media::markdown(&text)?,
+                    text,
+                    phase: Some("prompt".to_owned()),
+                    locus,
+                }));
+            }
+            "image" => {
+                let media = crate::media::value(value, "message-image")?;
+                if let Some(Event::Prose(prose)) = events.last_mut() {
+                    prose.media.extend(media);
+                    wire::media::admit_media(&prose.media).map_err(|_| ResidueKind::Malformed {
+                        field: "message.content[].media",
+                        expected: "at most eight admitted images",
+                    })?;
+                } else if !media.is_empty() {
+                    events.push(Event::Prose(Prose {
+                        role: ProseRole::Operator,
+                        text: String::new(),
+                        phase: Some("prompt".to_owned()),
+                        media,
+                        locus,
+                    }));
+                }
+            }
             "tool_result" => {
                 let result = match optional_boolean(block, "is_error")? {
                     Some(true) => ToolResult::Failed,
@@ -163,6 +190,10 @@ fn user(record: &Object, locus: Locus) -> Events {
                             .map(render_output)
                             .as_deref()
                             .and_then(output_exit_code),
+                        media: block.get("content").map_or_else(
+                            || Ok(Vec::new()),
+                            |content| crate::media::value(content, "tool-image"),
+                        )?,
                     }),
                     locus,
                 }));

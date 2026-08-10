@@ -469,6 +469,84 @@ fn message_snapshot_and_live_push_retain_distinct_authors_by_tape_identity() {
 }
 
 #[test]
+fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_distinct() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let snapshot = serde_json::to_vec(&serde_json::json!({
+        "stream": "messages",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "limit": 8,
+        "messages": [],
+    }))
+    .expect("message snapshot serializes");
+    runtime.apply_stream(&admitted_stream(&session, &snapshot));
+
+    let call = message_frame(
+        LANE,
+        LANE_CAPABILITY,
+        60,
+        0,
+        Some("tool"),
+        "view_image: capture.png",
+    );
+    runtime.apply_stream(&admitted_stream(&session, &call));
+    assert!(
+        runtime.messages().is_empty(),
+        "the call remains activity, so its answering image is rendered only once"
+    );
+
+    let media = serde_json::json!({
+        "name": "capture.png",
+        "content_type": "image/png",
+        "data_url": "data:image/png;base64,iVBORw0KGgo=",
+    });
+    let result = serde_json::to_vec(&serde_json::json!({
+        "stream": "message",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "message": {
+            "lane": LANE,
+            "author": LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 80, "length": 20, "event": 1},
+            "activity": "tool",
+            "text": "view_image: capture.png succeeded",
+            "media": [media.clone()],
+        },
+    }))
+    .expect("tool result frame serializes");
+    runtime.apply_stream(&admitted_stream(&session, &result));
+    runtime.apply_stream(&admitted_stream(&session, &result));
+    assert_eq!(runtime.messages().len(), 1, "one tape event is idempotent");
+    assert_eq!(runtime.messages()[0].media.len(), 1);
+
+    let distinct = serde_json::to_vec(&serde_json::json!({
+        "stream": "message",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "message": {
+            "lane": LANE,
+            "author": LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 120, "length": 20, "event": 1},
+            "activity": "tool",
+            "text": "view_image: capture.png succeeded",
+            "media": [media],
+        },
+    }))
+    .expect("distinct tool result frame serializes");
+    runtime.apply_stream(&admitted_stream(&session, &distinct));
+    assert_eq!(
+        runtime.messages().len(),
+        2,
+        "distinct causal tape events remain separately browsable even for identical bytes"
+    );
+}
+
+#[test]
 fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
