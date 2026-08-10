@@ -226,8 +226,8 @@ pub fn parse_markdown(text: &str) -> Vec<Result<Media, MediaError>> {
         };
         let url_end = url_start + relative_url_end;
         let url = &text[url_start..url_end];
-        cursor = url_end + 1;
         if !url.starts_with("data:image/") {
+            cursor = label_start;
             continue;
         }
         let content_type = url
@@ -240,6 +240,11 @@ pub fn parse_markdown(text: &str) -> Vec<Result<Media, MediaError>> {
                 url,
             )
         });
+        cursor = if candidate.is_ok() {
+            url_end + 1
+        } else {
+            label_start
+        };
         parsed.push(candidate);
     }
     parsed
@@ -405,6 +410,26 @@ mod tests {
             assert_eq!(parsed.data_url, media.data_url);
             assert_eq!(parsed.identity().unwrap(), media.identity().unwrap());
             assert!(media.is_embedded_in(&markdown).unwrap());
+        }
+    }
+
+    #[test]
+    fn broken_image_candidate_cannot_hide_later_canonical_media() {
+        let media = Media::from_base64("capture.png", "image/png", PNG).unwrap();
+        let canonical = media.markdown().unwrap();
+        for broken in [
+            "![broken](not-an-image ",
+            "![broken](data:image/png;base64,%%% ",
+        ] {
+            let text = format!("{broken}{canonical}");
+            let parsed = parse_markdown(&text);
+
+            assert!(
+                parsed
+                    .into_iter()
+                    .any(|candidate| { candidate.is_ok_and(|candidate| candidate == media) })
+            );
+            assert!(media.is_embedded_in(&text).unwrap());
         }
     }
 
