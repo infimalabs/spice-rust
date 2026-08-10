@@ -371,6 +371,7 @@ fn reminder() -> body::TasteReminded {
         occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
         compaction: 0,
         locus: body::TranscriptLocus {
+            source: None,
             member: 12,
             offset: 4096,
             length: 512,
