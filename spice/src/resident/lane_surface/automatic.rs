@@ -83,6 +83,7 @@ pub(super) fn wake(
     };
     let answer = LaneChangeAnswer {
         lane: request.lane,
+        topology_revision: observed.body().topology_revision,
         from: row.disposition.clone(),
         to: OCCUPIED.to_owned(),
         git: Some(proven.git.clone().into_boxed_str()),

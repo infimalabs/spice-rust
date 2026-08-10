@@ -49,6 +49,7 @@ pub(super) fn drain(
     let disposition = evidence.disposition();
     let answer = LaneChangeAnswer {
         lane: request.lane,
+        topology_revision: observed.body().topology_revision,
         from: OCCUPIED.to_owned(),
         to: disposition.to_owned(),
         git: None,

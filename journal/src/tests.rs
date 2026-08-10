@@ -24,6 +24,7 @@ mod lineage_migration;
 mod read;
 mod release_notes_migration;
 mod schema;
+mod topology_revision_migration;
 mod transcript;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -689,6 +690,7 @@ fn residency_head() -> ResidencyHead {
     ResidencyHead {
         epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
         state: ResidentState::Seated,
+        topology_revision: 0,
         lanes: vec![LaneResidency {
             lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
             lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),

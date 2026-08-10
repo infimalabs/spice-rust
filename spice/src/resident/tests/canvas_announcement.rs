@@ -51,6 +51,10 @@ pub(super) fn seed_lane_in_lineage(
 ) {
     let current = current_residency(bus, epoch).expect("current residency");
     let mut head = current.body().clone();
+    head.topology_revision = head
+        .topology_revision
+        .checked_add(1)
+        .expect("fixture topology revision advances");
     head.lanes.push(wire::LaneResidency {
         lane,
         lineage_id,
@@ -766,6 +770,7 @@ fn seat_ingestion_residency(bus: &Bus, lane: CanonicalUuid, epoch: CanonicalUuid
     write.residency_head(seated, move |_| wire::ResidencyHead {
         epoch,
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes: vec![wire::LaneResidency {
             lane,
             lineage_id: lane,

@@ -22,6 +22,17 @@ use crate::state::{BrowserState, ChainWalk};
 
 const EVENT_LIMIT: usize = 32;
 
+/// Whether a topology mutation response leaves Canvas owing an authoritative read.
+///
+/// Successful topology replies already carry the new table. A refusal or
+/// fault carries no replacement table, so the browser must re-pull rather
+/// than continue rendering the revision the rejected gesture observed.
+#[cfg(any(target_arch = "wasm32", test))]
+#[must_use]
+pub(crate) const fn topology_mutation_requires_refresh<T>(outcome: &Outcome<T>) -> bool {
+    !matches!(outcome, Outcome::Reply(_))
+}
+
 /// One fact envelope projected to fields that are safe and useful to render.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FactRow {
@@ -117,6 +128,8 @@ pub struct LaneView {
     pub epoch: CanonicalUuid,
     /// Current resident state.
     pub state: wire::ResidentState,
+    /// Monotonic authority for these exact team rows and policies.
+    pub topology_revision: u64,
     /// Safe current lane rows.
     pub lanes: Vec<LaneRow>,
 }
@@ -285,6 +298,7 @@ impl From<&LaneAnswer> for LaneView {
         Self {
             epoch: answer.epoch,
             state: answer.state,
+            topology_revision: answer.topology_revision,
             lanes: lineages,
         }
     }
@@ -1297,4 +1311,27 @@ pub fn stale_reads(admitted: &Admitted<StreamFrame>) -> Stale {
         _ => {}
     }
     stale
+}
+
+#[cfg(test)]
+mod topology_tests {
+    use super::*;
+
+    #[test]
+    fn a_stale_topology_refusal_requires_an_authoritative_refresh() {
+        let stale = Outcome::<()>::Refusal(wire::Refusal {
+            reason: "lane::topology-moved".to_owned(),
+            witness: Some("topology_revision".to_owned()),
+            expected: Some("7".to_owned()),
+            observed: Some("8".to_owned()),
+            remedy: "read the lane table".to_owned(),
+        });
+        assert!(topology_mutation_requires_refresh(&stale));
+
+        let current = Outcome::Reply(wire::Reply {
+            position: wire::ReplyPosition::Direct {},
+            body: (),
+        });
+        assert!(!topology_mutation_requires_refresh(&current));
+    }
 }

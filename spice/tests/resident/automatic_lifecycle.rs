@@ -55,6 +55,7 @@ fn configure_lineage(
     life: wire::intent::LineageLife,
 ) {
     let discovery = fixture.discovery();
+    let topology_revision = durable_head(fixture).topology_revision;
     let (mut socket, accepted) = authenticate(&discovery, discovery.capability);
     assert_eq!(accepted.actor, Actor::Operator);
     let id = match life {
@@ -69,6 +70,7 @@ fn configure_lineage(
         kind: wire::CommandKind::LineageConfigure,
         expected: Vec::new(),
         body: wire::intent::LineageConfigure {
+            topology_revision,
             lineage_id: lineage,
             member: None,
             life,

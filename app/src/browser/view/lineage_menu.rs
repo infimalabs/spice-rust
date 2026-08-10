@@ -122,7 +122,13 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
                     <p class="canvas-menu-empty">{"No open teams"}</p>
                 } else {
                     {for grouped_lineages.into_iter().map(|lineage| {
-                        render_lineage(lineage, waiting, sender, can_configure)
+                        render_lineage(
+                            lineage,
+                            waiting,
+                            sender,
+                            can_configure,
+                            lanes.topology_revision,
+                        )
                     })}
                 }
             </section>
@@ -131,6 +137,7 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
                 life_by_member.clone(),
                 sender,
                 can_configure,
+                lanes.topology_revision,
             )}
             {render_solo_members_drop(
                 &solo_members,
@@ -139,6 +146,7 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
                 life_by_member,
                 sender,
                 can_configure,
+                lanes.topology_revision,
             )}
         </div>
     }
@@ -156,6 +164,7 @@ fn render_lineage(
     waiting: &[wire::intent::LaneInbox],
     sender: &SenderHandle,
     can_configure: bool,
+    topology_revision: u64,
 ) -> Html {
     let target = lineage.lane;
     let life = lineage.subscription;
@@ -165,7 +174,14 @@ fn render_lineage(
         .map(|member| member.lane)
         .collect::<Vec<_>>();
     let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_lineage(sender.clone(), target, life, current, can_configure);
+    let ondrop = drop_into_lineage(
+        sender.clone(),
+        target,
+        life,
+        current,
+        can_configure,
+        topology_revision,
+    );
     html! {
         <article
             class="canvas-team"
@@ -236,9 +252,16 @@ fn render_new_lineage_drop(
     life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
     sender: &SenderHandle,
     can_configure: bool,
+    topology_revision: u64,
 ) -> Html {
     let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_new_lineage(sender.clone(), target, life_by_member, can_configure);
+    let ondrop = drop_into_new_lineage(
+        sender.clone(),
+        target,
+        life_by_member,
+        can_configure,
+        topology_revision,
+    );
     html! {
         <section class="canvas-menu-section canvas-team-drop" {ondragover} {ondrop}>
             <header><h2>{"New Team"}</h2><span>{"drop agent to create"}</span></header>
@@ -254,9 +277,16 @@ fn render_solo_members_drop(
     life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
     sender: &SenderHandle,
     can_configure: bool,
+    topology_revision: u64,
 ) -> Html {
     let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_solo_lineage(sender.clone(), current, life_by_member, can_configure);
+    let ondrop = drop_into_solo_lineage(
+        sender.clone(),
+        current,
+        life_by_member,
+        can_configure,
+        topology_revision,
+    );
     html! {
         <section class="canvas-menu-section canvas-unteamed" {ondragover} {ondrop}>
             <header>
@@ -317,6 +347,7 @@ fn drop_into_lineage(
     life: LineageLife,
     current: Vec<CanonicalUuid>,
     enabled: bool,
+    topology_revision: u64,
 ) -> Callback<DragEvent> {
     Callback::from(move |event: DragEvent| {
         event.prevent_default();
@@ -324,7 +355,7 @@ fn drop_into_lineage(
             return;
         };
         if enabled && !current.contains(&member) {
-            send_member(&sender, target, member, life);
+            send_member(&sender, target, member, life, topology_revision);
         }
     })
 }
@@ -334,6 +365,7 @@ fn drop_into_new_lineage(
     target: CanonicalUuid,
     life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
     enabled: bool,
+    topology_revision: u64,
 ) -> Callback<DragEvent> {
     Callback::from(move |event: DragEvent| {
         event.prevent_default();
@@ -341,7 +373,7 @@ fn drop_into_new_lineage(
             return;
         };
         if let Some(life) = enabled.then(|| life_by_member.get(&member)).flatten() {
-            send_member(&sender, target, member, *life);
+            send_member(&sender, target, member, *life, topology_revision);
         }
     })
 }
@@ -351,6 +383,7 @@ fn drop_into_solo_lineage(
     current: Vec<CanonicalUuid>,
     life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
     enabled: bool,
+    topology_revision: u64,
 ) -> Callback<DragEvent> {
     Callback::from(move |event: DragEvent| {
         event.prevent_default();
@@ -361,7 +394,7 @@ fn drop_into_solo_lineage(
             && !current.contains(&member)
             && let Some(life) = life_by_member.get(&member)
         {
-            send_member(&sender, member, member, *life);
+            send_member(&sender, member, member, *life, topology_revision);
         }
     })
 }
@@ -371,10 +404,12 @@ fn send_member(
     lineage: CanonicalUuid,
     member: CanonicalUuid,
     life: LineageLife,
+    topology_revision: u64,
 ) {
     send_action(
         sender,
         ClientAction::ConfigureLineage {
+            topology_revision,
             lineage,
             member: Some(member),
             life,

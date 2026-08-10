@@ -527,12 +527,14 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
             ResidencyHead {
                 epoch: first_uuid,
                 state: ResidentState::Seated,
+                topology_revision: 2,
                 lanes: vec![occupied],
                 subscriptions: vec![drive],
             },
             ResidencyHead {
                 epoch: second_uuid,
                 state: ResidentState::Dark,
+                topology_revision: 7,
                 lanes: vec![empty],
                 subscriptions: vec![steer],
             },

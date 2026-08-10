@@ -87,6 +87,7 @@ pub(super) fn import(
     };
     let answer = LaneChangeAnswer {
         lane: request.lane,
+        topology_revision: context.observed.body().topology_revision,
         from: context.row.worktree.clone(),
         to: context.worktree.clone(),
         git: Some(proven.git.clone().into_boxed_str()),
@@ -544,7 +545,7 @@ fn committed_reply(
             first: seq(committed.first()),
             last: seq(committed.last()),
         }),
-        body: CommandAnswer::LaneChange(answer),
+        body: CommandAnswer::LaneChange(Box::new(answer)),
     })
 }
 
