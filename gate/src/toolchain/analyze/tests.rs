@@ -205,9 +205,8 @@ fn repeated_canvas_analyses_reuse_one_repository_source_and_build_root() {
     let bounds = canvas_exit_bounds();
 
     let first = fixture.analyze(&first_cargo, &trunk, &bounds);
-    let cached = fixture
-        .output
-        .join("target/xtask-app-source/app/src/lib.rs");
+    let source = fixture.output.join("target/xtask-app-source");
+    let cached = source.join("app/src/lib.rs");
     let first_modified = fs::metadata(&cached)
         .expect("first analysis caches its selected source")
         .modified()
@@ -216,6 +215,10 @@ fn repeated_canvas_analyses_reuse_one_repository_source_and_build_root() {
 
     assert_eq!(first.outcome, ArmOutcome::Passed, "{}", first.reason);
     assert_eq!(second.outcome, ArmOutcome::Passed, "{}", second.reason);
+    assert!(
+        source.is_dir(),
+        "the reusable source survives both analyses"
+    );
     assert_eq!(
         fs::metadata(&cached)
             .expect("second analysis retains its selected source")

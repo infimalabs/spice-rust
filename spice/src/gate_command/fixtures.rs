@@ -144,6 +144,8 @@ fn bounded_parser_failure_crosses_the_ordinary_production_mapper() {
 
 #[test]
 fn confirmed_mutation_results_cross_the_production_mapper() {
+    // Real cargo-mutants records carry a source file; keep mapper fixtures at
+    // that production boundary instead of relying on a legacy partial shape.
     let killed = MutationFixture::new(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
     let killed_report = killed.report(Some(rate(1, 1)));
     assert!(matches!(

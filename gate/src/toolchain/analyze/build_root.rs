@@ -169,7 +169,7 @@ impl Drop for CanvasSource<'_> {
         }
         if let Err(error) = make_cache_writable(&self.root) {
             self.removal.set(Some(format!(
-                "{CANVAS_SOURCE_LABEL} {} could not be made removable after analysis: {error}",
+                "{CANVAS_SOURCE_LABEL} {} could not be made writable after analysis: {error}",
                 self.root.display()
             )));
         }

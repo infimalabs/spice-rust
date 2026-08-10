@@ -61,7 +61,10 @@ pub enum SpiceVariable {
 }
 
 impl SpiceVariable {
-    /// The complete vocabulary in stable report order.
+    /// The complete vocabulary in stable serialized-name order.
+    ///
+    /// Keeping this order aligned with both checked configuration ledgers makes
+    /// additions produce one local diff instead of a merge-only reorder.
     pub const ALL: &[Self] = &[
         Self::ClaudeSession,
         Self::CodexThread,

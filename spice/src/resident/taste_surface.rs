@@ -391,6 +391,7 @@ fn candidates(
             role: prose.role,
             text: authored,
             phase: prose.phase.clone(),
+            // Taste derivation rewrites text, not the durable media record.
             media: prose.media.clone(),
             locus: prose.locus,
         });

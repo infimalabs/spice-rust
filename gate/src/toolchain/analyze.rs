@@ -805,6 +805,8 @@ fn canvas_analysis(
             format!("{} declares no {TRUNK} program", declaration.id.as_str()),
         );
     };
+    // The mirror must outlive both compiler invocations; only the generated
+    // trunk distribution belongs to the transient per-run workspace below.
     let source = match CanvasSource::create(root, repository, removal) {
         Ok(source) => source,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),

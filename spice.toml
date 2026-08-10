@@ -115,6 +115,7 @@ pre_commit = [
 # name, and one written without being counted here is one nobody can find
 # again. Doctor reports only the names Spice owns, so these thirteen are the
 # difference wire pins between this manifest and SpiceVariable.
+# Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",

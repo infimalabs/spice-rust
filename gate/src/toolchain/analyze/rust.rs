@@ -16,7 +16,8 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CompileInvocation, HOME_DIRECTORY, run_compile_analysis_with_wait, tool_search_path,
+    CompileInvocation, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER,
+    run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
 use crate::toolchain::{ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
@@ -461,8 +462,8 @@ fn rust_environment(cargo: &str, workspace: &RustWorkspace) -> Result<Environmen
             CARGO_BUILD_DIRECTORY,
             workspace.cargo_build.as_os_str().to_owned(),
         ),
-        ("RUSTC_WORKSPACE_WRAPPER", std::ffi::OsString::new()),
-        ("RUSTC_WRAPPER", std::ffi::OsString::new()),
+        (RUSTC_WRAPPER, std::ffi::OsString::new()),
+        (RUSTC_WORKSPACE_WRAPPER, std::ffi::OsString::new()),
     ])
     .map_err(|error| format!("native typecheck tool environment was refused: {error}"))
 }
