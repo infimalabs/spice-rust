@@ -85,9 +85,9 @@ pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, FoldReport, FoldState, JournalBackup,
     JournalReindex, JournalReport, JournalRestore, JournalVerification, Outcome, ProofEvidence,
-    Refusal, ReleaseNotes, ReleaseNotesEntry, ReleasePlan, ReleasePlanObservations,
-    ReleaseRegistryEvidence, Reply, ReplyPosition, Response, RestoreVerification, SeqRange,
-    SeqRangeError, ThreadReport, Version,
+    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
+    ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, Response,
+    RestoreVerification, SeqRange, SeqRangeError, SpiceCommand, ThreadReport, Version,
 };
 pub use stream::{
     AgentActivityKind, AgentMessage, MessageLocus, StreamAdmissionError, StreamCursor, StreamFact,

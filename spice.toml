@@ -59,8 +59,7 @@ project_max_depth = 3
 enabled = true
 
 [policy]
-# The repository declares its complete pre-commit command below; do not run the
-# installed predecessor's built-in Rust gate a second time around it.
+# The installed predecessor owns the hook but not a second Python battery.
 pre_commit_builtins = false
 
 # The native Git publisher runs this cheap repository load over every
@@ -139,7 +138,6 @@ env_names = [
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
-    "SPICE_PROOF",
     "SPICE_NATIVE_SHELL",
     "TMPDIR",
 ]

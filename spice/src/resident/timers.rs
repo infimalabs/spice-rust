@@ -982,6 +982,7 @@ mod tests {
         write.residency_head(seated, move |_| ResidencyHead {
             epoch,
             state: ResidentState::Seated,
+            topology_revision: 1,
             lanes: vec![LaneResidency {
                 lane,
                 lineage_id: lane,

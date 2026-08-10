@@ -218,6 +218,7 @@ fn board_response(
             body: wire::ResidencyHead {
                 epoch: uuid(EPOCH),
                 state: wire::ResidentState::Seated,
+                topology_revision: 0,
                 lanes: Vec::new(),
                 subscriptions: Vec::new(),
             },
@@ -297,6 +298,7 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
             body: wire::intent::LaneAnswer {
                 epoch: uuid(EPOCH),
                 state: wire::ResidentState::Seated,
+                topology_revision: 9,
                 lanes,
                 subscriptions,
             },
@@ -990,13 +992,10 @@ fn an_effort_refusal_replaces_the_held_fold_rather_than_standing_beside_it() {
 
     runtime.apply_effort(&effort_response(
         &session,
-        Outcome::Refusal(Refusal {
-            reason: "effort::selection-failed".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "name a task that exists".to_owned(),
-        }),
+        Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new("effort::selection-failed", None, None, None)
+                .with_detail("name a task that exists"),
+        )),
     ));
     // The counters are gone rather than dimmed: a refusal that left the last
     // good total readable would show a number no read behind it produced.

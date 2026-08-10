@@ -204,7 +204,7 @@ impl Runtime {
                             "lifecycle refused trigger={} lane={} reason={} retry={}",
                             trigger.as_str(),
                             lane,
-                            refusal.reason,
+                            refusal.reason(),
                             deadline
                         );
                         Some(WakeDeadline {
@@ -469,17 +469,18 @@ fn unit_outcome(outcome: Outcome<wire::intent::CommandAnswer>) -> Outcome<()> {
     }
 }
 
+const RETRYABLE_START_REFUSALS: [&str; 4] = [
+    "lifecycle::wake-capacity-moved",
+    "lifecycle::snapshot-moved",
+    "lifecycle::held-claim-head-moved",
+    "lifecycle::held-claim-lease-moved",
+];
+
 fn pending_start_failure_is_terminal(failure: &Outcome<()>) -> bool {
     matches!(
         failure,
         Outcome::Refusal(refusal)
-            if !matches!(
-                refusal.reason.as_str(),
-                "lifecycle::wake-capacity-moved"
-                    | "lifecycle::snapshot-moved"
-                    | "lifecycle::held-claim-head-moved"
-                    | "lifecycle::held-claim-lease-moved"
-            )
+            if !RETRYABLE_START_REFUSALS.contains(&refusal.reason())
     )
 }
 
@@ -908,13 +909,10 @@ mod tests {
     #[test]
     fn pending_parks_permanent_start_refusals_but_retries_moved_authority() {
         let failure = |reason: &str| {
-            Outcome::Refusal(wire::Refusal {
-                reason: reason.to_owned(),
-                witness: None,
-                expected: None,
-                observed: None,
-                remedy: "fixture remedy".to_owned(),
-            })
+            Outcome::Refusal(wire::Refusal::bare(
+                wire::RefusalDiagnostic::new(reason.to_owned(), None, None, None)
+                    .with_detail("fixture diagnostic"),
+            ))
         };
         assert!(pending_start_failure_is_terminal(&failure(
             "lane::session-authority-missing"

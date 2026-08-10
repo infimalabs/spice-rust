@@ -87,6 +87,7 @@ pub(super) fn import(
     };
     let answer = LaneChangeAnswer {
         lane: request.lane,
+        topology_revision: context.observed.body().topology_revision,
         from: context.row.worktree.clone(),
         to: context.worktree.clone(),
         git: Some(proven.git.clone().into_boxed_str()),
@@ -544,7 +545,7 @@ fn committed_reply(
             first: seq(committed.first()),
             last: seq(committed.last()),
         }),
-        body: CommandAnswer::LaneChange(answer),
+        body: CommandAnswer::LaneChange(Box::new(answer)),
     })
 }
 
@@ -552,30 +553,24 @@ fn lane_refusal_unit(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: reason.into(),
-        witness: Some("lane".into()),
-        expected,
-        observed,
-        remedy: remedy.into(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(reason, Some("lane".into()), expected, observed)
+            .with_detail(detail),
+    ))
 }
 
 fn lane_refusal(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.into(),
-        witness: Some("lane".into()),
-        expected,
-        observed,
-        remedy: remedy.into(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(reason, Some("lane".into()), expected, observed)
+            .with_detail(detail),
+    ))
 }
 
 #[cfg(test)]

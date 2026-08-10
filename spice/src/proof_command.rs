@@ -126,15 +126,17 @@ impl Failure {
         reason: &'static str,
         expected: impl Into<String>,
         observed: impl Into<String>,
-        remedy: impl Into<String>,
+        detail: impl Into<String>,
     ) -> Self {
-        Self::Refusal(Refusal {
-            reason: reason.to_owned(),
-            witness: None,
-            expected: Some(expected.into()),
-            observed: Some(observed.into()),
-            remedy: remedy.into(),
-        })
+        Self::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                reason.to_owned(),
+                None,
+                Some(expected.into()),
+                Some(observed.into()),
+            )
+            .with_detail(detail),
+        ))
     }
 
     fn fault(class: FaultClass, reason: &'static str, detail: impl Into<String>) -> Self {
@@ -377,34 +379,31 @@ impl Failure {
             !failing.is_empty(),
             "a refused battery is refused by a member, so at least one must have failed",
         );
-        Self::Refusal(Refusal {
-            reason: "proof::battery-refused".to_owned(),
-            witness: Some(replay.replay_digest().to_string()),
-            expected: Some("every generated proof battery member to complete cleanly".to_owned()),
-            observed: Some(
-                failing
-                    .iter()
-                    .map(|check| {
-                        format!("{}={}", check.kind().as_str(), standing(check.standing()))
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
-            // The members are named here and not left to `observed` alone,
-            // because the text rendering prints the reason and the remedy and
-            // drops every other field. A remedy that says to repair the named
-            // failures has to be where the names are, or the only form most
-            // callers read sends them back to rerun the battery to learn what
-            // it already knew.
-            remedy: format!(
-                "repair {} and rerun the proof leaf",
-                failing
-                    .iter()
-                    .map(|check| check.kind().as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        })
+        let detail = format!(
+            "repair {} and rerun the proof leaf",
+            failing
+                .iter()
+                .map(|check| check.kind().as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        Self::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "proof::battery-refused",
+                Some(replay.replay_digest().to_string()),
+                Some("every generated proof battery member to complete cleanly".to_owned()),
+                Some(
+                    failing
+                        .iter()
+                        .map(|check| {
+                            format!("{}={}", check.kind().as_str(), standing(check.standing()))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+            )
+            .with_detail(detail),
+        ))
     }
 
     fn publication(error: EvidencePublishError) -> Self {
@@ -583,7 +582,7 @@ mod tests {
         let Outcome::Refusal(missing) = missing else {
             panic!("missing payload must refuse")
         };
-        assert_eq!(missing.reason, "proof::payload-refused");
+        assert_eq!(missing.reason(), "proof::payload-refused");
 
         let unreadable = Failure::seal(SealError::ReadPayload(InputError::Unreadable {
             input: Input::Payload,
@@ -619,7 +618,7 @@ mod tests {
         let Outcome::Refusal(refused) = refused else {
             panic!("publication shape must refuse")
         };
-        assert_eq!(refused.reason, "proof::publication-refused");
+        assert_eq!(refused.reason(), "proof::publication-refused");
 
         let failed = Failure::seal(SealError::Publish(EvidencePublishError::Publish(
             atomic::Error::Io {

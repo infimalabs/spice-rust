@@ -64,13 +64,12 @@ impl<'a> Surface<'a> {
         if let Some(outcome) = self.dispatch_controls(command) {
             return outcome;
         }
-        Outcome::Refusal(Refusal {
-            reason: PlaceholderReason::HandlerNotLanded.to_reason(),
-            witness: None,
-            expected: Some(command.kind().to_string()),
-            observed: None,
-            remedy: "land the registered resident handler before exposing this CLI leaf".to_owned(),
-        })
+        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            PlaceholderReason::HandlerNotLanded.to_reason(),
+            None,
+            Some(command.kind().to_string()),
+            None,
+        )))
     }
 
     fn dispatch_lane(

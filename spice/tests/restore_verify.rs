@@ -406,7 +406,7 @@ fn assert_refusal(output: &Output, reason: &str) {
     else {
         panic!("expected typed refusal: {:?}", output.stderr);
     };
-    assert_eq!(refusal.reason, reason);
+    assert_eq!(refusal.reason(), reason);
     assert!(output.stdout.is_empty(), "refusal spoke on stdout");
 }
 

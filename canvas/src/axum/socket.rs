@@ -691,13 +691,14 @@ async fn route_stream(
     let result = match &request {
         wire::StreamRequest::Subscribe { .. } => {
             if subscription.is_some() {
-                Err(crate::stream::Failure::Refusal(wire::Refusal {
-                    reason: "stream::already-subscribed".to_owned(),
-                    witness: Some("session".to_owned()),
-                    expected: Some("one subscription".to_owned()),
-                    observed: Some("a second subscription".to_owned()),
-                    remedy: "open another authenticated socket for another subscription".to_owned(),
-                }))
+                Err(crate::stream::Failure::Refusal(wire::Refusal::bare(
+                    wire::RefusalDiagnostic::new(
+                        "stream::already-subscribed",
+                        Some("session".to_owned()),
+                        Some("one subscription".to_owned()),
+                        Some("a second subscription".to_owned()),
+                    ),
+                )))
             } else {
                 match source.begin(accepted, &request) {
                     Ok((opened, frames)) => {
@@ -719,13 +720,14 @@ async fn route_stream(
         }
         wire::StreamRequest::Continue { .. } => match subscription.as_mut() {
             Some(subscription) => subscription.continue_page(&request),
-            None => Err(crate::stream::Failure::Refusal(wire::Refusal {
-                reason: "stream::subscription-required".to_owned(),
-                witness: Some("session".to_owned()),
-                expected: Some("an active subscription".to_owned()),
-                observed: Some("no subscription".to_owned()),
-                remedy: "subscribe before continuing a packed view".to_owned(),
-            })),
+            None => Err(crate::stream::Failure::Refusal(wire::Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "stream::subscription-required",
+                    Some("session".to_owned()),
+                    Some("an active subscription".to_owned()),
+                    Some("no subscription".to_owned()),
+                ),
+            ))),
         },
         wire::StreamRequest::Thread { .. } => source.thread(accepted, &request),
         // Admitted like every other request, so a probe from a replaced
@@ -992,13 +994,12 @@ pub(super) fn is_dark(command: &wire::AdmittedCommand) -> bool {
 }
 
 fn closing_refusal() -> wire::Outcome<wire::intent::CommandAnswer> {
-    wire::Outcome::Refusal(wire::Refusal {
-        reason: "resident::not-admitting".to_owned(),
-        witness: Some("resident-state".to_owned()),
-        expected: Some("seated".to_owned()),
-        observed: Some("quiescing".to_owned()),
-        remedy: "wait for shutdown to finish and reconnect to the next resident epoch".to_owned(),
-    })
+    wire::Outcome::Refusal(wire::Refusal::bare(wire::RefusalDiagnostic::new(
+        "resident::not-admitting",
+        Some("resident-state".to_owned()),
+        Some("seated".to_owned()),
+        Some("quiescing".to_owned()),
+    )))
 }
 
 async fn send_encoded<T: serde::Serialize>(socket: &mut WebSocket, value: &T) -> bool {

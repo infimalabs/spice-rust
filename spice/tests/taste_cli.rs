@@ -185,8 +185,8 @@ fn taste_reporting_and_review_plans_survive_restart() {
     else {
         panic!("ungrounded taste filing did not refuse")
     };
-    assert_eq!(refusal.reason, "task::origin-required");
-    assert!(refusal.remedy.contains("--origin"));
+    assert_eq!(refusal.reason(), "task::origin-required");
+    assert!(refusal.explanation().contains("--origin"));
     assert_eq!(fixture.cursor(), before_ungrounded);
 
     let added = text_reply::<TaskAnswer>(&fixture.invoke(&[
@@ -214,7 +214,7 @@ fn taste_reporting_and_review_plans_survive_restart() {
     else {
         panic!("unknown taste did not refuse")
     };
-    assert_eq!(refusal.reason, "taste::unknown");
+    assert_eq!(refusal.reason(), "taste::unknown");
     assert_eq!(fixture.cursor(), before_unknown);
 
     let causal: wire::Origin = CURATION_ORIGIN.parse().expect("curation origin");
@@ -391,8 +391,13 @@ fn a_reminder_naming_an_unseated_lane_refuses_rather_than_disappearing() {
     else {
         panic!("an unseated reminder did not refuse")
     };
-    assert_eq!(refusal.reason, "taste::lane-unseated");
-    assert_eq!(refusal.observed, Some(uuid(0x20).to_string()));
+    assert_eq!(refusal.reason(), "taste::lane-unseated");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        Some(uuid(0x20).to_string().as_str())
+    );
     // The whole report is withheld: an unjoinable fire cannot be dropped from a
     // row that still renders as if it were the current answer.
     assert!(output.stdout.is_empty(), "{}", spoken(&output));

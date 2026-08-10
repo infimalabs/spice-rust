@@ -822,19 +822,21 @@ struct ResolvedEntry {
     value: Value,
     root: SourceRef,
     sources: BTreeMap<Vec<String>, SourceRef>,
-    /// Whether a predecessor document named this identity at all.
-    ///
-    /// Every identity starts from an implicit entry, so the value alone cannot
-    /// say whether a document asked for this gate or the migration supplied it.
+    /// Whether a document named this identity rather than inheriting the
+    /// implicit compiled entry.
     named: bool,
+}
+
+fn builtin_root(document: PredecessorDocument<'_>) -> SourceRef {
+    SourceRef::new(
+        document,
+        vec!["policy".to_owned(), "pre_commit_builtins".to_owned()],
+    )
 }
 
 impl ResolvedEntry {
     fn implicit(system: PredecessorDocument<'_>) -> Self {
-        let root = SourceRef::new(
-            system,
-            vec!["policy".to_owned(), "pre_commit_builtins".to_owned()],
-        );
+        let root = builtin_root(system);
         let mut sources = BTreeMap::new();
         sources.insert(Vec::new(), root.clone());
         Self {
@@ -987,7 +989,6 @@ pub fn migrate_predecessor(inputs: PredecessorInputs<'_>) -> Result<GateManifest
         .map(|id| (id, ResolvedEntry::implicit(inputs.system)))
         .collect::<BTreeMap<_, _>>();
     let mut commands = CommandRegistry::default();
-
     for document in inputs.layers() {
         let root = parse_document(document)?;
         if let Some(table) = root.get("commands").and_then(Value::as_table) {
@@ -1006,18 +1007,21 @@ pub fn migrate_predecessor(inputs: PredecessorInputs<'_>) -> Result<GateManifest
         let Some(raw_registry) = policy.get("pre_commit_builtins") else {
             continue;
         };
-        let registry = raw_registry.as_table().ok_or_else(|| {
-            SourceRef::new(
-                document,
-                vec!["policy".to_owned(), "pre_commit_builtins".to_owned()],
-            )
-            .error(
-                MigrationErrorKind::Malformed,
-                "pre_commit_builtins must be a table",
-                "restore [policy.pre_commit_builtins] as a TOML table",
-            )
-        })?;
-        apply_builtin_layer(&mut entries, registry, document)?;
+        let source = builtin_root(document);
+        match raw_registry {
+            Value::Boolean(false) => entries
+                .iter_mut()
+                .filter(|(id, _)| id.predecessor_declared())
+                .for_each(|(_, entry)| entry.merge(raw_registry, source.clone())),
+            Value::Table(registry) => apply_builtin_layer(&mut entries, registry, document)?,
+            _ => {
+                return Err(source.error(
+                    MigrationErrorKind::Malformed,
+                    "pre_commit_builtins must be false or a table",
+                    "set pre_commit_builtins = false or restore its typed table",
+                ));
+            }
+        }
     }
 
     let gates = GateId::ALL
@@ -1031,11 +1035,7 @@ pub fn migrate_predecessor(inputs: PredecessorInputs<'_>) -> Result<GateManifest
         })
         .collect::<Result<Vec<_>, _>>()?;
     GateManifest::new(GATE_MANIFEST_VERSION, gates).map_err(|error| {
-        SourceRef::new(
-            inputs.system,
-            vec!["policy".to_owned(), "pre_commit_builtins".to_owned()],
-        )
-        .error(
+        builtin_root(inputs.system).error(
             MigrationErrorKind::Malformed,
             error.to_string(),
             "restore the complete predecessor builtin registry",
