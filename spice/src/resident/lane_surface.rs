@@ -270,14 +270,28 @@ pub(super) fn seat(
     let proposal = match proposal {
         Ok(proposal) => proposal,
         Err(outcome) => {
-            compensate_seat(paths, seats, runtime, request.lane, prepared.capability);
+            compensate_seat(
+                paths,
+                seats,
+                runtime,
+                &request.worktree,
+                request.lane,
+                prepared.capability,
+            );
             return typed_outcome(outcome);
         }
     };
     match commit(bus, proposal) {
         Ok(committed) => committed_lane_reply(committed, answer),
         Err(outcome) => {
-            compensate_seat(paths, seats, runtime, request.lane, prepared.capability);
+            compensate_seat(
+                paths,
+                seats,
+                runtime,
+                &request.worktree,
+                request.lane,
+                prepared.capability,
+            );
             typed_outcome(outcome)
         }
     }
@@ -543,9 +557,13 @@ fn prepare_seat(
         .map_err(|error| {
             typed_environment_fault("lane::capability-unavailable", &error.to_string())
         })?;
-    if let Err(outcome) =
-        super::steering::publish_lane_surface(paths, runtime.discovery, request.lane, capability)
-    {
+    if let Err(outcome) = super::steering::publish_lane_surface(
+        paths,
+        runtime.discovery,
+        &request.worktree,
+        request.lane,
+        capability,
+    ) {
         runtime.capabilities.remove(capability, &actor);
         return Err(typed_outcome(outcome));
     }
@@ -563,7 +581,7 @@ fn prepare_seat(
         Arc::clone(&runtime.capture),
     )
     .map_err(|outcome| {
-        remove_seat_surface(paths, runtime, request.lane, capability);
+        remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
         typed_outcome(outcome)
     })?;
     let git = launch.git;
@@ -572,12 +590,12 @@ fn prepare_seat(
         .seat_observed(request.lane, occupant, launch.spec, launch.observation)
         .map(lane::occupant::Occupant::group)
         .map_err(|error| {
-            remove_seat_surface(paths, runtime, request.lane, capability);
+            remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
             typed_environment_fault("lane::launch-failed", &error.to_string())
         })?;
     let session = await_session(session_proof).map_err(|error| {
         stop_lane(seats, request.lane);
-        remove_seat_surface(paths, runtime, request.lane, capability);
+        remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
         error.outcome()
     })?;
     Ok(PreparedSeat {
@@ -595,21 +613,23 @@ fn compensate_seat(
     paths: &RuntimePaths,
     seats: &mut Seats,
     runtime: &Runtime<'_>,
+    worktree: &str,
     lane: CanonicalUuid,
     capability: CanonicalUuid,
 ) {
     stop_lane(seats, lane);
-    remove_seat_surface(paths, runtime, lane, capability);
+    remove_seat_surface(paths, runtime, worktree, lane, capability);
 }
 
 fn remove_seat_surface(
     paths: &RuntimePaths,
     runtime: &Runtime<'_>,
+    worktree: &str,
     lane: CanonicalUuid,
     capability: CanonicalUuid,
 ) {
     runtime.capabilities.remove(capability, &Actor::Lane(lane));
-    super::steering::remove_lane_surface(paths, lane);
+    super::steering::remove_lane_surface(paths, worktree, lane);
 }
 
 /// Drain or wake one current lane.

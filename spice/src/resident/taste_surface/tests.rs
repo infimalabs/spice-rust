@@ -1335,6 +1335,7 @@ fn paths(root: &std::path::Path) -> RuntimePaths {
         canvas: root.join("canvas"),
         lane_canvas: root.join("lanes"),
         inbox: root.join("inbox"),
+        legacy_inbox: root.join("inbox"),
         degraded: root.join("degraded"),
         tape: root.join("tape"),
         stage: root.join("stage"),
