@@ -1075,7 +1075,7 @@ mod tests {
         let tracked_path = root.join("spice-rust.toml");
         let local_path = parent.join("config.toml");
         fs::create_dir(&outside).unwrap();
-        let tracked = b"[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n".to_vec();
+        let tracked = b"[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n".to_vec();
         fs::write(&tracked_path, &tracked).unwrap();
         let witness = admit_parent(&local_path).unwrap();
         let documents = Documents {

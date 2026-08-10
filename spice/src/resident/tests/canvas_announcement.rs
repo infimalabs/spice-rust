@@ -483,7 +483,7 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
         listen::Locus::new(4, 120, 48),
         "Polling is not a completion event.",
     );
-    let bag = taste_bag("polling", "poll*", "Wait for a terminal event.");
+    let bag = taste_bag("polling", "polling", "Wait for a terminal event.");
     let mut seats = Seats::new();
     seats
         .seat(
@@ -521,7 +521,7 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
         listen::Locus::new(4, 180, 48),
         "A fallback path is masking the failure.",
     );
-    let judged_bag = taste_bag("fallbacks", "fallback*", "Keep one deterministic path.");
+    let judged_bag = taste_bag("fallbacks", "fallback", "Keep one deterministic path.");
     let mut judge = confirming_taste_judge();
     let judged_surfaces = CaptureSurfaces::new(&paths, &judged_bag, &steering, &publisher);
     accept_capture_record(
