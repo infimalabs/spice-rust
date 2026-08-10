@@ -2,6 +2,7 @@
 //! Transcript-backed disposition is the sole acknowledgment path.
 
 use std::fs;
+use std::path::Path;
 use std::sync::Mutex;
 
 use bus::Bus;
