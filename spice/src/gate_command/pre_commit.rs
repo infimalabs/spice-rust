@@ -536,16 +536,21 @@ fn worker_failure(failure: WorkerFailure) -> Outcome<BatteryReport> {
             "repair the named staged-source test selection or failing selected target",
         ))
     } else {
+        let observed = failure.detail;
         Outcome::Refusal(Refusal::bare(
             RefusalDiagnostic::new(
                 failure.reason,
                 None,
                 Some("one complete canonical Rust battery capture".to_owned()),
-                Some(failure.detail),
+                Some(observed.clone()),
             )
-            .with_detail(
-                "repair the named capture input; the Rust battery is the sole execution path",
-            ),
+            .with_detail(format!(
+                concat!(
+                    "{}\n",
+                    "repair the named capture input; the Rust battery is the sole execution path"
+                ),
+                observed,
+            )),
         ))
     }
 }

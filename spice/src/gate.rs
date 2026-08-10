@@ -285,10 +285,20 @@ fn verifier_compiler_failure(
     } else {
         "exited"
     };
+    verifier_compiler_failure_detail(stage, completion, run.code(), run.stdout(), run.stderr())
+}
+
+fn verifier_compiler_failure_detail(
+    stage: ::gate::VerifierCompilerStage,
+    completion: &str,
+    code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> String {
     format!(
-        "stage={stage:?}; completion={completion}; code={:?}; stderr={}",
-        run.code(),
-        bounded_compiler_output(run.stderr()),
+        "stage={stage:?}; completion={completion}; code={code:?}; stdout={}; stderr={}",
+        bounded_compiler_output(stdout),
+        bounded_compiler_output(stderr),
     )
 }
 
@@ -641,5 +651,24 @@ mod tests {
             .expect_err("a later budget cannot change the evidence environment");
         assert_eq!(error.reason(), "gate::verifier-budget-refused");
         assert_eq!(environment, exact);
+    }
+
+    #[test]
+    fn verifier_compiler_failure_names_both_bounded_output_streams() {
+        let detail = verifier_compiler_failure_detail(
+            ::gate::VerifierCompilerStage::NativeClippy,
+            "exited",
+            Some(101),
+            b"compiler stdout witness",
+            b"compiler stderr witness",
+        );
+
+        assert_eq!(
+            detail,
+            concat!(
+                "stage=NativeClippy; completion=exited; code=Some(101); ",
+                "stdout=compiler stdout witness; stderr=compiler stderr witness"
+            )
+        );
     }
 }
