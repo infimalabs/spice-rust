@@ -13,7 +13,8 @@ const DESCENDANT_PID: &str = "GATE_VERIFIER_DESCENDANT_PID";
 // Recursive test-harness startup is outside the containment behavior under
 // test. Leave it a deliberate margin while the fake compiler remains live
 // well beyond the supervisor deadline.
-const CONTAINMENT_RUNTIME: Duration = Duration::from_secs(5);
+const CONTAINMENT_STARTUP_ALLOWANCE: Duration = Duration::from_secs(5);
+const CONTAINMENT_RUNTIME: Duration = Duration::from_secs(2);
 
 fn source(label: &[u8]) -> Digest {
     Digest::compute(Domain::GateTree, label)
@@ -170,7 +171,7 @@ fn pre_commit_deadline_contains_verifier_compiler_descendants() {
         environment: Environment::new(environment).expect("capture fixture environment"),
         group: ProcessGroup::New,
         deadlines: Deadlines::new(
-            CONTAINMENT_RUNTIME,
+            CONTAINMENT_STARTUP_ALLOWANCE + CONTAINMENT_RUNTIME,
             Duration::from_millis(100),
             Duration::from_millis(100),
         )
