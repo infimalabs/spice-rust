@@ -34,8 +34,14 @@ Historical `taste::confirmed` and `taste::cleared` facts predate that law. They
 remain decodable and visible as curation evidence; current resident decisions
 use the provenance-complete `taste::judged` fact instead.
 
-The active set is the tracked `[taste]` configuration. `TASTES.md` owns the
-curation law and the rationale for the installed seeds; it does not form a
+The configured set is the tracked `[taste]` configuration. `enabled` defaults
+to true and `scopes` defaults to the universal selector. Each named row may set
+`enabled = false` while remaining visible and enumerable, and may carry a
+`scopes` selector using the same `paths`, `extensions`, `vendors`, `models`,
+and `phases` grammar as the rest of repository policy. Alternatives within one
+axis are ORed and constrained axes are ANDed; malformed selectors and missing
+runtime context refuse rather than widening applicability. `TASTES.md` owns
+the curation law and the rationale for the installed seeds; it does not form a
 second executable copy. Named entries exist only through operator commits.
 
 ## 2. Authoring rules
@@ -49,12 +55,10 @@ A taste must satisfy all of these rules:
 - Keep the word bag small. Include the words authors naturally use when
   proposing the disfavored shape. Avoid project nouns and overloaded words
   whose ordinary uses would dominate the fires.
-- Use exact words, phrases, or word globs. Matching is over
-  whitespace-normalized, case-insensitive tokens: a bare word matches one
-  whole token, a trailing `*` covers suffixes of that token, and an entry
-  containing a space is a phrase matched across normalized whitespace and
-  line breaks. No other glob position and no regex is admitted. Prefer
-  explicit forms when a stem would capture unrelated words.
+- Use exact alphabetic words or phrases and enumerate every intended variation
+  in the bag. Matching is over case-insensitive whole words, and an entry
+  containing whitespace is a phrase matched across consecutive words. Globs,
+  digits, punctuation, stemming, and substring matching are not admitted.
 - Make the message imperative, context-independent, and immediately
   actionable. The message must carry the whole preference because the trigger
   words are only candidate selectors.
@@ -81,8 +85,9 @@ silently.
 
 `spice install` writes the starter set into tracked `spice-rust.toml`; the binary
 ships no named tastes. From that point the operator owns the set outright.
-Adding, editing, renaming, or removing a taste requires an operator commit.
-Deletion is the only disablement.
+Adding, editing, renaming, disabling, re-enabling, or removing a taste requires
+an operator commit. `enabled = false` is the named reversible disablement;
+deletion removes the row and its history from the current configured record.
 
 `spice taste add` and `spice taste drop` prepare curation proposals from the
 evidence that motivated them. A proposal inherits the operator's active task,
@@ -118,15 +123,15 @@ Install seeds these entries:
 
 ```toml
 [taste.polling]
-words = ["delay*", "poll*", "sleep*", "slept"]
+words = ["delay", "delays", "delayed", "delaying", "poll", "polls", "polled", "polling", "sleep", "sleeps", "sleeping", "slept"]
 message = "Respond to the real event, signal, or completion notification through a blocking call, watcher, or callback, or restructure the flow so nothing remains to await."
 
 [taste.fallbacks]
-words = ["fall back", "fall backs", "fallback*", "falls back"]
+words = ["fall back", "fall backs", "fallback", "fallbacks", "falls back"]
 message = "Keep one deterministic path and let violated assumptions refuse immediately. Add a default or resolver order only when the contract names it."
 
 [taste.compatibility]
-words = ["compatib*"]
+words = ["compatible", "compatibility", "compatibilities", "compatibly"]
 message = "Keep one tested, visible current path. Migrate retained data forward once or refuse naming its owning release; never accumulate release-specific execution arms."
 
 [taste.shims]
@@ -134,10 +139,10 @@ words = ["shim", "shimmed", "shimming", "shims"]
 message = "Replace the old shape outright, delete it, and route every caller to the current interface."
 
 [taste.aliases]
-words = ["alias*"]
+words = ["alias", "aliases", "aliased", "aliasing"]
 message = "Rename in place, update every reference in one change, and leave exactly one name."
 
 [taste.legacy]
-words = ["legac*"]
+words = ["legacy", "legacies"]
 message = "Treat old implementations as evidence, never as executable arms. Migrate retained data forward once or refuse naming its owning release."
 ```

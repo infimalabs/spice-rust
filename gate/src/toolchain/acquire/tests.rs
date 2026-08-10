@@ -81,6 +81,7 @@ impl ProbeFixture {
             identity: None,
             verifier_environment: &[],
             verifier_evidence: &[],
+            verifier_evidence_required: false,
         };
         probe_with(&requirement(), &source, bounds, read_program)
     }

@@ -22,14 +22,12 @@
 //! unnamed, and that argument reads better beside itself than interleaved with
 //! arms that share none of it.
 
-use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsStr;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use sill::{Argv, Completion, Environment, spawn};
+use sill::Environment;
 
 use super::{
     ArmFinding, ArmOutcome, ArmTiming, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind,
@@ -43,14 +41,25 @@ use crate::measure::Bounds;
 use crate::structural::{StructuralPattern, scan_javascript_symbols};
 
 mod build_root;
+mod canvas;
+mod formatter;
+
+pub(in crate::toolchain) use build_root::{
+    CANVAS_SOURCE_LABEL, CANVAS_SOURCE_LOCK, canvas_source_root,
+};
+pub(super) use canvas::canvas_web_typecheck;
+#[cfg(test)]
+use formatter::differing_files;
+pub(super) use formatter::{formatter_edition, formatter_sources, formatters};
+use formatter::{relative_to, reported_roots};
+
 mod compile;
 mod csharp;
 mod rust;
 
-use build_root::{CanvasSource, CanvasWorkspace};
-
 pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
 pub(super) use csharp::csharp_unused;
+pub(in crate::toolchain) use rust::{make_cache_writable, synchronize_source};
 pub(super) use rust::{rust_analysis_workspace, rust_typecheck};
 
 /// What one compiled analysis observed about one arm.
@@ -267,7 +276,8 @@ const HOME_DIRECTORY: &str = concat!("HO", "ME");
 const CARGO_WASM_ARGUMENTS: &[&str] = &[
     "check",
     "--locked",
-    "--workspace",
+    "--package",
+    "app",
     "--target",
     "wasm32-unknown-unknown",
 ];
@@ -621,346 +631,6 @@ fn env_sources(root: &Path) -> Result<Vec<String>, String> {
 mod javascript;
 pub(in crate::toolchain) use javascript::*;
 
-/// The formatter invocation for one selected tree, or the refusal to build it.
-///
-/// Every selected path is named on the command line rather than left to a
-/// crate-root walk. rustfmt reaches a file by walking the `mod` declarations
-/// down from each crate root, and a file reached through `include!` is named by
-/// a macro instead -- `proof/src/container.rs` reaches `container/tests.rs` that
-/// way, one of seven such files left here -- so it belongs to no module path.
-/// `cargo fmt --all` opens the including file and never the included one,
-/// which leaves those files counted as selected, measured by every other arm,
-/// and never handed to the formatter at all. Naming the paths is the one way
-/// rustfmt will open them, and it is what makes the arm's own count and its
-/// coverage the same set.
-fn formatter_invocation(
-    root: &Path,
-    sources: &[String],
-    programs: &BTreeMap<&str, &str>,
-) -> Result<(Argv, Environment), Analysis> {
-    let Some(program) = programs.get(FORMATTER) else {
-        return Err(Analysis::terminal(
-            ArmOutcome::ToolUnavailable,
-            format!("formatters declares no {FORMATTER} to invoke the check through"),
-        ));
-    };
-    let edition = match formatter_edition(root) {
-        Ok(edition) => edition,
-        Err(reason) => return Err(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
-    };
-    let arguments: Vec<String> = [
-        "--edition".to_owned(),
-        edition,
-        "--check".to_owned(),
-        FILES_WITH_DIFF.to_owned(),
-    ]
-    .into_iter()
-    .chain(sources.iter().cloned())
-    .collect();
-    let Ok(argv) = Argv::new(program, arguments.iter().map(OsStr::new)) else {
-        return Err(Analysis::terminal(
-            ArmOutcome::ParseFailure,
-            format!("{FORMATTER} argument vector was refused"),
-        ));
-    };
-    match tool_environment("formatters", &[*program]) {
-        Ok(environment) => Ok((argv, environment)),
-        Err(reason) => Err(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
-    }
-}
-
-/// Run the declared formatter check over the complete selected tree.
-///
-/// One finding per differing file and no locus within it, because
-/// [`FindingDetail::Formatting`] records that the file is not canonical and no
-/// single region is more the cause than any other.
-pub(super) fn formatters(
-    declaration: ToolchainDeclaration,
-    root: &Path,
-    bounds: &Bounds,
-    programs: &BTreeMap<&str, &str>,
-) -> Analysis {
-    let sources = match formatter_sources(root) {
-        Ok(sources) => sources,
-        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
-    };
-    // A tree with nothing to format runs no formatter at all, rather than one
-    // named an empty file list: rustfmt reads stdin when it is named no path,
-    // and would sit on it until the bounds killed the arm.
-    if sources.is_empty() {
-        return Analysis::not_applicable(declaration);
-    }
-    let (argv, environment) = match formatter_invocation(root, &sources, programs) {
-        Ok(invocation) => invocation,
-        Err(analysis) => return analysis,
-    };
-    let mut spec = bounds.spec(argv, root);
-    spec.environment = environment;
-    let running = match spawn(spec) {
-        Ok(running) => running,
-        Err(error) => {
-            return Analysis::terminal(
-                ArmOutcome::ParseFailure,
-                format!("{FORMATTER} did not start: {error}"),
-            );
-        }
-    };
-    let outcome = match running.wait() {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            return Analysis::terminal(
-                ArmOutcome::ParseFailure,
-                format!("{FORMATTER} could not be waited on: {error}"),
-            );
-        }
-    };
-    let status = match outcome.completion() {
-        Completion::Exited(status) => status,
-        Completion::TimedOut(_) => {
-            return Analysis::terminal(
-                ArmOutcome::Timeout,
-                format!("{FORMATTER} outlived the bounds it was given"),
-            );
-        }
-        Completion::Cancelled(_) => {
-            return Analysis::terminal(
-                ArmOutcome::ParseFailure,
-                format!("{FORMATTER} was cancelled before it reported"),
-            );
-        }
-    };
-    let Some(stdout) = outcome.stdout() else {
-        return Analysis::terminal(
-            ArmOutcome::ParseFailure,
-            format!("{FORMATTER} captured no stdout to read"),
-        );
-    };
-    if stdout.truncated() || !stdout.complete() {
-        return Analysis::terminal(
-            ArmOutcome::ParseFailure,
-            format!("{FORMATTER} output was truncated before it could be read"),
-        );
-    }
-
-    let printed = String::from_utf8_lossy(stdout.bytes()).into_owned();
-    let findings = differing_files(root, &printed);
-    if findings.is_empty() && !status.success() {
-        let Some(code) = status.code() else {
-            return Analysis::terminal(
-                ArmOutcome::ParseFailure,
-                format!("{FORMATTER} was signalled without naming a differing file"),
-            );
-        };
-        return Analysis::refused(
-            format!("{FORMATTER} refused with {code} and named no differing file"),
-            code,
-        );
-    }
-    Analysis::scanned(declaration.id, sources.len(), findings)
-}
-
-/// Run the declared canvas checks in order and stop at the first non-clean one.
-///
-/// The analysis is run against a cell its workspace reports a failed removal
-/// into, and that report outranks whatever the analysis concluded. A workspace
-/// left on disk refuses every later canvas analysis of the same tree, so an arm
-/// that passed while leaking one would report a clean tree and then be unable to
-/// measure it again; the refusal here is the same refusal, delivered on the run
-/// that caused it instead of the next one.
-pub(super) fn canvas_web_typecheck(
-    declaration: ToolchainDeclaration,
-    root: &Path,
-    repository: &Path,
-    bounds: &Bounds,
-    programs: &BTreeMap<&str, &str>,
-) -> Analysis {
-    let removal = Cell::new(None);
-    let analysis = canvas_analysis(declaration, root, repository, bounds, programs, &removal);
-    match removal.take() {
-        Some(report) => Analysis::terminal(ArmOutcome::ParseFailure, report),
-        None => analysis,
-    }
-}
-
-fn canvas_analysis(
-    declaration: ToolchainDeclaration,
-    root: &Path,
-    repository: &Path,
-    bounds: &Bounds,
-    programs: &BTreeMap<&str, &str>,
-    removal: &Cell<Option<String>>,
-) -> Analysis {
-    if !root.join("Cargo.toml").is_file() || !root.join("app/index.html").is_file() {
-        return Analysis::not_applicable(declaration);
-    }
-    let Some(cargo) = programs.get(CARGO) else {
-        return Analysis::terminal(
-            ArmOutcome::ToolUnavailable,
-            format!("{} declares no {CARGO} program", declaration.id.as_str()),
-        );
-    };
-    let Some(trunk) = programs.get(TRUNK) else {
-        return Analysis::terminal(
-            ArmOutcome::ToolUnavailable,
-            format!("{} declares no {TRUNK} program", declaration.id.as_str()),
-        );
-    };
-    // The mirror must outlive both compiler invocations; only the generated
-    // trunk distribution belongs to the transient per-run workspace below.
-    let source = match CanvasSource::create(root, repository, removal) {
-        Ok(source) => source,
-        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
-    };
-    let workspace = match CanvasWorkspace::create(root, removal) {
-        Ok(workspace) => workspace,
-        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
-    };
-    let outputs = match CanvasOutputs::create(&workspace, root, repository) {
-        Ok(outputs) => outputs,
-        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
-    };
-    let environment = match canvas_environment(cargo, trunk, &outputs) {
-        Ok(environment) => environment,
-        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
-    };
-
-    let source = source.path();
-    let app = source.join("app");
-    let invocations = [
-        CompileInvocation {
-            name: "cargo wasm32 check",
-            program: cargo,
-            arguments: CARGO_WASM_ARGUMENTS,
-            cwd: source,
-        },
-        CompileInvocation {
-            name: "trunk canvas build",
-            program: trunk,
-            arguments: TRUNK_BUILD_ARGUMENTS,
-            cwd: app.as_path(),
-        },
-    ];
-    for invocation in invocations {
-        if let Err(failure) = run_compile_analysis(
-            declaration.id,
-            source,
-            invocation,
-            bounds,
-            &environment,
-            |code, message| FindingDetail::CanvasWebOutput { code, message },
-        ) {
-            return failure.analysis;
-        }
-    }
-    Analysis::terminal(
-        ArmOutcome::Passed,
-        format!(
-            "{} completed both declared canvas analyses",
-            declaration.id.as_str()
-        ),
-    )
-}
-
-fn canvas_environment(
-    cargo: &str,
-    trunk: &str,
-    outputs: &CanvasOutputs,
-) -> Result<Environment, String> {
-    let path = tool_search_path("canvas", &[cargo, trunk, "/usr/bin/cc", "/bin/sh"])?;
-    Environment::new([
-        ("PATH", path),
-        (HOME_DIRECTORY, COMPILED_HOME_DIRECTORY.into()),
-        (
-            CARGO_TARGET_DIRECTORY,
-            outputs.cargo_target.as_os_str().to_owned(),
-        ),
-        (
-            CARGO_BUILD_DIRECTORY,
-            outputs.cargo_build.as_os_str().to_owned(),
-        ),
-        (RUSTC_WRAPPER, std::ffi::OsString::new()),
-        (RUSTC_WORKSPACE_WRAPPER, std::ffi::OsString::new()),
-        (
-            TRUNK_DISTRIBUTION_DIRECTORY,
-            outputs.trunk_dist.as_os_str().to_owned(),
-        ),
-    ])
-    .map_err(|error| format!("canvas tool environment was refused: {error}"))
-}
-
-/// A hermetic search path containing only the resolved analysis programs.
-///
-/// Cargo subcommands and the tools they dispatch are resolved through `PATH`
-/// even when Cargo itself was invoked by absolute path. Preserve the empty
-/// process environment everywhere else while making those declared programs
-/// mutually discoverable.
-fn tool_environment(label: &str, programs: &[&str]) -> Result<Environment, String> {
-    let path = tool_search_path(label, programs)?;
-    Environment::new([("PATH", path)])
-        .map_err(|error| format!("{label} tool environment was refused: {error}"))
-}
-
-fn tool_search_path(label: &str, programs: &[&str]) -> Result<std::ffi::OsString, String> {
-    let mut directories = Vec::new();
-    for program in programs {
-        let Some(parent) = Path::new(program).parent() else {
-            return Err(format!("{label} tool {program:?} has no parent directory"));
-        };
-        if !directories.contains(&parent) {
-            directories.push(parent);
-        }
-    }
-    std::env::join_paths(directories)
-        .map_err(|error| format!("{label} tool search path is invalid: {error}"))
-}
-
-/// Writable output roots for tools examining one immutable selected tree.
-///
-/// The Cargo pair is deliberately not inside [`CanvasWorkspace`]: it is a
-/// fixed repository path that every canvas analysis of this repository shares,
-/// so the compiled artifacts survive the run that produced them. `input.rs`
-/// records what that warmth is worth -- five cold samples of the `trunk build`
-/// this arm runs took 15.0 to 24.9 seconds against the 2.6 to 2.9 they take
-/// warm -- and a root minted per invocation would pay the cold price every time
-/// while stranding the previous one.
-///
-/// Sharing it is safe because Cargo already arbitrates it. Two of these
-/// analyses run at once against one repository were measured taking the same
-/// pair: the second reported `Blocking waiting for file lock on build
-/// directory` and then completed, both exiting zero. What must not be shared is
-/// the generated output, and that is the part living under the owned root.
-struct CanvasOutputs {
-    cargo_target: PathBuf,
-    cargo_build: PathBuf,
-    trunk_dist: PathBuf,
-}
-
-impl CanvasOutputs {
-    fn create(
-        workspace: &CanvasWorkspace<'_>,
-        selected: &Path,
-        repository: &Path,
-    ) -> Result<Self, String> {
-        let cargo_target = repository.join("target/xtask-app");
-        let cargo_build = repository.join("target/xtask-app-build");
-        let trunk_dist = workspace.path().join("trunk-dist");
-        if let Err(error) = fs::create_dir_all(&cargo_target)
-            .and_then(|()| fs::create_dir_all(&cargo_build))
-            .and_then(|()| fs::create_dir(&trunk_dist))
-        {
-            return Err(format!(
-                "canvas analysis output directories for {} could not be created: {error}",
-                selected.display()
-            ));
-        }
-        Ok(Self {
-            cargo_target,
-            cargo_build,
-            trunk_dist,
-        })
-    }
-}
-
 fn complete_output(name: &str, outcome: &sill::WaitOutcome) -> Result<String, String> {
     if let Some(failure) = outcome.observation_failure() {
         return Err(format!("{name} output observation failed: {failure}"));
@@ -1046,113 +716,30 @@ fn canvas_locus(root: &Path, cwd: &Path, location: &str) -> Option<(String, u32,
     super::valid_relative_path(&path).then_some((path, line, column))
 }
 
-/// One finding per file the formatter named as differing from canonical form.
+/// A hermetic search path containing only the resolved analysis programs.
 ///
-/// The file is the whole locus a formatting refusal has: the fix is to run the
-/// formatter over it, and no region within it is more the cause than another.
-fn differing_files(root: &Path, printed: &str) -> Vec<ArmFinding> {
-    let roots = reported_roots(root);
-    let named: BTreeSet<String> = printed
-        .lines()
-        .filter_map(|line| relative_to(&roots, line.trim_end()))
-        .collect();
-    named
-        .into_iter()
-        .map(|path| ArmFinding {
-            path: Some(path),
-            line: None,
-            column: None,
-            detail: FindingDetail::Formatting {
-                formatter: FORMATTER.to_owned(),
-            },
-        })
-        .collect()
+/// Cargo subcommands and the tools they dispatch are resolved through `PATH`
+/// even when Cargo itself was invoked by absolute path. Preserve the empty
+/// process environment everywhere else while making those declared programs
+/// mutually discoverable.
+fn tool_environment(label: &str, programs: &[&str]) -> Result<Environment, String> {
+    let path = tool_search_path(label, programs)?;
+    Environment::new([("PATH", path)])
+        .map_err(|error| format!("{label} tool environment was refused: {error}"))
 }
 
-/// Every spelling the formatter may report the selected tree under.
-///
-/// A tree reached through a symlinked ancestor is reported canonically by the
-/// formatter and handed here uncanonically, so both spellings are offered and a
-/// path matching neither is genuinely outside the tree. Offering only one would
-/// silently discard every finding and call an unformatted tree clean.
-fn reported_roots(root: &Path) -> Vec<PathBuf> {
-    let mut roots = vec![root.to_owned()];
-    if let Ok(canonical) = fs::canonicalize(root)
-        && canonical != root
-    {
-        roots.push(canonical);
+fn tool_search_path(label: &str, programs: &[&str]) -> Result<std::ffi::OsString, String> {
+    let mut directories = Vec::new();
+    for program in programs {
+        let Some(parent) = Path::new(program).parent() else {
+            return Err(format!("{label} tool {program:?} has no parent directory"));
+        };
+        if !directories.contains(&parent) {
+            directories.push(parent);
+        }
     }
-    roots
-}
-
-/// Re-express one absolute reported path relative to the selected tree.
-fn relative_to(roots: &[PathBuf], reported: &str) -> Option<String> {
-    let reported = Path::new(reported);
-    let relative = roots
-        .iter()
-        .find_map(|root| reported.strip_prefix(root).ok())?
-        .to_str()?;
-    (!relative.is_empty()).then(|| relative.replace('\\', "/"))
-}
-
-/// Count the selected Rust sources the formatter check applies to.
-pub(super) fn formatter_sources(root: &Path) -> Result<Vec<String>, String> {
-    let walked = Jurisdiction::walk(root, &Ignore::default())
-        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
-    Ok(walked
-        .measurable()
-        .filter(|entry| !built(entry.path()))
-        .filter(|entry| extension(entry.path()).is_some_and(|found| found == RUST_EXTENSION))
-        .map(|entry| entry.path().to_owned())
-        .collect())
-}
-
-/// The edition the root manifest pins, which the formatter must be told.
-///
-/// `cargo fmt` reads the edition out of the manifest of the package owning each
-/// target it drives, before it invokes the formatter. Handing the formatter its
-/// paths directly skips that read, and an included file has no package behind it
-/// to read one from in the first place, since no cargo target claims it. The
-/// formatter's own default is the 2015 edition, and a wrong edition is not a
-/// formatting difference: rustfmt refuses to parse the file at all. Refusing is
-/// the alternative to guessing one.
-///
-/// Both spellings are read because a root manifest carries the edition in
-/// either: a workspace declares one its members inherit, and a single-package
-/// repository declares its own. The workspace default is preferred because it
-/// is the one that governs more than the root package.
-///
-/// What this cannot see is a member overriding the inherited edition, which
-/// would be measured against the root's grammar instead of its own. This
-/// repository has no such member and its own arm would report the drift, so the
-/// bound is stated rather than guarded.
-///
-/// The refusal is flattened onto one line because a TOML error prints a
-/// multiline snippet and the executor refuses to publish a multiline reason at
-/// all, so an unflattened diagnosis would be replaced by the refusal to carry
-/// it rather than reaching the reader.
-pub(super) fn formatter_edition(root: &Path) -> Result<String, String> {
-    let manifest = root.join("Cargo.toml");
-    let text = fs::read_to_string(&manifest)
-        .map_err(|error| format!("the root manifest could not be read: {error}"))?;
-    let document: toml::Value = toml::from_str(&text).map_err(|error| {
-        format!(
-            "the root manifest is not valid TOML: {}",
-            error.to_string().replace('\n', " ")
-        )
-    })?;
-    let workspace = document
-        .get("workspace")
-        .and_then(|workspace| workspace.get("package"));
-    [workspace, document.get("package")]
-        .into_iter()
-        .flatten()
-        .find_map(|table| table.get("edition").and_then(toml::Value::as_str))
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            "the root manifest declares neither workspace.package.edition nor package.edition"
-                .to_owned()
-        })
+    std::env::join_paths(directories)
+        .map_err(|error| format!("{label} tool search path is invalid: {error}"))
 }
 
 /// Whether the selected tree satisfies the Python declaration's applicability.

@@ -126,25 +126,11 @@ impl Media {
     ///
     /// Returns an admission error rather than comparing a forged value.
     pub fn is_embedded_in(&self, text: &str) -> Result<bool, MediaError> {
-        self.validate()?;
-        let mut remaining = text;
-        while let Some(start) = remaining.find("![") {
-            remaining = &remaining[start + 2..];
-            let Some(label_end) = remaining.find("](") else {
-                break;
-            };
-            let name = &remaining[..label_end];
-            remaining = &remaining[label_end + 2..];
-            let Some(url_end) = remaining.find(')') else {
-                break;
-            };
-            let url = &remaining[..url_end];
-            remaining = &remaining[url_end + 1..];
-            if url == self.data_url && Self::admit(name, &self.content_type, url).is_ok() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        let identity = self.identity()?;
+        Ok(parse_markdown(text).into_iter().any(|candidate| {
+            candidate
+                .is_ok_and(|candidate| candidate.identity().is_ok_and(|found| found == identity))
+        }))
     }
 
     fn decoded(&self) -> Result<Vec<u8>, MediaError> {
@@ -213,6 +199,90 @@ pub fn admit_media(media: &[Media]) -> Result<(), MediaError> {
         item.validate()?;
     }
     Ok(())
+}
+
+/// Extract every data-backed image block from Markdown in source order.
+///
+/// Each candidate retains its own admission result so transcript ingestion can
+/// refuse malformed media while duplicate detection can continue looking for
+/// a later valid identity. Delimiter recognition honors canonical Markdown
+/// escapes, and labels are restored to their original admitted spelling.
+#[must_use]
+pub fn parse_markdown(text: &str) -> Vec<Result<Media, MediaError>> {
+    let mut parsed = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(relative_start) = find_unescaped(&text[cursor..], "![") {
+        let start = cursor + relative_start;
+        let label_start = start + 2;
+        let Some(relative_label_end) = find_unescaped(&text[label_start..], "](") else {
+            cursor = label_start;
+            continue;
+        };
+        let label_end = label_start + relative_label_end;
+        let url_start = label_end + 2;
+        let Some(relative_url_end) = find_unescaped(&text[url_start..], ")") else {
+            cursor = label_start;
+            continue;
+        };
+        let url_end = url_start + relative_url_end;
+        let url = &text[url_start..url_end];
+        if !url.starts_with("data:image/") {
+            cursor = label_start;
+            continue;
+        }
+        let content_type = url
+            .strip_prefix("data:")
+            .and_then(|rest| rest.split_once(";base64,").map(|(kind, _)| kind));
+        let candidate = content_type.map_or(Err(MediaError::DataUrl), |content_type| {
+            Media::admit(
+                unescape_markdown_label(&text[label_start..label_end]),
+                content_type,
+                url,
+            )
+        });
+        cursor = if candidate.is_ok() {
+            url_end + 1
+        } else {
+            label_start
+        };
+        parsed.push(candidate);
+    }
+    parsed
+}
+
+fn find_unescaped(text: &str, needle: &str) -> Option<usize> {
+    text.match_indices(needle)
+        .map(|(index, _)| index)
+        .find(|index| {
+            text.as_bytes()[..*index]
+                .iter()
+                .rev()
+                .take_while(|byte| **byte == b'\\')
+                .count()
+                % 2
+                == 0
+        })
+}
+
+fn unescape_markdown_label(label: &str) -> String {
+    let mut restored = String::with_capacity(label.len());
+    let mut characters = label.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            restored.push(character);
+            continue;
+        }
+        match characters.next() {
+            Some('\\') => restored.push('\\'),
+            Some(']') => restored.push(']'),
+            Some(other) => {
+                restored.push('\\');
+                restored.push(other);
+            }
+            None => restored.push('\\'),
+        }
+    }
+    restored
 }
 
 fn supported_type(content_type: &str) -> bool {
@@ -323,19 +393,44 @@ mod tests {
     }
 
     #[test]
-    fn markdown_escapes_operator_facing_alt_text_without_changing_identity() {
-        let media = Media::from_base64(r"capture\].png", "image/png", PNG).unwrap();
-        assert_eq!(
-            media.markdown().unwrap(),
-            format!(r"![capture\\\].png](data:image/png;base64,{PNG})")
-        );
-        assert_eq!(
-            media.identity().unwrap(),
-            Media::from_base64("other-name.png", "image/png", PNG)
-                .unwrap()
-                .identity()
-                .unwrap(),
-        );
+    fn canonical_markdown_round_trips_every_admitted_label_character() {
+        for name in [
+            r"capture](detail).png",
+            r"slash\](detail).png",
+            "雪](図).png",
+            r"punctuation !#$%&'()*+,-.;=@^_`{}~.png",
+        ] {
+            let media = Media::from_base64(name, "image/png", PNG).unwrap();
+            let markdown = media.markdown().unwrap();
+            let parsed = parse_markdown(&markdown);
+
+            assert_eq!(parsed.len(), 1, "one block expected for {name:?}");
+            let parsed = parsed.into_iter().next().unwrap().unwrap();
+            assert_eq!(parsed.name, name);
+            assert_eq!(parsed.data_url, media.data_url);
+            assert_eq!(parsed.identity().unwrap(), media.identity().unwrap());
+            assert!(media.is_embedded_in(&markdown).unwrap());
+        }
+    }
+
+    #[test]
+    fn broken_image_candidate_cannot_hide_later_canonical_media() {
+        let media = Media::from_base64("capture.png", "image/png", PNG).unwrap();
+        let canonical = media.markdown().unwrap();
+        for broken in [
+            "![broken](not-an-image ",
+            "![broken](data:image/png;base64,%%% ",
+        ] {
+            let text = format!("{broken}{canonical}");
+            let parsed = parse_markdown(&text);
+
+            assert!(
+                parsed
+                    .into_iter()
+                    .any(|candidate| { candidate.is_ok_and(|candidate| candidate == media) })
+            );
+            assert!(media.is_embedded_in(&text).unwrap());
+        }
     }
 
     #[test]

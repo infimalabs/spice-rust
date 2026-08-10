@@ -48,11 +48,11 @@ allowed_trailers = ["Spice-Origin", "Reviewed-By"]
 blocked_trailers = ["Co-Authored-By"]
 
 [taste.zeta]
-words = ["delay*", "slept"]
+words = ["delay", "slept"]
 message = "Wait on the real event."
 
 [taste.alpha]
-words = ["finish*"]
+words = ["finish"]
 message = "Observe completion."
 
 [consent]

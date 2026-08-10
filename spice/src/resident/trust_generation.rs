@@ -19,12 +19,12 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
     const FIRST: &str = concat!(
         "[steer]\nexpiry = \"12h\"\nresend = [\"2m\", \"4m\", \"6m\"]\n",
         "[consent]\nposture = \"deny\"\n",
-        "[taste.polling]\nwords = [\"poll*\"]\nmessage = \"Wait for completion.\"\n",
+        "[taste.polling]\nwords = [\"polling\"]\nmessage = \"Wait for completion.\"\n",
     );
     const SECOND: &str = concat!(
         "[steer]\nexpiry = \"48h\"\nresend = [\"10m\", \"20m\", \"30m\"]\n",
         "[consent]\nposture = \"allow\"\n",
-        "[taste.fallbacks]\nwords = [\"fallback*\"]\nmessage = \"Keep one path.\"\n",
+        "[taste.fallbacks]\nwords = [\"fallback\"]\nmessage = \"Keep one path.\"\n",
     );
     let (root, paths) = resident_fixture("startup-single-capture");
     let tracked = root.join("spice-rust.toml");

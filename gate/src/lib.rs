@@ -126,13 +126,13 @@ pub use names::{
     RETIRED_NAMES, RetiredMatch, RetiredName, retired_command_matches, retired_matches,
 };
 pub use policy::{
-    BoundLimits, BoundName, CompileError as PolicyCompileError, FileClasses, FileShapePolicy,
-    GlobalRatchet, LanguagesPolicy, MagicRule, MigrationError as PolicyMigrationError,
-    NARROWEST_FILE_CLASSES, OneLetterBehavior, PackagePolicy, Policy as RulePolicy, PolicyContext,
-    PolicyDocument, RegexDialect, RepoTruthPolicy, ResolveError as PolicyResolveError,
-    ResolvedBound, ResolvedMagic, RuleDeclaration, RuleId, RuleSettings, RuleSource,
-    RuleSourceKind, ScopeAxis, ScopeSelector, SelectionProvenance, SelectorSpecificity,
-    migrate_predecessor_policy,
+    Applicability, BoundLimits, BoundName, CompileError as PolicyCompileError, FileClasses,
+    FileShapePolicy, GlobalRatchet, LanguagesPolicy, MagicRule,
+    MigrationError as PolicyMigrationError, NARROWEST_FILE_CLASSES, OneLetterBehavior,
+    PackagePolicy, Policy as RulePolicy, PolicyContext, PolicyDocument, RegexDialect,
+    RepoTruthPolicy, ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic,
+    RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector,
+    SelectionProvenance, SelectorSpecificity, migrate_predecessor_policy,
 };
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{
@@ -178,8 +178,8 @@ pub use toolchain::{
 pub use toolchain::{
     RimCapture, RimDirectoryError, RustAnalysisWorkspace, ToolchainSource,
     VerifierCompilerContract, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
-    VerifierCompilerRun, VerifierCompilerStage, acquire_toolchain, formatter_edition,
-    formatter_sources,
+    VerifierCompilerRun, VerifierCompilerStage, acquire_toolchain, admit_verifier_compiler_receipt,
+    encode_verifier_compiler_receipt, formatter_edition, formatter_sources,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};

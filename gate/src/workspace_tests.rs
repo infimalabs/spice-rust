@@ -1,4 +1,5 @@
 //! Deterministic, bounded execution of every workspace Rust test target.
+//! Inventory and selection stay here; shard execution lives in `coordinator`.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -14,13 +15,22 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use sill::{
     Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Observation,
-    ObserveError, ObservedRecord, Output, OutputStream, ProcessGroup, RecordObserver, Redaction,
+    ObserveError, ObservedRecord, Output, OutputStream, RecordObserver, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
 };
+use syn::{Expr, Item, Lit, Meta};
 
 use crate::WORKSPACE_TEST_CONCURRENCY_CAP;
 
-const TARGETS_PER_SHARD: usize = 4;
+mod coordinator;
+
+use coordinator::{
+    Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
+};
+#[cfg(test)]
+use coordinator::{LastTest, target_arguments};
+
+const TARGETS_PER_SHARD: usize = 12;
 const SHARD_DEADLINE: Duration = Duration::from_secs(180);
 const COORDINATOR_DEADLINE: Duration = Duration::from_secs(180);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
@@ -219,7 +229,8 @@ pub fn run_at(
 /// Select and run only test targets reached by staged Rust sources according to
 /// canonical Cargo target roots. A reached library target expands to every
 /// test-enabled target in that package because those targets may link the
-/// library.
+/// library. A non-library target reaches only its root and exact `#[path]`
+/// module declarations.
 ///
 /// Unknown or incomplete package reach returns a non-admitting typed report
 /// without launching a narrowed test set. A complete report is emitted only
@@ -342,6 +353,7 @@ struct TargetIdentity {
     kind: String,
     name: String,
     source: PathBuf,
+    declared_path_sources: Vec<PathBuf>,
 }
 
 impl TargetIdentity {
@@ -573,11 +585,13 @@ fn package_inventory(
                     selected_root.display(),
                 )));
             }
+            let declared_path_sources = declared_path_sources(&source)?;
             Ok(TargetIdentity {
                 package: package.id.clone(),
                 kind: target.kind.join("+"),
                 name: target.name,
                 source,
+                declared_path_sources,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -670,22 +684,80 @@ fn selection_report(
     .map_err(|error| WorkspaceTestError::new(error.to_string()))
 }
 
+/// Resolve only reach that the Cargo target root or an exact Rust `#[path]`
+/// module declaration establishes; ordinary directory proximity is not reach.
 fn target_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
+    if source == target.source {
+        return true;
+    }
     let direct_root = target_is_library(target)
         .then(|| target.source.parent())
         .flatten();
-    let integration_module_root = if target.kind.split('+').any(|kind| kind == "test") {
-        target
-            .source
-            .parent()
-            .zip(target.source.file_stem())
-            .map(|(parent, stem)| parent.join(stem))
-    } else {
-        None
+    direct_root.is_some_and(|root| source.starts_with(root))
+        || target
+            .declared_path_sources
+            .iter()
+            .any(|declared| declared == source)
+}
+
+/// Acquire exact `#[path]` module sources once with their Cargo target.
+fn declared_path_sources(target_source: &Path) -> Result<Vec<PathBuf>, WorkspaceTestError> {
+    let document = match fs::read_to_string(target_source) {
+        Ok(document) => document,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(WorkspaceTestError::new(format!(
+                "read Cargo target source {} while resolving staged test reach: {error}",
+                target_source.display()
+            )));
+        }
     };
-    source == target.source
-        || direct_root.is_some_and(|root| source.starts_with(root))
-        || integration_module_root.is_some_and(|root| source.starts_with(root))
+    let syntax = syn::parse_file(&document).map_err(|error| {
+        WorkspaceTestError::new(format!(
+            "parse Cargo target source {} while resolving staged test reach: {error}",
+            target_source.display()
+        ))
+    })?;
+    let parent = target_source.parent().ok_or_else(|| {
+        WorkspaceTestError::new(format!(
+            "Cargo target source {} has no parent",
+            target_source.display()
+        ))
+    })?;
+    let mut declared = Vec::new();
+    for item in syntax.items {
+        let Item::Mod(module) = item else {
+            continue;
+        };
+        for attribute in module
+            .attrs
+            .iter()
+            .filter(|attribute| attribute.path().is_ident("path"))
+        {
+            let Meta::NameValue(pair) = &attribute.meta else {
+                return Err(WorkspaceTestError::new(format!(
+                    "Cargo target source {} has a non-value path attribute",
+                    target_source.display()
+                )));
+            };
+            let Expr::Lit(expression) = &pair.value else {
+                return Err(WorkspaceTestError::new(format!(
+                    "Cargo target source {} has a non-literal path attribute",
+                    target_source.display()
+                )));
+            };
+            let Lit::Str(path) = &expression.lit else {
+                return Err(WorkspaceTestError::new(format!(
+                    "Cargo target source {} has a non-string path attribute",
+                    target_source.display()
+                )));
+            };
+            declared.push(parent.join(path.value()));
+        }
+    }
+    declared.sort();
+    declared.dedup();
+    Ok(declared)
 }
 
 fn target_is_library(target: &TargetIdentity) -> bool {
@@ -698,27 +770,21 @@ fn target_is_library(target: &TargetIdentity) -> bool {
 }
 
 fn partition(inventory: &Inventory) -> Vec<PackageInventory> {
-    let mut shards = Vec::new();
-    for package in &inventory.packages {
-        let count = package.targets.len().div_ceil(TARGETS_PER_SHARD);
-        let mut package_shards = (0..count)
-            .map(|_| PackageInventory {
-                id: package.id.clone(),
-                name: package.name.clone(),
-                root: package.root.clone(),
-                targets: Vec::new(),
-            })
-            .collect::<Vec<_>>();
-        for (index, target) in package.targets.iter().cloned().enumerate() {
-            package_shards[index % count].targets.push(target);
-        }
-        shards.extend(package_shards);
-    }
-    // Stable largest-first scheduling starts broad packages while every worker
-    // is available, instead of leaving their longest shards behind a queue of
-    // one-target packages. Equal-sized shards retain canonical package order.
-    shards.sort_by_key(|shard| std::cmp::Reverse(shard.targets.len()));
-    shards
+    inventory
+        .packages
+        .iter()
+        .flat_map(|package| {
+            package
+                .targets
+                .chunks(TARGETS_PER_SHARD)
+                .map(|targets| PackageInventory {
+                    id: package.id.clone(),
+                    name: package.name.clone(),
+                    root: package.root.clone(),
+                    targets: targets.to_vec(),
+                })
+        })
+        .collect()
 }
 
 fn validate_partition(
@@ -785,8 +851,6 @@ fn count_differences<T: Ord + fmt::Debug>(
         })
         .collect()
 }
-
-include!("workspace_tests/execution.rs");
 
 #[cfg(test)]
 mod tests;

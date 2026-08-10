@@ -2,10 +2,11 @@
 
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, BufRead as _, BufReader, Write as _};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -25,11 +26,12 @@ const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const SELECTION_RECORD: u8 = b'S';
 const HARD_DEADLINE: Duration = Duration::from_secs(180);
-const WORK_RUNTIME: Duration = Duration::from_secs(150);
+const WORK_RUNTIME: Duration = Duration::from_secs(135);
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: usize = 1024 * 1024;
+const AUTHORITY_SIZE: usize = 32;
 
 const _: () = assert!(
     WORK_RUNTIME.as_secs()
@@ -101,13 +103,6 @@ struct WorkerFailure {
     fault: bool,
 }
 
-enum SelectionExecution {
-    Reuse(gate::RustAnalysisWorkspace),
-    SelectedRoot,
-}
-
-type SelectionStart = Arc<(Mutex<Option<SelectionExecution>>, Condvar)>;
-
 struct WorkerFiles {
     root: PathBuf,
     progress: PathBuf,
@@ -122,23 +117,18 @@ impl WorkerFiles {
             std::process::id(),
             uuid::Uuid::new_v4().simple(),
         ));
-        fs::create_dir(&root)?;
+        DirBuilder::new().mode(0o700).create(&root)?;
         let progress = root.join("progress.jsonl");
         let terminal = root.join("terminal.bin");
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&progress)?;
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&terminal)?;
-        Ok(Self {
+        let files = Self {
             root,
             progress,
             terminal,
             armed: true,
-        })
+        };
+        drop(create_private_file(&files.progress)?);
+        drop(create_private_file(&files.terminal)?);
+        Ok(files)
     }
 
     fn cleanup(mut self) -> io::Result<()> {
@@ -146,6 +136,14 @@ impl WorkerFiles {
         self.armed = false;
         Ok(())
     }
+}
+
+fn create_private_file(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
 }
 
 impl Drop for WorkerFiles {
@@ -157,11 +155,52 @@ impl Drop for WorkerFiles {
 }
 
 pub(super) fn run() -> Outcome<BatteryReport> {
+    run_with(supervise)
+}
+
+struct CompilerPreparation {
+    cargo_jobs: usize,
+    receipt: Vec<u8>,
+    authority: Vec<u8>,
+    reusable_workspace: Option<gate::RustAnalysisWorkspace>,
+}
+
+fn prepare_compilers() -> Result<CompilerPreparation, WorkerFailure> {
+    let cargo_jobs = std::thread::available_parallelism()
+        .map_err(|error| WorkerFailure {
+            reason: "gate::pre-commit-parallelism-unavailable".to_owned(),
+            detail: error.to_string(),
+            fault: true,
+        })?
+        .get();
+    let authority = fresh_authority();
+    let preparation =
+        spice::gate::verifier_compiler_preparation(Selector::staged(), cargo_jobs, &authority)
+            .map_err(run_error_failure)?;
+    let (receipt, reusable_workspace) = preparation.into_parts();
+    Ok(CompilerPreparation {
+        cargo_jobs,
+        receipt,
+        authority,
+        reusable_workspace,
+    })
+}
+
+fn fresh_authority() -> Vec<u8> {
+    let mut authority = Vec::with_capacity(AUTHORITY_SIZE);
+    authority.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    authority.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    authority
+}
+
+fn run_with(
+    supervisor: impl FnOnce(&WorkerFiles) -> Outcome<BatteryReport>,
+) -> Outcome<BatteryReport> {
     let files = match WorkerFiles::create() {
         Ok(files) => files,
         Err(error) => return fault("gate::pre-commit-supervisor-unavailable", error),
     };
-    let answer = supervise(&files);
+    let answer = supervisor(&files);
     match files.cleanup() {
         Ok(()) => answer,
         Err(error) => fault("gate::pre-commit-cleanup-failed", error),
@@ -300,17 +339,8 @@ fn worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
     write_phase(&mut progress, &WorkerPhase::Capture)?;
     let phase_failure = Arc::new(Mutex::new(None::<String>));
     let trace_failure = Arc::clone(&phase_failure);
-    let selection_start = Arc::new((Mutex::new(None), Condvar::new()));
-    let trace_selection_start = Arc::clone(&selection_start);
     let trace_path = progress_path.to_path_buf();
     let mut trace = move |event| {
-        if let RepositoryExecutionEvent::ToolchainAnalysisCompleted {
-            gate_id: GateId::RustTypecheck,
-            reusable_workspace: Some(workspace),
-        } = &event
-        {
-            release_selection(&trace_selection_start, Some(workspace.clone()));
-        }
         let Some(phase) = WorkerPhase::from_event(event) else {
             return;
         };
@@ -330,53 +360,90 @@ fn worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
     };
     let mut prepared = match spice::gate::prepare_traced(Selector::staged(), &mut trace) {
         Ok(prepared) => prepared,
-        Err(error) => {
-            return write_failure(
-                terminal,
-                &WorkerFailure {
-                    reason: error.reason().to_owned(),
-                    detail: error.detail().to_owned(),
-                    fault: error.is_fault(),
-                },
-            );
-        }
+        Err(error) => return write_failure(terminal, &run_error_failure(error)),
     };
+
     write_phase(&mut progress, &WorkerPhase::TestSelection)?;
-    let repository =
-        spice::repository::Repository::discover(Path::new(".")).map_err(io::Error::other)?;
-    let environment = ambient_environment().map_err(io::Error::other)?;
-    let selected_root = prepared.root().to_path_buf();
-    let writable_root = repository.worktree_root().to_path_buf();
-    let source = prepared.source().clone();
-    let changes = prepared.changes().to_vec();
+    let test_input = SelectedTestInput::capture(&prepared)?;
+    let compiler = thread::scope(|scope| {
+        let compiler = scope.spawn(prepare_compilers);
+        join_compiler(compiler.join())
+    });
+    let compiler = match compiler {
+        Ok(compiler) => compiler,
+        Err(error) => return write_failure(terminal, &error),
+    };
     let (selection, result) = thread::scope(|scope| -> io::Result<_> {
-        let selected_start = Arc::clone(&selection_start);
-        let selected = scope.spawn(move || {
-            let reusable_workspace = await_selection(&selected_start);
-            let mut output = Vec::new();
-            let roots = gate::WorkspaceTestRoots::new(&selected_root, &writable_root);
-            let roots = match reusable_workspace.as_ref() {
-                Some(workspace) => roots.with_reusable(workspace),
-                None => roots,
-            };
-            let report = gate::run_selected_workspace_tests_at(
-                roots,
-                source,
-                &changes,
-                environment,
-                WORKSPACE_TEST_CONCURRENCY_CAP,
-                &mut output,
-            );
-            (report, output)
-        });
-        let result = prepared.execute(&[]);
-        release_selection(&selection_start, None);
+        let selected = scope.spawn(|| test_input.execute(compiler.reusable_workspace.as_ref()));
+        let result = prepared
+            .admit_verifier_compiler_receipt(
+                &compiler.receipt,
+                compiler.cargo_jobs,
+                &compiler.authority,
+            )
+            .and_then(|evidence| prepared.execute(&evidence))
+            .map_err(run_error_failure);
         if !selected.is_finished() {
             write_phase(&mut progress, &WorkerPhase::TestSelection)?;
         }
         Ok((selected.join(), result))
     })?;
     publish_worker_result(&mut progress, terminal, &phase_failure, selection, result)
+}
+
+struct SelectedTestInput {
+    selected_root: PathBuf,
+    writable_root: PathBuf,
+    source: wire::Digest,
+    changes: Vec<String>,
+    environment: Environment,
+}
+
+impl SelectedTestInput {
+    fn capture(prepared: &spice::gate::PreparedBattery<'_>) -> io::Result<Self> {
+        let repository =
+            spice::repository::Repository::discover(Path::new(".")).map_err(io::Error::other)?;
+        Ok(Self {
+            selected_root: prepared.root().to_path_buf(),
+            writable_root: repository.worktree_root().to_path_buf(),
+            source: prepared.source().clone(),
+            changes: prepared.changes().to_vec(),
+            environment: ambient_environment().map_err(io::Error::other)?,
+        })
+    }
+
+    fn execute(
+        self,
+        reusable_workspace: Option<&gate::RustAnalysisWorkspace>,
+    ) -> (
+        Result<TestSelectionReport, gate::WorkspaceTestError>,
+        Vec<u8>,
+    ) {
+        let mut output = Vec::new();
+        let roots = gate::WorkspaceTestRoots::new(&self.selected_root, &self.writable_root);
+        let roots = reusable_workspace.map_or(roots, |workspace| roots.with_reusable(workspace));
+        let report = gate::run_selected_workspace_tests_at(
+            roots,
+            self.source,
+            &self.changes,
+            self.environment,
+            WORKSPACE_TEST_CONCURRENCY_CAP,
+            &mut output,
+        );
+        (report, output)
+    }
+}
+
+fn join_compiler(
+    result: thread::Result<Result<CompilerPreparation, WorkerFailure>>,
+) -> Result<CompilerPreparation, WorkerFailure> {
+    result.unwrap_or_else(|_| {
+        Err(WorkerFailure {
+            reason: "gate::verifier-compiler-worker-lost".to_owned(),
+            detail: "compiler preparation worker panicked".to_owned(),
+            fault: true,
+        })
+    })
 }
 
 fn publish_worker_result(
@@ -387,7 +454,7 @@ fn publish_worker_result(
         Result<TestSelectionReport, gate::WorkspaceTestError>,
         Vec<u8>,
     )>,
-    result: Result<BatteryReport, spice::gate::RunError>,
+    result: Result<BatteryReport, WorkerFailure>,
 ) -> io::Result<()> {
     let (selection, selection_output) = match selection {
         Ok(selection) => selection,
@@ -449,43 +516,7 @@ fn publish_worker_result(
             document.extend(report.encode().map_err(io::Error::other)?);
             fs::write(terminal, document)
         }
-        Err(error) => write_failure(
-            terminal,
-            &WorkerFailure {
-                reason: error.reason().to_owned(),
-                detail: error.detail().to_owned(),
-                fault: error.is_fault(),
-            },
-        ),
-    }
-}
-
-fn release_selection(start: &SelectionStart, workspace: Option<gate::RustAnalysisWorkspace>) {
-    let (selected, signal) = &**start;
-    let mut selected = selected
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if selected.is_some() {
-        return;
-    }
-    *selected = Some(workspace.map_or(SelectionExecution::SelectedRoot, SelectionExecution::Reuse));
-    signal.notify_one();
-}
-
-fn await_selection(start: &SelectionStart) -> Option<gate::RustAnalysisWorkspace> {
-    let (selected, signal) = &**start;
-    let mut selected = selected
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    while selected.is_none() {
-        selected = signal
-            .wait(selected)
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-    }
-    match selected.as_ref() {
-        Some(SelectionExecution::Reuse(workspace)) => Some(workspace.clone()),
-        Some(SelectionExecution::SelectedRoot) => None,
-        None => unreachable!("selection condition was observed ready"),
+        Err(error) => write_failure(terminal, &error),
     }
 }
 
@@ -515,17 +546,30 @@ fn worker_failure(failure: WorkerFailure) -> Outcome<BatteryReport> {
             "repair the named staged-source test selection or failing selected target",
         ))
     } else {
+        let observed = failure.detail;
         Outcome::Refusal(Refusal::bare(
             RefusalDiagnostic::new(
                 failure.reason,
                 None,
                 Some("one complete canonical Rust battery capture".to_owned()),
-                Some(failure.detail),
+                Some(observed.clone()),
             )
-            .with_detail(
-                "repair the named capture input; the Rust battery is the sole execution path",
-            ),
+            .with_detail(format!(
+                concat!(
+                    "{}\n",
+                    "repair the named capture input; the Rust battery is the sole execution path"
+                ),
+                observed,
+            )),
         ))
+    }
+}
+
+fn run_error_failure(error: spice::gate::RunError) -> WorkerFailure {
+    WorkerFailure {
+        reason: error.reason().to_owned(),
+        detail: error.detail().to_owned(),
+        fault: error.is_fault(),
     }
 }
 
@@ -669,163 +713,4 @@ fn ambient_environment() -> Result<Environment, sill::SpecError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use gate::CoverageCompleteness;
-    use std::thread;
-    use std::time::Instant;
-
-    #[test]
-    fn fixed_envelope_reserves_cleanup_inside_180_seconds() {
-        let bounds = ProcessBounds::production();
-        let envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
-        assert_eq!(envelope, Duration::from_secs(165));
-        assert!(envelope < HARD_DEADLINE);
-    }
-
-    #[test]
-    fn unknown_staged_source_coverage_refuses_with_the_exact_selection_report() {
-        let report = gate::TestEvidenceGraph::select_tests(
-            wire::Digest::compute(wire::Domain::GateTree, b"unknown staged selection"),
-            vec!["tools/outside.rs".to_owned()],
-            Vec::new(),
-            Vec::new(),
-            CoverageCompleteness::unknown("changed Rust source is outside every workspace package")
-                .expect("unknown reason"),
-        )
-        .expect("unknown selection remains typed");
-
-        let outcome = selection_refusal(report.clone());
-        let Outcome::Refusal(refusal) = &outcome else {
-            panic!("unknown source-to-test coverage must refuse");
-        };
-        assert_eq!(refusal.reason(), "gate::test-selection-coverage-unknown");
-        let rendering = crate::render::render_commit_gate(&outcome, crate::render::Form::Text)
-            .expect("selection refusal renders")
-            .expect("a selection refusal is not silent");
-        assert_eq!(rendering.stream(), crate::render::Stream::Err);
-        let evidence = std::str::from_utf8(rendering.document())
-            .expect("selection evidence is UTF-8")
-            .lines()
-            .next()
-            .expect("selection evidence precedes its summary");
-        assert_eq!(
-            TestSelectionReport::decode(evidence.as_bytes()).expect("decode refusal evidence"),
-            report
-        );
-    }
-
-    #[test]
-    fn deadline_terminates_the_worker_group_and_names_its_last_phase() {
-        let files = WorkerFiles::create().expect("create deadline worker files");
-        let pid = files.root.join("descendant.pid");
-        let script = concat!(
-            "printf '%s\\n' '{\"phase\":\"family\",\"family\":\"toolchain\"}' >> \"$1\"; ",
-            "sleep 30 & child=$!; printf '%s\\n' \"$child\" > \"$2\"; wait"
-        );
-        let bounds = ProcessBounds {
-            runtime: Duration::from_millis(100),
-            output_drain: Duration::from_millis(100),
-            reap: Duration::from_millis(100),
-            grace: Duration::from_millis(100),
-        };
-        let spec = worker_spec(
-            "/bin/sh",
-            [
-                OsString::from("-c"),
-                OsString::from(script),
-                OsString::from("commit-gate-deadline-fixture"),
-                files.progress.as_os_str().to_owned(),
-                pid.as_os_str().to_owned(),
-            ],
-            bounds,
-        )
-        .expect("declare deadline worker");
-        let started = Instant::now();
-        let waited = sill::spawn(spec)
-            .expect("launch deadline worker")
-            .wait()
-            .expect("terminate and reap deadline worker group");
-        assert!(matches!(waited.completion(), Completion::TimedOut(_)));
-        assert!(started.elapsed() < Duration::from_secs(2));
-
-        let pid = fs::read_to_string(pid)
-            .expect("read descendant pid")
-            .trim()
-            .parse::<u32>()
-            .expect("descendant pid is numeric");
-        for _ in 0..100 {
-            if !process_exists(pid) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        assert!(!process_exists(pid), "deadline leaked descendant {pid}");
-
-        let Outcome::Refusal(refusal) = deadline(&files.progress) else {
-            panic!("deadline is a typed refusal");
-        };
-        assert_eq!(refusal.reason(), "gate::pre-commit-deadline-elapsed");
-        let observed = refusal
-            .diagnostic()
-            .and_then(RefusalDiagnostic::observed)
-            .expect("deadline retains phase evidence");
-        assert!(observed.contains("phase=family family=toolchain"));
-        assert!(observed.contains("findings=incomplete"));
-        files.cleanup().expect("remove deadline worker files");
-    }
-
-    #[test]
-    fn abnormal_worker_exit_is_typed_and_retains_the_last_exact_phase() {
-        let files = WorkerFiles::create().expect("create lost-worker files");
-        let script = concat!(
-            "printf '%s\\n' ",
-            "'{\"phase\":\"arm\",\"ordinal\":12,\"gate_id\":\"rust-typecheck\",",
-            "\"family\":\"toolchain\"}' >> \"$1\"; exit 17"
-        );
-        let spec = worker_spec(
-            "/bin/sh",
-            [
-                OsString::from("-c"),
-                OsString::from(script),
-                OsString::from("commit-gate-lost-worker-fixture"),
-                files.progress.as_os_str().to_owned(),
-            ],
-            ProcessBounds {
-                runtime: Duration::from_secs(1),
-                output_drain: Duration::from_millis(100),
-                reap: Duration::from_millis(100),
-                grace: Duration::from_millis(100),
-            },
-        )
-        .expect("declare lost worker");
-        let waited = sill::spawn(spec)
-            .expect("launch lost worker")
-            .wait()
-            .expect("reap lost worker");
-
-        let Outcome::Fault(fault) = classify(&files, &waited) else {
-            panic!("worker loss is a typed fault");
-        };
-        assert_eq!(fault.reason, "gate::pre-commit-worker-lost");
-        assert!(
-            fault.detail.contains(concat!(
-                "phase=arm ordinal=12 gate=rust-typecheck family=toolchain; ",
-                "findings=incomplete"
-            )),
-            "worker loss omitted exact phase evidence: {}",
-            fault.detail,
-        );
-        assert!(fault.detail.contains("worker exited Some(17)"));
-        files.cleanup().expect("remove lost-worker files");
-    }
-
-    #[cfg(unix)]
-    fn process_exists(pid: u32) -> bool {
-        let Ok(pid) = libc::pid_t::try_from(pid) else {
-            return false;
-        };
-        // SAFETY: signal zero changes no process state and probes this exact pid.
-        unsafe { libc::kill(pid, 0) == 0 }
-    }
-}
+mod tests;

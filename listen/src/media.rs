@@ -6,24 +6,10 @@ use wire::Media;
 use crate::ResidueKind;
 
 pub(crate) fn markdown(text: &str) -> Result<Vec<Media>, ResidueKind> {
-    let mut media = Vec::new();
-    let mut remaining = text;
-    while let Some(start) = remaining.find("![") {
-        remaining = &remaining[start + 2..];
-        let Some(label_end) = remaining.find("](") else {
-            break;
-        };
-        let name = &remaining[..label_end];
-        remaining = &remaining[label_end + 2..];
-        let Some(url_end) = remaining.find(')') else {
-            break;
-        };
-        let url = &remaining[..url_end];
-        remaining = &remaining[url_end + 1..];
-        if url.starts_with("data:image/") {
-            media.push(admit(name, url)?);
-        }
-    }
+    let media = wire::media::parse_markdown(text)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| malformed())?;
     unique(media)
 }
 

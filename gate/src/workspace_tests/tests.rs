@@ -1,3 +1,5 @@
+//! Workspace Rust test coordinator fixtures and integration checks.
+
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -5,6 +7,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
+
+mod selection;
 
 #[test]
 fn production_policy_uses_only_the_scheduler_granted_shard_workers() {
@@ -128,18 +132,15 @@ fn partition_splits_large_packages_in_stable_target_order() {
             kind: "test".to_owned(),
             name: format!("target-{index:02}"),
             source: PathBuf::from(format!("/workspace/tests/target-{index:02}.rs")),
+            declared_path_sources: Vec::new(),
         })
         .collect();
 
     let shards = partition(&inventory);
 
     assert_eq!(shards.len(), 3);
-    assert_eq!(shards[0].targets.len(), 3);
-    assert_eq!(shards[1].targets.len(), 2);
-    assert_eq!(shards[0].targets[0].name, "target-00");
-    assert_eq!(shards[0].targets[1].name, "target-02");
-    assert_eq!(shards[1].targets[0].name, "target-01");
-    assert_eq!(shards[1].targets[1].name, "target-03");
+    assert_eq!(shards[0].targets.len(), TARGETS_PER_SHARD);
+    assert_eq!(shards[1].targets.len(), 1);
     assert_eq!(shards[2].name, "fixture-b");
     validate_partition(&inventory, &shards).expect("split partition remains exact");
 }
@@ -223,160 +224,6 @@ fn successful_execution_publishes_one_exact_target_inventory_without_parsing_log
         unknown.coverage(),
         crate::CoverageCompleteness::Unknown { .. }
     ));
-}
-
-#[test]
-fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
-    let inventory = fixture_inventory();
-    let source = wire::Digest::compute(wire::Domain::GateTree, b"selected Rust tree");
-
-    let report = selection_report(
-        &inventory,
-        Path::new("/workspace"),
-        source.clone(),
-        &["fixture-a/src/behavior.rs".to_owned()],
-    )
-    .expect("workspace reach graph selects tests");
-
-    assert!(report.admits());
-    assert_eq!(report.source(), &source);
-    assert_eq!(report.changed_sources(), ["fixture-a/src/behavior.rs"]);
-    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
-    assert_eq!(report.edges().len(), 1);
-    assert!(
-        report
-            .edges()
-            .iter()
-            .all(|edge| edge.source() == "fixture-a/src/behavior.rs")
-    );
-    assert_eq!(
-        crate::TestSelectionReport::decode(&report.encode().expect("encode selection"))
-            .expect("decode selection"),
-        report
-    );
-}
-
-#[test]
-fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
-    let mut inventory = fixture_inventory();
-    inventory.packages[0].targets.push(TargetIdentity {
-        package: "fixture-a-id".to_owned(),
-        kind: "test".to_owned(),
-        name: "behavior".to_owned(),
-        source: PathBuf::from("/workspace/fixture-a/tests/behavior.rs"),
-    });
-
-    let report = selection_report(
-        &inventory,
-        Path::new("/workspace"),
-        wire::Digest::compute(wire::Domain::GateTree, b"library-dependent tests"),
-        &["fixture-a/src/behavior.rs".to_owned()],
-    )
-    .expect("library reach expands through its package test targets");
-
-    assert!(report.admits());
-    assert_eq!(
-        report.tests(),
-        ["fixture-a::lib:fixture-a", "fixture-a::test:behavior"]
-    );
-    assert_eq!(report.edges().len(), 2);
-    assert!(
-        report
-            .edges()
-            .iter()
-            .all(|edge| edge.source() == "fixture-a/src/behavior.rs")
-    );
-}
-
-#[test]
-fn nested_integration_module_selects_its_exact_cargo_test_target() {
-    let mut inventory = fixture_inventory();
-    inventory.packages[0].targets.push(TargetIdentity {
-        package: "fixture-a-id".to_owned(),
-        kind: "test".to_owned(),
-        name: "behavior".to_owned(),
-        source: PathBuf::from("/workspace/fixture-a/tests/behavior.rs"),
-    });
-
-    let report = selection_report(
-        &inventory,
-        Path::new("/workspace"),
-        wire::Digest::compute(wire::Domain::GateTree, b"nested integration module"),
-        &["fixture-a/tests/behavior/cases.rs".to_owned()],
-    )
-    .expect("nested integration module maps through its target root");
-
-    assert!(report.admits());
-    assert_eq!(report.tests(), ["fixture-a::test:behavior"]);
-    assert_eq!(report.edges().len(), 1);
-    assert_eq!(
-        report.edges()[0].source(),
-        "fixture-a/tests/behavior/cases.rs"
-    );
-}
-
-#[test]
-fn rust_source_inside_a_package_but_outside_target_roots_refuses_narrowing() {
-    let report = selection_report(
-        &fixture_inventory(),
-        Path::new("/workspace"),
-        wire::Digest::compute(wire::Domain::GateTree, b"unreachable package source"),
-        &["fixture-a/tools/unreachable.rs".to_owned()],
-    )
-    .expect("unreachable package source remains reportable");
-
-    assert!(!report.admits());
-    assert!(report.tests().is_empty());
-    assert!(report.edges().is_empty());
-    let crate::CoverageCompleteness::Unknown { reason } = report.coverage() else {
-        panic!("unreachable package source must remain unknown");
-    };
-    assert!(reason.contains("reaches no direct Cargo test target"));
-}
-
-#[test]
-fn rust_source_outside_workspace_packages_refuses_narrowing_loudly() {
-    let report = selection_report(
-        &fixture_inventory(),
-        Path::new("/workspace"),
-        wire::Digest::compute(wire::Domain::GateTree, b"unknown Rust tree"),
-        &["tools/outside.rs".to_owned()],
-    )
-    .expect("unknown selection remains reportable");
-
-    assert!(!report.admits());
-    assert!(report.tests().is_empty());
-    assert!(report.edges().is_empty());
-    let crate::CoverageCompleteness::Unknown { reason } = report.coverage() else {
-        panic!("unmapped Rust source must remain unknown");
-    };
-    assert!(reason.contains("outside every workspace package"));
-    let document = String::from_utf8(report.encode().expect("encode refusal")).unwrap();
-    assert!(document.contains("tools/outside.rs"));
-    assert!(document.contains("outside every workspace package"));
-}
-
-#[test]
-fn partially_mapped_rust_sources_retain_edges_but_refuse_as_incomplete() {
-    let report = selection_report(
-        &fixture_inventory(),
-        Path::new("/workspace"),
-        wire::Digest::compute(wire::Domain::GateTree, b"incomplete Rust tree"),
-        &[
-            "fixture-a/src/behavior.rs".to_owned(),
-            "tools/outside.rs".to_owned(),
-        ],
-    )
-    .expect("incomplete selection remains reportable");
-
-    assert!(!report.admits());
-    assert_eq!(report.tests(), ["fixture-a::lib:fixture-a"]);
-    assert_eq!(report.edges().len(), 1);
-    assert_eq!(report.edges()[0].source(), "fixture-a/src/behavior.rs");
-    let crate::CoverageCompleteness::Incomplete { reason } = report.coverage() else {
-        panic!("partially mapped Rust selection must remain incomplete");
-    };
-    assert!(reason.contains("tools/outside.rs"));
 }
 
 #[test]
@@ -505,33 +352,19 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
     let vendor = executable(
         &root,
         "vendor",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/vendor.pid\"\n",
-            "exec /usr/bin/tail -f /dev/null\n",
-        ),
+        concat!("#!/bin/sh\n", "exec /usr/bin/tail -f /dev/null\n",),
     );
     let waiter = executable(
         &root,
         "fifo-waiter",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/waiter.pid\"\n",
-            "exec /bin/cat \"$PID_ROOT/resident.fifo\"\n",
-        ),
+        concat!("#!/bin/sh\n", "exec /bin/cat \"$PID_ROOT/resident.fifo\"\n",),
     );
     let test_binary = executable(
         &root,
         "resident-test",
-        concat!(
-            "#!/bin/sh\n",
-            "\"$VENDOR\" & vendor=$!\n",
-            "printf '%s\\n' \"$vendor\" > \"$PID_ROOT/vendor.pid\"\n",
-            "\"$WAITER\" & waiter=$!\n",
-            "printf '%s\\n' \"$waiter\" > \"$PID_ROOT/waiter.pid\"\n",
-            "wait\n",
-        ),
+        concat!("#!/bin/sh\n", "exec /usr/bin/tail -f /dev/null\n",),
     );
+    // Publish each child PID in the launcher so timeout cannot win a child-startup race.
     let cargo = executable(
         &root,
         "cargo",
@@ -540,8 +373,12 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
             "printf '%s\\n' \"$$\" > \"$PID_ROOT/cargo.pid\"\n",
             "printf '     Running tests/resident.rs (fixture)\\n' >&2\n",
             "printf 'test resident::fifo_wait ... '\n",
-            "\"$TEST_BINARY\" & test_process=$!\n",
-            "printf '%s\\n' \"$test_process\" > \"$PID_ROOT/test.pid\"\n",
+            "\"$TEST_BINARY\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/test.pid\"\n",
+            "\"$VENDOR\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/vendor.pid\"\n",
+            "\"$WAITER\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/waiter.pid\"\n",
             "wait\n",
         ),
     );
@@ -563,8 +400,8 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
     let shard = fixture_inventory().packages.remove(0);
     let policy = RunPolicy {
         concurrency: 1,
-        shard_deadline: Duration::from_secs(10),
-        coordinator_deadline: Duration::from_secs(12),
+        shard_deadline: Duration::from_secs(5),
+        coordinator_deadline: Duration::from_secs(7),
         progress_interval: Duration::from_secs(1),
         output_drain: Duration::from_secs(1),
         reap: Duration::from_secs(1),
@@ -640,6 +477,10 @@ impl ReportPoint {
     const fn has_hung_shard(self) -> bool {
         !matches!(self, Self::Coordinator)
     }
+
+    const fn requires_started_hung_shard(self) -> bool {
+        matches!(self, Self::Progress | Self::Terminal)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -650,8 +491,16 @@ enum ReportFailure {
 
 fn reporting_failure_case(point: ReportPoint, failure: ReportFailure) {
     let fixture = reporting_process_fixture(&format!("{point:?}-{failure:?}"));
-    let ready = if point.has_hung_shard() {
+    let pid_paths = if point.has_hung_shard() {
         process_pid_paths(&fixture.root, "a")
+    } else {
+        Vec::new()
+    };
+    // A start-report failure may legitimately beat the first asynchronous
+    // shard's PID publication. Progress and terminal reports, by contrast,
+    // must observe a complete live process tree before failure is injected.
+    let ready = if point.requires_started_hung_shard() {
+        pid_paths.clone()
     } else {
         Vec::new()
     };
@@ -686,7 +535,7 @@ fn reporting_failure_case(point: ReportPoint, failure: ReportFailure) {
         started.elapsed() < Duration::from_secs(12),
         "{point:?} {failure:?} did not cancel promptly"
     );
-    for path in ready {
+    for path in pid_paths.into_iter().filter(|path| pid_path_ready(path)) {
         let role = path
             .file_stem()
             .and_then(OsStr::to_str)
@@ -809,14 +658,7 @@ fn reporting_process_fixture(label: &str) -> ReportingProcessFixture {
     let test_binary = executable(
         &root,
         "report-test",
-        concat!(
-            "#!/bin/sh\n",
-            "ROLE=\"$ROLE\" \"$VENDOR\" &\n",
-            "printf '%s\\n' \"$!\" > \"$PID_ROOT/$ROLE.vendor.pid\"\n",
-            "ROLE=\"$ROLE\" \"$WAITER\" &\n",
-            "printf '%s\\n' \"$!\" > \"$PID_ROOT/$ROLE.waiter.pid\"\n",
-            "wait\n",
-        ),
+        "#!/bin/sh\nexec /usr/bin/tail -f /dev/null\n",
     );
     let cargo = executable(
         &root,
@@ -834,10 +676,14 @@ fn reporting_process_fixture(label: &str) -> ReportingProcessFixture {
             "  *) exit 64 ;;\n",
             "esac\n",
             "printf '%s\\n' \"$$\" > \"$PID_ROOT/$role.cargo.pid\"\n",
+            "\"$TEST_BINARY\" & test_pid=$!\n",
+            "printf '%s\\n' \"$test_pid\" > \"$PID_ROOT/$role.test.pid\"\n",
+            "\"$VENDOR\" & vendor_pid=$!\n",
+            "printf '%s\\n' \"$vendor_pid\" > \"$PID_ROOT/$role.vendor.pid\"\n",
+            "\"$WAITER\" & waiter_pid=$!\n",
+            "printf '%s\\n' \"$waiter_pid\" > \"$PID_ROOT/$role.waiter.pid\"\n",
             "printf '     Running tests/%s.rs (fixture)\\n' \"$role\" >&2\n",
             "printf 'test %s::fifo_wait ... ' \"$role\"\n",
-            "ROLE=\"$role\" \"$TEST_BINARY\" &\n",
-            "printf '%s\\n' \"$!\" > \"$PID_ROOT/$role.test.pid\"\n",
             "wait\n",
         ),
     );
@@ -901,6 +747,7 @@ fn quick_package() -> PackageInventory {
             kind: "test".to_owned(),
             name: "quick".to_owned(),
             source: PathBuf::from("/workspace/quick/tests/quick.rs"),
+            declared_path_sources: Vec::new(),
         }],
     }
 }
@@ -919,6 +766,7 @@ fn fixture_inventory() -> Inventory {
                     kind: "lib".to_owned(),
                     name: "fixture-a".to_owned(),
                     source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
+                    declared_path_sources: Vec::new(),
                 }],
             },
             PackageInventory {
@@ -930,6 +778,7 @@ fn fixture_inventory() -> Inventory {
                     kind: "bin".to_owned(),
                     name: "fixture-b".to_owned(),
                     source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
+                    declared_path_sources: Vec::new(),
                 }],
             },
         ],
@@ -956,6 +805,7 @@ fn target_identity(kind: &str, name: &str) -> TargetIdentity {
         kind: kind.to_owned(),
         name: name.to_owned(),
         source: PathBuf::from(format!("/workspace/{kind}/{name}.rs")),
+        declared_path_sources: Vec::new(),
     }
 }
 

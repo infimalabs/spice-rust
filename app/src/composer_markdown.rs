@@ -5,20 +5,14 @@
 //! Nothing here may be duplicated there: a second copy is what let the shipped
 //! quote drift from the tested one until the copies disagreed on blank input.
 
+use wire::Media;
+
 /// One quoted message and the reply the operator typed beneath it.
 pub(crate) struct QuotedReply<'a> {
     /// Quoted text, prefixed line by line as one Markdown block quote.
     pub(crate) quote: &'a str,
     /// Reply body shown under the quote, blank when the operator wrote none.
     pub(crate) body: &'a str,
-}
-
-/// One image the operator attached, carried inline as a Markdown image.
-pub(crate) struct Attachment<'a> {
-    /// Display name, which becomes the alt text.
-    pub(crate) name: &'a str,
-    /// Data URL carrying the image bytes.
-    pub(crate) data_url: &'a str,
 }
 
 /// Join every visible quote shard, the primary body, and every attachment.
@@ -28,11 +22,7 @@ pub(crate) struct Attachment<'a> {
 /// belong to the assembled document and follow its text. Parts are separated by
 /// the blank line Markdown reads as a block boundary, and a part that would
 /// contribute nothing is dropped rather than emitted as an empty block.
-pub(crate) fn compose(
-    body: &str,
-    quotes: &[QuotedReply<'_>],
-    attachments: &[Attachment<'_>],
-) -> String {
+pub(crate) fn compose(body: &str, quotes: &[QuotedReply<'_>], attachments: &[Media]) -> String {
     let mut parts = Vec::new();
     parts.extend(quotes.iter().filter_map(|quoted| {
         let quote = block_quote(quoted.quote);
@@ -49,11 +39,9 @@ pub(crate) fn compose(
         parts.push(body.to_owned());
     }
     parts.extend(attachments.iter().map(|attachment| {
-        let name = attachment
-            .name
-            .replace(['\r', '\n'], " ")
-            .replace(']', "\\]");
-        format!("![{name}]({})", attachment.data_url)
+        attachment
+            .markdown()
+            .expect("composer attachments passed admission before storage")
     }));
     parts.join("\n\n")
 }
@@ -123,17 +111,12 @@ mod tests {
     }
 
     #[test]
-    fn attachment_names_lose_the_characters_that_would_break_the_link() {
+    fn attachment_names_round_trip_through_canonical_media_markdown() {
+        let attachment = Media::from_base64(r"one](two)\\雪.png", "image/png", "iVBORw0KGgo=")
+            .expect("fixture attachment admits");
         assert_eq!(
-            compose(
-                "",
-                &[],
-                &[Attachment {
-                    name: "one]two\nthree",
-                    data_url: "data:image/png;base64,AA"
-                }]
-            ),
-            "![one\\]two three](data:image/png;base64,AA)"
+            compose("", &[], std::slice::from_ref(&attachment)),
+            attachment.markdown().expect("fixture Markdown renders"),
         );
     }
 

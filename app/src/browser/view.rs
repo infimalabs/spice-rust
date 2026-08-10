@@ -69,15 +69,16 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
             data-unsafe-intent={render.unsafe_intent.to_string()}
             data-submission-count={render.submissions.status.len().to_string()}
         >
-            {chrome::render_command_bar(
-                render.axis,
-                render.mosaic,
+            {chrome::render_command_bar(chrome::CommandBarRender {
+                axis: render.axis,
+                mosaic: render.mosaic,
                 active_axis,
-                render.surface,
-                &cursor,
-                render.sender,
-                &render.submissions.status,
-            )}
+                surface: render.surface,
+                cursor: &cursor,
+                sender: render.sender,
+                submissions: &render.submissions.status,
+                lineage_controls: render.lineage_controls,
+            })}
             {render_workspace(&render, active_axis)}
         </div>
     }

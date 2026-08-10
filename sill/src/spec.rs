@@ -351,6 +351,8 @@ impl WaitPolicy {
 pub enum StdinPolicy {
     Inherit,
     Null,
+    /// Give the caller one supervised write before waiting for completion.
+    Pipe,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

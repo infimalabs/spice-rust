@@ -1,16 +1,20 @@
+//! Bounded shard coordinator for workspace Rust test execution.
+
+use super::*;
+
 #[derive(Clone, Copy, Debug)]
-struct RunPolicy {
-    concurrency: usize,
-    shard_deadline: Duration,
-    coordinator_deadline: Duration,
-    progress_interval: Duration,
-    output_drain: Duration,
-    reap: Duration,
-    grace: Duration,
+pub(super) struct RunPolicy {
+    pub(super) concurrency: usize,
+    pub(super) shard_deadline: Duration,
+    pub(super) coordinator_deadline: Duration,
+    pub(super) progress_interval: Duration,
+    pub(super) output_drain: Duration,
+    pub(super) reap: Duration,
+    pub(super) grace: Duration,
 }
 
 impl RunPolicy {
-    fn production(concurrency: usize) -> Result<Self, WorkspaceTestError> {
+    pub(super) fn production(concurrency: usize) -> Result<Self, WorkspaceTestError> {
         if !(1..=WORKSPACE_TEST_CONCURRENCY_CAP).contains(&concurrency) {
             return Err(WorkspaceTestError::new(format!(
                 "workspace test concurrency must be between 1 and {}, \
@@ -29,7 +33,7 @@ impl RunPolicy {
         })
     }
 
-    fn for_shards(mut self, shards: usize) -> Self {
+    pub(super) fn for_shards(mut self, shards: usize) -> Self {
         self.concurrency = self.concurrency.min(if shards == 0 { 1 } else { shards });
         self
     }
@@ -43,7 +47,7 @@ struct ActiveShard {
     thread: thread::JoinHandle<()>,
 }
 
-struct Coordinator<'a, W> {
+pub(super) struct Coordinator<'a, W> {
     pending: VecDeque<(usize, PackageInventory)>,
     active: BTreeMap<usize, ActiveShard>,
     results: Vec<ShardResult>,
@@ -72,7 +76,7 @@ impl<W> Drop for Coordinator<'_, W> {
 }
 
 impl<'a, W: Write> Coordinator<'a, W> {
-    fn new(
+    pub(super) fn new(
         shards: Vec<PackageInventory>,
         root: PathBuf,
         environment: Environment,
@@ -101,7 +105,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
         }
     }
 
-    fn run(mut self) -> Result<(), WorkspaceTestError> {
+    pub(super) fn run(mut self) -> Result<(), WorkspaceTestError> {
         if self.policy.concurrency == 0 || self.policy.progress_interval.is_zero() {
             return Err(WorkspaceTestError::new(
                 "coordinator concurrency and progress interval must be nonzero",
@@ -345,7 +349,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
     }
 }
 
-fn output_error(error: io::Error) -> WorkspaceTestError {
+pub(super) fn output_error(error: io::Error) -> WorkspaceTestError {
     WorkspaceTestError::new(format!("report output failed: {error}"))
 }
 
@@ -359,12 +363,12 @@ fn target_list(shard: &PackageInventory) -> String {
 }
 
 #[derive(Default)]
-struct LastTest {
+pub(super) struct LastTest {
     line: Mutex<Option<String>>,
 }
 
 impl LastTest {
-    fn last(&self) -> String {
+    pub(super) fn last(&self) -> String {
         self.line
             .lock()
             .ok()
@@ -372,7 +376,7 @@ impl LastTest {
             .unwrap_or_else(|| "none".to_owned())
     }
 
-    fn observe_line(&self, line: String) -> Result<(), ObserveError> {
+    pub(super) fn observe_line(&self, line: String) -> Result<(), ObserveError> {
         if line.starts_with("test ") && !line.starts_with("test result:") {
             let mut last = self
                 .line
@@ -486,7 +490,9 @@ fn shard_spec(
     Ok(spec)
 }
 
-fn target_arguments(target: &TargetIdentity) -> Result<Vec<OsString>, WorkspaceTestError> {
+pub(super) fn target_arguments(
+    target: &TargetIdentity,
+) -> Result<Vec<OsString>, WorkspaceTestError> {
     let (selector, named) = match target.kind.as_str() {
         "bin" => ("--bin", true),
         "test" => ("--test", true),
@@ -507,7 +513,7 @@ fn target_arguments(target: &TargetIdentity) -> Result<Vec<OsString>, WorkspaceT
     Ok(arguments)
 }
 
-fn process_spec<I, S>(
+pub(super) fn process_spec<I, S>(
     program: &OsStr,
     arguments: I,
     root: &Path,
@@ -525,7 +531,7 @@ where
             .map_err(|error| WorkspaceTestError::new(error.to_string()))?,
         cwd: root.to_owned(),
         environment,
-        group: ProcessGroup::New,
+        group: crate::measure::bounded_process_group(),
         deadlines: Deadlines::new(runtime, OUTPUT_DRAIN_DEADLINE, REAP_DEADLINE)
             .map_err(|error| WorkspaceTestError::new(error.to_string()))?,
         wait: WaitPolicy::new(owner, cancellation, RestartDisposition::Never)
@@ -617,7 +623,7 @@ fn failed_shard(
     }
 }
 
-fn captured_excerpt(output: Option<&sill::CapturedOutput>) -> String {
+pub(super) fn captured_excerpt(output: Option<&sill::CapturedOutput>) -> String {
     let Some(output) = output else {
         return "not-captured".to_owned();
     };
@@ -637,7 +643,7 @@ fn last_binary(stderr: Option<&sill::CapturedOutput>) -> String {
         .unwrap_or_else(|| "not-observed".to_owned())
 }
 
-fn completion_name(completion: &Completion) -> String {
+pub(super) fn completion_name(completion: &Completion) -> String {
     match completion {
         Completion::Exited(status) => exit_name(*status),
         Completion::TimedOut(_) => "timeout".to_owned(),

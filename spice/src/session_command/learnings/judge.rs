@@ -75,5 +75,5 @@ where
 
 #[cfg(test)]
 pub(super) fn failure(reason: &'static str, detail: &str) -> JudgeError {
-    crate::judge::failure(reason, detail)
+    crate::judge::failure_error(reason, detail)
 }

@@ -953,6 +953,7 @@ fn declined(key: &str) -> SteerDeclined {
 
 fn transcript_locus(line: u32, column: u32) -> TranscriptLocus {
     TranscriptLocus {
+        source: None,
         member: 1,
         offset: 40,
         length: 80,

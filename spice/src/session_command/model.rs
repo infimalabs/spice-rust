@@ -20,7 +20,7 @@ impl Vendor {
             .session_vendors()
             .into_iter()
             .find(|vendor| vendor.session_gate().dialect() == dialect)
-            .expect("every compiled transcript dialect has one study declaration");
+            .expect("every compiled transcript dialect has one gate declaration");
         Self::declared(vendor)
     }
 

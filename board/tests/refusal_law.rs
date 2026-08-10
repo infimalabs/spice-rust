@@ -46,16 +46,11 @@ const LAW: &str = include_str!("refusal_law.rs");
 const LAPSE_DECLARATION: &str = include_str!("../src/lapse.rs");
 const CLAIM_DECLARATION: &str = include_str!("../src/claim.rs");
 
-/// Where a lapse assertion may live: both suite fragments, and the in-file test
-/// module.
+/// Where a lapse assertion may live: the suite, and the in-file test module.
 ///
 /// `Changed` is asserted only in the second, so a law that read `tests/` alone
 /// would report it uncovered and invite a redundant test.
-const LAPSE_SUITE: [&str; 3] = [
-    include_str!("lapse.rs"),
-    include_str!("lapse/late.rs"),
-    LAPSE_DECLARATION,
-];
+const LAPSE_SUITE: [&str; 2] = [include_str!("lapse.rs"), LAPSE_DECLARATION];
 
 /// Where a claim assertion may live.
 const CLAIM_SUITE: [&str; 2] = [

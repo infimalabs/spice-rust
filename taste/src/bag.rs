@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+use gate::{Applicability, PolicyContext, PolicyResolveError, RuleId, ScopeSelector};
 use listen::{Event, Locus};
 use wire::{Digest, Domain, Name};
 
@@ -16,56 +17,35 @@ pub const REMINDER_MARKER: &str = "[TASTE]";
 
 /// One admitted candidate selector.
 ///
-/// Matching is case-insensitive over tokens split at non-alphanumeric
-/// characters. Whitespace in a phrase is normalized before matching. A bare
-/// word matches one complete token, and one trailing `*` matches suffixes of a
-/// single token. No other glob position is admitted.
+/// Matching is case-insensitive over alphabetic words. Whitespace in a phrase
+/// is normalized before matching, and every selector word must match one
+/// complete prose word exactly.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Trigger {
     source: String,
-    matcher: Matcher,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Matcher {
-    Exact(Vec<String>),
-    Prefix(String),
+    words: Vec<String>,
 }
 
 impl Trigger {
-    /// Parse one exact word, exact phrase, or trailing-suffix glob.
+    /// Parse one exact alphabetic word or phrase.
     ///
     /// # Errors
     ///
-    /// Refuses empty selectors, punctuation, and a `*` anywhere except the
-    /// end of a single word.
+    /// Refuses empty selectors and every non-alphabetic selector term.
     pub fn parse(source: impl AsRef<str>) -> Result<Self, TriggerError> {
         let source = source.as_ref().trim();
         if source.is_empty() {
             return Err(TriggerError::Empty);
         }
 
-        let pieces = source.split_whitespace().collect::<Vec<_>>();
-        let stars = source.chars().filter(|character| *character == '*').count();
-        let glob = stars == 1 && source.ends_with('*');
-        if stars > 0 && (!glob || pieces.len() != 1) {
-            return Err(TriggerError::GlobPosition(source.to_owned()));
-        }
-
-        let words = pieces
-            .iter()
-            .map(|piece| piece.trim_end_matches('*'))
+        let words = source
+            .split_whitespace()
             .map(normalize_selector)
             .collect::<Result<Vec<_>, _>>()?;
-        let matcher = if glob {
-            Matcher::Prefix(words[0].clone())
-        } else {
-            Matcher::Exact(words)
-        };
 
         Ok(Self {
             source: source.to_owned(),
-            matcher,
+            words,
         })
     }
 
@@ -75,32 +55,26 @@ impl Trigger {
         &self.source
     }
 
-    fn spans(&self, tokens: &[String]) -> Vec<Span> {
-        match &self.matcher {
-            Matcher::Exact(words) => tokens
-                .windows(words.len())
-                .enumerate()
-                .filter(|(_, window)| *window == words.as_slice())
-                .map(|(first, _)| Span {
-                    first,
-                    end: first + words.len(),
-                })
-                .collect(),
-            Matcher::Prefix(prefix) => tokens
-                .iter()
-                .enumerate()
-                .filter(|(_, token)| token.starts_with(prefix))
-                .map(|(first, _)| Span {
-                    first,
-                    end: first + 1,
-                })
-                .collect(),
-        }
+    fn spans(&self, tokens: &[Option<String>]) -> Vec<Span> {
+        tokens
+            .windows(self.words.len())
+            .enumerate()
+            .filter(|(_, window)| {
+                window
+                    .iter()
+                    .zip(&self.words)
+                    .all(|(token, word)| token.as_deref() == Some(word))
+            })
+            .map(|(first, _)| Span {
+                first,
+                end: first + self.words.len(),
+            })
+            .collect()
     }
 }
 
 fn normalize_selector(word: &str) -> Result<String, TriggerError> {
-    if word.is_empty() || !word.chars().all(char::is_alphanumeric) {
+    if word.is_empty() || !word.chars().all(char::is_alphabetic) {
         return Err(TriggerError::NotWord(word.to_owned()));
     }
     Ok(lowercase(word))
@@ -138,10 +112,11 @@ pub fn reminder_identity(taste: &Name, prose: &str) -> Digest {
     Digest::compute(Domain::TasteProse, &framed)
 }
 
-/// Canonical identity of one complete ordered active taste bag.
+/// Canonical identity of one complete ordered configured taste bag.
 ///
-/// Names, triggers, and drivers are length-framed in their admitted order, so
-/// any policy movement produces a new identity without a second serializer.
+/// Names, selectors, triggers, and drivers are length-framed in their admitted
+/// order, and enablement is one fixed byte, so any policy movement produces a
+/// new identity without a second serializer.
 #[must_use]
 pub fn bag_identity(bag: &Bag) -> Digest {
     let mut framed = Vec::new();
@@ -153,6 +128,19 @@ pub fn bag_identity(bag: &Bag) -> Digest {
             frame_text(&mut framed, trigger.as_str());
         }
         frame_text(&mut framed, &taste.message);
+        framed.push(u8::from(taste.enabled));
+        for values in [
+            taste.applicability.selector().paths(),
+            taste.applicability.selector().extensions(),
+            taste.applicability.selector().vendors(),
+            taste.applicability.selector().models(),
+            taste.applicability.selector().phases(),
+        ] {
+            frame_count(&mut framed, values.len());
+            for value in values {
+                frame_text(&mut framed, value);
+            }
+        }
     }
     Digest::compute(Domain::TasteBag, &framed)
 }
@@ -178,10 +166,14 @@ pub fn reminder_text(taste: &Name, message: &str) -> String {
     format!("{REMINDER_MARKER} {}: {message}", taste.as_str())
 }
 
-fn prose_tokens(text: &str) -> (Vec<String>, Vec<(usize, usize)>) {
+fn prose_tokens(text: &str) -> (Vec<Option<String>>, Vec<(usize, usize)>) {
+    // A digit attached to letters makes the whole alphanumeric run inert. It
+    // remains as a barrier so `fall 2 back` cannot collapse into the phrase
+    // `fall back`, while punctuation and whitespace still delimit words.
     let mut tokens = Vec::new();
     let mut loci = Vec::new();
     let mut current = String::new();
+    let mut alphabetic = true;
     let mut line = 1;
     let mut line_start = 0;
 
@@ -189,11 +181,14 @@ fn prose_tokens(text: &str) -> (Vec<String>, Vec<(usize, usize)>) {
         if character.is_alphanumeric() {
             if current.is_empty() {
                 loci.push((line, offset - line_start + 1));
+                alphabetic = true;
             }
             current.extend(character.to_lowercase());
+            alphabetic &= character.is_alphabetic();
         } else {
             if !current.is_empty() {
-                tokens.push(std::mem::take(&mut current));
+                tokens.push(alphabetic.then(|| std::mem::take(&mut current)));
+                current.clear();
             }
             if character == '\n' {
                 line += 1;
@@ -202,7 +197,7 @@ fn prose_tokens(text: &str) -> (Vec<String>, Vec<(usize, usize)>) {
         }
     }
     if !current.is_empty() {
-        tokens.push(current);
+        tokens.push(alphabetic.then_some(current));
     }
 
     (tokens, loci)
@@ -212,7 +207,6 @@ fn prose_tokens(text: &str) -> (Vec<String>, Vec<(usize, usize)>) {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TriggerError {
     Empty,
-    GlobPosition(String),
     NotWord(String),
 }
 
@@ -220,11 +214,10 @@ impl fmt::Display for TriggerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => formatter.write_str("a taste trigger cannot be empty"),
-            Self::GlobPosition(trigger) => write!(
+            Self::NotWord(word) => write!(
                 formatter,
-                "taste trigger {trigger:?} places `*` outside one trailing word"
+                "taste trigger term {word:?} is not an alphabetic word"
             ),
-            Self::NotWord(word) => write!(formatter, "taste trigger term {word:?} is not a word"),
         }
     }
 }
@@ -237,6 +230,8 @@ pub struct Taste {
     name: Name,
     triggers: Vec<Trigger>,
     message: String,
+    enabled: bool,
+    applicability: Applicability,
 }
 
 impl Taste {
@@ -246,6 +241,20 @@ impl Taste {
     ///
     /// Refuses an empty bag, an empty message, or any invalid trigger.
     pub fn new<I, S>(name: Name, words: I, message: impl Into<String>) -> Result<Self, BagError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self::configured(name, words, message, true, &ScopeSelector::default())
+    }
+
+    pub(crate) fn configured<I, S>(
+        name: Name,
+        words: I,
+        message: impl Into<String>,
+        enabled: bool,
+        scopes: &ScopeSelector,
+    ) -> Result<Self, BagError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
@@ -261,10 +270,17 @@ impl Taste {
         if message.trim().is_empty() {
             return Err(BagError::EmptyMessage(name.to_string()));
         }
+        let subject = name
+            .as_str()
+            .parse::<RuleId>()
+            .expect("every admitted taste name is a valid selector subject");
+        let applicability = Applicability::compile(subject, scopes)?;
         Ok(Self {
             name,
             triggers,
             message,
+            enabled,
+            applicability,
         })
     }
 
@@ -285,16 +301,28 @@ impl Taste {
     pub fn message(&self) -> &str {
         &self.message
     }
+
+    /// Whether this named tracked row participates in matching.
+    #[must_use]
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Canonical shared selector constraining this taste.
+    #[must_use]
+    pub const fn scopes(&self) -> &ScopeSelector {
+        self.applicability.selector()
+    }
 }
 
-/// A closed active set of tracked tastes.
+/// A closed configured set of tracked tastes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bag {
     tastes: Vec<Taste>,
 }
 
 impl Bag {
-    /// Admit an active set with one row per taste name.
+    /// Admit a configured set with one row per taste name.
     ///
     /// # Errors
     ///
@@ -309,43 +337,52 @@ impl Bag {
         Ok(Self { tastes })
     }
 
-    /// Active tastes in tracked order.
+    /// Named tracked tastes in tracked order, including disabled rows.
     #[must_use]
     pub fn tastes(&self) -> &[Taste] {
         &self.tastes
     }
 
-    /// Select configured candidates from one typed listening event.
+    /// Select applicable configured candidates from one typed listening event.
     ///
     /// Only [`Event::Prose`] is readable here. Reasoning, tools, usage,
     /// compaction, and failure events produce no candidates, and this API has
     /// no vendor-byte input to parse.
-    #[must_use]
-    pub fn hits(&self, event: &Event) -> Vec<Hit> {
+    /// # Errors
+    ///
+    /// Refuses malformed context or any selector axis the caller did not
+    /// supply.
+    pub fn hits(
+        &self,
+        event: &Event,
+        context: &PolicyContext,
+    ) -> Result<Vec<Hit>, PolicyResolveError> {
         let Event::Prose(prose) = event else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let (tokens, loci) = prose_tokens(&prose.text);
-        self.tastes
-            .iter()
-            .flat_map(|taste| {
-                taste.triggers.iter().flat_map(|trigger| {
-                    trigger.spans(&tokens).into_iter().map(|span| {
-                        let (line, column) = loci[span.first];
-                        Hit {
-                            taste: taste.name.clone(),
-                            trigger: trigger.source.clone(),
-                            message: taste.message.clone(),
-                            span,
-                            context: prose.text.clone(),
-                            locus: prose.locus,
-                            line,
-                            column,
-                        }
-                    })
-                })
-            })
-            .collect()
+        let mut hits = Vec::new();
+        for taste in self.tastes.iter().filter(|taste| taste.enabled) {
+            if !taste.applicability.matches(context)? {
+                continue;
+            }
+            for trigger in &taste.triggers {
+                for span in trigger.spans(&tokens) {
+                    let (line, column) = loci[span.first];
+                    hits.push(Hit {
+                        taste: taste.name.clone(),
+                        trigger: trigger.source.clone(),
+                        message: taste.message.clone(),
+                        span,
+                        context: prose.text.clone(),
+                        locus: prose.locus,
+                        line,
+                        column,
+                    });
+                }
+            }
+        }
+        Ok(hits)
     }
 }
 
@@ -353,6 +390,7 @@ impl Bag {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BagError {
     Trigger(TriggerError),
+    Applicability(gate::PolicyCompileError),
     EmptyWords(String),
     EmptyMessage(String),
     Duplicate(String),
@@ -362,6 +400,7 @@ impl fmt::Display for BagError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Trigger(error) => error.fmt(formatter),
+            Self::Applicability(error) => error.fmt(formatter),
             Self::EmptyWords(name) => write!(formatter, "taste {name} has an empty word bag"),
             Self::EmptyMessage(name) => write!(formatter, "taste {name} has an empty message"),
             Self::Duplicate(name) => write!(formatter, "taste {name} is declared more than once"),
@@ -373,6 +412,7 @@ impl Error for BagError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Trigger(error) => Some(error),
+            Self::Applicability(error) => Some(error),
             Self::EmptyWords(_) | Self::EmptyMessage(_) | Self::Duplicate(_) => None,
         }
     }
@@ -381,6 +421,12 @@ impl Error for BagError {
 impl From<TriggerError> for BagError {
     fn from(error: TriggerError) -> Self {
         Self::Trigger(error)
+    }
+}
+
+impl From<gate::PolicyCompileError> for BagError {
+    fn from(error: gate::PolicyCompileError) -> Self {
+        Self::Applicability(error)
     }
 }
 

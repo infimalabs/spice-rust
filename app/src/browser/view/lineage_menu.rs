@@ -13,11 +13,12 @@ pub(super) fn render(
     axis_count: usize,
     runtime: Option<&CanvasRuntime>,
     sender: &SenderHandle,
+    lineage_controls: &UseReducerHandle<LineageControls>,
 ) -> Html {
     if !mosaic {
         return render_axis(active_axis, axis_count);
     }
-    render_agents(runtime, sender)
+    render_agents(runtime, sender, lineage_controls)
 }
 
 fn render_axis(axis: Axis, count: usize) -> Html {
@@ -60,7 +61,11 @@ fn render_axis(axis: Axis, count: usize) -> Html {
     }
 }
 
-fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
+fn render_agents(
+    runtime: Option<&CanvasRuntime>,
+    sender: &SenderHandle,
+    lineage_controls: &UseReducerHandle<LineageControls>,
+) -> Html {
     let Some(runtime) = runtime else {
         return html! {
             <div class="canvas-menu-page" data-menu-page="agents">
@@ -107,6 +112,13 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
         .collect::<Vec<_>>();
     let new_lineage =
         super::super::random_uuid().expect("browser crypto mints a new lineage identity");
+    let solo_render = SoloDropRender {
+        waiting,
+        sender,
+        can_configure,
+        topology_revision: lanes.topology_revision,
+        lineage_controls,
+    };
     html! {
         <div class="canvas-menu-page" data-menu-page="agents">
             <section class="canvas-menu-section canvas-menu-global">
@@ -128,6 +140,7 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
                             sender,
                             can_configure,
                             lanes.topology_revision,
+                            lineage_controls,
                         )
                     })}
                 }
@@ -141,12 +154,9 @@ fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html
             )}
             {render_solo_members_drop(
                 &solo_members,
-                waiting,
                 solo_member_ids,
                 life_by_member,
-                sender,
-                can_configure,
-                lanes.topology_revision,
+                &solo_render,
             )}
         </div>
     }
@@ -165,6 +175,7 @@ fn render_lineage(
     sender: &SenderHandle,
     can_configure: bool,
     topology_revision: u64,
+    lineage_controls: &UseReducerHandle<LineageControls>,
 ) -> Html {
     let target = lineage.lane;
     let life = lineage.subscription;
@@ -182,6 +193,8 @@ fn render_lineage(
         can_configure,
         topology_revision,
     );
+    let closed = lineage_controls.is_closed(lineage.lane);
+    let reopen = lineage_controls.clone();
     html! {
         <article
             class="canvas-team"
@@ -190,15 +203,35 @@ fn render_lineage(
             {ondrop}
         >
             <header>
-                <strong>{format!("Team {}", watchband::short(lineage.lane))}</strong>
-                <span>{format!(
-                    "open any member; {} agents open together",
-                    lineage.members.len()
-                )}</span>
+                <div>
+                    <strong>{format!("Team {}", watchband::short(lineage.lane))}</strong>
+                    <span>{format!(
+                        "open any member; {} agents open together",
+                        lineage.members.len()
+                    )}</span>
+                </div>
+                if closed {
+                    <button
+                        type="button"
+                        class="canvas-team-open"
+                        onclick={Callback::from(move |_| {
+                            reopen.dispatch(LineageControlAction::OpenLineage {
+                                lineage: target,
+                            });
+                        })}
+                    >{"Open team"}</button>
+                }
             </header>
             <div class="canvas-team-members">
                 {for lineage.members.iter().map(|member| {
-                    render_member(member, waiting, lineage.lane, can_configure)
+                    render_member(
+                        member,
+                        waiting,
+                        lineage.lane,
+                        can_configure,
+                        lineage_controls,
+                        false,
+                    )
                 })}
             </div>
         </article>
@@ -210,6 +243,8 @@ fn render_member(
     waiting: &[wire::intent::LaneInbox],
     source: CanonicalUuid,
     can_configure: bool,
+    lineage_controls: &UseReducerHandle<LineageControls>,
+    show_reopen: bool,
 ) -> Html {
     let pending = waiting
         .iter()
@@ -222,6 +257,8 @@ fn render_member(
         .unwrap_or_else(|| watchband::leaf(&member.worktree).to_owned());
     let worktree = watchband::leaf(&member.worktree).to_owned();
     let ondragstart = begin_drag(member.lane, can_configure);
+    let closed = lineage_controls.is_closed(source);
+    let reopen = lineage_controls.clone();
     html! {
         <article
             class="canvas-team-member"
@@ -243,6 +280,15 @@ fn render_member(
                 )}</small>
             </span>
             <span class="canvas-member-drag" aria-hidden="true">{"↕"}</span>
+            if closed && show_reopen {
+                <button
+                    type="button"
+                    class="canvas-team-open"
+                    onclick={Callback::from(move |_| {
+                        reopen.dispatch(LineageControlAction::OpenLineage { lineage: source });
+                    })}
+                >{"Open team"}</button>
+            }
         </article>
     }
 }
@@ -270,22 +316,27 @@ fn render_new_lineage_drop(
     }
 }
 
-fn render_solo_members_drop(
-    members: &[&crate::runtime::LaneMember],
-    waiting: &[wire::intent::LaneInbox],
-    current: Vec<CanonicalUuid>,
-    life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
-    sender: &SenderHandle,
+struct SoloDropRender<'a> {
+    waiting: &'a [wire::intent::LaneInbox],
+    sender: &'a SenderHandle,
     can_configure: bool,
     topology_revision: u64,
+    lineage_controls: &'a UseReducerHandle<LineageControls>,
+}
+
+fn render_solo_members_drop(
+    members: &[&crate::runtime::LaneMember],
+    current: Vec<CanonicalUuid>,
+    life_by_member: BTreeMap<CanonicalUuid, LineageLife>,
+    render: &SoloDropRender<'_>,
 ) -> Html {
-    let ondragover = allow_drop(can_configure);
+    let ondragover = allow_drop(render.can_configure);
     let ondrop = drop_into_solo_lineage(
-        sender.clone(),
+        render.sender.clone(),
         current,
         life_by_member,
-        can_configure,
-        topology_revision,
+        render.can_configure,
+        render.topology_revision,
     );
     html! {
         <section class="canvas-menu-section canvas-unteamed" {ondragover} {ondrop}>
@@ -298,7 +349,14 @@ fn render_solo_members_drop(
                     <p class="canvas-menu-empty">{"No unteamed agents"}</p>
                 } else {
                     {for members.iter().map(|member| {
-                        render_member(member, waiting, member.lane, can_configure)
+                        render_member(
+                            member,
+                            render.waiting,
+                            member.lane,
+                            render.can_configure,
+                            render.lineage_controls,
+                            true,
+                        )
                     })}
                 }
             </div>

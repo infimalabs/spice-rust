@@ -66,8 +66,9 @@ feed the board
 
 #[test]
 fn typed_media_reaches_the_lane_once_with_its_directive_identity() {
-    let attachment = wire::Media::from_base64("operator-capture.png", "image/png", "iVBORw0KGgo=")
-        .expect("fixture attachment admits");
+    let attachment =
+        wire::Media::from_base64(r"operator](capture)\雪.png", "image/png", "iVBORw0KGgo=")
+            .expect("fixture attachment admits");
     let canonical_markdown = attachment.markdown().expect("fixture Markdown renders");
     let cases = [
         "inspect this capture".to_owned(),

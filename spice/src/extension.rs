@@ -49,7 +49,7 @@ pub struct Gate {
 /// Typed configuration fold owned by one declared vendor.
 pub type ConfigFold = for<'a> fn(&'a crate::config::Root) -> vendor::LaunchValues<'a>;
 
-/// Session-study behavior carried by one declared vendor value.
+/// Session-gate behavior carried by one declared vendor value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionGate {
     identity: &'static str,
@@ -89,7 +89,7 @@ impl SessionGate {
     }
 }
 
-/// One complete declared vendor, including configuration and session study.
+/// One complete declared vendor, including configuration and session gate.
 #[derive(Clone, Copy)]
 pub struct Vendor {
     dialect: &'static vendor::Vendor,
@@ -98,7 +98,7 @@ pub struct Vendor {
 }
 
 impl Vendor {
-    /// Bind one raw vendor contract to configuration and ambient study order.
+    /// Bind one raw vendor contract to configuration and ambient gate order.
     #[must_use]
     pub const fn new(
         dialect: &'static vendor::Vendor,
@@ -118,7 +118,7 @@ impl Vendor {
         (self.configuration)(root)
     }
 
-    /// Declaration-owned session study contract.
+    /// Declaration-owned session gate contract.
     #[must_use]
     pub const fn session_gate(&self) -> SessionGate {
         self.session_gate
