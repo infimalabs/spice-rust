@@ -695,13 +695,20 @@ mod tests {
         )
         .expect("unknown selection remains typed");
 
-        let Outcome::Refusal(Refusal::Evidence {
-            reason, evidence, ..
-        }) = selection_refusal(report.clone())
-        else {
+        let outcome = selection_refusal(report.clone());
+        let Outcome::Refusal(refusal) = &outcome else {
             panic!("unknown source-to-test coverage must refuse");
         };
-        assert_eq!(reason, "gate::test-selection-coverage-unknown");
+        assert_eq!(refusal.reason(), "gate::test-selection-coverage-unknown");
+        let rendering = crate::render::render_commit_gate(&outcome, crate::render::Form::Text)
+            .expect("selection refusal renders")
+            .expect("a selection refusal is not silent");
+        assert_eq!(rendering.stream(), crate::render::Stream::Err);
+        let evidence = std::str::from_utf8(rendering.document())
+            .expect("selection evidence is UTF-8")
+            .lines()
+            .next()
+            .expect("selection evidence precedes its summary");
         assert_eq!(
             TestSelectionReport::decode(evidence.as_bytes()).expect("decode refusal evidence"),
             report

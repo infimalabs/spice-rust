@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -493,6 +493,26 @@ pub fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
 /// spice's.
 pub fn json_selected(matches: &ArgMatches) -> bool {
     matches.get_flag(JSON)
+}
+
+/// Whether a raw native invocation requests JSON before repository command
+/// mounts have been loaded and the complete parser can exist.
+///
+/// This bootstrap read is used only to render a mount-loading failure. The
+/// first `--` ends Spice's arguments, exactly as it does for the generated
+/// parser, so a child command's own `--json` remains its operand.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn bootstrap_json_selected(arguments: impl IntoIterator<Item = OsString>) -> bool {
+    let requested = format!("--{JSON}");
+    for argument in arguments.into_iter().skip(1) {
+        if argument == OsStr::new("--") {
+            return false;
+        }
+        if argument == OsStr::new(&requested) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]

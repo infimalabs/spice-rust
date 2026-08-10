@@ -896,6 +896,25 @@ fn the_renderer_flag_is_read_wherever_spice_owns_the_word() {
     assert!(!json_selected(&matches), "nobody asked for JSON");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn bootstrap_renderer_selection_stops_at_the_child_command_delimiter() {
+    for argv in [
+        &["spice", "--json", "doctor"][..],
+        &["spice", "doctor", "--json"][..],
+    ] {
+        assert!(
+            bootstrap_json_selected(argv.iter().map(|argument| OsString::from(*argument))),
+            "{argv:?} asks the bootstrap refusal renderer for JSON",
+        );
+    }
+    let child = ["spice", "run", "--", "echo", "--json"];
+    assert!(
+        !bootstrap_json_selected(child.into_iter().map(OsString::from)),
+        "the child command owns every argument after its delimiter",
+    );
+}
+
 /// A placeholder for each operand a contract requires before its command
 /// delimiter, or nothing when it admits no child command.
 ///
