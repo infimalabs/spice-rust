@@ -437,7 +437,7 @@ mod tests {
             r#"{"target":{"os":"linux","architecture":"x86_64"}"#,
             r#","locations":{"working":"/repo","repository":"/repo""#,
             r#","repository_common":"/repo/.git""#,
-            r#","tracked_configuration":"/repo/spice.toml""#,
+            r#","tracked_configuration":"/repo/spice-rust.toml""#,
             r#","local_configuration":"/repo/.git/.spice-rs/config.toml"}"#,
             r#","environment":[{"variable":"SPICE_HOOKS""#, // env-policy: allow
             r#","observation":{"status":"ready"}}]"#,

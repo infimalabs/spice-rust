@@ -300,7 +300,8 @@ impl SelectedContract {
             reason: "gate::contract-refused",
             expected: "one complete current tracked gate contract".to_owned(),
             observed: error.to_string(),
-            detail: "repair the selected spice.toml, baseline.toml, or compiled tool".to_owned(),
+            detail: "repair the selected spice-rust.toml, baseline.toml, or compiled tool"
+                .to_owned(),
         })?;
         Ok(Self { tree, contract })
     }

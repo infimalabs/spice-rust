@@ -115,7 +115,7 @@ impl DurationUnit {
 pub enum ConfigSource {
     /// Value compiled into the binary.
     Builtin,
-    /// Intent read from tracked `spice.toml`.
+    /// Intent read from tracked `spice-rust.toml`.
     Tracked,
     /// Admitted repository-local override.
     Local,

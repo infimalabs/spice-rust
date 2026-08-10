@@ -11,9 +11,9 @@ because this appliance is invoked by path, never by name.
 
 ## Before installing
 
-One tracked `spice.toml` serves both readers, so a lane that pinned it with
-`git update-index --skip-worktree` carries stale configuration invisibly. Prove
-no worktree holds a pin:
+Python and Rust own `spice.toml` and `spice-rust.toml` respectively. A lane that
+pinned either with `git update-index --skip-worktree` carries stale
+configuration invisibly. Prove no worktree holds a pin:
 
 ```sh
 SPICE_REPO=/absolute/path/to/this/worktree
@@ -23,9 +23,11 @@ cd "$SPICE_REPO"
 git worktree list --porcelain |
 awk '/^worktree / { sub(/^worktree /, ""); print }' |
 while IFS= read -r SPICE_WORKTREE; do
-  SPICE_ENTRY=$(git -C "$SPICE_WORKTREE" ls-files -v spice.toml)
-  test -n "$SPICE_ENTRY" || continue
-  printf '%s %s\n' "$SPICE_ENTRY" "$SPICE_WORKTREE"
+  for SPICE_CONFIG in spice.toml spice-rust.toml; do
+    SPICE_ENTRY=$(git -C "$SPICE_WORKTREE" ls-files -v "$SPICE_CONFIG")
+    test -n "$SPICE_ENTRY" || continue
+    printf '%s %s %s\n' "$SPICE_ENTRY" "$SPICE_CONFIG" "$SPICE_WORKTREE"
+  done
 done | grep -v '^H ' || true
 ```
 

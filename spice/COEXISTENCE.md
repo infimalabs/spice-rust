@@ -36,7 +36,8 @@ below.
 | --- | --- | --- |
 | Git-common authority root | `<common>/.spice` | `<common>/.spice-rs` |
 | Lane-local context root | `<git-dir>/.spice` and `<worktree>/.spice` | Per-lane facts below `<common>/.spice-rs` |
-| Repository-local config | `<git-dir>/.spice/config/spice.toml` | `<common>/.spice-rs/config.toml` |
+| Tracked repository config | `<worktree>/spice.toml` | `<worktree>/spice-rust.toml` |
+| Machine-local config | `<git-dir>/.spice/config/spice.toml` | `<common>/.spice-rs/config.toml` |
 | Task and message authority | `<common>/.spice/data/*.sqlite3` | `<common>/.spice-rs/data/spicejournal.sqlite3` |
 | Pending direction | `<worktree>/.spice/inbox/*.txt` | Rust journal facts and `spice/src/repository.rs#pub fn inbox` |
 | ACK authority | `<common>/.spice/data/spiceacks.sqlite3` | Rust journal facts under `.spice-rs` |
@@ -143,21 +144,22 @@ concurrent proof deliberately places a predecessor `spice` earlier in the
 resident's ambient path; bare agent-shell commands still reach the installed
 Rust appliance, and the predecessor invocation log stays absent.
 
-## Shared tracked configuration
+## Tracked configuration
 
-One tracked `spice.toml` is intentionally read by both systems. This is static
-repository policy, not a message or context transport. Python builds its
-configuration layers at `spice-z/spice/config/layers.py#effective_commands` and
-reads Rust source policy through `spice-z/spice/policyconfig.py#languages` and
-`spice-z/spice/policyconfig.py#file_shape`. Rust consumes its own admission key
-at `spice/src/config.rs#policy.admission`, with the gate mirror at
-`gate/src/core/config_keys.rs#policy.admission`.
+Tracked policy is physically separate. Python builds its repository layer from
+`<worktree>/spice.toml` at
+`spice-z/spice/config/layers.py#effective_commands`; Rust loads only
+`<worktree>/spice-rust.toml` through
+`spice/src/config/load.rs#const TRACKED_FILE`, and Gate uses that same Rust path
+through `gate/src/input.rs#POLICY_PATH`. Neither runtime falls back to the
+other's file when its own is absent or malformed.
 
-Python deliberately admits Rust-only vocabulary so the common tracked file can
-load: `spice-z/spice/config/schema.py#"admission"` and
-`spice-z/tests/test_configlayer.py#test_repository_configuration_admits_the_rust_publisher_admission_argv`
-pin that compatibility. Machine-local configuration is not shared; Rust reads
-only `.spice-rs/config.toml`.
+The Python document retains the one deliberate execution bridge: its sole
+`policy.pre_commit` entry invokes the current Rust `spice gate pre-commit`
+command while `policy.pre_commit_builtins` is false. That is a command owned by
+the predecessor hook, not a shared configuration read. Rust's document omits
+both predecessor-only bridge keys. Machine-local configuration is also
+separate; Rust reads only `.spice-rs/config.toml`.
 
 ## Git hook selection
 

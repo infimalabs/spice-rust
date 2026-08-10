@@ -165,7 +165,7 @@ fn set(
         return Err(refusal(
             "config::tracked-policy",
             Some(key.to_owned()),
-            "edit tracked spice.toml in an operator-reviewed commit",
+            "edit tracked spice-rust.toml in an operator-reviewed commit",
         ));
     }
     let value = parse_value(raw, descriptor.kind())?;
@@ -1072,7 +1072,7 @@ mod tests {
         let parent = root.join("parent");
         let parked = root.join("parked");
         let outside = root.join("outside");
-        let tracked_path = root.join("spice.toml");
+        let tracked_path = root.join("spice-rust.toml");
         let local_path = parent.join("config.toml");
         fs::create_dir(&outside).unwrap();
         let tracked = b"[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n".to_vec();

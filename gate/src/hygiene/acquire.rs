@@ -17,7 +17,7 @@ use crate::jurisdiction::{Admission, Ignore, Jurisdiction, Rule, Shape};
 use crate::tree::SelectedTree;
 
 /// Declaration metadata that names tracked policy rather than a path pattern.
-const TRACKED_EXCLUSION_SOURCE: &str = "spice.toml:policy.exclude";
+const TRACKED_EXCLUSION_SOURCE: &str = "spice-rust.toml:policy.exclude";
 
 /// One immutable selected tree and the complete hygiene jurisdiction captured
 /// from it.
@@ -229,7 +229,7 @@ fn tracked_walk_provenance(index: usize) -> HygieneProvenance {
     HygieneProvenance {
         release: CURRENT_RELEASE.to_owned(),
         layer: "repository".to_owned(),
-        document: "spice.toml".to_owned(),
+        document: "spice-rust.toml".to_owned(),
         field: format!("gate.walk.skip[{index}]"),
     }
 }

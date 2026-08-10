@@ -350,7 +350,7 @@ impl Fixture {
         fs::create_dir_all(self.root.join("src")).expect("create gate source directory");
         fs::create_dir_all(self.root.join("gate/src")).expect("create camp loci");
         fs::write(
-            self.root.join("spice.toml"),
+            self.root.join("spice-rust.toml"),
             format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
         )
         .expect("write gate policy");

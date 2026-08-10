@@ -6,7 +6,7 @@ use gate::{
 };
 use serde::Deserialize;
 
-const TRACKED_POLICY: &str = include_str!("../../spice.toml");
+const TRACKED_POLICY: &str = include_str!("../../spice-rust.toml");
 const TRACKED_BASELINE: &str = include_str!("../../baseline.toml");
 const TRACKED_FILE_LOC_LIMIT: u64 = 1_000;
 const TRACKED_FILE_LOC_RATCHET: u64 = 1_500;
@@ -508,7 +508,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn policy_path() -> PathBuf {
-    PathBuf::from("fixture/spice.toml")
+    PathBuf::from("fixture/spice-rust.toml")
 }
 
 fn baseline_path() -> PathBuf {
