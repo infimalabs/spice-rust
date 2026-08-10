@@ -511,6 +511,8 @@ fn add_coexistence_tasks(
                 "coexistence.rehearsal",
                 "--acceptance",
                 "coexistence fixture reaches clean resident shutdown",
+                "--origin",
+                "fixture:coexistence-rehearsal",
             ],
             true,
         ))
@@ -527,6 +529,8 @@ fn add_coexistence_tasks(
                 "coexistence.rehearsal",
                 "--acceptance",
                 "coexistence fixture reaches clean resident shutdown",
+                "--origin",
+                "fixture:coexistence-rehearsal",
             ],
             true,
         ))

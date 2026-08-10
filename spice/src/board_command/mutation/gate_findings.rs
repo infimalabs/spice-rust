@@ -6,6 +6,29 @@ const GATE_FINDING_TAG_PREFIX: &str = "gate-finding:";
 const GATE_FINDING_DEFER_UNTIL: &str = "2099-12-31T23:59:59.999Z";
 
 #[derive(Clone)]
+pub(in crate::board_command) struct FindingRow {
+    pub(in crate::board_command) identity: Digest,
+    pub(in crate::board_command) severity: String,
+    pub(in crate::board_command) locus: String,
+    pub(in crate::board_command) title: String,
+    pub(in crate::board_command) description: String,
+    pub(in crate::board_command) acceptance: Vec<String>,
+}
+
+impl From<gate::GateFinding> for FindingRow {
+    fn from(finding: gate::GateFinding) -> Self {
+        Self {
+            identity: finding.identity().clone(),
+            severity: finding.severity().to_owned(),
+            locus: finding.locus().to_owned(),
+            title: finding.title().to_owned(),
+            description: finding.description().to_owned(),
+            acceptance: finding.acceptance().to_vec(),
+        }
+    }
+}
+
+#[derive(Clone)]
 struct GateFindingPlan {
     identity: Digest,
     tag: String,
@@ -19,7 +42,7 @@ enum GateFindingAction {
     },
     Created {
         task: TaskHandle,
-        finding: wire::intent::GateFindingWork,
+        finding: FindingRow,
         predecessor: Option<TaskHandle>,
     },
 }
@@ -31,68 +54,150 @@ pub(in crate::board_command) fn gate_findings(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    let report = match focused_report(dispatch) {
+        Ok(report) => report,
+        Err(outcome) => return outcome,
+    };
+    let instrument = report.gate_id();
+    let admits = report.admits();
+    let findings = report
+        .findings()
+        .into_iter()
+        .map(FindingRow::from)
+        .collect::<Vec<_>>();
+    gate_findings_folded(
+        bus, command, dispatch, &findings, instrument, admits, projects, allocation,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::board_command) fn gate_findings_folded(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    dispatch: &GateFindings,
+    findings: &[FindingRow],
+    instrument: gate::GateId,
+    admits: bool,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Outcome<CommandAnswer> {
+    if let Err(outcome) = validate_finding_fold(findings, admits) {
+        return outcome;
+    }
+    let prepared =
+        match prepare_finding_fold(bus, command, dispatch, findings, projects, allocation) {
+            Ok(prepared) => prepared,
+            Err(outcome) => return outcome,
+        };
+    commit_finding_fold(
+        bus, command, dispatch, findings, instrument, admits, prepared,
+    )
+}
+
+struct PreparedFindingFold {
+    project: Project,
+    at: Instant,
+    until: Instant,
+    origin: wire::Origin,
+    plans: Vec<GateFindingPlan>,
+    created: usize,
+    reused: usize,
+}
+
+fn validate_finding_fold(
+    findings: &[FindingRow],
+    admits: bool,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if admits != findings.is_empty() {
+        return Err(refusal(
+            "gate::finding-report-fold-mismatch",
+            Some(format!(
+                "state={} findings={}",
+                if admits { "clean" } else { "findings" },
+                findings.len()
+            )),
+            "derive every finding and the admission state from the same focused report",
+        ));
+    }
+    if let Err(identity) = unique_gate_finding_identities(findings) {
+        return Err(refusal(
+            "gate::finding-duplicate",
+            Some(identity.to_string()),
+            "dispatch each folded gate finding identity at most once",
+        ));
+    }
+    Ok(())
+}
+
+fn prepare_finding_fold(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    dispatch: &GateFindings,
+    findings: &[FindingRow],
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Result<PreparedFindingFold, Outcome<CommandAnswer>> {
     let project = match projects.admit_manual_creation(GATE_FINDINGS_PROJECT) {
         Ok(project) => project,
         Err(error) => {
-            return refusal(
+            return Err(refusal(
                 "gate::findings-project-refused",
                 Some(error.to_string()),
                 "configure the gate public project stem before filing gate findings",
-            );
+            ));
         }
     };
-    if let Err(identity) = unique_gate_finding_identities(dispatch) {
-        return refusal(
-            "gate::finding-duplicate",
-            Some(identity.to_string()),
-            "dispatch each projected gate finding identity at most once",
-        );
-    }
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
-    let at = match current_instant() {
-        Ok(at) => at,
-        Err(outcome) => return outcome,
-    };
-    let until = match gate_finding_defer_until() {
-        Ok(until) => until,
-        Err(outcome) => return outcome,
-    };
-    let origin = match gate_findings_origin(command.actor(), &snapshot, &dispatch.report) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
-    };
-    let plans = match plan_gate_findings(dispatch, &snapshot, &project, at) {
-        Ok(plans) => plans,
-        Err(outcome) => return outcome,
-    };
+    let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
+    let at = current_instant()?;
+    let until = gate_finding_defer_until()?;
+    let origin = gate_findings_origin(command.actor(), &snapshot, &dispatch.report)?;
+    let plans = plan_gate_findings(findings, &snapshot, &project, at)?;
     let created = plans
         .iter()
         .filter(|plan| matches!(plan.action, GateFindingAction::Created { .. }))
         .count();
     let reused = plans.len().saturating_sub(created);
+    Ok(PreparedFindingFold {
+        project,
+        at,
+        until,
+        origin,
+        plans,
+        created,
+        reused,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_finding_fold(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    dispatch: &GateFindings,
+    findings: &[FindingRow],
+    instrument: gate::GateId,
+    admits: bool,
+    prepared: PreparedFindingFold,
+) -> Outcome<CommandAnswer> {
     let mut write = JournalWrite::new(
         command.actor().clone(),
-        origin.clone(),
-        at,
+        prepared.origin.clone(),
+        prepared.at,
         Producer::CommandDoor,
     );
-    guard_gate_finding_plan(&mut write, plans.clone());
+    guard_gate_finding_plan(&mut write, prepared.plans.clone());
     let filed = match write.fact(
         body::GateFindingsFiled {
             report: dispatch.report.clone(),
-            findings: dispatch.findings.len() as u32,
-            created: created as u32,
-            reused: reused as u32,
+            findings: findings.len() as u32,
+            created: prepared.created as u32,
+            reused: prepared.reused as u32,
         },
         FactCause::Root,
     ) {
         Ok(fact) => fact,
         Err(error) => return store_fault("gate::findings-build", &error.to_string()),
     };
-    for plan in &plans {
+    for plan in &prepared.plans {
         if let GateFindingAction::Created {
             task,
             finding,
@@ -101,12 +206,12 @@ pub(in crate::board_command) fn gate_findings(
             && let Err(outcome) = write_gate_finding_task(
                 &mut write,
                 filed,
-                &project,
+                &prepared.project,
                 task,
                 finding,
                 predecessor.as_ref(),
-                &origin,
-                until,
+                &prepared.origin,
+                prepared.until,
                 &dispatch.report,
             )
         {
@@ -114,11 +219,13 @@ pub(in crate::board_command) fn gate_findings(
         }
     }
     let text = format!(
-        "gate findings report={} findings={} created={} reused={}",
+        "gate findings instrument={} state={} report={} findings={} created={} reused={}",
+        instrument,
+        if admits { "clean" } else { "findings" },
         dispatch.report,
-        dispatch.findings.len(),
-        created,
-        reused
+        findings.len(),
+        prepared.created,
+        prepared.reused
     );
     let answer = CommandAnswer::Text(TextAnswer { text });
     if let Err(error) = write.command_result(
@@ -131,9 +238,29 @@ pub(in crate::board_command) fn gate_findings(
     committed(bus, write, answer)
 }
 
-fn unique_gate_finding_identities(dispatch: &GateFindings) -> Result<(), Digest> {
+fn focused_report(
+    dispatch: &GateFindings,
+) -> Result<gate::FocusedArmReport, Outcome<CommandAnswer>> {
+    let observed = Digest::compute(Domain::GateFocusedReport, dispatch.evidence.as_bytes());
+    if observed != dispatch.report {
+        return Err(refusal(
+            "gate::finding-report-digest-mismatch",
+            Some(format!("expected={} observed={observed}", dispatch.report)),
+            "dispatch the unchanged canonical focused report and its computed digest",
+        ));
+    }
+    gate::FocusedArmReport::decode(dispatch.evidence.as_bytes()).map_err(|error| {
+        refusal(
+            "gate::finding-report-invalid",
+            Some(error.to_string()),
+            "rerun the registered gate instrument and dispatch its canonical focused report",
+        )
+    })
+}
+
+fn unique_gate_finding_identities(findings: &[FindingRow]) -> Result<(), Digest> {
     let mut seen = std::collections::BTreeSet::new();
-    for finding in &dispatch.findings {
+    for finding in findings {
         if !seen.insert(finding.identity.clone()) {
             return Err(finding.identity.clone());
         }
@@ -158,30 +285,24 @@ fn gate_findings_origin(
     snapshot: &ValidatedSnapshot,
     report: &Digest,
 ) -> Result<wire::Origin, Outcome<CommandAnswer>> {
-    if let Some(entry) = snapshot.entries.iter().find(|entry| {
-        entry.claim().is_some_and(|claim| {
-            claim.actor == *actor && claim.disposition == ClaimDisposition::Active
-        })
-    }) {
-        return task_origin(&entry.statement().handle);
-    }
-    format!("gate:{report}").parse().map_err(|error| {
+    let intrinsic = format!("gate:{report}").parse().map_err(|error| {
         protocol_fault(
             "gate::origin-invalid",
             &format!("gate report digest did not form an origin: {error}"),
         )
-    })
+    })?;
+    resolve_creation_origin(None, actor, snapshot, Some(intrinsic))
 }
 
 fn plan_gate_findings(
-    dispatch: &GateFindings,
+    findings: &[FindingRow],
     snapshot: &ValidatedSnapshot,
     project: &Project,
     at: Instant,
 ) -> Result<Vec<GateFindingPlan>, Outcome<CommandAnswer>> {
-    let mut planned = Vec::with_capacity(dispatch.findings.len());
+    let mut planned = Vec::with_capacity(findings.len());
     let mut minted = std::collections::BTreeSet::new();
-    for (index, finding) in dispatch.findings.iter().enumerate() {
+    for (index, finding) in findings.iter().enumerate() {
         let tag = gate_finding_tag(&finding.identity);
         let matches = matching_gate_finding_tasks(snapshot, &tag);
         let open = matches
@@ -276,7 +397,7 @@ fn write_gate_finding_task(
     cause: PendingFact,
     project: &Project,
     task: &TaskHandle,
-    finding: &wire::intent::GateFindingWork,
+    finding: &FindingRow,
     predecessor: Option<&TaskHandle>,
     origin: &wire::Origin,
     until: Instant,
@@ -288,7 +409,7 @@ fn write_gate_finding_task(
     let tags = vec![
         GATE_FINDING_TAG.to_owned(),
         gate_finding_tag(&finding.identity),
-        format!("gate-severity:{}", severity_text(finding.severity)),
+        format!("gate-severity:{}", finding.severity),
     ];
     let uuid = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
     let added = write
@@ -350,16 +471,13 @@ fn write_gate_finding_task(
 }
 
 fn gate_finding_description(
-    finding: &wire::intent::GateFindingWork,
+    finding: &FindingRow,
     predecessor: Option<&TaskHandle>,
     report: &Digest,
 ) -> String {
     let mut description = format!(
         "{}\n\nGate report: {report}\nFinding identity: {}\nSeverity: {}\nLocus: {}",
-        finding.description,
-        finding.identity,
-        severity_text(finding.severity),
-        finding.locus
+        finding.description, finding.identity, finding.severity, finding.locus
     );
     if let Some(predecessor) = predecessor {
         description.push_str(&format!("\nPrevious completed task: {predecessor}"));
@@ -418,13 +536,4 @@ fn current_open_gate_finding_tasks(heads: &[journal::TaskHeads], tag: &str) -> V
 
 fn gate_finding_tag(identity: &Digest) -> String {
     format!("{GATE_FINDING_TAG_PREFIX}{identity}")
-}
-
-fn severity_text(severity: body::Severity) -> &'static str {
-    match severity {
-        body::Severity::Low => "low",
-        body::Severity::Medium => "medium",
-        body::Severity::High => "high",
-        body::Severity::Critical => "critical",
-    }
 }

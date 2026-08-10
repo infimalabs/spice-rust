@@ -15,7 +15,6 @@ use super::repository_executor::RepositoryExecutor;
 use super::{
     BatteryArmResult, BatteryError, BatteryInputs, BatteryReceipt, BatteryReport, BatteryScope,
     BatteryToolEvidence, ConfigurationEvidence, RepositoryExecutionEvent, run_battery,
-    run_battery_arm,
 };
 use crate::core::{ActorCapture, ClaimCapture};
 use crate::hygiene::HygieneConfiguration;
@@ -316,13 +315,27 @@ impl<'trace> BatteryCapture<'trace> {
         &mut self,
         gate_id: crate::GateId,
     ) -> Result<BatteryArmResult, BatteryError> {
+        self.execute_arm_report(gate_id)
+            .map(super::FocusedArmReport::into_result)
+    }
+
+    /// Run exactly one canonical arm and retain its verifiable input context.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same manifest, input, and executor refusals as
+    /// [`Self::execute_arm`].
+    pub fn execute_arm_report(
+        &mut self,
+        gate_id: crate::GateId,
+    ) -> Result<super::FocusedArmReport, BatteryError> {
         if self.selected != Some(gate_id) {
             return Err(BatteryError::new(format!(
                 "arm execution for {gate_id} requires a capture selected for that arm"
             )));
         }
         let inputs = self.authorities.inputs()?;
-        run_battery_arm(&inputs, &mut self.executor, gate_id)
+        super::run_focused_arm(&inputs, &mut self.executor, gate_id)
     }
 
     /// Run once and bind the complete vector to the captured baseline.

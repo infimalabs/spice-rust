@@ -7,12 +7,12 @@
 use std::path::Path;
 
 use gate::{
-    BatteryReceipt, BatteryReport, CampReport, KillReport, ReportMutationMovement, Selector,
+    BatteryReceipt, BatteryReport, CampReport, GateId, KillReport, ReportMutationMovement, Selector,
 };
 #[cfg(test)]
 use gate::{GateReport, Standing};
-use wire::intent::{CommandAnswer, GateFindingWork, GateFindings};
-use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, body};
+use wire::intent::{CommandAnswer, GateFindings};
+use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 use crate::cli::Contract;
 use spice::repository::Repository;
@@ -32,31 +32,41 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {
 
 /// Run the ordinary gate and file its projected findings as deferred board work.
 pub(crate) fn findings(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+    let instrument = matches
+        .get_one::<String>("INSTRUMENT")
+        .expect("required instrument is parsed");
+    let Some(gate_id) = GateId::ALL
+        .into_iter()
+        .find(|candidate| candidate.as_str() == instrument)
+    else {
+        return Outcome::Refusal(Refusal {
+            reason: "gate::instrument-unregistered".to_owned(),
+            witness: None,
+            expected: Some("one exact registered gate instrument".to_owned()),
+            observed: Some(instrument.clone()),
+            remedy: format!(
+                "select one of: {}",
+                GateId::ALL
+                    .into_iter()
+                    .map(GateId::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        });
+    };
     let selector = matches
         .get_one::<String>("at")
         .map_or_else(Selector::staged, |revision| {
             Selector::revision(revision.clone())
         });
-    let report = match spice::gate::run(selector) {
+    let report = match spice::gate::run_arm_report(selector, gate_id) {
         Ok(report) => report,
-        Err(error) => return battery_failure(error),
+        Err(error) => return focused_failure(error, gate_id),
     };
-    let report_digest = match battery_report_digest(&report) {
-        Ok(digest) => digest,
+    let (report_digest, evidence) = match focused_report_evidence(&report) {
+        Ok(evidence) => evidence,
         Err(outcome) => return outcome,
     };
-    let findings = report
-        .findings()
-        .into_iter()
-        .map(|finding| GateFindingWork {
-            identity: finding.identity().clone(),
-            severity: severity(finding.severity()),
-            locus: finding.locus().to_owned(),
-            title: finding.title().to_owned(),
-            description: finding.description().to_owned(),
-            acceptance: finding.acceptance().to_vec(),
-        })
-        .collect();
     let repository = match current_repository() {
         Ok(repository) => repository,
         Err(outcome) => return outcome,
@@ -68,7 +78,7 @@ pub(crate) fn findings(matches: &clap::ArgMatches, contract: &Contract) -> Outco
         Vec::new(),
         &GateFindings {
             report: report_digest,
-            findings,
+            evidence,
         },
     )
 }
@@ -191,6 +201,18 @@ fn battery_failure<B>(error: spice::gate::RunError) -> Outcome<B> {
     })
 }
 
+fn focused_failure<B>(error: spice::gate::RunError, gate_id: GateId) -> Outcome<B> {
+    Outcome::Refusal(Refusal {
+        reason: "gate::instrument-cannot-run".to_owned(),
+        witness: None,
+        expected: Some(format!(
+            "registered gate instrument {gate_id} to complete one focused run"
+        )),
+        observed: Some(format!("{}: {}", error.reason(), error.detail())),
+        remedy: "repair the named capture input, then rerun this registered instrument".to_owned(),
+    })
+}
+
 fn direct<B>(body: B) -> Outcome<B> {
     Outcome::Reply(Reply {
         position: ReplyPosition::Direct {},
@@ -198,7 +220,9 @@ fn direct<B>(body: B) -> Outcome<B> {
     })
 }
 
-fn battery_report_digest(report: &BatteryReport) -> Result<Digest, Outcome<CommandAnswer>> {
+fn focused_report_evidence(
+    report: &gate::FocusedArmReport,
+) -> Result<(Digest, String), Outcome<CommandAnswer>> {
     let bytes = report.encode().map_err(|error| {
         Outcome::Fault(Fault {
             class: FaultClass::Protocol,
@@ -206,7 +230,15 @@ fn battery_report_digest(report: &BatteryReport) -> Result<Digest, Outcome<Comma
             detail: error.to_string(),
         })
     })?;
-    Ok(Digest::compute(Domain::GateBatteryReport, &bytes))
+    let digest = Digest::compute(Domain::GateFocusedReport, &bytes);
+    let evidence = String::from_utf8(bytes).map_err(|error| {
+        Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "gate::report-non-utf8".to_owned(),
+            detail: error.to_string(),
+        })
+    })?;
+    Ok((digest, evidence))
 }
 
 fn current_repository() -> Result<Repository, Outcome<CommandAnswer>> {
@@ -224,15 +256,6 @@ fn current_repository() -> Result<Repository, Outcome<CommandAnswer>> {
             detail: error.to_string(),
         })
     })
-}
-
-fn severity(value: &str) -> body::Severity {
-    match value {
-        "critical" => body::Severity::Critical,
-        "high" => body::Severity::High,
-        "medium" => body::Severity::Medium,
-        _ => body::Severity::Low,
-    }
 }
 
 /// One immutable selected tree and the current contract loaded from its bytes.

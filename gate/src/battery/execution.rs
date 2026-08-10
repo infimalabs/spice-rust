@@ -183,6 +183,121 @@ impl BatteryArmResult {
     }
 }
 
+/// One canonical focused gate run with the immutable inputs needed to verify it.
+///
+/// Like [`BatteryReport`], this type deliberately omits [`Deserialize`]. All
+/// retained bytes must cross [`Self::decode`], which validates the selected
+/// arm against the compiled manifest and its captured source before admitting
+/// the report.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FocusedArmReport {
+    version: u64,
+    gate_set: Digest,
+    context: BatteryContext,
+    result: BatteryArmResult,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFocusedArmReport {
+    version: u64,
+    gate_set: Digest,
+    context: BatteryContext,
+    result: BatteryArmResult,
+}
+
+impl From<RawFocusedArmReport> for FocusedArmReport {
+    fn from(raw: RawFocusedArmReport) -> Self {
+        Self {
+            version: raw.version,
+            gate_set: raw.gate_set,
+            context: raw.context,
+            result: raw.result,
+        }
+    }
+}
+
+impl FocusedArmReport {
+    /// Registered instrument this report executed.
+    #[must_use]
+    pub const fn gate_id(&self) -> GateId {
+        self.result.gate_id()
+    }
+
+    /// Typed terminal arm result.
+    #[must_use]
+    pub const fn result(&self) -> &BatteryArmResult {
+        &self.result
+    }
+
+    /// Complete immutable run inputs retained for this arm.
+    #[must_use]
+    pub const fn context(&self) -> &BatteryContext {
+        &self.context
+    }
+
+    /// Whether this focused result admits publication.
+    #[must_use]
+    pub const fn admits(&self) -> bool {
+        self.result.state().admits()
+    }
+
+    /// Canonical JSON bytes for this focused report.
+    pub fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
+        wire::encode(self)
+    }
+
+    /// Decode only canonical focused evidence for one registered instrument.
+    pub fn decode(bytes: &[u8]) -> Result<Self, BatteryError> {
+        let raw: RawFocusedArmReport = wire::decode(bytes)
+            .map_err(|error| BatteryError::new(format!("invalid focused arm report: {error}")))?;
+        let report = Self::from(raw);
+        report.validate()?;
+        let canonical = report.encode().map_err(|error| {
+            BatteryError::new(format!("cannot encode focused arm report: {error}"))
+        })?;
+        if canonical != bytes {
+            return Err(BatteryError::new(
+                "focused arm report bytes are not canonical",
+            ));
+        }
+        Ok(report)
+    }
+
+    fn validate(&self) -> Result<(), BatteryError> {
+        if self.version != GATE_BATTERY_VERSION {
+            return Err(BatteryError::new(format!(
+                "unsupported focused arm report version {}; expected {GATE_BATTERY_VERSION}",
+                self.version
+            )));
+        }
+        self.context.validate()?;
+        let manifest = BatteryManifest::canonical()?;
+        if self.gate_set != gate_set_digest(&manifest) {
+            return Err(BatteryError::new(
+                "focused arm report gate-set identity disagrees with the canonical manifest",
+            ));
+        }
+        let Some(arm) = manifest.arms.get(self.result.position) else {
+            return Err(BatteryError::new(format!(
+                "focused arm position {} is outside the canonical manifest",
+                self.result.position
+            )));
+        };
+        validate_result(
+            self.result.position,
+            &self.result,
+            arm,
+            self.context.source(),
+        )
+    }
+
+    pub(super) fn into_result(self) -> BatteryArmResult {
+        self.result
+    }
+}
+
 /// Complete canonical battery report.
 ///
 /// This type deliberately does not implement [`Deserialize`]. A derived one
@@ -345,8 +460,18 @@ pub fn run_battery_arm(
     executor: &mut impl BatteryExecutor,
     gate_id: GateId,
 ) -> Result<BatteryArmResult, BatteryError> {
+    run_focused_arm(inputs, executor, gate_id).map(FocusedArmReport::into_result)
+}
+
+/// Execute exactly one named canonical arm and retain its verifiable inputs.
+pub fn run_focused_arm(
+    inputs: &BatteryInputs<'_>,
+    executor: &mut impl BatteryExecutor,
+    gate_id: GateId,
+) -> Result<FocusedArmReport, BatteryError> {
     let manifest = BatteryManifest::canonical()?;
-    inputs.snapshot()?;
+    let gate_set = gate_set_digest(&manifest);
+    let context = inputs.snapshot()?;
     let Some((position, arm)) = manifest.arms.iter().enumerate().find(|(_, arm)| {
         matches!(
             arm.disposition,
@@ -358,8 +483,14 @@ pub fn run_battery_arm(
         )));
     };
     let result = execute_arm(position, arm, inputs, executor);
-    validate_result(position, &result, arm, inputs.source())?;
-    Ok(result)
+    let report = FocusedArmReport {
+        version: GATE_BATTERY_VERSION,
+        gate_set,
+        context,
+        result,
+    };
+    report.validate()?;
+    Ok(report)
 }
 
 fn execute_arm(

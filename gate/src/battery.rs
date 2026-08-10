@@ -28,8 +28,8 @@ pub use context::{
     BoundActorInputsEvidence, BoundEvidence, ConfigurationEvidence, LatchEvidence,
 };
 pub use execution::{
-    ArmExecution, BatteryArmResult, BatteryExecutor, BatteryReport, CompiledArm, run_battery,
-    run_battery_arm,
+    ArmExecution, BatteryArmResult, BatteryExecutor, BatteryReport, CompiledArm, FocusedArmReport,
+    run_battery, run_battery_arm, run_focused_arm,
 };
 pub use family_evidence::{ArmEvidence, BatteryState, ResultProvenance};
 pub use findings::GateFinding;

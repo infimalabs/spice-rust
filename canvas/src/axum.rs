@@ -51,7 +51,18 @@ const DEFAULT_SCRIPT_HASH: &str = "B50SC8VLF+K2T0Re7VCfyZ3PqVhYIkg+OlhW+7PQyTU="
 /// Closed capability-to-principal map for one resident generation.
 #[derive(Clone, Default)]
 pub struct Capabilities {
-    principals: Arc<RwLock<BTreeMap<wire::CanonicalUuid, wire::Actor>>>,
+    principals: Arc<RwLock<BTreeMap<wire::CanonicalUuid, CapabilityBinding>>>,
+}
+
+#[derive(Clone, Debug)]
+struct CapabilityBinding {
+    actor: wire::Actor,
+    retired: CancellationToken,
+}
+
+struct CapabilityAdmission {
+    accepted: wire::Accepted,
+    retired: CancellationToken,
 }
 
 impl fmt::Debug for Capabilities {
@@ -85,7 +96,10 @@ impl Capabilities {
             .map_err(|_| CapabilityError::Unavailable)?;
         match principals.entry(capability) {
             Entry::Vacant(entry) => {
-                entry.insert(actor);
+                entry.insert(CapabilityBinding {
+                    actor,
+                    retired: CancellationToken::new(),
+                });
                 Ok(())
             }
             Entry::Occupied(_) => Err(CapabilityError::Duplicate),
@@ -97,10 +111,18 @@ impl Capabilities {
         let Ok(mut principals) = self.principals.write() else {
             return false;
         };
-        if principals.get(&capability) != Some(actor) {
+        if principals
+            .get(&capability)
+            .is_none_or(|binding| &binding.actor != actor)
+        {
             return false;
         }
-        principals.remove(&capability);
+        let retired = principals
+            .remove(&capability)
+            .expect("matching capability remains under the registry lock")
+            .retired;
+        drop(principals);
+        retired.cancel();
         true
     }
 
@@ -110,11 +132,21 @@ impl Capabilities {
         hello: &wire::Hello,
         epoch: wire::CanonicalUuid,
     ) -> Result<wire::Accepted, OpeningError> {
+        self.admit_session(hello, epoch)
+            .map(|admission| admission.accepted)
+    }
+
+    /// Admit one socket and retain the exact binding that authenticated it.
+    fn admit_session(
+        &self,
+        hello: &wire::Hello,
+        epoch: wire::CanonicalUuid,
+    ) -> Result<CapabilityAdmission, OpeningError> {
         hello.admit(epoch).map_err(|rejected| match rejected {
             wire::Rejected::Wire(refusal) => OpeningError::Refused(refusal),
             wire::Rejected::Epoch(fault) => OpeningError::Fault(fault),
         })?;
-        let actor = self
+        let (actor, retired) = self
             .principals
             .read()
             .map_err(|_| {
@@ -125,7 +157,7 @@ impl Capabilities {
                 })
             })?
             .get(&hello.capability)
-            .cloned()
+            .map(|binding| (binding.actor.clone(), binding.retired.clone()))
             .ok_or_else(|| {
                 OpeningError::Refused(wire::Refusal {
                     reason: "hello::capability-unknown".to_owned(),
@@ -137,10 +169,13 @@ impl Capabilities {
                             .to_owned(),
                 })
             })?;
-        Ok(wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor,
-            epoch,
+        Ok(CapabilityAdmission {
+            accepted: wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor,
+                epoch,
+            },
+            retired,
         })
     }
 
@@ -148,15 +183,16 @@ impl Capabilities {
         self.principals.read().ok().is_some_and(|principals| {
             principals
                 .get(&capability)
-                .is_some_and(|actor| matches!(actor, wire::Actor::Operator))
+                .is_some_and(|binding| matches!(&binding.actor, wire::Actor::Operator))
         })
     }
 
     fn matches(&self, capability: wire::CanonicalUuid, actor: &wire::Actor) -> bool {
-        self.principals
-            .read()
-            .ok()
-            .is_some_and(|principals| principals.get(&capability) == Some(actor))
+        self.principals.read().ok().is_some_and(|principals| {
+            principals
+                .get(&capability)
+                .is_some_and(|binding| &binding.actor == actor)
+        })
     }
 
     fn contains(&self, capability: wire::CanonicalUuid) -> bool {
@@ -168,8 +204,8 @@ impl Capabilities {
 
     fn operator(&self) -> Option<wire::CanonicalUuid> {
         let principals = self.principals.read().ok()?;
-        let mut operators = principals.iter().filter_map(|(capability, actor)| {
-            matches!(actor, wire::Actor::Operator).then_some(*capability)
+        let mut operators = principals.iter().filter_map(|(capability, binding)| {
+            matches!(&binding.actor, wire::Actor::Operator).then_some(*capability)
         });
         let operator = operators.next()?;
         operators.next().is_none().then_some(operator)
