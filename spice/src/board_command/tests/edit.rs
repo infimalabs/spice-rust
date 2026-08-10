@@ -201,7 +201,7 @@ fn a_settled_task_refuses_a_correction() {
     assert!(
         matches!(
             outcome,
-            Outcome::Refusal(Refusal { ref reason, .. }) if reason == "task::settled"
+            Outcome::Refusal(ref refusal) if refusal.reason() == "task::settled"
         ),
         "{outcome:?}"
     );
@@ -245,7 +245,7 @@ fn a_correction_naming_no_field_is_refused() {
     assert!(
         matches!(
             outcome,
-            Outcome::Refusal(Refusal { ref reason, .. }) if reason == "task::edit-empty"
+            Outcome::Refusal(ref refusal) if refusal.reason() == "task::edit-empty"
         ),
         "{outcome:?}"
     );
@@ -291,7 +291,7 @@ fn a_correction_to_an_unknown_task_is_refused() {
     assert!(
         matches!(
             outcome,
-            Outcome::Refusal(Refusal { ref reason, .. }) if reason == "task::unknown"
+            Outcome::Refusal(ref refusal) if refusal.reason() == "task::unknown"
         ),
         "{outcome:?}"
     );
@@ -501,7 +501,7 @@ fn a_priority_the_allocator_does_not_score_is_refused() {
     assert!(
         matches!(
             outcome,
-            Outcome::Refusal(Refusal { ref reason, .. }) if reason == "task::edit-priority-unknown"
+            Outcome::Refusal(ref refusal) if refusal.reason() == "task::edit-priority-unknown"
         ),
         "{outcome:?}"
     );
@@ -592,8 +592,8 @@ fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
         assert!(
             matches!(
                 outcome,
-                Outcome::Refusal(Refusal { ref reason, .. })
-                    if reason == "task::project-system-reserved"
+                Outcome::Refusal(ref refusal)
+                    if refusal.reason() == "task::project-system-reserved"
             ),
             "{destination} was not refused by name: {outcome:?}"
         );
@@ -613,8 +613,8 @@ fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
     assert!(
         matches!(
             outcome,
-            Outcome::Refusal(Refusal { ref reason, .. })
-                if reason == "task::edit-project-refused"
+            Outcome::Refusal(ref refusal)
+                if refusal.reason() == "task::edit-project-refused"
         ),
         "{outcome:?}"
     );

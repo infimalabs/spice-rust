@@ -81,8 +81,8 @@ fn missing_corrupt_and_absent_receipt_inputs_refuse_before_runtime_execution() {
         let refusal = refusal_pair(&fixture, command, "proof::payload-refused");
         assert!(
             refusal
-                .observed
-                .as_deref()
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
                 .is_some_and(|observed| observed.contains("is missing"))
         );
     }
@@ -94,8 +94,8 @@ fn missing_corrupt_and_absent_receipt_inputs_refuse_before_runtime_execution() {
         let refusal = refusal_pair(&fixture, command, "proof::payload-refused");
         assert!(
             refusal
-                .observed
-                .as_deref()
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
                 .is_some_and(|observed| observed.contains("does not decode"))
         );
     }
@@ -121,8 +121,8 @@ fn missing_corrupt_and_absent_receipt_inputs_refuse_before_runtime_execution() {
     let refusal = refusal_pair(&fixture, &["proof", "replay"], "proof::receipt-refused");
     assert!(
         refusal
-            .observed
-            .as_deref()
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
             .is_some_and(|observed| observed.contains("is missing"))
     );
     assert_eq!(snapshot(fixture.repository()), absent_receipt);
@@ -165,8 +165,8 @@ fn canonical_receipt_drift_is_a_verification_refusal_without_mutation() {
     );
     assert!(
         refusal
-            .observed
-            .as_deref()
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
             .is_some_and(|observed| observed.contains("does not bind the replay battery"))
     );
     assert_eq!(snapshot(fixture.repository()), before);
@@ -187,7 +187,8 @@ fn refused_batteries_keep_receipt_and_repository_bytes_unchanged_in_both_forms()
 
     for command in [&["proof"][..], &["proof", "replay"][..]] {
         let refusal = refusal_pair(&fixture, command, "proof::battery-refused");
-        assert!(refusal.witness.is_some());
+        let diagnostic = refusal.diagnostic().expect("proof refusal is diagnostic");
+        assert!(diagnostic.witness().is_some());
         // Both member lists are written out whole rather than joined from
         // `CheckKind::ALL`, because an assertion built from the array the
         // subject builds from shortens together with it: a truncation would
@@ -195,7 +196,7 @@ fn refused_batteries_keep_receipt_and_repository_bytes_unchanged_in_both_forms()
         // Naming the five also reds these lines when the array gains a sixth
         // member, rather than quietly accepting the shorter set it once had.
         assert_eq!(
-            refusal.observed.as_deref(),
+            diagnostic.observed(),
             Some(
                 "gate=failed(code=19), mutation-corpus=failed(code=19), \
                  dialect-refusals=failed(code=19), wait-and-process=failed(code=19), \
@@ -203,13 +204,15 @@ fn refused_batteries_keep_receipt_and_repository_bytes_unchanged_in_both_forms()
             )
         );
         // `refusal_pair` has already proved the text form is exactly the reason
-        // and the remedy, so a remedy that names the member is the text form
+        // and the detail, so detail that names the member is the text form
         // naming it. Stated against the remedy because that is the only field
         // of the four the text rendering keeps.
         assert_eq!(
-            refusal.remedy,
-            "repair gate, mutation-corpus, dialect-refusals, wait-and-process, \
-             supply-rebuild and rerun the proof leaf"
+            diagnostic.detail(),
+            Some(
+                "repair gate, mutation-corpus, dialect-refusals, wait-and-process, \
+                 supply-rebuild and rerun the proof leaf"
+            )
         );
     }
 
@@ -252,8 +255,8 @@ fn runner_refusal_process_fault_and_state_parent_refusal_stay_distinct() {
     let state = refusal_pair(&fixture, &["proof"], "repository::state-path-refused");
     assert!(
         state
-            .observed
-            .as_deref()
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
             .is_some_and(|observed| observed.contains(&fixture.proof_root().display().to_string()))
     );
     assert_eq!(snapshot(fixture.repository()), obstructed);
@@ -306,10 +309,14 @@ fn refusal_pair(fixture: &Fixture, command: &[&str], reason: &str) -> Refusal {
     let Outcome::Refusal(refusal) = outcome else {
         panic!("proof input must refuse: {outcome:?}")
     };
-    assert_eq!(refusal.reason, reason);
+    assert_eq!(refusal.reason(), reason);
+    let detail = refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::detail)
+        .expect("proof refusal carries detail");
     assert_eq!(
         text.err,
-        format!("spice: {}; {}\n", refusal.reason, refusal.remedy).as_bytes()
+        format!("spice: {}; {detail}\n", refusal.reason()).as_bytes()
     );
     refusal
 }

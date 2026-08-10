@@ -291,6 +291,7 @@ impl LineageControls {
 pub(super) fn render_lineage_controls(
     lineage: CanonicalUuid,
     authoritative_life: wire::intent::LineageLife,
+    topology_revision: u64,
     control: &LineageControl,
     lineage_controls: &UseReducerHandle<LineageControls>,
     sender: &SenderHandle,
@@ -362,6 +363,7 @@ pub(super) fn render_lineage_controls(
                         send_action(
                             &life_sender,
                             ClientAction::ConfigureLineage {
+                                topology_revision,
                                 lineage,
                                 member: None,
                                 life: life.wire(),

@@ -406,6 +406,7 @@ impl Table {
         ResidencyHead {
             epoch: self.epoch,
             state,
+            topology_revision: 0,
             lanes: self.seats.values().map(Seat::residency).collect(),
             subscriptions: Vec::new(),
         }

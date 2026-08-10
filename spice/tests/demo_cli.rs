@@ -412,7 +412,7 @@ fn seed_only_process_is_anchored_recoverable_and_ambient_inert() {
     else {
         panic!("nonempty demo root must refuse");
     };
-    assert_eq!(refusal.reason, "demo::root-not-empty");
+    assert_eq!(refusal.reason(), "demo::root-not-empty");
     assert_eq!(fs::read(sentinel).unwrap(), b"preserve me\n");
     fixture.assert_ambient_untouched(&ambient_before);
 }
@@ -594,18 +594,19 @@ fn reuse_refuses_a_moved_demo_root_over_the_wire_without_ambient_resolution() {
     else {
         panic!("a moved demo root must refuse");
     };
-    assert_eq!(refusal.reason, "demo::commit-moved");
+    assert_eq!(refusal.reason(), "demo::commit-moved");
+    let diagnostic = refusal.diagnostic().expect("demo refusal is diagnostic");
     assert_eq!(
-        refusal.expected.as_deref(),
+        diagnostic.expected(),
         Some(format!("refs/heads/main at {SEED_COMMIT}").as_str())
     );
     assert_eq!(
-        refusal.observed.as_deref(),
+        diagnostic.observed(),
         Some("refs/heads/main at 9c3f4bd0bd0b1e2ee59a1e0e9d2b47a3f7c4a5d6")
     );
     assert_eq!(
-        refusal.remedy,
-        "reset this demo root to its seeded commit or seed a new one"
+        diagnostic.detail(),
+        Some("reset this demo root to its seeded commit or seed a new one")
     );
     fixture.assert_ambient_untouched(&ambient_before);
 }

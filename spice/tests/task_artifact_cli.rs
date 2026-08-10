@@ -180,12 +180,17 @@ fn task_artifact_refuses_malformed_project_policy_before_state_access() {
     else {
         panic!("malformed project policy did not refuse")
     };
-    assert_eq!(refusal.reason, "artifact::configuration-refused");
+    assert_eq!(refusal.reason(), "artifact::configuration-refused");
     assert_eq!(
-        refusal.expected.as_deref(),
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::expected),
         Some("one admitted tracked task-project policy and machine-local configuration")
     );
-    let observed = refusal.observed.expect("configuration diagnostic");
+    let observed = refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::observed)
+        .expect("configuration diagnostic");
     assert!(observed.contains("tasks.hidden_stems[1]"), "{observed}");
     assert!(observed.contains("bad-stem"), "{observed}");
 }
@@ -221,11 +226,11 @@ fn task_artifact_refuses_opaque_binary_without_panicking_or_publishing() {
     else {
         panic!("opaque binary did not refuse")
     };
-    assert_eq!(refusal.reason, "artifact::operation-refused");
+    assert_eq!(refusal.reason(), "artifact::operation-refused");
     assert!(
         refusal
-            .observed
-            .as_deref()
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
             .is_some_and(|detail| detail.contains("pass --type")),
         "{refusal:?}"
     );
@@ -284,8 +289,13 @@ fn restore_refuses_an_internally_valid_artifact_for_an_unknown_task_inertly() {
     else {
         panic!("unknown artifact task did not refuse")
     };
-    assert_eq!(refusal.reason, "restore::artifact-task-unknown");
-    assert_eq!(refusal.observed.as_deref(), Some(unknown.as_str()));
+    assert_eq!(refusal.reason(), "restore::artifact-task-unknown");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        Some(unknown.as_str())
+    );
     assert_eq!(
         fs::read(&authority).expect("read authority after refusal"),
         authority_before,
@@ -371,7 +381,7 @@ fn assert_invalid_task_refusals(fixture: &Fixture) {
     else {
         panic!("invalid task did not refuse")
     };
-    assert_eq!(refusal.reason, "artifact::task-invalid");
+    assert_eq!(refusal.reason(), "artifact::task-invalid");
 
     let unknown = fixture.invoke(&[
         "task".to_owned(),
@@ -385,7 +395,7 @@ fn assert_invalid_task_refusals(fixture: &Fixture) {
     else {
         panic!("unknown task did not refuse")
     };
-    assert_eq!(refusal.reason, "artifact::task-unknown");
+    assert_eq!(refusal.reason(), "artifact::task-unknown");
 }
 
 fn assert_backup_restore(

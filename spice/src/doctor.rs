@@ -254,15 +254,12 @@ fn gate_observation(
 }
 
 fn configuration_refusal(error: &config::LoadError) -> Refusal {
-    Refusal {
-        reason: "doctor::configuration-refused".to_owned(),
-        witness: None,
-        expected: Some(
-            "tracked and local inputs admitted by the configuration registry".to_owned(),
-        ),
-        observed: Some(error.diagnostic()),
-        remedy: "correct the named configuration inputs and rerun doctor".to_owned(),
-    }
+    Refusal::bare(wire::RefusalDiagnostic::new(
+        "doctor::configuration-refused".to_owned(),
+        None,
+        Some("tracked and local inputs admitted by the configuration registry".to_owned()),
+        Some(error.diagnostic()),
+    ))
 }
 
 trait ExecutableProbe {

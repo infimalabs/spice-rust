@@ -606,7 +606,7 @@ fn assert_refusal(output: &Output, expected: &str) {
     let Outcome::Refusal(refusal) = value_outcome(output) else {
         panic!("command must refuse")
     };
-    assert_eq!(refusal.reason, expected);
+    assert_eq!(refusal.reason(), expected);
 }
 
 pub(super) fn durable_head(fixture: &Fixture) -> wire::ResidencyHead {

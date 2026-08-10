@@ -339,6 +339,7 @@ async fn dispatch_action(
         }
         ClientAction::Refresh => send_refresh(principal, writer, pending, submissions).await,
         ClientAction::Seat {
+            topology_revision,
             name,
             worktree,
             life,
@@ -346,6 +347,7 @@ async fn dispatch_action(
         } => {
             let lane = random_uuid()?;
             let body = LaneSeat {
+                topology_revision,
                 lane,
                 lineage_id: lane,
                 name,
@@ -365,19 +367,30 @@ async fn dispatch_action(
             )
             .await
         }
-        ClientAction::ArrangeLane { lane, before } => {
+        ClientAction::ArrangeLane {
+            topology_revision,
+            lane,
+            before,
+        } => {
             send_typed(
                 principal,
                 writer,
                 pending,
-                PendingKind::Lanes { wakes: Vec::new() },
+                PendingKind::LaneArrange,
                 CommandKind::LaneArrange,
                 vec![],
-                LaneArrange { lane, before },
+                LaneArrange {
+                    topology_revision,
+                    lane,
+                    before,
+                },
             )
             .await
         }
-        ClientAction::ArrangeLineages { lineages } => {
+        ClientAction::ArrangeLineages {
+            topology_revision,
+            lineages,
+        } => {
             send_typed(
                 principal,
                 writer,
@@ -385,15 +398,30 @@ async fn dispatch_action(
                 PendingKind::LineageArrange,
                 CommandKind::LineageArrange,
                 vec![],
-                LineageArrange { lineages },
+                LineageArrange {
+                    topology_revision,
+                    lineages,
+                },
             )
             .await
         }
         ClientAction::ConfigureLineage {
+            topology_revision,
             lineage,
             member,
             life,
-        } => send_lineage_configuration(principal, writer, pending, lineage, member, life).await,
+        } => {
+            send_lineage_configuration(
+                principal,
+                writer,
+                pending,
+                topology_revision,
+                lineage,
+                member,
+                life,
+            )
+            .await
+        }
         ClientAction::Note { task, note } => {
             send_task_note(principal, writer, pending, task, note).await
         }
@@ -502,6 +530,7 @@ async fn send_lineage_configuration(
     principal: &Principal,
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    topology_revision: u64,
     lineage: CanonicalUuid,
     member: Option<CanonicalUuid>,
     life: LineageLife,
@@ -514,6 +543,7 @@ async fn send_lineage_configuration(
         CommandKind::LineageConfigure,
         vec![],
         LineageConfigure {
+            topology_revision,
             lineage_id: lineage,
             member,
             life,
@@ -930,14 +960,16 @@ fn apply_command_response(
             false
         }
         // A read of the lane table and an arrangement of it answer with the
-        // same authoritative table, so they are applied the same way. Teams
-        // move when that answer lands, never before it: the surface holds the
-        // order the resident last stated, so a refused arrangement has nothing
-        // local to take back and needs no re-read either.
+        // same authoritative table, so successful replies apply identically.
+        // Teams move only when that answer lands. A refused mutation differs:
+        // it means this client lost its optimistic revision, so it immediately
+        // re-reads the winning table rather than retaining the stale render.
         PendingKind::Lanes { wakes } => {
-            apply_lane_response(session, handles, runtime, &wakes, bytes)?
+            apply_lane_response(session, handles, runtime, &wakes, false, bytes)?
         }
-        PendingKind::LineageArrange => apply_lane_response(session, handles, runtime, &[], bytes)?,
+        PendingKind::LaneArrange | PendingKind::LineageArrange => {
+            apply_lane_response(session, handles, runtime, &[], true, bytes)?
+        }
         PendingKind::Inbox { covered } => {
             apply_inbox_response(session, handles, runtime, &covered, bytes)?
         }
@@ -997,6 +1029,7 @@ fn apply_lane_response(
     handles: &SurfaceHandles,
     runtime: &mut CanvasRuntime,
     wakes: &[CanonicalUuid],
+    refresh_on_failure: bool,
     bytes: &[u8],
 ) -> Result<bool, String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
@@ -1051,8 +1084,9 @@ fn apply_lane_response(
     if !wake_lanes.is_empty() {
         handles.submissions.publish();
     }
+    let refresh = refresh_on_failure && topology_mutation_requires_refresh(&admitted.get().outcome);
     runtime.apply_lanes(&admitted);
-    Ok(false)
+    Ok(refresh)
 }
 
 fn apply_inbox_response(
@@ -1160,9 +1194,11 @@ fn restore_lane_submissions(
 fn outcome_issue<T>(action: &str, outcome: &wire::Outcome<T>) -> Option<String> {
     match outcome {
         wire::Outcome::Reply(_) => None,
-        wire::Outcome::Refusal(refusal) => {
-            Some(format!("{action}: {}. {}", refusal.reason, refusal.remedy))
-        }
+        wire::Outcome::Refusal(refusal) => Some(format!(
+            "{action}: {}. {}",
+            refusal.reason(),
+            refusal.explanation()
+        )),
         wire::Outcome::Fault(fault) => {
             Some(format!("{action}: {}. {}", fault.reason, fault.detail))
         }

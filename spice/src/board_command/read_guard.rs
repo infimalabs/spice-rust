@@ -872,13 +872,14 @@ pub(super) fn committed(
             }),
             body,
         }),
-        Ok(CommitOutcome::Refused(refusal)) => Outcome::Refusal(Refusal {
-            reason: "board::witness-moved".to_owned(),
-            witness: Some("current durable heads".to_owned()),
-            expected: None,
-            observed: Some(refusal.reason().to_owned()),
-            remedy: "read the current board and retry the exact task operation".to_owned(),
-        }),
+        Ok(CommitOutcome::Refused(refusal)) => {
+            Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+                "board::witness-moved".to_owned(),
+                Some("current durable heads".to_owned()),
+                None,
+                Some(refusal.reason().to_owned()),
+            )))
+        }
         Ok(CommitOutcome::Fault(fault)) => store_fault("board::commit-failed", fault.detail()),
         Err(error) => store_fault("board::bus-closed", &error.to_string()),
     }
@@ -1017,15 +1018,11 @@ pub(super) fn required(matches: &ArgMatches, name: &str) -> String {
 pub(super) fn refusal(
     reason: &str,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: None,
-        expected: None,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(reason.to_owned(), None, None, observed).with_detail(detail),
+    ))
 }
 
 pub(super) fn store_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {

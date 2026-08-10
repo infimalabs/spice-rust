@@ -125,8 +125,11 @@ fn refusal_is_typed_and_never_mutates_the_export_directory() {
     let Outcome::Refusal(refusal) = outcome else {
         panic!("raw override must refuse: {outcome:?}");
     };
-    assert_eq!(refusal.reason, "task-migration::unsupported-override");
-    let witness = refusal.witness.expect("refusal carries source witness");
+    assert_eq!(refusal.reason(), "task-migration::unsupported-override");
+    let witness = refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::witness)
+        .expect("refusal carries source witness");
     assert!(witness.contains("release=0.31.0"));
     assert!(witness.contains("lineage=red"));
     assert!(witness.contains("field=teams[0].shellSettings.taskRc[1]"));

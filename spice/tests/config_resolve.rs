@@ -59,7 +59,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 51);
+    assert_eq!(missing.provenance().len(), 52);
     assert!(
         missing
             .provenance()
@@ -596,6 +596,7 @@ enabled = true
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+pre_commit_builtins = true
 pre_commit = [
     { label = "Rust gate", run = ["gate/pre-commit"], scopes = { paths = ["src/**"] } },
 ]
@@ -604,7 +605,6 @@ generated_paths = ["build/fixture"]
 name_cluster_threshold = 4
 test_paths = ["tests/fixture"]
 admission = ["fixture-load", "--offline"]
-
 [policy.repo_truth]
 docs = ["DOCTRINE.md"]
 

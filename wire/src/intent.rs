@@ -142,6 +142,8 @@ pub struct LaneRead {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneSeat {
+    /// Topology revision observed before this seat was requested.
+    pub topology_revision: u64,
     /// Independently steerable member seat being created.
     pub lane: CanonicalUuid,
     /// Canvas lineage whose lane receives the member.
@@ -231,6 +233,8 @@ pub enum TaskSubscriptionScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineageConfigure {
+    /// Topology revision observed before this configuration was requested.
+    pub topology_revision: u64,
     /// Stable Canvas lineage identifying the group.
     pub lineage_id: CanonicalUuid,
     /// One seated member to move into this lineage, or absent to preserve membership.
@@ -277,6 +281,8 @@ pub struct LineageArrangement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineageArrange {
+    /// Topology revision of the complete arrangement being restated.
+    pub topology_revision: u64,
     /// Every surviving lineage, in the order the operator arranged them.
     pub lineages: Vec<LineageArrangement>,
 }
@@ -289,6 +295,8 @@ pub struct LineageArrange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneArrange {
+    /// Topology revision observed before this member move was requested.
+    pub topology_revision: u64,
     /// Existing member whose primary composer moves.
     pub lane: CanonicalUuid,
     /// Existing member the moved lane is placed immediately before.
@@ -823,6 +831,8 @@ pub struct LaneAnswer {
     pub epoch: CanonicalUuid,
     /// Resident state at the read barrier.
     pub state: ResidentState,
+    /// Monotonic authority for this exact topology and policy snapshot.
+    pub topology_revision: u64,
     /// Current lane rows in stable lane order.
     pub lanes: Vec<LaneAnswerRow>,
     /// One authoritative task-subscription policy per returned lineage.
@@ -835,6 +845,8 @@ pub struct LaneAnswer {
 pub struct LaneChangeAnswer {
     /// Lane whose disposition changed.
     pub lane: CanonicalUuid,
+    /// Topology authority after the transaction committed.
+    pub topology_revision: u64,
     /// Disposition held before the transaction.
     pub from: String,
     /// Disposition held after the transaction.
