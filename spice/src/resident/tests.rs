@@ -25,7 +25,8 @@ mod message_unavailable;
 mod startup_window;
 
 use canvas_announcement::{
-    fact_u64, process_spec, resident_fixture, seed_lane, seed_lane_in_lineage, test_uuid,
+    fact_u64, process_spec, resident_fixture, seed_lane, seed_lane_in_lineage,
+    seed_lane_in_worktree, test_uuid,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);

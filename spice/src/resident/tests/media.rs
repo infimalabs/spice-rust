@@ -6,6 +6,7 @@ use super::*;
 fn direct_steer_send_refuses_every_invalid_media_shape_before_journal_mutation() {
     let (root, paths) = resident_fixture("steer-media-admission");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let worktree = repository.worktree_root().to_string_lossy().into_owned();
     let surface =
         crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
     let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
@@ -14,7 +15,7 @@ fn direct_steer_send_refuses_every_invalid_media_shape_before_journal_mutation()
     let lane = test_uuid(2);
     let occupant = test_uuid(3);
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    seed_lane(&bus, epoch, lane, occupant);
+    seed_lane_in_worktree(&bus, epoch, lane, occupant, &worktree);
 
     let valid = wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
         .expect("fixture image admits");
@@ -107,6 +108,7 @@ fn direct_steer_send_refuses_every_invalid_media_shape_before_journal_mutation()
 fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     let (root, paths) = resident_fixture("steer-media-restart");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let worktree = repository.worktree_root().to_string_lossy().into_owned();
     let surface =
         crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
     let bus = Bus::start(journal::Journal::open(&paths.journal).expect("fixture journal opens"))
@@ -115,7 +117,7 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     let lane = test_uuid(2);
     let occupant = test_uuid(3);
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    seed_lane(&bus, epoch, lane, occupant);
+    seed_lane_in_worktree(&bus, epoch, lane, occupant, &worktree);
     let media = wire::Media::from_base64("operator-capture.png", "image/png", "iVBORw0KGgo=")
         .expect("operator image admits");
     let send = wire::intent::SteerSend {
@@ -152,6 +154,21 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
         ),
         Outcome::Reply(_)
     ));
+    let inbox = paths
+        .inbox_for_worktree(&worktree)
+        .expect("fixture worktree inbox resolves");
+    let rendered = fs::read_to_string(steer::inbox::path(&inbox, lane))
+        .expect("canonical lane inbox is published");
+    assert!(
+        rendered.contains(&format!("directive={}", send_command.id())),
+        "lane delivery lost directive causality: {rendered}",
+    );
+    assert!(rendered.contains(&media.markdown().expect("fixture media renders")));
+    assert_eq!(
+        rendered.matches(&media.data_url).count(),
+        1,
+        "typed direct-send media reaches the lane exactly once",
+    );
     bus.verify()
         .expect("published directive authority verifies");
     bus.shutdown().expect("first resident generation stops");
@@ -183,7 +200,10 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     };
     assert_eq!(inbox.lanes.len(), 1);
     assert_eq!(inbox.lanes[0].pending.len(), 1);
-    assert_eq!(inbox.lanes[0].pending[0].attachments, [media.clone()]);
+    assert_eq!(
+        inbox.lanes[0].pending[0].attachments.as_slice(),
+        std::slice::from_ref(&media),
+    );
     assert_eq!(
         inbox.lanes[0].pending[0].attachments[0]
             .identity()

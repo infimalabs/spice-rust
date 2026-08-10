@@ -159,7 +159,10 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         lane,
         text: "Address this exact steering ask".to_owned(),
         control: None,
-        attachments: Vec::new(),
+        attachments: vec![
+            wire::Media::from_base64("operator-capture.png", "image/png", "iVBORw0KGgo=")
+                .expect("fixture media admits"),
+        ],
         expires: instant(30),
     };
     let steering_fact = write
@@ -446,6 +449,14 @@ fn briefing_authority_sources_asks_and_held_work_from_exact_state_authorities() 
         "Address this exact steering ask"
     );
     assert_eq!(
+        recall["authorities"]["asks"][0]["attachments"][0]["name"],
+        "operator-capture.png",
+    );
+    assert_eq!(
+        recall["authorities"]["asks"][0]["attachments"][0]["data_url"],
+        "data:image/png;base64,iVBORw0KGgo=",
+    );
+    assert_eq!(
         recall["authorities"]["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
@@ -488,6 +499,10 @@ fn briefing_authority_sources_asks_and_held_work_from_exact_state_authorities() 
         "end pruning removed transcript turns"
     );
     assert_eq!(pruned["authorities"]["asks"][0]["key"], "1kAsk001");
+    assert_eq!(
+        pruned["authorities"]["asks"][0]["attachments"][0]["name"], "operator-capture.png",
+        "end pruning preserves typed outstanding-ask media",
+    );
     assert_eq!(
         pruned["authorities"]["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
