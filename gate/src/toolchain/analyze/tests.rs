@@ -158,9 +158,8 @@ fn canvas_routes_generated_bytes_outside_the_selected_tree() {
         concat!(
             "[ -d \"$CARGO_TARGET_DIR\" ] || exit 41\n",
             "[ -d \"$CARGO_BUILD_BUILD_DIR\" ] || exit 43\n",
-            "[ \"${RUSTC_WRAPPER+x}\" = x ] && [ -z \"$RUSTC_WRAPPER\" ] || exit 44\n",
-            "[ \"${RUSTC_WORKSPACE_WRAPPER+x}\" = x ] && ",
-            "[ -z \"$RUSTC_WORKSPACE_WRAPPER\" ] || exit 45\n",
+            "[ \"${RUSTC_WRAPPER+x}:$RUSTC_WRAPPER\" = 'x:' ] || exit 44\n",
+            "[ \"${RUSTC_WORKSPACE_WRAPPER+x}:$RUSTC_WORKSPACE_WRAPPER\" = 'x:' ] || exit 45\n",
             "printf cargo > \"$CARGO_TARGET_DIR/proof\"\n",
             "printf build > \"$CARGO_BUILD_BUILD_DIR/proof\"\n",
             "exit 0",

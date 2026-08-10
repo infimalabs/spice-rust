@@ -13,7 +13,7 @@ pub(super) fn transcript_recognition(
     vendor: &wire::Name,
     token: &str,
     disposition: Disposition,
-    standing: &steer::Ledger,
+    standing: &impl steer::Standing,
 ) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
     let path = paths.tape.join(lane.to_string()).join(vendor.as_str());
     match fs::metadata(&path) {
@@ -95,7 +95,7 @@ fn scan_record(
     locus: tape::Locus,
     token: &str,
     disposition: Disposition,
-    standing: &steer::Ledger,
+    standing: &impl steer::Standing,
 ) -> Result<Option<RecordRecognition>, Outcome<CommandAnswer>> {
     let registry = spice::extension::registry().map_err(|error| {
         typed_protocol_fault("steer::extension-registry-invalid", &error.to_string())

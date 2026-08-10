@@ -909,11 +909,14 @@ fn verify_authority(
         "duplicate and historical ACKs were not recorded"
     );
     let initial_epoch = expected.first().expect("successful recognition").epoch;
-    assert!(missed.iter().all(|body| {
-        body.lane == lane
-            && body.miss == wire::body::AcknowledgmentMiss::Historical
-            && body.epoch == initial_epoch
-    }));
+    assert!(
+        missed.iter().all(|body| {
+            body.lane == lane
+                && body.miss == wire::body::AcknowledgmentMiss::Historical
+                && body.epoch == initial_epoch
+        }),
+        "unexpected missed recognitions: {missed:#?}"
+    );
     let unique = missed
         .iter()
         .map(|body| (&body.key, body.locus))

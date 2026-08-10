@@ -804,6 +804,46 @@ fn replaying_the_same_facts_produces_the_same_standing() {
     assert_eq!(build(), build());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn replayed_authority_heads_reproduce_the_canonical_ledger() {
+    let snapshot = snapshot_of(&[
+        fact_bytes(1, ROOT, "first publication"),
+        fact_bytes(2, SECOND, "second publication"),
+    ]);
+    let canonical = Ledger::from_snapshot(&snapshot).expect("canonical replay");
+    let index = Ledger::authority_index(&snapshot).expect("authority projection");
+    let indexed = Ledger::from_authority_heads(index.heads().iter().map(|head| head.body()))
+        .expect("indexed heads reduce");
+
+    assert_eq!(indexed, canonical);
+    assert_eq!(index.heads().len(), 2);
+    assert_eq!(index.heads()[0].position().get(), 1);
+    assert_eq!(index.heads()[1].position().get(), 2);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn contradictory_replay_produces_no_partial_authority_index() {
+    let snapshot = snapshot_of(&[
+        fact_bytes(1, ROOT, "first publication"),
+        fact_bytes(2, ROOT, "contradictory duplicate key"),
+    ]);
+    let before = snapshot.facts().to_vec();
+
+    let error = Ledger::authority_index(&snapshot).expect_err("duplicate key refuses replay");
+    assert!(
+        error
+            .to_string()
+            .contains("steering fact steer::sent at 2 is invalid")
+    );
+    assert_eq!(
+        snapshot.facts(),
+        before.as_slice(),
+        "replay cannot mutate audit facts"
+    );
+}
+
 fn key(text: &str) -> Key {
     text.parse().expect("test key")
 }

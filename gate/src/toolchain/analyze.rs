@@ -248,6 +248,12 @@ const CARGO_TARGET_DIRECTORY: &str = concat!("CARGO_", "TARGET_DIR");
 /// Cargo's external build-artifact directory under the same ownership rule.
 const CARGO_BUILD_DIRECTORY: &str = concat!("CARGO_", "BUILD_BUILD_DIR");
 
+/// An ambient compiler cache must not sit outside this bounded process group.
+const RUSTC_WRAPPER: &str = concat!("RUSTC_", "WRAPPER");
+
+/// A workspace compiler wrapper is the same uncontained execution path.
+const RUSTC_WORKSPACE_WRAPPER: &str = concat!("RUSTC_", "WORKSPACE_WRAPPER");
+
 /// Trunk's external distribution directory under the same rule.
 const TRUNK_DISTRIBUTION_DIRECTORY: &str = concat!("TRUNK_", "BUILD_DIST");
 
@@ -870,8 +876,8 @@ fn canvas_environment(
             CARGO_BUILD_DIRECTORY,
             outputs.cargo_build.as_os_str().to_owned(),
         ),
-        ("RUSTC_WORKSPACE_WRAPPER", std::ffi::OsString::new()),
-        ("RUSTC_WRAPPER", std::ffi::OsString::new()),
+        (RUSTC_WRAPPER, std::ffi::OsString::new()),
+        (RUSTC_WORKSPACE_WRAPPER, std::ffi::OsString::new()),
         (
             TRUNK_DISTRIBUTION_DIRECTORY,
             outputs.trunk_dist.as_os_str().to_owned(),

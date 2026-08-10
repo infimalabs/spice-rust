@@ -316,6 +316,13 @@ fn fixture() -> Connection {
     connection
         .execute_batch(super::super::BASELINE_SQL)
         .expect("current baseline");
+    connection
+        .execute_batch(
+            "DROP TABLE steering_index;
+             DROP TABLE steering_misses;
+             DROP TABLE steering_heads;",
+        )
+        .expect("remove schema-7 steering index from schema-3 fixture");
     crate::tests::downgrade_task_identity_to_five(&connection);
     connection
         .execute(

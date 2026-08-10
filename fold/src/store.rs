@@ -228,13 +228,21 @@ impl Store {
             return Err(StoreError::Refused(Refusal::ZeroReducerVersion { fold }));
         }
         let inspection = inspect(&self.connection, fold)?;
-        if let Inspection::Present(current) = &inspection
-            && is_fresh(current, facts, reducer.version())
-        {
-            return Ok(ReadOutcome {
-                materialization: current.clone(),
-                rebuilt: None,
-            });
+        if let Inspection::Present(current) = &inspection {
+            let authority = facts.horizon().map_or_else(Cursor::empty, Cursor::at);
+            if current.cursor > authority {
+                return Err(StoreError::Refused(Refusal::GenerationAheadSnapshot {
+                    fold,
+                    current: current.cursor,
+                    authority,
+                }));
+            }
+            if is_fresh(current, authority, reducer.version()) {
+                return Ok(ReadOutcome {
+                    materialization: current.clone(),
+                    rebuilt: None,
+                });
+            }
         }
 
         let cause = inspection.cause();
@@ -297,17 +305,17 @@ impl Store {
     }
 }
 
-/// Freshness asks whether authority was kept up with, which the cursor answers.
+/// Freshness binds a generation to the exact authority snapshot being read.
 ///
 /// A fold whose native source cannot prove the full requested extent applies
 /// every fact it is handed and still reports a [`Horizon`] short of its
 /// [`Cursor`]. Keying freshness on the horizon would
 /// call that generation stale forever and rebuild it on every read, without the
 /// rebuild ever being able to close the gap. Readers learn about the gap through
-/// [`Horizon::availability`] instead.
-fn is_fresh(current: &Materialization, facts: &journal::FactSnapshot, version: u32) -> bool {
-    let applied = facts.horizon().map_or_else(Cursor::empty, Cursor::at);
-    current.reducer_version == version && current.cursor >= applied
+/// [`Horizon::availability`] instead. A cursor past authority is not freshness:
+/// it belongs to a different snapshot and its payload is never returned.
+fn is_fresh(current: &Materialization, authority: Cursor, version: u32) -> bool {
+    current.reducer_version == version && current.cursor == authority
 }
 
 /// Publication admits one rule: a reduction applied every fact it was handed.
@@ -574,6 +582,12 @@ pub enum Refusal {
     HorizonPastCursor { cursor: Cursor, horizon: Horizon },
     /// A reduction left facts of its own snapshot unapplied.
     BehindSnapshot { applied: Cursor, required: Horizon },
+    /// A disposable generation was derived from authority newer than this snapshot.
+    GenerationAheadSnapshot {
+        fold: FoldId,
+        current: Cursor,
+        authority: Cursor,
+    },
     /// A replacement would have retreated a fold's applied position.
     CursorMovedBackward {
         fold: FoldId,
