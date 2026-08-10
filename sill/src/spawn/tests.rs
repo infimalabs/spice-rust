@@ -20,7 +20,9 @@ use crate::{HeldShard, LockAttempt, LockConfig, LockTopology};
 use std::ffi::{CString, OsString};
 use std::fs;
 use std::io::{self, Read};
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -304,6 +306,97 @@ impl Read for AnnouncedEof {
     }
 }
 
+struct DropAnnouncedReader {
+    stream: UnixStream,
+    identity: OutputStream,
+    dropped: mpsc::Sender<OutputStream>,
+}
+
+impl Read for DropAnnouncedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.stream.read(buffer)
+    }
+}
+
+impl AsRawFd for DropAnnouncedReader {
+    fn as_raw_fd(&self) -> RawFd {
+        self.stream.as_raw_fd()
+    }
+}
+
+impl Drop for DropAnnouncedReader {
+    fn drop(&mut self) {
+        let _dropped = self.dropped.send(self.identity);
+    }
+}
+
+#[test]
+fn opaque_capture_interrupts_and_joins_before_foreign_writer_eof() {
+    let running = spawn(test_spec(
+        "/usr/bin/true",
+        std::iter::empty::<&str>(),
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(10),
+        StreamPolicy::Null,
+    ))
+    .expect("capture-interrupt child launches");
+    let context = Arc::new(FailureContext {
+        pid: running.pid,
+        group: running.spec.group,
+        owner: running.spec.wait.owner().to_owned(),
+        grace: running.spec.grace,
+        reap: running.spec.deadlines.reap(),
+        process: Arc::clone(&running.process),
+        wake: running
+            .cancellation_wake
+            .try_clone()
+            .expect("fixture wake clones"),
+        failed: std::sync::atomic::AtomicBool::new(false),
+    });
+    let (dropped, reader_dropped) = mpsc::channel();
+
+    for stream in [OutputStream::Stdout, OutputStream::Stderr] {
+        let (reader, writer) = UnixStream::pair().expect("fixture pipe opens");
+        let reader = DropAnnouncedReader {
+            stream: reader,
+            identity: stream,
+            dropped: dropped.clone(),
+        };
+        let descriptor = reader.as_raw_fd();
+        let capture = start_capture(
+            reader,
+            Some(descriptor),
+            64,
+            CaptureWorker {
+                stream,
+                observation: None,
+                failure_observer: None,
+                sink_deadline: Duration::from_millis(50),
+                failure: Arc::clone(&context),
+                wake: running
+                    .cancellation_wake
+                    .try_clone()
+                    .expect("capture wake clones"),
+                observer_wake: None,
+            },
+        );
+
+        capture
+            .finish()
+            .expect("opaque reader interrupts and joins");
+        assert_eq!(
+            reader_dropped
+                .recv_timeout(Duration::from_secs(1))
+                .expect("joined worker drops its reader"),
+            stream,
+        );
+        drop(writer);
+    }
+
+    running.wait().expect("fixture child reaps");
+}
+
 #[test]
 fn an_observer_still_working_at_the_drain_deadline_is_named_rather_than_read_as_complete() {
     let (ended, reader_ended) = mpsc::channel();
@@ -349,6 +442,7 @@ fn an_observer_still_working_at_the_drain_deadline_is_named_rather_than_read_as_
             bytes: io::Cursor::new(b"record\n".to_vec()),
             ended,
         },
+        None,
         64,
         CaptureWorker {
             stream: OutputStream::Stderr,
@@ -537,6 +631,7 @@ fn selected_reader_failure_uses_the_same_bounded_cleanup_path() {
     });
     let _capture = start_capture(
         FailingReader,
+        None,
         32,
         CaptureWorker {
             stream: OutputStream::Stdout,
@@ -597,6 +692,7 @@ fn opaque_reader_failure_uses_the_selected_observer_cleanup_path() {
     });
     running.stderr = Some(start_capture(
         FailingReader,
+        None,
         32,
         CaptureWorker {
             stream: OutputStream::Stderr,

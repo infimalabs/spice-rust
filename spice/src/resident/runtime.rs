@@ -1380,3 +1380,7 @@ fn is_dark_command(command: &wire::AdmittedCommand) -> bool {
         })
     )
 }
+
+#[cfg(test)]
+#[path = "tests/judge_liveness.rs"]
+mod judge_liveness;
