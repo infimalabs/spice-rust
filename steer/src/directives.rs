@@ -34,6 +34,7 @@ use crate::ack::scan::Standing;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Directive {
     directive: CanonicalUuid,
+    fanout: Option<CanonicalUuid>,
     key: Key,
     lane: CanonicalUuid,
     text: String,
@@ -51,6 +52,12 @@ impl Directive {
     #[must_use]
     pub const fn directive(&self) -> CanonicalUuid {
         self.directive
+    }
+
+    /// Operator submit action shared by target-specific fanout directives.
+    #[must_use]
+    pub const fn fanout(&self) -> Option<CanonicalUuid> {
+        self.fanout
     }
 
     /// The key this directive is quoted by.
@@ -118,6 +125,7 @@ impl Directive {
         admit_attachments(head.directive, &head.attachments)?;
         Ok(Self {
             directive: head.directive,
+            fanout: head.fanout,
             key,
             lane: head.lane,
             text: head.text.clone(),
@@ -134,6 +142,7 @@ impl Directive {
     fn to_head(&self, origin: wire::Origin, created: wire::Seq) -> wire::SteeringHead {
         wire::SteeringHead {
             directive: self.directive,
+            fanout: self.fanout,
             key: self.key.to_string(),
             lane: self.lane,
             text: self.text.clone(),
@@ -646,6 +655,7 @@ impl Ledger {
         admit_attachments(body.directive, &body.attachments)?;
         self.open(Directive {
             directive: body.directive,
+            fanout: body.fanout,
             key,
             lane: body.lane,
             text: body.text.clone(),
@@ -674,6 +684,7 @@ impl Ledger {
         let key = read("key", &body.key)?;
         self.open(Directive {
             directive: body.directive,
+            fanout: None,
             key,
             lane: body.lane,
             text: body.text.clone(),
@@ -700,6 +711,7 @@ impl Ledger {
         };
         self.open(Directive {
             directive: *directive,
+            fanout: None,
             key: read("key", key)?,
             lane: body.lane,
             text: text.clone(),

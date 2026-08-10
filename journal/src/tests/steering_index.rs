@@ -427,6 +427,7 @@ fn cancel_write(observed: &JournalHead<SteeringHead>) -> JournalWrite {
 fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {
     SteerSent {
         directive,
+        fanout: None,
         key: key.to_owned(),
         lane: lane(),
         text: "hold the indexed line".to_owned(),
@@ -439,6 +440,7 @@ fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {
 fn live_head(body: &SteerSent, key: String, created: Seq) -> SteeringHead {
     SteeringHead {
         directive: body.directive,
+        fanout: body.fanout,
         key,
         lane: body.lane,
         text: body.text.clone(),

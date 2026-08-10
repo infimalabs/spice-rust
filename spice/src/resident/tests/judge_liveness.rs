@@ -24,7 +24,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
     config.taste = taste::Bag::new(vec![
         taste::Taste::new(
             "polling".parse().expect("taste name"),
-            ["poll*"],
+            ["polling"],
             "Wait for an event.",
         )
         .expect("taste row"),

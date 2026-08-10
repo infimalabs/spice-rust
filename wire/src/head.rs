@@ -241,6 +241,15 @@ pub struct FindingHead {
 pub struct SteeringHead {
     /// Stable directive identity.
     pub directive: CanonicalUuid,
+    /// Operator submit action shared by target-specific fanout directives.
+    ///
+    /// Absent only on authority created before fanout provenance was durable.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fanout: Option<CanonicalUuid>,
     /// Human-sized key retained for the directive's complete lifetime.
     pub key: String,
     /// Lane the directive addresses.

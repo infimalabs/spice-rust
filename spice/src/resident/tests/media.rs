@@ -54,6 +54,7 @@ fn direct_steer_send_refuses_every_invalid_media_shape_before_journal_mutation()
 
     for (index, attachments) in invalid_sets.into_iter().enumerate() {
         let request = wire::intent::SteerSend {
+            fanout: test_uuid(u8::try_from(90 + index).expect("fixture fanout id fits")),
             lane,
             message: "inspect this capture".to_owned(),
             attachments,
@@ -121,6 +122,7 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     let media = wire::Media::from_base64("operator-capture.png", "image/png", "iVBORw0KGgo=")
         .expect("operator image admits");
     let send = wire::intent::SteerSend {
+        fanout: test_uuid(31),
         lane,
         message: "inspect this capture".to_owned(),
         attachments: vec![media.clone()],

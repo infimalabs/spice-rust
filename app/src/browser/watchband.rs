@@ -833,13 +833,25 @@ fn submit_lineage_callback(
         .collect::<Vec<_>>();
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
+        let Ok(fanout) = random_uuid() else {
+            return;
+        };
         for (lane, target, lane_key) in &targets {
-            submit_draft(*lane, *target, lane_key, &sender, &drafts, &submissions);
+            submit_draft(
+                fanout,
+                *lane,
+                *target,
+                lane_key,
+                &sender,
+                &drafts,
+                &submissions,
+            );
         }
     })
 }
 
 fn submit_draft(
+    fanout: CanonicalUuid,
     lane: CanonicalUuid,
     target: Option<SubmissionTarget>,
     lane_key: &str,
@@ -856,15 +868,16 @@ fn submit_draft(
     let submission = match target {
         Some(SubmissionTarget::Resident { occupant, epoch }) => Submission::new(
             id,
+            fanout,
             lane,
-            occupant,
-            epoch,
+            (occupant, epoch),
             prepared.message,
             prepared.attachments,
             prepared.snapshot,
         ),
         Some(SubmissionTarget::Wake) => Submission::wake(
             id,
+            fanout,
             lane,
             prepared.message,
             prepared.attachments,

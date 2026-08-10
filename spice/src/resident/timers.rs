@@ -823,6 +823,7 @@ mod tests {
         );
         let body = body::SteerSent {
             directive,
+            fanout: None,
             key: key.to_string(),
             lane: lane_uuid(),
             text: "hold the stable line".to_owned(),
