@@ -83,6 +83,7 @@ fn bridge_correction_cannot_synthesize_a_theme_shared_by_no_threshold_set() {
 #[test]
 fn one_transcript_locus_fanned_to_two_lanes_counts_once() {
     let shared = TranscriptLocus {
+        source: Some(directive(700)),
         member: 1,
         offset: 10,
         length: 50,
@@ -165,6 +166,57 @@ fn distinct_transcript_loci_still_satisfy_recurrence() {
 }
 
 #[test]
+fn unrelated_tape_sources_at_equal_local_coordinates_count_independently() {
+    let mut corrections = vec![
+        correction(1, "Do not use grep; use rg instead."),
+        correction(2, "Prefer rg rather than grep."),
+        correction(3, "Never use grep; always use rg."),
+    ];
+    let coordinates = TranscriptLocus {
+        source: None,
+        member: 1,
+        offset: 10,
+        length: 50,
+        event: 0,
+        line: 1,
+        column: 1,
+    };
+    for (index, correction) in corrections.iter_mut().enumerate() {
+        correction.locus = TranscriptLocus {
+            source: Some(directive(800 + u64::try_from(index).unwrap())),
+            ..coordinates
+        };
+    }
+
+    let candidates = cluster(&corrections, 3);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].corrections.len(), 3);
+}
+
+#[test]
+fn legacy_loci_are_scoped_by_lane_instead_of_guessed_as_fanout() {
+    let mut corrections = vec![
+        correction(1, "Do not use grep; use rg instead."),
+        correction(2, "Prefer rg rather than grep."),
+        correction(3, "Never use grep; always use rg."),
+    ];
+    let coordinates = TranscriptLocus {
+        source: None,
+        member: 1,
+        offset: 10,
+        length: 50,
+        event: 0,
+        line: 1,
+        column: 1,
+    };
+    for correction in &mut corrections {
+        correction.locus = coordinates;
+    }
+
+    assert_eq!(cluster(&corrections, 3)[0].corrections.len(), 3);
+}
+
+#[test]
 fn completed_predecessor_refiles_only_after_genuine_new_recurrence() {
     let base = vec![
         correction(1, "Do not use grep; use rg instead."),
@@ -201,6 +253,7 @@ fn unavailable_ack_context_is_a_loud_store_fault() {
         lane: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
         epoch: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
         locus: TranscriptLocus {
+            source: None,
             member: 1,
             offset: 10,
             length: 50,
@@ -242,7 +295,9 @@ fn correction(position: u64, text: &str) -> Correction {
         key: format!("taste-{position}"),
         excerpt: text.to_owned(),
         tokens: tokens(text),
+        lane: directive(position + 100),
         locus: TranscriptLocus {
+            source: Some(directive(position + 200)),
             member: position,
             offset: position * 10,
             length: 50,

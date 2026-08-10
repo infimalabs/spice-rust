@@ -26,7 +26,7 @@ fn prose(text: &str) -> Event {
 fn fallback_taste() -> Taste {
     Taste::new(
         "fallbacks".parse().expect("taste name"),
-        ["fall back", "fallback*", "poll*"],
+        ["fall back", "fallback", "polling"],
         "Keep one deterministic path.",
     )
     .expect("taste fixture")
@@ -38,13 +38,13 @@ fn matching_hits(bag: &Bag, event: &Event) -> Vec<taste::Hit> {
 }
 
 #[test]
-fn exact_words_suffix_globs_and_phrases_follow_one_matching_rule() {
+fn exact_alphabetic_words_and_phrases_follow_one_matching_rule() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let hits = matching_hits(&bag, &prose(BEHAVIOR));
 
     assert_eq!(
         hits.iter().map(|hit| hit.trigger()).collect::<Vec<_>>(),
-        vec!["fall back", "poll*"],
+        vec!["fall back", "polling"],
     );
     assert!(hits.iter().all(|hit| hit.context() == BEHAVIOR));
     assert!(hits.iter().all(|hit| hit.locus() == locus(BEHAVIOR)));
@@ -94,7 +94,7 @@ fn bag_identity_covers_ordered_names_triggers_and_drivers() {
     let changed = Bag::new(vec![
         Taste::new(
             "fallbacks".parse().expect("taste name"),
-            ["fall back", "fallback*", "poll*"],
+            ["fall back", "fallback", "polling"],
             "Use a different driver.",
         )
         .expect("changed taste"),
@@ -128,20 +128,51 @@ fn the_reserved_marker_classifies_echo_before_matching_and_leads_rendering() {
 }
 
 #[test]
-fn invalid_glob_positions_and_non_words_are_refused() {
-    assert!(matches!(
-        Trigger::parse("fall* back"),
-        Err(TriggerError::GlobPosition(_))
-    ));
-    assert!(matches!(
-        Trigger::parse("f*llback"),
-        Err(TriggerError::GlobPosition(_))
-    ));
-    assert!(matches!(
-        Trigger::parse("fall-back"),
-        Err(TriggerError::NotWord(_))
-    ));
+fn non_alphabetic_and_empty_triggers_are_refused() {
+    for invalid in ["fall*", "fall* back", "f*llback", "fall-back", "word2"] {
+        assert!(matches!(
+            Trigger::parse(invalid),
+            Err(TriggerError::NotWord(_))
+        ));
+    }
     assert_eq!(Trigger::parse("  "), Err(TriggerError::Empty));
+}
+
+#[test]
+fn matching_is_literal_case_insensitive_and_alphabetic() {
+    let taste = Taste::new(
+        "literal".parse().expect("taste name"),
+        ["Polling", "fall back", "élan vital"],
+        "Use literal selectors.",
+    )
+    .expect("literal taste");
+    let bag = Bag::new(vec![taste]).expect("bag");
+
+    let hits = matching_hits(&bag, &prose("POLLING, then fall\nback with ÉLAN—VITAL."));
+    assert_eq!(
+        hits.iter().map(|hit| hit.trigger()).collect::<Vec<_>>(),
+        ["Polling", "fall back", "élan vital"]
+    );
+
+    for adjacent in [
+        "poll",
+        "polls",
+        "polled",
+        "pollster",
+        "repolling",
+        "pollings",
+        "polling2",
+        "2polling",
+    ] {
+        assert!(
+            matching_hits(&bag, &prose(adjacent)).is_empty(),
+            "unlisted variation {adjacent:?} must remain inert"
+        );
+    }
+    assert!(
+        matching_hits(&bag, &prose("fall 2 back")).is_empty(),
+        "a digit-bearing run must remain a phrase boundary"
+    );
 }
 
 #[test]

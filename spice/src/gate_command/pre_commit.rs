@@ -3,10 +3,10 @@
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, DirBuilder, File, OpenOptions};
-use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
+use std::io::{self, BufRead as _, BufReader, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -31,7 +31,6 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: usize = 1024 * 1024;
-const RECEIPT_LIMIT: usize = 1024 * 1024;
 const AUTHORITY_SIZE: usize = 32;
 
 const _: () = assert!(
@@ -104,36 +103,15 @@ struct WorkerFailure {
     fault: bool,
 }
 
-enum SelectionExecution {
-    Reuse(gate::RustAnalysisWorkspace),
-    SelectedRoot,
-}
-
-type SelectionStart = Arc<(Mutex<Option<SelectionExecution>>, Condvar)>;
-
 struct WorkerFiles {
     root: PathBuf,
     progress: PathBuf,
     terminal: PathBuf,
-    receipt: PathBuf,
-    authority: PathBuf,
     armed: bool,
 }
 
 impl WorkerFiles {
-    fn create(receipt_document: &[u8], authority_document: &[u8]) -> io::Result<Self> {
-        if receipt_document.len() > RECEIPT_LIMIT {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "verifier compiler receipt exceeds its bounded artifact limit",
-            ));
-        }
-        if authority_document.len() != AUTHORITY_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "verifier compiler receipt authority has an invalid size",
-            ));
-        }
+    fn create() -> io::Result<Self> {
         let root = env::temp_dir().join(format!(
             "spice-commit-gate-{}-{}",
             std::process::id(),
@@ -142,24 +120,14 @@ impl WorkerFiles {
         DirBuilder::new().mode(0o700).create(&root)?;
         let progress = root.join("progress.jsonl");
         let terminal = root.join("terminal.bin");
-        let receipt = root.join("compiler-receipt.json");
-        let authority = root.join("compiler-authority.bin");
         let files = Self {
             root,
             progress,
             terminal,
-            receipt,
-            authority,
             armed: true,
         };
         drop(create_private_file(&files.progress)?);
         drop(create_private_file(&files.terminal)?);
-        let mut receipt_file = create_private_file(&files.receipt)?;
-        receipt_file.write_all(receipt_document)?;
-        receipt_file.flush()?;
-        let mut authority_file = create_private_file(&files.authority)?;
-        authority_file.write_all(authority_document)?;
-        authority_file.flush()?;
         Ok(files)
     }
 
@@ -187,16 +155,11 @@ impl Drop for WorkerFiles {
 }
 
 pub(super) fn run() -> Outcome<BatteryReport> {
-    run_with(prepare_compilers, supervise)
+    run_with(supervise)
 }
 
 struct CompilerPreparation {
     cargo_jobs: usize,
-    receipt: Vec<u8>,
-    authority: Vec<u8>,
-}
-
-struct CompilerArtifacts {
     receipt: Vec<u8>,
     authority: Vec<u8>,
 }
@@ -228,18 +191,13 @@ fn fresh_authority() -> Vec<u8> {
 }
 
 fn run_with(
-    compiler: impl FnOnce() -> Result<CompilerPreparation, WorkerFailure>,
-    supervisor: impl FnOnce(&WorkerFiles, usize) -> Outcome<BatteryReport>,
+    supervisor: impl FnOnce(&WorkerFiles) -> Outcome<BatteryReport>,
 ) -> Outcome<BatteryReport> {
-    let prepared = match compiler() {
-        Ok(prepared) => prepared,
-        Err(error) => return worker_failure(error),
-    };
-    let files = match WorkerFiles::create(&prepared.receipt, &prepared.authority) {
+    let files = match WorkerFiles::create() {
         Ok(files) => files,
         Err(error) => return fault("gate::pre-commit-supervisor-unavailable", error),
     };
-    let answer = supervisor(&files, prepared.cargo_jobs);
+    let answer = supervisor(&files);
     match files.cleanup() {
         Ok(()) => answer,
         Err(error) => fault("gate::pre-commit-cleanup-failed", error),
@@ -259,43 +217,20 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         eprintln!("commit-gate worker requires a terminal path");
         return Some(1);
     };
-    let Some(receipt) = arguments.next() else {
-        eprintln!("commit-gate worker requires a compiler receipt path");
-        return Some(1);
-    };
-    let Some(authority) = arguments.next() else {
-        eprintln!("commit-gate worker requires a compiler authority path");
-        return Some(1);
-    };
-    let Some(cargo_jobs) = arguments
-        .next()
-        .and_then(|argument| argument.to_string_lossy().parse::<usize>().ok())
-    else {
-        eprintln!("commit-gate worker requires a numeric Cargo job cap");
-        return Some(1);
-    };
     if arguments.next().is_some() {
         eprintln!("commit-gate worker received trailing arguments");
         return Some(1);
     }
-    Some(
-        match worker(
-            Path::new(&progress),
-            Path::new(&terminal),
-            Path::new(&receipt),
-            Path::new(&authority),
-            cargo_jobs,
-        ) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("commit-gate worker failed to publish its terminal: {error}");
-                1
-            }
-        },
-    )
+    Some(match worker(Path::new(&progress), Path::new(&terminal)) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("commit-gate worker failed to publish its terminal: {error}");
+            1
+        }
+    })
 }
 
-fn supervise(files: &WorkerFiles, cargo_jobs: usize) -> Outcome<BatteryReport> {
+fn supervise(files: &WorkerFiles) -> Outcome<BatteryReport> {
     let executable = match env::current_exe() {
         Ok(executable) => executable,
         Err(error) => return fault("gate::pre-commit-executable-unavailable", error),
@@ -306,9 +241,6 @@ fn supervise(files: &WorkerFiles, cargo_jobs: usize) -> Outcome<BatteryReport> {
             OsString::from(WORKER_ARGUMENT),
             files.progress.as_os_str().to_owned(),
             files.terminal.as_os_str().to_owned(),
-            files.receipt.as_os_str().to_owned(),
-            files.authority.as_os_str().to_owned(),
-            OsString::from(cargo_jobs.to_string()),
         ],
         ProcessBounds::production(),
     ) {
@@ -398,73 +330,14 @@ fn terminal(path: &Path, progress: &Path) -> Outcome<BatteryReport> {
     }
 }
 
-fn read_compiler_artifacts(
-    receipt_path: &Path,
-    authority_path: &Path,
-    terminal: &Path,
-) -> io::Result<Option<CompilerArtifacts>> {
-    let receipt = match read_receipt(receipt_path) {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            write_failure(
-                terminal,
-                &WorkerFailure {
-                    reason: "gate::verifier-receipt-unavailable".to_owned(),
-                    detail: error.to_string(),
-                    fault: true,
-                },
-            )?;
-            return Ok(None);
-        }
-    };
-    let authority = match read_authority(authority_path) {
-        Ok(authority) => authority,
-        Err(error) => {
-            write_failure(
-                terminal,
-                &WorkerFailure {
-                    reason: "gate::verifier-receipt-authority-unavailable".to_owned(),
-                    detail: error.to_string(),
-                    fault: true,
-                },
-            )?;
-            return Ok(None);
-        }
-    };
-    fs::remove_file(receipt_path)?;
-    fs::remove_file(authority_path)?;
-    Ok(Some(CompilerArtifacts { receipt, authority }))
-}
-
-fn worker(
-    progress_path: &Path,
-    terminal: &Path,
-    receipt_path: &Path,
-    authority_path: &Path,
-    cargo_jobs: usize,
-) -> io::Result<()> {
+fn worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
-    let Some(CompilerArtifacts { receipt, authority }) =
-        read_compiler_artifacts(receipt_path, authority_path, terminal)?
-    else {
-        return Ok(());
-    };
-
     let mut progress = OpenOptions::new().append(true).open(progress_path)?;
     write_phase(&mut progress, &WorkerPhase::Capture)?;
     let phase_failure = Arc::new(Mutex::new(None::<String>));
     let trace_failure = Arc::clone(&phase_failure);
-    let selection_start = Arc::new((Mutex::new(None), Condvar::new()));
-    let trace_selection_start = Arc::clone(&selection_start);
     let trace_path = progress_path.to_path_buf();
     let mut trace = move |event| {
-        if let RepositoryExecutionEvent::ToolchainAnalysisCompleted {
-            gate_id: GateId::RustTypecheck,
-            reusable_workspace: Some(workspace),
-        } = &event
-        {
-            release_selection(&trace_selection_start, Some(workspace.clone()));
-        }
         let Some(phase) = WorkerPhase::from_event(event) else {
             return;
         };
@@ -484,69 +357,83 @@ fn worker(
     };
     let mut prepared = match spice::gate::prepare_traced(Selector::staged(), &mut trace) {
         Ok(prepared) => prepared,
-        Err(error) => {
-            return write_failure(
-                terminal,
-                &WorkerFailure {
-                    reason: error.reason().to_owned(),
-                    detail: error.detail().to_owned(),
-                    fault: error.is_fault(),
-                },
-            );
-        }
-    };
-    let evidence = match prepared.admit_verifier_compiler_receipt(&receipt, cargo_jobs, &authority)
-    {
-        Ok(evidence) => evidence,
-        Err(error) => {
-            return write_failure(
-                terminal,
-                &WorkerFailure {
-                    reason: error.reason().to_owned(),
-                    detail: error.detail().to_owned(),
-                    fault: error.is_fault(),
-                },
-            );
-        }
+        Err(error) => return write_failure(terminal, &run_error_failure(error)),
     };
 
     write_phase(&mut progress, &WorkerPhase::TestSelection)?;
-    let repository =
-        spice::repository::Repository::discover(Path::new(".")).map_err(io::Error::other)?;
-    let environment = ambient_environment().map_err(io::Error::other)?;
-    let selected_root = prepared.root().to_path_buf();
-    let writable_root = repository.worktree_root().to_path_buf();
-    let source = prepared.source().clone();
-    let changes = prepared.changes().to_vec();
-    release_selection(&selection_start, None);
+    let test_input = SelectedTestInput::capture(&prepared)?;
     let (selection, result) = thread::scope(|scope| -> io::Result<_> {
-        let selected_start = Arc::clone(&selection_start);
-        let selected = scope.spawn(move || {
-            let reusable_workspace = await_selection(&selected_start);
-            let mut output = Vec::new();
-            let roots = gate::WorkspaceTestRoots::new(&selected_root, &writable_root);
-            let roots = match reusable_workspace.as_ref() {
-                Some(workspace) => roots.with_reusable(workspace),
-                None => roots,
-            };
-            let report = gate::run_selected_workspace_tests_at(
-                roots,
-                source,
-                &changes,
-                environment,
-                WORKSPACE_TEST_CONCURRENCY_CAP,
-                &mut output,
-            );
-            (report, output)
+        let selected = scope.spawn(|| test_input.execute());
+        let compiler = scope.spawn(prepare_compilers);
+        let result = join_compiler(compiler.join()).and_then(|compiler| {
+            prepared
+                .admit_verifier_compiler_receipt(
+                    &compiler.receipt,
+                    compiler.cargo_jobs,
+                    &compiler.authority,
+                )
+                .and_then(|evidence| prepared.execute(&evidence))
+                .map_err(run_error_failure)
         });
-        let result = prepared.execute(&evidence);
-        release_selection(&selection_start, None);
         if !selected.is_finished() {
             write_phase(&mut progress, &WorkerPhase::TestSelection)?;
         }
         Ok((selected.join(), result))
     })?;
     publish_worker_result(&mut progress, terminal, &phase_failure, selection, result)
+}
+
+struct SelectedTestInput {
+    selected_root: PathBuf,
+    writable_root: PathBuf,
+    source: wire::Digest,
+    changes: Vec<String>,
+    environment: Environment,
+}
+
+impl SelectedTestInput {
+    fn capture(prepared: &spice::gate::PreparedBattery<'_>) -> io::Result<Self> {
+        let repository =
+            spice::repository::Repository::discover(Path::new(".")).map_err(io::Error::other)?;
+        Ok(Self {
+            selected_root: prepared.root().to_path_buf(),
+            writable_root: repository.worktree_root().to_path_buf(),
+            source: prepared.source().clone(),
+            changes: prepared.changes().to_vec(),
+            environment: ambient_environment().map_err(io::Error::other)?,
+        })
+    }
+
+    fn execute(
+        self,
+    ) -> (
+        Result<TestSelectionReport, gate::WorkspaceTestError>,
+        Vec<u8>,
+    ) {
+        let mut output = Vec::new();
+        let roots = gate::WorkspaceTestRoots::new(&self.selected_root, &self.writable_root);
+        let report = gate::run_selected_workspace_tests_at(
+            roots,
+            self.source,
+            &self.changes,
+            self.environment,
+            WORKSPACE_TEST_CONCURRENCY_CAP,
+            &mut output,
+        );
+        (report, output)
+    }
+}
+
+fn join_compiler(
+    result: thread::Result<Result<CompilerPreparation, WorkerFailure>>,
+) -> Result<CompilerPreparation, WorkerFailure> {
+    result.unwrap_or_else(|_| {
+        Err(WorkerFailure {
+            reason: "gate::verifier-compiler-worker-lost".to_owned(),
+            detail: "compiler preparation worker panicked".to_owned(),
+            fault: true,
+        })
+    })
 }
 
 fn publish_worker_result(
@@ -557,7 +444,7 @@ fn publish_worker_result(
         Result<TestSelectionReport, gate::WorkspaceTestError>,
         Vec<u8>,
     )>,
-    result: Result<BatteryReport, spice::gate::RunError>,
+    result: Result<BatteryReport, WorkerFailure>,
 ) -> io::Result<()> {
     let (selection, selection_output) = match selection {
         Ok(selection) => selection,
@@ -619,76 +506,7 @@ fn publish_worker_result(
             document.extend(report.encode().map_err(io::Error::other)?);
             fs::write(terminal, document)
         }
-        Err(error) => write_failure(
-            terminal,
-            &WorkerFailure {
-                reason: error.reason().to_owned(),
-                detail: error.detail().to_owned(),
-                fault: error.is_fault(),
-            },
-        ),
-    }
-}
-
-fn read_receipt(path: &Path) -> io::Result<Vec<u8>> {
-    let receipt = read_bounded(path, RECEIPT_LIMIT)?;
-    if receipt.len() > RECEIPT_LIMIT {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "verifier compiler receipt exceeds its bounded artifact limit",
-        ));
-    }
-    Ok(receipt)
-}
-
-fn read_authority(path: &Path) -> io::Result<Vec<u8>> {
-    let authority = read_bounded(path, AUTHORITY_SIZE)?;
-    if authority.len() != AUTHORITY_SIZE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "verifier compiler receipt authority has an invalid size",
-        ));
-    }
-    Ok(authority)
-}
-
-fn read_bounded(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
-    let read_limit = u64::try_from(limit)
-        .map_err(io::Error::other)?
-        .saturating_add(1);
-    let mut document = Vec::with_capacity(limit.min(4096));
-    File::open(path)?
-        .take(read_limit)
-        .read_to_end(&mut document)?;
-    Ok(document)
-}
-
-fn release_selection(start: &SelectionStart, workspace: Option<gate::RustAnalysisWorkspace>) {
-    let (selected, signal) = &**start;
-    let mut selected = selected
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if selected.is_some() {
-        return;
-    }
-    *selected = Some(workspace.map_or(SelectionExecution::SelectedRoot, SelectionExecution::Reuse));
-    signal.notify_one();
-}
-
-fn await_selection(start: &SelectionStart) -> Option<gate::RustAnalysisWorkspace> {
-    let (selected, signal) = &**start;
-    let mut selected = selected
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    while selected.is_none() {
-        selected = signal
-            .wait(selected)
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-    }
-    match selected.as_ref() {
-        Some(SelectionExecution::Reuse(workspace)) => Some(workspace.clone()),
-        Some(SelectionExecution::SelectedRoot) => None,
-        None => unreachable!("selection condition was observed ready"),
+        Err(error) => write_failure(terminal, &error),
     }
 }
 

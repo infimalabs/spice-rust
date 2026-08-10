@@ -825,6 +825,7 @@ fn candidates(
                 vendor: hit.message().to_owned(),
                 source: hit.context().to_owned(),
                 locus: TranscriptLocus {
+                    source: None,
                     member: hit.locus().member,
                     offset: hit.locus().offset,
                     length: hit.locus().length,

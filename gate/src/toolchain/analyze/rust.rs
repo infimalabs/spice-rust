@@ -288,7 +288,7 @@ impl Drop for RustWorkspace {
 /// holds the cache lock. A complete second comparison precedes sealing, so a
 /// killed partial synchronization is reusable only after the next run repairs
 /// and verifies it.
-pub(super) fn synchronize_source(selected: &Path, cached: &Path) -> io::Result<()> {
+pub(in crate::toolchain) fn synchronize_source(selected: &Path, cached: &Path) -> io::Result<()> {
     match fs::symlink_metadata(cached) {
         Ok(metadata) if metadata.is_dir() => make_cache_writable(cached)?,
         Ok(_) => return Err(unsafe_cache_entry(cached)),
@@ -300,7 +300,7 @@ pub(super) fn synchronize_source(selected: &Path, cached: &Path) -> io::Result<(
     seal_directory_copy(selected, cached)
 }
 
-pub(super) fn make_cache_writable(path: &Path) -> io::Result<()> {
+pub(in crate::toolchain) fn make_cache_writable(path: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.is_dir() {
         set_owner_writable(path, &metadata)?;

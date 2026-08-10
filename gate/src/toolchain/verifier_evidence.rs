@@ -10,6 +10,7 @@
 //! stages that arm requires.
 
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
@@ -17,12 +18,17 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sill::{
-    Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
-    ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
+    Acquisition, Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
+    Possession, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy,
+    WaitPolicy,
 };
 use wire::{Digest, Domain};
 
 use super::ToolEvidence;
+use super::analyze::{
+    CANVAS_SOURCE_LABEL, CANVAS_SOURCE_LOCK, canvas_source_root, make_cache_writable,
+    rust_analysis_workspace, synchronize_source,
+};
 use crate::VERIFIER_APP_PUBLISH_FLAG;
 use crate::battery::CANONICAL_BATTERY_MANIFEST;
 use crate::manifest::GateId;
@@ -225,6 +231,25 @@ impl VerifierCompilerContract {
         expected_stages(self.gate_id)
     }
 
+    /// Mirror this contract's immutable selection into its stable compiler root.
+    ///
+    /// The returned preparation holds the source-cache possession until every
+    /// stage has completed. Unchanged bytes retain their mtimes, so Cargo can
+    /// reuse exact fingerprints without a compiler wrapper or a live-worktree
+    /// input. The contract itself remains reusable by callers whose compiler
+    /// scheduling already owns a different source-root policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns source-root resolution, possession, synchronization, or
+    /// permission failures.
+    pub fn prepare_stable(self) -> io::Result<PreparedVerifierCompiler> {
+        let source = StableCompilerSource::capture(&self)?;
+        let mut contract = self;
+        contract.selection_root = source.root().to_path_buf();
+        Ok(PreparedVerifierCompiler { contract, source })
+    }
+
     /// Run one exact compiler stage and mint evidence only after a clean exit.
     ///
     /// The process runs from the immutable selected source root. Compiler
@@ -382,6 +407,130 @@ impl VerifierCompilerContract {
             }
         }
         Ok(VerifierCompilerEvidence::mint(self, selected))
+    }
+}
+
+/// One compiler contract bound to a verified stable mirror of its selection.
+pub struct PreparedVerifierCompiler {
+    contract: VerifierCompilerContract,
+    source: StableCompilerSource,
+}
+
+impl PreparedVerifierCompiler {
+    /// Exact stages this prepared arm must complete.
+    #[must_use]
+    pub fn stages(&self) -> &'static [VerifierCompilerStage] {
+        self.contract.stages()
+    }
+
+    /// Run one exact stage from the held stable source mirror.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same supervision failures as [`VerifierCompilerContract::run`].
+    pub fn run(&self, stage: VerifierCompilerStage) -> io::Result<VerifierCompilerRun> {
+        self.contract.run(stage)
+    }
+
+    /// Complete the arm proof and release its stable source possession.
+    ///
+    /// # Errors
+    ///
+    /// Refuses incomplete evidence or a source mirror that cannot be returned
+    /// to its writable persistent state.
+    pub fn complete(
+        mut self,
+        processes: &[VerifierCompilerProcessEvidence],
+    ) -> Result<VerifierCompilerEvidence, String> {
+        let evidence = self.contract.complete(processes)?;
+        self.source.release().map_err(|error| {
+            format!(
+                "{} {} could not be released: {error}",
+                self.source.label,
+                self.source.root.display(),
+            )
+        })?;
+        Ok(evidence)
+    }
+}
+
+struct StableCompilerSource {
+    root: PathBuf,
+    label: &'static str,
+    possession: Option<Possession>,
+}
+
+impl StableCompilerSource {
+    fn capture(contract: &VerifierCompilerContract) -> io::Result<Self> {
+        let (root, lock, label) = stable_source_contract(contract)?;
+        let parent = root.parent().ok_or_else(|| {
+            io::Error::other(format!(
+                "{label} {} has no parent directory",
+                root.display()
+            ))
+        })?;
+        fs::create_dir_all(parent)?;
+        let source_lock =
+            crate::held_root::held_root_lock(&root, lock, label).map_err(io::Error::other)?;
+        let possession = match source_lock.try_acquire().map_err(io::Error::other)? {
+            Acquisition::Acquired(possession) => possession,
+            Acquisition::Contended => {
+                return Err(io::Error::other(format!(
+                    "{label} {} is in use by another canonical gate",
+                    root.display(),
+                )));
+            }
+        };
+        synchronize_source(&contract.selection_root, &root)?;
+        Ok(Self {
+            root,
+            label,
+            possession: Some(possession),
+        })
+    }
+
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn release(&mut self) -> io::Result<()> {
+        make_cache_writable(&self.root)?;
+        drop(self.possession.take());
+        Ok(())
+    }
+}
+
+impl Drop for StableCompilerSource {
+    fn drop(&mut self) {
+        if self.possession.is_some() {
+            let _ = make_cache_writable(&self.root);
+            drop(self.possession.take());
+        }
+    }
+}
+
+fn stable_source_contract(
+    contract: &VerifierCompilerContract,
+) -> io::Result<(PathBuf, &'static str, &'static str)> {
+    match contract.gate_id {
+        GateId::RustTypecheck => rust_analysis_workspace(&contract.repository)
+            .map(|workspace| {
+                (
+                    workspace.source().to_path_buf(),
+                    "rust-analysis-source-cache",
+                    "rust analysis source cache",
+                )
+            })
+            .map_err(io::Error::other),
+        GateId::CanvasWebTypecheck => Ok((
+            canvas_source_root(&contract.repository),
+            CANVAS_SOURCE_LOCK,
+            CANVAS_SOURCE_LABEL,
+        )),
+        gate_id => Err(io::Error::other(format!(
+            "{} has no stable verifier compiler source",
+            gate_id.as_str(),
+        ))),
     }
 }
 
@@ -793,6 +942,67 @@ mod tests {
                 &contract.tools,
             ));
         }
+    }
+
+    #[test]
+    fn stable_preparation_mirrors_once_holds_its_lock_and_preserves_fingerprints() {
+        let root = crate::toolchain::exclusive_scratch_root("gate-verifier-stable-source");
+        let repository = root.join("repository");
+        let selection = root.join("selection");
+        fs::create_dir_all(selection.join("src")).expect("create selected source");
+        fs::create_dir(&repository).expect("create repository");
+        fs::write(selection.join("Cargo.toml"), b"[workspace]\n").expect("write manifest");
+        fs::write(
+            selection.join("src/lib.rs"),
+            b"pub fn answer() -> u8 { 42 }\n",
+        )
+        .expect("write selected body");
+        let contract = || {
+            VerifierCompilerContract::new(
+                GateId::CanvasWebTypecheck,
+                source(b"stable compiler selected tree"),
+                repository.clone(),
+                selection.clone(),
+                vec![
+                    tool("cargo", "/usr/bin/true"),
+                    tool("trunk", "/usr/bin/true"),
+                ],
+                Vec::new(),
+            )
+            .expect("stable compiler contract")
+        };
+
+        let prepared = contract().prepare_stable().expect("prepare stable source");
+        let cached = canvas_source_root(&repository);
+        assert_eq!(prepared.contract.selection_root, cached);
+        assert_eq!(
+            fs::read(cached.join("src/lib.rs")).expect("read mirrored body"),
+            b"pub fn answer() -> u8 { 42 }\n"
+        );
+        let modified = fs::metadata(cached.join("src/lib.rs"))
+            .expect("read mirrored metadata")
+            .modified()
+            .expect("mirrored mtime");
+        let contention = contract().prepare_stable();
+        assert!(
+            contention
+                .err()
+                .is_some_and(|error| error.to_string().contains("in use")),
+            "a second preparation acquired the held stable source"
+        );
+        drop(prepared);
+
+        let repeated = contract().prepare_stable().expect("repeat stable source");
+        assert_eq!(
+            fs::metadata(cached.join("src/lib.rs"))
+                .expect("read repeated metadata")
+                .modified()
+                .expect("repeated mtime"),
+            modified,
+            "unchanged selected bytes lost their Cargo fingerprint mtime"
+        );
+        drop(repeated);
+        fs::remove_dir_all(root).expect("remove stable source fixture");
     }
 
     #[test]

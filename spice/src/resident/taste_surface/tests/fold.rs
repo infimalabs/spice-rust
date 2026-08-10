@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn transaction_guard_retries_after_both_key_and_directive_command_races() {
     let fixture = Fixture::new("guard-races");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let attempts = Cell::new(0_u8);
 
@@ -60,7 +60,7 @@ fn transaction_guard_retries_after_both_key_and_directive_command_races() {
 #[test]
 fn transaction_guard_rebuilds_when_compaction_moves_after_recognition() {
     let fixture = Fixture::new("epoch-guard");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let attempts = Cell::new(0_u8);
     let moved = Cell::new(0_u64);
@@ -102,7 +102,7 @@ fn transaction_guard_rebuilds_when_compaction_moves_after_recognition() {
 #[test]
 fn transaction_guard_treats_a_concurrent_same_content_winner_as_success() {
     let fixture = Fixture::new("content-guard");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let attempts = Cell::new(0_u8);
 
@@ -144,7 +144,7 @@ fn transaction_guard_treats_a_concurrent_same_content_winner_as_success() {
 #[test]
 fn concurrent_adjudication_replay_records_one_judgment_and_one_directive() {
     let fixture = Fixture::new("judgment-content-guard");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let judge_calls = Cell::new(0_u8);
     let commit_attempts = Cell::new(0_u8);
@@ -201,7 +201,7 @@ fn a_commit_failure_delivers_nothing_while_a_rendering_failure_parks_for_repair(
     // ST-05 + ID-10 + CON-05: taste reminders use the same journal-derived
     // fold progress and restart repair authority as operator directives.
     let fixture = Fixture::new("failure-order");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let published = Cell::new(false);
 
@@ -299,7 +299,7 @@ fn an_older_repair_replays_when_new_authority_lands_during_publication() {
     // CON-05 + ID-10: an older attempt must not publish stale progress across
     // a concurrent journal advance; it retries from the new authority horizon.
     let fixture = Fixture::new("fold-movement");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     fixture.recognize(&bag, &record);
     let residency = current_residency(&fixture.bus, fixture.epoch).expect("residency");
@@ -342,7 +342,7 @@ fn an_older_repair_replays_when_new_authority_lands_during_publication() {
 #[test]
 fn unrelated_journal_movement_does_not_starve_a_lane_fold() {
     let fixture = Fixture::new("fold-unrelated-movement");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     fixture.recognize(&bag, &record);
     let residency = current_residency(&fixture.bus, fixture.epoch).expect("residency");

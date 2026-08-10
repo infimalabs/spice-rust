@@ -259,8 +259,8 @@ impl Fixture {
 fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
     let fixture = Fixture::new("two-tastes");
     let bag = bag(&[
-        ("polling", &["poll*"], "Wait for the terminal event."),
-        ("fallbacks", &["fallback*"], "Keep one current path."),
+        ("polling", &["polling"], "Wait for the terminal event."),
+        ("fallbacks", &["fallback"], "Keep one current path."),
     ]);
     let record = prose_record(
         fixture.lane,
@@ -301,7 +301,7 @@ fn driver_scoped_tastes_follow_the_durable_lane_vendor() {
     let bag = taste::configured(
         r#"
 [taste.polling]
-words = ["poll*"]
+words = ["polling"]
 message = "Wait for the terminal event."
 scopes = { vendors = ["codex"] }
 "#,
@@ -336,8 +336,8 @@ scopes = { vendors = ["codex"] }
 fn distinct_contents_in_separate_records_both_commit_in_one_suppression_epoch() {
     let fixture = Fixture::new("distinct-records");
     let bag = bag(&[
-        ("polling", &["poll*"], "Wait."),
-        ("fallbacks", &["fallback*"], "Keep one path."),
+        ("polling", &["polling"], "Wait."),
+        ("fallbacks", &["fallback"], "Keep one path."),
     ]);
 
     fixture.recognize(
@@ -365,7 +365,7 @@ fn duplicate_hits_records_and_restart_replay_create_one_reminder_in_the_epoch() 
     let fixture = Fixture::new("deduplicate");
     let bag = bag(&[(
         "polling",
-        &["poll*", "polling"],
+        &["polling", "POLLING"],
         "Wait for the terminal event.",
     )]);
     let first = prose_record(fixture.lane, fixture.occupant, "  POLLING now ");
@@ -399,13 +399,13 @@ fn duplicate_hits_records_and_restart_replay_create_one_reminder_in_the_epoch() 
 #[test]
 fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_directive() {
     let fixture = Fixture::new("judge-confirmed");
-    let bag = bag(&[("polling", &["poll*"], "Wait for the terminal event.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait for the terminal event.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "Polling is not completion.");
     let calls = Cell::new(0_u8);
     let mut judge = FunctionAdjudicator(|candidate: &Candidate| {
         calls.set(calls.get() + 1);
         assert_eq!(candidate.taste, "polling");
-        assert_eq!(candidate.trigger, "poll*");
+        assert_eq!(candidate.trigger, "polling");
         assert_eq!(candidate.vendor, "Wait for the terminal event.");
         assert_eq!(candidate.source, "Polling is not completion.");
         Ok(judgment(
@@ -425,7 +425,7 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
     assert_eq!(judgments.len(), 1);
     let evidence = &judgments[0];
     assert_eq!(evidence.bag, taste::bag_identity(&bag));
-    assert_eq!(evidence.trigger, "poll*");
+    assert_eq!(evidence.trigger, "polling");
     assert_eq!(evidence.vendor, "Wait for the terminal event.");
     assert_eq!(evidence.source, "Polling is not completion.");
     assert_eq!(evidence.compaction, fixture.anchor.get());
@@ -462,7 +462,7 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
 #[test]
 fn enabled_clearance_is_durable_evidence_and_never_opens_steering() {
     let fixture = Fixture::new("judge-cleared");
-    let bag = bag(&[("fallbacks", &["fallback*"], "Keep one path.")]);
+    let bag = bag(&[("fallbacks", &["fallback"], "Keep one path.")]);
     let record = prose_record(
         fixture.lane,
         fixture.occupant,
@@ -509,7 +509,7 @@ fn enabled_clearance_is_durable_evidence_and_never_opens_steering() {
 #[test]
 fn unavailable_judge_abandons_candidate_without_fact_or_reminder() {
     let fixture = Fixture::new("judge-unavailable");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let mut judge = FunctionAdjudicator(|_: &Candidate| {
         Err(crate::judge::failure_error(
@@ -534,7 +534,7 @@ fn unavailable_judge_abandons_candidate_without_fact_or_reminder() {
 #[test]
 fn current_thread_progresses_while_bounded_adjudication_is_held_open() {
     let fixture = Fixture::new("judge-current-thread-progress");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
     let release = Arc::new((Mutex::new(false), Condvar::new()));
@@ -609,8 +609,8 @@ fn current_thread_progresses_while_bounded_adjudication_is_held_open() {
 #[test]
 fn delayed_completion_is_abandoned_after_compaction_or_bag_movement() {
     let mut fixture = Fixture::new("judge-delayed-authority");
-    let original_bag = bag(&[("polling", &["poll*"], "Wait.")]);
-    let changed_bag = bag(&[("polling", &["poll*"], "Choose another action.")]);
+    let original_bag = bag(&[("polling", &["polling"], "Wait.")]);
+    let changed_bag = bag(&[("polling", &["polling"], "Choose another action.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let prepared = prepare_judgment(&fixture.bus, fixture.epoch, &original_bag, &record)
         .expect("candidate prepares")
@@ -653,7 +653,7 @@ fn delayed_completion_is_abandoned_after_compaction_or_bag_movement() {
 #[test]
 fn shutdown_cancels_and_joins_an_inflight_process_request() {
     let fixture = Fixture::new("judge-shutdown");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let script = std::env::temp_dir().join(format!(
         "spice-taste-judge-shutdown-{}-{}",
@@ -702,7 +702,7 @@ fn shutdown_cancels_and_joins_an_inflight_process_request() {
 
 #[test]
 fn taste_framings_are_complete_and_deterministically_shuffled() {
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let candidate = (0..128)
         .find_map(|index| {
             let record = prose_record(uuid(2), uuid(3), &format!("polling candidate {index}"));
@@ -736,7 +736,7 @@ fn taste_framings_are_complete_and_deterministically_shuffled() {
 #[test]
 fn compaction_and_occupant_renewal_each_open_one_later_suppression_epoch() {
     let mut fixture = Fixture::new("epochs");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let started = fixture.anchor;
     let original = prose_record(fixture.lane, fixture.occupant, "polling now");
     fixture.recognize(&bag, &original);
@@ -766,7 +766,7 @@ fn compaction_and_occupant_renewal_each_open_one_later_suppression_epoch() {
 #[test]
 fn quoted_echo_and_every_non_prose_surface_are_inert() {
     let fixture = Fixture::new("inert-surfaces");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let echo = prose_record(
         fixture.lane,
         fixture.occupant,
@@ -840,7 +840,7 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
 
 #[test]
 fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let lane = uuid(90);
     let occupant = uuid(91);
     let patch = prose_record(
@@ -894,8 +894,8 @@ fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
 fn emitted_reminders_ack_decline_escalate_and_expire_as_ordinary_steering() {
     let fixture = Fixture::new("ordinary-steering");
     let bag = bag(&[
-        ("polling", &["poll*"], "Wait."),
-        ("fallbacks", &["fallback*"], "Keep one path."),
+        ("polling", &["polling"], "Wait."),
+        ("fallbacks", &["fallback"], "Keep one path."),
     ]);
     fixture.recognize(
         &bag,

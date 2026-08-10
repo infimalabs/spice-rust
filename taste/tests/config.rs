@@ -75,7 +75,7 @@ fn every_documented_seed_selects_prose_containing_its_own_tracked_words() {
         // the probe below is built from whatever the decoder returned and
         // would match its own corruption. Each decoded value is therefore
         // first required to appear in the tracked block as TOML spells it:
-        // quoted in full, so a truncated `word*` no longer matches.
+        // quoted in full, so a truncated selector no longer matches.
         let block = documented_seeds();
         assert!(
             block.contains(&format!("[taste.{}]", taste.name())),
@@ -97,9 +97,8 @@ fn every_documented_seed_selects_prose_containing_its_own_tracked_words() {
             );
 
             // The probe is built from the tracked selector itself, so this
-            // file still names no word. Dropping the one admitted trailing
-            // `*` turns a suffix glob into a word it must cover.
-            let probe = trigger.as_str().replace('*', "");
+            // file still names no word while exercising every literal entry.
+            let probe = trigger.as_str();
             let hits = matching_hits(&bag, &prose(&format!("we should {probe} instead")));
             let hit = hits
                 .iter()

@@ -40,6 +40,16 @@ pub(super) fn transcript_recognition(
     let tape = tape::Tape::open_existing(&path).map_err(|error| {
         typed_store_fault("steer::transcript-tape-unreadable", &error.to_string())
     })?;
+    let source = tape
+        .source_id()
+        .map_err(|error| {
+            typed_store_fault("steer::transcript-tape-unreadable", &error.to_string())
+        })?
+        .as_str()
+        .parse::<CanonicalUuid>()
+        .map_err(|error| {
+            typed_protocol_fault("steer::transcript-source-invalid", &error.to_string())
+        })?;
     let extents = tape.extents().map_err(|error| {
         typed_store_fault("steer::transcript-tape-unreadable", &error.to_string())
     })?;
@@ -65,6 +75,7 @@ pub(super) fn transcript_recognition(
             )? {
                 return Ok(TranscriptRecognition {
                     locus: TranscriptLocus {
+                        source: Some(source),
                         member: extent.member,
                         offset,
                         length,

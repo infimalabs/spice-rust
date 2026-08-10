@@ -7,8 +7,6 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::thread;
 use std::time::Instant;
 
-const TEST_AUTHORITY: [u8; AUTHORITY_SIZE] = [0x5a; AUTHORITY_SIZE];
-
 #[test]
 fn fixed_envelope_reserves_cleanup_inside_180_seconds() {
     let bounds = ProcessBounds::production();
@@ -18,35 +16,25 @@ fn fixed_envelope_reserves_cleanup_inside_180_seconds() {
 }
 
 #[test]
-fn compiler_preparation_and_receipt_publication_precede_supervision() {
+fn run_enters_supervision_with_only_private_worker_artifacts() {
     let phase = Cell::new(0);
-    let answer = run_with(
-        || {
-            assert_eq!(phase.get(), 0);
-            phase.set(1);
-            Ok(CompilerPreparation {
-                cargo_jobs: 3,
-                receipt: b"source-bound compiler receipt".to_vec(),
-                authority: TEST_AUTHORITY.to_vec(),
-            })
-        },
-        |files, cargo_jobs| {
-            assert_eq!(phase.get(), 1);
-            assert_eq!(cargo_jobs, 3);
+    let answer = run_with(|files| {
+        assert_eq!(phase.get(), 0);
+        for path in [&files.progress, &files.terminal] {
             assert_eq!(
-                fs::read(&files.receipt).expect("read published compiler receipt"),
-                b"source-bound compiler receipt"
+                fs::metadata(path)
+                    .expect("worker artifact metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
             );
-            assert_eq!(
-                fs::read(&files.authority).expect("read receipt authority"),
-                TEST_AUTHORITY
-            );
-            phase.set(2);
-            fault("gate::supervisor-fixture", "bounded supervisor entered")
-        },
-    );
+        }
+        phase.set(1);
+        fault("gate::supervisor-fixture", "bounded supervisor entered")
+    });
 
-    assert_eq!(phase.get(), 2);
+    assert_eq!(phase.get(), 1);
     let Outcome::Fault(fault) = answer else {
         panic!("fixture supervisor returns its typed marker fault");
     };
@@ -84,24 +72,17 @@ fn verifier_compiler_refusal_renders_its_stage_and_output_evidence() {
 }
 
 #[test]
-fn compiler_receipt_artifact_is_private_and_size_bounded() {
-    let document = b"source-bound compiler receipt";
-    let files =
-        WorkerFiles::create(document, &TEST_AUTHORITY).expect("create private receipt files");
+fn worker_artifact_directory_is_private() {
+    let files = WorkerFiles::create().expect("create private worker files");
     assert_eq!(
         fs::metadata(&files.root)
-            .expect("receipt root metadata")
+            .expect("worker root metadata")
             .permissions()
             .mode()
             & 0o777,
         0o700
     );
-    for path in [
-        &files.progress,
-        &files.terminal,
-        &files.receipt,
-        &files.authority,
-    ] {
+    for path in [&files.progress, &files.terminal] {
         assert_eq!(
             fs::metadata(path)
                 .expect("worker artifact metadata")
@@ -111,24 +92,7 @@ fn compiler_receipt_artifact_is_private_and_size_bounded() {
             0o600
         );
     }
-    assert_eq!(
-        read_receipt(&files.receipt).expect("read receipt"),
-        document
-    );
-    assert_eq!(
-        read_authority(&files.authority).expect("read receipt authority"),
-        TEST_AUTHORITY
-    );
-    fs::write(&files.receipt, vec![0; RECEIPT_LIMIT + 1]).expect("write oversized receipt fixture");
-    assert!(read_receipt(&files.receipt).is_err());
-    fs::write(&files.authority, [0; AUTHORITY_SIZE + 1])
-        .expect("write oversized authority fixture");
-    assert!(read_authority(&files.authority).is_err());
-    files.cleanup().expect("remove private receipt files");
-
-    let oversized = vec![0; RECEIPT_LIMIT + 1];
-    assert!(WorkerFiles::create(&oversized, &TEST_AUTHORITY).is_err());
-    assert!(WorkerFiles::create(document, &TEST_AUTHORITY[..AUTHORITY_SIZE - 1]).is_err());
+    files.cleanup().expect("remove private worker files");
 }
 
 #[test]
@@ -165,8 +129,7 @@ fn unknown_staged_source_coverage_refuses_with_the_exact_selection_report() {
 
 #[test]
 fn deadline_terminates_the_worker_group_and_names_its_last_phase() {
-    let files = WorkerFiles::create(b"receipt fixture", &TEST_AUTHORITY)
-        .expect("create deadline worker files");
+    let files = WorkerFiles::create().expect("create deadline worker files");
     let pid = files.root.join("descendant.pid");
     let script = concat!(
         "printf '%s\\n' '{\"phase\":\"family\",\"family\":\"toolchain\"}' >> \"$1\"; ",
@@ -226,8 +189,7 @@ fn deadline_terminates_the_worker_group_and_names_its_last_phase() {
 
 #[test]
 fn abnormal_worker_exit_is_typed_and_retains_the_last_exact_phase() {
-    let files =
-        WorkerFiles::create(b"receipt fixture", &TEST_AUTHORITY).expect("create lost-worker files");
+    let files = WorkerFiles::create().expect("create lost-worker files");
     let script = concat!(
         "printf '%s\\n' ",
         "'{\"phase\":\"arm\",\"ordinal\":12,\"gate_id\":\"rust-typecheck\",",
