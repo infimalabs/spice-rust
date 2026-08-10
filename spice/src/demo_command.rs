@@ -609,6 +609,8 @@ fn seeded_head(root: &Path) -> DemoResult<String> {
 fn seed_journal(state: &spice::repository::StatePaths, root: &Path) -> DemoResult<()> {
     let mut journal = journal::Journal::open(state.journal())
         .map_err(|error| environment_fault("demo::journal-unavailable", error.to_string()))?;
+    crate::resident::admit_steering_index(&mut journal)
+        .map_err(|outcome| environment_fault("demo::journal-invalid", format!("{outcome:?}")))?;
     let task: wire::TaskHandle = DEMO_TASK.parse().expect("demo task handle is valid");
     let previous = seed_task(&mut journal, &task)?;
     seed_turns(&mut journal, &task, previous)?;

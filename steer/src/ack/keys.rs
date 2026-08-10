@@ -104,6 +104,21 @@ impl Key {
         Ok(Self::encode(value))
     }
 
+    /// Decode the moment carried by a key from the current mint alphabet.
+    ///
+    /// Historical base-62 keys containing a character outside the current
+    /// vowel-free alphabet return `None`; they remain valid identities but do
+    /// not participate in the indexed mint high-water mark.
+    #[must_use]
+    pub fn minted_millis(&self) -> Option<i64> {
+        let mut value = 0_u64;
+        for byte in self.0.bytes() {
+            let digit = ALPHABET.iter().position(|candidate| *candidate == byte)?;
+            value = value.checked_mul(52)?.checked_add(digit as u64)?;
+        }
+        i64::try_from(value).ok()
+    }
+
     /// Derive one stable human-sized seal from a durable identity.
     ///
     /// A lane inbox seal is a capability-derived recognition token, not an
@@ -333,6 +348,21 @@ mod tests {
         assert_eq!(first.as_str(), "1dzGkSrJ");
         assert_eq!(second.as_str(), "1dzGkTCX");
         assert!(first.as_str() < second.as_str(), "{first} !< {second}");
+    }
+
+    #[test]
+    fn current_mint_moments_decode_without_searching_other_keys() {
+        for moment in [0, 1, 1_700_000_000_000, 52_i64.pow(Key::WIDTH as u32) - 1] {
+            let key = Key::for_millis(moment).expect("moment encodes");
+            assert_eq!(key.minted_millis(), Some(moment));
+        }
+        assert_eq!(
+            "YTVtQvOX"
+                .parse::<Key>()
+                .expect("retired key")
+                .minted_millis(),
+            None
+        );
     }
 
     #[test]

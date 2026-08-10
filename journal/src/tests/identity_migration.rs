@@ -17,6 +17,7 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
     let scratch = Scratch::new();
     let path = scratch.path().join("identity-v5.sqlite3");
     let journal = authority_file_fixture(&path);
+    drop_steering_index(&journal.connection);
     downgrade_task_identity_to_five(&journal.connection);
     store_bare_stamp_origin(&journal.connection, 2);
     insert_legacy_review_receipt(&journal.connection);
@@ -129,6 +130,7 @@ fn schema_five_review_without_followups_migrates_as_the_canonical_empty_list() {
     let scratch = Scratch::new();
     let path = scratch.path().join("identity-v5-empty-review.sqlite3");
     let journal = authority_file_fixture(&path);
+    drop_steering_index(&journal.connection);
     downgrade_task_identity_to_five(&journal.connection);
     insert_legacy_empty_review_receipt(&journal.connection);
     journal
@@ -171,6 +173,7 @@ fn schema_five_non_array_review_followups_refuse_and_roll_back() {
     let scratch = Scratch::new();
     let path = scratch.path().join("identity-v5-malformed-review.sqlite3");
     let journal = authority_file_fixture(&path);
+    drop_steering_index(&journal.connection);
     downgrade_task_identity_to_five(&journal.connection);
     insert_legacy_empty_review_receipt(&journal.connection);
     let request = review_request(&journal.connection, EMPTY_REVIEW_COMMAND);
@@ -230,6 +233,7 @@ fn malformed_legacy_identity_refuses_and_rolls_back_the_whole_crossing() {
     let scratch = Scratch::new();
     let path = scratch.path().join("identity-v5-invalid.sqlite3");
     let journal = authority_file_fixture(&path);
+    drop_steering_index(&journal.connection);
     downgrade_task_identity_to_five(&journal.connection);
     let bytes: Vec<u8> = journal
         .connection

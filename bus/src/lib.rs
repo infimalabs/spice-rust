@@ -315,6 +315,22 @@ mod runtime {
             receiver.recv().map_err(|_| BusError::Closed)
         }
 
+        /// Run one bounded indexed read through the sole journal queue.
+        ///
+        /// The closure receives the same immutable SQLite snapshot used by
+        /// journal guards. Unlike [`Self::fact_snapshot`], callers choose exact
+        /// head or index queries and therefore do not decode unrelated facts.
+        pub fn read<T, F>(&self, query: F) -> Result<T, BusReadError>
+        where
+            T: Send + 'static,
+            F: for<'a> FnOnce(&journal::JournalRead<'a>) -> Result<T, GuardError> + Send + 'static,
+        {
+            self.transact(move |journal| {
+                JournalTransaction::settled(journal.read(query).map_err(BusReadError::Head))
+            })
+            .map_err(BusReadError::Bus)?
+        }
+
         /// Subscribe to commits that become durable after registration.
         pub fn subscribe(&self) -> Result<CommitSubscriber, BusError> {
             let (commits, receiver) = mpsc::channel();

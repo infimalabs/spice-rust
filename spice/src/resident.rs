@@ -39,6 +39,10 @@ mod steering;
 mod taste_surface;
 mod timers;
 
+pub(crate) fn admit_steering_index(journal: &mut journal::Journal) -> CommandResult<()> {
+    steering::admit_index(journal)
+}
+
 #[cfg(test)]
 use message_surface::AgentMessagePublisher;
 #[cfg(test)]

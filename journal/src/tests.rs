@@ -25,6 +25,7 @@ mod lineage_migration;
 mod read;
 mod release_notes_migration;
 mod schema;
+mod steering_index;
 mod topology_revision_migration;
 mod transcript;
 
@@ -421,9 +422,9 @@ fn populate_authority(journal: Journal) -> Journal {
     insert_receipt(&journal);
     journal
         .connection
-        .execute(
-            "UPDATE cursor_head SET seq = 2, wake = 1 WHERE singleton = 1",
-            [],
+        .execute_batch(
+            "UPDATE cursor_head SET seq = 2, wake = 1 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 2 WHERE singleton = 1;",
         )
         .expect("advance cursor fixture");
     journal
@@ -1083,6 +1084,9 @@ fn expected_tables() -> BTreeSet<String> {
         "journal_schema",
         "lease_heads",
         "residency_head",
+        "steering_heads",
+        "steering_index",
+        "steering_misses",
         "task_heads",
         "thread_index",
         "transcript_source_heads",
@@ -1093,6 +1097,17 @@ fn expected_tables() -> BTreeSet<String> {
     .into_iter()
     .map(str::to_owned)
     .collect()
+}
+
+/// Remove the schema-7 authority index when constructing an older authority.
+fn drop_steering_index(connection: &Connection) {
+    connection
+        .execute_batch(
+            "DROP TABLE steering_index;
+             DROP TABLE steering_misses;
+             DROP TABLE steering_heads;",
+        )
+        .expect("remove schema-7 steering index from older fixture");
 }
 
 fn uuid(text: &str) -> CanonicalUuid {

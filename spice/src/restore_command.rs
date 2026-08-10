@@ -342,6 +342,13 @@ fn append_restored(prepared: &PreparedRestore) -> Result<SeqRange, Failure> {
             error.to_string(),
         )
     })?;
+    crate::resident::admit_steering_index(&mut authority).map_err(|outcome| {
+        fault(
+            FaultClass::Store,
+            "restore::steering-index-invalid",
+            format!("{outcome:?}"),
+        )
+    })?;
     let committed = authority.apply(write).map_err(|error| match error {
         journal::CommitError::Refused(_) => refusal(
             "restore::recognition-refused",

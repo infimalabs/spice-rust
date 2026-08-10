@@ -665,14 +665,14 @@ fn rewrite_value(
 fn rewrite_expected_witnesses(
     request: &mut Value,
     by_directive: &BTreeMap<String, Node>,
-    remove_lineage: bool,
+    recovery: bool,
     row: &str,
 ) -> Result<bool, OpenError> {
     let expected = request
         .as_object_mut()
         .and_then(|object| object.get_mut("expected"))
         .ok_or_else(|| invalid("command_receipts", row, "request.expected is missing"))?;
-    rewrite_witness_array(expected, by_directive, remove_lineage, row)
+    rewrite_witness_array(expected, by_directive, recovery, row)
 }
 
 fn rewrite_witness_array(

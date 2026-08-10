@@ -212,6 +212,7 @@ fn seed_free(journal: &mut Journal, fixture: &AllocationFixture) {
 }
 
 fn downgrade(connection: &Connection) {
+    drop_steering_index(connection);
     downgrade_task_identity_to_five(connection);
     remove_fields(
         connection,

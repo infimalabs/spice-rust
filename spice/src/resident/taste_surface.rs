@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bus::{Bus, JournalCommit};
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
-use steer::Standing as _;
 use wire::body::TranscriptLocus;
 use wire::body::{TasteDecision, TasteJudgeAttempt, TasteJudgeReply, TasteJudged};
 use wire::{Actor, CanonicalUuid, Digest, Instant, Outcome, Producer, ResidencyHead, Seq};
@@ -13,7 +12,7 @@ use crate::message_shape::classify;
 
 use super::{
     CommandResult, RuntimePaths, commit, current_residency, environment_fault, new_uuid, steering,
-    store_fault, write,
+    store_fault,
 };
 
 const COMMIT_RETRIES: usize = 4;
@@ -167,10 +166,14 @@ where
             return Ok(());
         }
 
-        let ledger = steer::Ledger::from_snapshot(&snapshot)
-            .map_err(|error| store_fault("taste::steering-invalid", &error.to_string()))?;
+        let minted_millis = bus
+            .read(|read| read.steering_minted_millis())
+            .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
         let at = current_instant()?;
         let expires = expiry(at, steering_config.expiry().get())?;
+        let origin = format!("resident:{epoch}")
+            .parse::<wire::Origin>()
+            .map_err(|error| store_fault("resident::origin-invalid", &error.to_string()))?;
         let (openings, proposal) = if let Some(adjudicator) = judge.as_deref_mut() {
             let decisions =
                 adjudicate_candidates(unsuppressed, anchor, &mut decision_cache, adjudicator);
@@ -183,10 +186,10 @@ where
                     .filter(|decision| decision.judgment.confirmed)
                     .map(|decision| decision.candidate.clone())
                     .collect(),
-                &ledger,
+                minted_millis,
                 at,
             )?;
-            let mut proposal = write(Actor::Spice, epoch, Producer::Judge)?;
+            let mut proposal = JournalWrite::new(Actor::Spice, origin.clone(), at, Producer::Judge);
             proposal.guard(judgment_guard(
                 epoch,
                 record.lane,
@@ -210,30 +213,40 @@ where
                 } else {
                     TasteDecision::Cleared
                 };
-                proposal
-                    .fact(
-                        TasteJudged {
-                            lane: record.lane,
-                            occupant: record.occupant,
-                            compaction: anchor.get(),
-                            taste: decided.candidate.taste.clone(),
-                            content: decided.candidate.content.clone(),
-                            bag: decided.candidate.bag.clone(),
-                            trigger: decided.candidate.trigger.clone(),
-                            driver: decided.candidate.driver.clone(),
-                            source: decided.candidate.source.clone(),
-                            locus: decided.candidate.locus,
-                            attempts: decided.judgment.attempts.clone(),
-                            decision,
-                        },
-                        FactCause::Existing(anchor),
-                    )
+                let judged = TasteJudged {
+                    lane: record.lane,
+                    occupant: record.occupant,
+                    compaction: anchor.get(),
+                    taste: decided.candidate.taste.clone(),
+                    content: decided.candidate.content.clone(),
+                    bag: decided.candidate.bag.clone(),
+                    trigger: decided.candidate.trigger.clone(),
+                    driver: decided.candidate.driver.clone(),
+                    source: decided.candidate.source.clone(),
+                    locus: decided.candidate.locus,
+                    attempts: decided.judgment.attempts.clone(),
+                    decision,
+                };
+                let pending = proposal
+                    .fact(judged.clone(), FactCause::Existing(anchor))
                     .map_err(|error| store_fault("taste::judgment-invalid", &error.to_string()))?;
+                if decided.judgment.confirmed {
+                    let head_origin = origin.clone();
+                    proposal.steering_head(pending, move |seq| {
+                        steer::Ledger::judged_head(&judged, head_origin, at, seq)
+                            .expect("the admitted judgment builds its authority head")
+                    });
+                }
             }
             (openings, proposal)
         } else {
-            let openings = openings(unsuppressed, &ledger, at)?;
-            let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+            let openings = openings(unsuppressed, minted_millis, at)?;
+            let mut proposal = JournalWrite::new(
+                Actor::Spice,
+                origin.clone(),
+                at,
+                Producer::ResidentRecognition,
+            );
             proposal.guard(reminder_guard(
                 epoch,
                 record.lane,
@@ -242,23 +255,26 @@ where
                 openings.clone(),
             ));
             for opening in &openings {
-                proposal
-                    .fact(
-                        wire::body::TasteReminded {
-                            directive: opening.directive,
-                            key: opening.key.to_string(),
-                            lane: record.lane,
-                            taste: opening.candidate.taste.clone(),
-                            content: opening.candidate.content.clone(),
-                            occupant: record.occupant,
-                            compaction: anchor.get(),
-                            locus: opening.candidate.locus,
-                            text: opening.candidate.text.clone(),
-                            expires,
-                        },
-                        FactCause::Existing(anchor),
-                    )
+                let reminded = wire::body::TasteReminded {
+                    directive: opening.directive,
+                    key: opening.key.to_string(),
+                    lane: record.lane,
+                    taste: opening.candidate.taste.clone(),
+                    content: opening.candidate.content.clone(),
+                    occupant: record.occupant,
+                    compaction: anchor.get(),
+                    locus: opening.candidate.locus,
+                    text: opening.candidate.text.clone(),
+                    expires,
+                };
+                let pending = proposal
+                    .fact(reminded.clone(), FactCause::Existing(anchor))
                     .map_err(|error| store_fault("taste::reminder-invalid", &error.to_string()))?;
+                let head_origin = origin.clone();
+                proposal.steering_head(pending, move |seq| {
+                    steer::Ledger::reminded_head(&reminded, head_origin, at, seq)
+                        .expect("the admitted reminder builds its authority head")
+                });
             }
             (openings, proposal)
         };
@@ -436,34 +452,36 @@ fn require_current_occupant(
 
 fn openings(
     candidates: Vec<Candidate>,
-    ledger: &steer::Ledger,
+    previous: Option<i64>,
     at: Instant,
 ) -> CommandResult<Vec<Opening>> {
-    let mut millis = at.get().as_millisecond();
-    let mut keys = BTreeSet::new();
-    let mut identities = BTreeSet::new();
-    let mut opened = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        let directive = loop {
-            let candidate = new_uuid();
-            if ledger.directive(candidate).is_none() && identities.insert(candidate) {
-                break candidate;
-            }
-        };
-        let key = loop {
-            let candidate = steer::Key::for_millis(millis).map_err(|error| {
-                environment_fault("taste::steering-key-invalid", &error.to_string())
-            })?;
-            millis = millis.checked_add(1).ok_or_else(|| {
+    let now = at.get().as_millisecond();
+    let mut millis = previous.map_or(Ok(now), |previous| {
+        previous
+            .checked_add(1)
+            .map(|next| next.max(now))
+            .ok_or_else(|| {
                 environment_fault(
                     "taste::steering-key-invalid",
-                    "epoch millisecond overflowed while advancing past a collision",
+                    "epoch millisecond overflowed while advancing the indexed key clock",
                 )
-            })?;
-            if ledger.disposition(&candidate).is_none() && keys.insert(candidate.clone()) {
-                break candidate;
-            }
-        };
+            })
+    })?;
+    let mut keys = BTreeSet::new();
+    let mut opened = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let directive = new_uuid();
+        let key = steer::Key::for_millis(millis).map_err(|error| {
+            environment_fault("taste::steering-key-invalid", &error.to_string())
+        })?;
+        let inserted = keys.insert(key.clone());
+        debug_assert!(inserted, "monotone moments mint distinct keys");
+        millis = millis.checked_add(1).ok_or_else(|| {
+            environment_fault(
+                "taste::steering-key-invalid",
+                "epoch millisecond overflowed while allocating one reminder batch",
+            )
+        })?;
         opened.push(Opening {
             candidate,
             directive,
@@ -517,8 +535,6 @@ fn reminder_guard(
         if current != anchor {
             return Err(GuardError::refused("taste::epoch-moved"));
         }
-        let ledger = steer::Ledger::from_snapshot(&snapshot)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
         for opening in &openings {
             if was_reminded(&snapshot, &opening.candidate.content, anchor)
                 || was_judged(
@@ -530,8 +546,8 @@ fn reminder_guard(
             {
                 return Err(GuardError::refused("taste::reminder-recorded"));
             }
-            if ledger.directive(opening.directive).is_some()
-                || ledger.disposition(&opening.key).is_some()
+            if read.steering_head(opening.directive)?.is_some()
+                || read.steering_key(opening.key.as_str())?.is_some()
             {
                 return Err(GuardError::refused("taste::steering-identity-taken"));
             }
@@ -579,11 +595,9 @@ fn judgment_guard(
                 return Err(GuardError::refused("taste::judgment-recorded"));
             }
         }
-        let ledger = steer::Ledger::from_snapshot(&snapshot)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
         for opening in &openings {
-            if ledger.directive(opening.directive).is_some()
-                || ledger.disposition(&opening.key).is_some()
+            if read.steering_head(opening.directive)?.is_some()
+                || read.steering_key(opening.key.as_str())?.is_some()
             {
                 return Err(GuardError::refused("taste::steering-identity-taken"));
             }
