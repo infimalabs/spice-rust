@@ -88,6 +88,27 @@ impl PreparedBattery<'_> {
             .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
     }
 
+    /// Capture an exact compiler contract when its reusable arm is applicable.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a foreign arm, an unavailable/drifted declared tool, or a Cargo
+    /// job cap that differs from the first contract minted by this capture.
+    pub fn applicable_verifier_compiler_contract(
+        &mut self,
+        gate_id: GateId,
+        cargo_jobs: usize,
+    ) -> Result<Option<VerifierCompilerContract>, RunError> {
+        bind_cargo_jobs(
+            &mut self.verifier_environment,
+            &mut self.cargo_jobs,
+            cargo_jobs,
+        )?;
+        self.capture
+            .applicable_verifier_compiler_contract(gate_id, self.verifier_environment.clone())
+            .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
+    }
+
     /// Admit a cross-process compiler receipt against this retained capture.
     ///
     /// # Errors
@@ -99,10 +120,14 @@ impl PreparedBattery<'_> {
         cargo_jobs: usize,
         authority: &[u8],
     ) -> Result<Vec<VerifierCompilerEvidence>, RunError> {
-        let contracts = [GateId::RustTypecheck, GateId::CanvasWebTypecheck]
-            .into_iter()
-            .map(|gate_id| self.verifier_compiler_contract(gate_id, cargo_jobs))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut contracts = Vec::new();
+        for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
+            if let Some(contract) =
+                self.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
+            {
+                contracts.push(contract);
+            }
+        }
         let evidence = admit_verifier_compiler_receipt(receipt, &contracts, authority)
             .map_err(|error| RunError::refusal("gate::verifier-receipt-refused", error))?;
         self.verifier_receipt_admitted = true;
@@ -194,7 +219,10 @@ pub fn verifier_compiler_receipt(
     let mut battery = prepare(selector)?;
     let mut evidence = Vec::new();
     for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
-        let contract = battery.verifier_compiler_contract(gate_id, cargo_jobs)?;
+        let Some(contract) = battery.applicable_verifier_compiler_contract(gate_id, cargo_jobs)?
+        else {
+            continue;
+        };
         let mut processes = Vec::new();
         for stage in contract.stages() {
             let run = contract
