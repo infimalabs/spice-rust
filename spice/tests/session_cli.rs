@@ -751,11 +751,8 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     scratch.remove();
 }
 
-#[test]
-fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
-    let scratch = Scratch::new("message-shapes");
-    let transcript = scratch.path().join("message-shapes.jsonl");
-    let rows = vec![
+fn message_shape_rows() -> Vec<Value> {
+    vec![
         codex_event(
             "2026-01-03T00:00:00Z",
             "event_msg",
@@ -833,15 +830,15 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
             Some("commentary"),
             "*** Begin Patch\n+generated body\n*** End Patch",
         ),
-    ];
-    write_jsonl(&transcript, &rows);
-    let file = transcript.to_string_lossy().into_owned();
+    ]
+}
 
+fn assert_message_shapes(file: &str) {
     let messages = reply_forms(
         &strings(&[
             "session",
             "messages",
-            &file,
+            file,
             "--side",
             "user",
             "--oldest-first",
@@ -869,9 +866,11 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
             "authored-ask",
         ]
     );
+}
 
+fn assert_recent_prompt_shapes(file: &str) {
     let summary = reply_forms(
-        &strings(&["session", "summary", &file, "--recent", "8"]),
+        &strings(&["session", "summary", file, "--recent", "8"]),
         &[],
         "summary",
     );
@@ -892,9 +891,11 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
             "Same text at a distinct source position.",
         ]
     );
+}
 
+fn assert_rehydration_dialogue(file: &str) {
     let briefing = reply_forms(
-        &strings(&["session", "briefing", &file, "--deadline-seconds", "5"]),
+        &strings(&["session", "briefing", file, "--deadline-seconds", "5"]),
         &[],
         "recall",
     );
@@ -914,6 +915,18 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
             {"side": "assistant", "text": "Authored commentary."},
         ])
     );
+}
+
+#[test]
+fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
+    let scratch = Scratch::new("message-shapes");
+    let transcript = scratch.path().join("message-shapes.jsonl");
+    write_jsonl(&transcript, &message_shape_rows());
+    let file = transcript.to_string_lossy().into_owned();
+
+    assert_message_shapes(&file);
+    assert_recent_prompt_shapes(&file);
+    assert_rehydration_dialogue(&file);
     scratch.remove();
 }
 
