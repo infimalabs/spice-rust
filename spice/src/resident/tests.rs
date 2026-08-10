@@ -1,4 +1,5 @@
 //! Runtime and shutdown regressions for the split resident surface.
+//! Long startup and media cases live in child modules to keep this root bounded.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

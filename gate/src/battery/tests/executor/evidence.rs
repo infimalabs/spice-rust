@@ -1,3 +1,5 @@
+//! Evidence-specific executor checks split from the battery runner tests.
+
 use super::*;
 use crate::metrics::{EvidenceState, MetricId, MetricKey, StructuralArmEvidence};
 

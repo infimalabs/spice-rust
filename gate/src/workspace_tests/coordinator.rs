@@ -1,3 +1,5 @@
+//! Bounded shard coordinator for workspace Rust test execution.
+
 use super::*;
 
 #[derive(Clone, Copy, Debug)]

@@ -6,6 +6,7 @@
 //! the law under them is shared: an arrangement is admitted entire or refused
 //! entire, and the standing it leaves behind is read from the durable head
 //! rather than the reply, which only ever describes the lineages it returned.
+//! Child modules cover the boundary and concurrent write cases for that same law.
 
 use super::*;
 

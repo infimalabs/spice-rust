@@ -1,4 +1,5 @@
 //! Deterministic, bounded execution of every workspace Rust test target.
+//! Inventory and selection stay here; shard execution lives in `coordinator`.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;

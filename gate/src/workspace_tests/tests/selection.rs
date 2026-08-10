@@ -1,3 +1,5 @@
+//! Staged-source selection cases for workspace Rust test targets.
+
 use super::*;
 
 #[test]

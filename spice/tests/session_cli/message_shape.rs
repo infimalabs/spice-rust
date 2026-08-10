@@ -1,3 +1,5 @@
+//! Session message-shape cases split from the CLI suite.
+
 use super::*;
 
 #[test]

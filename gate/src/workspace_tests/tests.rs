@@ -1,3 +1,5 @@
+//! Workspace Rust test coordinator fixtures and integration checks.
+
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;

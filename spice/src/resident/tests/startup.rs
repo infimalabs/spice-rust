@@ -1,3 +1,5 @@
+//! Resident startup, access, path, and lock regressions split from the root suite.
+
 use super::*;
 
 fn listen_for(argv: &[&str]) -> CommandResult<SocketAddr> {

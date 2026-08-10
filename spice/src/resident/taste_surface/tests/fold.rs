@@ -1,3 +1,5 @@
+//! Fold-publication races split from the taste surface fixture suite.
+
 use super::*;
 
 #[test]
