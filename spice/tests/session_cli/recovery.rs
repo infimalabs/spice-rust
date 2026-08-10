@@ -29,7 +29,8 @@ fn assert_damaged_recovery(damaged: &str) {
     );
     assert_eq!(first, second, "malformed-evidence refusal is deterministic");
     assert!(
-        refusal_value(&first, "observed")
+        refusal_diagnostic(&first)["observed"]
+            .as_str()
             .is_some_and(|observed| observed.contains(":2: Malformed"))
     );
 }
@@ -132,7 +133,9 @@ fn assert_unavailable_turn_identity(scratch: &Scratch) {
         "session::turn-id-unavailable",
     );
     assert!(
-        refusal_value(&unavailable_turn, "remedy").is_some_and(|remedy| remedy.contains("--start"))
+        refusal_diagnostic(&unavailable_turn)["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("--start"))
     );
 }
 
@@ -165,7 +168,7 @@ fn recall_and_sweep_deadlines_name_inputs_without_partial_report_data() {
             input
         );
         assert_eq!(
-            refusal_value(&envelope, "observed"),
+            refusal_diagnostic(&envelope)["observed"].as_str(),
             Some(expected_observed.as_str())
         );
         assert!(

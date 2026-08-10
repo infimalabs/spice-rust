@@ -5,8 +5,8 @@ use board::allocate::{Mint, mint};
 use journal::{FactCause, Journal, JournalWrite};
 use serde_json::json;
 use wire::{
-    Actor, CanonicalUuid, Instant, LaneResidency, Origin, Phase, Producer, ResidencyHead,
-    ResidentState, TaskStamp, WorkflowHead, body,
+    Actor, CanonicalUuid, Disposition, Instant, LaneResidency, Origin, Phase, Producer,
+    ResidencyHead, ResidentState, SteeringHead, TaskStamp, WorkflowHead, body,
 };
 
 use super::{Scratch, codex_rows, reply_forms_in, strings, write_jsonl};
@@ -152,20 +152,35 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         SESSION_PROJECT,
         "todo",
     );
-    write
-        .fact(
-            body::SteerSent {
-                directive: uuid(0xaf),
-                key: "1kAsk001".to_owned(),
-                lane,
-                text: "Address this exact steering ask".to_owned(),
-                control: None,
-                attachments: Vec::new(),
-                expires: instant(30),
-            },
-            FactCause::Root,
-        )
+    let steering = body::SteerSent {
+        directive: uuid(0xaf),
+        key: "1kAsk001".to_owned(),
+        lane,
+        text: "Address this exact steering ask".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: instant(30),
+    };
+    let steering_fact = write
+        .fact(steering.clone(), FactCause::Root)
         .expect("steering fact builds");
+    let steering_origin = origin.clone();
+    write.steering_head(steering_fact, move |created| SteeringHead {
+        directive: steering.directive,
+        key: steering.key,
+        lane: steering.lane,
+        text: steering.text,
+        control: steering.control,
+        attachments: steering.attachments,
+        published: instant(0),
+        expires: steering.expires,
+        stage: body::SteeringStage::Published,
+        escalations: Vec::new(),
+        disposition: Disposition::Live,
+        origin: steering_origin,
+        created,
+        minted_millis: None,
+    });
     journal.apply(write).expect("fixture authority seeds");
 
     mint_claim(
