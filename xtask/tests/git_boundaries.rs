@@ -1,10 +1,13 @@
 //! The git network surface and the boundaries that write, both enumerated.
 //!
 //! Two invariants govern how this system is allowed to touch git. GIT-01: the
-//! agent itself never pulls and never pushes, and git is touched at exactly
-//! three control-plane boundaries. GIT-06: activation is deliberately not a
-//! fourth boundary, because it is replayed after every compaction and would
-//! land git work mid-session between two of a live agent's own commands.
+//! agent itself never pulls and never pushes, and its working tree is touched
+//! at exactly three control-plane boundaries. Operator-authored release
+//! publication is a separate, enumerated control plane: planning may inspect
+//! the configured remote, while applying a digest-approved plan may publish
+//! through the tracked release authority. GIT-06: activation is deliberately
+//! not another boundary, because it is replayed after every compaction and
+//! would land git work mid-session between two of a live agent's own commands.
 //!
 //! Neither invariant is expressible as a unit test of any one function: both
 //! are statements about what the whole tree does *not* contain. So they are
@@ -24,9 +27,9 @@
 //! verifier.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// This file, carved out of the scan it performs.
 ///
@@ -181,7 +184,7 @@ const VERIFIER_ACTION_LIST: &str = "const VERIFY_ACTIONS";
 /// GIT-01: no source names a network subcommand outside the allowlist.
 #[test]
 fn every_tracked_network_subcommand_literal_is_allowlisted() {
-    let sources = tracked_rust_sources();
+    let sources = workspace_rust_sources();
     assert!(
         sources.contains_key(SELF_PATH),
         "{SELF_PATH} is not in the tracked set, so the carve-out below names \
@@ -215,7 +218,7 @@ fn every_tracked_network_subcommand_literal_is_allowlisted() {
 /// from its path, not declared, for the same reason.
 #[test]
 fn production_names_a_network_subcommand_only_inside_the_control_plane() {
-    let found = scan_network_sites(&tracked_rust_sources());
+    let found = scan_network_sites(&workspace_rust_sources());
 
     let production = found
         .iter()
@@ -244,7 +247,7 @@ fn production_names_a_network_subcommand_only_inside_the_control_plane() {
 /// GIT-01 and GIT-06: three writing boundaries, and activation is not one.
 #[test]
 fn the_git_writing_boundaries_are_claim_completion_and_launch() {
-    let sources = tracked_rust_sources();
+    let sources = workspace_rust_sources();
 
     let found = public_entry_points(&sources);
     let declared = ENTRY_POINTS
@@ -334,9 +337,9 @@ fn the_git_writing_boundaries_are_claim_completion_and_launch() {
 /// This battery is reached by the canonical verifier, not just by a local run.
 ///
 /// The three assertions close the question together with the fact that this
-/// body is executing at all: the file is in the Git index rather than an
-/// untracked working copy, `xtask` is a workspace member so cargo builds its
-/// integration tests,
+/// body is executing at all: the file is present in the selected workspace
+/// source set, `xtask` is a workspace member so cargo builds its integration
+/// tests,
 /// and the verifier's own action list names the sweep that builds them. The
 /// action list is read as source text because it is private to the crate; the
 /// slice is bounded so a label appearing only in `xtask`'s own test copy of the
@@ -344,10 +347,10 @@ fn the_git_writing_boundaries_are_claim_completion_and_launch() {
 #[test]
 fn this_battery_runs_inside_the_canonical_verifier() {
     let root = workspace_root();
-    let sources = tracked_rust_sources();
+    let sources = workspace_rust_sources();
     assert!(
         sources.contains_key(SELF_PATH),
-        "{SELF_PATH} is not in the Git index, so it cannot reach another worktree"
+        "{SELF_PATH} is absent from the selected workspace source set"
     );
 
     let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("read workspace manifest");
@@ -435,41 +438,65 @@ fn public_entry_points(sources: &BTreeMap<String, String>) -> BTreeSet<(String, 
     found
 }
 
-/// Every tracked Rust source, read from the working tree.
+/// Every Rust source in the selected workspace tree.
 ///
-/// The Git index is the inventory rather than a directory walk, so an
-/// untracked scratch file cannot contribute a call site and a tracked one
-/// cannot be hidden by an ignore rule.
-///
-/// A tracked path with no file behind it -- staged for deletion, or absent
-/// mid-merge -- is skipped rather than read, because reading it would panic on
-/// a tree that is merely between states. Skipping cannot hide a call site: a
-/// file that is gone contributes nothing to add, and any allowlist entry naming
-/// it turns into a stale entry the second assertion reports.
-fn tracked_rust_sources() -> BTreeMap<String, String> {
+/// The canonical verifier executes this battery from an immutable selected
+/// tree that deliberately carries no `.git` directory, so Git cannot be the
+/// runtime inventory authority. Walking the compiled workspace gives direct
+/// and verifier execution one path. In a development worktree the walk also
+/// sees untracked Rust scratch files and therefore fails closed: an extra
+/// network literal can red the invariant, but it cannot hide from it.
+fn workspace_rust_sources() -> BTreeMap<String, String> {
     let root = workspace_root();
-    let output = Command::new("git")
-        .args(["ls-files", "-z", "--", "*.rs"])
-        .current_dir(&root)
-        .output()
-        .expect("Git lists tracked Rust sources");
-    assert!(
-        output.status.success(),
-        "git ls-files failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-        .map(|path| String::from_utf8(path.to_vec()).expect("tracked Rust path is UTF-8"))
-        .filter(|path| root.join(path).is_file())
-        .map(|path| {
-            let text = fs::read_to_string(root.join(&path))
-                .unwrap_or_else(|error| panic!("read tracked source {path}: {error}"));
-            (path, text)
-        })
-        .collect()
+    let mut sources = BTreeMap::new();
+    collect_rust_sources(&root, &root, &mut sources);
+    sources
+}
+
+fn collect_rust_sources(root: &Path, directory: &Path, sources: &mut BTreeMap<String, String>) {
+    let mut entries = fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("read source directory {}: {error}", directory.display()))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|error| panic!("read source entry in {}: {error}", directory.display()));
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .unwrap_or_else(|error| panic!("inspect source path {}: {error}", path.display()));
+        if kind.is_dir() {
+            if !excluded_source_directory(&entry.file_name()) {
+                collect_rust_sources(root, &path, sources);
+            }
+            continue;
+        }
+        if !kind.is_file() || path.extension() != Some(OsStr::new("rs")) {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .expect("walked source stays beneath workspace")
+            .to_str()
+            .expect("Rust source path is UTF-8")
+            .to_owned();
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read Rust source {relative}: {error}"));
+        sources.insert(relative, text);
+    }
+}
+
+fn excluded_source_directory(name: &OsStr) -> bool {
+    [
+        ".agents",
+        ".git",
+        ".spice",
+        ".spice-rs",
+        "node_modules",
+        "stage-app",
+        "target",
+    ]
+    .into_iter()
+    .any(|excluded| name == OsStr::new(excluded))
 }
 
 fn workspace_root() -> PathBuf {
