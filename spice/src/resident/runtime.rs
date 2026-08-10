@@ -411,11 +411,14 @@ fn up_from_with(
         return outcome;
     }
 
-    let journal = match journal::Journal::open(&paths.journal) {
+    let mut journal = match journal::Journal::open(&paths.journal) {
         Ok(journal) => journal,
         Err(error) => return journal_open_failure(error),
     };
     let migration = journal.migration();
+    if let Err(outcome) = steering::admit_index(&mut journal) {
+        return outcome;
+    }
     let epoch = new_uuid();
     if let Err(error) = resident_lock.set_epoch(epoch) {
         return environment_fault("resident::holder-unwritable", &error.to_string());

@@ -47,10 +47,20 @@ impl Journal {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_fault)?;
         let current = read_cursor(&transaction)?;
+        ensure_steering_index_current(&transaction, current)?;
+        validate_steering_updates(&write)?;
         run_guards(&transaction, current, std::mem::take(&mut write.guards))?;
         let assigned = assign_positions(current, write.facts.len())?;
         insert_facts(&transaction, &write, &assigned, current)?;
-        apply_heads(&transaction, write.id, write.heads, &assigned)?;
+        apply_heads(
+            &transaction,
+            write.id,
+            &write.facts,
+            &write.origin,
+            write.at,
+            write.heads,
+            &assigned,
+        )?;
         if let Some(receipt) = write.receipt {
             insert_receipt(
                 &transaction,
@@ -67,11 +77,247 @@ impl Journal {
                 [to_sql(last)?],
             )
             .map_err(sqlite_fault)?;
+        transaction
+            .execute(
+                "UPDATE steering_index SET indexed_seq = ?1 WHERE singleton = 1",
+                [to_sql(last)?],
+            )
+            .map_err(sqlite_fault)?;
         transaction.commit().map_err(sqlite_fault)?;
         Ok(Applied {
             first: assigned[0],
             last,
         })
+    }
+
+    /// Whether the steering authority index covers the current journal cursor.
+    pub fn steering_index_current(&self) -> Result<bool, GuardError> {
+        let cursor = visible_cursor(&self.connection)?;
+        let indexed = self
+            .connection
+            .query_row(
+                "SELECT indexed_seq FROM steering_index WHERE singleton = 1",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(GuardError::Store)?;
+        let indexed = decode_optional_seq(indexed).map_err(GuardError::Invalid)?;
+        Ok(indexed == cursor)
+    }
+
+    /// Atomically replace a lagging steering index with one canonical replay.
+    ///
+    /// The caller must reduce the immutable snapshot before entering this
+    /// method. Invalid or contradictory replay therefore performs no mutation;
+    /// this transaction only proves the snapshot cursor is still current and
+    /// publishes the already-validated rows as one generation.
+    pub fn rebuild_steering_index(
+        &mut self,
+        expected: Option<wire::Seq>,
+        heads: &[JournalHead<wire::SteeringHead>],
+        misses: &[JournalHead<wire::body::SteerMissed>],
+    ) -> Result<(), GuardError> {
+        let mut encoded_heads = Vec::with_capacity(heads.len());
+        for head in heads {
+            if head.body.created > head.position {
+                return Err(GuardError::Invalid(format!(
+                    "steering head {} predates its creating fact",
+                    head.body.directive
+                )));
+            }
+            if expected.is_none_or(|cursor| head.position > cursor) {
+                return Err(GuardError::Invalid(format!(
+                    "steering head {} lies beyond rebuild cursor {expected:?}",
+                    head.body.directive
+                )));
+            }
+            encoded_heads.push((
+                head.position,
+                head.body.clone(),
+                wire::encode(&head.body).map_err(|error| GuardError::Invalid(error.to_string()))?,
+            ));
+        }
+        let mut encoded_misses = Vec::with_capacity(misses.len());
+        for miss in misses {
+            if expected.is_none_or(|cursor| miss.position > cursor) {
+                return Err(GuardError::Invalid(format!(
+                    "steering miss lies beyond rebuild cursor {expected:?}"
+                )));
+            }
+            let bytes =
+                wire::encode(&miss.body).map_err(|error| GuardError::Invalid(error.to_string()))?;
+            let identity = canonical_identity(&miss.body)?;
+            encoded_misses.push((miss.position, identity, bytes));
+        }
+
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(GuardError::Store)?;
+        let current = visible_cursor(&transaction)?;
+        if current != expected {
+            return Err(GuardError::refused("steering index rebuild snapshot moved"));
+        }
+        transaction
+            .execute("DELETE FROM steering_heads", [])
+            .map_err(GuardError::Store)?;
+        transaction
+            .execute("DELETE FROM steering_misses", [])
+            .map_err(GuardError::Store)?;
+        for (position, head, bytes) in encoded_heads {
+            transaction
+                .execute(
+                    "INSERT INTO steering_heads(\
+                        directive, steer_key, lane, disposition, created_seq, minted_millis, \
+                        head_seq, body\
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        head.directive.to_string(),
+                        head.key,
+                        head.lane.to_string(),
+                        disposition_name(head.disposition),
+                        to_sql(head.created).map_err(commit_fault_to_guard)?,
+                        head.minted_millis,
+                        to_sql(position).map_err(commit_fault_to_guard)?,
+                        bytes,
+                    ],
+                )
+                .map_err(GuardError::Store)?;
+        }
+        for (position, identity, bytes) in encoded_misses {
+            transaction
+                .execute(
+                    "INSERT INTO steering_misses(identity, head_seq, body) VALUES (?1, ?2, ?3)",
+                    params![
+                        identity,
+                        to_sql(position).map_err(commit_fault_to_guard)?,
+                        bytes
+                    ],
+                )
+                .map_err(GuardError::Store)?;
+        }
+        transaction
+            .execute(
+                "UPDATE steering_index SET indexed_seq = ?1 WHERE singleton = 1",
+                [expected
+                    .map(to_sql)
+                    .transpose()
+                    .map_err(commit_fault_to_guard)?],
+            )
+            .map_err(GuardError::Store)?;
+        transaction.commit().map_err(GuardError::Store)
+    }
+}
+
+fn commit_fault_to_guard(error: CommitError) -> GuardError {
+    GuardError::Invalid(error.to_string())
+}
+
+fn ensure_steering_index_current(
+    connection: &Connection,
+    cursor: Option<wire::Seq>,
+) -> Result<(), CommitError> {
+    let indexed = connection
+        .query_row(
+            "SELECT indexed_seq FROM steering_index WHERE singleton = 1",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .map_err(sqlite_fault)?;
+    let indexed = decode_optional_seq(indexed).map_err(|detail| {
+        CommitError::Fault(CommitFault::new(format!(
+            "steering index cursor is invalid: {detail}"
+        )))
+    })?;
+    if indexed != cursor {
+        return Err(CommitError::Fault(CommitFault::new(format!(
+            "steering index cursor {indexed:?} disagrees with journal cursor {cursor:?}; rebuild the index before writing"
+        ))));
+    }
+    Ok(())
+}
+
+fn validate_steering_updates(write: &JournalWrite) -> Result<(), CommitError> {
+    let mut subjects = std::collections::BTreeMap::<String, Vec<usize>>::new();
+    let mut misses = Vec::new();
+    for (index, proposed) in write.facts.iter().enumerate() {
+        if let Some(subject) = steering_subject(&proposed.fact) {
+            subjects.entry(subject).or_default().push(index);
+        } else if proposed.fact.kind() == wire::FactKind::SteerMissed {
+            misses.push(index);
+        }
+    }
+    let indexed_subjects = write
+        .heads
+        .iter()
+        .filter(|head| head.kind == HeadUpdateKind::Steering)
+        .map(|head| head.fact.index)
+        .collect::<std::collections::BTreeSet<_>>();
+    let indexed_misses = write
+        .heads
+        .iter()
+        .filter(|head| head.kind == HeadUpdateKind::SteeringMiss)
+        .map(|head| head.fact.index)
+        .collect::<std::collections::BTreeSet<_>>();
+    let missing_subject = subjects
+        .values()
+        .any(|facts| facts.iter().all(|index| !indexed_subjects.contains(index)));
+    let stray_subject = indexed_subjects.iter().any(|index| {
+        write
+            .facts
+            .get(*index)
+            .and_then(|fact| steering_subject(&fact.fact))
+            .is_none()
+    });
+    let missing_miss = misses.iter().any(|index| !indexed_misses.contains(index));
+    let stray_miss = indexed_misses.iter().any(|index| !misses.contains(index));
+    if missing_subject || stray_subject || missing_miss || stray_miss {
+        return Err(CommitError::Refused(GuardRefusal::new(
+            "every affected steering identity must advance its authoritative head or evidence index",
+        )));
+    }
+    Ok(())
+}
+
+fn steering_subject(fact: &wire::AnyFact) -> Option<String> {
+    match fact.kind() {
+        wire::FactKind::SteerSent => fact
+            .read::<wire::body::SteerSent>()
+            .map(|body| format!("directive:{}", body.directive)),
+        wire::FactKind::TasteReminded => fact
+            .read::<wire::body::TasteReminded>()
+            .map(|body| format!("directive:{}", body.directive)),
+        wire::FactKind::TasteJudged => {
+            fact.read::<wire::body::TasteJudged>()
+                .and_then(|body| match body.decision {
+                    wire::body::TasteDecision::Confirmed { directive, .. } => {
+                        Some(format!("directive:{directive}"))
+                    }
+                    wire::body::TasteDecision::Cleared => None,
+                })
+        }
+        wire::FactKind::SteerEscalated => fact
+            .read::<wire::body::SteerEscalated>()
+            .map(|body| format!("directive:{}", body.directive)),
+        wire::FactKind::SteerRecovered => fact
+            .read::<wire::body::SteerRecovered>()
+            .map(|body| format!("directive:{}", body.directive)),
+        wire::FactKind::SteerAcked => fact
+            .read::<wire::body::SteerAcked>()
+            .map(|body| format!("directive:{}", body.directive)),
+        wire::FactKind::SteerDeclined => fact
+            .read::<wire::body::SteerDeclined>()
+            .map(|body| format!("directive:{}", body.directive)),
+        wire::FactKind::SteerDeadLettered => fact
+            .read::<wire::steering::SteerDeadLettered>()
+            .map(|body| format!("directive:{}", body.directive)),
+        wire::FactKind::SteerLapsed => fact
+            .read::<wire::body::SteerLapsed>()
+            .map(|body| format!("key:{}", body.key)),
+        wire::FactKind::SteerCanceled => fact
+            .read::<wire::body::SteerCanceled>()
+            .map(|body| format!("key:{}", body.key)),
+        _ => None,
     }
 }
 
@@ -288,6 +534,9 @@ fn insert_thread_index(
 fn apply_heads(
     transaction: &Transaction<'_>,
     write: u64,
+    facts: &[ProposedFact],
+    origin: &wire::Origin,
+    at: wire::Instant,
     heads: Vec<HeadUpdate>,
     assigned: &[wire::Seq],
 ) -> Result<(), CommitError> {
@@ -306,6 +555,56 @@ fn apply_heads(
         let row = (head.build)(seq).map_err(|detail| {
             CommitError::Refused(GuardRefusal::new(format!("head update refused: {detail}")))
         })?;
+        let fact = &facts
+            .get(head.fact.index)
+            .expect("assigned head fact was proven present")
+            .fact;
+        validate_head_agreement(head.kind, fact, origin, at, seq, &row)?;
+        if head.kind == HeadUpdateKind::SteeringMiss {
+            let HeadKey::Text(identity) = row.key else {
+                return Err(CommitError::Refused(GuardRefusal::new(
+                    "steering evidence requires a canonical identity",
+                )));
+            };
+            transaction
+                .execute(
+                    "INSERT INTO steering_misses(identity, head_seq, body) VALUES (?1, ?2, ?3)",
+                    params![identity, to_sql(row.seq)?, row.body],
+                )
+                .map_err(sqlite_fault)?;
+            continue;
+        }
+        if let Some(steering) = row.steering {
+            let HeadKey::Text(directive) = row.key else {
+                return Err(CommitError::Refused(GuardRefusal::new(
+                    "steering head requires a directive key",
+                )));
+            };
+            transaction
+                .execute(
+                    "INSERT INTO steering_heads(\
+                        directive, steer_key, lane, disposition, created_seq, minted_millis, \
+                        head_seq, body\
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+                     ON CONFLICT(directive) DO UPDATE SET \
+                        steer_key = excluded.steer_key, lane = excluded.lane, \
+                        disposition = excluded.disposition, created_seq = excluded.created_seq, \
+                        minted_millis = excluded.minted_millis, head_seq = excluded.head_seq, \
+                        body = excluded.body",
+                    params![
+                        directive,
+                        steering.key,
+                        steering.lane,
+                        steering.disposition,
+                        to_sql(steering.created)?,
+                        steering.minted_millis,
+                        to_sql(row.seq)?,
+                        row.body,
+                    ],
+                )
+                .map_err(sqlite_fault)?;
+            continue;
+        }
         let statement = format!(
             "INSERT INTO {table}({key}, head_seq, body) VALUES (?1, ?2, ?3) \
              ON CONFLICT({key}) DO UPDATE SET head_seq = excluded.head_seq, body = excluded.body",
@@ -322,6 +621,260 @@ fn apply_heads(
         };
     }
     Ok(())
+}
+
+fn validate_head_agreement(
+    kind: HeadUpdateKind,
+    fact: &wire::AnyFact,
+    origin: &wire::Origin,
+    at: wire::Instant,
+    seq: wire::Seq,
+    row: &HeadRow,
+) -> Result<(), CommitError> {
+    let refused =
+        |detail| CommitError::Refused(GuardRefusal::new(format!("head update refused: {detail}")));
+    match kind {
+        HeadUpdateKind::Ordinary => Ok(()),
+        HeadUpdateKind::SteeringMiss => {
+            let indexed = wire::decode::<wire::body::SteerMissed>(&row.body)
+                .map_err(|error| refused(error.to_string()))?;
+            let proposed = fact.read::<wire::body::SteerMissed>().ok_or_else(|| {
+                refused("steering evidence does not name a missed fact".to_owned())
+            })?;
+            (indexed == proposed).then_some(()).ok_or_else(|| {
+                refused("steering evidence disagrees with its missed fact".to_owned())
+            })
+        }
+        HeadUpdateKind::Steering => {
+            let indexed = wire::decode::<wire::SteeringHead>(&row.body)
+                .map_err(|error| refused(error.to_string()))?;
+            steering_head_agrees(fact, origin, at, seq, &indexed).map_err(refused)
+        }
+    }
+}
+
+fn steering_head_agrees(
+    fact: &wire::AnyFact,
+    origin: &wire::Origin,
+    at: wire::Instant,
+    seq: wire::Seq,
+    head: &wire::SteeringHead,
+) -> Result<(), String> {
+    if &head.origin != origin {
+        return Err("steering head origin disagrees with its fact envelope".to_owned());
+    }
+    match fact.kind() {
+        wire::FactKind::SteerSent => sent_head_agrees(fact, at, seq, head),
+        wire::FactKind::TasteReminded => reminder_head_agrees(fact, at, seq, head),
+        wire::FactKind::TasteJudged => judgment_head_agrees(fact, at, seq, head),
+        wire::FactKind::SteerEscalated => escalation_head_agrees(fact, at, head),
+        wire::FactKind::SteerRecovered => recovery_head_agrees(fact, head),
+        wire::FactKind::SteerAcked => {
+            let body = fact
+                .read::<wire::body::SteerAcked>()
+                .expect("registered kind");
+            steering_identity_agrees(
+                body.directive,
+                &body.key,
+                body.lane,
+                wire::Disposition::Acked,
+                head,
+            )
+        }
+        wire::FactKind::SteerDeclined => {
+            let body = fact
+                .read::<wire::body::SteerDeclined>()
+                .expect("registered kind");
+            steering_identity_agrees(
+                body.directive,
+                &body.key,
+                body.lane,
+                wire::Disposition::Declined,
+                head,
+            )
+        }
+        wire::FactKind::SteerDeadLettered => {
+            let body = fact
+                .read::<wire::steering::SteerDeadLettered>()
+                .expect("registered kind");
+            steering_identity_agrees(
+                body.directive,
+                &body.key,
+                body.lane,
+                wire::Disposition::DeadLettered,
+                head,
+            )
+        }
+        wire::FactKind::SteerLapsed => lapse_head_agrees(fact, head),
+        wire::FactKind::SteerCanceled => cancellation_head_agrees(fact, head),
+        _ => Err("steering head does not name a steering authority fact".to_owned()),
+    }
+}
+
+fn sent_head_agrees(
+    fact: &wire::AnyFact,
+    at: wire::Instant,
+    seq: wire::Seq,
+    head: &wire::SteeringHead,
+) -> Result<(), String> {
+    let body = fact
+        .read::<wire::body::SteerSent>()
+        .expect("registered kind");
+    steering_identity_agrees(
+        body.directive,
+        &body.key,
+        body.lane,
+        wire::Disposition::Live,
+        head,
+    )?;
+    (head.created == seq
+        && head.published == at
+        && head.text == body.text
+        && head.control == body.control
+        && head.attachments == body.attachments
+        && head.expires == body.expires
+        && head.stage == wire::body::SteeringStage::Published
+        && head.escalations.is_empty())
+    .then_some(())
+    .ok_or_else(|| "steering publication head disagrees with its creating fact".to_owned())
+}
+
+fn reminder_head_agrees(
+    fact: &wire::AnyFact,
+    at: wire::Instant,
+    seq: wire::Seq,
+    head: &wire::SteeringHead,
+) -> Result<(), String> {
+    let body = fact
+        .read::<wire::body::TasteReminded>()
+        .expect("registered kind");
+    steering_identity_agrees(
+        body.directive,
+        &body.key,
+        body.lane,
+        wire::Disposition::Live,
+        head,
+    )?;
+    (head.created == seq
+        && head.published == at
+        && head.text == body.text
+        && head.control.is_none()
+        && head.attachments.is_empty()
+        && head.expires == body.expires
+        && head.stage == wire::body::SteeringStage::Published
+        && head.escalations.is_empty())
+    .then_some(())
+    .ok_or_else(|| "taste reminder head disagrees with its creating fact".to_owned())
+}
+
+fn judgment_head_agrees(
+    fact: &wire::AnyFact,
+    at: wire::Instant,
+    seq: wire::Seq,
+    head: &wire::SteeringHead,
+) -> Result<(), String> {
+    let body = fact
+        .read::<wire::body::TasteJudged>()
+        .expect("registered kind");
+    let wire::body::TasteDecision::Confirmed {
+        directive,
+        key,
+        text,
+        expires,
+    } = &body.decision
+    else {
+        return Err("cleared taste judgment cannot establish a steering head".to_owned());
+    };
+    steering_identity_agrees(*directive, key, body.lane, wire::Disposition::Live, head)?;
+    (head.created == seq
+        && head.published == at
+        && head.text == *text
+        && head.control.is_none()
+        && head.attachments.is_empty()
+        && head.expires == *expires
+        && head.stage == wire::body::SteeringStage::Published
+        && head.escalations.is_empty())
+    .then_some(())
+    .ok_or_else(|| "taste judgment head disagrees with its creating fact".to_owned())
+}
+
+fn escalation_head_agrees(
+    fact: &wire::AnyFact,
+    at: wire::Instant,
+    head: &wire::SteeringHead,
+) -> Result<(), String> {
+    let body = fact
+        .read::<wire::body::SteerEscalated>()
+        .expect("registered kind");
+    steering_identity_agrees(
+        body.directive,
+        &body.key,
+        body.lane,
+        wire::Disposition::Live,
+        head,
+    )?;
+    (head.stage == body.stage
+        && head.escalations.last()
+            == Some(&wire::body::SteeringTransition {
+                stage: body.stage,
+                at,
+            }))
+    .then_some(())
+    .ok_or_else(|| "steering head stage disagrees with its escalation fact".to_owned())
+}
+
+fn recovery_head_agrees(fact: &wire::AnyFact, head: &wire::SteeringHead) -> Result<(), String> {
+    let body = fact
+        .read::<wire::body::SteerRecovered>()
+        .expect("registered kind");
+    steering_identity_agrees(
+        body.directive,
+        &body.key,
+        body.lane,
+        wire::Disposition::Live,
+        head,
+    )?;
+    (head.expires == body.expires)
+        .then_some(())
+        .ok_or_else(|| "steering head expiry disagrees with its recovery fact".to_owned())
+}
+
+fn lapse_head_agrees(fact: &wire::AnyFact, head: &wire::SteeringHead) -> Result<(), String> {
+    let body = fact
+        .read::<wire::body::SteerLapsed>()
+        .expect("registered kind");
+    (head.key == body.key
+        && head.lane == body.lane
+        && head.disposition == wire::Disposition::Lapsed
+        && head.expires == body.expires)
+        .then_some(())
+        .ok_or_else(|| "steering head disagrees with its lapse fact".to_owned())
+}
+
+fn cancellation_head_agrees(fact: &wire::AnyFact, head: &wire::SteeringHead) -> Result<(), String> {
+    let body = fact
+        .read::<wire::body::SteerCanceled>()
+        .expect("registered kind");
+    (head.key == body.key
+        && head.lane == body.lane
+        && head.disposition == wire::Disposition::Canceled)
+        .then_some(())
+        .ok_or_else(|| "steering head disagrees with its cancellation fact".to_owned())
+}
+
+fn steering_identity_agrees(
+    directive: wire::CanonicalUuid,
+    key: &str,
+    lane: wire::CanonicalUuid,
+    disposition: wire::Disposition,
+    head: &wire::SteeringHead,
+) -> Result<(), String> {
+    (head.directive == directive
+        && head.key == key
+        && head.lane == lane
+        && head.disposition == disposition)
+        .then_some(())
+        .ok_or_else(|| "steering head identity or disposition disagrees with its fact".to_owned())
 }
 
 fn insert_receipt(

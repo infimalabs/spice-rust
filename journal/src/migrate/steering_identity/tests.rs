@@ -318,6 +318,14 @@ fn fixture() -> Connection {
         .expect("current baseline");
     crate::tests::downgrade_task_identity_to_five(&connection);
     connection
+        .execute_batch(
+            "DROP TABLE steering_index;
+             DROP TABLE steering_misses;
+             DROP TABLE steering_heads;",
+        )
+        .expect("remove schema-7 steering index from schema-3 fixture");
+    crate::tests::downgrade_task_identity_to_five(&connection);
+    connection
         .execute(
             "UPDATE journal_schema SET version = 3 WHERE singleton = 1",
             [],
