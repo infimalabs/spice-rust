@@ -299,8 +299,15 @@ fn build_resolved(
     action: &str,
     sources: Vec<source::ResolvedSource>,
 ) -> Result<Report, Refusal> {
-    let data = dataset::load(&sources)?;
     let filters = project::Filters::from_matches(matches)?;
+    let data = if matches!(action, "briefing" | "sweep") {
+        let count = project::horizon_count(matches, action)?;
+        let horizon = dataset::recent_compaction_horizon(&sources, count, filters.end_bound())?;
+        let start = filters.start_bound().or(horizon.start.as_deref());
+        dataset::load_since(&sources, start)?
+    } else {
+        dataset::load(&sources)?
+    };
     match action {
         "briefing" => project::recall(&data, matches, &filters),
         "sweep" => project::sweep(&data, matches, &filters),
