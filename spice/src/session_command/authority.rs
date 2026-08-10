@@ -17,7 +17,17 @@ pub(crate) fn observe(
     sources: &[source::ResolvedSource],
     environment: &Environment,
 ) -> BriefingAuthorities {
-    let mut briefing = BriefingAuthorities {
+    let mut briefing = empty_briefing_authorities();
+
+    let thread = exact_thread(sources, environment, &mut briefing);
+    briefing.held_work.thread.clone_from(&thread);
+
+    observe_current_authorities(thread.as_deref(), &mut briefing);
+    briefing
+}
+
+fn empty_briefing_authorities() -> BriefingAuthorities {
+    BriefingAuthorities {
         fold: AuthorityFoldView {
             mode: "bounded-read-only".to_owned(),
             probes: vec![
@@ -48,13 +58,7 @@ pub(crate) fn observe(
             peer_claims: None,
         },
         unknowns: Vec::new(),
-    };
-
-    let thread = exact_thread(sources, environment, &mut briefing);
-    briefing.held_work.thread.clone_from(&thread);
-
-    observe_current_authorities(thread.as_deref(), &mut briefing);
-    briefing
+    }
 }
 
 struct ObservedAuthorities {

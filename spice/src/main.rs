@@ -141,7 +141,9 @@ fn main() {
         Form::Text
     };
     #[cfg(not(target_arch = "wasm32"))]
-    let mounts = mounted_registry(bootstrap_form);
+    let bootstrap_doctor = cli::bootstrap_doctor_selected(std::env::args_os());
+    #[cfg(not(target_arch = "wasm32"))]
+    let mounts = mounted_registry(bootstrap_form, bootstrap_doctor);
     #[cfg(not(target_arch = "wasm32"))]
     let matches = mounts.command().get_matches();
     #[cfg(target_arch = "wasm32")]
@@ -191,7 +193,7 @@ fn main() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn mounted_registry(form: Form) -> cli::MountRegistry {
+fn mounted_registry(form: Form, doctor_selected: bool) -> cli::MountRegistry {
     let working_directory = std::env::current_dir().unwrap_or_else(|error| {
         deliver_fault(
             Fault {
@@ -202,18 +204,40 @@ fn mounted_registry(form: Form) -> cli::MountRegistry {
             form,
         );
     });
-    cli::MountRegistry::load(&working_directory).unwrap_or_else(|error| {
-        let observed = error.to_string();
-        let outcome: Outcome<()> = Outcome::Refusal(Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                "cli::mount-registry-refused".to_owned(),
-                Some("repository-command-mounts".to_owned()),
-                Some("one valid tracked command mount registry".to_owned()),
-                Some(observed.clone()),
-            )
-            .with_detail(observed),
-        ));
-        deliver(&outcome, form)
+    match cli::MountRegistry::load(&working_directory) {
+        Ok(mounts) => mounts,
+        Err(cli::MountLoadError::Configuration(error))
+            if doctor_selected && !mount_configuration_error(&error) =>
+        {
+            cli::MountRegistry::default()
+        }
+        Err(error) => {
+            let observed = error.to_string();
+            let outcome: Outcome<()> = Outcome::Refusal(Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "cli::mount-registry-refused".to_owned(),
+                    Some("repository-command-mounts".to_owned()),
+                    Some("one valid tracked command mount registry".to_owned()),
+                    Some(observed.clone()),
+                )
+                .with_detail(observed),
+            ));
+            deliver(&outcome, form)
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn mount_configuration_error(error: &spice::config::LoadError) -> bool {
+    error.resolution().is_some_and(|resolution| {
+        resolution.issues().iter().any(|issue| {
+            issue.path().is_some_and(|path| {
+                matches!(
+                    path.segments().next(),
+                    Some(spice::config::PathSegment::Key("commands"))
+                )
+            })
+        })
     })
 }
 

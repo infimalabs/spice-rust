@@ -361,7 +361,7 @@ where
             .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
         let anchor = context_anchor(&snapshot, record.lane, record.occupant)
             .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
-        let unsuppressed = unsuppressed(&candidates, &snapshot, anchor);
+        let unsuppressed = unsuppressed_candidates(&candidates, &snapshot, anchor);
         if unsuppressed.is_empty() {
             return Ok(());
         }
@@ -371,24 +371,20 @@ where
             .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
         let at = current_instant()?;
         let expires = expiry(at, steering_config.expiry().get())?;
-        let (openings, proposal) = if let Some(adjudicator) = judge.as_deref_mut() {
-            let decisions =
-                adjudicate_candidates(unsuppressed, anchor, &mut decision_cache, adjudicator);
-            if decisions.is_empty() {
-                return Ok(());
-            }
-            judged_proposal(
+        let proposal = if let Some(adjudicator) = judge.as_deref_mut() {
+            judged_recognition_proposal(
                 epoch,
-                record.lane,
-                record.occupant,
+                record,
                 anchor,
-                decisions,
+                unsuppressed,
                 minted_millis,
                 at,
                 expires,
+                &mut decision_cache,
+                adjudicator,
             )?
         } else {
-            reminder_proposal(
+            Some(reminder_proposal(
                 epoch,
                 record.lane,
                 record.occupant,
@@ -397,7 +393,10 @@ where
                 minted_millis,
                 at,
                 expires,
-            )?
+            )?)
+        };
+        let Some((openings, proposal)) = proposal else {
+            return Ok(());
         };
 
         match commit_write(bus, &openings, proposal) {
@@ -422,7 +421,7 @@ where
     unreachable!("the final commit attempt returns instead of retrying")
 }
 
-fn unsuppressed(
+fn unsuppressed_candidates(
     candidates: &[Candidate],
     snapshot: &journal::FactSnapshot,
     anchor: Seq,
@@ -435,6 +434,38 @@ fn unsuppressed(
         })
         .cloned()
         .collect()
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "proposal construction names the authority snapshot, indexed key clock, and cache boundary"
+)]
+fn judged_recognition_proposal(
+    epoch: CanonicalUuid,
+    record: &lane::capture::CaptureRecord,
+    anchor: Seq,
+    unsuppressed: Vec<Candidate>,
+    minted_millis: Option<i64>,
+    at: Instant,
+    expires: Instant,
+    decision_cache: &mut BTreeMap<(Digest, Digest, u64), Option<Judgment>>,
+    adjudicator: &mut dyn Adjudicator,
+) -> CommandResult<Option<(Vec<Opening>, JournalWrite)>> {
+    let decisions = adjudicate_candidates(unsuppressed, anchor, decision_cache, adjudicator);
+    if decisions.is_empty() {
+        return Ok(None);
+    }
+    judged_proposal(
+        epoch,
+        record.lane,
+        record.occupant,
+        anchor,
+        decisions,
+        minted_millis,
+        at,
+        expires,
+    )
+    .map(Some)
 }
 
 #[allow(
@@ -472,20 +503,7 @@ fn judged_proposal(
         openings.clone(),
     ));
     for decided in &decisions {
-        let decision = if decided.judgment.confirmed {
-            let opening = openings
-                .iter()
-                .find(|opening| opening.candidate.content == decided.candidate.content)
-                .expect("every confirmed decision owns one opening");
-            TasteDecision::Confirmed {
-                directive: opening.directive,
-                key: opening.key.to_string(),
-                text: opening.candidate.text.clone(),
-                expires,
-            }
-        } else {
-            TasteDecision::Cleared
-        };
+        let decision = taste_decision(decided, &openings, expires);
         let judged = TasteJudged {
             lane,
             occupant,
@@ -512,6 +530,27 @@ fn judged_proposal(
         }
     }
     Ok((openings, proposal))
+}
+
+fn taste_decision(
+    decided: &JudgedCandidate,
+    openings: &[Opening],
+    expires: Instant,
+) -> TasteDecision {
+    if decided.judgment.confirmed {
+        let opening = openings
+            .iter()
+            .find(|opening| opening.candidate.content == decided.candidate.content)
+            .expect("every confirmed decision owns one opening");
+        TasteDecision::Confirmed {
+            directive: opening.directive,
+            key: opening.key.to_string(),
+            text: opening.candidate.text.clone(),
+            expires,
+        }
+    } else {
+        TasteDecision::Cleared
+    }
 }
 
 #[allow(
@@ -591,7 +630,7 @@ fn prepare_judgment(
         .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
     let anchor = context_anchor(&snapshot, record.lane, record.occupant)
         .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
-    let candidates = unsuppressed(&candidates, &snapshot, anchor);
+    let candidates = unsuppressed_candidates(&candidates, &snapshot, anchor);
     if candidates.is_empty() {
         return Ok(None);
     }

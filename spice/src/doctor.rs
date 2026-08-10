@@ -1,5 +1,7 @@
 //! Side-effect-free acquisition for the daemonless Doctor report.
 
+mod subsystems;
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
@@ -97,6 +99,7 @@ fn report(
                 },
             })
             .collect(),
+        subsystems: subsystems::diagnose(repository, &configuration),
         configuration,
         provenance,
         commands,
@@ -506,6 +509,32 @@ mod tests {
             assert!(
                 !source.contains(forbidden),
                 "Doctor gained forbidden side-effect surface {forbidden:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn subsystem_diagnosis_has_no_execution_or_mutation_surface() {
+        let source = include_str!("doctor/subsystems.rs");
+        for forbidden in [
+            concat!("std::", "process"),
+            concat!("std::", "net"),
+            concat!("journal", "::", "Journal", "::", "open"),
+            concat!("fold", "::", "Store", "::", "open", "("),
+            concat!("Command", "::"),
+            concat!("Tcp", "Stream"),
+            concat!("Udp", "Socket"),
+            concat!("fs::", "write"),
+            concat!("Open", "Options"),
+            concat!("create", "_dir"),
+            concat!("set", "_permissions"),
+            concat!("write", "_all"),
+            concat!("install", "::", "apply"),
+            concat!("install", "::", "unapply"),
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "Doctor subsystem diagnosis gained forbidden side-effect surface {forbidden:?}",
             );
         }
     }

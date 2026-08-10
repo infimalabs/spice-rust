@@ -2,6 +2,7 @@ use super::*;
 
 mod claim;
 mod gate_findings;
+mod taste_proposal;
 
 pub(super) use claim::claim_win;
 #[cfg(test)]
@@ -11,6 +12,7 @@ pub(super) use claim::{
 pub(super) use gate_findings::gate_findings;
 #[cfg(test)]
 pub(super) use gate_findings::{FindingRow, gate_findings_folded};
+pub(super) use taste_proposal::taste_proposal_add;
 
 /// One actor-filtered board snapshot whose cursor and entries were validated together.
 pub(super) struct ValidatedSnapshot {
@@ -102,45 +104,6 @@ pub(super) fn task_oops_add(
     )
 }
 
-pub(super) fn taste_proposal_add(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    add: &TasteProposalAdd,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
-) -> Outcome<CommandAnswer> {
-    let project = match projects.admit_system_creation(&SystemTaskRoute::proposal([
-        "taste".to_owned(),
-        add.finding.to_string(),
-    ])) {
-        Ok(project) => project,
-        Err(error) => {
-            return protocol_fault(
-                "taste::proposal-route-invalid",
-                &format!("resident-owned taste proposal route is not admitted: {error}"),
-            );
-        }
-    };
-    let normalized = TaskAdd {
-        title: add.title.clone(),
-        project: None,
-        description: Some(add.description.clone()),
-        acceptance: add.acceptance.clone(),
-        origin: Some(add.origin.clone()),
-        flow: Some("todo,review".to_owned()),
-        depends: add.depends.clone(),
-    };
-    create_task(
-        bus,
-        command,
-        &normalized,
-        project,
-        add.clone(),
-        projects,
-        allocation,
-    )
-}
-
 fn create_task<B: serde::Serialize>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -163,6 +126,38 @@ fn create_task<B: serde::Serialize>(
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
+    commit_prepared_task(
+        bus,
+        command,
+        add,
+        &project,
+        request_body,
+        projects,
+        &snapshot,
+        prepared,
+        Vec::new(),
+        |_| {},
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_prepared_task<B, F>(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    project: &Project,
+    request_body: B,
+    projects: &ProjectPolicy,
+    snapshot: &ValidatedSnapshot,
+    mut prepared: PreparedTask,
+    tags: Vec<String>,
+    extra_guard: F,
+) -> Outcome<CommandAnswer>
+where
+    B: serde::Serialize,
+    F: FnOnce(&mut JournalWrite),
+{
+    prepared.statement.tags.clone_from(&tags);
     let post = Entry::new(
         prepared.statement.clone(),
         prepared.workflow.clone(),
@@ -171,7 +166,7 @@ fn create_task<B: serde::Serialize>(
         projects,
     )
     .expect("prepared task already passed entry validation");
-    let next = next_action(&snapshot, &post, true);
+    let next = next_action(snapshot, &post, true);
     let mut write = JournalWrite::new(
         command.actor().clone(),
         prepared.origin,
@@ -179,6 +174,7 @@ fn create_task<B: serde::Serialize>(
         Producer::CommandDoor,
     );
     guard(&mut write, command.expected().to_vec());
+    extra_guard(&mut write);
     let added = match write.fact(
         body::TaskAdded {
             task: prepared.incepted.clone(),
@@ -186,7 +182,7 @@ fn create_task<B: serde::Serialize>(
             description: add.description.clone(),
             acceptance: add.acceptance.clone(),
             project: prepared.project,
-            tags: Vec::new(),
+            tags,
             depends: prepared.statement.dependencies.clone(),
             flow: prepared.flow,
             phase: prepared.phase,
@@ -204,7 +200,7 @@ fn create_task<B: serde::Serialize>(
         ..statement
     });
     write.workflow_head(prepared.incepted.clone(), added, move |_| prepared.workflow);
-    if let Err(outcome) = add_oops_note(&mut write, &project, add, &prepared.incepted, added) {
+    if let Err(outcome) = add_oops_note(&mut write, project, add, &prepared.incepted, added) {
         return outcome;
     }
     let answer = wire::intent::TaskAnswer {

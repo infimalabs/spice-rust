@@ -1,6 +1,7 @@
 use super::*;
 
 use std::os::unix::fs::PermissionsExt as _;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::toolchain::{
@@ -139,7 +140,7 @@ fn canvas_runs_both_declared_commands_in_order_from_their_owned_directories() {
         fixture.log_lines(),
         [
             format!(
-                "{}|check --locked --workspace --target wasm32-unknown-unknown",
+                "{}|check --locked --package app --target wasm32-unknown-unknown",
                 root.display()
             ),
             format!(

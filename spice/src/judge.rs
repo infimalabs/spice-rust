@@ -155,7 +155,7 @@ pub(crate) fn adjudicate_with(
     mut invoke_prompt: impl FnMut(&str) -> Result<String, Error>,
 ) -> Result<Decision, Error> {
     if prompts.is_empty() {
-        return Err(failure(
+        return Err(failure_error(
             "judge_error",
             "an adjudication question declared no framing",
         ));
@@ -227,7 +227,7 @@ fn invoke_with(
         detail: format!("judge process boundary failed: {error}"),
     })?;
     if !outcome.outputs_drained() {
-        return Err(failure(
+        return Err(failure_error(
             "judge_error",
             "judge descendants retained an output pipe past the drain deadline",
         ));
@@ -240,7 +240,7 @@ fn invoke_with(
             });
         }
         Completion::Cancelled(_) => {
-            return Err(failure("cancelled", "judge request was cancelled"));
+            return Err(failure_error("cancelled", "judge request was cancelled"));
         }
         Completion::Exited(_) => {}
     }
@@ -350,7 +350,7 @@ pub(crate) fn compact(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub(crate) fn failure(reason: &'static str, detail: &str) -> Error {
+pub(crate) fn failure_error(reason: &'static str, detail: &str) -> Error {
     Error {
         reason,
         detail: detail.to_owned(),
