@@ -376,6 +376,8 @@ fn native_task_add_carries_authored_context_through_client_add() {
         "Description reaches the authoritative statement",
         "--acceptance",
         "Every acceptance criterion survives the client seam",
+        "--origin",
+        "ack:1kLGp2NJ",
     ]));
 
     let current = board(&fixture);
@@ -397,11 +399,13 @@ fn native_task_add_carries_authored_context_through_client_add() {
             "Every acceptance criterion survives the client seam",
         ]
     );
+    assert_eq!(statement.provenance.to_string(), "ack:1kLGp2NJ");
 
     let requests = task_add_requests(&fixture);
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].description, statement.description);
     assert_eq!(requests[0].acceptance, statement.acceptance);
+    assert_eq!(requests[0].origin, Some(statement.provenance.clone()));
 
     let listed = text_reply::<TextAnswer>(&fixture.invoke(&[
         "task",

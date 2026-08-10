@@ -508,6 +508,8 @@ fn add_coexistence_tasks(
                 "Fresh Claude coexistence work",
                 "--project",
                 "coexistence.rehearsal",
+                "--origin",
+                "fixture:coexistence-rehearsal",
             ],
             true,
         ))
@@ -522,6 +524,8 @@ fn add_coexistence_tasks(
                 "Fresh Codex coexistence work",
                 "--project",
                 "coexistence.rehearsal",
+                "--origin",
+                "fixture:coexistence-rehearsal",
             ],
             true,
         ))

@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 94);
+    assert_eq!(contracts().len(), 95);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 94);
+    assert_eq!(landed, 95);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
@@ -473,6 +473,36 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
         leaf.get_one::<String>("origin").map(String::as_str),
         Some("task:CLI-parent")
     );
+
+    for argv in [
+        vec![
+            "spice",
+            "task",
+            "capture",
+            "--project",
+            "task.cli",
+            "--origin",
+            "ack:1kLGp2NJ",
+        ],
+        vec![
+            "spice",
+            "task",
+            "oops",
+            "Unexpected origin loss",
+            "--origin",
+            "ack:1kLGp2NJ",
+        ],
+    ] {
+        let parsed = command()
+            .try_get_matches_from(argv)
+            .expect("creation repair origin parses");
+        assert_eq!(
+            selected_matches(&parsed)
+                .get_one::<String>("origin")
+                .map(String::as_str),
+            Some("ack:1kLGp2NJ")
+        );
+    }
 }
 
 #[test]

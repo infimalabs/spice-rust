@@ -155,10 +155,11 @@ pub(super) fn record_followups(
     snapshot: &ValidatedSnapshot,
     review: &TaskReview,
     reviewed: PendingFact,
+    origin: &wire::Origin,
     projects: &ProjectPolicy,
 ) -> Result<(), Outcome<CommandAnswer>> {
     for followup in &review.then {
-        create_followup(write, command, review, followup, reviewed, projects)?;
+        create_followup(write, command, review, followup, reviewed, origin, projects)?;
     }
     for handle in &review.followup {
         wire_followup_edge(write, snapshot, review, handle, reviewed, projects)?;
@@ -173,6 +174,7 @@ fn create_followup(
     review: &TaskReview,
     followup: &ReviewFollowup,
     reviewed: PendingFact,
+    origin: &wire::Origin,
     projects: &ProjectPolicy,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let witnessed = command
@@ -206,7 +208,7 @@ fn create_followup(
         project: project.as_str().to_owned(),
         tags: Vec::new(),
         dependencies: vec![review.task.clone()],
-        provenance: task_origin(&review.task)?,
+        provenance: origin.clone(),
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
     let workflow = WorkflowHead {

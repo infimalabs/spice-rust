@@ -98,8 +98,7 @@ pub(in crate::board_command) fn gate_findings(
             finding,
             predecessor,
         } = &plan.action
-        {
-            if let Err(outcome) = write_gate_finding_task(
+            && let Err(outcome) = write_gate_finding_task(
                 &mut write,
                 filed,
                 &project,
@@ -109,9 +108,9 @@ pub(in crate::board_command) fn gate_findings(
                 &origin,
                 until,
                 &dispatch.report,
-            ) {
-                return outcome;
-            }
+            )
+        {
+            return outcome;
         }
     }
     let text = format!(
@@ -159,19 +158,13 @@ fn gate_findings_origin(
     snapshot: &ValidatedSnapshot,
     report: &Digest,
 ) -> Result<wire::Origin, Outcome<CommandAnswer>> {
-    if let Some(entry) = snapshot.entries.iter().find(|entry| {
-        entry.claim().is_some_and(|claim| {
-            claim.actor == *actor && claim.disposition == ClaimDisposition::Active
-        })
-    }) {
-        return task_origin(&entry.statement().handle);
-    }
-    format!("gate:{report}").parse().map_err(|error| {
+    let intrinsic = format!("gate:{report}").parse().map_err(|error| {
         protocol_fault(
             "gate::origin-invalid",
             &format!("gate report digest did not form an origin: {error}"),
         )
-    })
+    })?;
+    resolve_creation_origin(None, actor, snapshot, Some(intrinsic))
 }
 
 fn plan_gate_findings(
