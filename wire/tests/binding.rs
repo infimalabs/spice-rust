@@ -50,6 +50,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         r#"{
   "finding": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "occurrence": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "recurrence": 3,
   "title": "Review one mined taste candidate",
   "description": "Finding identity: aaaa",
   "acceptance": ["operator reviews cited evidence"],

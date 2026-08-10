@@ -21,6 +21,58 @@ use crate::cli::Contract;
 mod mining;
 pub(crate) use mining::mine;
 
+/// Conservatively reject evidence that may contain credentials before it can
+/// cross the durable task boundary.
+pub(crate) fn contains_sensitive_text(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    const MARKERS: [&str; 20] = [
+        "-----begin private key-----",
+        "-----begin rsa private key-----",
+        "-----begin openssh private key-----",
+        "api_key",
+        "api key",
+        "apikey",
+        "password",
+        "passwd",
+        "secret",
+        "credential",
+        "client_secret",
+        "access_token",
+        "refresh_token",
+        "token=",
+        "token:",
+        "token ",
+        "secret=",
+        "secret:",
+        "bearer ",
+        "authorization:",
+    ];
+    if MARKERS.iter().any(|marker| lower.contains(marker))
+        || (lower.contains("-----begin ") && lower.contains(" private key-----"))
+    {
+        return true;
+    }
+    ["ghp_", "github_pat_", "xoxb-", "xoxp-", "sk-"]
+        .iter()
+        .any(|prefix| has_credential_prefix(&lower, prefix))
+        || has_credential_prefix(&lower, "akia")
+}
+
+fn has_credential_prefix(text: &str, prefix: &str) -> bool {
+    text.match_indices(prefix).any(|(offset, _)| {
+        let boundary = offset == 0
+            || !text.as_bytes()[offset - 1].is_ascii_alphanumeric()
+                && text.as_bytes()[offset - 1] != b'_';
+        boundary
+            && text[offset + prefix.len()..]
+                .bytes()
+                .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+                .take(8)
+                .count()
+                == 8
+    })
+}
+
 const PROJECT: &str = "taste.policy";
 
 /// Recent fires carried per taste.

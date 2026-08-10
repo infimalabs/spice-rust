@@ -85,6 +85,8 @@ pub struct TasteProposalAdd {
     pub finding: Digest,
     /// Identity of the exact independent-locus set this filing covers.
     pub occurrence: Digest,
+    /// Number of independent transcript loci supporting this occurrence.
+    pub recurrence: usize,
     /// One-line statement of the proposed review work.
     pub title: String,
     /// Exact cited evidence and the proposed tracked row.
