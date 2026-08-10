@@ -81,7 +81,8 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
     assert!(
         refusal
             .explanation()
-            .contains("task:<parent-inception-stamp>")
+            .contains("task:<parent-inception-stamp>"),
+        "causal guidance names durable task identity rather than a rendered handle"
     );
     assert!(
         board(bus, epoch, Actor::Operator)

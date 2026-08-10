@@ -62,6 +62,11 @@ fn schema_five_derives_one_revision_authority_from_topology_facts() {
         version_records(&journal.connection),
         (SCHEMA_VERSION, SCHEMA_VERSION)
     );
+    assert_eq!(
+        topology_task_key_column(&journal.connection),
+        "stamp",
+        "the combined schema-five crossing also contracts task identity"
+    );
     assert_eq!(residency(&journal.connection).topology_revision, 4);
     assert_eq!(
         request::<wire::intent::LaneSeat>(&journal.connection, CommandKind::LaneSeat)
@@ -200,6 +205,16 @@ fn schema_five_topology_authority(path: &Path, stored: StoredRevision) {
              PRAGMA user_version = 5;",
         )
         .expect("downgrade topology fixture to schema 5");
+}
+
+fn topology_task_key_column(connection: &Connection) -> String {
+    connection
+        .query_row(
+            "SELECT name FROM pragma_table_info('task_heads') WHERE pk = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read task head primary key after combined crossing")
 }
 
 fn insert_topology_facts(journal: &Journal) {
