@@ -304,18 +304,26 @@ fn migrate_request(row: &str, kind: &str, bytes: &[u8]) -> Result<Vec<u8>, OpenE
         .ok_or_else(|| invalid("command_receipts", row, "request.body is missing"))?;
     if kind == "task::review" {
         let body = object("command_receipts", row, body)?;
-        let then = body
-            .get_mut("then")
-            .and_then(Value::as_array_mut)
-            .ok_or_else(|| invalid("command_receipts", row, "review body.then is not an array"))?;
-        for (index, followup) in then.iter_mut().enumerate() {
-            replace_handle(
-                "command_receipts",
-                &format!("{row} then[{index}]"),
-                object("command_receipts", row, followup)?,
-                "task",
-                "task",
-            )?;
+        match body.get_mut("then") {
+            None => {}
+            Some(Value::Array(then)) => {
+                for (index, followup) in then.iter_mut().enumerate() {
+                    replace_handle(
+                        "command_receipts",
+                        &format!("{row} then[{index}]"),
+                        object("command_receipts", row, followup)?,
+                        "task",
+                        "task",
+                    )?;
+                }
+            }
+            Some(_) => {
+                return Err(invalid(
+                    "command_receipts",
+                    row,
+                    "review body.then is not an array",
+                ));
+            }
         }
     } else if kind == "task::add" {
         let body = object("command_receipts", row, body)?;

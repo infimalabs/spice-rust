@@ -163,6 +163,8 @@ pub enum Domain {
     ConfigExecutableSurface,
     /// The normalized authored prose one taste reminder was derived from.
     TasteProse,
+    /// One complete ordered active taste bag.
+    TasteBag,
 }
 
 impl Domain {
@@ -196,7 +198,8 @@ impl Domain {
             | Self::DistReleaseNotesContent
             | Self::DistReleasePackage
             | Self::DistReleasePlan
-            | Self::TasteProse => self.product_tag(),
+            | Self::TasteProse
+            | Self::TasteBag => self.product_tag(),
             Self::ProofBattery
             | Self::ProofReplayV3
             | Self::ProofReceiptV3
@@ -250,6 +253,7 @@ impl Domain {
             Self::DistReleasePackage => "spice.dist.release-package.v1",
             Self::DistReleasePlan => "spice.dist.release-plan.v1",
             Self::TasteProse => "spice.taste.prose.v1",
+            Self::TasteBag => "spice.taste.bag.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }
     }

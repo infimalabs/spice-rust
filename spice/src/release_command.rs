@@ -428,32 +428,103 @@ struct LocalPreconditions {
     release_version: ProductVersion,
 }
 
+struct ReleaseVersions {
+    requested: ProductVersion,
+    source: ProductVersion,
+    observed: ProductVersion,
+}
+
+struct ExternalRefs {
+    source_ref: Option<String>,
+    package_ref: Option<String>,
+    tag_ref: Option<String>,
+    announcement_ref: Option<String>,
+}
+
 fn resolve_external_preconditions(
     root: &Path,
     matches: &ArgMatches,
     revision_commit: &str,
 ) -> Result<ExternalPreconditions, String> {
+    let versions = release_versions(root, matches)?;
+    let action = release_action(matches)?;
+    let local = resolve_local_preconditions(
+        root,
+        &action,
+        revision_commit,
+        &versions.source,
+        &versions.requested,
+        &versions.observed,
+    )?;
+    let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
+    let external_refs = resolve_external_refs(
+        root,
+        &authority,
+        &versions.requested,
+        &local.source_commit,
+        &local.release_commit,
+    )?;
+    validate_external_refs(&external_refs, &local.release_commit)?;
+    Ok(ExternalPreconditions {
+        requested_version: versions.requested,
+        source_commit: local.source_commit,
+        release_commit: local.release_commit,
+        action,
+        repository: repository_identity(root, authority.remote())?,
+        head: local.head,
+        clean: local.clean,
+        bump_claimed: local.bump_claimed,
+        unrecorded_local_commits: 0,
+        source_version: versions.source,
+        release_version: local.release_version,
+        source_ref: external_refs.source_ref,
+        package_ref: external_refs.package_ref,
+        tag_ref: external_refs.tag_ref,
+        announcement_ref: external_refs.announcement_ref,
+    })
+}
+
+fn release_versions(root: &Path, matches: &ArgMatches) -> Result<ReleaseVersions, String> {
     let requested = matches
         .get_one::<String>("version")
         .map_or(env!("CARGO_PKG_VERSION"), String::as_str);
     let requested_version = ProductVersion::parse(requested).map_err(|error| error.to_string())?;
     let source_version =
         ProductVersion::parse(env!("CARGO_PKG_VERSION")).map_err(|error| error.to_string())?;
-    let action = release_action(matches)?;
-    let local = resolve_local_preconditions(
-        root,
-        &action,
-        revision_commit,
-        &requested_version,
-        &source_version,
-    )?;
-    let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
-    let refs = authority.refs(&requested_version);
+    let release_version_text = fs::read_to_string(root.join("dist/VERSION"))
+        .map_err(|error| format!("cannot read dist/VERSION: {error}"))?;
+    let release_version =
+        ProductVersion::parse(release_version_text.trim()).map_err(|error| error.to_string())?;
+    Ok(ReleaseVersions {
+        requested: requested_version,
+        source: source_version,
+        observed: release_version,
+    })
+}
+
+fn release_action(matches: &ArgMatches) -> Result<dist::ReleaseAction, String> {
+    Ok(
+        match matches.get_one::<String>("action").map(String::as_str) {
+            None | Some("publish") => dist::ReleaseAction::Publish,
+            Some("tag-and-announce") => dist::ReleaseAction::TagAndAnnounce,
+            Some(other) => return Err(format!("unsupported release action {other:?}")),
+        },
+    )
+}
+
+fn resolve_external_refs(
+    root: &Path,
+    authority: &dist::ReleaseAuthority,
+    requested_version: &ProductVersion,
+    source_commit: &str,
+    release_commit: &str,
+) -> Result<ExternalRefs, String> {
+    let refs = authority.refs(requested_version);
     git_required(root, &["ls-remote", "--refs", authority.remote()])?;
-    let credential_object = if commit_exists(root, &local.release_commit)? {
-        &local.release_commit
+    let credential_object = if commit_exists(root, release_commit)? {
+        release_commit
     } else {
-        &local.source_commit
+        source_commit
     };
     let rehearsal = authority
         .source_rehearsal(credential_object)
@@ -466,36 +537,19 @@ fn resolve_external_preconditions(
     git_required(root, &rehearsal_arguments)?;
     let source_ref = normalize_source_ref(
         remote_ref(root, authority.remote(), refs.source())?,
-        &local.source_commit,
-        &local.release_commit,
+        source_commit,
+        release_commit,
     );
     let package_ref = remote_ref(root, authority.remote(), refs.package())?;
     let tag_ref = normalize_converged_ref(
         remote_ref(root, authority.remote(), refs.tag())?,
-        &local.release_commit,
+        release_commit,
     );
     let announcement_ref = normalize_converged_ref(
         remote_ref(root, authority.remote(), refs.announcement())?,
-        &local.release_commit,
+        release_commit,
     );
-    validate_remote_refs(
-        &source_ref,
-        &tag_ref,
-        &announcement_ref,
-        &local.release_commit,
-    )?;
-    Ok(ExternalPreconditions {
-        requested_version,
-        source_commit: local.source_commit,
-        release_commit: local.release_commit,
-        action,
-        repository: repository_identity(root, authority.remote())?,
-        head: local.head,
-        clean: local.clean,
-        bump_claimed: local.bump_claimed,
-        unrecorded_local_commits: 0,
-        source_version,
-        release_version: local.release_version,
+    Ok(ExternalRefs {
         source_ref,
         package_ref,
         tag_ref,
@@ -503,17 +557,33 @@ fn resolve_external_preconditions(
     })
 }
 
+fn validate_external_refs(refs: &ExternalRefs, release_commit: &str) -> Result<(), String> {
+    ensure_release_ref_absent("source", &refs.source_ref, release_commit)?;
+    ensure_release_ref_absent("tag", &refs.tag_ref, release_commit)?;
+    ensure_release_ref_absent("announcement", &refs.announcement_ref, release_commit)
+}
+
+fn ensure_release_ref_absent(
+    label: &str,
+    observed: &Option<String>,
+    release_commit: &str,
+) -> Result<(), String> {
+    if let Some(object) = observed {
+        return Err(format!(
+            "the {label} ref names {object}, not {release_commit}"
+        ));
+    }
+    Ok(())
+}
+
 fn resolve_local_preconditions(
     root: &Path,
     action: &dist::ReleaseAction,
     revision_commit: &str,
-    requested_version: &ProductVersion,
     source_version: &ProductVersion,
+    requested_version: &ProductVersion,
+    observed_version: &ProductVersion,
 ) -> Result<LocalPreconditions, String> {
-    let observed_version_text = fs::read_to_string(root.join("dist/VERSION"))
-        .map_err(|error| format!("cannot read dist/VERSION: {error}"))?;
-    let observed_version =
-        ProductVersion::parse(observed_version_text.trim()).map_err(|error| error.to_string())?;
     let head = git_required(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let subject = git_required(root, &["show", "-s", "--format=%s", &head])?;
     let expected_subject = format!("release: bump to {requested_version}");
@@ -537,7 +607,7 @@ fn resolve_local_preconditions(
                 &head,
                 &source_commit,
                 &projection.commit,
-                &observed_version,
+                observed_version,
                 source_version,
                 requested_version,
                 &status,
@@ -562,7 +632,7 @@ fn resolve_local_preconditions(
                 git_required(root, &["rev-parse", "--verify", &format!("{head}^")])?;
             let projection =
                 crate::release_commit::project(root, &source_commit, requested_version)?;
-            if projection.commit != head || &observed_version != requested_version {
+            if projection.commit != head || observed_version != requested_version {
                 return Err("tag-and-announce release identity or version moved".to_owned());
             }
             Ok(LocalPreconditions {
@@ -613,36 +683,6 @@ fn exact_version_bump(status: &str) -> bool {
 fn commit_exists(root: &Path, commit: &str) -> Result<bool, String> {
     git_optional(root, &["cat-file", "-e", &format!("{commit}^{{commit}}")])
         .map(|row| row.is_some())
-}
-
-fn release_action(matches: &ArgMatches) -> Result<dist::ReleaseAction, String> {
-    match matches.get_one::<String>("action").map(String::as_str) {
-        None | Some("publish") => Ok(dist::ReleaseAction::Publish),
-        Some("tag-and-announce") => Ok(dist::ReleaseAction::TagAndAnnounce),
-        Some(other) => Err(format!("unsupported release action {other:?}")),
-    }
-}
-
-fn validate_remote_refs(
-    source: &Option<String>,
-    tag: &Option<String>,
-    announcement: &Option<String>,
-    release_commit: &str,
-) -> Result<(), String> {
-    if let Some(object) = source {
-        return Err(format!(
-            "the source ref names {object}, not {release_commit}"
-        ));
-    }
-    if let Some(object) = tag {
-        return Err(format!("the tag ref names {object}, not {release_commit}"));
-    }
-    if let Some(object) = announcement {
-        return Err(format!(
-            "the announcement ref names {object}, not {release_commit}"
-        ));
-    }
-    Ok(())
 }
 
 fn bind_external_plan(

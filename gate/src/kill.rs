@@ -63,7 +63,8 @@ mod profile;
 pub use profile::*;
 
 /// One exact rational survivor rate.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SurvivorRate {
     numerator: u64,
     denominator: u64,
@@ -333,7 +334,8 @@ pub enum OutcomeEvidence {
 }
 
 /// What unanimous retry evidence proved about one mutant.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum MutantDisposition {
     /// Every attempt killed the mutant.
     ConfirmedKilled,

@@ -303,11 +303,9 @@ fn extract(data: &Dataset, context: &CompletionContext) -> Vec<LearningCandidate
                     message.ts.as_str() >= context.claim_started_at.as_str()
                         && message.ts.as_str() <= context.done_at.as_str()
                 })
-                .map(move |message| {
-                    (
-                        compact(&message.text),
-                        turn.turn_id.as_deref().unwrap_or(""),
-                    )
+                .filter_map(move |message| {
+                    let text = message.authored.as_deref()?;
+                    Some((compact(text), turn.turn_id.as_deref().unwrap_or("")))
                 })
         })
         .filter(|(text, _)| !text.is_empty())

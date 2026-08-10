@@ -364,6 +364,22 @@ impl<'trace> BatteryCapture<'trace> {
     pub fn root(&self) -> &Path {
         self.executor.root()
     }
+
+    /// Exact changed paths observed before this selected source was captured.
+    #[must_use]
+    pub fn changes(&self) -> &[String] {
+        self.executor.changes()
+    }
+
+    /// Execute the existing canonical mutation profile over this same source.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first mutation selection, tool, inventory, baseline, or
+    /// integrity refusal. No second selected tree or mutation runner is used.
+    pub fn execute_kill(&self) -> Result<crate::KillRun, crate::KillError> {
+        self.executor.execute_kill()
+    }
 }
 
 /// Resolve the one actor a battery run is attributed to.

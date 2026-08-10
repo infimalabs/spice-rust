@@ -122,13 +122,36 @@ impl Fixture {
             self.epoch,
             bag,
             &steer::Config::default(),
+            None,
             record,
         )
         .expect("capture recognizes");
     }
 
+    fn adjudicate(
+        &self,
+        bag: &taste::Bag,
+        judge: &mut dyn Adjudicator,
+        record: &lane::capture::CaptureRecord,
+    ) {
+        super::recognize(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            bag,
+            &steer::Config::default(),
+            Some(judge),
+            record,
+        )
+        .expect("capture adjudicates");
+    }
+
     fn reminders(&self) -> Vec<wire::body::TasteReminded> {
         reminders(&self.bus.fact_snapshot().expect("snapshot reads"))
+    }
+
+    fn judgments(&self) -> Vec<wire::body::TasteJudged> {
+        judgments(&self.bus.fact_snapshot().expect("snapshot reads"))
     }
 
     fn compact(&mut self) -> Seq {
@@ -297,7 +320,189 @@ fn duplicate_hits_records_and_restart_replay_create_one_reminder_in_the_epoch() 
     fixture.recognize(&bag.clone(), &duplicate);
 
     assert_eq!(fixture.reminders().len(), 1);
+    let calls = Cell::new(0_u8);
+    let mut judge = FunctionAdjudicator(|_: &Candidate| {
+        calls.set(calls.get() + 1);
+        Ok(judgment(
+            true,
+            vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+        ))
+    });
+    fixture.adjudicate(&bag, &mut judge, &duplicate);
+    assert_eq!(
+        calls.get(),
+        0,
+        "the direct evidence suppresses later judging"
+    );
+    assert!(fixture.judgments().is_empty());
+    assert_eq!(fixture.reminders().len(), 1);
     fixture.finish();
+}
+
+#[test]
+fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_directive() {
+    let fixture = Fixture::new("judge-confirmed");
+    let bag = bag(&[("polling", &["poll*"], "Wait for the terminal event.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "Polling is not completion.");
+    let calls = Cell::new(0_u8);
+    let mut judge = FunctionAdjudicator(|candidate: &Candidate| {
+        calls.set(calls.get() + 1);
+        assert_eq!(candidate.taste, "polling");
+        assert_eq!(candidate.trigger, "poll*");
+        assert_eq!(candidate.driver, "Wait for the terminal event.");
+        assert_eq!(candidate.source, "Polling is not completion.");
+        Ok(judgment(
+            true,
+            vec![
+                attempt(2, "perhaps", wire::body::TasteJudgeReply::Ambiguous),
+                attempt(0, "YES", wire::body::TasteJudgeReply::Yes),
+            ],
+        ))
+    });
+
+    fixture.adjudicate(&bag, &mut judge, &record);
+
+    assert_eq!(calls.get(), 1);
+    assert!(fixture.reminders().is_empty(), "enabled mode uses one fact");
+    let judgments = fixture.judgments();
+    assert_eq!(judgments.len(), 1);
+    let evidence = &judgments[0];
+    assert_eq!(evidence.bag, taste::bag_identity(&bag));
+    assert_eq!(evidence.trigger, "poll*");
+    assert_eq!(evidence.driver, "Wait for the terminal event.");
+    assert_eq!(evidence.source, "Polling is not completion.");
+    assert_eq!(evidence.compaction, fixture.anchor.get());
+    assert_eq!(evidence.attempts.len(), 2);
+    let wire::body::TasteDecision::Confirmed { key, text, .. } = &evidence.decision else {
+        panic!("positive judgment was not confirmed");
+    };
+    assert_eq!(text, "[TASTE] polling: Wait for the terminal event.");
+    let snapshot = fixture.bus.fact_snapshot().expect("snapshot");
+    let ledger = steer::Ledger::from_snapshot(&snapshot).expect("judgment replays");
+    assert_eq!(ledger.pending(fixture.lane).len(), 1);
+    assert_eq!(ledger.pending(fixture.lane)[0].key().to_string(), *key);
+    assert_eq!(wire::FactKind::TasteJudged.producer(), Producer::Judge);
+
+    let fixture = fixture.restart();
+    fixture.adjudicate(&bag, &mut judge, &record);
+    fixture.recognize(&bag, &record);
+    assert_eq!(calls.get(), 1, "restart replay did not re-judge evidence");
+    assert_eq!(fixture.judgments().len(), 1);
+    assert!(
+        fixture.reminders().is_empty(),
+        "a disabled restart respects the durable judgment"
+    );
+    assert_eq!(
+        steer::Ledger::from_snapshot(&fixture.bus.fact_snapshot().expect("snapshot"))
+            .expect("restart judgment replays")
+            .pending(fixture.lane)
+            .len(),
+        1,
+    );
+    fixture.finish();
+}
+
+#[test]
+fn enabled_clearance_is_durable_evidence_and_never_opens_steering() {
+    let fixture = Fixture::new("judge-cleared");
+    let bag = bag(&[("fallbacks", &["fallback*"], "Keep one path.")]);
+    let record = prose_record(
+        fixture.lane,
+        fixture.occupant,
+        "This paragraph merely mentions fallback terminology.",
+    );
+    let calls = Cell::new(0_u8);
+    let mut judge = FunctionAdjudicator(|_: &Candidate| {
+        calls.set(calls.get() + 1);
+        Ok(judgment(
+            false,
+            vec![attempt(1, "NO", wire::body::TasteJudgeReply::No)],
+        ))
+    });
+
+    fixture.adjudicate(&bag, &mut judge, &record);
+    fixture.adjudicate(&bag, &mut judge, &record);
+
+    assert_eq!(calls.get(), 1, "durable clearance suppresses replay");
+    let judgments = fixture.judgments();
+    assert_eq!(judgments.len(), 1);
+    assert!(matches!(
+        judgments[0].decision,
+        wire::body::TasteDecision::Cleared
+    ));
+    assert!(fixture.reminders().is_empty());
+    let ledger = steer::Ledger::from_snapshot(&fixture.bus.fact_snapshot().expect("snapshot"))
+        .expect("clearance replays");
+    assert!(ledger.pending(fixture.lane).is_empty());
+    let fixture = fixture.restart();
+    fixture.recognize(&bag, &record);
+    assert!(
+        fixture.reminders().is_empty(),
+        "a disabled restart respects the durable clearance"
+    );
+    assert!(
+        steer::Ledger::from_snapshot(&fixture.bus.fact_snapshot().expect("snapshot"))
+            .expect("clearance still replays")
+            .pending(fixture.lane)
+            .is_empty()
+    );
+    fixture.finish();
+}
+
+#[test]
+fn unavailable_judge_abandons_candidate_without_fact_or_reminder() {
+    let fixture = Fixture::new("judge-unavailable");
+    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let mut judge = FunctionAdjudicator(|_: &Candidate| {
+        Err(crate::judge::failure(
+            "unavailable",
+            "fixture judge is absent",
+        ))
+    });
+
+    fixture.adjudicate(&bag, &mut judge, &record);
+
+    assert!(fixture.judgments().is_empty());
+    assert!(fixture.reminders().is_empty());
+    assert!(
+        steer::Ledger::from_snapshot(&fixture.bus.fact_snapshot().expect("snapshot"))
+            .expect("empty judgment replay")
+            .pending(fixture.lane)
+            .is_empty()
+    );
+    fixture.finish();
+}
+
+#[test]
+fn taste_framings_are_complete_and_deterministically_shuffled() {
+    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let candidate = (0..128)
+        .find_map(|index| {
+            let record = prose_record(uuid(2), uuid(3), &format!("polling candidate {index}"));
+            let candidate = candidates(&bag, &record).expect("candidate scan").remove(0);
+            let order = judge_prompts(&candidate)
+                .iter()
+                .map(crate::judge::Prompt::framing)
+                .collect::<Vec<_>>();
+            (order != [0, 1, 2]).then_some(candidate)
+        })
+        .expect("at least one digest shuffles the framing order");
+
+    let first = judge_prompts(&candidate);
+    let second = judge_prompts(&candidate);
+    assert_eq!(first, second, "same evidence has one framing order");
+    let mut identities = first
+        .iter()
+        .map(crate::judge::Prompt::framing)
+        .collect::<Vec<_>>();
+    identities.sort_unstable();
+    assert_eq!(identities, [0, 1, 2]);
+    assert!(first.iter().all(|prompt| {
+        prompt.text().contains(&candidate.source)
+            && prompt.text().contains(&candidate.trigger)
+            && prompt.text().contains(&candidate.driver)
+    }));
 }
 
 #[test]
@@ -398,6 +603,42 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
 }
 
 #[test]
+fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
+    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let lane = uuid(90);
+    let occupant = uuid(91);
+    let patch = prose_record(
+        lane,
+        occupant,
+        "*** Begin Patch\n+polling forever\n*** End Patch",
+    );
+    let mixed = prose_record(
+        lane,
+        occupant,
+        "Authored delivery.\ndiff --git a/a b/a\n@@ -1 +1 @@\n-pause\n+polling",
+    );
+    let authored = prose_record(
+        lane,
+        occupant,
+        "Polling is discussed here.\ndiff --git a/a b/a\n+polling",
+    );
+
+    assert!(candidates(&bag, &patch).expect("patch scans").is_empty());
+    assert!(
+        candidates(&bag, &mixed)
+            .expect("mixed diff scans")
+            .is_empty()
+    );
+    assert_eq!(
+        candidates(&bag, &authored)
+            .expect("authored prefix scans")
+            .len(),
+        1,
+        "only the authored prefix remains eligible"
+    );
+}
+
+#[test]
 fn transaction_guard_retries_after_both_key_and_directive_command_races() {
     let fixture = Fixture::new("guard-races");
     let bag = bag(&[("polling", &["poll*"], "Wait.")]);
@@ -410,6 +651,7 @@ fn transaction_guard_retries_after_both_key_and_directive_command_races() {
         fixture.epoch,
         &bag,
         &steer::Config::default(),
+        None,
         &record,
         |bus, openings, proposal| {
             let attempt = attempts.get();
@@ -465,6 +707,7 @@ fn transaction_guard_rebuilds_when_compaction_moves_after_recognition() {
         fixture.epoch,
         &bag,
         &steer::Config::default(),
+        None,
         &record,
         |bus, _, proposal| {
             let attempt = attempts.get();
@@ -505,6 +748,7 @@ fn transaction_guard_treats_a_concurrent_same_content_winner_as_success() {
         fixture.epoch,
         &bag,
         &steer::Config::default(),
+        None,
         &record,
         |bus, openings, proposal| {
             attempts.set(attempts.get() + 1);
@@ -534,6 +778,61 @@ fn transaction_guard_treats_a_concurrent_same_content_winner_as_success() {
 }
 
 #[test]
+fn concurrent_adjudication_replay_records_one_judgment_and_one_directive() {
+    let fixture = Fixture::new("judgment-content-guard");
+    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let judge_calls = Cell::new(0_u8);
+    let commit_attempts = Cell::new(0_u8);
+    let mut judge = FunctionAdjudicator(|_: &Candidate| {
+        judge_calls.set(judge_calls.get() + 1);
+        Ok(judgment(
+            true,
+            vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+        ))
+    });
+
+    recognize_with(
+        &fixture.bus,
+        &fixture.paths,
+        fixture.epoch,
+        &bag,
+        &steer::Config::default(),
+        Some(&mut judge),
+        &record,
+        |bus, openings, proposal| {
+            commit_attempts.set(commit_attempts.get() + 1);
+            if commit_attempts.get() == 1 {
+                append_judgment(
+                    bus,
+                    fixture.epoch,
+                    fixture.lane,
+                    fixture.occupant,
+                    fixture.anchor,
+                    &openings[0],
+                );
+            }
+            commit(bus, proposal)
+        },
+        steering::publish_inbox,
+    )
+    .expect("the concurrent judgment winner suppresses replay work");
+
+    assert_eq!(judge_calls.get(), 1);
+    assert_eq!(commit_attempts.get(), 1);
+    assert_eq!(fixture.judgments().len(), 1);
+    let snapshot = fixture.bus.fact_snapshot().expect("snapshot");
+    assert_eq!(
+        steer::Ledger::from_snapshot(&snapshot)
+            .expect("winner judgment replays")
+            .pending(fixture.lane)
+            .len(),
+        1
+    );
+    fixture.finish();
+}
+
+#[test]
 fn a_commit_failure_delivers_nothing_while_a_rendering_failure_parks_for_repair() {
     // ST-05 + ID-10 + CON-05: taste reminders use the same journal-derived
     // fold progress and restart repair authority as operator directives.
@@ -548,6 +847,7 @@ fn a_commit_failure_delivers_nothing_while_a_rendering_failure_parks_for_repair(
         fixture.epoch,
         &bag,
         &steer::Config::default(),
+        None,
         &record,
         |_, _, _| Err(store_fault("taste::forced-commit", "fixture refusal")),
         |_, _, _, _| {
@@ -566,6 +866,7 @@ fn a_commit_failure_delivers_nothing_while_a_rendering_failure_parks_for_repair(
         fixture.epoch,
         &bag,
         &steer::Config::default(),
+        None,
         &record,
     )
     .expect("rendering failure becomes durable parked progress");
@@ -845,6 +1146,33 @@ fn reminders(snapshot: &journal::FactSnapshot) -> Vec<wire::body::TasteReminded>
         .collect()
 }
 
+fn judgments(snapshot: &journal::FactSnapshot) -> Vec<wire::body::TasteJudged> {
+    snapshot
+        .facts()
+        .iter()
+        .filter_map(|envelope| envelope.fact.read())
+        .collect()
+}
+
+fn judgment(confirmed: bool, attempts: Vec<wire::body::TasteJudgeAttempt>) -> Judgment {
+    Judgment {
+        confirmed,
+        attempts,
+    }
+}
+
+fn attempt(
+    framing: u8,
+    reply: &str,
+    verdict: wire::body::TasteJudgeReply,
+) -> wire::body::TasteJudgeAttempt {
+    wire::body::TasteJudgeAttempt {
+        framing,
+        reply: reply.to_owned(),
+        verdict,
+    }
+}
+
 fn append_send(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -925,6 +1253,42 @@ fn append_reminder(
         )
         .expect("reminder fact");
     commit(bus, proposal).expect("concurrent reminder commits");
+}
+
+fn append_judgment(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    anchor: Seq,
+    opening: &Opening,
+) {
+    let mut proposal = write(Actor::Spice, epoch, Producer::Judge).expect("judgment proposal");
+    proposal
+        .fact(
+            wire::body::TasteJudged {
+                lane,
+                occupant,
+                compaction: anchor.get(),
+                taste: opening.candidate.taste.clone(),
+                content: opening.candidate.content.clone(),
+                bag: opening.candidate.bag.clone(),
+                trigger: opening.candidate.trigger.clone(),
+                driver: opening.candidate.driver.clone(),
+                source: opening.candidate.source.clone(),
+                locus: opening.candidate.locus,
+                attempts: vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+                decision: wire::body::TasteDecision::Confirmed {
+                    directive: opening.directive,
+                    key: opening.key.to_string(),
+                    text: opening.candidate.text.clone(),
+                    expires: "2030-01-01T00:00:00.000Z".parse().expect("expiry"),
+                },
+            },
+            FactCause::Existing(anchor),
+        )
+        .expect("judgment fact");
+    commit(bus, proposal).expect("concurrent judgment commits");
 }
 
 fn paths(root: &std::path::Path) -> RuntimePaths {

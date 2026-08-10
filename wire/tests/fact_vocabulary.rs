@@ -20,7 +20,7 @@
 //! expanded from it. Reading the expansion instead would read this crate's own
 //! output back to itself, which is why the parser below looks for the table and
 //! not for `pub enum FactKind` — that enum is now generated, so a parser aimed
-//! at it would find no variants and prove nothing about all 68 of them.
+//! at it would find no variants and prove nothing about all 69 of them.
 //!
 //! [`PINNED`] holds the third side, and the one neither of the others can
 //! supply. Both of those read the crate under test: the match covers its enum
@@ -102,6 +102,7 @@ const PINNED: &[(&str, &str)] = &[
     ("LaneResumed", "lane::resumed"),
     ("TasteConfirmed", "taste::confirmed"),
     ("TasteCleared", "taste::cleared"),
+    ("TasteJudged", "taste::judged"),
     ("TasteReminded", "taste::reminded"),
     ("CanaryAlarmed", "canary::alarmed"),
     ("CanaryContradicted", "canary::contradicted"),
@@ -180,7 +181,10 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::LaneHeld
         | FactKind::LaneResumed => "lane",
         FactKind::LineageConfigured | FactKind::LineageArranged => "lineage",
-        FactKind::TasteConfirmed | FactKind::TasteCleared | FactKind::TasteReminded => "taste",
+        FactKind::TasteConfirmed
+        | FactKind::TasteCleared
+        | FactKind::TasteJudged
+        | FactKind::TasteReminded => "taste",
         FactKind::CanaryAlarmed | FactKind::CanaryContradicted => "canary",
         FactKind::VendorArmed => "vendor",
         FactKind::TrustPended | FactKind::TrustGranted | FactKind::TrustRevoked => "trust",

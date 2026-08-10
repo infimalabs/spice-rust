@@ -5,10 +5,10 @@ use clap::ArgMatches;
 use wire::Refusal;
 
 use super::model::{
-    ActivityView, CommandAudit, CommandRecord, CommandView, CommitView, CompactionRecord,
-    CompactionView, Dataset, DialogueLine, MessageRecord, MessageView, PhaseExample, PhaseView,
-    PruningView, RecallWindow, Report, SliceView, SourceView, ThreadView, TimelineView,
-    TokenRecord, TokenView, TurnRecord, TurnView,
+    ActivityView, BriefingAuthorities, CommandAudit, CommandRecord, CommandView, CommitView,
+    CompactionRecord, CompactionView, Dataset, DialogueLine, MessageRecord, MessageView,
+    PhaseExample, PhaseView, PruningView, RecallWindow, Report, SliceView, SourceView, ThreadView,
+    TimelineView, TokenRecord, TokenView, TurnRecord, TurnView,
 };
 
 // Two report families are split out by `mod` rather than left inline, following
@@ -40,6 +40,18 @@ const DEFAULT_COMMITS_LIMIT: usize = 25;
 const DEFAULT_COMMANDS_LIMIT: usize = 80;
 const DEFAULT_COMMAND_TEXT: usize = 220;
 
+struct WindowPlan<'a> {
+    horizon_start: Option<&'a str>,
+    selected: Vec<&'a CompactionRecord>,
+    intervals: Vec<WindowInterval<'a>>,
+}
+
+struct WindowInterval<'a> {
+    start: Option<&'a str>,
+    end: Option<&'a str>,
+    anchors: Vec<&'a CompactionRecord>,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Filters {
     start: Option<String>,
@@ -69,6 +81,14 @@ impl Filters {
             turn_ids: values(matches, "turn-id").into_iter().collect(),
             tools: values(matches, "tool").into_iter().collect(),
         })
+    }
+
+    pub(crate) fn start_bound(&self) -> Option<&str> {
+        self.start.as_deref()
+    }
+
+    pub(crate) fn end_bound(&self) -> Option<&str> {
+        self.end.as_deref()
     }
 
     fn turn_matches(&self, turn: &TurnRecord) -> bool {
@@ -132,37 +152,26 @@ impl Filters {
     }
 }
 
+pub(crate) fn horizon_count(matches: &ArgMatches, action: &str) -> Result<usize, Refusal> {
+    if action == "sweep" {
+        number(matches, "count", DEFAULT_HORIZON_COMPACTIONS)
+    } else {
+        Ok(DEFAULT_HORIZON_COMPACTIONS)
+    }
+}
+
 pub(crate) fn recall(
     dataset: &Dataset,
     matches: &ArgMatches,
     filters: &Filters,
+    authorities: BriefingAuthorities,
 ) -> Result<Report, Refusal> {
     filters.validate_turn_ids(dataset)?;
     let max_lines = number(matches, "max-lines", DEFAULT_RECALL_MAX_LINES)?;
     let max_bytes = number(matches, "max-bytes", DEFAULT_RECALL_MAX_BYTES)?;
     let explain = flag(matches, "explain-pruning");
-    let selected_compactions = dataset
-        .compactions
-        .iter()
-        .filter(|row| filters.end.as_ref().is_none_or(|end| row.ts <= *end))
-        .rev()
-        .take(DEFAULT_HORIZON_COMPACTIONS)
-        .collect::<Vec<_>>();
-    let horizon_start = filters.start.clone().or_else(|| {
-        selected_compactions
-            .last()
-            .map(|compaction| compaction.ts.clone())
-    });
-    let mut turns = dataset
-        .turns
-        .iter()
-        .filter(|turn| filters.turn_matches(turn))
-        .filter(|turn| {
-            horizon_start
-                .as_ref()
-                .is_none_or(|start| turn_end(turn) >= *start)
-        })
-        .collect::<Vec<_>>();
+    let plan = window_plan(dataset, filters, DEFAULT_HORIZON_COMPACTIONS);
+    let mut turns = plan_turns(dataset, filters, plan.horizon_start, None);
     let before = turns.len();
     while turns.len() > 1 {
         let (lines, bytes) = estimated_budget(&turns);
@@ -174,24 +183,24 @@ pub(crate) fn recall(
     let window = recall_window(
         1,
         &turns,
-        dataset
-            .compactions
+        plan.selected
             .iter()
+            .copied()
             .filter(|row| filters.compaction_matches(row))
-            .filter(|row| horizon_start.as_ref().is_none_or(|start| row.ts >= *start))
             .collect(),
         false,
     );
     Ok(Report::Recall {
         sources: dataset.sources.clone(),
-        horizon_basis: if dataset.compactions.is_empty() {
+        horizon_basis: if plan.selected.is_empty() {
             "full-history-no-compactions"
         } else {
             "compaction-count"
         }
         .to_owned(),
         requested_compactions: DEFAULT_HORIZON_COMPACTIONS,
-        selected_compactions: selected_compactions.len(),
+        selected_compactions: plan.selected.len(),
+        authorities,
         window,
         pruning: PruningView {
             max_lines,
@@ -215,59 +224,17 @@ pub(crate) fn sweep(
     filters: &Filters,
 ) -> Result<Report, Refusal> {
     filters.validate_turn_ids(dataset)?;
-    let count = number(matches, "count", DEFAULT_HORIZON_COMPACTIONS)?;
-    let compactions = dataset
-        .compactions
-        .iter()
-        .filter(|row| filters.end.as_ref().is_none_or(|end| row.ts <= *end))
-        .collect::<Vec<_>>();
-    let selected = compactions
-        .iter()
-        .rev()
-        .take(count)
-        .copied()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>();
+    let count = horizon_count(matches, "sweep")?;
+    let plan = window_plan(dataset, filters, count);
     let mut windows = Vec::new();
-    if selected.is_empty() {
-        let turns = dataset
-            .turns
-            .iter()
-            .filter(|turn| filters.turn_matches(turn))
-            .collect::<Vec<_>>();
-        windows.push(recall_window(1, &turns, Vec::new(), false));
-    } else {
-        let horizon_start = filters.start.as_deref().unwrap_or(selected[0].ts.as_str());
-        let boundaries = selected
-            .iter()
-            .filter(|compaction| compaction.ts.as_str() > horizon_start)
-            .collect::<Vec<_>>();
-        for index in 0..=boundaries.len() {
-            let start = index
-                .checked_sub(1)
-                .and_then(|prior| boundaries.get(prior))
-                .map_or(horizon_start, |compaction| compaction.ts.as_str());
-            let end = boundaries
-                .get(index)
-                .map(|compaction| compaction.ts.as_str());
-            let turns = dataset
-                .turns
-                .iter()
-                .filter(|turn| filters.turn_matches(turn))
-                .filter(|turn| {
-                    turn.start_ts.as_str() >= start
-                        && end.is_none_or(|end| turn.start_ts.as_str() < end)
-                })
-                .collect::<Vec<_>>();
-            let anchors = selected
-                .iter()
-                .copied()
-                .filter(|compaction| compaction.ts == start)
-                .collect();
-            windows.push(recall_window(index + 1, &turns, anchors, false));
-        }
+    for (index, interval) in plan.intervals.iter().enumerate() {
+        let turns = plan_turns(dataset, filters, interval.start, interval.end);
+        windows.push(recall_window(
+            index + 1,
+            &turns,
+            interval.anchors.clone(),
+            false,
+        ));
     }
     Ok(Report::Sweep {
         sources: dataset.sources.clone(),
@@ -276,15 +243,80 @@ pub(crate) fn sweep(
     })
 }
 
+fn window_plan<'a>(dataset: &'a Dataset, filters: &'a Filters, count: usize) -> WindowPlan<'a> {
+    let mut selected = dataset
+        .compactions
+        .iter()
+        .filter(|row| filters.end.as_ref().is_none_or(|end| row.ts <= *end))
+        .collect::<Vec<_>>();
+    let first = selected.len().saturating_sub(count);
+    selected.drain(..first);
+    let horizon_start = filters
+        .start
+        .as_deref()
+        .or_else(|| selected.first().map(|compaction| compaction.ts.as_str()));
+    let mut intervals = Vec::new();
+    let boundaries = selected
+        .iter()
+        .copied()
+        .filter(|compaction| horizon_start.is_none_or(|start| compaction.ts.as_str() > start))
+        .collect::<Vec<_>>();
+    for index in 0..=boundaries.len() {
+        let start = index
+            .checked_sub(1)
+            .and_then(|prior| boundaries.get(prior))
+            .map(|compaction| compaction.ts.as_str())
+            .or(horizon_start);
+        let end = boundaries
+            .get(index)
+            .map(|compaction| compaction.ts.as_str());
+        let anchors = selected
+            .iter()
+            .copied()
+            .filter(|compaction| Some(compaction.ts.as_str()) == start)
+            .collect();
+        intervals.push(WindowInterval {
+            start,
+            end,
+            anchors,
+        });
+    }
+    WindowPlan {
+        horizon_start,
+        selected,
+        intervals,
+    }
+}
+
+fn plan_turns<'a>(
+    dataset: &'a Dataset,
+    filters: &Filters,
+    start: Option<&str>,
+    end: Option<&str>,
+) -> Vec<&'a TurnRecord> {
+    dataset
+        .turns
+        .iter()
+        .filter(|turn| filters.turn_matches(turn))
+        .filter(|turn| turn_overlaps_interval(turn, start, end))
+        .collect()
+}
+
+fn turn_overlaps_interval(turn: &TurnRecord, start: Option<&str>, end: Option<&str>) -> bool {
+    let turn_end = turn_end(turn);
+    start.is_none_or(|start| turn_end.as_str() >= start)
+        && end.is_none_or(|end| turn.start_ts.as_str() < end)
+}
+
 pub(crate) fn summary(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, Refusal> {
     let recent = number(matches, "recent", DEFAULT_SUMMARY_RECENT)?;
     let prompts = dataset
         .messages
         .iter()
-        .filter(|row| row.side == "user" && row.human)
+        .filter(|row| row.side == "user" && row.authored.is_some())
         .rev()
         .take(recent)
-        .map(message_view)
+        .map(authored_message_view)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
@@ -292,10 +324,12 @@ pub(crate) fn summary(dataset: &Dataset, matches: &ArgMatches) -> Result<Report,
     let finals = dataset
         .messages
         .iter()
-        .filter(|row| row.side == "assistant" && row.phase == "final_answer")
+        .filter(|row| {
+            row.side == "assistant" && row.phase == "final_answer" && row.authored.is_some()
+        })
         .rev()
         .take(recent)
-        .map(message_view)
+        .map(authored_message_view)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
@@ -396,7 +430,7 @@ pub(crate) fn turns(
         .turns
         .iter()
         .filter(|turn| filters.turn_matches(turn))
-        .map(|turn| turn_view(turn, full, DEFAULT_TIMELINE_TEXT))
+        .map(|turn| turn_view(turn, full, DEFAULT_TIMELINE_TEXT, false))
         .collect::<Vec<_>>();
     trim_oldest(&mut rows, limit);
     Ok(Report::Turns {
@@ -500,8 +534,9 @@ pub(crate) fn commits(dataset: &Dataset, matches: &ArgMatches) -> Result<Report,
         let user = turn
             .messages
             .iter()
-            .find(|message| message.side == "user" && message.human)
-            .map(|message| clip(&message.text, 120))
+            .find(|message| message.side == "user" && message.authored.is_some())
+            .and_then(|message| message.authored.as_deref())
+            .map(|message| clip(message, 120))
             .unwrap_or_default();
         let mut messages = turn
             .messages
@@ -516,7 +551,10 @@ pub(crate) fn commits(dataset: &Dataset, matches: &ArgMatches) -> Result<Report,
                 .filter(|message| message.side == "assistant" && message.phase != "final_answer"),
         );
         for message in messages {
-            for line in message.text.lines() {
+            let Some(authored) = message.authored.as_deref() else {
+                continue;
+            };
+            for line in authored.lines() {
                 if !commit_line(line) {
                     continue;
                 }
@@ -554,7 +592,7 @@ pub(crate) fn thread(source: SourceView, dataset: &Dataset, id: String) -> Repor
         compactions: dataset.compactions.len(),
         start: dataset.turns.first().map(|turn| turn.start_ts.clone()),
         end: dataset.turns.last().map(turn_end),
-        latest_turn: latest.map(|turn| turn_view(turn, false, DEFAULT_TIMELINE_TEXT)),
+        latest_turn: latest.map(|turn| turn_view(turn, false, DEFAULT_TIMELINE_TEXT, false)),
     };
     Report::Thread {
         source,
@@ -581,15 +619,15 @@ fn recall_window(
             .or_else(|| compactions.last().map(|row| row.ts.clone())),
         turns: turns
             .iter()
-            .map(|turn| turn_view(turn, full, DEFAULT_TIMELINE_TEXT))
+            .map(|turn| turn_view(turn, full, DEFAULT_TIMELINE_TEXT, true))
             .collect(),
         compactions: compactions.into_iter().map(compaction_view).collect(),
         latest_final: turns.iter().rev().find_map(|turn| {
             turn.messages
                 .iter()
                 .rev()
-                .find(|message| message.phase == "final_answer")
-                .map(|message| message.text.clone())
+                .find(|message| message.phase == "final_answer" && message.authored.is_some())
+                .and_then(|message| message.authored.clone())
         }),
         activity: activity(turns.to_vec()),
     }
@@ -607,17 +645,24 @@ fn activity(turns: Vec<&TurnRecord>) -> ActivityView {
 fn estimated_budget(turns: &[&TurnRecord]) -> (usize, usize) {
     let lines = turns
         .iter()
-        .map(|turn| 1 + turn.messages.len())
+        .map(|turn| {
+            1 + turn
+                .messages
+                .iter()
+                .filter(|message| message.authored.is_some())
+                .count()
+        })
         .sum::<usize>();
     let bytes = turns
         .iter()
         .flat_map(|turn| turn.messages.iter())
-        .map(|message| message.text.len())
+        .filter_map(|message| message.authored.as_ref())
+        .map(String::len)
         .sum();
     (lines, bytes)
 }
 
-fn turn_view(turn: &TurnRecord, full: bool, max_text: usize) -> TurnView {
+fn turn_view(turn: &TurnRecord, full: bool, max_text: usize, authored_only: bool) -> TurnView {
     TurnView {
         source: turn.source.clone(),
         vendor: turn.vendor,
@@ -630,16 +675,24 @@ fn turn_view(turn: &TurnRecord, full: bool, max_text: usize) -> TurnView {
         errors: turn.error_count,
         web_searches: turn.web_search_count,
         compactions: turn.compaction_count,
+        touched_paths: turn.touched_files.iter().cloned().collect(),
         dialogue: turn
             .messages
             .iter()
-            .map(|message| DialogueLine {
-                side: message.side.clone(),
-                text: if full {
-                    message.text.clone()
+            .filter_map(|message| {
+                let text = if authored_only {
+                    message.authored.as_deref()?
                 } else {
-                    clip(&message.text, max_text)
-                },
+                    &message.text
+                };
+                Some(DialogueLine {
+                    side: message.side.clone(),
+                    text: if full {
+                        text.to_owned()
+                    } else {
+                        clip(text, max_text)
+                    },
+                })
             })
             .collect(),
     }
@@ -652,11 +705,21 @@ fn message_view(row: &MessageRecord) -> MessageView {
         turn_id: row.turn_id.clone(),
         side: row.side.clone(),
         phase: row.phase.clone(),
+        shape: row.shape,
         flavor: row.primary_flavor.clone(),
         tags: row.flavor_tags.clone(),
         cues: row.matched_cues.clone(),
         text: row.text.clone(),
     }
+}
+
+fn authored_message_view(row: &MessageRecord) -> MessageView {
+    let mut view = message_view(row);
+    view.text = row
+        .authored
+        .clone()
+        .expect("authored message views are selected by authored presence");
+    view
 }
 
 fn compaction_view(row: &CompactionRecord) -> CompactionView {
@@ -694,15 +757,15 @@ fn turn_timeline_text(turn: &TurnRecord) -> String {
         .messages
         .iter()
         .rev()
-        .find(|message| message.side == "user")
-        .map(|message| message.text.as_str())
+        .find(|message| message.side == "user" && message.authored.is_some())
+        .and_then(|message| message.authored.as_deref())
         .unwrap_or("");
     let assistant = turn
         .messages
         .iter()
         .rev()
-        .find(|message| message.side == "assistant")
-        .map(|message| message.text.as_str())
+        .find(|message| message.side == "assistant" && message.authored.is_some())
+        .and_then(|message| message.authored.as_deref())
         .unwrap_or("");
     format!(
         "completed={} cmds={} patches={} errors={} user={} assistant={}",

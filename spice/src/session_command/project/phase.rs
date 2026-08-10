@@ -194,14 +194,16 @@ fn phase_example(turn: &TurnRecord, max_text: usize) -> PhaseExample {
         user: turn
             .messages
             .iter()
-            .find(|message| message.side == "user" && message.human)
-            .map(|message| clip(&message.text, max_text)),
+            .find(|message| message.side == "user" && message.authored.is_some())
+            .and_then(|message| message.authored.as_deref())
+            .map(|message| clip(message, max_text)),
         final_answer: turn
             .messages
             .iter()
             .rev()
-            .find(|message| message.phase == "final_answer")
-            .map(|message| clip(&message.text, max_text)),
+            .find(|message| message.phase == "final_answer" && message.authored.is_some())
+            .and_then(|message| message.authored.as_deref())
+            .map(|message| clip(message, max_text)),
     }
 }
 #[cfg(test)]
