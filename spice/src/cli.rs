@@ -535,6 +535,12 @@ pub fn bootstrap_doctor_selected(arguments: impl IntoIterator<Item = OsString>) 
     bootstrap_leaf_selected(arguments, &["doctor"])
 }
 
+/// Whether the raw native invocation selects the top-level Lock command.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn bootstrap_lock_selected(arguments: impl IntoIterator<Item = OsString>) -> bool {
+    bootstrap_leaf_selected(arguments, &["lock"])
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn bootstrap_leaf_selected(arguments: impl IntoIterator<Item = OsString>, leaves: &[&str]) -> bool {
     let json = format!("--{JSON}");

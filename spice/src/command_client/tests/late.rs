@@ -1,3 +1,234 @@
+/// A record outlives its publisher, and the reader refuses it unread.
+///
+/// Both halves run against one fixture and one set of published bytes, so the
+/// only thing that changes between the launch and the refusal is whether a
+/// process still holds the resident lock. The live half is what makes the
+/// refusal mean something: without it, a reader that refused everything would
+/// pass.
+///
+/// Nothing on disk distinguishes the two states. The record is byte-identical
+/// and the lock file still names the pid that wrote it, which is exactly the
+/// evidence a killed resident leaves behind — and exactly why the pid in it
+/// cannot be the check.
+#[test]
+fn canvas_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
+    let mut fixture = Fixture::new("canvas-publisher-gone");
+    let discovery = fixture.publish();
+    let mut launched = Vec::new();
+
+    let live = open_canvas_with(
+        &fixture.canvas,
+        || {},
+        |endpoint| {
+            launched.push(endpoint.to_owned());
+            Ok(())
+        },
+    );
+    assert!(
+        matches!(live, Outcome::Reply(_)),
+        "a record whose publisher is live must open: {live:?}"
+    );
+    assert_eq!(launched, [discovery.endpoint.as_str()]);
+
+    let record = fs::read(&fixture.canvas).expect("published record reads");
+    let holder = fs::read(fixture.root.join("resident")).expect("holder line reads");
+    fixture.release_publisher();
+    assert_eq!(
+        fs::read(&fixture.canvas).expect("record survives the publisher"),
+        record,
+        "releasing the lock must not be a rewrite of the record under test"
+    );
+    assert_eq!(
+        fs::read(fixture.root.join("resident")).expect("holder line survives"),
+        holder,
+        "a killed resident leaves its holder line naming a pid that is gone"
+    );
+
+    let gone = open_canvas_with(
+        &fixture.canvas,
+        || {},
+        |endpoint| {
+            launched.push(endpoint.to_owned());
+            Ok(())
+        },
+    );
+
+    let Outcome::Fault(fault) = gone else {
+        panic!("a record whose publisher is gone must fault");
+    };
+    assert_eq!(fault.reason, "canvas::publisher-gone");
+    assert_eq!(
+        launched,
+        [discovery.endpoint],
+        "the endpoint must not reach the launcher a second time"
+    );
+    assert!(!fault.detail.contains(&discovery.capability.to_string()));
+}
+
+/// A lock that cannot be probed refuses under its own name, not the record's.
+///
+/// The published record here is byte-perfect and owner-only; only the lock is
+/// unusable. Reporting that as a discovery fault would name the one file that
+/// is not at fault, and admitting it would dial an endpoint nobody has shown
+/// is served.
+#[test]
+fn canvas_refuses_a_publisher_whose_lock_cannot_be_probed() {
+    let mut fixture = Fixture::new("canvas-publisher-unknown");
+    let discovery = fixture.publish();
+    fixture.release_publisher();
+
+    let resident = fixture.root.join("resident");
+    fs::remove_file(&resident).expect("fixture lock file removes");
+    fs::create_dir(&resident).expect("fixture lock becomes unprobeable");
+
+    let mut launched = false;
+    let outcome = open_canvas_with(
+        &fixture.canvas,
+        || {},
+        |_| {
+            launched = true;
+            Ok(())
+        },
+    );
+
+    let Outcome::Fault(fault) = outcome else {
+        panic!("an unprobeable lock must fault");
+    };
+    assert_eq!(fault.reason, "canvas::publisher-unknown");
+    assert!(!launched, "an unprobeable lock must not reach the launcher");
+    assert!(!fault.detail.contains(&discovery.capability.to_string()));
+}
+
+/// Every byte the client wrote, captured underneath the server handshake.
+///
+/// The peer records at the socket rather than at the protocol so the recording
+/// survives a client that writes nothing: `tungstenite::accept` reports EOF the
+/// same way whether the request was withheld or malformed, and only the raw
+/// buffer distinguishes those.
+struct RecordingStream {
+    stream: TcpStream,
+    seen: Arc<Mutex<Vec<u8>>>,
+}
+
+impl Read for RecordingStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let read = self.stream.read(buf)?;
+        self.seen
+            .lock()
+            .expect("recorded request bytes")
+            .extend_from_slice(&buf[..read]);
+        Ok(read)
+    }
+}
+
+impl Write for RecordingStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
+
+/// A peer that answers one opening, whatever the client decides to send it.
+///
+/// It always accepts the connection and always tries the handshake, because it
+/// is the same peer in both halves of the test below. What differs is only
+/// what the client puts on the wire.
+fn answer_one_opening(
+    listener: TcpListener,
+    accepted: mpsc::Sender<()>,
+    seen: Arc<Mutex<Vec<u8>>>,
+    epoch: CanonicalUuid,
+) {
+    let (stream, _) = listener
+        .accept()
+        .expect("peer accepts the client connection");
+    stream
+        .set_read_timeout(Some(PEER_BOUND))
+        .expect("peer read timeout");
+    stream
+        .set_write_timeout(Some(PEER_BOUND))
+        .expect("peer write timeout");
+    accepted
+        .send(())
+        .expect("peer announces the accepted connection");
+    let Ok(mut socket) = tungstenite::accept(RecordingStream { stream, seen }) else {
+        return;
+    };
+    let hello = socket
+        .read()
+        .expect("peer reads the client Hello")
+        .into_data();
+    let hello: wire::Hello = wire::decode(&hello).expect("client Hello decodes");
+    socket
+        .send(Message::Binary(
+            wire::encode(&wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: Actor::Operator,
+                epoch: hello.epoch,
+            })
+            .expect("peer acceptance encodes")
+            .into(),
+        ))
+        .expect("peer sends its acceptance");
+    assert_eq!(hello.epoch, epoch);
+    // Held open until the client is done with it, so the reply cannot race a
+    // close, and released as soon as the client drops its end.
+    let _ = socket.read();
+}
+
+const PEER_BOUND: Duration = Duration::from_secs(10);
+
+/// Open one session against a live peer, losing the publisher or keeping it.
+///
+/// The publisher is released from inside `after_connect`, which is the only
+/// place the interval under test can be entered on purpose: the connection is
+/// established and not one request byte has been written. Waiting for the
+/// peer's own accept first means the connection is genuinely made — the
+/// refusal cannot be explained by a client that never got that far.
+fn open_against_peer(fixture: &mut Fixture, lose_publisher: bool) -> (ClientResult<()>, Vec<u8>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("peer binds an endpoint");
+    let discovery = canvas::Discovery {
+        endpoint: format!(
+            "http://{}",
+            listener.local_addr().expect("peer endpoint address")
+        ),
+        capability: uuid(1),
+        epoch: uuid(2),
+    };
+    discovery
+        .publish(&fixture.canvas)
+        .expect("fixture discovery publishes");
+    fixture.hold(discovery.epoch);
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (accepted, connected) = mpsc::channel();
+    let peer = std::thread::spawn({
+        let seen = Arc::clone(&seen);
+        let epoch = discovery.epoch;
+        move || answer_one_opening(listener, accepted, seen, epoch)
+    });
+
+    let read = DiscoveryRead::open(&fixture.canvas, &resident_lock_path(&fixture.canvas))
+        .expect("fixture discovery reads");
+    let outcome = open_session_with(&COMMAND_CONTRACT, read, OPENING_BOUND, || {
+        connected
+            .recv_timeout(PEER_BOUND)
+            .expect("peer accepts the connection before the publisher is decided");
+        if lose_publisher {
+            fixture.release_publisher();
+        }
+    })
+    // Dropping the session closes the client end, which is what lets the peer
+    // finish; the opening either completed or it did not.
+    .map(drop);
+    peer.join().expect("peer thread");
+    let seen = seen.lock().expect("recorded request bytes").clone();
+    (outcome, seen)
+}
+
 /// The publisher dies after the connect, and the capability is never spent.
 ///
 /// This is the interval the pre-connect check cannot cover. The record is

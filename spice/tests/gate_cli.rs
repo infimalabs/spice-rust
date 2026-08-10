@@ -199,42 +199,7 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     let terminal = scratch.path().join("terminal.bin");
     fs::write(&progress, []).expect("create deadline progress file");
     fs::write(&terminal, []).expect("create deadline terminal file");
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the process-boundary fixture must preserve the invoking test environment"
-    )]
-    let mut environment = env::vars_os().collect::<BTreeMap<_, _>>();
-    environment.insert(OsString::from(PROCESS_PATH), programs.into_os_string());
-    let capture = StreamPolicy::Capture { limit: 1024 * 1024 };
-    let spec = Spec {
-        argv: Argv::new(
-            env!("CARGO_BIN_EXE_spice"),
-            [
-                OsString::from("__gate-pre-commit-worker"),
-                progress.as_os_str().to_owned(),
-                terminal.as_os_str().to_owned(),
-            ],
-        )
-        .expect("declare hidden commit worker"),
-        cwd: repository.path().to_path_buf(),
-        environment: Environment::new(environment).expect("capture deadline environment"),
-        group: ProcessGroup::New,
-        deadlines: Deadlines::new(
-            COMMIT_WORKER_STARTUP_ALLOWANCE + COMMIT_WORKER_CONTAINMENT_RUNTIME,
-            Duration::from_millis(200),
-            Duration::from_millis(200),
-        )
-        .expect("declare scaled deadline"),
-        wait: WaitPolicy::new(
-            "commit worker process-tree fixture",
-            Cancellation::Never,
-            sill::RestartDisposition::Never,
-        )
-        .expect("declare worker wait"),
-        output: Output::new(StdinPolicy::Null, capture, capture),
-        redaction: Redaction::All,
-        grace: Duration::from_millis(200),
-    };
+    let spec = deadline_worker_spec(repository.path(), &programs, &progress, &terminal);
 
     let waited = sill::spawn(spec)
         .expect("launch hidden commit worker")
@@ -262,6 +227,48 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
         progress.contains("\"phase\":\"family\",\"family\":\"toolchain\""),
         "deadline phase evidence omitted the active toolchain family: {progress}"
     );
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the process-boundary fixture must preserve the invoking test environment"
+)]
+fn deadline_worker_spec(root: &Path, programs: &Path, progress: &Path, terminal: &Path) -> Spec {
+    let mut environment = env::vars_os().collect::<BTreeMap<_, _>>();
+    environment.insert(
+        OsString::from(PROCESS_PATH),
+        programs.as_os_str().to_owned(),
+    );
+    let capture = StreamPolicy::Capture { limit: 1024 * 1024 };
+    Spec {
+        argv: Argv::new(
+            env!("CARGO_BIN_EXE_spice"),
+            [
+                OsString::from("__gate-pre-commit-worker"),
+                progress.as_os_str().to_owned(),
+                terminal.as_os_str().to_owned(),
+            ],
+        )
+        .expect("declare hidden commit worker"),
+        cwd: root.to_path_buf(),
+        environment: Environment::new(environment).expect("capture deadline environment"),
+        group: ProcessGroup::New,
+        deadlines: Deadlines::new(
+            COMMIT_WORKER_STARTUP_ALLOWANCE + COMMIT_WORKER_CONTAINMENT_RUNTIME,
+            Duration::from_millis(200),
+            Duration::from_millis(200),
+        )
+        .expect("declare scaled deadline"),
+        wait: WaitPolicy::new(
+            "commit worker process-tree fixture",
+            Cancellation::Never,
+            sill::RestartDisposition::Never,
+        )
+        .expect("declare worker wait"),
+        output: Output::new(StdinPolicy::Null, capture, capture),
+        redaction: Redaction::All,
+        grace: Duration::from_millis(200),
+    }
 }
 
 struct Spoken {

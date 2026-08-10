@@ -26,12 +26,9 @@ const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const SELECTION_RECORD: u8 = b'S';
 const HARD_DEADLINE: Duration = Duration::from_secs(180);
-// A complete broad-source selection can legitimately spend more than 135
-// seconds in the canonical workspace coordinator on a shared machine. Keep
-// the public 180-second envelope fixed, but assign its previously unused
-// reserve to the work that produces the verdict while retaining every bounded
-// cleanup phase and five seconds of outer-envelope headroom.
-const WORK_RUNTIME: Duration = Duration::from_secs(160);
+// Stable, isolated shard output roots keep broad-source selection within this
+// work allowance while preserving fifteen seconds for bounded cleanup.
+const WORK_RUNTIME: Duration = Duration::from_secs(150);
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);

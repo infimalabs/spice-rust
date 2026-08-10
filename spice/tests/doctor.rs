@@ -723,7 +723,7 @@ fn missing_required_proof_runtime_is_an_unhealthy_row_inside_a_direct_reply() {
 }
 
 #[test]
-fn malformed_and_unknown_configuration_are_typed_refusals_from_both_exact_paths() {
+fn malformed_and_unknown_configuration_are_typed_startup_refusals() {
     for (label, tracked, local, expected) in [
         ("tracked-syntax", "[lane\n", "", "spice-rust.toml"),
         (

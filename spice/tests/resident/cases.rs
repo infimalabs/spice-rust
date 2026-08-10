@@ -818,7 +818,7 @@ fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
         let Outcome::Refusal(refusal) = outcome(&output) else {
             panic!("{linked} startup did not return a typed refusal");
         };
-        assert_eq!(refusal.reason(), "resident::configuration-refused");
+        assert_eq!(refusal.reason(), "cli::mount-registry-refused");
         assert_eq!(
             fs::read(fixture.journal()).expect("journal bytes after refusal"),
             before,

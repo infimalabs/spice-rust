@@ -8,6 +8,7 @@ use wire::ConfigSource;
 const COMPLETE: &str = r#"
 [commands]
 "report.inspect" = ["tool", "report", "inspect"]
+release = ["tool", "release"]
 
 [tasks]
 stems = ["app", "board"]
@@ -254,6 +255,21 @@ fn root_is_exactly_the_sixteen_typed_domains() {
     );
     assert_eq!(root.tasks().project_min_depth(), 2);
     assert_eq!(root.tasks().project_max_depth(), 3);
+    assert_eq!(
+        root.commands()
+            .iter()
+            .map(|(name, arguments)| {
+                (
+                    name,
+                    arguments.iter().map(String::as_str).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            ("release", vec!["tool", "release"]),
+            ("report.inspect", vec!["tool", "report", "inspect"]),
+        ]
+    );
     assert_eq!(root.judge().enabled(), Some(true));
     assert_eq!(
         root.policy().env_names(),

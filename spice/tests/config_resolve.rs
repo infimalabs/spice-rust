@@ -586,6 +586,7 @@ fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
 const TRACKED_ALL_DESCRIPTOR_DOCUMENT: &str = r#"
 [commands]
 "report.inspect" = ["tool", "report", "inspect"]
+release = ["tool", "release"]
 
 [taste.alpha]
 words = ["done"]
