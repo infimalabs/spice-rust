@@ -213,6 +213,7 @@ fn seed_free(journal: &mut Journal, fixture: &AllocationFixture) {
 }
 
 fn downgrade(connection: &Connection) {
+    drop_steering_index(connection);
     remove_fields(
         connection,
         "SELECT body FROM task_heads WHERE handle = 'JOURNAL-age1'",

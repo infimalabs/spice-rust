@@ -152,6 +152,7 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
         "/body",
         shapes[2],
     );
+    drop_steering_index(&journal.connection);
     journal
         .connection
         .execute_batch(

@@ -8,6 +8,14 @@ use serde::Serialize;
 use crate::Journal;
 use wire::body::SourceBoundary;
 
+mod steering_index;
+
+#[cfg(test)]
+pub(crate) use steering_index::{
+    SteeringReadMetrics, reset_steering_read_metrics, steering_read_metrics,
+};
+use steering_index::{canonical_identity, disposition_name};
+
 /// A fact added earlier in the same guarded transaction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PendingFact {
@@ -148,6 +156,12 @@ impl TaskHeads {
 }
 
 impl<T> JournalHead<T> {
+    /// Pair one replayed body with the fact position that established it.
+    #[must_use]
+    pub const fn new(position: wire::Seq, body: T) -> Self {
+        Self { position, body }
+    }
+
     /// Fact position stored beside this head.
     #[must_use]
     pub const fn position(&self) -> wire::Seq {
@@ -819,14 +833,18 @@ impl JournalWrite {
     where
         F: FnOnce(wire::Seq) -> wire::TaskHead + Send + 'static,
     {
-        self.heads.push(HeadUpdate::new(fact, move |seq| {
-            let head = build(seq);
-            let key = head.handle.as_str().to_owned();
-            if head.revision != seq {
-                return Err("task head revision does not name its assigned fact".to_owned());
-            }
-            HeadRow::text("task_heads", "handle", key, seq, &head)
-        }));
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| {
+                let head = build(seq);
+                let key = head.handle.as_str().to_owned();
+                if head.revision != seq {
+                    return Err("task head revision does not name its assigned fact".to_owned());
+                }
+                HeadRow::text("task_heads", "handle", key, seq, &head)
+            },
+        ));
     }
 
     /// Replace the current workflow head at the assigned fact position.
@@ -834,15 +852,19 @@ impl JournalWrite {
     where
         F: FnOnce(wire::Seq) -> wire::WorkflowHead + Send + 'static,
     {
-        self.heads.push(HeadUpdate::new(fact, move |seq| {
-            HeadRow::text(
-                "workflow_heads",
-                "handle",
-                task.as_str().to_owned(),
-                seq,
-                &build(seq),
-            )
-        }));
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| {
+                HeadRow::text(
+                    "workflow_heads",
+                    "handle",
+                    task.as_str().to_owned(),
+                    seq,
+                    &build(seq),
+                )
+            },
+        ));
     }
 
     /// Replace the current claim head at the assigned fact position.
@@ -850,19 +872,23 @@ impl JournalWrite {
     where
         F: FnOnce(wire::Seq) -> wire::ClaimHead + Send + 'static,
     {
-        self.heads.push(HeadUpdate::new(fact, move |seq| {
-            let head = build(seq);
-            if head.fact != seq {
-                return Err("claim head fact does not name its assigned fact".to_owned());
-            }
-            HeadRow::text(
-                "claim_heads",
-                "handle",
-                task.as_str().to_owned(),
-                seq,
-                &head,
-            )
-        }));
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| {
+                let head = build(seq);
+                if head.fact != seq {
+                    return Err("claim head fact does not name its assigned fact".to_owned());
+                }
+                HeadRow::text(
+                    "claim_heads",
+                    "handle",
+                    task.as_str().to_owned(),
+                    seq,
+                    &head,
+                )
+            },
+        ));
     }
 
     /// Replace the current lease head at the assigned fact position.
@@ -870,15 +896,19 @@ impl JournalWrite {
     where
         F: FnOnce(wire::Seq) -> wire::LeaseHead + Send + 'static,
     {
-        self.heads.push(HeadUpdate::new(fact, move |seq| {
-            HeadRow::text(
-                "lease_heads",
-                "handle",
-                task.as_str().to_owned(),
-                seq,
-                &build(seq),
-            )
-        }));
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| {
+                HeadRow::text(
+                    "lease_heads",
+                    "handle",
+                    task.as_str().to_owned(),
+                    seq,
+                    &build(seq),
+                )
+            },
+        ));
     }
 
     /// Replace one named witness head at the assigned fact position.
@@ -886,14 +916,18 @@ impl JournalWrite {
     where
         F: FnOnce(wire::Seq) -> wire::WitnessHead + Send + 'static,
     {
-        self.heads.push(HeadUpdate::new(fact, move |seq| {
-            let head = build(seq);
-            let key = head.name.clone();
-            if head.head != seq {
-                return Err("witness head does not name its assigned fact".to_owned());
-            }
-            HeadRow::text("witness_heads", "name", key, seq, &head)
-        }));
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| {
+                let head = build(seq);
+                let key = head.name.clone();
+                if head.head != seq {
+                    return Err("witness head does not name its assigned fact".to_owned());
+                }
+                HeadRow::text("witness_heads", "name", key, seq, &head)
+            },
+        ));
     }
 
     /// Replace one executable trust head at the assigned fact position.
@@ -901,16 +935,20 @@ impl JournalWrite {
     where
         F: FnOnce(wire::Seq) -> wire::TrustHead + Send + 'static,
     {
-        self.heads.push(HeadUpdate::new(fact, move |seq| {
-            let head = build(seq);
-            HeadRow::text(
-                "trust_heads",
-                "digest",
-                head.digest.as_str().to_owned(),
-                seq,
-                &head,
-            )
-        }));
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| {
+                let head = build(seq);
+                HeadRow::text(
+                    "trust_heads",
+                    "digest",
+                    head.digest.as_str().to_owned(),
+                    seq,
+                    &head,
+                )
+            },
+        ));
     }
 
     /// Replace one gate finding head at the assigned fact position.
@@ -918,11 +956,39 @@ impl JournalWrite {
     where
         F: FnOnce(wire::Seq) -> wire::FindingHead + Send + 'static,
     {
-        self.heads.push(HeadUpdate::new(fact, move |seq| {
-            let head = build(seq);
-            let key = head.identity.clone();
-            HeadRow::text("finding_heads", "identity", key, seq, &head)
-        }));
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| {
+                let head = build(seq);
+                let key = head.identity.clone();
+                HeadRow::text("finding_heads", "identity", key, seq, &head)
+            },
+        ));
+    }
+
+    /// Replace one directive's current steering head at the assigned fact.
+    pub fn steering_head<F>(&mut self, fact: PendingFact, build: F)
+    where
+        F: FnOnce(wire::Seq) -> wire::SteeringHead + Send + 'static,
+    {
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Steering,
+            move |seq| HeadRow::steering(seq, &build(seq)),
+        ));
+    }
+
+    /// Index one exact missed-recognition body at its evidence fact.
+    pub fn steering_miss(&mut self, fact: PendingFact, miss: wire::body::SteerMissed) {
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::SteeringMiss,
+            move |seq| {
+                let identity = canonical_identity(&miss).map_err(|error| error.to_string())?;
+                HeadRow::text("steering_misses", "identity", identity, seq, &miss)
+            },
+        ));
     }
 
     /// Replace one transcript source head at the assigned fact position.
@@ -930,11 +996,15 @@ impl JournalWrite {
     where
         F: FnOnce(wire::Seq) -> wire::TranscriptSourceHead + Send + 'static,
     {
-        self.heads.push(HeadUpdate::new(fact, move |seq| {
-            let head = build(seq);
-            let key = head.key().into_string();
-            HeadRow::text("transcript_source_heads", "stream", key, seq, &head)
-        }));
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| {
+                let head = build(seq);
+                let key = head.key().into_string();
+                HeadRow::text("transcript_source_heads", "stream", key, seq, &head)
+            },
+        ));
     }
 
     /// Replace the singleton resident head at the assigned fact position.
@@ -942,9 +1012,11 @@ impl JournalWrite {
     where
         F: FnOnce(wire::Seq) -> wire::ResidencyHead + Send + 'static,
     {
-        self.heads.push(HeadUpdate::new(fact, move |seq| {
-            HeadRow::singleton("residency_head", seq, &build(seq))
-        }));
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| HeadRow::singleton("residency_head", seq, &build(seq)),
+        ));
     }
 
     /// Store one successful command result with exactly the witnesses the
@@ -1002,19 +1074,28 @@ type HeadBuilder = dyn FnOnce(wire::Seq) -> Result<HeadRow, String> + Send + 'st
 
 struct HeadUpdate {
     fact: PendingFact,
+    kind: HeadUpdateKind,
     build: Box<HeadBuilder>,
 }
 
 impl HeadUpdate {
-    fn new<F>(fact: PendingFact, build: F) -> Self
+    fn new<F>(fact: PendingFact, kind: HeadUpdateKind, build: F) -> Self
     where
         F: FnOnce(wire::Seq) -> Result<HeadRow, String> + Send + 'static,
     {
         Self {
             fact,
+            kind,
             build: Box::new(build),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HeadUpdateKind {
+    Ordinary,
+    Steering,
+    SteeringMiss,
 }
 
 impl fmt::Debug for HeadUpdate {
@@ -1037,6 +1118,15 @@ struct HeadRow {
     key: HeadKey,
     seq: wire::Seq,
     body: Vec<u8>,
+    steering: Option<SteeringHeadColumns>,
+}
+
+struct SteeringHeadColumns {
+    key: String,
+    lane: String,
+    disposition: &'static str,
+    created: wire::Seq,
+    minted_millis: Option<i64>,
 }
 
 impl HeadRow {
@@ -1056,6 +1146,7 @@ impl HeadRow {
             key: HeadKey::Text(key),
             seq,
             body: wire::encode(body).map_err(|error| error.to_string())?,
+            steering: None,
         })
     }
 
@@ -1070,6 +1161,30 @@ impl HeadRow {
             key: HeadKey::Singleton,
             seq,
             body: wire::encode(body).map_err(|error| error.to_string())?,
+            steering: None,
+        })
+    }
+
+    fn steering(seq: wire::Seq, head: &wire::SteeringHead) -> Result<Self, String> {
+        if head.key.is_empty() {
+            return Err("steering head key must not be empty".to_owned());
+        }
+        if head.created > seq {
+            return Err("steering head cannot predate its creating fact".to_owned());
+        }
+        Ok(Self {
+            table: "steering_heads",
+            key_column: "directive",
+            key: HeadKey::Text(head.directive.to_string()),
+            seq,
+            body: wire::encode(head).map_err(|error| error.to_string())?,
+            steering: Some(SteeringHeadColumns {
+                key: head.key.clone(),
+                lane: head.lane.to_string(),
+                disposition: disposition_name(head.disposition),
+                created: head.created,
+                minted_millis: head.minted_millis,
+            }),
         })
     }
 }

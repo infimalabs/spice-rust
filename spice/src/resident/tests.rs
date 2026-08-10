@@ -808,21 +808,26 @@ fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
     commit(&bus, ending).expect("vacancy commits");
     let residency = current_residency(&bus, epoch).expect("vacant residency reads");
     let expires: wire::Instant = "2026-08-10T07:07:19.000Z".parse().expect("fixture expiry");
-    let mut sent =
-        write(Actor::Operator, epoch, Producer::CommandDoor).expect("steering write starts");
-    sent.fact(
-        wire::body::SteerSent {
-            directive,
-            key: "1kJK6N3R".to_owned(),
-            lane,
-            text: "do not lose me".to_owned(),
-            control: None,
-            attachments: Vec::new(),
-            expires,
-        },
-        FactCause::Existing(residency.position()),
-    )
-    .expect("steering fact is valid");
+    let at = wire::Instant::new(jiff::Timestamp::now()).expect("steering instant");
+    let origin: wire::Origin = format!("resident:{epoch}")
+        .parse()
+        .expect("steering origin");
+    let mut sent = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let body = wire::body::SteerSent {
+        directive,
+        key: "1kJK6N3R".to_owned(),
+        lane,
+        text: "do not lose me".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires,
+    };
+    let pending = sent
+        .fact(body.clone(), FactCause::Existing(residency.position()))
+        .expect("steering fact is valid");
+    sent.steering_head(pending, move |seq| {
+        steer::Ledger::sent_head(&body, origin, at, seq).expect("steering head is valid")
+    });
     commit(&bus, sent).expect("pending steering commits");
     let cursor = bus
         .task_snapshot()

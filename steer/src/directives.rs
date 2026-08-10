@@ -111,6 +111,44 @@ impl Directive {
     pub const fn disposition(&self) -> Disposition {
         self.disposition
     }
+
+    fn from_head(head: &wire::SteeringHead) -> Result<Self, Refusal> {
+        let key = read("key", &head.key)?;
+        Ok(Self {
+            directive: head.directive,
+            key,
+            lane: head.lane,
+            text: head.text.clone(),
+            control: head.control.clone(),
+            attachments: head.attachments.clone(),
+            expires: head.expires,
+            published: Some(head.published),
+            stage: head.stage,
+            escalations: head.escalations.clone(),
+            disposition: head.disposition,
+        })
+    }
+
+    fn to_head(&self, origin: wire::Origin, created: wire::Seq) -> wire::SteeringHead {
+        wire::SteeringHead {
+            directive: self.directive,
+            key: self.key.to_string(),
+            lane: self.lane,
+            text: self.text.clone(),
+            control: self.control.clone(),
+            attachments: self.attachments.clone(),
+            published: self
+                .published
+                .expect("an authoritative directive has a publication instant"),
+            expires: self.expires,
+            stage: self.stage,
+            escalations: self.escalations.clone(),
+            disposition: self.disposition,
+            origin,
+            created,
+            minted_millis: self.key.minted_millis(),
+        }
+    }
 }
 
 /// One steering fact, as the reducer reads it.
@@ -331,11 +369,63 @@ pub struct Ledger {
     directives: BTreeMap<Key, Directive>,
 }
 
+/// One canonical replay projected into the bounded journal steering index.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct AuthorityIndex {
+    heads: Vec<journal::JournalHead<wire::SteeringHead>>,
+    misses: Vec<journal::JournalHead<SteerMissed>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AuthorityIndex {
+    /// Current directive heads in immutable publication order.
+    #[must_use]
+    pub fn heads(&self) -> &[journal::JournalHead<wire::SteeringHead>] {
+        &self.heads
+    }
+
+    /// Canonical missed-recognition evidence indexed during replay.
+    #[must_use]
+    pub fn misses(&self) -> &[journal::JournalHead<SteerMissed>] {
+        &self.misses
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct AuthorityPosition {
+    origin: wire::Origin,
+    created: wire::Seq,
+    head: wire::Seq,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type AuthorityReplay = (
+    Ledger,
+    BTreeMap<CanonicalUuid, AuthorityPosition>,
+    Vec<journal::JournalHead<SteerMissed>>,
+);
+
 impl Ledger {
     /// An empty ledger, before any fact.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Materialize a bounded ledger from authoritative current heads.
+    ///
+    /// Callers normally pass one directive or one lane's live set. This keeps
+    /// existing pure rendering and recognition logic while ensuring retired
+    /// history outside the requested keyspace is never loaded.
+    pub fn from_authority_heads<'a>(
+        heads: impl IntoIterator<Item = &'a wire::SteeringHead>,
+    ) -> Result<Self, Refusal> {
+        let mut ledger = Self::new();
+        for head in heads {
+            ledger.open(Directive::from_head(head)?)?;
+        }
+        Ok(ledger)
     }
 
     /// Rebuild standing from one canonical journal snapshot.
@@ -347,41 +437,79 @@ impl Ledger {
     /// bodies its registered DTO already accepted.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, ReplayError> {
+        replay(snapshot).map(|(ledger, _, _)| ledger)
+    }
+
+    /// Rebuild the singular bounded steering authority from immutable facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same exact contradictory fact refusal as [`Self::from_snapshot`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn authority_index(
+        snapshot: &journal::FactSnapshot,
+    ) -> Result<AuthorityIndex, ReplayError> {
+        let (ledger, positions, misses) = replay(snapshot)?;
+        let heads = ledger
+            .order
+            .iter()
+            .filter_map(|key| ledger.directives.get(key))
+            .map(|directive| {
+                let position = positions
+                    .get(&directive.directive)
+                    .expect("every replayed directive has authority positions");
+                journal::JournalHead::new(
+                    position.head,
+                    directive.to_head(position.origin.clone(), position.created),
+                )
+            })
+            .collect();
+        Ok(AuthorityIndex { heads, misses })
+    }
+
+    /// Build one new operator directive head without consulting other history.
+    pub fn sent_head(
+        body: &SteerSent,
+        origin: wire::Origin,
+        published: Instant,
+        created: wire::Seq,
+    ) -> Result<wire::SteeringHead, Refusal> {
         let mut ledger = Self::new();
-        for envelope in snapshot.facts() {
-            // Each read is the kind test and the decode at once, so a kind is
-            // named here exactly once, by the body type registered against it.
-            let fact = &envelope.fact;
-            let result = if let Some(body) = fact.read::<SteerSent>() {
-                ledger.absorb_recorded(Steering::Sent(&body), Some(envelope.at))
-            } else if let Some(body) = fact.read::<TasteReminded>() {
-                ledger.absorb_recorded(Steering::Reminded(&body), Some(envelope.at))
-            } else if let Some(body) = fact.read::<SteerEscalated>() {
-                ledger.absorb_recorded(Steering::Escalated(&body), Some(envelope.at))
-            } else if let Some(body) = fact.read::<SteerRecovered>() {
-                ledger.absorb_recorded(Steering::Recovered(&body), Some(envelope.at))
-            } else if let Some(body) = fact.read::<SteerAcked>() {
-                ledger.absorb_recorded(Steering::Acked(&body), Some(envelope.at))
-            } else if let Some(body) = fact.read::<SteerDeclined>() {
-                ledger.absorb_recorded(Steering::Declined(&body), Some(envelope.at))
-            } else if let Some(body) = fact.read::<SteerMissed>() {
-                ledger.absorb_recorded(Steering::Missed(&body), Some(envelope.at))
-            } else if let Some(body) = fact.read::<SteerLapsed>() {
-                ledger.absorb_recorded(Steering::Lapsed(&body), Some(envelope.at))
-            } else if let Some(body) = fact.read::<SteerDeadLettered>() {
-                ledger.absorb_recorded(Steering::DeadLettered(&body), Some(envelope.at))
-            } else if let Some(body) = fact.read::<SteerCanceled>() {
-                ledger.absorb_recorded(Steering::Canceled(&body), Some(envelope.at))
-            } else {
-                continue;
-            };
-            result.map_err(|error| ReplayError {
-                seq: envelope.seq,
-                kind: fact.kind(),
-                detail: error.to_string(),
-            })?;
-        }
-        Ok(ledger)
+        ledger.absorb_recorded(Steering::Sent(body), Some(published))?;
+        Ok(ledger
+            .directive(body.directive)
+            .expect("sent fact created its directive")
+            .to_head(origin, created))
+    }
+
+    /// Build one new taste-reminder directive head without unrelated history.
+    pub fn reminded_head(
+        body: &TasteReminded,
+        origin: wire::Origin,
+        published: Instant,
+        created: wire::Seq,
+    ) -> Result<wire::SteeringHead, Refusal> {
+        let mut ledger = Self::new();
+        ledger.absorb_recorded(Steering::Reminded(body), Some(published))?;
+        Ok(ledger
+            .directive(body.directive)
+            .expect("reminder fact created its directive")
+            .to_head(origin, created))
+    }
+
+    /// Apply one transition to one indexed head without replaying other facts.
+    pub fn transition_head(
+        current: &wire::SteeringHead,
+        transition: Steering<'_>,
+        at: Instant,
+    ) -> Result<wire::SteeringHead, Refusal> {
+        let mut ledger = Self::new();
+        ledger.place(Directive::from_head(current)?);
+        ledger.absorb_recorded(transition, Some(at))?;
+        Ok(ledger
+            .directive(current.directive)
+            .expect("transition retains the stable directive")
+            .to_head(current.origin.clone(), current.created))
     }
 
     /// Folds one steering fact into standing.
@@ -706,6 +834,115 @@ impl Ledger {
         self.order.push(directive.key.clone());
         self.directives.insert(directive.key.clone(), directive);
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn replay(snapshot: &journal::FactSnapshot) -> Result<AuthorityReplay, ReplayError> {
+    let mut ledger = Ledger::new();
+    let mut positions = BTreeMap::new();
+    let mut misses = Vec::new();
+    for envelope in snapshot.facts() {
+        let fact = &envelope.fact;
+        let (result, affected, created) = if let Some(body) = fact.read::<SteerSent>() {
+            (
+                ledger.absorb_recorded(Steering::Sent(&body), Some(envelope.at)),
+                Some(body.directive),
+                true,
+            )
+        } else if let Some(body) = fact.read::<TasteReminded>() {
+            (
+                ledger.absorb_recorded(Steering::Reminded(&body), Some(envelope.at)),
+                Some(body.directive),
+                true,
+            )
+        } else if let Some(body) = fact.read::<SteerEscalated>() {
+            (
+                ledger.absorb_recorded(Steering::Escalated(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+            )
+        } else if let Some(body) = fact.read::<SteerRecovered>() {
+            (
+                ledger.absorb_recorded(Steering::Recovered(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+            )
+        } else if let Some(body) = fact.read::<SteerAcked>() {
+            (
+                ledger.absorb_recorded(Steering::Acked(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+            )
+        } else if let Some(body) = fact.read::<SteerDeclined>() {
+            (
+                ledger.absorb_recorded(Steering::Declined(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+            )
+        } else if let Some(body) = fact.read::<SteerMissed>() {
+            misses.push(journal::JournalHead::new(envelope.seq, body.clone()));
+            (
+                ledger.absorb_recorded(Steering::Missed(&body), Some(envelope.at)),
+                None,
+                false,
+            )
+        } else if let Some(body) = fact.read::<SteerLapsed>() {
+            let affected = body
+                .key
+                .parse::<Key>()
+                .ok()
+                .and_then(|key| ledger.directives.get(&key))
+                .map(|directive| directive.directive);
+            (
+                ledger.absorb_recorded(Steering::Lapsed(&body), Some(envelope.at)),
+                affected,
+                false,
+            )
+        } else if let Some(body) = fact.read::<SteerDeadLettered>() {
+            (
+                ledger.absorb_recorded(Steering::DeadLettered(&body), Some(envelope.at)),
+                Some(body.directive),
+                false,
+            )
+        } else if let Some(body) = fact.read::<SteerCanceled>() {
+            let affected = body
+                .key
+                .parse::<Key>()
+                .ok()
+                .and_then(|key| ledger.directives.get(&key))
+                .map(|directive| directive.directive);
+            (
+                ledger.absorb_recorded(Steering::Canceled(&body), Some(envelope.at)),
+                affected,
+                false,
+            )
+        } else {
+            continue;
+        };
+        result.map_err(|error| ReplayError {
+            seq: envelope.seq,
+            kind: fact.kind(),
+            detail: error.to_string(),
+        })?;
+        if let Some(directive) = affected {
+            if created {
+                positions.insert(
+                    directive,
+                    AuthorityPosition {
+                        origin: envelope.origin.clone(),
+                        created: envelope.seq,
+                        head: envelope.seq,
+                    },
+                );
+            } else {
+                positions
+                    .get_mut(&directive)
+                    .expect("a transition follows one creating fact")
+                    .head = envelope.seq;
+            }
+        }
+    }
+    Ok((ledger, positions, misses))
 }
 
 /// A durable steering stream that cannot be reduced consistently.

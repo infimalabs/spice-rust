@@ -75,9 +75,9 @@ pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVe
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency,
-    LaneSession, LeaseHead, LineageSubscription, ResidencyHead, ResidentState, TapeLocus, TaskHead,
-    TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
-    WorkflowHead,
+    LaneSession, LeaseHead, LineageSubscription, ResidencyHead, ResidentState, SteeringHead,
+    TapeLocus, TaskHead, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
+    WitnessClass, WitnessHead, WorkflowHead,
 };
 pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected, SpeechPlayback, SpeechRequest};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};

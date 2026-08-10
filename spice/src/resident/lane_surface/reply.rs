@@ -114,14 +114,17 @@ pub(super) fn next_topology_revision(
     observed: u64,
 ) -> Result<u64, Outcome<CommandAnswer>> {
     if observed != head.topology_revision {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lane::topology-moved".to_owned(),
-            witness: Some("topology_revision".to_owned()),
-            expected: Some(observed.to_string()),
-            observed: Some(head.topology_revision.to_string()),
-            remedy: "read the authoritative lane table and retry against its topology revision"
-                .to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::topology-moved".to_owned(),
+                Some("topology_revision".to_owned()),
+                Some(observed.to_string()),
+                Some(head.topology_revision.to_string()),
+            )
+            .with_detail(
+                "read the authoritative lane table and retry against its topology revision",
+            ),
+        )));
     }
     head.topology_revision.checked_add(1).ok_or_else(|| {
         typed_store_fault(

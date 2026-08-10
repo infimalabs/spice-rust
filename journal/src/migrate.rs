@@ -459,7 +459,44 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (3, MigrationStep::Rust(migrate_schema_3)),
     (4, MigrationStep::Rust(release_notes::migrate)),
     (5, MigrationStep::Rust(topology_revision::migrate)),
+    (6, MigrationStep::Sql(MIGRATE_6_TO_7_SQL)),
 ];
+
+/// Schema 6 to 7: bounded current steering authority and missed-evidence index.
+///
+/// Existing facts are deliberately not interpreted in this storage-only step.
+/// The resident's one canonical steering reducer rebuilds these empty tables
+/// once after open, validates the complete immutable stream, and advances the
+/// nullable index cursor atomically. A current schema with a lagging cursor is
+/// refused by every indexed steering read and write until that rebuild lands.
+const MIGRATE_6_TO_7_SQL: &str = r#"
+CREATE TABLE steering_heads (
+    directive TEXT PRIMARY KEY,
+    steer_key TEXT NOT NULL UNIQUE,
+    lane TEXT NOT NULL,
+    disposition TEXT NOT NULL,
+    created_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    minted_millis INTEGER,
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
+CREATE INDEX steering_heads_lane_disposition_created
+    ON steering_heads(lane, disposition, created_seq);
+CREATE INDEX steering_heads_disposition_created
+    ON steering_heads(disposition, created_seq);
+CREATE INDEX steering_heads_minted_millis
+    ON steering_heads(minted_millis) WHERE minted_millis IS NOT NULL;
+CREATE TABLE steering_misses (
+    identity TEXT PRIMARY KEY,
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
+CREATE TABLE steering_index (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    indexed_seq INTEGER REFERENCES fact_envelopes(seq)
+) STRICT;
+INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
+"#;
 
 /// Schema 1 to 2: the table transcript accounting reads its heads from.
 ///
@@ -574,6 +611,31 @@ CREATE TABLE transcript_source_heads (
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
+CREATE TABLE steering_heads (
+    directive TEXT PRIMARY KEY,
+    steer_key TEXT NOT NULL UNIQUE,
+    lane TEXT NOT NULL,
+    disposition TEXT NOT NULL,
+    created_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    minted_millis INTEGER,
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
+CREATE INDEX steering_heads_lane_disposition_created
+    ON steering_heads(lane, disposition, created_seq);
+CREATE INDEX steering_heads_disposition_created
+    ON steering_heads(disposition, created_seq);
+CREATE INDEX steering_heads_minted_millis
+    ON steering_heads(minted_millis) WHERE minted_millis IS NOT NULL;
+CREATE TABLE steering_misses (
+    identity TEXT PRIMARY KEY,
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
+CREATE TABLE steering_index (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    indexed_seq INTEGER REFERENCES fact_envelopes(seq)
+) STRICT;
 CREATE TABLE residency_head (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -594,7 +656,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 6, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 7, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
-PRAGMA user_version = 6;
+INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
+PRAGMA user_version = 7;
 "#;

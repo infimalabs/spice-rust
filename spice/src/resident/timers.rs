@@ -147,10 +147,16 @@ impl Runtime {
     /// Make process-local waits exactly match current lapse-capable claim heads.
     pub(super) fn synchronize(&mut self, bus: &Bus) -> CommandResult<()> {
         let snapshot = bus
-            .task_snapshot()
+            .read(|read| {
+                Ok((
+                    read.task_heads()?,
+                    read.residency_head()?,
+                    read.pending_steering(None)?,
+                ))
+            })
             .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))?;
-        let desired = desired_claims(&snapshot)?;
-        let desired_directives = desired_directives(snapshot.facts(), &self.steering)?;
+        let desired = desired_claims(&snapshot.0, snapshot.1.as_ref())?;
+        let desired_directives = desired_directives(&snapshot.2, &self.steering)?;
         let stale = self
             .claims
             .iter()
@@ -352,16 +358,17 @@ impl Drop for Runtime {
 }
 
 fn desired_claims(
-    snapshot: &bus::TaskSnapshot,
+    tasks: &[journal::TaskHeads],
+    residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
 ) -> CommandResult<BTreeMap<TaskHandle, ClaimAuthority>> {
-    let Some(residency) = snapshot.residency() else {
+    let Some(residency) = residency else {
         return Ok(BTreeMap::new());
     };
     if residency.body().state != ResidentState::Seated {
         return Ok(BTreeMap::new());
     }
     let mut desired = BTreeMap::new();
-    for heads in snapshot.tasks() {
+    for heads in tasks {
         let Some(claim) = heads.claim().map(journal::JournalHead::body) else {
             continue;
         };
@@ -420,28 +427,15 @@ fn desired_claims(
 }
 
 fn desired_directives(
-    snapshot: &journal::FactSnapshot,
+    heads: &[journal::JournalHead<wire::SteeringHead>],
     config: &steer::Config,
 ) -> CommandResult<BTreeMap<CanonicalUuid, DirectiveAuthority>> {
-    let ledger = steer::Ledger::from_snapshot(snapshot)
-        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
     let horizons = config.stage_horizons();
     let mut desired = BTreeMap::new();
-    for directive in ledger
-        .directives()
-        .into_iter()
-        .filter(|directive| directive.disposition() == wire::Disposition::Live)
-    {
-        let published = directive.published().ok_or_else(|| {
-            store_fault(
-                "steer::publication-missing",
-                &format!(
-                    "directive {} replayed without an original publication instant",
-                    directive.directive()
-                ),
-            )
-        })?;
-        let next = directive.stage().next();
+    for directive in heads {
+        let directive = directive.body();
+        let published = directive.published;
+        let next = directive.stage.next();
         let stage_deadline = next
             .map(|stage| {
                 let index = match stage {
@@ -456,24 +450,28 @@ fn desired_directives(
             })
             .transpose()?;
         let (deadline, transition) = match (next, stage_deadline) {
-            (Some(to), Some(deadline)) if deadline < directive.expires() => (
+            (Some(to), Some(deadline)) if deadline < directive.expires => (
                 deadline,
                 steering::DeadlineTransition::Escalate {
-                    from: directive.stage(),
+                    from: directive.stage,
                     to,
                 },
             ),
-            _ => (directive.expires(), steering::DeadlineTransition::Lapse),
+            _ => (directive.expires, steering::DeadlineTransition::Lapse),
         };
+        let key = directive
+            .key
+            .parse::<steer::Key>()
+            .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
         desired.insert(
-            directive.directive(),
+            directive.directive,
             DirectiveAuthority {
                 deadline,
                 body: steering::SteeringDeadline {
-                    directive: directive.directive(),
-                    key: directive.key().clone(),
-                    lane: directive.lane(),
-                    expires: directive.expires(),
+                    directive: directive.directive,
+                    key,
+                    lane: directive.lane,
+                    expires: directive.expires,
                     transition,
                 },
             },
@@ -675,6 +673,10 @@ mod tests {
             .expect("past reminder horizon fires");
 
         let at = Instant::new(jiff::Timestamp::now()).expect("fixture clock");
+        let current = bus
+            .read(move |read| read.steering_head(directive))
+            .expect("indexed directive reads")
+            .expect("indexed directive exists");
         let mut retirement = JournalWrite::new(
             Actor::Lane(lane_uuid()),
             format!("resident:{}", epoch_uuid())
@@ -683,25 +685,27 @@ mod tests {
             at,
             Producer::AckScanner,
         );
-        retirement
-            .fact(
-                body::SteerAcked {
-                    directive,
-                    key: key.to_string(),
-                    lane: lane_uuid(),
-                    epoch: epoch_uuid(),
-                    locus: body::TranscriptLocus {
-                        member: 1,
-                        offset: 2,
-                        length: 3,
-                        event: 0,
-                        line: 1,
-                        column: 1,
-                    },
-                },
-                FactCause::Root,
-            )
+        let body = body::SteerAcked {
+            directive,
+            key: key.to_string(),
+            lane: lane_uuid(),
+            epoch: epoch_uuid(),
+            locus: body::TranscriptLocus {
+                member: 1,
+                offset: 2,
+                length: 3,
+                event: 0,
+                line: 1,
+                column: 1,
+            },
+        };
+        let pending = retirement
+            .fact(body.clone(), FactCause::Root)
             .expect("retirement fact builds");
+        let next =
+            steer::Ledger::transition_head(current.body(), steer::Steering::Acked(&body), at)
+                .expect("retirement head builds");
+        retirement.steering_head(pending, move |_| next);
         assert!(matches!(
             bus.commit(retirement).expect("retirement submits"),
             bus::CommitOutcome::Committed(_)
@@ -789,28 +793,30 @@ mod tests {
         let expires = shifted(now, 3600);
         let directive = uuid(80);
         let key: steer::Key = "1kJK6N3R".parse().expect("fixture key");
+        let origin: wire::Origin = format!("resident:{}", epoch_uuid())
+            .parse()
+            .expect("fixture origin");
         let mut write = JournalWrite::new(
             Actor::Operator,
-            format!("resident:{}", epoch_uuid())
-                .parse()
-                .expect("fixture origin"),
+            origin.clone(),
             published,
             Producer::CommandDoor,
         );
-        write
-            .fact(
-                body::SteerSent {
-                    directive,
-                    key: key.to_string(),
-                    lane: lane_uuid(),
-                    text: "hold the stable line".to_owned(),
-                    control: None,
-                    attachments: Vec::new(),
-                    expires,
-                },
-                FactCause::Root,
-            )
+        let body = body::SteerSent {
+            directive,
+            key: key.to_string(),
+            lane: lane_uuid(),
+            text: "hold the stable line".to_owned(),
+            control: None,
+            attachments: Vec::new(),
+            expires,
+        };
+        let pending = write
+            .fact(body.clone(), FactCause::Root)
             .expect("steering publication builds");
+        write.steering_head(pending, move |seq| {
+            steer::Ledger::sent_head(&body, origin, published, seq).expect("steering head builds")
+        });
         let mut journal = Journal::in_memory().expect("fixture journal opens");
         journal.apply(write).expect("steering publication seeds");
         (

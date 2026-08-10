@@ -298,6 +298,7 @@ fn reindex_inner() -> Result<(ReplyPosition, JournalReindex), Failure> {
     let state = state()?;
     let _lock = acquire_lock(&state)?;
     let mut journal = journal::Journal::open(state.journal()).map_err(open_failure)?;
+    admit_steering_index(&mut journal)?;
     let rebuilt = journal.reindex().map_err(|error| match error {
         journal::ReindexError::Violations(_) => Failure::refusal(
             "journal::history-invalid",
@@ -586,10 +587,24 @@ fn append_recovery_fact<F: wire::Body>(
         .fact(body, journal::FactCause::Root)
         .map_err(|error| Failure::protocol("journal::recovery-fact-invalid", error.to_string()))?;
     let mut journal = journal::Journal::open(state.journal()).map_err(open_failure)?;
+    admit_steering_index(&mut journal)?;
     let committed = journal.apply(write).map_err(commit_failure)?;
     Ok(SeqRange {
         first: committed.first(),
         last: committed.last(),
+    })
+}
+
+fn admit_steering_index(journal: &mut journal::Journal) -> Result<(), Failure> {
+    crate::resident::admit_steering_index(journal).map_err(|outcome| match outcome {
+        Outcome::Fault(fault) => Failure::store(fault.reason, fault.detail),
+        Outcome::Refusal(refusal) => Failure::refusal(
+            refusal.reason(),
+            "one canonical steering replay",
+            refusal.explanation(),
+            "verify or restore the journal before retrying recovery",
+        ),
+        Outcome::Reply(_) => unreachable!("steering index admission does not reply"),
     })
 }
 

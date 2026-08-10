@@ -558,6 +558,7 @@ fn rewrite_receipts(
         let mut response = decode("command_receipts", &command, &response)?;
         let mut changed = rewrite_value(&mut request, by_key, by_directive);
         changed |= rewrite_value(&mut response, by_key, by_directive);
+        changed |= rewrite_legacy_refusal(&mut response);
         // Schema 3 exposed `steer::resend` only as the recovery command. Schema
         // 4 gives live re-delivery that name and moves recovery to its own kind,
         // so successful and refused historical receipts must both be renamed.
@@ -628,6 +629,38 @@ fn rewrite_value(
     changed
 }
 
+/// Lift the schema-3 flat refusal into the current explicit refusal sum type.
+fn rewrite_legacy_refusal(response: &mut Value) -> bool {
+    let Some(outcome) = response
+        .as_object_mut()
+        .and_then(|object| object.get_mut("outcome"))
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    if outcome.get("kind").and_then(Value::as_str) != Some("refusal")
+        || outcome.contains_key("form")
+    {
+        return false;
+    }
+    let Some(reason) = outcome.remove("reason") else {
+        return false;
+    };
+    let mut diagnostic = serde_json::Map::new();
+    diagnostic.insert("reason".to_owned(), reason);
+    for field in ["witness", "expected", "observed"] {
+        if let Some(value) = outcome.remove(field) {
+            diagnostic.insert(field.to_owned(), value);
+        }
+    }
+    if let Some(detail) = outcome.remove("remedy") {
+        diagnostic.insert("detail".to_owned(), detail);
+    }
+    outcome.insert("form".to_owned(), Value::String("bare".to_owned()));
+    outcome.insert("diagnostic".to_owned(), Value::Object(diagnostic));
+    true
+}
+
 fn rewrite_expected_witnesses(
     request: &mut Value,
     by_directive: &BTreeMap<String, Node>,
@@ -664,19 +697,23 @@ fn rewrite_witness_array(
                 "a steering witness is not an object",
             )
         })?;
-        let kind = object.get("kind").and_then(Value::as_str).ok_or_else(|| {
-            invalid(
-                "command_receipts",
-                row,
-                "a steering witness kind is missing",
-            )
-        })?;
+        let kind = object
+            .get("kind")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                invalid(
+                    "command_receipts",
+                    row,
+                    "a steering witness kind is missing",
+                )
+            })?;
         if kind == "lineage" && remove_lineage {
             values.remove(index);
             changed = true;
             continue;
         }
-        if matches!(kind, "directive" | "lineage") {
+        if matches!(kind.as_str(), "directive" | "lineage") {
             let steer = object
                 .get_mut("steer")
                 .and_then(|value| value.as_str())
@@ -700,6 +737,11 @@ fn rewrite_witness_array(
                     "steer".to_owned(),
                     Value::String(node.root_directive.clone()),
                 );
+                changed = true;
+            }
+            if kind == "directive" && remove_lineage {
+                object.insert("kind".to_owned(), Value::String("recoverable".to_owned()));
+                object.remove("disposition");
                 changed = true;
             }
         }

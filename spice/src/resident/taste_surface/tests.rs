@@ -3,6 +3,8 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
+use crate::resident::write;
+use steer::Standing as _;
 use wire::intent::DeliveryStanding;
 use wire::{Disposition, ResidentState};
 
@@ -853,22 +855,25 @@ fn append_send(
     key: &str,
     cause: Seq,
 ) {
+    let at = current_instant().expect("command instant");
+    let origin: wire::Origin = format!("resident:{epoch}").parse().expect("command origin");
     let mut proposal =
-        write(Actor::Operator, epoch, Producer::CommandDoor).expect("command proposal");
-    proposal
-        .fact(
-            wire::body::SteerSent {
-                directive,
-                key: key.to_owned(),
-                lane,
-                text: "concurrent command".to_owned(),
-                control: None,
-                attachments: Vec::new(),
-                expires: "2030-01-01T00:00:00.000Z".parse().expect("expiry"),
-            },
-            FactCause::Existing(cause),
-        )
+        JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let body = wire::body::SteerSent {
+        directive,
+        key: key.to_owned(),
+        lane,
+        text: "concurrent command".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: "2030-01-01T00:00:00.000Z".parse().expect("expiry"),
+    };
+    let pending = proposal
+        .fact(body.clone(), FactCause::Existing(cause))
         .expect("command fact");
+    proposal.steering_head(pending, move |seq| {
+        steer::Ledger::sent_head(&body, origin, at, seq).expect("command head")
+    });
     commit(bus, proposal).expect("concurrent command commits");
 }
 
@@ -905,25 +910,34 @@ fn append_reminder(
     anchor: Seq,
     candidate: &Candidate,
 ) {
-    let mut proposal =
-        write(Actor::Spice, epoch, Producer::ResidentRecognition).expect("reminder proposal");
-    proposal
-        .fact(
-            wire::body::TasteReminded {
-                directive: uuid(70),
-                key: "00000000".to_owned(),
-                lane,
-                taste: candidate.taste.clone(),
-                content: candidate.content.clone(),
-                occupant,
-                compaction: anchor.get(),
-                locus: candidate.locus,
-                text: candidate.text.clone(),
-                expires: "2030-01-01T00:00:00.000Z".parse().expect("expiry"),
-            },
-            FactCause::Existing(anchor),
-        )
+    let at = current_instant().expect("reminder instant");
+    let origin: wire::Origin = format!("resident:{epoch}")
+        .parse()
+        .expect("reminder origin");
+    let mut proposal = JournalWrite::new(
+        Actor::Spice,
+        origin.clone(),
+        at,
+        Producer::ResidentRecognition,
+    );
+    let body = wire::body::TasteReminded {
+        directive: uuid(70),
+        key: "00000000".to_owned(),
+        lane,
+        taste: candidate.taste.clone(),
+        content: candidate.content.clone(),
+        occupant,
+        compaction: anchor.get(),
+        locus: candidate.locus,
+        text: candidate.text.clone(),
+        expires: "2030-01-01T00:00:00.000Z".parse().expect("expiry"),
+    };
+    let pending = proposal
+        .fact(body.clone(), FactCause::Existing(anchor))
         .expect("reminder fact");
+    proposal.steering_head(pending, move |seq| {
+        steer::Ledger::reminded_head(&body, origin, at, seq).expect("reminder head")
+    });
     commit(bus, proposal).expect("concurrent reminder commits");
 }
 

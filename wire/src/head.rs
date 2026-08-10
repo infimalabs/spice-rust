@@ -6,10 +6,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Name;
-use crate::body::{LaneLaunchIdentity, TranscriptPosition};
+use crate::body::{
+    DirectiveAttachment, LaneLaunchIdentity, SteeringStage, SteeringTransition, TranscriptPosition,
+};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
-use crate::witness::{Phase, TaskHandle};
+use crate::witness::{Disposition, Phase, TaskHandle};
 
 /// One allocator locality coordinate captured when a claim is won.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -228,6 +230,61 @@ pub struct FindingHead {
     pub receipt: Digest,
     /// Whether the finding remains open.
     pub state: FindingState,
+}
+
+/// One directive's complete current steering standing.
+///
+/// The immutable facts remain the audit authority. This row is their
+/// transactionally maintained current head: keyed by both `directive` and
+/// `key`, ordered by `created`, and sufficient to admit the next transition
+/// without replaying unrelated journal history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteeringHead {
+    /// Stable directive identity.
+    pub directive: CanonicalUuid,
+    /// Human-sized key retained for the directive's complete lifetime.
+    pub key: String,
+    /// Lane the directive addresses.
+    pub lane: CanonicalUuid,
+    /// Original direction text.
+    pub text: String,
+    /// Optional control channel driven by the directive.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub control: Option<String>,
+    /// Opaque attachments carried by the original direction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<DirectiveAttachment>,
+    /// Instant the creating fact was recorded.
+    pub published: Instant,
+    /// Current expiry, advanced by recovery.
+    pub expires: Instant,
+    /// Current presentation stage.
+    pub stage: SteeringStage,
+    /// Ordered presentation audit, bounded by the closed stage vocabulary.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub escalations: Vec<SteeringTransition>,
+    /// Current directive disposition.
+    pub disposition: Disposition,
+    /// Causal origin retained from the creating fact.
+    pub origin: Origin,
+    /// Creating fact position retained as the cause of later transitions.
+    pub created: Seq,
+    /// Decoded moment for a key minted by the current time codec.
+    ///
+    /// Legacy keys outside that codec leave this absent. The maximum present
+    /// value lets new key allocation jump past all historical collisions in
+    /// one indexed lookup.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub minted_millis: Option<i64>,
 }
 
 /// How far one logical transcript stream has been accounted.

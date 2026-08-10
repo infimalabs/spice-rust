@@ -123,6 +123,7 @@ fn schema_four_release_authority(path: &Path, remove_note_identity: bool) {
             }),
         ),
     );
+    drop_steering_index(&journal.connection);
     journal
         .connection
         .execute(

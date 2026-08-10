@@ -192,6 +192,7 @@ fn schema_five_topology_authority(path: &Path, stored: StoredRevision) {
         StoredRevision::Current => {}
         StoredRevision::Mismatched => set_head_revision(&journal.connection, 99),
     }
+    drop_steering_index(&journal.connection);
     journal
         .connection
         .execute_batch(
