@@ -9,8 +9,11 @@ use std::time::Duration;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use wire::{CommandKind, FactKind};
 
+mod mounts;
 mod syntax;
 mod tools;
+
+pub use mounts::{Mount, MountLoadError, MountRegistry, MountRegistryError, MountSelection};
 
 use syntax::register_syntax;
 #[cfg(test)]
@@ -28,6 +31,7 @@ use tools::{ToolBounds, ToolCancellation, ToolNetwork, posture_violations};
 /// The renderer flag, spelled once so its registration and its reader cannot
 /// drift into naming two different arguments that merely agree today.
 const JSON: &str = "json";
+const MOUNT_ARGUMENT: &str = "MOUNT_ARGUMENTS";
 
 /// Principal admitted to a command leaf.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -336,10 +340,10 @@ pub fn landing(path: &[&str]) -> Landing {
 
 /// Build the one parser and help tree from the registry [`contracts()`] returns.
 pub fn command() -> Command {
-    command_from(contracts())
+    command_from(contracts(), &[])
 }
 
-fn command_from(contracts: &[Contract]) -> Command {
+fn command_from(contracts: &[Contract], mounts: &[Mount]) -> Command {
     let mut root = Command::new("spice")
         .about("Repository-local coordination appliance")
         .subcommand_required(true)
@@ -352,16 +356,23 @@ fn command_from(contracts: &[Contract]) -> Command {
                 .action(ArgAction::SetTrue),
         );
 
-    for child in child_names(contracts, &[]) {
-        root = root.subcommand(branch(contracts, child, &[child]));
+    for child in child_names(contracts, mounts, &[]) {
+        root = root.subcommand(branch(
+            contracts,
+            mounts,
+            &child,
+            std::slice::from_ref(&child),
+        ));
     }
     root
 }
 
-fn branch(contracts: &[Contract], name: &'static str, path: &[&'static str]) -> Command {
-    let contract = contract_at(contracts, path);
-    let children = child_names(contracts, path);
-    let mut command = Command::new(name).disable_help_subcommand(true);
+fn branch(contracts: &[Contract], mounts: &[Mount], name: &str, path: &[String]) -> Command {
+    let borrowed = path.iter().map(String::as_str).collect::<Vec<_>>();
+    let contract = contract_at(contracts, &borrowed);
+    let mount = mount_at(mounts, &borrowed);
+    let children = child_names(contracts, mounts, &borrowed);
+    let mut command = Command::new(name.to_owned()).disable_help_subcommand(true);
     if !children.is_empty() {
         command = command.subcommand_negates_reqs(true);
     }
@@ -374,6 +385,13 @@ fn branch(contracts: &[Contract], name: &'static str, path: &[&'static str]) -> 
         if !children.is_empty() {
             command = command.subcommand_negates_reqs(true);
         }
+    } else if mount.is_some() {
+        command = command.disable_help_flag(true).trailing_var_arg(true).arg(
+            Arg::new(MOUNT_ARGUMENT)
+                .num_args(0..)
+                .allow_hyphen_values(true)
+                .value_parser(clap::builder::OsStringValueParser::new()),
+        );
     } else {
         command = command
             .subcommand_required(true)
@@ -382,18 +400,43 @@ fn branch(contracts: &[Contract], name: &'static str, path: &[&'static str]) -> 
 
     for child in children {
         let mut child_path = path.to_vec();
-        child_path.push(child);
-        command = command.subcommand(branch(contracts, child, &child_path));
+        child_path.push(child.clone());
+        command = command.subcommand(branch(contracts, mounts, &child, &child_path));
     }
     command.subcommand_precedence_over_arg(true)
 }
 
-fn child_names(contracts: &[Contract], path: &[&str]) -> BTreeSet<&'static str> {
+fn child_names(contracts: &[Contract], mounts: &[Mount], path: &[&str]) -> BTreeSet<String> {
     contracts
         .iter()
         .filter(|contract| contract.path.starts_with(path) && contract.path.len() > path.len())
-        .map(|contract| contract.path[path.len()])
+        .map(|contract| contract.path[path.len()].to_owned())
+        .chain(
+            mounts
+                .iter()
+                .filter(|mount| {
+                    mount.path().len() > path.len()
+                        && mount
+                            .path()
+                            .iter()
+                            .map(String::as_str)
+                            .zip(path.iter().copied())
+                            .all(|(left, right)| left == right)
+                })
+                .map(|mount| mount.path()[path.len()].clone()),
+        )
         .collect()
+}
+
+fn mount_at<'a>(mounts: &'a [Mount], path: &[&str]) -> Option<&'a Mount> {
+    mounts.iter().find(|mount| {
+        mount.path().len() == path.len()
+            && mount
+                .path()
+                .iter()
+                .map(String::as_str)
+                .eq(path.iter().copied())
+    })
 }
 
 fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contract> {
@@ -408,13 +451,18 @@ pub fn contract(path: &[&str]) -> Option<&'static Contract> {
 
 /// Recover the contract selected by the generated parser.
 pub fn selected_contract(matches: &ArgMatches) -> Option<&'static Contract> {
+    let path = selected_path(matches);
+    contract_at(contracts(), &path)
+}
+
+fn selected_path(matches: &ArgMatches) -> Vec<&str> {
     let mut path = Vec::new();
     let mut cursor = matches;
     while let Some((name, child)) = cursor.subcommand() {
         path.push(name);
         cursor = child;
     }
-    contract_at(contracts(), &path)
+    path
 }
 
 /// Recover the leaf matches selected by the generated parser.

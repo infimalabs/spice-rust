@@ -134,9 +134,17 @@ fn main() {
     if let Some(code) = gate_command::pre_commit_worker_entry(std::env::args_os()) {
         terminate_code(code);
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    let mounts = mounted_registry();
+    #[cfg(not(target_arch = "wasm32"))]
+    let matches = mounts.command().get_matches();
+    #[cfg(target_arch = "wasm32")]
     let matches = cli::command().get_matches();
     #[cfg(not(target_arch = "wasm32"))]
     {
+        if let Some(selection) = mounts.selected(&matches) {
+            run_mounted(selection);
+        }
         if let Some(command) = cli::run_command(&matches) {
             run(command);
         }
@@ -174,6 +182,48 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     let outcome = not_landed(contract);
     deliver(&outcome, form);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn mounted_registry() -> cli::MountRegistry {
+    let working_directory = std::env::current_dir().unwrap_or_else(|error| {
+        let mut stderr = io::stderr().lock();
+        let _ = writeln!(stderr, "spice: cannot read working directory: {error}");
+        terminate_code(FAULT_EXIT);
+    });
+    cli::MountRegistry::load(&working_directory).unwrap_or_else(|error| {
+        let mut stderr = io::stderr().lock();
+        let _ = writeln!(stderr, "spice: {error}");
+        terminate_code(REFUSAL_EXIT);
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_mounted(selection: cli::MountSelection<'_>) -> ! {
+    let mount = selection.mount();
+    let (program, declared_arguments) = mount
+        .argv()
+        .split_first()
+        .expect("typed command mounts always contain a program");
+    let status = std::process::Command::new(program)
+        .args(declared_arguments)
+        .args(selection.arguments())
+        .current_dir(mount.repository())
+        .status();
+
+    match status {
+        Ok(status) => terminate_child(status),
+        Err(error) => {
+            let mut stderr = io::stderr().lock();
+            let _ = writeln!(stderr, "spice {}: {error}", mount.path().join(" "));
+            let code = match error.kind() {
+                io::ErrorKind::NotFound => 127,
+                io::ErrorKind::PermissionDenied => 126,
+                _ => FAULT_EXIT,
+            };
+            terminate_code(code);
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
