@@ -42,6 +42,7 @@ fn result(outcome: listen::ToolResult) -> listen::ToolMoment {
         result: outcome,
         output: None,
         exit_code: None,
+        media: Vec::new(),
     })
 }
 

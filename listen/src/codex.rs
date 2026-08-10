@@ -47,9 +47,11 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
     let item = object(record, "item")?;
     match string(item, "type")? {
         "agent_message" if matches!(moment, ItemMoment::Completed) => {
+            let text = string(item, "text")?.to_owned();
             Ok(vec![Event::Prose(Prose {
                 role: ProseRole::Assistant,
-                text: string(item, "text")?.to_owned(),
+                media: crate::media::markdown(&text)?,
+                text,
                 phase: None,
                 locus,
             })])
@@ -169,6 +171,10 @@ fn tool(
                 .get("exit_code")
                 .and_then(Value::as_i64)
                 .and_then(|code| i32::try_from(code).ok()),
+            media: item.get("aggregated_output").map_or_else(
+                || Ok(Vec::new()),
+                |output| crate::media::value(output, "tool-image"),
+            )?,
         }),
     };
     Ok(vec![Event::Tool(Tool {
@@ -244,6 +250,7 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
                 |text| {
                     Ok(vec![Event::Prose(Prose {
                         role: ProseRole::Assistant,
+                        media: crate::media::markdown(text)?,
                         text: text.to_owned(),
                         phase: Some("final_answer".to_owned()),
                         locus,
@@ -251,6 +258,7 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
                 },
             ),
         "exec_command_end" => completed_command(payload, locus),
+        "mcp_tool_call_end" => rollout_mcp_result(payload, locus),
         "web_search" => Ok(vec![Event::Tool(Tool {
             call_id: synthetic_id("web_search", locus),
             moment: ToolMoment::Call {
@@ -326,8 +334,27 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
                 {
                     events.push(Event::Prose(Prose {
                         role,
+                        media: crate::media::markdown(text)?,
                         text: text.to_owned(),
                         phase: phase.clone(),
+                        locus,
+                    }));
+                }
+            }
+            Some("image" | "input_image" | "output_image") => {
+                let media = crate::media::value(value, "message-image")?;
+                if let Some(Event::Prose(prose)) = events.last_mut() {
+                    prose.media.extend(media);
+                    wire::media::admit_media(&prose.media).map_err(|_| ResidueKind::Malformed {
+                        field: "payload.content[].media",
+                        expected: "at most eight admitted images",
+                    })?;
+                } else if !media.is_empty() {
+                    events.push(Event::Prose(Prose {
+                        role,
+                        text: String::new(),
+                        phase: phase.clone(),
+                        media,
                         locus,
                     }));
                 }
@@ -396,6 +423,10 @@ fn rollout_tool_call(payload: &Object, locus: Locus) -> Events {
 fn rollout_tool_result(payload: &Object, locus: Locus) -> Events {
     let call_id = string(payload, "call_id")?.to_owned();
     let output = payload.get("output").map(render_output);
+    let media = payload.get("output").map_or_else(
+        || Ok(Vec::new()),
+        |output| crate::media::value(output, "tool-image"),
+    )?;
     let exit_code = output.as_deref().and_then(output_exit_code);
     let result = match exit_code {
         Some(0) => ToolResult::Succeeded,
@@ -408,6 +439,36 @@ fn rollout_tool_result(payload: &Object, locus: Locus) -> Events {
             result,
             output,
             exit_code,
+            media,
+        }),
+        locus,
+    })])
+}
+
+fn rollout_mcp_result(payload: &Object, locus: Locus) -> Events {
+    let call_id = string(payload, "call_id")?.to_owned();
+    let result = payload.get("result").ok_or(ResidueKind::Absent {
+        field: "payload.result",
+    })?;
+    let media = crate::media::value(result, "tool-image")?;
+    let standing = if result.get("Err").is_some() {
+        ToolResult::Failed
+    } else if let Some(ok) = result.get("Ok").and_then(Value::as_object) {
+        match ok.get("isError").and_then(Value::as_bool) {
+            Some(true) => ToolResult::Failed,
+            Some(false) => ToolResult::Succeeded,
+            None => ToolResult::Unreported,
+        }
+    } else {
+        ToolResult::Unreported
+    };
+    Ok(vec![Event::Tool(Tool {
+        call_id,
+        moment: ToolMoment::Result(ToolOutcome {
+            result: standing,
+            output: Some(render_output(result)),
+            exit_code: None,
+            media,
         }),
         locus,
     })])
@@ -461,6 +522,7 @@ fn completed_command(payload: &Object, locus: Locus) -> Events {
                 result,
                 output: None,
                 exit_code,
+                media: Vec::new(),
             }),
             locus,
         }),

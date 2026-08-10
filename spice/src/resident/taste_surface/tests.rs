@@ -1130,6 +1130,7 @@ fn prose_record(
                 role: listen::ProseRole::Assistant,
                 text: text.to_owned(),
                 phase: Some("final".to_owned()),
+                media: Vec::new(),
                 locus,
             })],
         },

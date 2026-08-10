@@ -92,7 +92,36 @@ fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentMessage {
         },
         activity: wire::AgentActivityKind::Prose,
         text: text.to_owned(),
+        media: Vec::new(),
     }
+}
+
+#[test]
+fn canvas_message_ingress_refuses_invalid_media_without_retaining_or_broadcasting_it() {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    let source = crate::stream::Source::new(bus.reader(), epoch(), 8);
+    let publisher = source.message_publisher();
+    let mut updates = source.subscribe_messages();
+    let mut invalid = agent_message(0xe6, 10, "forged capture");
+    invalid.media.push(wire::Media {
+        name: "capture.txt".to_owned(),
+        content_type: "text/plain".to_owned(),
+        data_url: "data:text/plain;base64,aGVsbG8=".to_owned(),
+    });
+
+    assert!(matches!(
+        publisher.publish(invalid),
+        Err(crate::stream::MessagePublishError::InvalidMedia(
+            wire::MediaError::UnsupportedType(found)
+        )) if found == "text/plain"
+    ));
+    assert!(matches!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    drop(source);
+    bus.shutdown().expect("bus stops");
 }
 
 fn commit_lane_stream(

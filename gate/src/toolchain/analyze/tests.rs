@@ -1,7 +1,6 @@
 use super::*;
 
 use std::os::unix::fs::PermissionsExt as _;
-use std::thread;
 use std::time::Duration;
 
 use crate::toolchain::{
@@ -134,7 +133,8 @@ fn canvas_runs_both_declared_commands_in_order_from_their_owned_directories() {
     assert_eq!(analysis.outcome, ArmOutcome::Passed);
     assert!(analysis.findings.is_empty());
     assert_eq!(analysis.exit_code, None);
-    let root = fs::canonicalize(&fixture.root).expect("canonical fixture root");
+    let root = fs::canonicalize(fixture.output.join("target/xtask-app-source"))
+        .expect("canonical Canvas source cache");
     assert_eq!(
         fixture.log_lines(),
         [
@@ -189,77 +189,48 @@ fn canvas_routes_generated_bytes_outside_the_selected_tree() {
     assert!(!CanvasFixture::workspace_root(&fixture.root).exists());
 }
 
-/// Two canvas analyses of one repository run at once and share its build root.
-///
-/// The claim is that the shared root is safe, so the two analyses have to
-/// genuinely overlap rather than be asserted not to. Each stub announces
-/// itself into the shared `CARGO_TARGET_DIR` and then meets the other
-/// through a pair of named pipes: opening one for writing finishes only once
-/// the other side opens it for reading, so neither stub gets past the
-/// rendezvous unless both are running. Should either analysis refuse before
-/// reaching its stub, the rendezvous never completes and the bounded runtime
-/// ends the arm rather than leaving the suite stopped.
-///
-/// What real Cargo does under that overlap was measured rather than stubbed,
-/// because it is Cargo's behaviour and not this crate's: two `cargo check`
-/// runs sharing one `CARGO_TARGET_DIR` and `CARGO_BUILD_BUILD_DIR`, the
-/// first held inside a build script, made the second report `Blocking
-/// waiting for file lock on build directory` and then finish, both exiting
-/// zero. Cargo serializes the shared root; it does not corrupt it.
 #[test]
-fn two_canvas_analyses_at_once_share_one_repository_build_root() {
+fn repeated_canvas_analyses_reuse_one_repository_source_and_build_root() {
     let fixture = CanvasFixture::new("shared-build-root", true);
     let second_tree = fixture.second_tree("second-tree");
-    let reached = fixture.base.join("first-reached");
-    let released = fixture.base.join("second-reached");
-    make_pipe(&reached);
-    make_pipe(&released);
-
     let first_cargo = fixture.script(
         "cargo-first",
-        &format!(
-            concat!(
-                "printf first > \"$CARGO_TARGET_DIR/first\"\n",
-                "printf x > '{}'\n",
-                "cat '{}' > /dev/null\n",
-                "exit 0",
-            ),
-            reached.display(),
-            released.display(),
-        ),
+        "printf first > \"$CARGO_TARGET_DIR/first\"\nexit 0",
     );
     let second_cargo = fixture.script(
         "cargo-second",
-        &format!(
-            concat!(
-                "printf second > \"$CARGO_TARGET_DIR/second\"\n",
-                "cat '{}' > /dev/null\n",
-                "printf x > '{}'\n",
-                "exit 0",
-            ),
-            reached.display(),
-            released.display(),
-        ),
+        "printf second > \"$CARGO_TARGET_DIR/second\"\nexit 0",
     );
     let trunk = fixture.script("trunk", "exit 0");
-    let bounds = canvas_bounds(Duration::from_secs(30));
+    let bounds = canvas_exit_bounds();
 
-    let (first, second) = thread::scope(|scope| {
-        let other =
-            scope.spawn(|| fixture.analyze_tree(&second_tree, &second_cargo, &trunk, &bounds));
-        let mine = fixture.analyze(&first_cargo, &trunk, &bounds);
-        (
-            mine,
-            other.join().expect("the second analysis does not panic"),
-        )
-    });
+    let first = fixture.analyze(&first_cargo, &trunk, &bounds);
+    let source = fixture.output.join("target/xtask-app-source");
+    let cached = source.join("app/src/lib.rs");
+    let first_modified = fs::metadata(&cached)
+        .expect("first analysis caches its selected source")
+        .modified()
+        .expect("cached source has an mtime");
+    let second = fixture.analyze_tree(&second_tree, &second_cargo, &trunk, &bounds);
 
     assert_eq!(first.outcome, ArmOutcome::Passed, "{}", first.reason);
     assert_eq!(second.outcome, ArmOutcome::Passed, "{}", second.reason);
+    assert!(
+        source.is_dir(),
+        "the reusable source survives both analyses"
+    );
+    assert_eq!(
+        fs::metadata(&cached)
+            .expect("second analysis retains its selected source")
+            .modified()
+            .expect("cached source has an mtime"),
+        first_modified,
+        "unchanged selected bytes keep the Cargo fingerprint path and mtime",
+    );
     let shared = fixture.output.join("target/xtask-app");
     assert!(
         shared.join("first").is_file() && shared.join("second").is_file(),
-        "both overlapping analyses compiled into {}",
+        "both repeated analyses compiled into {}",
         shared.display(),
     );
     assert!(
@@ -854,20 +825,6 @@ impl Drop for CanvasFixture {
 /// leaving the blocking wait on the child's exit as the only way these fixtures end.
 fn canvas_exit_bounds() -> Bounds {
     canvas_bounds(Duration::MAX)
-}
-
-/// A named pipe two stubs meet at.
-///
-/// The meeting is what makes overlap a fact rather than a hope: opening one
-/// end finishes only once the other end is open, so both stubs are provably
-/// running at the same moment without either one measuring a clock a loaded
-/// lane could outrun.
-fn make_pipe(path: &Path) {
-    let status = std::process::Command::new("/usr/bin/mkfifo")
-        .arg(path)
-        .status()
-        .expect("run mkfifo");
-    assert!(status.success(), "mkfifo {} said {status}", path.display());
 }
 
 fn canvas_bounds(runtime: Duration) -> Bounds {

@@ -82,6 +82,9 @@ pub struct AgentMessage {
     pub activity: AgentActivityKind,
     /// Visible assistant prose or concise tool preview.
     pub text: String,
+    /// Admitted media carried beside this exact transcript event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<crate::Media>,
 }
 
 /// A resumable journal position bound to one resident generation.

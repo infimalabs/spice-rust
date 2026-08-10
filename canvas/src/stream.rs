@@ -204,8 +204,10 @@ impl MessagePublisher {
     /// # Errors
     ///
     /// Returns an error when retained state is unavailable or one durable
-    /// transcript identity is reused for different content.
+    /// transcript identity is reused for different content, or when an
+    /// upstream emitter presents media outside the shared admission law.
     pub fn publish(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
+        wire::media::admit_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
         let mut retained = self
             .feed
             .retained
@@ -232,8 +234,10 @@ impl MessagePublisher {
 }
 
 /// A capture-backed message could not enter the Canvas view.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MessagePublishError {
+    /// Typed media failed the shared count, size, type, or byte admission law.
+    InvalidMedia(wire::MediaError),
     /// Retained message state could not be acquired.
     Unavailable,
     /// One tape event identity was reused for different content.
@@ -242,10 +246,15 @@ pub enum MessagePublishError {
 
 impl fmt::Display for MessagePublishError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Unavailable => "canvas message retention is unavailable",
-            Self::IdentityConflict => "a transcript event identity named different message content",
-        })
+        match self {
+            Self::InvalidMedia(error) => {
+                write!(formatter, "canvas message media is invalid: {error}")
+            }
+            Self::Unavailable => formatter.write_str("canvas message retention is unavailable"),
+            Self::IdentityConflict => {
+                formatter.write_str("a transcript event identity named different message content")
+            }
+        }
     }
 }
 

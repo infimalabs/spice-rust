@@ -13,13 +13,8 @@ pub(in crate::resident) fn send(
     command: &wire::AdmittedCommand,
     send: &wire::intent::SteerSend,
 ) -> Outcome<CommandAnswer> {
-    if send.message.trim().is_empty() {
-        return refusal(
-            "steer::message-empty",
-            Some("non-empty direction".to_owned()),
-            Some(send.message.clone()),
-            "supply direction text that the lane can act on",
-        );
+    if let Err(outcome) = admit_send_content(send) {
+        return outcome;
     }
     let residency = match current_residency(bus, epoch) {
         Ok(residency) => residency,
@@ -123,6 +118,30 @@ pub(in crate::resident) fn send(
         return typed_store_fault("steer::receipt-invalid", &error.to_string());
     }
     finish(bus, paths, residency.body(), send.lane, proposal, answer)
+}
+
+fn admit_send_content(send: &wire::intent::SteerSend) -> Result<(), Outcome<CommandAnswer>> {
+    if let Err(error) = wire::media::admit_media(&send.attachments) {
+        return Err(refusal(
+            "steer::media-invalid",
+            Some(format!(
+                "at most {} admitted images of at most {} decoded bytes each",
+                wire::media::MAX_MEDIA_ITEMS,
+                wire::media::MAX_MEDIA_BYTES,
+            )),
+            Some(error.to_string()),
+            "remove or replace the invalid attachment and retry the same authored message",
+        ));
+    }
+    if send.message.trim().is_empty() {
+        return Err(refusal(
+            "steer::message-empty",
+            Some("non-empty direction".to_owned()),
+            Some(send.message.clone()),
+            "supply direction text that the lane can act on",
+        ));
+    }
+    Ok(())
 }
 
 pub(in crate::resident) fn cancel(

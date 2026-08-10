@@ -165,6 +165,8 @@ pub enum Domain {
     TasteProse,
     /// One complete ordered active taste bag.
     TasteBag,
+    /// Exact decoded bytes of one admitted browsable media block.
+    MediaContent,
 }
 
 impl Domain {
@@ -199,7 +201,8 @@ impl Domain {
             | Self::DistReleasePackage
             | Self::DistReleasePlan
             | Self::TasteProse
-            | Self::TasteBag => self.product_tag(),
+            | Self::TasteBag
+            | Self::MediaContent => self.product_tag(),
             Self::ProofBattery
             | Self::ProofReplayV3
             | Self::ProofReceiptV3
@@ -254,6 +257,7 @@ impl Domain {
             Self::DistReleasePlan => "spice.dist.release-plan.v1",
             Self::TasteProse => "spice.taste.prose.v1",
             Self::TasteBag => "spice.taste.bag.v1",
+            Self::MediaContent => "spice.media.content.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }
     }

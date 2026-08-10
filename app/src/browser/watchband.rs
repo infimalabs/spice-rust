@@ -24,8 +24,8 @@ use controls::{LineageLife, LineageSpeech, render_lineage_controls};
 use mosaic_view::{ActivityCard, CardLayout, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
 
-const MAX_ATTACHMENTS: usize = 8;
-const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
+const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
+const MAX_ATTACHMENT_BYTES: f64 = wire::media::MAX_MEDIA_BYTES as f64;
 const RENEWAL_REQUEST: &str = "Renew your current task lease now.";
 const LANE_DRAG_MIME: &str = "application/x-spice-lane";
 
