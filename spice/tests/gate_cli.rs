@@ -795,15 +795,16 @@ impl Drop for Scratch {
 }
 
 fn remove_scratch(path: &Path) -> std::io::Result<()> {
-    const ATTEMPTS: usize = 20;
-    for attempt in 0..ATTEMPTS {
+    const SCRATCH_REMOVE_ATTEMPTS: usize = 20;
+    const SCRATCH_REMOVE_RETRY: Duration = Duration::from_millis(25);
+    for attempt in 0..SCRATCH_REMOVE_ATTEMPTS {
         match fs::remove_dir_all(path) {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) if attempt + 1 == ATTEMPTS => return Err(error),
+            Err(error) if attempt + 1 == SCRATCH_REMOVE_ATTEMPTS => return Err(error),
             Err(_) => {
                 make_tree_writable(path);
-                thread::sleep(Duration::from_millis(25));
+                thread::sleep(SCRATCH_REMOVE_RETRY);
             }
         }
     }

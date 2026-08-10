@@ -126,7 +126,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
     let seated = write
         .fact(body::UpSeated { epoch }, FactCause::Root)
         .expect("seating fact builds");
-    let lanes = briefing_lanes(lane, occupant, epoch, peer_lane, peer_occupant, thread);
+    let lanes = briefing_residencies(lane, occupant, epoch, peer_lane, peer_occupant, thread);
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
@@ -188,7 +188,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
     );
 }
 
-fn briefing_lanes(
+fn briefing_residencies(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
