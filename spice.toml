@@ -134,8 +134,6 @@ env_names = [
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
     "SPICE_NATIVE_SHELL",
-    # The hook regression tests still assert this retired proof-routing name is absent.
-    "SPICE_PROOF",
     "TMPDIR",
 ]
 

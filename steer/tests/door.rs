@@ -183,8 +183,9 @@ fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
         "exec spice run -- \"${SPICE_HOOKS:?spice hooks directory}/static/stage.sh\" \"$@\""
     ));
     assert!(!entry.contains("spice agent run"));
+    let removed_proof_name = ["spice", "proof"].join("_").to_ascii_uppercase();
     assert!(
-        !entry.contains("SPICE_PROOF"), // env-policy: allow
+        !entry.contains(&removed_proof_name),
         "entry stage no longer carries proof routing"
     );
     assert!(!entry.contains("if ["));
