@@ -300,6 +300,11 @@ pub struct WorkspacePolicy {
     generated_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     name_cluster_threshold: Option<usize>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "optional_recurrence_threshold"
+    )]
+    taste_mining_threshold: Option<usize>,
     test_paths: Vec<String>,
     package: gate::PackagePolicy,
     admission: Vec<String>,
@@ -376,6 +381,12 @@ impl WorkspacePolicy {
         self.name_cluster_threshold
     }
 
+    /// Independent correction loci required before taste review work is filed.
+    #[must_use]
+    pub const fn taste_mining_threshold(&self) -> Option<usize> {
+        self.taste_mining_threshold
+    }
+
     /// Roots the repository declares its tests under.
     #[must_use]
     pub fn test_paths(&self) -> &[String] {
@@ -417,6 +428,19 @@ fn positive_depth<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::
         Err(D::Error::custom("project depth must be positive"))
     } else {
         Ok(depth)
+    }
+}
+
+fn optional_recurrence_threshold<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<usize>, D::Error> {
+    let threshold = Option::<usize>::deserialize(deserializer)?;
+    if matches!(threshold, Some(0 | 1)) {
+        Err(D::Error::custom(
+            "taste mining threshold must be at least two independent loci",
+        ))
+    } else {
+        Ok(threshold)
     }
 }
 
@@ -873,6 +897,13 @@ registry! {
         flag: None,
     }
     fixed "policy.name_cluster_threshold" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.taste_mining_threshold" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::Absent),
         layers: TRACKED,

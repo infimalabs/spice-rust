@@ -247,50 +247,7 @@ fn publication_plans_commits_replays_and_survives_restart() {
         spoken(&text)
     );
     let text_plan: ReleasePlan = wire::decode(&text.stdout).expect("text body is a release plan");
-    assert_eq!(text_plan.manifest, fixture.manifest);
-    assert_eq!(text_plan.targets.len(), 2);
-    assert_eq!(text_plan.action, "publish");
-    assert_eq!(text_plan.requested_version.as_str(), "0.0.0");
-    assert_eq!(text_plan.source_commit.len(), 40);
-    assert_eq!(text_plan.release_commit.len(), 40);
-    assert_eq!(text_plan.package_object.len(), 40);
-    assert!(text_plan.observations.clean);
-    assert!(text_plan.observations.bump_claimed);
-    assert!(text_plan.observations.credentials_valid);
-    assert_eq!(text_plan.observations.unrecorded_local_commits, 0);
-    assert!(text_plan.observations.registry.is_none());
-    assert_eq!(
-        text_plan.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "run-correctness-gate",
-            "bump-and-verify-version",
-            "create-release-commit",
-            "rebuild-artifacts",
-            "install-and-probe-artifacts",
-            "rehearse-upload",
-            "publish-source",
-            "upload-package",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
-    );
-    let draft = fixture.invoke(&["--json", "release", "notes"]);
-    let Outcome::Reply(draft) =
-        wire::decode::<Outcome<wire::ReleaseNotes>>(&draft.stdout).expect("draft is typed")
-    else {
-        panic!("release notes did not reply")
-    };
-    let candidate = fs::read_to_string(&fixture.notes).expect("curated notes read");
-    let expected_notes =
-        dist::curated_release_notes(&candidate, &draft.body).expect("notes are curated");
-    assert_eq!(text_plan.notes, expected_notes.identity);
-    assert_eq!(text_plan.notes_document, expected_notes.document);
-    assert!(
-        remote_refs(&fixture).is_empty(),
-        "preview changed remote refs"
-    );
+    assert_initial_preview(&fixture, &text_plan);
 
     let json = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
     assert!(
@@ -322,104 +279,8 @@ fn publication_plans_commits_replays_and_survives_restart() {
     );
     let first = recognition(&first);
     assert!(first.1.fresh);
-    assert_eq!(
-        remote_refs(&fixture),
-        [
-            "refs/heads/main",
-            "refs/spice/packages/v0.0.0",
-            "refs/spice/releases/v0.0.0",
-            "refs/tags/v0.0.0",
-        ]
-    );
-    assert_eq!(
-        remote_object_type(&fixture, "refs/spice/packages/v0.0.0"),
-        "tree"
-    );
-    assert_eq!(
-        remote_object(&fixture, "refs/spice/packages/v0.0.0"),
-        text_plan.package_object
-    );
-    let operation_journal = fixture
-        .journal
-        .parent()
-        .expect("journal data directory")
-        .join("release-operations")
-        .join(format!("{}.json", text_plan.key));
-    let operation_journal: serde_json::Value = serde_json::from_slice(
-        &fs::read(operation_journal).expect("external operation journal exists"),
-    )
-    .expect("external operation journal is typed JSON");
-    assert_eq!(
-        operation_journal["accepted"]
-            .as_array()
-            .expect("accepted operation rows")
-            .len(),
-        text_plan.operations.len()
-    );
-    assert_eq!(
-        operation_journal["receipts"]
-            .as_array()
-            .expect("operation receipt rows")
-            .len(),
-        text_plan.operations.len()
-    );
-
-    let recovery = fixture.invoke(&[
-        "--json",
-        "release",
-        "publish",
-        "--notes-file",
-        notes,
-        "--action",
-        "tag-and-announce",
-    ]);
-    assert!(
-        recovery.status.success(),
-        "recovery preview failed: {}",
-        spoken(&recovery)
-    );
-    let Outcome::Reply(recovery) =
-        wire::decode::<Outcome<ReleasePlan>>(&recovery.stdout).expect("recovery preview is typed")
-    else {
-        panic!("recovery preview did not reply")
-    };
-    assert_eq!(recovery.body.action, "tag-and-announce");
-    assert_eq!(
-        recovery
-            .body
-            .observations
-            .registry
-            .as_ref()
-            .expect("recovery binds registry evidence")
-            .release_commit,
-        recovery.body.release_commit
-    );
-    assert_eq!(
-        recovery.body.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
-    );
-    let recovery_apply = format!("--apply={}", recovery.body.key);
-    let recovered = fixture.invoke(&[
-        "--json",
-        "release",
-        "publish",
-        "--notes-file",
-        notes,
-        "--action",
-        "tag-and-announce",
-        &recovery_apply,
-    ]);
-    assert!(
-        recovered.status.success(),
-        "recovery apply failed: {}",
-        spoken(&recovered)
-    );
-    assert!(!recognition(&recovered).1.fresh);
+    assert_published(&fixture, &text_plan);
+    assert_recovery(&fixture, notes);
 
     let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, &apply]);
     assert!(
@@ -461,6 +322,146 @@ fn publication_plans_commits_replays_and_survives_restart() {
     assert_eq!(after_restart.0, first.0);
     assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 1);
     restarted.stop(&fixture);
+}
+
+fn assert_initial_preview(fixture: &Fixture, plan: &ReleasePlan) {
+    assert_eq!(plan.manifest, fixture.manifest);
+    assert_eq!(plan.targets.len(), 2);
+    assert_eq!(plan.action, "publish");
+    assert_eq!(plan.requested_version.as_str(), "0.0.0");
+    assert_eq!(plan.source_commit.len(), 40);
+    assert_eq!(plan.release_commit.len(), 40);
+    assert_eq!(plan.package_object.len(), 40);
+    assert!(plan.observations.clean);
+    assert!(plan.observations.bump_claimed);
+    assert!(plan.observations.credentials_valid);
+    assert_eq!(plan.observations.unrecorded_local_commits, 0);
+    assert!(plan.observations.registry.is_none());
+    assert_eq!(
+        plan.operations,
+        [
+            "resolve-preconditions-and-credentials",
+            "run-correctness-gate",
+            "bump-and-verify-version",
+            "create-release-commit",
+            "rebuild-artifacts",
+            "install-and-probe-artifacts",
+            "rehearse-upload",
+            "publish-source",
+            "upload-package",
+            "await-registry-visibility",
+            "create-immutable-tag",
+            "announce",
+        ]
+    );
+    let draft = fixture.invoke(&["--json", "release", "notes"]);
+    let Outcome::Reply(draft) =
+        wire::decode::<Outcome<wire::ReleaseNotes>>(&draft.stdout).expect("draft is typed")
+    else {
+        panic!("release notes did not reply")
+    };
+    let candidate = fs::read_to_string(&fixture.notes).expect("curated notes read");
+    let expected = dist::curated_release_notes(&candidate, &draft.body).expect("notes are curated");
+    assert_eq!(plan.notes, expected.identity);
+    assert_eq!(plan.notes_document, expected.document);
+    assert!(
+        remote_refs(fixture).is_empty(),
+        "preview changed remote refs"
+    );
+}
+
+fn assert_published(fixture: &Fixture, plan: &ReleasePlan) {
+    assert_eq!(
+        remote_refs(fixture),
+        [
+            "refs/heads/main",
+            "refs/spice/packages/v0.0.0",
+            "refs/spice/releases/v0.0.0",
+            "refs/tags/v0.0.0",
+        ]
+    );
+    assert_eq!(
+        remote_object_type(fixture, "refs/spice/packages/v0.0.0"),
+        "tree"
+    );
+    assert_eq!(
+        remote_object(fixture, "refs/spice/packages/v0.0.0"),
+        plan.package_object
+    );
+    let path = fixture
+        .journal
+        .parent()
+        .expect("journal data directory")
+        .join("release-operations")
+        .join(format!("{}.json", plan.key));
+    let journal: serde_json::Value =
+        serde_json::from_slice(&fs::read(path).expect("external operation journal exists"))
+            .expect("external operation journal is typed JSON");
+    for key in ["accepted", "receipts"] {
+        assert_eq!(
+            journal[key].as_array().expect("operation rows").len(),
+            plan.operations.len()
+        );
+    }
+}
+
+fn assert_recovery(fixture: &Fixture, notes: &str) {
+    let recovery = fixture.invoke(&[
+        "--json",
+        "release",
+        "publish",
+        "--notes-file",
+        notes,
+        "--action",
+        "tag-and-announce",
+    ]);
+    assert!(
+        recovery.status.success(),
+        "recovery preview failed: {}",
+        spoken(&recovery)
+    );
+    let Outcome::Reply(recovery) =
+        wire::decode::<Outcome<ReleasePlan>>(&recovery.stdout).expect("recovery preview is typed")
+    else {
+        panic!("recovery preview did not reply")
+    };
+    assert_eq!(recovery.body.action, "tag-and-announce");
+    assert_eq!(
+        recovery
+            .body
+            .observations
+            .registry
+            .as_ref()
+            .expect("recovery binds registry evidence")
+            .release_commit,
+        recovery.body.release_commit
+    );
+    assert_eq!(
+        recovery.body.operations,
+        [
+            "resolve-preconditions-and-credentials",
+            "await-registry-visibility",
+            "create-immutable-tag",
+            "announce",
+        ]
+    );
+    let apply = format!("--apply={}", recovery.body.key);
+    let recovered = fixture.invoke(&[
+        "--json",
+        "release",
+        "publish",
+        "--notes-file",
+        notes,
+        "--action",
+        "tag-and-announce",
+        &apply,
+    ]);
+    assert!(
+        recovered.status.success(),
+        "recovery apply failed: {}",
+        spoken(&recovered)
+    );
+    assert!(!recognition(&recovered).1.fresh);
 }
 
 #[test]

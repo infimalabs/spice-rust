@@ -345,25 +345,15 @@ async fn dispatch_action(
             life,
             vendor,
         } => {
-            let lane = random_uuid()?;
-            let body = LaneSeat {
+            send_lane_seat(
+                principal,
+                writer,
+                pending,
                 topology_revision,
-                lane,
-                lineage_id: lane,
                 name,
                 worktree,
                 life,
                 vendor,
-                resume: None,
-            };
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::LaneSeat,
-                CommandKind::LaneSeat,
-                vec![],
-                body,
             )
             .await
         }
@@ -437,28 +427,85 @@ async fn dispatch_action(
             message,
             attachments,
         } => {
-            let body = SteerSend {
-                lane,
-                message,
-                attachments,
-            };
-            let expected = vec![Witness::Residency {
-                lane,
-                occupant,
-                epoch,
-            }];
-            send_typed(
+            send_steer(
                 principal,
                 writer,
                 pending,
-                PendingKind::Steer { lane },
-                CommandKind::SteerSend,
-                expected,
-                body,
+                lane,
+                occupant,
+                epoch,
+                message,
+                attachments,
             )
             .await
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_steer(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    message: String,
+    attachments: Vec<DirectiveAttachment>,
+) -> Result<(), String> {
+    let body = SteerSend {
+        lane,
+        message,
+        attachments,
+    };
+    let expected = vec![Witness::Residency {
+        lane,
+        occupant,
+        epoch,
+    }];
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::Steer { lane },
+        CommandKind::SteerSend,
+        expected,
+        body,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_lane_seat(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    topology_revision: u64,
+    name: Option<String>,
+    worktree: String,
+    life: String,
+    vendor: wire::Name,
+) -> Result<(), String> {
+    let lane = random_uuid()?;
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::LaneSeat,
+        CommandKind::LaneSeat,
+        vec![],
+        LaneSeat {
+            topology_revision,
+            lane,
+            lineage_id: lane,
+            name,
+            worktree,
+            life,
+            vendor,
+            resume: None,
+        },
+    )
+    .await
 }
 
 async fn drain_submissions(

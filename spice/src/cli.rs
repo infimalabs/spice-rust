@@ -142,6 +142,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::EffortRead
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
+        | CommandKind::TasteProposalAdd
         | CommandKind::GateFindings
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
@@ -329,7 +330,8 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["doc", "ledger"]
         | ["taste"]
         | ["taste", "add"]
-        | ["taste", "drop"] => Landing::Landed,
+        | ["taste", "drop"]
+        | ["taste", "mine"] => Landing::Landed,
         _ => Landing::Unaccounted,
     }
 }

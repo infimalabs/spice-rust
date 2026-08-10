@@ -791,6 +791,32 @@ pub(crate) fn submit_task_add(
     })
 }
 
+pub(crate) fn submit_taste_proposal(
+    repository: &Repository,
+    contract: &Contract,
+    body: TasteProposalAdd,
+) -> Outcome<CommandAnswer> {
+    mutate_from_board(repository, contract, |board| {
+        let handle = super::taste_proposal_handle(&body.occurrence);
+        if board
+            .tasks
+            .iter()
+            .any(|task| task.statement.body.handle == handle)
+        {
+            return Err(refusal(
+                "taste::proposal-identity-collision",
+                Some(handle.to_string()),
+                "re-read mined proposal standing before filing this occurrence",
+            ));
+        }
+        Ok((
+            CommandKind::TasteProposalAdd,
+            vec![Witness::Absence { task: handle }],
+            serde_json::to_value(body).expect("typed intent encodes"),
+        ))
+    })
+}
+
 fn mutate_task<F>(
     repository: &Repository,
     contract: &Contract,
@@ -847,7 +873,7 @@ where
     crate::command_client::execute_typed(repository, contract, kind, expected, &body)
 }
 
-pub(super) fn current_board(
+pub(crate) fn current_board(
     repository: &Repository,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["board"]).expect("board read contract is registered");
@@ -1154,6 +1180,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects, allocation),
         wire::intent::Intent::TaskOopsAdd(add) => {
             task_oops_add(bus, command, add, projects, allocation)
+        }
+        wire::intent::Intent::TasteProposalAdd(add) => {
+            taste_proposal_add(bus, command, add, projects, allocation)
         }
         wire::intent::Intent::GateFindings(findings) => {
             gate_findings(bus, command, findings, projects, allocation)

@@ -337,6 +337,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         ["taste"] => deliver(&taste_command::report(contract), form),
         ["taste", "add"] => deliver(&taste_command::add(leaf, contract), form),
         ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract), form),
+        ["taste", "mine"] => deliver(&taste_command::mine(contract), form),
         _ => {}
     }
 }

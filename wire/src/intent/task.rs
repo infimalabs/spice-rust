@@ -72,6 +72,31 @@ pub struct TaskOopsAdd {
     pub origin: Option<Origin>,
 }
 
+/// File one evidence-backed taste candidate through the fixed hidden proposal route.
+///
+/// The route and workflow are server-owned. A caller supplies the stable finding
+/// and occurrence identities plus review material, but cannot target an
+/// arbitrary hidden project or activate tracked policy directly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TasteProposalAdd {
+    /// Stable identity of the recurring correction theme.
+    pub finding: Digest,
+    /// Identity of the exact independent-locus set this filing covers.
+    pub occurrence: Digest,
+    /// One-line statement of the proposed review work.
+    pub title: String,
+    /// Exact cited evidence and the proposed tracked row.
+    pub description: String,
+    /// Criteria the operator-reviewed proposal must satisfy.
+    pub acceptance: Vec<String>,
+    /// Causal steering directive that supplied the oldest cited correction.
+    pub origin: Origin,
+    /// Completed predecessor, present only for a later genuine recurrence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends: Vec<TaskHandle>,
+}
+
 /// File the exact findings folded from one registered gate run.
 ///
 /// No caller-authored finding rows cross this boundary; the resident decodes

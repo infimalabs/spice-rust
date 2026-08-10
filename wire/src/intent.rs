@@ -43,7 +43,7 @@ pub use task::{
     EffortAvailability, EffortIdentity, EffortPhaseAnswer, EffortRead, EffortSegmentAnswer,
     EffortUnavailable, EffortUnavailableCode, EffortUsage, GateFindings, ReviewFollowup, TaskAdd,
     TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd,
-    TaskPhase, TaskRef, TaskReview,
+    TaskPhase, TaskRef, TaskReview, TasteProposalAdd,
 };
 
 /// Append one durable directive to a lane.

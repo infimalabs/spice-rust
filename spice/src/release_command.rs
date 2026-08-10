@@ -442,6 +442,68 @@ fn resolve_external_preconditions(
         release_commit.to_owned()
     };
     let clean = tracked_worktree_clean(root)?;
+    validate_release_state(
+        clean,
+        &source_version,
+        &release_version,
+        &requested_version,
+        bump_claimed,
+        unrecorded_local_commits,
+        &head,
+        release_commit,
+    )?;
+    let action = match matches.get_one::<String>("action").map(String::as_str) {
+        None | Some("publish") => dist::ReleaseAction::Publish,
+        Some("tag-and-announce") => dist::ReleaseAction::TagAndAnnounce,
+        Some(other) => return Err(format!("unsupported release action {other:?}")),
+    };
+    let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
+    let refs = authority.refs(&requested_version);
+    git_required(root, &["ls-remote", "--refs", authority.remote()])?;
+    let source_ref = normalize_source_ref(
+        remote_ref(root, authority.remote(), refs.source())?,
+        &source_commit,
+        release_commit,
+    );
+    let package_ref = remote_ref(root, authority.remote(), refs.package())?;
+    let tag_ref = normalize_converged_ref(
+        remote_ref(root, authority.remote(), refs.tag())?,
+        release_commit,
+    );
+    let announcement_ref = normalize_converged_ref(
+        remote_ref(root, authority.remote(), refs.announcement())?,
+        release_commit,
+    );
+    validate_release_refs(&source_ref, &tag_ref, &announcement_ref, release_commit)?;
+    Ok(ExternalPreconditions {
+        requested_version,
+        source_commit,
+        action,
+        repository: repository_identity(root, authority.remote())?,
+        head,
+        clean,
+        bump_claimed,
+        unrecorded_local_commits,
+        source_version,
+        release_version,
+        source_ref,
+        package_ref,
+        tag_ref,
+        announcement_ref,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_release_state(
+    clean: bool,
+    source_version: &ProductVersion,
+    release_version: &ProductVersion,
+    requested_version: &ProductVersion,
+    bump_claimed: bool,
+    unrecorded_local_commits: u64,
+    head: &str,
+    release_commit: &str,
+) -> Result<(), String> {
     if !clean {
         return Err("the release worktree is dirty".to_owned());
     }
@@ -465,57 +527,27 @@ fn resolve_external_preconditions(
             "release commit {release_commit} is not HEAD {head}"
         ));
     }
-    let action = match matches.get_one::<String>("action").map(String::as_str) {
-        None | Some("publish") => dist::ReleaseAction::Publish,
-        Some("tag-and-announce") => dist::ReleaseAction::TagAndAnnounce,
-        Some(other) => return Err(format!("unsupported release action {other:?}")),
-    };
-    let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
-    let refs = authority.refs(&requested_version);
-    git_required(root, &["ls-remote", "--refs", authority.remote()])?;
-    let source_ref = normalize_source_ref(
-        remote_ref(root, authority.remote(), refs.source())?,
-        &source_commit,
-        release_commit,
-    );
-    let package_ref = remote_ref(root, authority.remote(), refs.package())?;
-    let tag_ref = normalize_converged_ref(
-        remote_ref(root, authority.remote(), refs.tag())?,
-        release_commit,
-    );
-    let announcement_ref = normalize_converged_ref(
-        remote_ref(root, authority.remote(), refs.announcement())?,
-        release_commit,
-    );
-    if let Some(object) = &source_ref {
-        return Err(format!(
-            "the source ref names {object}, not {release_commit}"
-        ));
+    Ok(())
+}
+
+fn validate_release_refs(
+    source: &Option<String>,
+    tag: &Option<String>,
+    announcement: &Option<String>,
+    release_commit: &str,
+) -> Result<(), String> {
+    for (name, object) in [
+        ("source", source),
+        ("tag", tag),
+        ("announcement", announcement),
+    ] {
+        if let Some(object) = object {
+            return Err(format!(
+                "the {name} ref names {object}, not {release_commit}"
+            ));
+        }
     }
-    if let Some(object) = &tag_ref {
-        return Err(format!("the tag ref names {object}, not {release_commit}"));
-    }
-    if let Some(object) = &announcement_ref {
-        return Err(format!(
-            "the announcement ref names {object}, not {release_commit}"
-        ));
-    }
-    Ok(ExternalPreconditions {
-        requested_version,
-        source_commit,
-        action,
-        repository: repository_identity(root, authority.remote())?,
-        head,
-        clean,
-        bump_claimed,
-        unrecorded_local_commits,
-        source_version,
-        release_version,
-        source_ref,
-        package_ref,
-        tag_ref,
-        announcement_ref,
-    })
+    Ok(())
 }
 
 fn bind_external_plan(

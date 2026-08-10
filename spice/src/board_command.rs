@@ -12,7 +12,7 @@ use wire::intent::{
     BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead, BoardTask, ClaimRenew,
     ClaimWin, CommandAnswer, DocApply, DocLedger, GateFindings, Positioned, ReviewFollowup,
     TaskAdd, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd,
-    TaskRef, TaskReview, TextAnswer,
+    TaskRef, TaskReview, TasteProposalAdd, TextAnswer,
 };
 use wire::{
     Actor, ClaimDisposition, ClaimHead, Command, CommandKind, Digest, Domain, Fault, FaultClass,
@@ -77,6 +77,12 @@ pub(crate) fn parse_origin(
             })
         })
         .transpose()
+}
+
+pub(crate) fn taste_proposal_handle(occurrence: &wire::Digest) -> wire::TaskHandle {
+    format!("TASTE-{}", &occurrence.as_str()[..16])
+        .parse()
+        .expect("digest prefix forms an admitted deterministic task handle")
 }
 
 #[cfg(test)]

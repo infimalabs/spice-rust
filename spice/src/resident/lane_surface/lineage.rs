@@ -27,6 +27,15 @@ struct MembershipChange {
     source_rekeyed_to: Option<CanonicalUuid>,
 }
 
+struct ConfiguredLineage {
+    membership: Option<MembershipChange>,
+    previous: wire::LineageSubscription,
+    manual_projects: Vec<String>,
+    sources: Vec<wire::body::LaneSourceBoundary>,
+    next: wire::ResidencyHead,
+    answer: LaneAnswer,
+}
+
 /// Commit one task-subscription policy and optional member move.
 ///
 /// `drain` here is a policy spelling. Occupant teardown remains exclusively
@@ -103,6 +112,31 @@ pub(in crate::resident) fn configure(
             return typed_store_fault("lineage::boundary-unreadable", &error.to_string());
         }
     };
+    commit_configured(
+        bus,
+        epoch,
+        command,
+        request,
+        &observed,
+        ConfiguredLineage {
+            membership,
+            previous,
+            manual_projects: configured_manual_projects,
+            sources,
+            next,
+            answer: lane_answer,
+        },
+    )
+}
+
+fn commit_configured(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    request: &LineageConfigure,
+    observed: &journal::JournalHead<wire::ResidencyHead>,
+    configured: ConfiguredLineage,
+) -> Outcome<CommandAnswer> {
     let mut write = match write(
         command.actor().clone(),
         epoch,
@@ -111,25 +145,30 @@ pub(in crate::resident) fn configure(
         Ok(write) => write,
         Err(outcome) => return typed_outcome(outcome),
     };
-    guard_residency(&mut write, &observed);
+    guard_residency(&mut write, observed);
     let fact = match write.fact(
         wire::body::LineageConfigured {
             lineage_id: request.lineage_id,
-            member: membership.as_ref().map(|change| change.member),
-            from_lineage: membership.as_ref().map(|change| change.from_lineage),
-            source_rekeyed_to: membership.and_then(|change| change.source_rekeyed_to),
-            from: previous.policy,
+            member: configured.membership.as_ref().map(|change| change.member),
+            from_lineage: configured
+                .membership
+                .as_ref()
+                .map(|change| change.from_lineage),
+            source_rekeyed_to: configured
+                .membership
+                .and_then(|change| change.source_rekeyed_to),
+            from: configured.previous.policy,
             life: request.life,
-            from_manual_projects: previous.manual_projects,
-            manual_projects: configured_manual_projects,
-            sources,
+            from_manual_projects: configured.previous.manual_projects,
+            manual_projects: configured.manual_projects,
+            sources: configured.sources,
         },
         FactCause::Existing(observed.position()),
     ) {
         Ok(fact) => fact,
         Err(error) => return typed_store_fault("lineage::fact-invalid", &error.to_string()),
     };
-    write.residency_head(fact, move |_| next);
+    write.residency_head(fact, move |_| configured.next);
     if let Err(error) = write.command_result(
         Command {
             v: wire::WireVersion::CURRENT,
@@ -140,7 +179,7 @@ pub(in crate::resident) fn configure(
             body: request.clone(),
         },
         epoch,
-        lane_answer.clone(),
+        configured.answer.clone(),
     ) {
         return typed_store_fault("lineage::receipt-invalid", &error.to_string());
     }
@@ -150,7 +189,7 @@ pub(in crate::resident) fn configure(
                 first: seq(committed.first()),
                 last: seq(committed.last()),
             }),
-            body: CommandAnswer::Lane(Box::new(lane_answer)),
+            body: CommandAnswer::Lane(Box::new(configured.answer)),
         }),
         Err(outcome) => typed_outcome(outcome),
     }

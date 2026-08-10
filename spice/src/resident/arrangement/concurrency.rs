@@ -80,10 +80,11 @@ impl Arranged {
         let Outcome::Refusal(refusal) = outcome else {
             panic!("stale topology mutation must refuse: {outcome:?}");
         };
-        assert_eq!(refusal.reason, "lane::topology-moved");
-        assert_eq!(refusal.witness.as_deref(), Some("topology_revision"));
-        assert_eq!(refusal.expected, Some(requested.to_string()));
-        assert_eq!(refusal.observed, Some(current.to_string()));
+        assert_eq!(refusal.reason(), "lane::topology-moved");
+        let diagnostic = refusal.diagnostic().expect("predicate refusal");
+        assert_eq!(diagnostic.witness(), Some("topology_revision"));
+        assert_eq!(diagnostic.expected(), Some(requested.to_string().as_str()));
+        assert_eq!(diagnostic.observed(), Some(current.to_string().as_str()));
     }
 
     fn committed_arrangement(

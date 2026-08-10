@@ -896,6 +896,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "taste::drop"
     ),
     row!(
+        ["taste", "mine"],
+        "taste mine",
+        Operator,
+        Command,
+        [TaskAdded],
+        [Resident, OperatorCapability],
+        Reply,
+        "taste::mine"
+    ),
+    row!(
         ["trust"],
         "trust",
         Operator,

@@ -15,6 +15,9 @@ use wire::{
 
 use crate::cli::Contract;
 
+mod mining;
+pub(crate) use mining::mine;
+
 const PROJECT: &str = "taste.policy";
 
 /// Recent fires carried per taste.
@@ -30,6 +33,7 @@ struct Surface {
     location: String,
     digest: Digest,
     tastes: Vec<TasteDefinition>,
+    mining_threshold: Option<usize>,
 }
 
 impl Surface {
@@ -55,11 +59,13 @@ impl Surface {
                 message: taste.message().to_owned(),
             })
             .collect();
+        let mining_threshold = loaded.resolved().root().policy().taste_mining_threshold();
         Ok(Self {
             text,
             location,
             digest,
             tastes,
+            mining_threshold,
         })
     }
 
