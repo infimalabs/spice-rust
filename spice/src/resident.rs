@@ -41,6 +41,8 @@ mod timers;
 
 #[cfg(test)]
 use message_surface::AgentMessagePublisher;
+#[cfg(test)]
+use message_surface::CaptureViews;
 use message_surface::{CallPreviews, CaptureSurfaces, accept_capture_record};
 use shutdown::{current_residency, drive_shutdown};
 

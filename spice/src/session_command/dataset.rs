@@ -10,6 +10,10 @@ use serde_json::Value;
 use spice::session_meter::ContextSnapshot;
 use wire::Refusal;
 
+use crate::message_shape::{
+    MessageShape, UNRECOVERABLE_REHYDRATION_INTENT, classify, rehydration_intent,
+};
+
 use super::model::{
     CommandRecord, CompactionRecord, Dataset, MessageRecord, Residue, SourceView, TokenRecord,
     TurnRecord, Vendor,
@@ -22,9 +26,6 @@ use horizon::read_records;
 pub(crate) use horizon::recent_compaction_horizon;
 
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
-const UNPARSEABLE_INTENT: &str = "unparseable compaction summary intent";
-const HYPHEN_BYTE: u8 = 45;
-const UNDERSCORE_BYTE: u8 = 95;
 
 #[derive(Debug)]
 struct TypedRecord {
@@ -440,7 +441,8 @@ fn push_message(
         return;
     }
     let timestamp = record_timestamp(record);
-    let (primary_flavor, flavor_tags, matched_cues, human) = classify_message(side, phase, text);
+    let (primary_flavor, flavor_tags, matched_cues) = classify_message(side, phase, text);
+    let classified = classify(text);
     let message = MessageRecord {
         source: record.source.clone(),
         ts: timestamp.to_owned(),
@@ -451,7 +453,8 @@ fn push_message(
         primary_flavor,
         flavor_tags,
         matched_cues,
-        human,
+        shape: classified.shape,
+        authored: classified.authored.map(str::to_owned),
     };
     if dataset.turns[index].messages.iter().any(|row| {
         row.ts == message.ts
@@ -466,11 +469,7 @@ fn push_message(
     touch_turn(dataset, index, timestamp);
 }
 
-fn classify_message(
-    side: &str,
-    phase: &str,
-    text: &str,
-) -> (String, Vec<String>, Vec<String>, bool) {
+fn classify_message(side: &str, phase: &str, text: &str) -> (String, Vec<String>, Vec<String>) {
     let lower = text.to_lowercase();
     let stripped = lower.trim_start();
     let mut tags = Vec::new();
@@ -493,7 +492,7 @@ fn classify_message(
         } else if text.trim_start().starts_with("NACK ") {
             tags.push("steering_nack".to_owned());
         }
-        return (flavor.to_owned(), dedupe(tags), dedupe(cues), false);
+        return (flavor.to_owned(), dedupe(tags), dedupe(cues));
     }
 
     let question = question_cues(&lower, stripped);
@@ -554,12 +553,7 @@ fn classify_message(
     .find(|candidate| tags.iter().any(|tag| tag == candidate))
     .unwrap_or("plain")
     .to_owned();
-    (
-        primary,
-        dedupe(tags),
-        dedupe(cues),
-        human_user_message(text),
-    )
+    (primary, dedupe(tags), dedupe(cues))
 }
 
 fn question_cues(lower: &str, stripped: &str) -> Vec<String> {
@@ -584,48 +578,6 @@ fn pattern_cues(lower: &str, patterns: &[&str]) -> Vec<String> {
         .filter(|pattern| lower.contains(**pattern))
         .map(|pattern| (*pattern).to_owned())
         .collect()
-}
-
-fn human_user_message(text: &str) -> bool {
-    let trimmed = text.trim_start();
-    ![
-        "The linked skill below carries the full authority",
-        "[$spice](",
-        "This session is being continued from a previous conversation",
-        "<task-notification>",
-        "<user_instructions>",
-        "<environment_context>",
-        "<ENVIRONMENT",
-        "Your tool call was malformed",
-        "[Your previous response had no visible output",
-    ]
-    .into_iter()
-    .any(|prefix| trimmed.starts_with(prefix))
-        && !complete_tag_envelope(trimmed)
-}
-
-fn complete_tag_envelope(text: &str) -> bool {
-    if !text.starts_with('<') {
-        return false;
-    }
-    let open_end = match text.find('>') {
-        Some(index) => index,
-        None => return false,
-    };
-    let opening = &text[1..open_end];
-    let tag = match opening.split_whitespace().next() {
-        Some(candidate) => candidate.trim_end_matches('/'),
-        None => return false,
-    };
-    if tag.is_empty() {
-        return false;
-    }
-    for byte in tag.bytes() {
-        if !(byte.is_ascii_alphanumeric() || byte == UNDERSCORE_BYTE || byte == HYPHEN_BYTE) {
-            return false;
-        }
-    }
-    text.trim_end().ends_with(&format!("</{tag}>"))
 }
 
 fn dedupe(values: Vec<String>) -> Vec<String> {
@@ -854,12 +806,7 @@ fn reconstruct_compactions(markers: &[Marker], dataset: &mut Dataset) {
                 .messages
                 .iter()
                 .filter(after)
-                .find(|message| {
-                    message
-                        .text
-                        .trim_start()
-                        .starts_with("This session is being continued from a previous conversation")
-                })
+                .find(|message| message.shape == MessageShape::CompactionRehydration)
                 .map_or_else(String::new, |message| message.text.clone())
         } else {
             marker.summary.clone()
@@ -868,8 +815,9 @@ fn reconstruct_compactions(markers: &[Marker], dataset: &mut Dataset) {
             .messages
             .iter()
             .filter(after)
-            .find(|message| message.side == "user" && message.human)
-            .map_or_else(String::new, |message| message.text.clone());
+            .find(|message| message.side == "user" && message.shape.is_authored())
+            .and_then(|message| message.authored.clone())
+            .unwrap_or_default();
         dataset.compactions.push(CompactionRecord {
             source: marker.source.clone(),
             ts: marker.ts.clone(),
@@ -883,32 +831,9 @@ fn reconstruct_compactions(markers: &[Marker], dataset: &mut Dataset) {
 
 fn compaction_intent(summary: &str) -> String {
     if summary.is_empty() {
-        return String::new();
+        return UNRECOVERABLE_REHYDRATION_INTENT.to_owned();
     }
-    let lines = summary.lines().collect::<Vec<_>>();
-    let Some(start) = lines
-        .iter()
-        .position(|line| line.contains("Primary Request and Intent"))
-    else {
-        return UNPARSEABLE_INTENT.to_owned();
-    };
-    let selected = lines
-        .iter()
-        .skip(start + 1)
-        .take_while(|line| {
-            let trimmed = line.trim_start();
-            !(trimmed.starts_with(|character: char| character.is_ascii_digit())
-                && trimmed.contains(". "))
-        })
-        .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    if selected.is_empty() {
-        UNPARSEABLE_INTENT.to_owned()
-    } else {
-        selected
-    }
+    rehydration_intent(summary)
 }
 
 fn account_compactions(dataset: &mut Dataset) {

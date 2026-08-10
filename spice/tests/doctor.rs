@@ -33,7 +33,7 @@ impl Scratch {
     }
 
     fn tracked(&self, text: &str) {
-        fs::write(self.0.join("spice.toml"), text).expect("write tracked configuration");
+        fs::write(self.0.join("spice-rust.toml"), text).expect("write tracked configuration");
     }
 
     fn local(&self, text: &str) {
@@ -174,8 +174,8 @@ fn same_report(text: &Spoken, json: &Spoken) -> DoctorReport<Root> {
 #[test]
 fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
     let repository = Scratch::repository("shared-metadata");
-    let tracked = include_bytes!("../../spice.toml");
-    fs::write(repository.path().join("spice.toml"), tracked)
+    let tracked = include_bytes!("../../spice-rust.toml");
+    fs::write(repository.path().join("spice-rust.toml"), tracked)
         .expect("copy exact tracked configuration");
     let hook = repository.path().join(".git/.spice/hooks/pre-commit");
     fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hook directory");
@@ -290,7 +290,7 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         );
     }
     assert_eq!(
-        fs::read(repository.path().join("spice.toml")).unwrap(),
+        fs::read(repository.path().join("spice-rust.toml")).unwrap(),
         tracked
     );
     assert_eq!(fs::read(&hook).unwrap(), b"active operator hook sentinel\n");
@@ -309,7 +309,7 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
     );
     assert_eq!(
         report.locations.tracked_configuration,
-        canonical.join("spice.toml").display().to_string()
+        canonical.join("spice-rust.toml").display().to_string()
     );
     assert_eq!(
         report.locations.local_configuration,
@@ -516,7 +516,7 @@ fn missing_required_proof_runtime_is_an_unhealthy_row_inside_a_direct_reply() {
 #[test]
 fn malformed_and_unknown_configuration_are_typed_refusals_from_both_exact_paths() {
     for (label, tracked, local, expected) in [
-        ("tracked-syntax", "[lane\n", "", "spice.toml"),
+        ("tracked-syntax", "[lane\n", "", "spice-rust.toml"),
         (
             "local-syntax",
             "",

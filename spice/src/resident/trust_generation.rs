@@ -27,7 +27,7 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
         "[taste.fallbacks]\nwords = [\"fallback*\"]\nmessage = \"Keep one path.\"\n",
     );
     let (root, paths) = resident_fixture("startup-single-capture");
-    let tracked = root.join("spice.toml");
+    let tracked = root.join("spice-rust.toml");
     fs::write(&tracked, FIRST).expect("write first startup policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
 
@@ -102,7 +102,7 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
 #[test]
 fn policy_movement_after_pend_refuses_seating_and_retry_pends_the_new_digest() {
     let (root, paths) = resident_fixture("trust-pend-generation");
-    let tracked = root.join("spice.toml");
+    let tracked = root.join("spice-rust.toml");
     fs::write(&tracked, "# tracked policy v1\n").expect("write first policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let surface = crate::trust_command::Surface::load(&repository).expect("first surface loads");
@@ -154,7 +154,7 @@ fn policy_movement_after_pend_refuses_seating_and_retry_pends_the_new_digest() {
 #[test]
 fn equal_byte_replacement_with_an_existing_head_refuses_zero_write_seating() {
     let (root, paths) = resident_fixture("trust-existing-generation");
-    let tracked = root.join("spice.toml");
+    let tracked = root.join("spice-rust.toml");
     let bytes = "# stable tracked policy\n";
     fs::write(&tracked, bytes).expect("write tracked policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
@@ -186,7 +186,7 @@ fn equal_byte_replacement_with_an_existing_head_refuses_zero_write_seating() {
 #[test]
 fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
     let (root, paths) = resident_fixture("trust-ruling-generation");
-    let tracked = root.join("spice.toml");
+    let tracked = root.join("spice-rust.toml");
     let bytes = "# stable ruling policy\n";
     fs::write(&tracked, bytes).expect("write tracked policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");

@@ -52,7 +52,7 @@ fn production_contract_distinguishes_clean_and_camped_complete_populations() {
 
 fn profile_tree(label: &str, lengths: [usize; 4]) -> Tree {
     let tree = git_repository(label);
-    tree.write("spice.toml", gate::NARROWEST_FILE_CLASSES);
+    tree.write("spice-rust.toml", gate::NARROWEST_FILE_CLASSES);
     tree.write("baseline.toml", BASELINE);
     for (path, length) in LOCI.into_iter().zip(lengths) {
         assert!(length <= LONG_LINE_LIMIT + 6);
@@ -63,7 +63,7 @@ fn profile_tree(label: &str, lengths: [usize; 4]) -> Tree {
 }
 
 fn tracked_bytes(tree: &Tree) -> Vec<(String, Vec<u8>)> {
-    ["spice.toml", "baseline.toml"]
+    ["spice-rust.toml", "baseline.toml"]
         .into_iter()
         .chain(LOCI)
         .map(|path| {

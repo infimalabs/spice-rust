@@ -44,8 +44,8 @@ pub(super) fn configure(fixture: &Fixture) -> Rig {
         CODEX_MODEL,
         CODEX_PERSONALITY,
     );
-    fs::write(fixture.root.join("spice.toml"), &document).expect("Claude config");
-    fs::write(codex_worktree.join("spice.toml"), document).expect("Codex config");
+    fs::write(fixture.root.join("spice-rust.toml"), &document).expect("Claude config");
+    fs::write(codex_worktree.join("spice-rust.toml"), document).expect("Codex config");
     Rig {
         codex_worktree,
         capture_index,

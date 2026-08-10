@@ -476,8 +476,8 @@ fn configure_vendors(fixture: &Fixture) -> VendorFixture {
         claude_binary.display().to_string(),
         codex_binary.display().to_string(),
     );
-    fs::write(fixture.root.join("spice.toml"), &config).expect("Claude worktree config");
-    fs::write(codex_worktree.join("spice.toml"), config).expect("Codex worktree config");
+    fs::write(fixture.root.join("spice-rust.toml"), &config).expect("Claude worktree config");
+    fs::write(codex_worktree.join("spice-rust.toml"), config).expect("Codex worktree config");
     VendorFixture {
         codex_worktree,
         claude_control,

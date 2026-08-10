@@ -189,6 +189,8 @@ pub enum DoctorToolSource {
     ProofBattery,
     /// The task-boundary contract supplies a bounded executable.
     TaskBoundaryContract,
+    /// The shared adjudication contract supplies the optional judge executable.
+    AdjudicationContract,
     /// A worktree-local integration seam supplies the executable.
     WorktreeConfiguration,
 }
@@ -202,6 +204,7 @@ impl DoctorToolSource {
         Self::ProofRuntime,
         Self::ProofBattery,
         Self::TaskBoundaryContract,
+        Self::AdjudicationContract,
         Self::WorktreeConfiguration,
     ];
 }
@@ -218,6 +221,8 @@ pub enum DoctorToolBounds {
     ProofLimits,
     /// The task boundary owns command deadlines and bounded captured output.
     TaskBoundary,
+    /// The shared adjudication service owns deadline and output bounds.
+    Adjudication,
     /// Observation never starts the tool.
     NotExecuted,
 }
@@ -229,6 +234,7 @@ impl DoctorToolBounds {
         Self::GateContract,
         Self::ProofLimits,
         Self::TaskBoundary,
+        Self::Adjudication,
         Self::NotExecuted,
     ];
 }
@@ -437,7 +443,7 @@ mod tests {
             r#"{"target":{"os":"linux","architecture":"x86_64"}"#,
             r#","locations":{"working":"/repo","repository":"/repo""#,
             r#","repository_common":"/repo/.git""#,
-            r#","tracked_configuration":"/repo/spice.toml""#,
+            r#","tracked_configuration":"/repo/spice-rust.toml""#,
             r#","local_configuration":"/repo/.git/.spice-rs/config.toml"}"#,
             r#","environment":[{"variable":"SPICE_RS_HOOKS""#, // env-policy: allow
             r#","observation":{"status":"ready"}}]"#,

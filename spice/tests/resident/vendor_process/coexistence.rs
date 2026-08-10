@@ -357,9 +357,9 @@ fn installed_spice_lifecycle_leaves_the_predecessor_system_untouched() {
 
 fn prepare_coexistence_repository(fixture: &Fixture, rig: &Rig) {
     let mut document =
-        fs::read_to_string(fixture.root.join("spice.toml")).expect("fixture config reads");
+        fs::read_to_string(fixture.root.join("spice-rust.toml")).expect("fixture config reads");
     document.push_str("\n[tasks]\nstems = [\"coexistence\"]\n");
-    fs::write(fixture.root.join("spice.toml"), &document).expect("Claude config extends");
+    fs::write(fixture.root.join("spice-rust.toml"), &document).expect("Claude config extends");
     fs::write(
         fixture.root.join(".gitignore"),
         format!(
@@ -387,7 +387,7 @@ fn prepare_coexistence_repository(fixture: &Fixture, rig: &Rig) {
         &fixture.root,
         &["config", "user.email", "coexistence@spice.invalid"],
     );
-    fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
+    fixture_git(&fixture.root, &["add", ".gitignore", "spice-rust.toml"]);
     fixture_git(&fixture.root, &["commit", "-m", "coexistence fixture"]);
     assert_fixture_repository_clean(&fixture.root);
     fs::remove_dir_all(&rig.codex_worktree).expect("synthetic Codex worktree withdraws");

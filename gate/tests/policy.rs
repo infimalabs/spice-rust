@@ -245,7 +245,7 @@ fn migration_assigns_stable_ids_and_preserves_selection_and_bound_order() {
 #[test]
 fn generated_markdown_rules_retain_regex_one_letter_depth_and_priority() {
     let policy = migrate_predecessor_policy(
-        "tracked/spice.toml",
+        "tracked/spice-rust.toml",
         &loadable(
             r#"
         [policy.limits]
@@ -305,7 +305,7 @@ fn generated_markdown_rules_retain_regex_one_letter_depth_and_priority() {
 #[test]
 fn repository_document_selection_unifies_explicit_paths_and_generated_depth_rules() {
     let policy = migrate_predecessor_policy(
-        "tracked/spice.toml",
+        "tracked/spice-rust.toml",
         &loadable(
             r#"
         [policy.repo_truth]

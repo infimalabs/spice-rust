@@ -801,7 +801,7 @@ fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
             "tracked-file" => {
                 let target = fixture.root.join("outside-tracked.toml");
                 fs::write(&target, "# linked tracked policy\n").expect("write tracked target");
-                symlink(&target, fixture.root.join("spice.toml"))
+                symlink(&target, fixture.root.join("spice-rust.toml"))
                     .expect("link tracked policy file");
             }
             "local-file" => {
@@ -859,7 +859,7 @@ fn operator_trust_process_binds_policy_bytes_across_reconnect_and_restart() {
 fn trust_fixture() -> Fixture {
     let fixture = Fixture::new("trust-lifecycle");
     fs::write(
-        fixture.root.join("spice.toml"),
+        fixture.root.join("spice-rust.toml"),
         "# tracked executable policy v1\n",
     )
     .expect("tracked policy writes");
@@ -963,7 +963,7 @@ fn start_changed_trust(
     assert!(invoke(fixture, "down").status.success());
     assert!(resident.wait().status.success());
     fs::write(
-        fixture.root.join("spice.toml"),
+        fixture.root.join("spice-rust.toml"),
         "# tracked executable policy v2\n",
     )
     .expect("tracked policy changes");

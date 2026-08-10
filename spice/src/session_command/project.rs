@@ -313,10 +313,10 @@ pub(crate) fn summary(dataset: &Dataset, matches: &ArgMatches) -> Result<Report,
     let prompts = dataset
         .messages
         .iter()
-        .filter(|row| row.side == "user" && row.human)
+        .filter(|row| row.side == "user" && row.authored.is_some())
         .rev()
         .take(recent)
-        .map(message_view)
+        .map(authored_message_view)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
@@ -324,10 +324,12 @@ pub(crate) fn summary(dataset: &Dataset, matches: &ArgMatches) -> Result<Report,
     let finals = dataset
         .messages
         .iter()
-        .filter(|row| row.side == "assistant" && row.phase == "final_answer")
+        .filter(|row| {
+            row.side == "assistant" && row.phase == "final_answer" && row.authored.is_some()
+        })
         .rev()
         .take(recent)
-        .map(message_view)
+        .map(authored_message_view)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
@@ -428,7 +430,7 @@ pub(crate) fn turns(
         .turns
         .iter()
         .filter(|turn| filters.turn_matches(turn))
-        .map(|turn| turn_view(turn, full, DEFAULT_TIMELINE_TEXT))
+        .map(|turn| turn_view(turn, full, DEFAULT_TIMELINE_TEXT, false))
         .collect::<Vec<_>>();
     trim_oldest(&mut rows, limit);
     Ok(Report::Turns {
@@ -532,8 +534,9 @@ pub(crate) fn commits(dataset: &Dataset, matches: &ArgMatches) -> Result<Report,
         let user = turn
             .messages
             .iter()
-            .find(|message| message.side == "user" && message.human)
-            .map(|message| clip(&message.text, 120))
+            .find(|message| message.side == "user" && message.authored.is_some())
+            .and_then(|message| message.authored.as_deref())
+            .map(|message| clip(message, 120))
             .unwrap_or_default();
         let mut messages = turn
             .messages
@@ -548,7 +551,10 @@ pub(crate) fn commits(dataset: &Dataset, matches: &ArgMatches) -> Result<Report,
                 .filter(|message| message.side == "assistant" && message.phase != "final_answer"),
         );
         for message in messages {
-            for line in message.text.lines() {
+            let Some(authored) = message.authored.as_deref() else {
+                continue;
+            };
+            for line in authored.lines() {
                 if !commit_line(line) {
                     continue;
                 }
@@ -586,7 +592,7 @@ pub(crate) fn thread(source: SourceView, dataset: &Dataset, id: String) -> Repor
         compactions: dataset.compactions.len(),
         start: dataset.turns.first().map(|turn| turn.start_ts.clone()),
         end: dataset.turns.last().map(turn_end),
-        latest_turn: latest.map(|turn| turn_view(turn, false, DEFAULT_TIMELINE_TEXT)),
+        latest_turn: latest.map(|turn| turn_view(turn, false, DEFAULT_TIMELINE_TEXT, false)),
     };
     Report::Thread {
         source,
@@ -613,15 +619,15 @@ fn recall_window(
             .or_else(|| compactions.last().map(|row| row.ts.clone())),
         turns: turns
             .iter()
-            .map(|turn| turn_view(turn, full, DEFAULT_TIMELINE_TEXT))
+            .map(|turn| turn_view(turn, full, DEFAULT_TIMELINE_TEXT, true))
             .collect(),
         compactions: compactions.into_iter().map(compaction_view).collect(),
         latest_final: turns.iter().rev().find_map(|turn| {
             turn.messages
                 .iter()
                 .rev()
-                .find(|message| message.phase == "final_answer")
-                .map(|message| message.text.clone())
+                .find(|message| message.phase == "final_answer" && message.authored.is_some())
+                .and_then(|message| message.authored.clone())
         }),
         activity: activity(turns.to_vec()),
     }
@@ -639,17 +645,24 @@ fn activity(turns: Vec<&TurnRecord>) -> ActivityView {
 fn estimated_budget(turns: &[&TurnRecord]) -> (usize, usize) {
     let lines = turns
         .iter()
-        .map(|turn| 1 + turn.messages.len())
+        .map(|turn| {
+            1 + turn
+                .messages
+                .iter()
+                .filter(|message| message.authored.is_some())
+                .count()
+        })
         .sum::<usize>();
     let bytes = turns
         .iter()
         .flat_map(|turn| turn.messages.iter())
-        .map(|message| message.text.len())
+        .filter_map(|message| message.authored.as_ref())
+        .map(String::len)
         .sum();
     (lines, bytes)
 }
 
-fn turn_view(turn: &TurnRecord, full: bool, max_text: usize) -> TurnView {
+fn turn_view(turn: &TurnRecord, full: bool, max_text: usize, authored_only: bool) -> TurnView {
     TurnView {
         source: turn.source.clone(),
         vendor: turn.vendor,
@@ -666,13 +679,20 @@ fn turn_view(turn: &TurnRecord, full: bool, max_text: usize) -> TurnView {
         dialogue: turn
             .messages
             .iter()
-            .map(|message| DialogueLine {
-                side: message.side.clone(),
-                text: if full {
-                    message.text.clone()
+            .filter_map(|message| {
+                let text = if authored_only {
+                    message.authored.as_deref()?
                 } else {
-                    clip(&message.text, max_text)
-                },
+                    &message.text
+                };
+                Some(DialogueLine {
+                    side: message.side.clone(),
+                    text: if full {
+                        text.to_owned()
+                    } else {
+                        clip(text, max_text)
+                    },
+                })
             })
             .collect(),
     }
@@ -685,11 +705,21 @@ fn message_view(row: &MessageRecord) -> MessageView {
         turn_id: row.turn_id.clone(),
         side: row.side.clone(),
         phase: row.phase.clone(),
+        shape: row.shape,
         flavor: row.primary_flavor.clone(),
         tags: row.flavor_tags.clone(),
         cues: row.matched_cues.clone(),
         text: row.text.clone(),
     }
+}
+
+fn authored_message_view(row: &MessageRecord) -> MessageView {
+    let mut view = message_view(row);
+    view.text = row
+        .authored
+        .clone()
+        .expect("authored message views are selected by authored presence");
+    view
 }
 
 fn compaction_view(row: &CompactionRecord) -> CompactionView {
@@ -727,15 +757,15 @@ fn turn_timeline_text(turn: &TurnRecord) -> String {
         .messages
         .iter()
         .rev()
-        .find(|message| message.side == "user")
-        .map(|message| message.text.as_str())
+        .find(|message| message.side == "user" && message.authored.is_some())
+        .and_then(|message| message.authored.as_deref())
         .unwrap_or("");
     let assistant = turn
         .messages
         .iter()
         .rev()
-        .find(|message| message.side == "assistant")
-        .map(|message| message.text.as_str())
+        .find(|message| message.side == "assistant" && message.authored.is_some())
+        .and_then(|message| message.authored.as_deref())
         .unwrap_or("");
     format!(
         "completed={} cmds={} patches={} errors={} user={} assistant={}",

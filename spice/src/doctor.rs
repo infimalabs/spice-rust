@@ -215,6 +215,10 @@ fn tool_observation(
             Ok(()) => DoctorObservation::Ready {},
             Err(reason) => DoctorObservation::Unavailable { reason },
         },
+        DoctorToolSource::AdjudicationContract => match probe.named(tool.name) {
+            Ok(()) => DoctorObservation::Ready {},
+            Err(reason) => DoctorObservation::Unavailable { reason },
+        },
         DoctorToolSource::WorktreeConfiguration => match probe.named(tool.name) {
             Ok(()) => DoctorObservation::Ready {},
             Err(reason) => DoctorObservation::Unavailable { reason },

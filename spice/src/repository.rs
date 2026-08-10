@@ -45,9 +45,9 @@
 //!   an operator running both at once has no journal to cross-write -- the
 //!   guarantee holds per file, and does not depend on the two never running
 //!   together.
-//! * **Config** is separate by anchor. `config.toml` here hangs off the common
-//!   root, while the predecessor's worktree config hangs off `<git-dir>/.spice`
-//!   and the root `spice.toml` schema stays the predecessor's.
+//! * **Config** is separate by name and anchor. This runtime reads tracked
+//!   `spice-rust.toml` plus common-root `.spice-rs/config.toml`; the predecessor
+//!   owns tracked `spice.toml` plus its `<git-dir>/.spice` configuration.
 //! * **Hooks** were separate before the question was asked: the installer owns
 //!   `.spice-install/`, which is not under this root at all.
 //! * **Worktree Git-dir state** is not shared, because this port keeps none.

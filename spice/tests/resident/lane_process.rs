@@ -91,8 +91,8 @@ pub(super) fn configure_successor_worktree(fixture: &Fixture) -> PathBuf {
     .expect("successor Git pointer");
     fs::write(git.join("commondir"), "../..\n").expect("successor common pointer");
     fs::copy(
-        fixture.root.join("spice.toml"),
-        successor.join("spice.toml"),
+        fixture.root.join("spice-rust.toml"),
+        successor.join("spice-rust.toml"),
     )
     .expect("successor vendor configuration copies");
     successor
@@ -115,7 +115,10 @@ pub(super) fn initialize_task_git_fixture(fixture: &Fixture) {
         ),
     )
     .expect("task fixture ignore writes");
-    fixture_git(fixture, &["add", ".gitignore", "fake-claude", "spice.toml"]);
+    fixture_git(
+        fixture,
+        &["add", ".gitignore", "fake-claude", "spice-rust.toml"],
+    );
     fixture_git(fixture, &["commit", "-m", "resident fixture"]);
     assert_fixture_repository_clean(&fixture.root);
 }
@@ -226,7 +229,7 @@ fn configure_vendor(fixture: &Fixture, script: &str) {
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))
         .expect("fake vendor becomes executable");
     fs::write(
-        fixture.root.join("spice.toml"),
+        fixture.root.join("spice-rust.toml"),
         format!(
             concat!(
                 "[lane]\n",
@@ -1021,10 +1024,11 @@ fn predecessor_import_launches_the_successor_through_the_shared_occupant_path() 
 fn manual_hidden_task_creation_refuses_for_operator_and_lane_processes() {
     let fixture = Fixture::new("hidden-task-creation");
     configure_fake_vendor(&fixture);
-    let mut config = fs::read_to_string(fixture.root.join("spice.toml"))
+    let mut config = fs::read_to_string(fixture.root.join("spice-rust.toml"))
         .expect("task fixture configuration reads");
     config.push_str("\n[tasks]\nhidden_stems = [\"scratch\"]\n");
-    fs::write(fixture.root.join("spice.toml"), config).expect("task fixture project policy writes");
+    fs::write(fixture.root.join("spice-rust.toml"), config)
+        .expect("task fixture project policy writes");
     initialize_task_git_fixture(&fixture);
     establish_task_baseline(&fixture);
     let mut resident = RunningResident::spawn(&fixture);

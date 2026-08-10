@@ -74,8 +74,8 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
 /// that refuses the commit, which is a far later and much less legible door.
 #[test]
 fn the_tracked_vocabulary_is_doctor_rows_plus_the_named_foreign_class() {
-    let tracked: WorkspacePolicy =
-        toml::from_str(include_str!("../../spice.toml")).expect("tracked workspace policy decodes");
+    let tracked: WorkspacePolicy = toml::from_str(include_str!("../../spice-rust.toml"))
+        .expect("tracked workspace policy decodes");
     let reported: Vec<_> = SpiceVariable::ALL
         .iter()
         .map(|variable| variable.as_str())

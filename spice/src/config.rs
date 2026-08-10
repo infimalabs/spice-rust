@@ -145,7 +145,7 @@ impl Root {
     }
 }
 
-/// Shared maxim-adjudication policy understood by both runtimes.
+/// Optional resident maxim-adjudication policy.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct JudgeConfig {
@@ -154,7 +154,7 @@ pub struct JudgeConfig {
 }
 
 impl JudgeConfig {
-    /// The predecessor's optional maxim-adjudication decision.
+    /// Whether resident taste candidates cross the shared judge boundary.
     #[must_use]
     pub const fn enabled(&self) -> Option<bool> {
         self.enabled

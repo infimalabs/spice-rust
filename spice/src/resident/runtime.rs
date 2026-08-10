@@ -21,6 +21,7 @@ pub(super) struct SurfaceConfig {
     canvas: canvas::Config,
     pub(super) steering: steer::Config,
     pub(super) taste: taste::Bag,
+    pub(super) judge_enabled: bool,
     pub(super) consent: consent::Policy,
     speech: canvas::SpeechConfig,
     pub(super) allocation: board::NextConfig,
@@ -66,6 +67,7 @@ where
             canvas: *loaded.resolved().root().canvas(),
             steering: loaded.resolved().root().steer().clone(),
             taste: loaded.resolved().root().taste().bag().clone(),
+            judge_enabled: loaded.resolved().root().judge().enabled().unwrap_or(false),
             consent: loaded.resolved().root().consent().policy().clone(),
             speech: loaded.resolved().root().say().clone(),
             allocation: *loaded.resolved().root().board().next(),
@@ -922,6 +924,7 @@ async fn run_surface(
     let timer_commits = bus.reader().subscribe();
     let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
     let lifecycle = lifecycle::Runtime::new(&config.lane);
+    let mut taste_judge = taste_surface::ProcessAdjudicator::default();
     let started = start_surface(bus, paths, epoch, residency.body(), config, launch).await?;
     let StartedSurface {
         capabilities,
@@ -960,6 +963,7 @@ async fn run_surface(
         shutdown,
         server_task,
         message_publisher,
+        &mut taste_judge,
         records,
         failures,
         exits,
@@ -1064,6 +1068,7 @@ async fn drive_surface(
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
+    taste_judge: &mut dyn taste_surface::Adjudicator,
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
     mut failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
     mut exits: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureExit>,
@@ -1092,7 +1097,7 @@ async fn drive_surface(
             }
             record = records.recv() => accept_record(
                 bus, epoch, seats, command_surface, &message_publisher,
-                record, &mut tool_previews, diagnostic,
+                taste_judge, record, &mut tool_previews, diagnostic,
             )?,
             failure = failures.recv() => accept_failure(
                 bus, epoch, seats, command_surface, &mut lifecycle, failure,
@@ -1164,6 +1169,7 @@ fn accept_record(
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
     message_publisher: &canvas::stream::MessagePublisher,
+    taste_judge: &mut dyn taste_surface::Adjudicator,
     record: Option<lane::capture::CaptureRecord>,
     tool_previews: &mut CallPreviews,
     diagnostic: &mut dyn io::Write,
@@ -1174,19 +1180,24 @@ fn accept_record(
             "lane capture record receiver closed",
         )
     })?;
+    let surfaces = CaptureSurfaces::new(
+        command_surface.paths,
+        &command_surface.config.taste,
+        &command_surface.config.steering,
+        message_publisher,
+    );
+    let judge = command_surface
+        .config
+        .judge_enabled
+        .then_some(taste_judge as &mut dyn taste_surface::Adjudicator);
     accept_capture_record(
         bus,
         epoch,
         seats,
-        &CaptureSurfaces::new(
-            command_surface.paths,
-            &command_surface.config.taste,
-            &command_surface.config.steering,
-            message_publisher,
-        ),
+        &surfaces,
+        judge,
         &record,
-        tool_previews,
-        diagnostic,
+        message_surface::CaptureViews::new(tool_previews, diagnostic),
     )
 }
 

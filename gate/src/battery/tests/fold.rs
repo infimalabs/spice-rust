@@ -483,8 +483,13 @@ fn bounded_row(
     let transition = if breached { "latched" } else { "clear" };
     let measurement = MetricMeasurement::new(value, ParserEvidence::Native { parser })
         .with_rule(
-            RuleBinding::new(field, Some("fold-fixture"), "spice.toml", "path fixture")
-                .expect("fixture policy binding"),
+            RuleBinding::new(
+                field,
+                Some("fold-fixture"),
+                "spice-rust.toml",
+                "path fixture",
+            )
+            .expect("fixture policy binding"),
         )
         .with_latch(
             LatchBinding::new(
@@ -519,7 +524,7 @@ fn magic_row() -> MetricEvidence {
         RuleBinding::new(
             "magic.examine_threshold",
             Some("fold-fixture"),
-            "spice.toml",
+            "spice-rust.toml",
             "path src/magic.rs",
         )
         .expect("magic policy binding"),

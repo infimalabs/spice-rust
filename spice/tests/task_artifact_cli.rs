@@ -31,7 +31,7 @@ impl Fixture {
         ));
         fs::create_dir_all(root.join(".git")).expect("create repository fixture");
         staged_app::seed(&root);
-        fs::write(root.join("spice.toml"), "[tasks]\nstems = [\"rim\"]\n")
+        fs::write(root.join("spice-rust.toml"), "[tasks]\nstems = [\"rim\"]\n")
             .expect("write task project policy");
         let bundle = root.join("artifact-backup");
         Self { root, bundle }
@@ -189,7 +189,7 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
 fn task_artifact_refuses_malformed_project_policy_before_state_access() {
     let fixture = Fixture::new();
     fs::write(
-        fixture.root.join("spice.toml"),
+        fixture.root.join("spice-rust.toml"),
         "[tasks]\nstems = [\"rim\"]\nhidden_stems = [\"sandbox\", \"bad-stem\"]\n",
     )
     .expect("write malformed hidden project policy");

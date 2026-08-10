@@ -19,7 +19,7 @@ fn absolute(name: &str) -> String {
 
 fn documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a> {
     Inputs::new(
-        tracked.map(|text| Document::new("spice.toml", text)),
+        tracked.map(|text| Document::new("spice-rust.toml", text)),
         local.map(|text| Document::new(".spice-rs/local.toml", text)),
         &[],
     )
@@ -259,7 +259,10 @@ fn every_two_layer_precedence_pair_is_deterministic() {
     );
 
     let tracked_flag = resolve(Inputs::new(
-        Some(Document::new("spice.toml", "[lane]\nvendor = \"codex\"\n")),
+        Some(Document::new(
+            "spice-rust.toml",
+            "[lane]\nvendor = \"codex\"\n",
+        )),
         None,
         std::slice::from_ref(&vendor_flag),
     ))
@@ -743,7 +746,7 @@ fn all_four_layers_use_one_leaf_order() {
     let flags = [life, vendor];
     let resolved = resolve(Inputs::new(
         Some(Document::new(
-            "spice.toml",
+            "spice-rust.toml",
             concat!(
                 "[lane]\nlife = \"Steer\"\nvendor = \"codex\"\n",
                 "[listen]\nwindow = \"2m\"\n[lock]\nbusy = 70\n",
@@ -994,7 +997,7 @@ value = 1
                 .is_some_and(|path| path.to_string() == "lane.life")
         })
         .expect("local policy issue");
-    assert!(local_policy.message().contains("tracked spice.toml"));
+    assert!(local_policy.message().contains("tracked spice-rust.toml"));
     assert!(error.issues().windows(2).all(|pair| {
         pair[0].path().map(ToString::to_string) <= pair[1].path().map(ToString::to_string)
     }));
@@ -1004,7 +1007,7 @@ value = 1
 fn syntax_positions_and_other_layer_diagnostics_are_both_returned() {
     let error = resolve(Inputs::new(
         Some(Document::new(
-            "config/spice.toml",
+            "config/spice-rust.toml",
             "# caf\u{e9}\n[lane]\nlease = [\n",
         )),
         Some(Document::new(
@@ -1020,7 +1023,7 @@ fn syntax_positions_and_other_layer_diagnostics_are_both_returned() {
         .iter()
         .find(|issue| issue.kind() == IssueKind::Syntax)
         .expect("syntax issue");
-    assert_eq!(syntax.document(), "config/spice.toml");
+    assert_eq!(syntax.document(), "config/spice-rust.toml");
     assert_eq!(syntax.source(), ConfigSource::Tracked);
     assert!(syntax.line().is_some_and(|line| line >= 3));
     assert!(syntax.column().is_some());
