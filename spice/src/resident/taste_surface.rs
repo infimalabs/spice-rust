@@ -8,6 +8,8 @@ use steer::Standing as _;
 use wire::body::TranscriptLocus;
 use wire::{Actor, CanonicalUuid, Digest, Instant, Outcome, Producer, ResidencyHead, Seq};
 
+use crate::message_shape::classify;
+
 use super::{
     CommandResult, RuntimePaths, commit, current_residency, environment_fault, new_uuid, steering,
     store_fault, write,
@@ -162,13 +164,23 @@ fn candidates(
         let listen::Event::Prose(prose) = decoded else {
             continue;
         };
+        let classified = classify(&prose.text);
+        let Some(authored) = classified.authored else {
+            continue;
+        };
         // Echo classification precedes bag matching. No trigger can make a
         // resident-authored reminder become a candidate again.
-        if taste::is_reminder_echo(&prose.text) {
+        if taste::is_reminder_echo(authored) {
             continue;
         }
+        let authored = listen::Event::Prose(listen::Prose {
+            role: prose.role,
+            text: authored.to_owned(),
+            phase: prose.phase.clone(),
+            locus: prose.locus,
+        });
         let event = checked_locus(event)?;
-        for hit in bag.hits(decoded) {
+        for hit in bag.hits(&authored) {
             let content = taste::reminder_identity(hit.taste(), hit.context());
             if candidates
                 .iter()

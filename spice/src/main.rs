@@ -40,6 +40,8 @@ mod journal_lock;
 mod lane_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod message_shape;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_command;

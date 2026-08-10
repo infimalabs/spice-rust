@@ -1043,6 +1043,109 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     scratch.remove();
 }
 
+#[test]
+fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
+    let scratch = Scratch::new("message-shapes");
+    let transcript = scratch.path().join("message-shapes.jsonl");
+    let rows = vec![
+        codex_event(
+            "2026-01-03T00:00:00Z",
+            "event_msg",
+            json!({"type": "task_started", "turn_id": "shape-turn"}),
+        ),
+        codex_message(
+            "2026-01-03T00:00:01Z",
+            "user",
+            None,
+            "Please preserve the authored ask.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:02Z",
+            "user",
+            None,
+            "[$spice](.agents/skills/spice/SKILL.md)",
+        ),
+        codex_message(
+            "2026-01-03T00:00:03Z",
+            "user",
+            None,
+            "1. Primary Request and Intent:\nContinue.\n2. Work Completed:\nNone.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:04Z",
+            "user",
+            None,
+            "<future-envelope>tool output</future-envelope>",
+        ),
+        codex_message(
+            "2026-01-03T00:00:05Z",
+            "assistant",
+            Some("commentary"),
+            "Authored commentary.\ndiff --git a/a.rs b/a.rs\n+generated body",
+        ),
+        codex_message(
+            "2026-01-03T00:00:06Z",
+            "assistant",
+            Some("commentary"),
+            "*** Begin Patch\n+generated body\n*** End Patch",
+        ),
+    ];
+    write_jsonl(&transcript, &rows);
+    let file = transcript.to_string_lossy().into_owned();
+
+    let messages = reply_forms(
+        &strings(&[
+            "session",
+            "messages",
+            &file,
+            "--side",
+            "user",
+            "--oldest-first",
+        ]),
+        &[],
+        "messages",
+    );
+    assert_eq!(
+        messages["rows"]
+            .as_array()
+            .expect("message rows")
+            .iter()
+            .map(|row| row["shape"].as_str().expect("message shape"))
+            .collect::<Vec<_>>(),
+        [
+            "authored-ask",
+            "scaffolding",
+            "compaction-rehydration",
+            "tool-generated-envelope",
+        ]
+    );
+
+    let summary = reply_forms(
+        &strings(&["session", "summary", &file, "--recent", "8"]),
+        &[],
+        "summary",
+    );
+    assert_eq!(summary["recent_prompts"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        summary["recent_prompts"][0]["text"],
+        "Please preserve the authored ask."
+    );
+
+    let briefing = reply_forms(
+        &strings(&["session", "briefing", &file, "--deadline-seconds", "5"]),
+        &[],
+        "recall",
+    );
+    assert_eq!(
+        briefing["window"]["turns"][0]["dialogue"],
+        json!([
+            {"side": "user", "text": "Please preserve the authored ask."},
+            {"side": "assistant", "text": "Authored commentary."},
+        ])
+    );
+    scratch.remove();
+}
+
 fn assert_codex_final_rows(codex: &str) {
     let finals = reply_forms(
         &strings(&[
