@@ -17,7 +17,7 @@ use wire::intent::{
 use wire::{
     Actor, ClaimDisposition, ClaimHead, Command, CommandKind, Digest, Domain, Fault, FaultClass,
     Instant, LeaseHead, Name, Outcome, Producer, Refusal, Reply, ReplyPosition, Seq, SeqRange,
-    TaskHandle, TaskHead, WireVersion, Witness, WorkflowHead, body,
+    TaskHandle, TaskHead, TaskStamp, WireVersion, Witness, WorkflowHead, body,
 };
 
 use crate::cli::Contract;

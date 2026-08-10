@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sill::{LockFile, LockName, Possession};
-use wire::{Digest, Domain, Instant, TaskHandle};
+use wire::{Digest, Domain, Instant, TaskHandle, TaskStamp};
 
 use crate::model::{
     Artifact, BackupFile, BackupImage, Manifest, MediaType, ObjectMetadata, PruneChange,
@@ -30,7 +30,7 @@ static NEXT_REPLACEMENT: AtomicU64 = AtomicU64::new(0);
 
 /// Inputs for one task artifact publication.
 pub struct AddRequest<'a> {
-    pub task: &'a TaskHandle,
+    pub task: &'a TaskStamp,
     pub source: &'a Path,
     pub name: Option<&'a str>,
     pub media_type: Option<&'a str>,
@@ -74,6 +74,7 @@ impl Store {
         F: FnOnce() -> Result<(), Error>,
     {
         let _possession = self.acquire()?;
+        refuse_legacy_layout(&self.root)?;
         let bytes = read_source(request.source)?;
         let raw_name = request.name.map(str::to_owned).unwrap_or_else(|| {
             request
@@ -133,8 +134,9 @@ impl Store {
     }
 
     /// List citations only after proving every referenced payload generation.
-    pub fn list(&self, task: &TaskHandle) -> Result<Vec<Artifact>, Error> {
+    pub fn list(&self, task: &TaskStamp) -> Result<Vec<Artifact>, Error> {
         let _possession = self.acquire()?;
+        refuse_legacy_layout(&self.root)?;
         let task_dir = self.task_dir(task);
         let manifest = read_manifest(&task_dir, task)?;
         validate_manifest(&task_dir, task, &manifest, true)?;
@@ -142,8 +144,9 @@ impl Store {
     }
 
     /// Return one cited payload after proving its metadata and content digest.
-    pub fn show(&self, task: &TaskHandle, artifact_id: &str) -> Result<(Artifact, Vec<u8>), Error> {
+    pub fn show(&self, task: &TaskStamp, artifact_id: &str) -> Result<(Artifact, Vec<u8>), Error> {
         let _possession = self.acquire()?;
+        refuse_legacy_layout(&self.root)?;
         let task_dir = self.task_dir(task);
         let manifest = read_manifest(&task_dir, task)?;
         validate_manifest(&task_dir, task, &manifest, true)?;
@@ -165,7 +168,7 @@ impl Store {
     /// Compute one ordered retention preview without changing the store.
     pub fn plan_prune(
         &self,
-        statuses: &BTreeMap<TaskHandle, String>,
+        statuses: &BTreeMap<TaskStamp, (TaskHandle, String)>,
         cutoff: Option<Instant>,
         older_than_seconds: Option<u64>,
     ) -> Result<PrunePlan, Error> {
@@ -175,7 +178,7 @@ impl Store {
 
     fn plan_prune_locked(
         &self,
-        statuses: &BTreeMap<TaskHandle, String>,
+        statuses: &BTreeMap<TaskStamp, (TaskHandle, String)>,
         cutoff: Option<Instant>,
         older_than_seconds: Option<u64>,
     ) -> Result<PrunePlan, Error> {
@@ -200,18 +203,20 @@ impl Store {
             if manifest.artifacts.is_empty() {
                 continue;
             }
-            let status = statuses
-                .get(&task)
-                .map_or("stranded", String::as_str)
-                .to_owned();
+            let current = statuses.get(&task);
+            let status = current.map_or("stranded", |(_, status)| status.as_str());
             if status != "completed" {
                 skipped.push(PruneSkip {
                     order: count(skipped.len() + 1, "prune skip")?,
-                    task,
-                    status,
+                    incepted: task,
+                    handle: current.map(|(handle, _)| handle.clone()),
+                    status: status.to_owned(),
                 });
                 continue;
             }
+            let handle = current
+                .map(|(handle, _)| handle)
+                .expect("completed status carries a current derived handle");
             let mut remaining = Vec::new();
             let mut remove = Vec::new();
             for artifact in &manifest.artifacts {
@@ -219,7 +224,8 @@ impl Store {
                 if artifact.retention == Retention::Prunable && old_enough {
                     operations.push(PruneOperation {
                         order: count(operations.len() + 1, "prune operation")?,
-                        task: task.clone(),
+                        incepted: task.clone(),
+                        handle: handle.clone(),
                         artifact_id: artifact.id.clone(),
                         name: artifact.name.clone(),
                     });
@@ -405,7 +411,7 @@ impl Store {
             .map_err(|source| Error::io("acquire artifact lock", self.lock.path(), source))
     }
 
-    fn task_dir(&self, task: &TaskHandle) -> PathBuf {
+    fn task_dir(&self, task: &TaskStamp) -> PathBuf {
         self.root.join(task.as_str())
     }
 }
@@ -445,9 +451,7 @@ impl BackupImage {
                     "task manifest is not one level below the root",
                 ));
             }
-            let task = task_text
-                .parse::<TaskHandle>()
-                .map_err(|error| Error::corrupt(path, error.to_string()))?;
+            let task = parse_task_key(task_text, path)?;
             let manifest = decode_canonical::<Manifest>(&map[path].bytes, path)?;
             validate_manifest_shape(&task, &manifest, path)?;
             tasks.push(task.clone());
@@ -718,7 +722,7 @@ fn publish(path: &Path, bytes: &[u8]) -> Result<(), Error> {
         .map_err(|error| Error::environment("publish artifact file", error.to_string()))
 }
 
-fn read_manifest(task_dir: &Path, task: &TaskHandle) -> Result<Manifest, Error> {
+fn read_manifest(task_dir: &Path, task: &TaskStamp) -> Result<Manifest, Error> {
     if !admitted_directory(task_dir, true)? {
         return Ok(Manifest::empty(task.clone()));
     }
@@ -741,7 +745,7 @@ fn read_manifest(task_dir: &Path, task: &TaskHandle) -> Result<Manifest, Error> 
 
 fn validate_manifest(
     task_dir: &Path,
-    task: &TaskHandle,
+    task: &TaskStamp,
     manifest: &Manifest,
     payloads: bool,
 ) -> Result<(), Error> {
@@ -769,7 +773,7 @@ fn validate_manifest(
 }
 
 fn validate_manifest_shape(
-    task: &TaskHandle,
+    task: &TaskStamp,
     manifest: &Manifest,
     subject: &str,
 ) -> Result<(), Error> {
@@ -930,7 +934,7 @@ fn next_id(artifacts: &[Artifact]) -> Result<String, Error> {
         .ok_or_else(|| Error::corrupt("artifact manifest", "artifact id space is exhausted"))
 }
 
-fn task_directories(root: &Path) -> Result<Vec<TaskHandle>, Error> {
+fn task_directories(root: &Path) -> Result<Vec<TaskStamp>, Error> {
     let mut tasks = Vec::new();
     let entries =
         fs::read_dir(root).map_err(|source| Error::io("read artifact root", root, source))?;
@@ -952,9 +956,7 @@ fn task_directories(root: &Path) -> Result<Vec<TaskHandle>, Error> {
                 "task directory name is not UTF-8",
             )
         })?;
-        let task = text
-            .parse::<TaskHandle>()
-            .map_err(|error| Error::corrupt(path.display().to_string(), error.to_string()))?;
+        let task = parse_task_key(&text, &path.display().to_string())?;
         let manifest = manifest_path(&path);
         match fs::symlink_metadata(&manifest) {
             Ok(metadata) if metadata.file_type().is_file() => tasks.push(task),
@@ -970,6 +972,36 @@ fn task_directories(root: &Path) -> Result<Vec<TaskHandle>, Error> {
     }
     tasks.sort();
     Ok(tasks)
+}
+
+fn refuse_legacy_layout(root: &Path) -> Result<(), Error> {
+    if admitted_directory(root, true)? {
+        task_directories(root)?;
+    }
+    Ok(())
+}
+
+fn parse_task_key(text: &str, subject: &str) -> Result<TaskStamp, Error> {
+    match text.parse::<TaskStamp>() {
+        Ok(task) => Ok(task),
+        Err(stamp_error) => {
+            if text.parse::<TaskHandle>().is_ok() {
+                Err(Error::refused(
+                    "artifact store version",
+                    format!(
+                        concat!(
+                            "{} uses rendered-handle task directory {:?} from artifact ",
+                            "store release 1; this release owns version {} and requires ",
+                            "inception-stamp directory keys"
+                        ),
+                        subject, text, STORE_VERSION,
+                    ),
+                ))
+            } else {
+                Err(Error::corrupt(subject, stamp_error.to_string()))
+            }
+        }
+    }
 }
 
 fn capture_file(root: &Path, path: &Path, files: &mut Vec<BackupFile>) -> Result<(), Error> {

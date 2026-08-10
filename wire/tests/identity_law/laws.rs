@@ -20,6 +20,10 @@ pub(super) fn handle(text: &str) -> TaskHandle {
     text.parse().expect("task handle")
 }
 
+pub(super) fn stamp(text: &str) -> TaskStamp {
+    text.parse().expect("task stamp")
+}
+
 pub(super) fn digest(nibble: &str) -> Digest {
     nibble.repeat(64).parse().expect("digest spelling")
 }
@@ -252,7 +256,7 @@ where
 /// samples too, whose bodies are unconstrained.
 pub(super) fn body(validation: &str) -> body::TaskDone {
     body::TaskDone {
-        task: handle("SPICE-aBcD"),
+        task: stamp("1kKRRsDP"),
         validation: validation.to_owned(),
         git: None,
         source: body::SourceBoundary::Proven { heads: Vec::new() },
@@ -274,14 +278,14 @@ pub(super) fn name(text: &str) -> Name {
 
 pub(super) fn task_witness() -> Witness {
     Witness::Task {
-        task: handle("SPICE-aBcD"),
+        task: stamp("1kKRRsDP"),
         head: seq(48190),
     }
 }
 
 pub(super) fn workflow_witness() -> Witness {
     Witness::Workflow {
-        task: handle("SPICE-aBcD"),
+        task: stamp("1kKRRsDP"),
         head: seq(48190),
         phase: "todo".parse().expect("phase"),
     }

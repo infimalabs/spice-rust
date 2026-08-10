@@ -47,7 +47,7 @@ impl Transition {
         let previous = next.phase.clone();
         next.phase = target.clone();
         Ok(Self {
-            task: entry.statement().handle.clone(),
+            task: entry.handle().clone(),
             kind: TransitionKind::Advance {
                 from: previous,
                 to: target,
@@ -77,7 +77,7 @@ impl Transition {
         next.completion = Some(at);
         next.assignment = None;
         Ok(Self {
-            task: entry.statement().handle.clone(),
+            task: entry.handle().clone(),
             kind: TransitionKind::Complete {
                 phase: workflow.phase.clone(),
             },
@@ -122,7 +122,7 @@ pub enum PhaseRefusal {
 }
 
 fn bind_claim(entry: &Entry, active: &Active<'_>) -> Result<(), PhaseRefusal> {
-    if active.handle() == &entry.statement().handle {
+    if active.handle() == entry.handle() {
         Ok(())
     } else {
         Err(PhaseRefusal::ClaimForAnotherTask)

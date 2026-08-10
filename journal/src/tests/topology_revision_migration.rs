@@ -168,6 +168,7 @@ fn a_mismatched_schema_five_revision_refuses_and_rolls_back() {
 
 fn schema_five_topology_authority(path: &Path, stored: StoredRevision) {
     let journal = authority_file_fixture(path);
+    downgrade_task_identity_to_five(&journal.connection);
     insert_topology_facts(&journal);
     insert_lane_receipts(&journal);
     let mut head = residency_head();
