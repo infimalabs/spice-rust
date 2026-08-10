@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,24 +7,21 @@ import { fileURLToPath } from "node:url";
 import { installActivityReplay } from "./activity-replay.mjs";
 import { assertAgesTickWhileTheResidentIsSilent } from "./age-ticker.mjs";
 import {
-  agentNames,
   assertAgentConversation,
-  assertFourAgentDensity,
   assertMosaicLattice,
   entirelyQuotedMessage,
   nestedQuoteMessage,
   seatAgentTeam,
 } from "./agent-conversation.mjs";
-import {
-  assertComposerShards,
-  primaryDestination,
-} from "./composer-shards.mjs";
+import { assertComposerShards } from "./composer-shards.mjs";
 import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
 import { assertComposerRecovery } from "./composer-recovery.mjs";
 import { assertVacantWakeSubmission } from "./vacant-wake-submission.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
-import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
-import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
+import {
+  assertPerTeamWatchbands,
+  captureReferenceViewport,
+} from "./canvas-watchbands.mjs";
 import { assertMotionPreference } from "./mosaic-motion.mjs";
 import { assertTeamArrangement } from "./team-arrangement.mjs";
 import { assertTeamMenu } from "./team-menu.mjs";
@@ -121,458 +118,6 @@ async function assertDistinctWaitCallSites(page) {
     "the second wait reports its named spec caller",
   );
   assert.notEqual(first, second, "two waits armed at different spec sites remain distinguishable");
-}
-
-const nestedQuotePreview = "The author words belong in the composer band.";
-
-async function settleLatestSystemSpeech(page, event = "end") {
-  await page.evaluate((event) => {
-    const utterance = window.__speechUtterances.at(-1);
-    if (!utterance) throw new Error("no system utterance is available to settle");
-    const callback = event === "error" ? utterance.onerror : utterance.onend;
-    if (!callback) throw new Error(`system utterance has no ${event} callback`);
-    callback(new Event(event));
-  }, event);
-}
-
-async function triggerAgentProse(worktree, cards) {
-  const before = await cards.count();
-  await writeFile(join(worktree, ".spice-prose-trigger"), "emit\n");
-  await cards.nth(before).waitFor({ timeout: CONNECT_MS });
-}
-
-async function assertPerTeamWatchbands(page, fixture, worktrees) {
-  const before = await reply(fixture, ["lane"]);
-  const primary = before.body.lanes.find((lane) => lane.worktree === worktrees[0]);
-  assert.ok(primary, "the primary team remains seated for watchband proof");
-  await reply(fixture, [
-    "lane", "add", worktrees[4],
-    "--life", "Drive",
-    "--vendor", "claude",
-  ]);
-  await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Agents");
-  const console = page.locator('[data-pane="agent-console"]');
-  await console.getByRole("tab", { name: /^Compose/ }).first().click();
-  await waitForElement(page, "second team renders after reload", CONNECT_MS,
-    console.locator(".team-surface").nth(1));
-
-  const lanes = await reply(fixture, ["lane"]);
-  const secondary = lanes.body.lanes.find((lane) => lane.worktree === worktrees[4]);
-  assert.ok(secondary, "the second team is independently seated");
-  const primarySurface = console.locator(
-    `.team-surface[data-lineage-id="${primary.lineage_id}"]`,
-  );
-  const secondarySurface = console.locator(
-    `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
-  );
-  const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
-  assert.deepEqual(
-    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Compose", "Compose"],
-    "each newly rendered team begins in Compose",
-  );
-  await primarySurface.getByRole("tab", { name: /^Metrics/ }).click();
-  assert.deepEqual(
-    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Metrics", "Compose"],
-    "switching the primary team to Metrics leaves its sibling in Compose",
-  );
-  await secondarySurface.getByRole("tab", { name: /^Info/ }).click();
-  assert.deepEqual(
-    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Metrics", "Info"],
-    "two teams retain different selected views simultaneously",
-  );
-  await primarySurface.getByRole("tab", { name: /^Filters/ }).click();
-  assert.deepEqual(
-    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Filters", "Info"],
-    "a subsequent primary switch preserves the secondary selection",
-  );
-  await secondarySurface.getByRole("tab", { name: /^Compose/ }).click();
-  assert.deepEqual(
-    [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Filters", "Compose"],
-    "a subsequent secondary switch preserves the primary selection",
-  );
-  await primarySurface.getByRole("tab", { name: /^Compose/ }).click();
-  const noCardDestination = await primaryDestination(secondarySurface, secondary.lane);
-  assert.equal(
-    noCardDestination.rendered.length,
-    0,
-    "the freshly seated secondary agent exercises the primary lineage default before any card",
-  );
-  const firstSecondaryDirection = "the lineage default precedes this first rendered card";
-  await secondarySurface.getByRole("textbox").fill(firstSecondaryDirection);
-  await secondarySurface.getByRole("button", { name: "Drive", exact: true }).click();
-  await secondarySurface
-    .locator(".mosaic-message-card")
-    .filter({ hasText: firstSecondaryDirection })
-    .waitFor({ timeout: 10_000 });
-  assert.equal(await console.locator(".team-surface").count(), 2);
-  assert.equal(await console.locator(".team-speech").count(), 2);
-  assert.equal(await console.locator(".team-lifetime").count(), 2);
-  const weightedWidths = await console.locator(".team-surface").evaluateAll((surfaces) =>
-    surfaces.map((surface) => ({
-      weight: Number(surface.dataset.lineageWeight),
-      width: surface.getBoundingClientRect().width,
-    })),
-  );
-  const widthsByWeight = weightedWidths.toSorted((left, right) => left.weight - right.weight);
-  assert.deepEqual(
-    widthsByWeight.map(({ weight }) => weight),
-    [1, 4],
-    "lineage weights remain the admitted member counts",
-  );
-  assert.ok(
-    widthsByWeight[1].width > widthsByWeight[0].width,
-    "the four-agent lineage remains wider than its one-agent sibling",
-  );
-
-  const primaryLife = primarySurface.locator('.team-lifetime input[type="range"]');
-  const primarySeatLives = new Map(
-    lanes.body.lanes
-      .filter((lane) => lane.lineage_id === primary.lineage_id)
-      .map((lane) => [lane.lane, lane.life]),
-  );
-  const initialPrimaryPolicy = lanes.body.subscriptions.find(
-    (subscription) => subscription.lineage_id === primary.lineage_id,
-  )?.policy;
-  assert.ok(initialPrimaryPolicy, "the primary team has one authoritative task policy");
-  const initialPrimaryLabel = `${initialPrimaryPolicy[0].toUpperCase()}${initialPrimaryPolicy.slice(1)}`;
-  const initialPrimaryIndex = { steer: "0", drive: "1", drain: "2" }[initialPrimaryPolicy];
-  await page.evaluate((missingLineage) => {
-    const socket = window.__canvasSockets.at(-1);
-    if (!socket) throw new Error("canvas WebSocket was not captured");
-    const send = socket.send.bind(socket);
-    let intercepted = false;
-    const rewrite = (bytes) => {
-      const command = JSON.parse(new TextDecoder().decode(bytes));
-      if (!intercepted && command.kind === "lineage::configure") {
-        intercepted = true;
-        command.body.lineage_id = missingLineage;
-        return new TextEncoder().encode(JSON.stringify(command));
-      }
-      return bytes;
-    };
-    socket.send = (data) => {
-      if (typeof data === "string") {
-        const rewritten = rewrite(new TextEncoder().encode(data));
-        send(new TextDecoder().decode(rewritten));
-      } else if (data instanceof Blob) {
-        void data.arrayBuffer().then((buffer) => send(rewrite(new Uint8Array(buffer))));
-      } else {
-        send(rewrite(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
-      }
-    };
-  }, staleEpoch);
-  await primaryLife.fill("2");
-  await waitForPage(
-    page,
-    "rejected lifetime command settles",
-    TRANSITION_MS,
-    (lineage) => document
-      .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
-      ?.dataset.lifetimePending === "false",
-    primary.lineage_id,
-  );
-  await primarySurface
-    .getByRole("button", { name: initialPrimaryLabel, exact: true })
-    .waitFor();
-  assert.equal(await primaryLife.inputValue(), initialPrimaryIndex);
-  assert.match(await primarySurface.locator(".team-control-issue").innerText(), /lineage::missing/);
-
-  await primaryLife.fill("2");
-  await waitForPage(
-    page,
-    "accepted lifetime command settles",
-    TRANSITION_MS,
-    (lineage) => document
-      .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
-      ?.dataset.lifetimePending === "false",
-    primary.lineage_id,
-  );
-  await primarySurface.getByRole("button", { name: "Drain", exact: true }).waitFor();
-  const configured = await reply(fixture, ["lane"]);
-  const primaryRows = configured.body.lanes.filter(
-    (lane) => lane.lineage_id === primary.lineage_id,
-  );
-  const primarySubscription = configured.body.subscriptions.find(
-    (subscription) => subscription.lineage_id === primary.lineage_id,
-  );
-  assert.equal(primaryRows.length, 4, "the first team retains all four worktrees");
-  assert.equal(primarySubscription?.policy, "drain");
-  assert.ok(
-    primaryRows.every((lane) => lane.life === primarySeatLives.get(lane.lane)),
-    "watchband Drain never changes terminal lane life",
-  );
-  assert.ok(
-    primaryRows.every((lane) => lane.occupant && lane.disposition === "occupied"),
-    "watchband Drain changes task policy and never tears down occupants",
-  );
-  assert.equal(
-    await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
-    1,
-    "the sibling team keeps its own authoritative lifetime",
-  );
-
-  const primarySpeech = primarySurface.locator('.team-speech input[type="range"]');
-  const secondarySpeech = secondarySurface.locator('.team-speech input[type="range"]');
-  await primarySpeech.fill("0");
-  await secondarySpeech.fill("2");
-  assert.equal(await primarySpeech.inputValue(), "0");
-  assert.equal(await secondarySpeech.inputValue(), "2");
-  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
-  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
-  await console.getByRole("tab", { name: /^Info/ }).first().click();
-  await console.getByRole("tab", { name: /^Compose/ }).first().click();
-  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a team redraw");
-  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a team redraw");
-  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
-  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
-
-  await page.evaluate(() => { window.__speechLog = []; });
-  await primarySurface.getByLabel("Speak this message").first().click();
-  assert.deepEqual(
-    await page.evaluate(() => window.__speechLog),
-    [],
-    "Quiet suppresses manual speech for only its team",
-  );
-  await secondarySurface.getByLabel("Speak this message").first().click();
-  await waitForPage(page, "Narrate dispatches speech", TRANSITION_MS,
-    () => window.__speechLog.some((row) => row.action === "speak"));
-  await settleLatestSystemSpeech(page);
-  await waitForPage(page, "manual speech releases the global head", TRANSITION_MS,
-    () => window.__speechActive === 0);
-
-  await primarySpeech.fill("2");
-  await page.evaluate(() => {
-    window.__speechLog = [];
-    window.__speechUtterances = [];
-    window.__speechActive = 0;
-    window.__speechMaxActive = 0;
-  });
-  const primaryNarrator = primaryRows.find((lane) => lane.worktree === worktrees[0]);
-  assert.ok(primaryNarrator, "the first team exposes a real narrator worktree");
-  const primaryNarrationCards = primarySurface.locator(
-    `[data-card-kind="agent-message"][data-agent-lane="${primaryNarrator.lane}"]`,
-  );
-  const secondaryNarrationCards = secondarySurface.locator(
-    `[data-card-kind="agent-message"][data-agent-lane="${secondary.lane}"]`,
-  );
-  await triggerAgentProse(primaryNarrator.worktree, primaryNarrationCards);
-  await waitForPage(page, "the first lineage owns the global narration head", CONNECT_MS,
-    () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
-  await triggerAgentProse(secondary.worktree, secondaryNarrationCards);
-  await triggerAgentProse(secondary.worktree, secondaryNarrationCards);
-  assert.equal(
-    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
-    1,
-    "a two-lineage burst preserves the active head and queues its tail",
-  );
-  const transcriptCards = await console.locator('.mosaic-message-card[data-card-kind="agent-message"]')
-    .count();
-  await settleLatestSystemSpeech(page, "error");
-  await waitForPage(page, "a failed head advances to the coalesced lineage tail", TRANSITION_MS,
-    () => window.__speechLog.filter((row) => row.action === "speak").length === 2);
-  assert.equal(
-    await console.locator('.mosaic-message-card[data-card-kind="agent-message"]').count(),
-    transcriptCards,
-    "speech failure neither removes nor rewrites the admitted transcript",
-  );
-  assert.equal(
-    await page.evaluate(() => window.__speechMaxActive),
-    1,
-    "the browser-global narration arbiter never overlaps two clips",
-  );
-  const storedNarrationCursors = await page.evaluate(() => JSON.parse(
-    localStorage.getItem("spice:narration-cursors:v1") ?? "[]",
-  ));
-  assert.ok(
-    storedNarrationCursors.length > 0 && storedNarrationCursors.length <= 256,
-    "durable narration cursors are present and bounded in browser storage",
-  );
-  await settleLatestSystemSpeech(page);
-  await waitForPage(page, "the coalesced narration tail drains", TRANSITION_MS,
-    () => window.__speechActive === 0);
-  assert.equal(
-    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
-    2,
-    "two stale entries from one queued lineage coalesce to one successor",
-  );
-  await primarySpeech.fill("0");
-
-  await assertAgentRenewalRequest(page, primarySurface, fixture);
-
-  const policyMessage = "drain lifetime is task policy, not occupant teardown";
-  await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);
-  await primarySurface.getByRole("button", { name: "Drain", exact: true }).click();
-  await primarySurface
-    .locator(".mosaic-message-card")
-    .filter({ hasText: policyMessage })
-    .waitFor({ timeout: 10_000 });
-  const inbox = await reply(fixture, ["inbox", primaryRows[0].lane]);
-  assert.ok(
-    inbox.body.lanes[0].pending.some((directive) => directive.text === policyMessage),
-    "the Drain-labelled submit follows the configured team policy into real steering",
-  );
-  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a streamed refresh");
-  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a streamed refresh");
-  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
-  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
-
-  const renderedPrimaryMembers = await primarySurface.locator(".team-agent").evaluateAll(
-    (members) => members.map((member) => member.dataset.agentLane),
-  );
-  assert.equal(renderedPrimaryMembers.length, 4, "the quote fixture has four ordered members");
-  const lifecycleLane = primaryRows.find((lane) => lane.lane === renderedPrimaryMembers[1]);
-  assert.ok(lifecycleLane, "the quote fixture resolves the card's second rendered member");
-  assert.notEqual(
-    lifecycleLane.lane,
-    renderedPrimaryMembers[0],
-    "the departed-author card is not the row-order member",
-  );
-  const departedAuthor = lifecycleLane.occupant;
-  const departedCards = primarySurface.locator(
-    `[data-card-kind="agent-message"][data-agent-lane="${lifecycleLane.lane}"]`,
-  );
-  await departedCards.first().waitFor({ timeout: 10_000 });
-  await reply(fixture, ["lane", "drain", lifecycleLane.lane]);
-  const vacantSnapshot = await reply(fixture, ["lane"]);
-  const vacant = vacantSnapshot.body.lanes.find((lane) => lane.lane === lifecycleLane.lane);
-  assert.ok(vacant, "the configured member remains durable after leaving");
-  assert.equal(vacant.disposition, "vacant");
-  assert.equal(vacant.occupant, undefined);
-  assert.equal(vacant.life, primarySeatLives.get(vacant.lane));
-  assert.equal(
-    vacantSnapshot.body.lanes.some((lane) => lane.occupant === departedAuthor),
-    false,
-    "the author of the second member's retained cards is seated in no lane",
-  );
-  await waitForPage(page, "departed author cards retain their lane", TRANSITION_MS,
-    ({ lineage, lane }) => {
-    const cards = [...document.querySelectorAll(
-      `.team-surface[data-lineage-id="${lineage}"] `
-        + `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
-    )];
-    return cards.length > 0 && cards.every((card) => card.dataset.producerTargetId === lane);
-  }, { lineage: primary.lineage_id, lane: lifecycleLane.lane });
-  assert.deepEqual(
-    new Set(await departedCards.evaluateAll(
-      (cards) => cards.map((card) => card.dataset.producerTargetId),
-    )),
-    new Set([lifecycleLane.lane]),
-    "an unseated author routes every retained card to its own lane, never the first member",
-  );
-  assert.equal(
-    vacantSnapshot.body.subscriptions.find(
-      (subscription) => subscription.lineage_id === primary.lineage_id,
-    )?.policy,
-    "drain",
-  );
-  await reply(fixture, ["lane", "wake", lifecycleLane.lane]);
-  const wokenSnapshot = await reply(fixture, ["lane"]);
-  const woken = wokenSnapshot.body.lanes.find((lane) => lane.lane === lifecycleLane.lane);
-  assert.ok(woken?.occupant, "watchband Drain leaves the member eligible for a normal wake");
-  assert.equal(woken.disposition, "occupied");
-  assert.equal(woken.life, primarySeatLives.get(woken.lane));
-  await assertPrimaryComposerDragging(
-    page,
-    fixture,
-    console,
-    primary.lineage_id,
-    secondary.lineage_id,
-    join(artifacts, "canvas-primary-composer-dragging.png"),
-  );
-  await page.screenshot({
-    path: join(artifacts, "canvas-light-watchband-teams.png"),
-    fullPage: true,
-  });
-  await page.evaluate(() => {
-    window.__speechLog = [];
-    window.__speechUtterances = [];
-  });
-  await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Agents");
-  const reconnected = page.locator('[data-pane="agent-console"]');
-  await reconnected.getByRole("tab", { name: /^Compose/ }).first().click();
-  const restoredPrimary = reconnected.locator(
-    `.team-surface[data-lineage-id="${primary.lineage_id}"]`,
-  );
-  const restoredSecondary = reconnected.locator(
-    `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
-  );
-  await restoredPrimary.locator('.team-speech input[type="range"]').fill("2");
-  await restoredSecondary.locator('.team-speech input[type="range"]').fill("2");
-  await reconnected.getByRole("tab", { name: /^Info/ }).first().click();
-  await reconnected.getByRole("tab", { name: /^Compose/ }).first().click();
-  await page.evaluate(() => new Promise((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.deepEqual(
-    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak")),
-    [],
-    "reconnect and rematerialization never narrate retained history",
-  );
-  const restoredNarrationCards = restoredPrimary.locator(
-    `[data-card-kind="agent-message"][data-agent-lane="${primaryNarrator.lane}"]`,
-  );
-  await triggerAgentProse(primaryNarrator.worktree, restoredNarrationCards);
-  await waitForPage(page, "live narration resumes after reconnect history suppression", CONNECT_MS,
-    () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
-  await settleLatestSystemSpeech(page);
-  await waitForPage(page, "post-reconnect narration drains", TRANSITION_MS,
-    () => window.__speechActive === 0);
-  return { lineage: primary.lineage_id, policy: "drain" };
-}
-
-async function captureReferenceViewport(page) {
-  await chooseCanvasView(page, "Agents");
-  const team = page.locator('[data-pane="agent-console"]');
-  await team.getByRole("tab", { name: /^Info/ }).click();
-  for (const name of agentNames) {
-    await team.getByText(name, { exact: true }).waitFor();
-  }
-  await team.getByText("0 pending", { exact: true }).waitFor();
-  await team.getByText("running", { exact: true }).first().waitFor();
-  await team.getByText("running-stale", { exact: true }).first().waitFor();
-  await page.screenshot({
-    path: join(artifacts, "canvas-reference-agent-details-dark.png"),
-    fullPage: false,
-  });
-  await team.getByRole("tab", { name: /^Compose/ }).click();
-  await team.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
-  assert.equal(
-    await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches),
-    true,
-    "the reference capture explicitly exercises dark mode",
-  );
-  await assertFourAgentDensity(team);
-  assert.equal(
-    await team.locator(".team-surface").getAttribute("data-lineage-weight"),
-    "4",
-    "the reference viewport retains the four-agent lineage weight",
-  );
-  await assertMosaicLattice(page, false);
-  const pixels = await page.evaluate(() => ({
-    width: innerWidth,
-    height: innerHeight,
-    background: getComputedStyle(document.body).backgroundColor,
-    bodyWidth: document.body.scrollWidth,
-  }));
-  assert.deepEqual([pixels.width, pixels.height], [1000, 568]);
-  assert.equal(
-    await page.locator(".mosaic-workspace > .topbar").count(),
-    0,
-    "the live lineage has no redundant operator control bar",
-  );
-  assert.equal(pixels.bodyWidth, 1000, "the reference viewport has no horizontal overflow");
-  assert.equal(pixels.background, "rgb(11, 15, 12)", "the captured surface uses the dark palette");
-  await captureReferenceControls(
-    page,
-    team,
-    join(artifacts, "canvas-reference-four-agent-dark.png"),
-  );
 }
 
 async function assertAuthoritySurface(page, seeded) {
@@ -1332,7 +877,7 @@ try {
         const page = await reference.newPage();
         const monitor = monitorPage(page);
         await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-        await captureReferenceViewport(page);
+        await captureReferenceViewport(page, artifacts);
         monitor.assertClean();
         await reference.close();
         seeded.extent = await journalExtent(fixture);
@@ -1402,7 +947,12 @@ try {
         );
       });
       await run.scenario("team-lifecycle", async () => {
-        configuredPolicy = await assertPerTeamWatchbands(lightPage, fixture, worktrees);
+        configuredPolicy = await assertPerTeamWatchbands(
+          lightPage,
+          fixture,
+          worktrees,
+          { artifacts, staleEpoch },
+        );
         await assertTeamArrangement(lightPage, fixture, worktrees, artifacts);
         lightMonitor.assertClean();
         darkMonitor.assertClean();
