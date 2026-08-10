@@ -420,6 +420,7 @@ fn examine(
             GateId::RustTypecheck => analyze::rust_typecheck(
                 declaration,
                 source.root,
+                source.repository,
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
@@ -643,7 +644,10 @@ pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
         | GateId::SymbolReachability
         | GateId::PythonUnused
         | GateId::AssertionFreeTests
-        | GateId::PrivateInternals => None,
+        | GateId::PrivateInternals
+        | GateId::SuiteSeam
+        | GateId::MutationCoverage
+        | GateId::TestSubsumption => None,
     }
 }
 

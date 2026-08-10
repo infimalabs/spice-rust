@@ -33,7 +33,7 @@ fn a_minted_receipt_binds_every_identity_of_its_run() {
             .iter()
             .map(BatteryArmResult::gate_id)
             .collect::<Vec<_>>(),
-        GateId::ALL,
+        GateId::BATTERY,
     );
     assert_eq!(
         receipt.report(),
@@ -201,8 +201,8 @@ fn truncated_tampered_and_reordered_receipts_are_refused_by_the_invariant_they_b
 
     let incomplete = format!(
         "complete battery report requires {} results, received {}",
-        GateId::ALL.len(),
-        GateId::ALL.len() - 1
+        GateId::BATTERY.len(),
+        GateId::BATTERY.len() - 1
     );
     let candidates = vec![
         (

@@ -432,44 +432,19 @@ fn resolve_external_preconditions(
     )?
     .parse::<u64>()
     .map_err(|error| format!("Git returned an invalid local commit count: {error}"))?;
-    let source_commit = if release_subject.starts_with("release: bump to ") {
-        git_optional(
-            root,
-            &["rev-parse", "--verify", &format!("{release_commit}^")],
-        )?
-        .unwrap_or_else(|| release_commit.to_owned())
-    } else {
-        release_commit.to_owned()
-    };
+    let source_commit = release_source_commit(root, release_commit, &release_subject)?;
     let clean = tracked_worktree_clean(root)?;
-    if !clean {
-        return Err("the release worktree is dirty".to_owned());
-    }
-    if source_version != release_version && !bump_claimed {
-        return Err("the observed version bump is not claimed by this release".to_owned());
-    }
-    if unrecorded_local_commits != 0 {
-        return Err(format!(
-            "{unrecorded_local_commits} local commits have not been recorded on the \
-             publication baseline"
-        ));
-    }
-    if release_version != requested_version {
-        return Err(format!(
-            "requested version {requested_version} disagrees with observed release version \
-             {release_version}"
-        ));
-    }
-    if head != release_commit {
-        return Err(format!(
-            "release commit {release_commit} is not HEAD {head}"
-        ));
-    }
-    let action = match matches.get_one::<String>("action").map(String::as_str) {
-        None | Some("publish") => dist::ReleaseAction::Publish,
-        Some("tag-and-announce") => dist::ReleaseAction::TagAndAnnounce,
-        Some(other) => return Err(format!("unsupported release action {other:?}")),
-    };
+    validate_local_preconditions(LocalPreconditions {
+        requested: &requested_version,
+        source: &source_version,
+        release: &release_version,
+        head: &head,
+        release_commit,
+        clean,
+        bump_claimed,
+        unrecorded_local_commits,
+    })?;
+    let action = release_action(matches)?;
     let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
     let refs = authority.refs(&requested_version);
     git_required(root, &["ls-remote", "--refs", authority.remote()])?;
@@ -487,19 +462,7 @@ fn resolve_external_preconditions(
         remote_ref(root, authority.remote(), refs.announcement())?,
         release_commit,
     );
-    if let Some(object) = &source_ref {
-        return Err(format!(
-            "the source ref names {object}, not {release_commit}"
-        ));
-    }
-    if let Some(object) = &tag_ref {
-        return Err(format!("the tag ref names {object}, not {release_commit}"));
-    }
-    if let Some(object) = &announcement_ref {
-        return Err(format!(
-            "the announcement ref names {object}, not {release_commit}"
-        ));
-    }
+    validate_remote_refs(&source_ref, &tag_ref, &announcement_ref, release_commit)?;
     Ok(ExternalPreconditions {
         requested_version,
         source_commit,
@@ -516,6 +479,93 @@ fn resolve_external_preconditions(
         tag_ref,
         announcement_ref,
     })
+}
+
+fn release_source_commit(
+    root: &Path,
+    release_commit: &str,
+    release_subject: &str,
+) -> Result<String, String> {
+    if !release_subject.starts_with("release: bump to ") {
+        return Ok(release_commit.to_owned());
+    }
+    Ok(git_optional(
+        root,
+        &["rev-parse", "--verify", &format!("{release_commit}^")],
+    )?
+    .unwrap_or_else(|| release_commit.to_owned()))
+}
+
+struct LocalPreconditions<'a> {
+    requested: &'a ProductVersion,
+    source: &'a ProductVersion,
+    release: &'a ProductVersion,
+    head: &'a str,
+    release_commit: &'a str,
+    clean: bool,
+    bump_claimed: bool,
+    unrecorded_local_commits: u64,
+}
+
+fn validate_local_preconditions(observed: LocalPreconditions<'_>) -> Result<(), String> {
+    // Preserve the preflight refusal order: callers and tests surface the first
+    // violated publication invariant as the actionable diagnosis.
+    if !observed.clean {
+        return Err("the release worktree is dirty".to_owned());
+    }
+    if observed.source != observed.release && !observed.bump_claimed {
+        return Err("the observed version bump is not claimed by this release".to_owned());
+    }
+    if observed.unrecorded_local_commits != 0 {
+        return Err(format!(
+            "{} local commits have not been recorded on the \
+             publication baseline",
+            observed.unrecorded_local_commits
+        ));
+    }
+    if observed.release != observed.requested {
+        return Err(format!(
+            "requested version {} disagrees with observed release version {}",
+            observed.requested, observed.release
+        ));
+    }
+    if observed.head != observed.release_commit {
+        return Err(format!(
+            "release commit {} is not HEAD {}",
+            observed.release_commit, observed.head
+        ));
+    }
+    Ok(())
+}
+
+fn release_action(matches: &ArgMatches) -> Result<dist::ReleaseAction, String> {
+    match matches.get_one::<String>("action").map(String::as_str) {
+        None | Some("publish") => Ok(dist::ReleaseAction::Publish),
+        Some("tag-and-announce") => Ok(dist::ReleaseAction::TagAndAnnounce),
+        Some(other) => Err(format!("unsupported release action {other:?}")),
+    }
+}
+
+fn validate_remote_refs(
+    source: &Option<String>,
+    tag: &Option<String>,
+    announcement: &Option<String>,
+    release_commit: &str,
+) -> Result<(), String> {
+    if let Some(object) = source {
+        return Err(format!(
+            "the source ref names {object}, not {release_commit}"
+        ));
+    }
+    if let Some(object) = tag {
+        return Err(format!("the tag ref names {object}, not {release_commit}"));
+    }
+    if let Some(object) = announcement {
+        return Err(format!(
+            "the announcement ref names {object}, not {release_commit}"
+        ));
+    }
+    Ok(())
 }
 
 fn bind_external_plan(

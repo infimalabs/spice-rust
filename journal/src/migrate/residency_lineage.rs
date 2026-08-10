@@ -203,11 +203,11 @@ fn decode(table: &'static str, row: &str, bytes: &[u8]) -> Result<Value, OpenErr
 
 fn encode_residency(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
     let bytes = intermediate("residency_head", row, value)?;
-    let head: wire::ResidencyHead = wire::decode(&bytes).map_err(|error| {
+    let head: PreTopologyResidencyHead = wire::decode(&bytes).map_err(|error| {
         invalid(
             "residency_head",
             row,
-            &format!("migrated body is not current residency wire: {error}"),
+            &format!("migrated body is not schema-three residency wire: {error}"),
         )
     })?;
     wire::encode(&head).map_err(|error| {
@@ -217,6 +217,16 @@ fn encode_residency(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
             &format!("migrated body cannot encode canonically: {error}"),
         )
     })
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreTopologyResidencyHead {
+    epoch: wire::CanonicalUuid,
+    state: wire::ResidentState,
+    lanes: Vec<wire::LaneResidency>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    subscriptions: Vec<wire::LineageSubscription>,
 }
 
 fn encode_fact(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {

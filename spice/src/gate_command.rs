@@ -35,7 +35,7 @@ pub(crate) fn findings(matches: &clap::ArgMatches, contract: &Contract) -> Outco
     let instrument = matches
         .get_one::<String>("INSTRUMENT")
         .expect("required instrument is parsed");
-    let Some(gate_id) = GateId::ALL
+    let Some(gate_id) = GateId::BATTERY
         .into_iter()
         .find(|candidate| candidate.as_str() == instrument)
     else {
