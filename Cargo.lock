@@ -3175,7 +3175,6 @@ dependencies = [
  "atomic",
  "journal",
  "serde",
- "sill",
  "syn 3.0.3",
  "wire",
 ]

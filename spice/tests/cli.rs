@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use listen::{EventKind, Mode, Observation, StreamOutcome};
 use rusqlite::{Connection, params};
@@ -533,6 +533,182 @@ fn run_preserves_the_childs_argument_vector() {
     assert_eq!(spoken.code, Some(0));
     assert_eq!(spoken.out, b"<two words>\n<--json>\n<>\n");
     assert!(spoken.err.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new("structural-shell-boundary");
+    let hooks = steer::hook::Hooks::new(scratch.path().join("hooks"));
+    hooks.install().expect("structural stages install");
+    let inbox = scratch.path().join("inbox");
+    fs::write(&inbox, b"<steering>\none wrapper\n</steering>\n")
+        .expect("steering rendering writes");
+
+    let arguments = scratch.path().join("native-arguments");
+    let native = scratch.path().join("native-shell");
+    fs::write(
+        &native,
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\0' \"$@\" > \"$BOUNDARY_ARGUMENTS\"\n",
+            "exec /bin/sh \"$@\"\n",
+        ),
+    )
+    .expect("native-shell fixture writes");
+    fs::set_permissions(&native, fs::Permissions::from_mode(0o700))
+        .expect("native-shell fixture is executable");
+
+    let sourced = scratch.path().join("sourced.sh");
+    fs::write(
+        &sourced,
+        "printf 'sourced=<%s>:<%s>\\n' \"$(boundary_function)\" \"$-\"\n",
+    )
+    .expect("sourced fixture writes");
+    let executed = scratch.path().join("executed.sh");
+    fs::write(
+        &executed,
+        concat!(
+            "#!/bin/sh\n",
+            "printf 'executed=<%s>:<%s>:<%s>\\n' \"$SHELL\" ",
+            "\"${SPICE_HOOKS-unset}\" \"${SPICE_NATIVE_SHELL-unset}\"\n",
+            "printf 'hidden descendant stderr\\n' >&2\n",
+        ),
+    )
+    .expect("executed fixture writes");
+    fs::set_permissions(&executed, fs::Permissions::from_mode(0o700))
+        .expect("executed fixture is executable");
+
+    let complete = format!(
+        "boundary_function() {{ printf shared; }}; set -u; . {}; {} 2>/dev/null",
+        sourced.display(),
+        executed.display()
+    );
+    let binary = Path::new(env!("CARGO_BIN_EXE_spice"));
+    let mut path = vec![
+        binary
+            .parent()
+            .expect("spice binary has a directory")
+            .to_path_buf(),
+    ];
+    if let Some(ambient) = std::env::var_os("PATH") {
+        path.extend(std::env::split_paths(&ambient));
+    }
+    let output = Command::new(hooks.stage(steer::hook::STAGES[0]))
+        .args(["-c", &complete])
+        .env(
+            "PATH",
+            std::env::join_paths(path).expect("fixture PATH joins"),
+        )
+        .env(steer::hook::HOOKS, hooks.root())
+        .env(steer::hook::NATIVE_SHELL, &native)
+        .env(steer::hook::INBOX, &inbox)
+        .env("BOUNDARY_ARGUMENTS", &arguments)
+        .output()
+        .expect("outer structural shell runs");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("command output is UTF-8");
+    assert!(stdout.contains("sourced=<shared>:<"));
+    assert!(
+        stdout
+            .lines()
+            .find(|line| line.starts_with("sourced="))
+            .and_then(|line| line.rsplit_once(":<"))
+            .is_some_and(|(_, options)| options.contains('u')),
+        "sourced script did not share nounset shell option: {stdout:?}"
+    );
+    assert!(stdout.contains(&format!("executed=<{}>:<unset>:<unset>", native.display())));
+    assert_eq!(
+        output.stderr, b"<steering>\none wrapper\n</steering>\n",
+        "descendant stderr redirection captured or duplicated wrapper steering"
+    );
+    assert_eq!(
+        fs::read(&arguments).expect("native shell captured its arguments"),
+        [b"-c\0".as_slice(), complete.as_bytes(), b"\0"].concat(),
+        "the complete command string did not cross the wrapper exactly once"
+    );
+    scratch.remove();
+}
+
+#[test]
+#[cfg(unix)]
+fn steering_follows_the_wrappers_own_stderr_redirection() {
+    let scratch = Scratch::new("run-stderr");
+    let inbox = scratch.path().join("inbox");
+    let redirected = scratch.path().join("wrapper-stderr");
+    fs::write(&inbox, b"wrapper steering\n").expect("inbox writes");
+    let stderr = fs::File::create(&redirected).expect("redirect target creates");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args([
+            "run",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf child-output; printf hidden-child-error >&2",
+        ])
+        .env(steer::hook::INBOX, &inbox)
+        .stderr(Stdio::from(stderr))
+        .output()
+        .expect("wrapper runs with redirected stderr");
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"child-output");
+    assert!(output.stderr.is_empty(), "stderr was redirected at spawn");
+    assert_eq!(
+        fs::read(&redirected).expect("redirected stderr reads"),
+        b"wrapper steering\nhidden-child-error"
+    );
+    scratch.remove();
+}
+
+#[test]
+#[cfg(unix)]
+fn run_waits_through_exec_and_returns_while_a_background_descendant_lives() {
+    let scratch = Scratch::new("run-child-identity");
+    let before = scratch.path().join("before-pid");
+    let after = scratch.path().join("after-pid");
+    let replacement = format!(
+        "printf '%s' $$ > {}; (exit 0) & wait; exec /bin/sh -c 'printf \"%s\" $$ > {}; exit 9'",
+        before.display(),
+        after.display()
+    );
+    let replaced = invoke(&["run", "--", "/bin/sh", "-c", &replacement]);
+    assert_eq!(replaced.code, Some(9));
+    assert_eq!(fs::read(&before).unwrap(), fs::read(&after).unwrap());
+
+    let descendant = scratch.path().join("descendant-pid");
+    let backgrounded = format!(
+        "sleep 30 </dev/null >/dev/null 2>&1 & printf '%s' $! > {}",
+        descendant.display()
+    );
+    let started = Instant::now();
+    let returned = invoke(&["run", "--", "/bin/sh", "-c", &backgrounded]);
+    assert_eq!(returned.code, Some(0));
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "wrapper waited for a descendant after its immediate child exited"
+    );
+    let pid = fs::read_to_string(&descendant).expect("descendant pid was published");
+    let pid = pid.trim();
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-0", pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-TERM", pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    scratch.remove();
 }
 
 #[test]

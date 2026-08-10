@@ -179,29 +179,43 @@ fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
         .expect("the entry stage is registered")
         .bytes();
 
-    assert!(entry.contains("exec spice run -- \"$@\""));
+    assert!(entry.contains(
+        "exec spice run -- \"${SPICE_HOOKS:?spice hooks directory}/static/stage.sh\" \"$@\""
+    ));
     assert!(!entry.contains("spice agent run"));
+    assert!(!entry.contains("SPICE_PROOF"));
+    assert!(!entry.contains("if ["));
 }
 
-/// Proof answers from the environment the caller hands in, so the same call
-/// runs identically in a test and under a shell that really did reexec.
+/// The inner stage restores the native shell before the command runs and does
+/// not leak either packaged-routing variable across the process boundary.
+#[cfg(unix)]
 #[test]
-fn activation_is_proven_from_the_environment_it_is_handed() {
+fn the_inner_stage_execs_the_native_shell_with_native_descendant_routing() {
+    use std::process::Command;
+
     let scratch = Scratch::new("proof");
     let hooks = Hooks::new(scratch.path().join("hooks"));
     hooks.install().expect("installation");
 
-    let activation = hooks
-        .proof(&environment(&[(steer::hook::PROOF, LANE)]))
-        .expect("proof");
-    assert_eq!(activation.lane(), lane(LANE));
-
-    assert_eq!(hooks.proof(&environment(&[])), Err(Refusal::Unproven));
+    let output = Command::new(hooks.stage(STAGES[1]))
+        .args([
+            "-c",
+            "printf '<%s><%s><%s>' \"$SHELL\" \"${SPICE_HOOKS-unset}\" \"${SPICE_NATIVE_SHELL-unset}\"",
+        ])
+        .env(steer::hook::HOOKS, hooks.root())
+        .env(steer::hook::NATIVE_SHELL, "/bin/sh")
+        .output()
+        .expect("inner stage runs");
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"</bin/sh><unset><unset>");
+    assert_eq!(output.stderr, b"");
     assert_eq!(
-        hooks.proof(&environment(&[(steer::hook::PROOF, "not-a-lane")])),
-        Err(Refusal::Unnamed {
-            text: "not-a-lane".to_owned()
-        })
+        STAGES[1]
+            .bytes()
+            .matches("exec \"$native_shell\" \"$@\"")
+            .count(),
+        1
     );
     scratch.remove();
 }
@@ -213,10 +227,9 @@ fn activation_is_proven_from_the_environment_it_is_handed() {
 fn a_stage_that_is_missing_or_drifted_is_named() {
     let scratch = Scratch::new("stages");
     let hooks = Hooks::new(scratch.path().join("hooks"));
-    let proven = environment(&[(steer::hook::PROOF, LANE)]);
 
     assert_eq!(
-        hooks.proof(&proven),
+        hooks.verify(),
         Err(Refusal::Absent {
             stage: hooks.stage(STAGES[0])
         })
@@ -227,7 +240,7 @@ fn a_stage_that_is_missing_or_drifted_is_named() {
         let path = hooks.stage(stage);
         fs::write(&path, "# drifted\n").expect("stage rewritten");
         assert_eq!(
-            hooks.proof(&proven),
+            hooks.verify(),
             Err(Refusal::Divergent {
                 stage: path.clone()
             })
@@ -235,7 +248,7 @@ fn a_stage_that_is_missing_or_drifted_is_named() {
         fs::write(&path, stage.bytes()).expect("stage restored");
     }
 
-    hooks.proof(&proven).expect("restored stages prove");
+    hooks.verify().expect("restored stages verify");
     scratch.remove();
 }
 
@@ -325,10 +338,6 @@ fn directive(key: &str) -> CanonicalUuid {
     format!("00000000-0000-4000-8000-{:012x}", suffix & 0xffff_ffff_ffff)
         .parse()
         .expect("fixture directive UUID")
-}
-
-fn environment(entries: &[(&str, &str)]) -> sill::Environment {
-    sill::Environment::new(entries.iter().copied()).expect("environment")
 }
 
 #[cfg(unix)]
