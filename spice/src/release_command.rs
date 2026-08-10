@@ -407,11 +407,70 @@ struct ExternalPreconditions {
     announcement_ref: Option<String>,
 }
 
+struct ReleaseVersions {
+    requested: ProductVersion,
+    source: ProductVersion,
+    release: ProductVersion,
+}
+
+struct ReleaseGitState {
+    source_commit: String,
+    head: String,
+    clean: bool,
+    bump_claimed: bool,
+    unrecorded_local_commits: u64,
+}
+
+struct ExternalRefs {
+    source_ref: Option<String>,
+    package_ref: Option<String>,
+    tag_ref: Option<String>,
+    announcement_ref: Option<String>,
+}
+
 fn resolve_external_preconditions(
     root: &Path,
     matches: &ArgMatches,
     release_commit: &str,
 ) -> Result<ExternalPreconditions, String> {
+    let versions = release_versions(root, matches)?;
+    let git = release_git_state(root, release_commit, &versions.source, &versions.requested)?;
+    validate_release_git_state(
+        &git,
+        release_commit,
+        &versions.source,
+        &versions.release,
+        &versions.requested,
+    )?;
+    let action = release_action(matches)?;
+    let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
+    let external_refs = resolve_external_refs(
+        root,
+        &authority,
+        &versions.requested,
+        &git.source_commit,
+        release_commit,
+    )?;
+    validate_external_refs(&external_refs, release_commit)?;
+    Ok(ExternalPreconditions {
+        requested_version: versions.requested,
+        source_commit: git.source_commit,
+        action,
+        repository: repository_identity(root, authority.remote())?,
+        head: git.head,
+        clean: git.clean,
+        bump_claimed: git.bump_claimed,
+        unrecorded_local_commits: git.unrecorded_local_commits,
+        source_version: versions.source,
+        release_version: versions.release,
+        source_ref: external_refs.source_ref,
+        package_ref: external_refs.package_ref,
+        tag_ref: external_refs.tag_ref,
+        announcement_ref: external_refs.announcement_ref,
+    })
+}
+
+fn release_versions(root: &Path, matches: &ArgMatches) -> Result<ReleaseVersions, String> {
     let requested = matches
         .get_one::<String>("version")
         .map_or(env!("CARGO_PKG_VERSION"), String::as_str);
@@ -422,6 +481,19 @@ fn resolve_external_preconditions(
         .map_err(|error| format!("cannot read dist/VERSION: {error}"))?;
     let release_version =
         ProductVersion::parse(release_version_text.trim()).map_err(|error| error.to_string())?;
+    Ok(ReleaseVersions {
+        requested: requested_version,
+        source: source_version,
+        release: release_version,
+    })
+}
+
+fn release_git_state(
+    root: &Path,
+    release_commit: &str,
+    source_version: &ProductVersion,
+    requested_version: &ProductVersion,
+) -> Result<ReleaseGitState, String> {
     let head = git_required(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let release_subject = git_required(root, &["show", "-s", "--format=%s", release_commit])?;
     let bump_claimed = source_version == requested_version
@@ -434,23 +506,72 @@ fn resolve_external_preconditions(
     .map_err(|error| format!("Git returned an invalid local commit count: {error}"))?;
     let source_commit = release_source_commit(root, release_commit, &release_subject)?;
     let clean = tracked_worktree_clean(root)?;
-    validate_local_preconditions(LocalPreconditions {
-        requested: &requested_version,
-        source: &source_version,
-        release: &release_version,
-        head: &head,
-        release_commit,
+    Ok(ReleaseGitState {
+        source_commit,
+        head,
         clean,
         bump_claimed,
         unrecorded_local_commits,
-    })?;
-    let action = release_action(matches)?;
-    let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
-    let refs = authority.refs(&requested_version);
+    })
+}
+
+fn validate_release_git_state(
+    state: &ReleaseGitState,
+    release_commit: &str,
+    source_version: &ProductVersion,
+    release_version: &ProductVersion,
+    requested_version: &ProductVersion,
+) -> Result<(), String> {
+    if !state.clean {
+        return Err("the release worktree is dirty".to_owned());
+    }
+    if source_version != release_version && !state.bump_claimed {
+        return Err("the observed version bump is not claimed by this release".to_owned());
+    }
+    if state.unrecorded_local_commits != 0 {
+        return Err(format!(
+            "{} local commits have not been recorded on the \
+             publication baseline",
+            state.unrecorded_local_commits
+        ));
+    }
+    if release_version != requested_version {
+        return Err(format!(
+            "requested version {requested_version} disagrees with observed release version \
+             {release_version}"
+        ));
+    }
+    if state.head != release_commit {
+        return Err(format!(
+            "release commit {release_commit} is not HEAD {}",
+            state.head
+        ));
+    }
+    Ok(())
+}
+
+fn release_action(matches: &ArgMatches) -> Result<dist::ReleaseAction, String> {
+    Ok(
+        match matches.get_one::<String>("action").map(String::as_str) {
+            None | Some("publish") => dist::ReleaseAction::Publish,
+            Some("tag-and-announce") => dist::ReleaseAction::TagAndAnnounce,
+            Some(other) => return Err(format!("unsupported release action {other:?}")),
+        },
+    )
+}
+
+fn resolve_external_refs(
+    root: &Path,
+    authority: &dist::ReleaseAuthority,
+    requested_version: &ProductVersion,
+    source_commit: &str,
+    release_commit: &str,
+) -> Result<ExternalRefs, String> {
+    let refs = authority.refs(requested_version);
     git_required(root, &["ls-remote", "--refs", authority.remote()])?;
     let source_ref = normalize_source_ref(
         remote_ref(root, authority.remote(), refs.source())?,
-        &source_commit,
+        source_commit,
         release_commit,
     );
     let package_ref = remote_ref(root, authority.remote(), refs.package())?;
@@ -462,23 +583,31 @@ fn resolve_external_preconditions(
         remote_ref(root, authority.remote(), refs.announcement())?,
         release_commit,
     );
-    validate_remote_refs(&source_ref, &tag_ref, &announcement_ref, release_commit)?;
-    Ok(ExternalPreconditions {
-        requested_version,
-        source_commit,
-        action,
-        repository: repository_identity(root, authority.remote())?,
-        head,
-        clean,
-        bump_claimed,
-        unrecorded_local_commits,
-        source_version,
-        release_version,
+    Ok(ExternalRefs {
         source_ref,
         package_ref,
         tag_ref,
         announcement_ref,
     })
+}
+
+fn validate_external_refs(refs: &ExternalRefs, release_commit: &str) -> Result<(), String> {
+    ensure_release_ref_absent("source", &refs.source_ref, release_commit)?;
+    ensure_release_ref_absent("tag", &refs.tag_ref, release_commit)?;
+    ensure_release_ref_absent("announcement", &refs.announcement_ref, release_commit)
+}
+
+fn ensure_release_ref_absent(
+    label: &str,
+    observed: &Option<String>,
+    release_commit: &str,
+) -> Result<(), String> {
+    if let Some(object) = observed {
+        return Err(format!(
+            "the {label} ref names {object}, not {release_commit}"
+        ));
+    }
+    Ok(())
 }
 
 fn release_source_commit(
@@ -494,78 +623,6 @@ fn release_source_commit(
         &["rev-parse", "--verify", &format!("{release_commit}^")],
     )?
     .unwrap_or_else(|| release_commit.to_owned()))
-}
-
-struct LocalPreconditions<'a> {
-    requested: &'a ProductVersion,
-    source: &'a ProductVersion,
-    release: &'a ProductVersion,
-    head: &'a str,
-    release_commit: &'a str,
-    clean: bool,
-    bump_claimed: bool,
-    unrecorded_local_commits: u64,
-}
-
-fn validate_local_preconditions(observed: LocalPreconditions<'_>) -> Result<(), String> {
-    // Preserve the preflight refusal order: callers and tests surface the first
-    // violated publication invariant as the actionable diagnosis.
-    if !observed.clean {
-        return Err("the release worktree is dirty".to_owned());
-    }
-    if observed.source != observed.release && !observed.bump_claimed {
-        return Err("the observed version bump is not claimed by this release".to_owned());
-    }
-    if observed.unrecorded_local_commits != 0 {
-        return Err(format!(
-            "{} local commits have not been recorded on the \
-             publication baseline",
-            observed.unrecorded_local_commits
-        ));
-    }
-    if observed.release != observed.requested {
-        return Err(format!(
-            "requested version {} disagrees with observed release version {}",
-            observed.requested, observed.release
-        ));
-    }
-    if observed.head != observed.release_commit {
-        return Err(format!(
-            "release commit {} is not HEAD {}",
-            observed.release_commit, observed.head
-        ));
-    }
-    Ok(())
-}
-
-fn release_action(matches: &ArgMatches) -> Result<dist::ReleaseAction, String> {
-    match matches.get_one::<String>("action").map(String::as_str) {
-        None | Some("publish") => Ok(dist::ReleaseAction::Publish),
-        Some("tag-and-announce") => Ok(dist::ReleaseAction::TagAndAnnounce),
-        Some(other) => Err(format!("unsupported release action {other:?}")),
-    }
-}
-
-fn validate_remote_refs(
-    source: &Option<String>,
-    tag: &Option<String>,
-    announcement: &Option<String>,
-    release_commit: &str,
-) -> Result<(), String> {
-    if let Some(object) = source {
-        return Err(format!(
-            "the source ref names {object}, not {release_commit}"
-        ));
-    }
-    if let Some(object) = tag {
-        return Err(format!("the tag ref names {object}, not {release_commit}"));
-    }
-    if let Some(object) = announcement {
-        return Err(format!(
-            "the announcement ref names {object}, not {release_commit}"
-        ));
-    }
-    Ok(())
 }
 
 fn bind_external_plan(

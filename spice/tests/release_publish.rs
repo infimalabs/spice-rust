@@ -273,23 +273,7 @@ fn preview_publication(fixture: &Fixture) -> (String, ReleasePlan) {
     assert!(text_plan.observations.credentials_valid);
     assert_eq!(text_plan.observations.unrecorded_local_commits, 0);
     assert!(text_plan.observations.registry.is_none());
-    assert_eq!(
-        text_plan.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "run-correctness-gate",
-            "bump-and-verify-version",
-            "create-release-commit",
-            "rebuild-artifacts",
-            "install-and-probe-artifacts",
-            "rehearse-upload",
-            "publish-source",
-            "upload-package",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
-    );
+    assert_eq!(text_plan.operations, publish_operations());
     let draft = fixture.invoke(&["--json", "release", "notes"]);
     let Outcome::Reply(draft) =
         wire::decode::<Outcome<wire::ReleaseNotes>>(&draft.stdout).expect("draft is typed")
@@ -343,15 +327,7 @@ fn apply_publication(
     );
     let first = recognition(&first);
     assert!(first.1.fresh);
-    assert_eq!(
-        remote_refs(fixture),
-        [
-            "refs/heads/main",
-            "refs/spice/packages/v0.0.0",
-            "refs/spice/releases/v0.0.0",
-            "refs/tags/v0.0.0",
-        ]
-    );
+    assert_eq!(remote_refs(fixture), published_refs());
     assert_eq!(
         remote_object_type(fixture, "refs/spice/packages/v0.0.0"),
         "tree"
@@ -418,15 +394,7 @@ fn recover_publication(fixture: &Fixture, notes: &str) {
             .release_commit,
         recovery.body.release_commit
     );
-    assert_eq!(
-        recovery.body.operations,
-        [
-            "resolve-preconditions-and-credentials",
-            "await-registry-visibility",
-            "create-immutable-tag",
-            "announce",
-        ]
-    );
+    assert_eq!(recovery.body.operations, recovery_operations());
     let recovery_apply = format!("--apply={}", recovery.body.key);
     let recovered = fixture.invoke(&[
         "--json",
@@ -549,6 +517,41 @@ fn publication_refuses_every_uncurated_notes_shape_before_resident_work() {
     let heading_only = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
     assert_notes_refusal(&heading_only);
     assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 0);
+}
+
+fn publish_operations() -> [&'static str; 12] {
+    [
+        "resolve-preconditions-and-credentials",
+        "run-correctness-gate",
+        "bump-and-verify-version",
+        "create-release-commit",
+        "rebuild-artifacts",
+        "install-and-probe-artifacts",
+        "rehearse-upload",
+        "publish-source",
+        "upload-package",
+        "await-registry-visibility",
+        "create-immutable-tag",
+        "announce",
+    ]
+}
+
+fn recovery_operations() -> [&'static str; 4] {
+    [
+        "resolve-preconditions-and-credentials",
+        "await-registry-visibility",
+        "create-immutable-tag",
+        "announce",
+    ]
+}
+
+fn published_refs() -> [&'static str; 4] {
+    [
+        "refs/heads/main",
+        "refs/spice/packages/v0.0.0",
+        "refs/spice/releases/v0.0.0",
+        "refs/tags/v0.0.0",
+    ]
 }
 
 fn publish_stage(root: &Path) -> Digest {

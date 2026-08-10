@@ -184,7 +184,10 @@ fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
     ));
     assert!(!entry.contains("spice agent run"));
     let removed_proof_name = ["spice", "proof"].join("_").to_ascii_uppercase();
-    assert!(!entry.contains(&removed_proof_name));
+    assert!(
+        !entry.contains(&removed_proof_name),
+        "entry stage no longer carries proof routing"
+    );
     assert!(!entry.contains("if ["));
 }
 
