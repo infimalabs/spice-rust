@@ -838,11 +838,45 @@ struct StartedSurface<'a> {
     capabilities: canvas::axum::Capabilities,
     discovery: canvas::Discovery,
     control: canvas::axum::Control,
-    published: PublishedDiscovery,
+    publication: SurfacePublication<'a>,
     shutdown: oneshot::Sender<()>,
     server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
     progress: &'a mut dyn io::Write,
+}
+
+struct SurfacePublication<'a> {
+    discovery: canvas::Discovery,
+    published: PublishedDiscovery,
+    app_description: String,
+    token: Option<String>,
+    open: bool,
+    endpoint: &'a mut dyn io::Write,
+}
+
+impl SurfacePublication<'_> {
+    fn publish(
+        &mut self,
+        bus: &Bus,
+        paths: &RuntimePaths,
+        residency: &ResidencyHead,
+        progress: &mut dyn io::Write,
+    ) -> CommandResult<()> {
+        steering::publish_lane_discoveries(paths, &self.discovery, residency)?;
+        steering::publish_inboxes(bus, paths, residency)?;
+        self.discovery
+            .publish(&self.published.path)
+            .map_err(|error| environment_fault("canvas::publish-failed", &error.to_string()))?;
+        announce_started_surface(
+            paths,
+            &self.app_description,
+            self.token.as_deref(),
+            self.open,
+            self.endpoint,
+            progress,
+        );
+        Ok(())
+    }
 }
 
 async fn start_surface<'a>(
@@ -891,32 +925,25 @@ async fn start_surface<'a>(
             "the streaming canvas server has no transcript activity publisher",
         )
     })?;
-    let published = PublishedDiscovery {
-        path: paths.canvas.clone(),
-        lane_root: paths.lane_canvas.clone(),
-    };
-    steering::publish_lane_discoveries(paths, &discovery, residency)?;
-    steering::publish_inboxes(bus, paths, residency)?;
-    discovery
-        .publish(&paths.canvas)
-        .map_err(|error| environment_fault("canvas::publish-failed", &error.to_string()))?;
     let (shutdown, stopped) = oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    announce_started_surface(
-        paths,
-        &app_description,
-        token.as_deref(),
-        open,
-        endpoint,
-        progress,
-    );
     Ok(StartedSurface {
         capabilities,
-        discovery,
+        discovery: discovery.clone(),
         control,
-        published,
+        publication: SurfacePublication {
+            discovery,
+            published: PublishedDiscovery {
+                path: paths.canvas.clone(),
+                lane_root: paths.lane_canvas.clone(),
+            },
+            app_description,
+            token,
+            open,
+            endpoint,
+        },
         shutdown,
         server_task,
         message_publisher,
@@ -969,7 +996,7 @@ async fn run_surface(
         capabilities,
         discovery,
         control,
-        published,
+        publication,
         shutdown,
         server_task,
         message_publisher,
@@ -1004,7 +1031,7 @@ async fn run_surface(
         seats,
         &command_surface,
         control,
-        published,
+        publication,
         shutdown,
         server_task,
         message_publisher,
@@ -1110,7 +1137,7 @@ async fn drive_surface(
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
     mut control: canvas::axum::Control,
-    published: PublishedDiscovery,
+    mut publication: SurfacePublication<'_>,
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
@@ -1132,6 +1159,8 @@ async fn drive_surface(
         &mut timers,
         &mut lifecycle,
     )?;
+    let residency = current_residency(bus, epoch)?;
+    publication.publish(bus, command_surface.paths, residency.body(), diagnostic)?;
     let mut tool_previews = CallPreviews::default();
     loop {
         tokio::select! {
@@ -1139,7 +1168,7 @@ async fn drive_surface(
                 if dispatch_control(
                     command_surface, seats, &mut lifecycle, &mut control, request,
                 ).await? {
-                    return stop_surface(published, shutdown, server_task).await;
+                    return stop_surface(publication, shutdown, server_task).await;
                 }
             }
             record = records.recv() => accept_record(
@@ -1218,11 +1247,11 @@ fn accept_timer_fired(
 }
 
 async fn stop_surface(
-    published: PublishedDiscovery,
+    publication: SurfacePublication<'_>,
     shutdown: oneshot::Sender<()>,
     server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
 ) -> CommandResult<()> {
-    drop(published);
+    drop(publication);
     let _ = shutdown.send(());
     match server_task.await {
         Ok(Ok(())) => Ok(()),

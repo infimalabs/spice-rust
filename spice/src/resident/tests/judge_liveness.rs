@@ -112,11 +112,15 @@ hold = "0s"
         )
         .await
         .expect("Canvas surface starts");
+        assert!(
+            !paths.canvas.exists(),
+            "binding alone must not publish a command surface before drive_surface is ready"
+        );
         let StartedSurface {
             capabilities,
             discovery,
             control,
-            published,
+            publication,
             shutdown,
             server_task,
             message_publisher,
@@ -161,7 +165,7 @@ hold = "0s"
             &mut seats,
             &command_surface,
             control,
-            published,
+            publication,
             shutdown,
             server_task,
             message_publisher,
