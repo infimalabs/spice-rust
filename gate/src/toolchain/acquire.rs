@@ -643,7 +643,10 @@ pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
         | GateId::SymbolReachability
         | GateId::PythonUnused
         | GateId::AssertionFreeTests
-        | GateId::PrivateInternals => None,
+        | GateId::PrivateInternals
+        | GateId::SuiteSeam
+        | GateId::MutationCoverage
+        | GateId::TestSubsumption => None,
     }
 }
 

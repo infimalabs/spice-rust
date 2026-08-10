@@ -65,7 +65,7 @@ fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {
         .map(|declaration| declaration.id())
         .collect();
     assert_eq!(ids, CORE_GATE_IDS);
-    assert_eq!(ids, GateId::ALL[..CORE_GATE_IDS.len()]);
+    assert_eq!(ids, GateId::BATTERY[..CORE_GATE_IDS.len()]);
     assert_eq!(
         declarations
             .iter()

@@ -445,9 +445,15 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
 
 fn assert_bounded_refusal(output: &std::process::Output, selected: &BatteryArmResult) {
     let stdout = String::from_utf8(output.stdout.clone()).expect("verifier stdout is UTF-8");
+    let first_arm = format!(
+        "arm position={} gate={} state={}",
+        selected.position(),
+        selected.gate_id(),
+        selected.state().as_str(),
+    );
     let fold_start = stdout
-        .find("non-authoritative battery refusal fold:")
-        .expect("verifier emits the named refusal fold");
+        .find(&first_arm)
+        .unwrap_or_else(|| panic!("verifier emits the refusal fold: {}", streams(output)));
     let fold = &stdout.as_bytes()[fold_start..];
     assert!(
         fold.len() <= BATTERY_REFUSAL_FOLD_MAX_BYTES,
@@ -603,7 +609,7 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
         "run `cargo xtask verify` before task completion\n"
     )));
     assert!(stdout.contains("[verify] scoped gate arms run: none\n"));
-    let skipped = GateId::ALL
+    let skipped = GateId::BATTERY
         .into_iter()
         .map(GateId::as_str)
         .collect::<Vec<_>>()
@@ -652,7 +658,7 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
         streams(&output)
     );
     assert!(stdout.contains("not a completion verifier"));
-    for gate_id in GateId::ALL {
+    for gate_id in GateId::BATTERY {
         assert!(
             stdout
                 .lines()

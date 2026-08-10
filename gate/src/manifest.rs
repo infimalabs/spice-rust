@@ -19,6 +19,7 @@ pub const PREDECESSOR_GATE_RELEASE: &str = "0.31.0";
 
 /// One stable compiled gate identity.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[repr(u8)]
 pub enum GateId {
     #[serde(rename = "merge-integrity")]
     MergeIntegrity,
@@ -74,11 +75,17 @@ pub enum GateId {
     AssertionFreeTests,
     #[serde(rename = "private-internals")]
     PrivateInternals,
+    #[serde(rename = "suite-seam")]
+    SuiteSeam,
+    #[serde(rename = "mutation-coverage")]
+    MutationCoverage,
+    #[serde(rename = "test-subsumption")]
+    TestSubsumption,
 }
 
 impl GateId {
-    /// Every compiled identity in predecessor battery order.
-    pub const ALL: [Self; 27] = [
+    /// Every identity executed by the synchronous canonical battery.
+    pub const BATTERY: [Self; 27] = [
         Self::MergeIntegrity,
         Self::PlanPhase,
         Self::RepoShape,
@@ -108,38 +115,83 @@ impl GateId {
         Self::PrivateInternals,
     ];
 
+    /// Instruments folded from the shared long-running test evidence graph.
+    pub const TEST_EVIDENCE: [Self; 3] = [
+        Self::SuiteSeam,
+        Self::MutationCoverage,
+        Self::TestSubsumption,
+    ];
+
+    /// Every registered instrument, in stable report order.
+    pub const ALL: [Self; 30] = [
+        Self::MergeIntegrity,
+        Self::PlanPhase,
+        Self::RepoShape,
+        Self::Staging,
+        Self::RepoDocs,
+        Self::ConfigKeyValidity,
+        Self::ConfigFalseDisable,
+        Self::ConfigTrackedTrust,
+        Self::Formatters,
+        Self::LocalPaths,
+        Self::Taste,
+        Self::RustTypecheck,
+        Self::CanvasWebTypecheck,
+        Self::JavascriptUnused,
+        Self::CsharpUnusedCandidates,
+        Self::PythonTypecheck,
+        Self::EnvPolicy,
+        Self::EnvNameLedger,
+        Self::FileShape,
+        Self::Complexity,
+        Self::MagicNumbers,
+        Self::MarkdownLinks,
+        Self::Reachability,
+        Self::SymbolReachability,
+        Self::PythonUnused,
+        Self::AssertionFreeTests,
+        Self::PrivateInternals,
+        Self::SuiteSeam,
+        Self::MutationCoverage,
+        Self::TestSubsumption,
+    ];
+
     /// Exact current spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::MergeIntegrity => "merge-integrity",
-            Self::PlanPhase => "plan-phase",
-            Self::RepoShape => "repo-shape",
-            Self::Staging => "staging",
-            Self::RepoDocs => "repo-docs",
-            Self::ConfigKeyValidity => "config-key-validity",
-            Self::ConfigFalseDisable => "config-false-disable",
-            Self::ConfigTrackedTrust => "config-tracked-trust",
-            Self::Formatters => "formatters",
-            Self::LocalPaths => "local-paths",
-            Self::Taste => "taste",
-            Self::RustTypecheck => "rust-typecheck",
-            Self::CanvasWebTypecheck => "canvas-web-typecheck",
-            Self::JavascriptUnused => "javascript-unused",
-            Self::CsharpUnusedCandidates => "csharp-unused-candidates",
-            Self::PythonTypecheck => "python-typecheck",
-            Self::EnvPolicy => "env-policy",
-            Self::EnvNameLedger => "env-name-ledger",
-            Self::FileShape => "file-shape",
-            Self::Complexity => "complexity",
-            Self::MagicNumbers => "magic-numbers",
-            Self::MarkdownLinks => "markdown-links",
-            Self::Reachability => "reachability",
-            Self::SymbolReachability => "symbol-reachability",
-            Self::PythonUnused => "python-unused",
-            Self::AssertionFreeTests => "assertion-free-tests",
-            Self::PrivateInternals => "private-internals",
-        }
+        const SPELLINGS: [&str; GateId::ALL.len()] = [
+            "merge-integrity",
+            "plan-phase",
+            "repo-shape",
+            "staging",
+            "repo-docs",
+            "config-key-validity",
+            "config-false-disable",
+            "config-tracked-trust",
+            "formatters",
+            "local-paths",
+            "taste",
+            "rust-typecheck",
+            "canvas-web-typecheck",
+            "javascript-unused",
+            "csharp-unused-candidates",
+            "python-typecheck",
+            "env-policy",
+            "env-name-ledger",
+            "file-shape",
+            "complexity",
+            "magic-numbers",
+            "markdown-links",
+            "reachability",
+            "symbol-reachability",
+            "python-unused",
+            "assertion-free-tests",
+            "private-internals",
+            "suite-seam",
+            "mutation-coverage",
+            "test-subsumption",
+        ];
+        SPELLINGS[self as usize]
     }
 
     fn exact(name: &str) -> Option<Self> {
@@ -176,7 +228,14 @@ impl GateId {
     /// never existed.
     #[must_use]
     pub const fn predecessor_declared(self) -> bool {
-        !matches!(self, Self::CsharpUnusedCandidates | Self::RustTypecheck)
+        !matches!(
+            self,
+            Self::CsharpUnusedCandidates
+                | Self::RustTypecheck
+                | Self::SuiteSeam
+                | Self::MutationCoverage
+                | Self::TestSubsumption
+        )
     }
 
     #[cfg(test)]
@@ -198,7 +257,7 @@ enum PredecessorStandardArm {
 // except where the pairing says the battery declared nothing. A gate this
 // workspace grew past the predecessor has no argv to normalize away from, and
 // naming that outright keeps the refusal from inventing a step that never ran.
-const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 27] = [
+const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 30] = [
     (
         GateId::MergeIntegrity,
         PredecessorStandardArm::InternalBuiltin,
@@ -277,13 +336,22 @@ const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 27] = [
         GateId::PrivateInternals,
         PredecessorStandardArm::InternalBuiltin,
     ),
+    (GateId::SuiteSeam, PredecessorStandardArm::AbsentFromBattery),
+    (
+        GateId::MutationCoverage,
+        PredecessorStandardArm::AbsentFromBattery,
+    ),
+    (
+        GateId::TestSubsumption,
+        PredecessorStandardArm::AbsentFromBattery,
+    ),
 ];
 
 fn predecessor_standard_arm(id: GateId) -> PredecessorStandardArm {
     PREDECESSOR_STANDARD_ARMS
         .into_iter()
         .find_map(|(candidate, arm)| (candidate == id).then_some(arm))
-        .expect("every compiled gate has one predecessor standard arm")
+        .expect("every registered gate has one predecessor standard-arm disposition")
 }
 
 impl fmt::Display for GateId {
@@ -545,7 +613,7 @@ impl GateManifest {
         self.version
     }
 
-    /// Complete declarations in compiled battery order.
+    /// Complete declarations in registered instrument order.
     #[must_use]
     pub fn gates(&self) -> &[GateDeclaration] {
         &self.gates
@@ -1310,7 +1378,7 @@ fn undeclared_refusal(id: GateId, entry: &ResolvedEntry) -> Result<(), Migration
             id = id,
             release = PREDECESSOR_GATE_RELEASE
         ),
-        format!("remove the entry and let the compiled battery declare {id}"),
+        format!("remove the entry and let the compiled instrument registry declare {id}"),
     ))
 }
 

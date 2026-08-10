@@ -115,7 +115,7 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     );
     assert_eq!(receipt.gate_set(), report.gate_set());
     assert_equivalent_except_rust_elapsed(receipt.results(), report.results());
-    assert_eq!(gate::GateId::ALL.len(), 27);
+    assert_eq!(gate::GateId::BATTERY.len(), 27);
     assert_eq!(report.results().len(), 27);
     assert_eq!(
         report
@@ -123,7 +123,7 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
             .iter()
             .map(|result| result.gate_id())
             .collect::<Vec<_>>(),
-        gate::GateId::ALL
+        gate::GateId::BATTERY
     );
     assert!(
         !marker.exists(),
@@ -234,7 +234,7 @@ fn ordinary_gate_uses_only_the_captured_index_and_one_selected_commit() {
     let json = invoke(&["--json", "gate"], repository.path());
     let text_report = report_body(&text);
     assert_structured_body(&json, &text_report);
-    assert_eq!(text_report.results().len(), gate::GateId::ALL.len());
+    assert_eq!(text_report.results().len(), gate::GateId::BATTERY.len());
     assert!(
         text_report.admits(),
         "fixture battery must admit publication: {:?}",
@@ -312,7 +312,7 @@ fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_state() {
     assert!(receipt_text.err.is_empty());
     let receipt_text = receipt_body(&receipt_text);
     assert_structured_body(&receipt_json, &receipt_text);
-    assert_eq!(receipt_text.results().len(), gate::GateId::ALL.len());
+    assert_eq!(receipt_text.results().len(), gate::GateId::BATTERY.len());
 
     let kill = invoke(&["--json", "gate", "kill"], repository.path());
     assert_eq!(kill.code, Some(REFUSAL_EXIT));

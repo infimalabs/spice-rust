@@ -128,6 +128,7 @@ pub struct MutationInventory {
     tool: MutationToolIdentity,
     targets: Vec<String>,
     mutants: Vec<String>,
+    mutant_sources: Vec<String>,
     attempts: usize,
     seed: u64,
     timeout_seconds: u64,
@@ -150,6 +151,12 @@ impl MutationInventory {
     #[must_use]
     pub fn mutants(&self) -> &[String] {
         &self.mutants
+    }
+
+    /// Exact structured source path for each mutation identity.
+    #[must_use]
+    pub fn mutant_sources(&self) -> &[String] {
+        &self.mutant_sources
     }
 
     /// Attempts required for every inventoried mutant.
@@ -209,8 +216,9 @@ impl MutationInventory {
             let _ = writeln!(rendered, "attempt-argument {target}");
             let _ = writeln!(rendered, "target {target}");
         }
-        for mutant in &self.mutants {
+        for (mutant, source) in self.mutants.iter().zip(&self.mutant_sources) {
             let _ = writeln!(rendered, "mutant {mutant}");
+            let _ = writeln!(rendered, "mutant-source {source}");
             let _ = writeln!(rendered, "mutant-argument --re");
             let _ = writeln!(rendered, "mutant-argument {}", exact_regex(mutant));
         }
@@ -340,6 +348,8 @@ pub enum MutantDisposition {
 pub struct MutantEvidence {
     /// Stable identity from the current tool inventory.
     pub identity: String,
+    /// Exact structured source path from the current tool inventory.
+    pub source: String,
     /// Exactly the declared number of attempts, in execution order.
     pub attempts: Vec<AttemptEvidence>,
     /// Classification derived from every attempt.
@@ -370,6 +380,8 @@ pub enum MutationMovement {
 /// A complete mutation run after every preflight succeeded.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KillRun {
+    source: Digest,
+    floor: Option<SurvivorRate>,
     inventory: MutationInventory,
     baseline: ProcessEvidence,
     mutants: Vec<MutantEvidence>,
@@ -378,6 +390,18 @@ pub struct KillRun {
 }
 
 impl KillRun {
+    /// Exact caller-tree identity proven unchanged across the mutation run.
+    #[must_use]
+    pub const fn source(&self) -> &Digest {
+        &self.source
+    }
+
+    /// Committed survivor floor supplied to this run, if one existed.
+    #[must_use]
+    pub const fn floor(&self) -> Option<SurvivorRate> {
+        self.floor
+    }
+
     /// Exact inventory this run consumed.
     #[must_use]
     pub const fn inventory(&self) -> &MutationInventory {
@@ -499,7 +523,7 @@ impl Kill {
         }
 
         let mut mutants = Vec::with_capacity(after.mutants.len());
-        for identity in &after.mutants {
+        for (identity, source) in after.mutants.iter().zip(&after.mutant_sources) {
             let mut attempts = Vec::with_capacity(self.battery.attempts);
             for number in 1..=self.battery.attempts {
                 let private = selected
@@ -516,6 +540,7 @@ impl Kill {
             let disposition = classify(&attempts);
             mutants.push(MutantEvidence {
                 identity: identity.clone(),
+                source: source.clone(),
                 attempts,
                 disposition,
             });
@@ -559,6 +584,8 @@ impl Kill {
         let movement = movement(rate, floor, confirmed, mutants.len());
 
         Ok(KillRun {
+            source: caller_tree,
+            floor,
             inventory: after,
             baseline,
             mutants,
@@ -617,20 +644,31 @@ impl Kill {
             .expect("complete evidence has stdout");
         let listed: Vec<ListedMutant> = serde_json::from_slice(&stdout.bytes)
             .map_err(|source| KillError::InventoryUnreadable(source.to_string()))?;
-        let mut mutants: Vec<String> = listed.into_iter().map(|listed| listed.name).collect();
-        for mutant in &mutants {
-            if mutant.is_empty() || mutant.contains(['\n', '\r']) {
-                return Err(KillError::InvalidMutant(mutant.clone()));
+        let mut listed = listed;
+        for mutant in &mut listed {
+            if mutant.name.is_empty() || mutant.name.contains(['\n', '\r']) {
+                return Err(KillError::InvalidMutant(mutant.name.clone()));
+            }
+            if !self.battery.targets.contains(&mutant.file) {
+                return Err(KillError::InvalidMutantSource {
+                    mutant: mutant.name.clone(),
+                    source: mutant.file.clone(),
+                });
             }
         }
-        mutants.sort();
-        if let Some(pair) = mutants.windows(2).find(|pair| pair[0] == pair[1]) {
-            return Err(KillError::DuplicateMutant(pair[0].clone()));
+        listed.sort_by(|left, right| left.name.cmp(&right.name));
+        if let Some(pair) = listed.windows(2).find(|pair| pair[0].name == pair[1].name) {
+            return Err(KillError::DuplicateMutant(pair[0].name.clone()));
         }
+        let (mutants, mutant_sources) = listed
+            .into_iter()
+            .map(|listed| (listed.name, listed.file))
+            .unzip();
         Ok(MutationInventory {
             tool: tool.clone(),
             targets: self.battery.targets.clone(),
             mutants,
+            mutant_sources,
             attempts: self.battery.attempts,
             seed: self.battery.seed,
             timeout_seconds: self.bounds.timeout_seconds(),
@@ -832,6 +870,8 @@ fn make_mutation_targets_writable(root: &Path, targets: &[String]) -> io::Result
 #[derive(Deserialize)]
 struct ListedMutant {
     name: String,
+    #[serde(default)]
+    file: String,
 }
 
 #[derive(Deserialize)]
