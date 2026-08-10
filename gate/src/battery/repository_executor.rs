@@ -102,6 +102,7 @@ pub struct RepositoryExecutor<'trace> {
     families: [Option<FamilyExecution>; FAMILY_COUNT],
     verifier_environment: Vec<(OsString, OsString)>,
     verifier_evidence: Vec<VerifierCompilerEvidence>,
+    verifier_evidence_required: bool,
     selected: Option<GateId>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 }
@@ -247,6 +248,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             families: std::array::from_fn(|_| None),
             verifier_environment: Vec::new(),
             verifier_evidence: Vec::new(),
+            verifier_evidence_required: false,
             selected,
             trace,
         })
@@ -305,6 +307,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         &mut self,
         evidence: &[VerifierCompilerEvidence],
         environment: Vec<(OsString, OsString)>,
+        required: bool,
     ) -> Result<(), BatteryError> {
         if self.selected.is_some() {
             return Err(BatteryError::new(
@@ -318,6 +321,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         }
         self.verifier_environment = environment;
         self.verifier_evidence = evidence.to_vec();
+        self.verifier_evidence_required = required;
         Ok(())
     }
 
@@ -411,6 +415,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             &self.source,
             &self.verifier_environment,
             &self.verifier_evidence,
+            self.verifier_evidence_required,
         );
         if let Some(gate_id) = self.selected {
             let observation = acquire_toolchain_arm(&source, &self.contract, gate_id)

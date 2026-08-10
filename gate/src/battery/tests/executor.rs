@@ -283,7 +283,7 @@ fn admitted_cross_process_receipt_never_reinvokes_compilers() {
         .expect("fresh receipt admits against consumer capture");
 
     consumer
-        .execute_with_verifier_evidence(&admitted, Vec::new())
+        .execute_with_required_verifier_evidence(&admitted, Vec::new())
         .expect("receipt-backed battery executes");
 
     assert!(
@@ -293,6 +293,69 @@ fn admitted_cross_process_receipt_never_reinvokes_compilers() {
     assert!(
         !trunk_log.exists(),
         "receipt-backed battery reinvoked Trunk inside the consumer"
+    );
+}
+
+#[test]
+fn required_cross_process_receipt_never_falls_back_after_tool_drift() {
+    let fixture = Fixture::new();
+    let repository = compiler_fixture_repository(&fixture);
+    let (programs, cargo_log, trunk_log) = install_compiler_programs(&fixture);
+    let capture = |actor: &str| {
+        crate::BatteryCapture::capture(
+            &repository,
+            &crate::Selector::staged(),
+            crate::ClaimCapture::Idle,
+            acting(actor),
+            crate::RimCapture::new(
+                &repository,
+                Some(OsString::from(programs.as_os_str())),
+                Vec::new(),
+            )
+            .expect("absolute compiler rim"),
+            crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
+        )
+        .expect("capture compiler fixture")
+    };
+    let producer = capture("compiler-producer");
+    let (_, evidence) = compiler_evidence(&producer, Vec::new());
+    let authority = b"cross-process receipt fixture authority";
+    let receipt =
+        crate::encode_verifier_compiler_receipt(&evidence, authority).expect("encode receipt");
+    fs::remove_file(&cargo_log).expect("clear producer Cargo trace");
+
+    let mut consumer = capture("compiler-consumer");
+    let contracts = [GateId::RustTypecheck, GateId::CanvasWebTypecheck].map(|gate_id| {
+        consumer
+            .verifier_compiler_contract(gate_id, Vec::new())
+            .expect("consumer verifier contract")
+    });
+    let admitted = crate::admit_verifier_compiler_receipt(&receipt, &contracts, authority)
+        .expect("fresh receipt admits against consumer capture");
+    let cargo = programs.join("cargo");
+    let mut changed = fs::read(&cargo).expect("read admitted Cargo fixture");
+    changed.extend_from_slice(b"\n# changed after receipt admission\n");
+    fs::write(&cargo, changed).expect("change Cargo after receipt admission");
+
+    let report = consumer
+        .execute_with_required_verifier_evidence(&admitted, Vec::new())
+        .expect("tool drift remains a complete refusing battery");
+
+    for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
+        let result = report
+            .results()
+            .iter()
+            .find(|result| result.gate_id() == gate_id)
+            .expect("compiler arm remains in the canonical battery");
+        assert_eq!(result.state(), BatteryState::Failed);
+    }
+    assert!(
+        !cargo_log.exists(),
+        "required receipt fell back to Cargo after tool drift"
+    );
+    assert!(
+        !trunk_log.exists(),
+        "required receipt fell back to Trunk after tool drift"
     );
 }
 
