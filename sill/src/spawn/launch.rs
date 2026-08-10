@@ -5,7 +5,6 @@ use crate::observe::{Observation, OutputStream};
 use crate::spec::{ProcessGroup, Spec, StdinPolicy, StreamPolicy};
 use std::fs::File;
 use std::io;
-use std::os::fd::AsRawFd;
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex};
@@ -108,19 +107,15 @@ fn spawn_inner_with_guardian(
         failure,
     };
     let stdout = pipes.stdout.map(|(reader, limit)| {
-        let descriptor = reader.as_raw_fd();
         start_capture(
             reader,
-            Some(descriptor),
             limit,
             captures.worker(OutputStream::Stdout, wakes.stdout),
         )
     });
     let stderr = pipes.stderr.map(|(reader, limit)| {
-        let descriptor = reader.as_raw_fd();
         start_capture(
             reader,
-            Some(descriptor),
             limit,
             captures.worker(OutputStream::Stderr, wakes.stderr),
         )

@@ -62,9 +62,7 @@ impl CaptureHandle {
         if !complete && let Some(interrupt) = &self.interrupt {
             let _interrupt_result = interrupt.send(WAKE_BYTE);
         }
-        if (complete || self.interrupt.is_some())
-            && let Some(worker) = self.worker.take()
-        {
+        if let Some(worker) = self.worker.take() {
             worker
                 .join()
                 .map_err(|_| io::Error::other("capture worker panicked"))?;
@@ -101,15 +99,11 @@ pub(super) struct CaptureWorker {
     pub(super) observer_wake: Option<std::os::unix::net::UnixDatagram>,
 }
 
-pub(super) fn start_capture<R>(
-    mut reader: R,
-    reader_descriptor: Option<RawFd>,
-    limit: usize,
-    worker: CaptureWorker,
-) -> CaptureHandle
+pub(super) fn start_capture<R>(mut reader: R, limit: usize, worker: CaptureWorker) -> CaptureHandle
 where
-    R: Read + Send + 'static,
+    R: Read + AsRawFd + Send + 'static,
 {
+    let reader_descriptor = reader.as_raw_fd();
     let CaptureWorker {
         stream,
         observation,
@@ -221,11 +215,8 @@ where
     }
 }
 
-fn wait_to_read(
-    reader_descriptor: Option<RawFd>,
-    interrupt: Option<&UnixDatagram>,
-) -> io::Result<bool> {
-    let (Some(reader_descriptor), Some(interrupt)) = (reader_descriptor, interrupt) else {
+fn wait_to_read(reader_descriptor: RawFd, interrupt: Option<&UnixDatagram>) -> io::Result<bool> {
+    let Some(interrupt) = interrupt else {
         return Ok(true);
     };
     let mut descriptors = [
