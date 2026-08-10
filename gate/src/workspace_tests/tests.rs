@@ -253,6 +253,67 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
 }
 
 #[test]
+fn staged_path_module_selects_only_its_declaring_integration_target() {
+    let root = fixture_root("workspace-path-module-selection");
+    let tests = root.join("fixture/tests");
+    fs::create_dir_all(tests.join("resident")).expect("create path-module fixture");
+    fs::write(
+        tests.join("resident.rs"),
+        "#[path = \"resident/lane_continuity.rs\"]\nmod lane_continuity;\n",
+    )
+    .expect("write declaring integration target");
+    fs::write(
+        tests.join("resident/lane_continuity.rs"),
+        "#[test]\nfn continuity() {}\n",
+    )
+    .expect("write declared path module");
+    fs::write(tests.join("other.rs"), "#[test]\nfn other() {}\n")
+        .expect("write unrelated integration target");
+    let root = fs::canonicalize(root).expect("canonical path-module fixture root");
+    let tests = root.join("fixture/tests");
+    let inventory = Inventory {
+        target_directory: root.join("target"),
+        build_directory: root.join("target/cargo-build"),
+        packages: vec![PackageInventory {
+            id: "fixture-id".to_owned(),
+            name: "fixture".to_owned(),
+            root: root.join("fixture"),
+            targets: vec![
+                TargetIdentity {
+                    package: "fixture-id".to_owned(),
+                    kind: "test".to_owned(),
+                    name: "other".to_owned(),
+                    source: tests.join("other.rs"),
+                },
+                TargetIdentity {
+                    package: "fixture-id".to_owned(),
+                    kind: "test".to_owned(),
+                    name: "resident".to_owned(),
+                    source: tests.join("resident.rs"),
+                },
+            ],
+        }],
+    };
+
+    let report = selection_report(
+        &inventory,
+        &root,
+        wire::Digest::compute(wire::Domain::GateTree, b"declared path module"),
+        &["fixture/tests/resident/lane_continuity.rs".to_owned()],
+    )
+    .expect("declared path module maps to its integration target");
+
+    assert!(report.admits());
+    assert_eq!(report.tests(), ["fixture::test:resident"]);
+    assert_eq!(report.edges().len(), 1);
+    assert_eq!(
+        report.edges()[0].source(),
+        "fixture/tests/resident/lane_continuity.rs"
+    );
+    fs::remove_dir_all(root).expect("remove path-module fixture");
+}
+
+#[test]
 fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
     let mut inventory = fixture_inventory();
     inventory.packages[0].targets.push(TargetIdentity {
