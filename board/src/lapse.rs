@@ -671,6 +671,7 @@ mod tests {
         write.residency_head(fact, |_| ResidencyHead {
             epoch: uuid(22),
             state: ResidentState::Seated,
+            topology_revision: 0,
             lanes: vec![LaneResidency {
                 lane: uuid(20),
                 lineage_id: uuid(20),

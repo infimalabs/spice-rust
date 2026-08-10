@@ -333,33 +333,37 @@ fn worker_failure(failure: WorkerFailure) -> Outcome<BatteryReport> {
             detail: failure.detail,
         })
     } else {
-        Outcome::Refusal(Refusal {
-            reason: failure.reason,
-            witness: None,
-            expected: Some("one complete canonical Rust battery capture".to_owned()),
-            observed: Some(failure.detail),
-            remedy: "repair the named capture input; the Rust battery is the sole execution path"
-                .to_owned(),
-        })
+        Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                failure.reason,
+                None,
+                Some("one complete canonical Rust battery capture".to_owned()),
+                Some(failure.detail),
+            )
+            .with_detail(
+                "repair the named capture input; the Rust battery is the sole execution path",
+            ),
+        ))
     }
 }
 
 fn deadline(progress: &Path) -> Outcome<BatteryReport> {
     let phase = last_phase(progress);
-    Outcome::Refusal(Refusal {
-        reason: "gate::pre-commit-deadline-elapsed".to_owned(),
-        witness: Some("canonical-commit-gate".to_owned()),
-        expected: Some(format!(
-            "one complete ordered battery and process-group cleanup inside {} seconds",
-            HARD_DEADLINE.as_secs(),
-        )),
-        observed: Some(format!(
-            "phase={phase}; findings=incomplete; worker=timed-out; work_cutoff_seconds={}",
-            WORK_RUNTIME.as_secs(),
-        )),
-        remedy: "repair or reduce the named gate phase, then retry the same plain git commit"
-            .to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            "gate::pre-commit-deadline-elapsed",
+            Some("canonical-commit-gate".to_owned()),
+            Some(format!(
+                "one complete ordered battery and process-group cleanup inside {} seconds",
+                HARD_DEADLINE.as_secs(),
+            )),
+            Some(format!(
+                "phase={phase}; findings=incomplete; worker=timed-out; work_cutoff_seconds={}",
+                WORK_RUNTIME.as_secs(),
+            )),
+        )
+        .with_detail("repair or reduce the named gate phase, then retry the same plain git commit"),
+    ))
 }
 
 fn worker_lost(progress: &Path, detail: String) -> Outcome<BatteryReport> {
@@ -525,8 +529,11 @@ mod tests {
         let Outcome::Refusal(refusal) = deadline(&files.progress) else {
             panic!("deadline is a typed refusal");
         };
-        assert_eq!(refusal.reason, "gate::pre-commit-deadline-elapsed");
-        let observed = refusal.observed.expect("deadline retains phase evidence");
+        assert_eq!(refusal.reason(), "gate::pre-commit-deadline-elapsed");
+        let observed = refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
+            .expect("deadline retains phase evidence");
         assert!(observed.contains("phase=family family=toolchain"));
         assert!(observed.contains("findings=incomplete"));
         files.cleanup().expect("remove deadline worker files");
