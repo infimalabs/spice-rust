@@ -774,7 +774,10 @@ fn declared(identity: &str) -> CaptureRecord {
             session: vendor::SessionId::new(identity.to_owned()).expect("fixture identity"),
             locus: locus(),
         }),
-        decoded: listen::Decoded::Events(Vec::new()),
+        decoded: listen::Decoded::Events {
+            context: Default::default(),
+            events: Vec::new(),
+        },
     }
 }
 

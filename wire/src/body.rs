@@ -456,19 +456,72 @@ pub struct DirectiveAttachment {
     pub data_url: String,
 }
 
-/// The same intent was sent again with lineage and escalation carried.
+/// How urgently one stable directive is currently presented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SteeringStage {
+    /// The original publication has not crossed its first silence horizon.
+    Published,
+    /// Silence crossed the first horizon.
+    Reminded,
+    /// Silence crossed the second horizon.
+    Escalated,
+    /// Silence crossed the final pre-expiry horizon.
+    Overdue,
+}
+
+impl SteeringStage {
+    /// Stable lowercase spelling used on operator surfaces.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Published => "published",
+            Self::Reminded => "reminded",
+            Self::Escalated => "escalated",
+            Self::Overdue => "overdue",
+        }
+    }
+
+    /// The next presentation state, absent at the last pre-expiry state.
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self {
+            Self::Published => Some(Self::Reminded),
+            Self::Reminded => Some(Self::Escalated),
+            Self::Escalated => Some(Self::Overdue),
+            Self::Overdue => None,
+        }
+    }
+}
+
+impl std::fmt::Display for SteeringStage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// One durable presentation transition in a directive's audit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteeringTransition {
+    /// State entered at this transition.
+    pub stage: SteeringStage,
+    /// Journal instant at which the transition was recorded.
+    pub at: Instant,
+}
+
+/// One stable directive crossed a named silence horizon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SteerResent {
-    /// Durable identity of the new rung.
+#[serde(deny_unknown_fields)]
+pub struct SteerEscalated {
+    /// Durable identity retained from publication.
     pub directive: CanonicalUuid,
-    /// Key of the resent directive.
+    /// Human key retained from publication.
     pub key: String,
-    /// Key this send descends from.
-    pub ancestor: String,
     /// Lane the directive addresses.
     pub lane: CanonicalUuid,
-    /// Escalation level the lineage has reached.
-    pub escalation: u32,
+    /// Named presentation state entered by this fact.
+    pub stage: SteeringStage,
 }
 
 /// A lapsed directive was restored to live standing exactly once.
@@ -578,7 +631,7 @@ pub struct SteerLapsed {
     pub expires: Instant,
 }
 
-/// The operator withdrew a live directive; the lineage retired without an agent disposition.
+/// The operator withdrew a live directive without an agent disposition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerCanceled {
     /// Withdrawn directive key.
@@ -1466,7 +1519,12 @@ pub struct ReleasePublished {
     /// Sealed release manifest digest.
     pub manifest: Digest,
     /// Identity of the exact curated release-note bytes published.
-    pub notes: Digest,
+    ///
+    /// `HistoricalAbsent` is written only by the journal schema-4-to-5
+    /// migration for a publication whose pre-digest bytes cannot be
+    /// reconstructed. The field remains required on the wire, so unmigrated
+    /// schema-4 JSON does not enter the current decoder.
+    pub notes: crate::ReleaseNotesIdentity,
     /// Each target entry published under its detached proof receipt.
     pub targets: Vec<PublishedTarget>,
 }

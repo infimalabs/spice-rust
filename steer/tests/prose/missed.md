@@ -4,7 +4,7 @@ ACK 1kJK6N3: the key is a character short, so it is malformed.
 
 ACK 1kJKZZZZ: nothing on the board carries this key.
 
-ACK 1kJK8KcW: this lineage retired a long time ago.
+ACK 1kJK8KcW: this directive retired a long time ago.
 
 > ACK 1kJK6N3R: quoted in a block quote, so it is shown rather than spoken.
 

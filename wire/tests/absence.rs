@@ -78,6 +78,7 @@ const DIRECTIVE: &str = r#"{
   "key": "1kJJP87B",
   "text": "> quoted only",
   "authored": "2026-08-01T06:07:19.000Z",
+  "stage": "published",
   "expires": "2026-08-01T07:07:19.000Z"
 }"#;
 

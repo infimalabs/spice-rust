@@ -2,10 +2,16 @@
 
 use super::*;
 use ::axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use futures_util::StreamExt as _;
+use futures_util::stream::FuturesUnordered;
+use std::pin::Pin;
 
 const CAPABILITY_REPLACED_REASON: &str = "stream::capability-replaced";
 const CAPABILITY_REPLACED_DETAIL: &str =
     "the capability that authenticated this stream is no longer current";
+
+pub(super) type PendingCommands =
+    FuturesUnordered<Pin<Box<dyn Future<Output = CommandCompletion> + Send>>>;
 
 pub(super) async fn socket(
     State(state): State<Arc<SurfaceState>>,
@@ -93,6 +99,7 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
         .stream
         .as_ref()
         .map(crate::stream::Source::subscribe_messages);
+    let mut commands = PendingCommands::new();
     let mut lead = Lead::Journal;
     loop {
         let live = subscription
@@ -104,6 +111,7 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
             &mut closed,
             &mut broadcasts,
             &mut message_broadcasts,
+            &mut commands,
             live,
         )
         .await;
@@ -155,6 +163,14 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
                     return;
                 }
             }
+            Event::Command(completed) => {
+                if matches!(
+                    route_command_completion(&mut socket, &state, completed).await,
+                    SessionFlow::Close
+                ) {
+                    return;
+                }
+            }
             Event::Inbound(message) => {
                 let Some(Ok(message)) = message else {
                     return;
@@ -176,12 +192,32 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
                     )
                     .await
                 } else {
-                    route_command(&mut socket, &state, &accepted, &bytes).await
+                    route_inbound_command(&mut socket, &state, &accepted, &mut commands, &bytes)
+                        .await
                 };
                 if matches!(flow, SessionFlow::Close) {
                     return;
                 }
             }
+        }
+    }
+}
+
+async fn route_inbound_command(
+    socket: &mut WebSocket,
+    state: &Arc<SurfaceState>,
+    accepted: &wire::Accepted,
+    commands: &mut PendingCommands,
+    bytes: &[u8],
+) -> SessionFlow {
+    match route_command(socket, state, accepted, bytes).await {
+        CommandRoute::Flow(flow) => flow,
+        CommandRoute::Pending(command) if command.dark => {
+            route_dark_command(socket, state, commands, *command).await
+        }
+        CommandRoute::Pending(command) => {
+            commands.push(Box::pin((*command).complete(Arc::clone(state))));
+            SessionFlow::Continue
         }
     }
 }
@@ -197,6 +233,7 @@ pub(super) enum Lead {
     Journal,
     Message,
     Inbound,
+    Command,
 }
 
 impl Lead {
@@ -210,7 +247,8 @@ impl Lead {
         *self = match leading {
             Self::Journal => Self::Message,
             Self::Message => Self::Inbound,
-            Self::Inbound => Self::Journal,
+            Self::Inbound => Self::Command,
+            Self::Command => Self::Journal,
         };
         leading
     }
@@ -239,6 +277,7 @@ pub(super) enum Event {
     Journal(Result<bus::JournalCommit, tokio::sync::broadcast::error::RecvError>),
     Message(Result<wire::AgentMessage, tokio::sync::broadcast::error::RecvError>),
     Inbound(Option<Result<Message, ::axum::Error>>),
+    Command(Option<CommandCompletion>),
 }
 
 /// Await the next event for one session, rotating which work source leads.
@@ -250,8 +289,8 @@ pub(super) enum Event {
 /// without a bound, which per-connection isolation does not help: the flood and
 /// the starved requests share the connection.
 ///
-/// Rotating which of the three work sources is evaluated first bounds the wait
-/// at two iterations rather than at the journal falling quiet. No source is
+/// Rotating which of the four work sources is evaluated first bounds the wait
+/// at three iterations rather than at the journal falling quiet. No source is
 /// ever *disabled* to make room, because a disabled broadcast receiver stops
 /// draining its channel and converts a scheduling question into a lag question,
 /// changing the retained-cursor overflow behavior this rotation must leave
@@ -262,10 +301,12 @@ pub(super) async fn next_event(
     closed: &mut tokio::sync::watch::Receiver<bool>,
     broadcasts: &mut Option<bus::BroadcastSubscriber>,
     messages: &mut Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
+    commands: &mut PendingCommands,
     live: bool,
 ) -> Event {
     let journal = broadcasts.is_some() && live;
     let transcript = messages.is_some() && live;
+    let command = !commands.is_empty();
     match lead.take() {
         Lead::Journal => tokio::select! {
             biased;
@@ -273,20 +314,31 @@ pub(super) async fn next_event(
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
+            completed = commands.next(), if command => Event::Command(completed),
         },
         Lead::Message => tokio::select! {
             biased;
             changed = closed.changed() => Event::Closed(changed),
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
+            completed = commands.next(), if command => Event::Command(completed),
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
         },
         Lead::Inbound => tokio::select! {
             biased;
             changed = closed.changed() => Event::Closed(changed),
             message = socket.next_message() => Event::Inbound(message),
+            completed = commands.next(), if command => Event::Command(completed),
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
+        },
+        Lead::Command => tokio::select! {
+            biased;
+            changed = closed.changed() => Event::Closed(changed),
+            completed = commands.next(), if command => Event::Command(completed),
+            notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
+            notice = recv_message(messages), if transcript => Event::Message(notice),
+            message = socket.next_message() => Event::Inbound(message),
         },
     }
 }
@@ -661,12 +713,12 @@ async fn route_command(
     state: &SurfaceState,
     accepted: &wire::Accepted,
     bytes: &[u8],
-) -> SessionFlow {
+) -> CommandRoute {
     let crossing = match wire::decode::<wire::Command<serde_json::Value>>(bytes) {
         Ok(command) => command,
         Err(error) => {
             send_encoded(socket, &undecodable_command(error)).await;
-            return SessionFlow::Continue;
+            return CommandRoute::Flow(SessionFlow::Continue);
         }
     };
     let id = crossing.id;
@@ -683,41 +735,147 @@ async fn route_command(
                 },
             )
             .await;
-            return SessionFlow::Continue;
+            return CommandRoute::Flow(SessionFlow::Continue);
         }
     };
     let dark = is_dark(&command);
-    let response = command.clone();
+    let response = CommandResponse::from(&command);
     let pending = match state.enqueue(command).await {
         Ok(pending) => pending,
         Err(EnqueueError::NotAdmitting) if *state.closed.borrow() => {
-            return SessionFlow::Close;
+            return CommandRoute::Flow(SessionFlow::Close);
         }
         Err(EnqueueError::NotAdmitting) => {
-            send_encoded(socket, &response.response(closing_refusal())).await;
-            return SessionFlow::Continue;
+            send_encoded(socket, &response.bind(closing_refusal())).await;
+            return CommandRoute::Flow(SessionFlow::Continue);
         }
         Err(EnqueueError::ControlClosed) => {
-            send_encoded(socket, &response.response(closing_refusal())).await;
-            return SessionFlow::Close;
+            send_encoded(socket, &response.bind(closing_refusal())).await;
+            return CommandRoute::Flow(SessionFlow::Close);
         }
     };
     let PendingResponse { returned, sent } = pending;
-    let mut closed = state.closed.subscribe();
-    let returned = tokio::select! {
-        biased;
-        changed = closed.changed() => {
-            let _ = changed;
+    CommandRoute::Pending(Box::new(PendingCommand {
+        response,
+        returned,
+        sent,
+        dark,
+    }))
+}
+
+enum CommandRoute {
+    Flow(SessionFlow),
+    Pending(Box<PendingCommand>),
+}
+
+struct PendingCommand {
+    response: CommandResponse,
+    returned: tokio::sync::oneshot::Receiver<wire::Outcome<wire::intent::CommandAnswer>>,
+    sent: tokio::sync::oneshot::Sender<()>,
+    dark: bool,
+}
+
+pub(super) enum CommandCompletion {
+    Closed,
+    Returned(Box<ReturnedCommand>),
+}
+
+pub(super) struct ReturnedCommand {
+    response: CommandResponse,
+    returned:
+        Result<wire::Outcome<wire::intent::CommandAnswer>, tokio::sync::oneshot::error::RecvError>,
+    sent: tokio::sync::oneshot::Sender<()>,
+    dark: bool,
+}
+
+#[derive(Clone, Copy)]
+struct CommandResponse {
+    id: wire::CanonicalUuid,
+    epoch: wire::CanonicalUuid,
+}
+
+impl CommandResponse {
+    fn from(command: &wire::AdmittedCommand) -> Self {
+        Self {
+            id: command.id(),
+            epoch: command.epoch(),
+        }
+    }
+
+    fn bind(
+        self,
+        outcome: wire::Outcome<wire::intent::CommandAnswer>,
+    ) -> wire::Response<wire::intent::CommandAnswer> {
+        wire::Response {
+            v: wire::WireVersion::CURRENT,
+            id: self.id,
+            epoch: self.epoch,
+            outcome,
+        }
+    }
+}
+
+impl PendingCommand {
+    async fn complete(self, state: Arc<SurfaceState>) -> CommandCompletion {
+        if *state.closed.borrow() || state.connections.is_cancelled() {
+            return CommandCompletion::Closed;
+        }
+        let mut closed = state.closed.subscribe();
+        let returned = tokio::select! {
+            biased;
+            changed = closed.changed() => {
+                let _ = changed;
+                return CommandCompletion::Closed;
+            },
+            _ = state.connections.cancelled() => return CommandCompletion::Closed,
+            returned = self.returned => returned,
+        };
+        CommandCompletion::Returned(Box::new(ReturnedCommand {
+            response: self.response,
+            returned,
+            sent: self.sent,
+            dark: self.dark,
+        }))
+    }
+}
+
+async fn route_dark_command(
+    socket: &mut WebSocket,
+    state: &Arc<SurfaceState>,
+    commands: &mut PendingCommands,
+    command: PendingCommand,
+) -> SessionFlow {
+    while let Some(completed) = commands.next().await {
+        if matches!(
+            route_command_completion(socket, state, Some(completed)).await,
+            SessionFlow::Close
+        ) {
             return SessionFlow::Close;
-        },
-        _ = state.connections.cancelled() => return SessionFlow::Close,
-        returned = returned => returned,
+        }
+    }
+    let completed = command.complete(Arc::clone(state)).await;
+    route_command_completion(socket, state, Some(completed)).await
+}
+
+async fn route_command_completion(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    completed: Option<CommandCompletion>,
+) -> SessionFlow {
+    let Some(CommandCompletion::Returned(completed)) = completed else {
+        return SessionFlow::Close;
     };
+    let ReturnedCommand {
+        response,
+        returned,
+        sent,
+        dark,
+    } = *completed;
     let Ok(outcome) = returned else {
         return SessionFlow::Close;
     };
     let reached_dark = dark && matches!(outcome, wire::Outcome::Reply(_));
-    send_encoded(socket, &response.response(outcome)).await;
+    send_encoded(socket, &response.bind(outcome)).await;
     let _ = sent.send(());
     if dark && !reached_dark {
         state.reopen_after_dark_refusal().await;

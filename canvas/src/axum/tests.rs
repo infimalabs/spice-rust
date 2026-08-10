@@ -274,6 +274,25 @@ async fn send_change(
     .await;
 }
 
+async fn send_recall(
+    socket: &mut ClientSocket,
+    id: wire::CanonicalUuid,
+    lane: wire::CanonicalUuid,
+) {
+    send_client(
+        socket,
+        &wire::Command {
+            v: wire::WireVersion::CURRENT,
+            id,
+            epoch: epoch(),
+            kind: wire::CommandKind::LaneRecall,
+            expected: Vec::new(),
+            body: wire::intent::LaneRecall { lane: Some(lane) },
+        },
+    )
+    .await;
+}
+
 async fn send_client<T: serde::Serialize>(socket: &mut ClientSocket, value: &T) {
     let bytes = wire::encode(value).expect("client frame encodes");
     socket
@@ -554,6 +573,129 @@ async fn a_liveness_probe_is_answered_per_probe_and_still_admits_its_generation(
     bus.shutdown().expect("bus shuts down");
 }
 
+/// One held command cannot own the authenticated socket's receive loop.
+///
+/// The first `ControlRequest` is the event-driven barrier: retaining it keeps
+/// its response oneshot open without sleeping or substituting another route.
+/// The probe and sibling recall cross the same real WebSocket after that
+/// barrier. Answering the sibling first proves response correlation is by
+/// command identity rather than request position; a final probe is a sentinel
+/// proving neither response was duplicated before the next known frame.
+#[tokio::test(flavor = "current_thread")]
+async fn a_held_recall_does_not_block_a_probe_or_sibling_recall_on_one_socket() {
+    let app = TestApp::new();
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "concurrent command horizon", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, mut control) = Server::bind_streaming(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        epoch(),
+        capabilities,
+        app.source(),
+        speech(),
+        bus.reader(),
+        2,
+    )
+    .await
+    .expect("streaming server binds");
+    let address = server.local_addr().expect("address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+
+    let lane_a = identity(0xa1);
+    let lane_b = identity(0xb1);
+    let recall_a = identity(0xa2);
+    let recall_b = identity(0xb2);
+    let probe = identity(0xc1);
+    send_recall(&mut socket, recall_a, lane_a).await;
+    let first = control.recv().await.expect("first recall enters Control");
+    assert!(matches!(
+        first.command().body(),
+        wire::intent::Intent::LaneRecall(wire::intent::LaneRecall { lane: Some(lane) })
+            if *lane == lane_a
+    ));
+
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Ping {
+            v: wire::WireVersion::CURRENT,
+            id: probe,
+            epoch: epoch(),
+        },
+    )
+    .await;
+    send_recall(&mut socket, recall_b, lane_b).await;
+    let second = timeout(ASSERTION_DEADLINE, control.recv())
+        .await
+        .expect("sibling recall enters Control while the first response is held")
+        .expect("Control remains open");
+    assert!(matches!(
+        second.command().body(),
+        wire::intent::Intent::LaneRecall(wire::intent::LaneRecall { lane: Some(lane) })
+            if *lane == lane_b
+    ));
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Pong { id, .. } if id == probe
+    ));
+
+    let second_sent = second
+        .respond(wire::Outcome::Refusal(wire::Refusal {
+            reason: "fixture::lane-b".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "release lane A after observing lane B".to_owned(),
+        }))
+        .expect("sibling response receiver remains open");
+    let answered_b = response(&mut socket).await;
+    assert_eq!(answered_b.id, recall_b);
+    second_sent.wait().await;
+
+    let first_sent = first
+        .respond(wire::Outcome::Refusal(wire::Refusal {
+            reason: "fixture::lane-a".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "finish the held fixture response".to_owned(),
+        }))
+        .expect("held response receiver remains open");
+    let answered_a = response(&mut socket).await;
+    assert_eq!(answered_a.id, recall_a);
+    first_sent.wait().await;
+
+    let sentinel = identity(0xc2);
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Ping {
+            v: wire::WireVersion::CURRENT,
+            id: sentinel,
+            epoch: epoch(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Pong { id, .. } if id == sentinel
+    ));
+
+    shutdown.send(()).expect("shutdown signals");
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+    assert_socket_terminated(&mut socket).await;
+    bus.shutdown().expect("bus shuts down");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author() {
     let app = TestApp::new();
@@ -665,14 +807,14 @@ fn every_source_ready() -> (
     (bus, publisher, Some(broadcasts), Some(transcript))
 }
 
-/// Each rotation step serves its own source while all three stay ready.
+/// Each rotation step serves its own source while all four stay ready.
 ///
 /// Every source is ready before the first call and none is exhausted by the
-/// four, so the lead is the only thing left that can decide which event comes
+/// five, so the lead is the only thing left that can decide which event comes
 /// back. One fixed order answers `Journal` every time; a rotation that fails to
-/// cycle answers `Journal` after the first step; and the fourth call is what
+/// cycle answers `Journal` after the first step; and the fifth call is what
 /// proves the cycle closes rather than parking on its last source. One lead is
-/// carried across all four calls, so the advance a session depends on is the
+/// carried across all five calls, so the advance a session depends on is the
 /// same advance under test.
 ///
 /// Readiness is established by the assertions themselves rather than by timing.
@@ -680,21 +822,26 @@ fn every_source_ready() -> (
 /// yield it would return a later source instead and fail there, so this cannot
 /// decay into a test that passes because nothing was ever ready.
 #[tokio::test(flavor = "current_thread")]
-async fn each_rotation_step_serves_its_own_source_while_all_three_stay_ready() {
-    use super::socket::{Event, Lead, next_event};
+async fn each_rotation_step_serves_its_own_source_while_all_four_stay_ready() {
+    use super::socket::{CommandCompletion, Event, Lead, PendingCommands, next_event};
 
     let (bus, _publisher, mut broadcasts, mut messages) = every_source_ready();
     let (_closed, mut closed) = tokio::sync::watch::channel(false);
     let mut inbound = ReadyInbound;
     let mut lead = Lead::Journal;
+    let mut commands = PendingCommands::new();
+    for _ in 0..8 {
+        commands.push(Box::pin(async { CommandCompletion::Closed }));
+    }
 
-    for expected in ["journal", "message", "inbound", "journal"] {
+    for expected in ["journal", "message", "inbound", "command", "journal"] {
         let event = next_event(
             &mut lead,
             &mut inbound,
             &mut closed,
             &mut broadcasts,
             &mut messages,
+            &mut commands,
             true,
         )
         .await;
@@ -709,6 +856,10 @@ async fn each_rotation_step_serves_its_own_source_while_all_three_stay_ready() {
                 "message"
             }
             Event::Inbound(_) => "inbound",
+            Event::Command(completed) => {
+                assert!(matches!(completed, Some(CommandCompletion::Closed)));
+                "command"
+            }
         };
         assert_eq!(
             served, expected,
@@ -727,14 +878,18 @@ async fn each_rotation_step_serves_its_own_source_while_all_three_stay_ready() {
 /// step is a fresh race between a ready close and three ready work sources.
 #[tokio::test(flavor = "current_thread")]
 async fn close_outranks_every_ready_work_source_on_every_lead() {
-    use super::socket::{Event, Lead, next_event};
+    use super::socket::{CommandCompletion, Event, Lead, PendingCommands, next_event};
 
     let (bus, _publisher, mut broadcasts, mut messages) = every_source_ready();
     let (shutdown, mut closed) = tokio::sync::watch::channel(false);
     let mut inbound = ReadyInbound;
     let mut lead = Lead::Journal;
+    let mut commands = PendingCommands::new();
+    for _ in 0..8 {
+        commands.push(Box::pin(async { CommandCompletion::Closed }));
+    }
 
-    for _ in 0..3 {
+    for _ in 0..4 {
         shutdown
             .send(true)
             .expect("the session holds the watch open");
@@ -746,6 +901,7 @@ async fn close_outranks_every_ready_work_source_on_every_lead() {
                     &mut closed,
                     &mut broadcasts,
                     &mut messages,
+                    &mut commands,
                     true,
                 )
                 .await,

@@ -345,26 +345,31 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
         boundary: sill::RecordBoundary::Complete,
         locus,
         declaration: None,
-        decoded: listen::Decoded::Events(vec![
-            listen::Event::Reasoning(listen::Reasoning {
-                content: listen::ReasoningContent::Opaque,
-                locus,
-            }),
-            listen::Event::Tool(listen::Tool {
-                call_id: "tool-1".to_owned(),
-                moment: listen::ToolMoment::Call {
-                    name: "Bash".to_owned(),
-                    arguments: r#"{"command":"git status --short","description":"read the tree"}"#
-                        .to_owned(),
-                },
-                locus,
-            }),
-            listen::Event::Prose(listen::Prose {
-                text: "agent-authored answer".to_owned(),
-                phase: None,
-                locus,
-            }),
-        ]),
+        decoded: listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![
+                listen::Event::Reasoning(listen::Reasoning {
+                    content: listen::ReasoningContent::Opaque,
+                    locus,
+                }),
+                listen::Event::Tool(listen::Tool {
+                    call_id: "tool-1".to_owned(),
+                    moment: listen::ToolMoment::Call {
+                        name: "Bash".to_owned(),
+                        arguments:
+                            r#"{"command":"git status --short","description":"read the tree"}"#
+                                .to_owned(),
+                    },
+                    locus,
+                }),
+                listen::Event::Prose(listen::Prose {
+                    role: listen::ProseRole::Assistant,
+                    text: "agent-authored answer".to_owned(),
+                    phase: None,
+                    locus,
+                }),
+            ],
+        },
     };
     let mut seats = Seats::new();
     seats
@@ -435,11 +440,15 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
         boundary: sill::RecordBoundary::Complete,
         locus,
         declaration: None,
-        decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
-            text: "Polling is not a completion event.".to_owned(),
-            phase: None,
-            locus,
-        })]),
+        decoded: listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: "Polling is not a completion event.".to_owned(),
+                phase: None,
+                locus,
+            })],
+        },
     };
     let bag = taste::Bag::new(vec![
         taste::Taste::new(
@@ -583,11 +592,15 @@ fn assert_stale_capture_ignored<P: AgentMessagePublisher>(
         boundary: sill::RecordBoundary::Complete,
         locus,
         declaration: None,
-        decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
-            text: "stale prior-occupant answer".to_owned(),
-            phase: None,
-            locus,
-        })]),
+        decoded: listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: "stale prior-occupant answer".to_owned(),
+                phase: None,
+                locus,
+            })],
+        },
     };
     accept_capture_record(
         bus,
@@ -685,11 +698,15 @@ fn a_live_capture_record_accounts_the_tape_behind_its_lane() {
         boundary: sill::RecordBoundary::Complete,
         locus,
         declaration: None,
-        decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
-            text: "agent-authored answer".to_owned(),
-            phase: None,
-            locus,
-        })]),
+        decoded: listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: "agent-authored answer".to_owned(),
+                phase: None,
+                locus,
+            })],
+        },
     };
     let mut seats = Seats::new();
     seats

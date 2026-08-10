@@ -60,13 +60,14 @@ fn prepare_release_publish(
     command: &wire::AdmittedCommand,
     publish: &ReleasePublish,
 ) -> Result<PreparedReleasePublish, Outcome<CommandAnswer>> {
+    let notes = current_notes(publish)?;
     let app = crate::release_command::app_digest(&paths.worktree)
         .map_err(|error| release_refusal("release::app-stage-refused", &error))?;
-    let release = crate::release_command::admit_stage(&paths.stage, &app, &publish.notes)
+    let release = crate::release_command::admit_stage(&paths.stage, &app, notes)
         .map_err(|error| release_refusal("release::manifest-refused", &error.to_string()))?;
     if publish.key != *release.key()
         || publish.manifest != *release.manifest()
-        || publish.notes != *release.notes()
+        || notes != release.notes()
     {
         return Err(Outcome::Refusal(Refusal {
             reason: "release::plan-moved".to_owned(),
@@ -77,10 +78,7 @@ fn prepare_release_publish(
                 release.manifest(),
                 release.notes()
             )),
-            observed: Some(format!(
-                "{}:{}:{}",
-                publish.key, publish.manifest, publish.notes
-            )),
+            observed: Some(format!("{}:{}:{}", publish.key, publish.manifest, notes)),
             remedy: "preview the current sealed manifest and apply its exact key".to_owned(),
         }));
     }
@@ -106,6 +104,18 @@ fn prepare_release_publish(
         release,
         snapshot,
         state,
+    })
+}
+
+fn current_notes(publish: &ReleasePublish) -> Result<&wire::Digest, Outcome<CommandAnswer>> {
+    publish.notes.digest().ok_or_else(|| {
+        Outcome::Refusal(Refusal {
+            reason: "release::notes-identity-absent".to_owned(),
+            witness: Some("publication-plan".to_owned()),
+            expected: Some("the exact curated release-note digest".to_owned()),
+            observed: Some("historical schema-4 absence".to_owned()),
+            remedy: "preview the current sealed release and apply its exact plan".to_owned(),
+        })
     })
 }
 
@@ -433,4 +443,31 @@ fn fault<B>(class: FaultClass, reason: &str, detail: &str) -> Outcome<B> {
         reason: reason.to_owned(),
         detail: detail.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_migrated_command_cannot_enter_the_current_publication_door() {
+        let publish = ReleasePublish {
+            key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .parse()
+                .expect("plan digest"),
+            manifest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                .parse()
+                .expect("manifest digest"),
+            notes: wire::ReleaseNotesIdentity::HistoricalAbsent,
+        };
+
+        let Err(Outcome::Refusal(refusal)) = current_notes(&publish) else {
+            panic!("historical note absence must refuse before stage admission")
+        };
+        assert_eq!(refusal.reason, "release::notes-identity-absent");
+        assert_eq!(
+            refusal.observed.as_deref(),
+            Some("historical schema-4 absence")
+        );
+    }
 }

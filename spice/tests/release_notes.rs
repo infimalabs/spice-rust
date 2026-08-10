@@ -187,6 +187,41 @@ fn an_explicit_release_commit_and_no_tag_fallback_are_both_visible() {
 }
 
 #[test]
+fn reverting_a_target_before_the_selected_tag_keeps_every_window_landing() {
+    let mut fixture = Fixture::new("pre-tag-revert");
+    fixture.commit("repository root", None, None);
+    let target = fixture.commit(
+        "core: Add pre-tag behavior CORE-before",
+        Some("core.behavior"),
+        Some("before"),
+    );
+    git(&fixture.root, &["tag", "v1.0.0"]);
+
+    let unrelated = fixture.commit(
+        "canvas: Add unrelated palette UI-unrelated",
+        Some("canvas.ui"),
+        Some("unrelated"),
+    );
+    git(&fixture.root, &["revert", "--no-edit", &target]);
+    let revert = fixture.head();
+
+    let output = fixture.invoke(&["--json", "release", "notes"]);
+    assert!(output.status.success(), "{}", spoken(&output));
+    let Outcome::Reply(reply) =
+        wire::decode::<Outcome<ReleaseNotes>>(&output.stdout).expect("JSON draft is typed")
+    else {
+        panic!("release notes did not reply")
+    };
+
+    assert_eq!(reply.body.previous_tag.as_deref(), Some("v1.0.0"));
+    assert_eq!(reply.body.entries.len(), 2);
+    assert_eq!(reply.body.entries[0].references, [unrelated]);
+    assert_eq!(reply.body.entries[1].references, [revert]);
+    assert!(reply.body.document.contains("unrelated palette"));
+    assert!(reply.body.document.contains("Revert"));
+}
+
+#[test]
 fn an_unknown_release_commit_is_one_typed_refusal() {
     let mut fixture = Fixture::new("unknown");
     fixture.commit("root", None, None);

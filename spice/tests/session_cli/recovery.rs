@@ -1,6 +1,5 @@
 use super::*;
 use serde_json::json;
-use std::collections::BTreeSet;
 use std::fs;
 
 fn damaged_fixture(scratch: &Scratch) -> String {
@@ -18,28 +17,21 @@ fn damaged_fixture(scratch: &Scratch) -> String {
 }
 
 fn assert_damaged_recovery(damaged: &str) {
-    let first = reply_forms(&strings(&["session", "summary", damaged]), &[], "summary");
-    let second = reply_forms(&strings(&["session", "summary", damaged]), &[], "summary");
-    assert_eq!(first, second, "residue projection is deterministic");
-    let residues = first["residues"].as_array().expect("residues are typed");
-    let kinds = residues
-        .iter()
-        .filter_map(|row| row["kind"].as_str())
-        .collect::<BTreeSet<_>>();
-    assert_eq!(kinds, BTreeSet::from(["malformed-json", "truncated-json"]));
-    assert!(residues.iter().all(|row| {
-        row["recovery"]
-            .as_str()
-            .is_some_and(|recovery| !recovery.is_empty())
-    }));
-    let full_history_slice = reply_forms(
-        &strings(&["session", "slices", damaged, "--limit", "1"]),
+    let first = refusal(
+        &strings(&["session", "summary", damaged]),
         &[],
-        "slices",
+        "session::transcript-evidence-invalid",
     );
-    assert_eq!(
-        full_history_slice["rows"][0]["basis"],
-        "full_history_no_compactions"
+    let second = refusal(
+        &strings(&["session", "summary", damaged]),
+        &[],
+        "session::transcript-evidence-invalid",
+    );
+    assert_eq!(first, second, "malformed-evidence refusal is deterministic");
+    assert!(
+        first["observed"]
+            .as_str()
+            .is_some_and(|observed| observed.contains(":2: Malformed"))
     );
 }
 
@@ -193,7 +185,9 @@ fn malformed_truncated_missing_and_unavailable_state_is_accounted_with_recovery(
     let scratch = Scratch::new("residue");
     let damaged = damaged_fixture(&scratch);
     assert_damaged_recovery(&damaged);
-    assert_invalid_query_arguments(&damaged);
+    let valid_path = scratch.path().join("valid.jsonl");
+    write_jsonl(&valid_path, &codex_rows());
+    assert_invalid_query_arguments(&valid_path.to_string_lossy());
     assert_unavailable_files(&scratch);
     assert_unavailable_turn_identity(&scratch);
     scratch.remove();

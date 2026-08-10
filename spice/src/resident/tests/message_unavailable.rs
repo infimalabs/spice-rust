@@ -45,11 +45,15 @@ fn unavailable_canvas_messages_are_diagnostic_and_capture_remains_live() {
             boundary: sill::RecordBoundary::Complete,
             locus,
             declaration: None,
-            decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
-                text: text.to_owned(),
-                phase: None,
-                locus,
-            })]),
+            decoded: listen::Decoded::Events {
+                context: Default::default(),
+                events: vec![listen::Event::Prose(listen::Prose {
+                    role: listen::ProseRole::Assistant,
+                    text: text.to_owned(),
+                    phase: None,
+                    locus,
+                })],
+            },
         };
 
         accept_capture_record(

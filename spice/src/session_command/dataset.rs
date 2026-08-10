@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io;
 use std::path::Path;
 
-use flate2::read::GzDecoder;
+use listen::{
+    Decoded, Dialect, Event, ProseRole, RecordContext, RecordDecodeError, ResidueKind,
+    SourcedEvent, Span, ToolMoment, ToolOutcome, ToolResult, TurnMoment,
+};
 use serde_json::Value;
 use spice::session_meter::ContextSnapshot;
 use wire::Refusal;
@@ -14,19 +16,23 @@ use super::model::{
 };
 use super::source::ResolvedSource;
 
+mod horizon;
+
+use horizon::read_records;
+pub(crate) use horizon::recent_compaction_horizon;
+
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
-const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
 const UNPARSEABLE_INTENT: &str = "unparseable compaction summary intent";
 const HYPHEN_BYTE: u8 = 45;
 const UNDERSCORE_BYTE: u8 = 95;
 
 #[derive(Debug)]
-struct RawEvent {
+struct TypedRecord {
     source: String,
     line: u64,
-    ts: String,
     vendor: Vendor,
-    value: Value,
+    context: RecordContext,
+    events: Vec<SourcedEvent>,
 }
 
 #[derive(Debug)]
@@ -41,6 +47,18 @@ pub(crate) struct CompactionHorizon {
     pub(crate) start: Option<String>,
 }
 
+#[derive(Debug)]
+struct PendingTool {
+    turn: usize,
+    command: Option<usize>,
+}
+
+enum DecodedRow {
+    Typed(TypedRecord),
+    Residue(Residue),
+    Ignored,
+}
+
 pub(crate) fn load(sources: &[ResolvedSource]) -> Result<Dataset, Refusal> {
     load_since(sources, None)
 }
@@ -50,16 +68,10 @@ pub(crate) fn load_since(
     start: Option<&str>,
 ) -> Result<Dataset, Refusal> {
     let mut dataset = Dataset::default();
-    let mut events = Vec::new();
+    let mut markers = Vec::new();
     for source in sources {
         let source_name = source.path.display().to_string();
-        let (mut rows, mut residues) = read_events(source, start)?;
-        let vendor = detected_vendor(source.vendor, &rows);
-        for row in &mut rows {
-            if row.vendor == Vendor::Unknown {
-                row.vendor = vendor;
-            }
-        }
+        let (records, mut residues, vendor) = read_records(source, start)?;
         dataset.sources.push(SourceView {
             name: source.path.file_name().map_or_else(
                 || source_name.clone(),
@@ -70,28 +82,8 @@ pub(crate) fn load_since(
             thread: source.thread.clone(),
             compressed: source.path.to_string_lossy().ends_with(".gz"),
         });
-        events.append(&mut rows);
+        reduce(&records, &mut dataset, &mut markers)?;
         dataset.residues.append(&mut residues);
-    }
-
-    let mut markers = Vec::new();
-    let source_order = dataset
-        .sources
-        .iter()
-        .map(|source| (source.path.clone(), source.vendor))
-        .collect::<Vec<_>>();
-    for (source_path, source_vendor) in source_order {
-        let mut source_events = events
-            .iter()
-            .filter(|event| event.source == source_path)
-            .collect::<Vec<_>>();
-        source_events.sort_by_key(|event| event.line);
-        match source_vendor {
-            Vendor::Claude => reduce_claude(&source_events, &mut dataset, &mut markers),
-            Vendor::Codex | Vendor::Unknown => {
-                reduce_codex(&source_events, &mut dataset, &mut markers)
-            }
-        }
     }
     reconstruct_compactions(&markers, &mut dataset);
     account_compactions(&mut dataset);
@@ -99,385 +91,135 @@ pub(crate) fn load_since(
     Ok(dataset)
 }
 
-pub(crate) fn recent_compaction_horizon(
-    sources: &[ResolvedSource],
-    count: usize,
-    end: Option<&str>,
-) -> Result<CompactionHorizon, Refusal> {
-    let mut markers = Vec::new();
-    for source in sources {
-        markers.extend(read_recent_compaction_markers(source, count, end)?);
+fn decode_row(
+    source: &ResolvedSource,
+    line: u64,
+    buffer: &[u8],
+    dialect: Option<Dialect>,
+) -> Result<(Dialect, DecodedRow), Refusal> {
+    if buffer.len() > MAX_LINE_BYTES {
+        return Err(refusal(
+            "session::transcript-record-oversized",
+            Some(format!(
+                "{}:{line} exceeds {MAX_LINE_BYTES} bytes",
+                source.path.display()
+            )),
+            "restore a bounded transcript record or select an earlier intact copy",
+        ));
     }
-    markers.sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
-    let first = markers.len().saturating_sub(count);
-    let selected = markers.into_iter().skip(first).collect::<Vec<_>>();
-    Ok(CompactionHorizon {
-        start: selected.first().map(|marker| marker.ts.clone()),
-    })
-}
-
-fn read_events(
-    source: &ResolvedSource,
-    start: Option<&str>,
-) -> Result<(Vec<RawEvent>, Vec<Residue>), Refusal> {
-    let file = open_transcript(source)?;
-    let compressed = compressed(&source.path);
-    let mut reader: Box<dyn BufRead> = if compressed {
-        Box::new(BufReader::new(GzDecoder::new(file)))
-    } else {
-        let mut file = file;
-        if let Some(start) = start {
-            let offset = start_offset_after_prior_timestamp(&source.path, start)?;
-            file.seek(SeekFrom::Start(offset)).map_err(|error| {
-                refusal(
-                    "session::transcript-unreadable",
-                    Some(format!("{}: {error}", source.path.display())),
-                    "restore read access to the transcript and retry",
-                )
-            })?;
+    let locus = listen::Locus::new(line, 0, buffer.len() as u64);
+    let detected = listen::decode_record(dialect, buffer, locus)
+        .map_err(|error| record_refusal(&source.path, line, &error))?;
+    let observed = detected.dialect;
+    let row = match detected.decoded {
+        Decoded::Residue(residue) => decode_residue(source, line, residue.kind)?,
+        Decoded::Events { context, events } => {
+            typed_row(source, line, buffer, observed, context, events)?
         }
-        Box::new(BufReader::new(file))
     };
-    read_events_from_reader(source, start, &mut reader)
+    Ok((observed, row))
 }
 
-fn read_events_from_reader(
+fn decode_residue(
     source: &ResolvedSource,
-    start: Option<&str>,
-    reader: &mut dyn BufRead,
-) -> Result<(Vec<RawEvent>, Vec<Residue>), Refusal> {
-    let source_name = source.path.display().to_string();
-    let mut rows = Vec::new();
-    let mut residues = Vec::new();
-    let mut buffer = Vec::new();
-    let mut line = 0_u64;
-    loop {
-        buffer.clear();
-        let read = match reader.read_until(b'\n', &mut buffer) {
-            Ok(read) => read,
-            Err(error) => {
-                residues.push(read_residue(&source.path, line.saturating_add(1), &error));
-                break;
-            }
-        };
-        if read == 0 {
-            break;
-        }
-        line = line.saturating_add(1);
-        let terminated = buffer.last() == Some(&b'\n');
-        while matches!(buffer.last(), Some(b'\n' | b'\r')) {
-            buffer.pop();
-        }
-        if buffer.is_empty() {
-            continue;
-        }
-        if buffer.len() > MAX_LINE_BYTES {
-            residues.push(Residue {
-                source: source_name.clone(),
-                line,
-                kind: "oversized-line".to_owned(),
-                detail: format!("JSONL record exceeds {MAX_LINE_BYTES} bytes"),
-                recovery: "restore a bounded transcript record or select an earlier intact copy"
-                    .to_owned(),
-            });
-            continue;
-        }
-        let value = match serde_json::from_slice::<Value>(&buffer) {
-            Ok(value) => value,
-            Err(error) => {
-                residues.push(Residue {
-                    source: source_name.clone(),
-                    line,
-                    kind: if terminated {
-                        "malformed-json"
-                    } else {
-                        "truncated-json"
-                    }
-                    .to_owned(),
-                    detail: error.to_string(),
-                    recovery: "retain the readable prefix and recover this line from the \
-                               owning transcript archive"
-                        .to_owned(),
-                });
-                continue;
-            }
-        };
-        let Some(raw_ts) = value.get("timestamp").and_then(Value::as_str) else {
-            residues.push(Residue {
-                source: source_name.clone(),
-                line,
-                kind: "timestamp-missing".to_owned(),
-                detail: "record has no string timestamp".to_owned(),
-                recovery: "recover the original timestamped transcript record".to_owned(),
-            });
-            continue;
-        };
-        let Some(timestamp) = spice::session_meter::normalize_timestamp(raw_ts) else {
-            residues.push(Residue {
-                source: source_name.clone(),
-                line,
-                kind: "timestamp-invalid".to_owned(),
-                detail: format!("record timestamp cannot be normalized: {raw_ts}"),
-                recovery: "recover the original timestamp; no substitute ordering key is used"
-                    .to_owned(),
-            });
-            continue;
-        };
-        let timestamp = timestamp.to_string();
-        if start.is_some_and(|start| timestamp.as_str() < start) {
-            continue;
-        }
-        rows.push(RawEvent {
-            source: source_name.clone(),
+    line: u64,
+    kind: ResidueKind,
+) -> Result<DecodedRow, Refusal> {
+    match kind {
+        ResidueKind::Unknown { discriminator } => Ok(DecodedRow::Residue(Residue {
+            source: source.path.display().to_string(),
             line,
-            ts: timestamp,
-            vendor: source.vendor,
-            value,
-        });
+            kind: "unrecognized-record".to_owned(),
+            detail: discriminator,
+            recovery:
+                "upgrade the owning transcript decoder or select records from its current release"
+                    .to_owned(),
+        })),
+        kind => Err(refusal(
+            "session::transcript-evidence-invalid",
+            Some(format!("{}:{line}: {kind:?}", source.path.display())),
+            "restore the current vendor record or use the decoder from its owning release",
+        )),
     }
-    Ok((rows, residues))
 }
 
-fn open_transcript(source: &ResolvedSource) -> Result<File, Refusal> {
-    File::open(&source.path).map_err(|error| {
+fn typed_row(
+    source: &ResolvedSource,
+    line: u64,
+    buffer: &[u8],
+    dialect: Dialect,
+    mut context: RecordContext,
+    events: Vec<Event>,
+) -> Result<DecodedRow, Refusal> {
+    if events.is_empty() && context.turn.is_none() && context.timestamp.is_none() {
+        return Ok(DecodedRow::Ignored);
+    }
+    let raw_timestamp = context.timestamp.as_deref().ok_or_else(|| {
         refusal(
-            "session::transcript-unreadable",
-            Some(format!("{}: {error}", source.path.display())),
-            "restore read access to the transcript and retry",
+            "session::transcript-timestamp-missing",
+            Some(format!("{}:{line}", source.path.display())),
+            "recover the original timestamped transcript record",
         )
-    })
-}
-
-fn compressed(path: &Path) -> bool {
-    path.to_string_lossy().ends_with(".gz")
-}
-
-fn read_recent_compaction_markers(
-    source: &ResolvedSource,
-    count: usize,
-    end: Option<&str>,
-) -> Result<Vec<Marker>, Refusal> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-    if compressed(&source.path) {
-        return read_recent_compaction_markers_forward(source, count, end);
-    }
-    let source_name = source.path.display().to_string();
-    let mut markers = Vec::new();
-    reverse_lines(&source.path, |line, _, _| {
-        if let Some(marker) = marker_from_line(&source_name, line)
-            && end.is_none_or(|end| marker.ts.as_str() <= end)
-        {
-            markers.push(marker);
-            if markers.len() == count {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     })?;
-    markers.reverse();
-    Ok(markers)
-}
-
-fn read_recent_compaction_markers_forward(
-    source: &ResolvedSource,
-    count: usize,
-    end: Option<&str>,
-) -> Result<Vec<Marker>, Refusal> {
-    let source_name = source.path.display().to_string();
-    let file = open_transcript(source)?;
-    let mut reader: Box<dyn BufRead> = if compressed(&source.path) {
-        Box::new(BufReader::new(GzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
+    let timestamp = spice::session_meter::normalize_timestamp(raw_timestamp).ok_or_else(|| {
+        refusal(
+            "session::transcript-timestamp-invalid",
+            Some(format!("{}:{line}: {raw_timestamp}", source.path.display())),
+            "recover the original timestamp; no substitute ordering key is used",
+        )
+    })?;
+    context.timestamp = Some(timestamp.to_string());
+    let span = Span {
+        member: line,
+        offset: 0,
+        length: buffer.len() as u64,
     };
-    let mut markers = Vec::new();
-    let mut buffer = Vec::new();
-    loop {
-        buffer.clear();
-        let read = reader.read_until(b'\n', &mut buffer).map_err(|error| {
-            refusal(
-                "session::transcript-unreadable",
-                Some(format!("{}: {error}", source.path.display())),
-                "restore read access to the transcript and retry",
-            )
-        })?;
-        if read == 0 {
-            break;
-        }
-        while matches!(buffer.last(), Some(b'\n' | b'\r')) {
-            buffer.pop();
-        }
-        if let Some(marker) = marker_from_line(&source_name, &buffer)
-            && end.is_none_or(|end| marker.ts.as_str() <= end)
-        {
-            markers.push(marker);
-            trim_oldest(&mut markers, count);
-        }
-    }
-    Ok(markers)
+    let sourced = events
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, event)| SourcedEvent {
+            ordinal: ordinal as u64,
+            spans: vec![span],
+            context: context.clone(),
+            event,
+        })
+        .collect();
+    Ok(DecodedRow::Typed(TypedRecord {
+        source: source.path.display().to_string(),
+        line,
+        vendor: dialect_vendor(dialect),
+        context,
+        events: sourced,
+    }))
 }
 
-fn start_offset_after_prior_timestamp(path: &Path, start: &str) -> Result<u64, Refusal> {
-    let mut offset = 0_u64;
-    reverse_lines(path, |line, _, next| {
-        if let Some(ts) = timestamp_from_line(line)
-            && ts.as_str() < start
-        {
-            offset = next;
-            return Ok(false);
-        }
-        Ok(true)
-    })?;
-    Ok(offset)
-}
-
-fn reverse_lines<F>(path: &Path, mut visit: F) -> Result<(), Refusal>
-where
-    F: FnMut(&[u8], u64, u64) -> Result<bool, Refusal>,
-{
-    let mut file = File::open(path).map_err(|error| {
-        refusal(
-            "session::transcript-unreadable",
-            Some(format!("{}: {error}", path.display())),
-            "restore read access to the transcript and retry",
-        )
-    })?;
-    let mut position = file
-        .metadata()
-        .map_err(|error| {
-            refusal(
-                "session::transcript-unreadable",
-                Some(format!("{}: {error}", path.display())),
-                "restore read access to the transcript and retry",
-            )
-        })?
-        .len();
-    let mut carry = Vec::new();
-    while position > 0 {
-        let read = position.min(BACKWARD_CHUNK_BYTES);
-        position -= read;
-        file.seek(SeekFrom::Start(position)).map_err(|error| {
-            refusal(
-                "session::transcript-unreadable",
-                Some(format!("{}: {error}", path.display())),
-                "restore read access to the transcript and retry",
-            )
-        })?;
-        let mut block = vec![0_u8; read as usize];
-        file.read_exact(&mut block).map_err(|error| {
-            refusal(
-                "session::transcript-unreadable",
-                Some(format!("{}: {error}", path.display())),
-                "restore read access to the transcript and retry",
-            )
-        })?;
-        block.extend_from_slice(&carry);
-        let parse_start = if position == 0 {
-            0
-        } else if let Some(split) = block.iter().position(|byte| *byte == b'\n') {
-            carry = block[..split].to_vec();
-            split + 1
-        } else {
-            carry = block;
-            continue;
-        };
-        let mut ranges = Vec::new();
-        let mut line_start = parse_start;
-        for index in parse_start..block.len() {
-            if block[index] == b'\n' {
-                ranges.push((line_start, index, index + 1));
-                line_start = index + 1;
-            }
-        }
-        if line_start < block.len() {
-            ranges.push((line_start, block.len(), block.len()));
-        }
-        for (start, mut end, next) in ranges.into_iter().rev() {
-            while end > start && block[end - 1] == b'\r' {
-                end -= 1;
-            }
-            if start == end {
-                continue;
-            }
-            if !visit(
-                &block[start..end],
-                position.saturating_add(start as u64),
-                position.saturating_add(next as u64),
-            )? {
-                return Ok(());
-            }
-        }
-    }
-    Ok(())
-}
-
-fn marker_from_line(source: &str, line: &[u8]) -> Option<Marker> {
-    if line.len() > MAX_LINE_BYTES {
-        return None;
-    }
-    let value = serde_json::from_slice::<Value>(line).ok()?;
-    let ts = timestamp_from_value(&value)?;
-    marker_from_value(source, &ts, &value)
-}
-
-fn timestamp_from_line(line: &[u8]) -> Option<String> {
-    if line.len() > MAX_LINE_BYTES {
-        return None;
-    }
-    serde_json::from_slice::<Value>(line)
-        .ok()
-        .and_then(|value| timestamp_from_value(&value))
-}
-
-fn timestamp_from_value(value: &Value) -> Option<String> {
-    value
-        .get("timestamp")
-        .and_then(Value::as_str)
-        .and_then(spice::session_meter::normalize_timestamp)
-        .map(|timestamp| timestamp.to_string())
-}
-
-fn marker_from_value(source: &str, ts: &str, value: &Value) -> Option<Marker> {
-    let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
-    let payload_kind = value
-        .get("payload")
-        .and_then(|payload| payload.get("type"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    match (kind, payload_kind) {
-        ("compacted", _) => Some(Marker {
-            source: source.to_owned(),
-            ts: ts.to_owned(),
-            summary: String::new(),
-        }),
-        ("summary", _) => Some(Marker {
-            source: source.to_owned(),
-            ts: ts.to_owned(),
-            summary: value
-                .get("summary")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-        }),
-        ("system", _)
-            if value.get("subtype").and_then(Value::as_str) == Some("compact_boundary") =>
-        {
-            Some(Marker {
-                source: source.to_owned(),
-                ts: ts.to_owned(),
-                summary: String::new(),
-            })
-        }
-        _ => None,
+fn vendor_dialect(vendor: Vendor) -> Option<Dialect> {
+    match vendor {
+        Vendor::Codex => Some(Dialect::Codex),
+        Vendor::Claude => Some(Dialect::Claude),
+        Vendor::Unknown => None,
     }
 }
 
-fn trim_oldest<T>(rows: &mut Vec<T>, count: usize) {
-    if rows.len() > count {
-        rows.drain(..rows.len() - count);
+fn dialect_vendor(dialect: Dialect) -> Vendor {
+    match dialect {
+        Dialect::Codex => Vendor::Codex,
+        Dialect::Claude => Vendor::Claude,
     }
+}
+
+fn record_refusal(path: &Path, line: u64, error: &RecordDecodeError) -> Refusal {
+    let reason = match error {
+        RecordDecodeError::Disagreement { .. } => "session::transcript-dialect-disagreement",
+        RecordDecodeError::Invalid { .. } => "session::transcript-evidence-invalid",
+        RecordDecodeError::Unowned => "session::transcript-dialect-unowned",
+        RecordDecodeError::Locus(_) => "session::transcript-locus-invalid",
+    };
+    refusal(
+        reason,
+        Some(format!("{}:{line}: {error}", path.display())),
+        "select the transcript's owning vendor release and retry without a fallback decoder",
+    )
 }
 
 fn read_residue(path: &Path, line: u64, error: &io::Error) -> Residue {
@@ -491,242 +233,149 @@ fn read_residue(path: &Path, line: u64, error: &io::Error) -> Residue {
     }
 }
 
-fn detected_vendor(hint: Vendor, rows: &[RawEvent]) -> Vendor {
-    if hint != Vendor::Unknown {
-        return hint;
-    }
-    rows.iter()
-        .find_map(
-            |event| match event.value.get("type").and_then(Value::as_str) {
-                Some("user" | "assistant" | "system" | "summary") => Some(Vendor::Claude),
-                Some("event_msg" | "response_item" | "compacted" | "session_meta") => {
-                    Some(Vendor::Codex)
-                }
-                _ if event.value.get("payload").is_some() => Some(Vendor::Codex),
-                _ => None,
-            },
-        )
-        .unwrap_or(Vendor::Unknown)
-}
-
-fn reduce_codex(events: &[&RawEvent], dataset: &mut Dataset, markers: &mut Vec<Marker>) {
+fn reduce(
+    records: &[TypedRecord],
+    dataset: &mut Dataset,
+    markers: &mut Vec<Marker>,
+) -> Result<(), Refusal> {
     let mut current = None;
-    let mut pending_commands = BTreeMap::new();
-    for event in events {
-        let kind = event
-            .value
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let payload = event.value.get("payload").unwrap_or(&Value::Null);
-        let payload_kind = payload.get("type").and_then(Value::as_str).unwrap_or("");
-        match (kind, payload_kind) {
-            ("event_msg", "task_started") => {
+    let mut pending = BTreeMap::new();
+    for record in records {
+        let timestamp = record_timestamp(record);
+        match record.context.turn {
+            Some(TurnMoment::Started) => {
                 if let Some(index) = current {
-                    finish_turn(dataset, index, &event.ts, false);
+                    finish_turn(dataset, index, timestamp, false);
                 }
                 current = Some(start_turn(
                     dataset,
-                    event,
-                    payload.get("turn_id").and_then(Value::as_str),
+                    record,
+                    record.context.turn_id.as_deref(),
                 ));
             }
-            ("event_msg", "task_complete") => {
-                let index = ensure_turn(
-                    dataset,
-                    event,
-                    &mut current,
-                    payload.get("turn_id").and_then(Value::as_str),
-                );
-                if let Some(text) = payload.get("last_agent_message").and_then(Value::as_str)
-                    && !last_final_matches(dataset, index, text)
-                {
-                    push_message(dataset, index, event, "assistant", "final_answer", text);
-                }
-                finish_turn(dataset, index, &event.ts, true);
-                current = None;
+            Some(TurnMoment::Observed) => {
+                current = Some(observe_turn(dataset, record, current));
             }
-            ("event_msg", "exec_command_end") => {
-                let turn_id = payload.get("turn_id").and_then(Value::as_str);
-                let index = ensure_turn(dataset, event, &mut current, turn_id);
-                push_completed_command(dataset, index, event, payload);
-            }
-            ("response_item", "message") => {
-                let index = ensure_turn(dataset, event, &mut current, None);
-                let role = payload
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .unwrap_or("assistant");
-                let phase = if role == "user" {
-                    "prompt"
-                } else {
-                    payload
-                        .get("phase")
-                        .and_then(Value::as_str)
-                        .unwrap_or("commentary")
-                };
-                for text in content_texts(payload.get("content")) {
-                    push_message(dataset, index, event, role, phase, &text);
-                }
-            }
-            ("response_item", "function_call" | "custom_tool_call") => {
-                let index = ensure_turn(
-                    dataset,
-                    event,
-                    &mut current,
-                    payload.get("turn_id").and_then(Value::as_str),
-                );
-                let call_id = payload
-                    .get("call_id")
-                    .or_else(|| payload.get("id"))
-                    .and_then(Value::as_str);
-                register_tool_call(
-                    dataset,
-                    index,
-                    event,
-                    payload,
-                    call_id,
-                    &mut pending_commands,
-                );
-            }
-            ("response_item", "function_call_output" | "custom_tool_call_output") => {
-                let call_id = payload.get("call_id").and_then(Value::as_str);
-                complete_tool_call(dataset, current, event, payload, call_id, &pending_commands);
-            }
-            ("response_item", "token_count") => collect_codex_usage(dataset, event, payload),
-            ("compacted", _) => markers.push(Marker {
-                source: event.source.clone(),
-                ts: event.ts.clone(),
-                summary: String::new(),
-            }),
-            ("event_msg", "web_search") | ("response_item", "web_search_call") => {
-                let index = ensure_turn(dataset, event, &mut current, None);
-                dataset.turns[index].web_search_count =
-                    dataset.turns[index].web_search_count.saturating_add(1);
-                touch_turn(dataset, index, &event.ts);
-            }
-            _ => {}
+            Some(TurnMoment::Completed) | None => {}
         }
-    }
-}
 
-fn reduce_claude(events: &[&RawEvent], dataset: &mut Dataset, markers: &mut Vec<Marker>) {
-    let mut current = None;
-    let mut active_prompt = None;
-    let mut pending_commands = BTreeMap::new();
-    for event in events {
-        let kind = event
-            .value
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        match kind {
-            "user" => {
-                let prompt = event.value.get("promptId").and_then(Value::as_str);
-                if prompt != active_prompt.as_deref() {
-                    if let Some(index) = current {
-                        finish_turn(dataset, index, &event.ts, false);
+        for sourced in &record.events {
+            match &sourced.event {
+                Event::Session(_) => {}
+                Event::Prose(prose) => {
+                    let index = ensure_turn(dataset, record, &mut current);
+                    let side = match prose.role {
+                        ProseRole::Operator => "user",
+                        ProseRole::Assistant => "assistant",
+                    };
+                    let phase = if prose.role == ProseRole::Operator {
+                        "prompt"
+                    } else if prose.phase.as_deref() == Some("final_answer")
+                        || record.context.turn == Some(TurnMoment::Completed)
+                    {
+                        "final_answer"
+                    } else {
+                        prose.phase.as_deref().unwrap_or("commentary")
+                    };
+                    if !(phase == "final_answer" && last_final_matches(dataset, index, &prose.text))
+                    {
+                        push_message(dataset, index, record, side, phase, &prose.text);
                     }
-                    current = Some(start_turn(dataset, event, prompt));
-                    active_prompt = prompt.map(str::to_owned);
                 }
-                let index = ensure_turn(dataset, event, &mut current, prompt);
-                let content = event.value.pointer("/message/content");
-                for text in content_texts(content) {
-                    push_message(dataset, index, event, "user", "prompt", &text);
+                Event::Reasoning(_) => {
+                    let index = ensure_turn(dataset, record, &mut current);
+                    touch_turn(dataset, index, timestamp);
                 }
-                complete_claude_tool_results(dataset, index, event, content, &pending_commands);
-            }
-            "assistant" => {
-                let index = ensure_turn(dataset, event, &mut current, None);
-                let final_answer = event
-                    .value
-                    .pointer("/message/stop_reason")
-                    .and_then(Value::as_str)
-                    .is_some();
-                let phase = if final_answer {
-                    "final_answer"
-                } else {
-                    "commentary"
-                };
-                if let Some(content) = event
-                    .value
-                    .pointer("/message/content")
-                    .and_then(Value::as_array)
-                {
-                    for block in content {
-                        match block.get("type").and_then(Value::as_str) {
-                            Some("text") => {
-                                if let Some(text) = block.get("text").and_then(Value::as_str) {
-                                    push_message(dataset, index, event, "assistant", phase, text);
-                                }
-                            }
-                            Some("tool_use") => {
-                                let call_id = block.get("id").and_then(Value::as_str);
-                                register_tool_call(
-                                    dataset,
-                                    index,
-                                    event,
-                                    block,
-                                    call_id,
-                                    &mut pending_commands,
-                                );
-                            }
-                            _ => {}
+                Event::Tool(tool) => match &tool.moment {
+                    ToolMoment::Call { name, arguments } => {
+                        let index = ensure_turn(dataset, record, &mut current);
+                        register_tool_call(
+                            dataset,
+                            index,
+                            record,
+                            &tool.call_id,
+                            name,
+                            arguments,
+                            &mut pending,
+                        )?;
+                    }
+                    ToolMoment::Update { .. } => {
+                        if let Some(tool) = pending.get(&tool.call_id) {
+                            touch_turn(dataset, tool.turn, timestamp);
                         }
                     }
+                    ToolMoment::Result(outcome) => {
+                        complete_tool_call(dataset, record, &tool.call_id, outcome, &mut pending)?;
+                    }
+                },
+                Event::Usage(usage) => push_usage(dataset, record, usage),
+                Event::Compaction(compaction) => markers.push(Marker {
+                    source: record.source.clone(),
+                    ts: timestamp.to_owned(),
+                    summary: compaction.summary.clone().unwrap_or_default(),
+                }),
+                Event::Failure(_) => {
+                    let index = ensure_turn(dataset, record, &mut current);
+                    dataset.turns[index].error_count =
+                        dataset.turns[index].error_count.saturating_add(1);
+                    touch_turn(dataset, index, timestamp);
                 }
-                collect_claude_usage(dataset, event);
-                if final_answer {
-                    finish_turn(dataset, index, &event.ts, true);
-                    current = None;
-                    active_prompt = None;
-                }
             }
-            "summary" => markers.push(Marker {
-                source: event.source.clone(),
-                ts: event.ts.clone(),
-                summary: event
-                    .value
-                    .get("summary")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned(),
-            }),
-            "system"
-                if event.value.get("subtype").and_then(Value::as_str)
-                    == Some("compact_boundary") =>
-            {
-                markers.push(Marker {
-                    source: event.source.clone(),
-                    ts: event.ts.clone(),
-                    summary: String::new(),
-                });
-            }
-            "rate_limit_event" | "error" => {
-                let index = ensure_turn(dataset, event, &mut current, None);
-                dataset.turns[index].error_count =
-                    dataset.turns[index].error_count.saturating_add(1);
-                touch_turn(dataset, index, &event.ts);
-            }
-            _ => {}
+        }
+
+        if record.context.turn == Some(TurnMoment::Completed) {
+            let index = ensure_turn(dataset, record, &mut current);
+            finish_turn(dataset, index, timestamp, true);
+            current = None;
         }
     }
     if let Some(index) = current {
         let end = dataset.turns[index].last_activity_ts.clone();
         finish_turn(dataset, index, &end, false);
     }
+    Ok(())
 }
 
-fn start_turn(dataset: &mut Dataset, event: &RawEvent, turn_id: Option<&str>) -> usize {
+fn record_timestamp(record: &TypedRecord) -> &str {
+    record
+        .context
+        .timestamp
+        .as_deref()
+        .expect("typed session records require normalized timestamps")
+}
+
+fn observe_turn(dataset: &mut Dataset, record: &TypedRecord, current: Option<usize>) -> usize {
+    if let Some(turn_id) = record.context.turn_id.as_deref() {
+        if let Some(index) = current
+            && dataset.turns[index].turn_id.as_deref() == Some(turn_id)
+        {
+            return index;
+        }
+        if let Some(index) = current {
+            finish_turn(dataset, index, record_timestamp(record), false);
+        }
+        if let Some(index) = dataset.turns.iter().rposition(|turn| {
+            turn.source == record.source
+                && turn.turn_id.as_deref() == Some(turn_id)
+                && !turn.completed
+        }) {
+            return index;
+        }
+        return start_turn(dataset, record, Some(turn_id));
+    }
+    current.unwrap_or_else(|| start_turn(dataset, record, None))
+}
+
+fn start_turn(dataset: &mut Dataset, record: &TypedRecord, turn_id: Option<&str>) -> usize {
+    let timestamp = record_timestamp(record);
     let index = dataset.turns.len();
     dataset.turns.push(TurnRecord {
-        source: event.source.clone(),
-        vendor: event.vendor,
+        source: record.source.clone(),
+        vendor: record.vendor,
         turn_id: turn_id.map(str::to_owned),
-        start_ts: event.ts.clone(),
+        start_ts: timestamp.to_owned(),
         end_ts: None,
-        last_activity_ts: event.ts.clone(),
+        last_activity_ts: timestamp.to_owned(),
         completed: false,
         messages: Vec::new(),
         tool_calls: BTreeMap::new(),
@@ -740,15 +389,12 @@ fn start_turn(dataset: &mut Dataset, event: &RawEvent, turn_id: Option<&str>) ->
     index
 }
 
-fn ensure_turn(
-    dataset: &mut Dataset,
-    event: &RawEvent,
-    current: &mut Option<usize>,
-    turn_id: Option<&str>,
-) -> usize {
-    if let Some(turn_id) = turn_id
+fn ensure_turn(dataset: &mut Dataset, record: &TypedRecord, current: &mut Option<usize>) -> usize {
+    if let Some(turn_id) = record.context.turn_id.as_deref()
         && let Some(index) = dataset.turns.iter().rposition(|turn| {
-            turn.source == event.source && turn.turn_id.as_deref() == Some(turn_id)
+            turn.source == record.source
+                && turn.turn_id.as_deref() == Some(turn_id)
+                && !turn.completed
         })
     {
         *current = Some(index);
@@ -757,7 +403,7 @@ fn ensure_turn(
     if let Some(index) = *current {
         return index;
     }
-    let index = start_turn(dataset, event, turn_id);
+    let index = start_turn(dataset, record, record.context.turn_id.as_deref());
     *current = Some(index);
     index
 }
@@ -785,7 +431,7 @@ fn last_final_matches(dataset: &Dataset, index: usize, text: &str) -> bool {
 fn push_message(
     dataset: &mut Dataset,
     index: usize,
-    event: &RawEvent,
+    record: &TypedRecord,
     side: &str,
     phase: &str,
     text: &str,
@@ -793,10 +439,11 @@ fn push_message(
     if text.trim().is_empty() {
         return;
     }
+    let timestamp = record_timestamp(record);
     let (primary_flavor, flavor_tags, matched_cues, human) = classify_message(side, phase, text);
-    let record = MessageRecord {
-        source: event.source.clone(),
-        ts: event.ts.clone(),
+    let message = MessageRecord {
+        source: record.source.clone(),
+        ts: timestamp.to_owned(),
         turn_id: dataset.turns[index].turn_id.clone(),
         side: side.to_owned(),
         phase: phase.to_owned(),
@@ -807,16 +454,16 @@ fn push_message(
         human,
     };
     if dataset.turns[index].messages.iter().any(|row| {
-        row.ts == record.ts
-            && row.side == record.side
-            && row.phase == record.phase
-            && row.text == record.text
+        row.ts == message.ts
+            && row.side == message.side
+            && row.phase == message.phase
+            && row.text == message.text
     }) {
         return;
     }
-    dataset.turns[index].messages.push(record.clone());
-    dataset.messages.push(record);
-    touch_turn(dataset, index, &event.ts);
+    dataset.turns[index].messages.push(message.clone());
+    dataset.messages.push(message);
+    touch_turn(dataset, index, timestamp);
 }
 
 fn classify_message(
@@ -991,43 +638,32 @@ fn dedupe(values: Vec<String>) -> Vec<String> {
     rows
 }
 
-fn content_texts(content: Option<&Value>) -> Vec<String> {
-    match content {
-        Some(Value::String(text)) => vec![text.clone()],
-        Some(Value::Array(values)) => values
-            .iter()
-            .filter_map(|value| match value.get("type").and_then(Value::as_str) {
-                Some("text" | "input_text" | "output_text") | None => value
-                    .get("text")
-                    .or_else(|| value.get("content").filter(|row| row.is_string()))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
 fn register_tool_call(
     dataset: &mut Dataset,
     index: usize,
-    event: &RawEvent,
-    payload: &Value,
-    call_id: Option<&str>,
-    pending_commands: &mut BTreeMap<String, usize>,
-) {
-    let name = payload
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
+    record: &TypedRecord,
+    call_id: &str,
+    name: &str,
+    arguments: &str,
+    pending: &mut BTreeMap<String, PendingTool>,
+) -> Result<(), Refusal> {
+    if pending.contains_key(call_id) {
+        return Err(refusal(
+            "session::tool-invocation-duplicate",
+            Some(call_id.to_owned()),
+            "restore one invocation per vendor call identity",
+        ));
+    }
     *dataset.turns[index]
         .tool_calls
         .entry(name.to_owned())
         .or_default() += 1;
-    if matches!(name, "apply_patch" | "Edit" | "Write" | "MultiEdit") {
+    if matches!(
+        name,
+        "apply_patch" | "Edit" | "Write" | "MultiEdit" | "file_change"
+    ) {
         dataset.turns[index].patch_count = dataset.turns[index].patch_count.saturating_add(1);
-        for path in tool_paths(payload) {
+        for path in tool_paths(arguments) {
             dataset.turns[index].touched_files.insert(path);
         }
     }
@@ -1035,15 +671,15 @@ fn register_tool_call(
         dataset.turns[index].web_search_count =
             dataset.turns[index].web_search_count.saturating_add(1);
     }
-    if matches!(
+    let command = if matches!(
         name,
-        "exec_command" | "Bash" | "shell" | "local_shell" | "container.exec"
+        "exec_command" | "command_execution" | "Bash" | "shell" | "local_shell" | "container.exec"
     ) {
-        let (command, cwd) = tool_command(payload);
+        let (command, cwd) = tool_command(arguments);
         let command_index = dataset.commands.len();
         dataset.commands.push(CommandRecord {
-            source: event.source.clone(),
-            ts: event.ts.clone(),
+            source: record.source.clone(),
+            ts: record_timestamp(record).to_owned(),
             turn_id: dataset.turns[index].turn_id.clone(),
             cwd,
             command,
@@ -1051,19 +687,23 @@ fn register_tool_call(
             status: "called".to_owned(),
         });
         dataset.turns[index].command_count = dataset.turns[index].command_count.saturating_add(1);
-        if let Some(call_id) = call_id {
-            pending_commands.insert(call_id.to_owned(), command_index);
-        }
-    }
-    touch_turn(dataset, index, &event.ts);
+        Some(command_index)
+    } else {
+        None
+    };
+    pending.insert(
+        call_id.to_owned(),
+        PendingTool {
+            turn: index,
+            command,
+        },
+    );
+    touch_turn(dataset, index, record_timestamp(record));
+    Ok(())
 }
 
-fn tool_command(payload: &Value) -> (String, Option<String>) {
-    let arguments = payload.get("arguments").and_then(Value::as_str);
-    let parsed = arguments
-        .and_then(|text| serde_json::from_str::<Value>(text).ok())
-        .or_else(|| payload.get("input").cloned())
-        .unwrap_or(Value::Null);
+fn tool_command(arguments: &str) -> (String, Option<String>) {
+    let parsed = serde_json::from_str::<Value>(arguments).unwrap_or(Value::Null);
     let command = parsed
         .get("cmd")
         .or_else(|| parsed.get("command"))
@@ -1089,23 +729,22 @@ fn render_command(value: &Value) -> String {
     }
 }
 
-fn tool_paths(payload: &Value) -> Vec<String> {
-    let arguments = payload
-        .get("arguments")
-        .and_then(Value::as_str)
-        .and_then(|text| serde_json::from_str::<Value>(text).ok())
-        .or_else(|| payload.get("input").cloned())
-        .unwrap_or(Value::Null);
+fn tool_paths(arguments: &str) -> Vec<String> {
+    let parsed = serde_json::from_str::<Value>(arguments).unwrap_or(Value::Null);
     let mut paths = ["file_path", "path"]
         .into_iter()
-        .filter_map(|key| {
-            arguments
-                .get(key)
+        .filter_map(|key| parsed.get(key).and_then(Value::as_str).map(str::to_owned))
+        .collect::<Vec<_>>();
+    if let Some(changes) = parsed.get("changes").and_then(Value::as_array) {
+        paths.extend(changes.iter().filter_map(|change| {
+            change
+                .get("path")
+                .or_else(|| change.get("file_path"))
                 .and_then(Value::as_str)
                 .map(str::to_owned)
-        })
-        .collect::<Vec<_>>();
-    if let Some(patch) = arguments.get("input").and_then(Value::as_str) {
+        }));
+    }
+    if let Some(patch) = parsed.get("input").and_then(Value::as_str) {
         for line in patch.lines() {
             if let Some(path) = line
                 .strip_prefix("*** Update File: ")
@@ -1121,194 +760,69 @@ fn tool_paths(payload: &Value) -> Vec<String> {
 
 fn complete_tool_call(
     dataset: &mut Dataset,
-    current: Option<usize>,
-    event: &RawEvent,
-    payload: &Value,
-    call_id: Option<&str>,
-    pending_commands: &BTreeMap<String, usize>,
-) {
-    let Some(command_index) = call_id.and_then(|id| pending_commands.get(id)).copied() else {
+    record: &TypedRecord,
+    call_id: &str,
+    outcome: &ToolOutcome,
+    pending: &mut BTreeMap<String, PendingTool>,
+) -> Result<(), Refusal> {
+    let pending = pending.remove(call_id).ok_or_else(|| {
+        refusal(
+            "session::tool-invocation-missing",
+            Some(format!(
+                "{}:{} call_id={call_id}",
+                record.source, record.line
+            )),
+            "restore the matching invocation before its tool outcome",
+        )
+    })?;
+    let failed =
+        outcome.result == ToolResult::Failed || outcome.exit_code.is_some_and(|code| code != 0);
+    if failed {
+        dataset.turns[pending.turn].error_count =
+            dataset.turns[pending.turn].error_count.saturating_add(1);
+    }
+    if let Some(command) = pending.command {
+        dataset.commands[command].exit_code = outcome.exit_code;
+        dataset.commands[command].status = if outcome.output.as_deref().is_some_and(|output| {
+            output.contains("Process running with session ID")
+                || output.contains("Script running with cell ID")
+        }) {
+            "running"
+        } else if outcome.exit_code.is_some() || outcome.result != ToolResult::Unreported {
+            "completed"
+        } else {
+            "called"
+        }
+        .to_owned();
+    }
+    touch_turn(dataset, pending.turn, record_timestamp(record));
+    Ok(())
+}
+
+fn push_usage(dataset: &mut Dataset, record: &TypedRecord, usage: &listen::Usage) {
+    let context = ContextSnapshot::admit(
+        record_timestamp(record),
+        record.context.model_context_window,
+    )
+    .expect("typed record timestamps were admitted before reduction");
+    let reasoning = usage.reasoning_output_tokens.unwrap_or(0);
+    let total = usage
+        .input_tokens
+        .saturating_add(usage.output_tokens)
+        .saturating_add(reasoning);
+    if total == 0 {
         return;
-    };
-    let output = output_text(payload.get("output"));
-    let (status, exit_code) = output_status(&output);
-    dataset.commands[command_index].status = status;
-    dataset.commands[command_index].exit_code = exit_code;
-    if let Some(index) = current {
-        if exit_code.is_some_and(|code| code != 0) {
-            dataset.turns[index].error_count = dataset.turns[index].error_count.saturating_add(1);
-        }
-        touch_turn(dataset, index, &event.ts);
     }
-}
-
-fn complete_claude_tool_results(
-    dataset: &mut Dataset,
-    index: usize,
-    event: &RawEvent,
-    content: Option<&Value>,
-    pending_commands: &BTreeMap<String, usize>,
-) {
-    let Some(values) = content.and_then(Value::as_array) else {
-        return;
-    };
-    for block in values {
-        if block.get("type").and_then(Value::as_str) != Some("tool_result") {
-            continue;
-        }
-        let call_id = block.get("tool_use_id").and_then(Value::as_str);
-        complete_tool_call(
-            dataset,
-            Some(index),
-            event,
-            block,
-            call_id,
-            pending_commands,
-        );
-    }
-}
-
-fn output_text(value: Option<&Value>) -> String {
-    match value {
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Array(values)) => values
-            .iter()
-            .filter_map(|value| {
-                value
-                    .get("text")
-                    .or_else(|| value.get("content"))
-                    .and_then(Value::as_str)
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Some(value) => value.to_string(),
-        None => String::new(),
-    }
-}
-
-fn output_status(output: &str) -> (String, Option<i32>) {
-    if output.contains("Process running with session ID")
-        || output.contains("Script running with cell ID")
-    {
-        return ("running".to_owned(), None);
-    }
-    for prefix in [
-        "Process exited with code ",
-        "exit_code\":",
-        "\"exit_code\":",
-    ] {
-        if let Some(rest) = output.split(prefix).nth(1) {
-            let digits = rest
-                .trim_start()
-                .chars()
-                .take_while(|character| character.is_ascii_digit() || *character == '-')
-                .collect::<String>();
-            if let Ok(code) = digits.parse() {
-                return ("completed".to_owned(), Some(code));
-            }
-        }
-    }
-    ("called".to_owned(), None)
-}
-
-fn push_completed_command(dataset: &mut Dataset, index: usize, event: &RawEvent, payload: &Value) {
-    let command = payload
-        .get("command")
-        .map(render_command)
-        .unwrap_or_else(|| "-".to_owned());
-    let exit_code = payload.get("exit_code").and_then(|value| {
-        value
-            .as_i64()
-            .and_then(|value| i32::try_from(value).ok())
-            .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
-    });
-    dataset.commands.push(CommandRecord {
-        source: event.source.clone(),
-        ts: event.ts.clone(),
-        turn_id: payload
-            .get("turn_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| dataset.turns[index].turn_id.clone()),
-        cwd: payload
-            .get("cwd")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        command,
-        exit_code,
-        status: payload
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("completed")
-            .to_owned(),
-    });
-    dataset.turns[index].command_count = dataset.turns[index].command_count.saturating_add(1);
-    if exit_code.is_some_and(|code| code != 0) {
-        dataset.turns[index].error_count = dataset.turns[index].error_count.saturating_add(1);
-    }
-    touch_turn(dataset, index, &event.ts);
-}
-
-fn collect_codex_usage(dataset: &mut Dataset, event: &RawEvent, payload: &Value) {
-    let usage = payload
-        .pointer("/info/last_token_usage")
-        .unwrap_or(&Value::Null);
-    let context_window = payload
-        .pointer("/info/model_context_window")
-        .and_then(Value::as_u64);
-    let record = token_record(&event.source, &event.ts, usage, context_window);
-    if record.total > 0 || record.input > 0 || record.output > 0 {
-        dataset.tokens.push(record);
-    }
-}
-
-fn collect_claude_usage(dataset: &mut Dataset, event: &RawEvent) {
-    let usage = event
-        .value
-        .pointer("/message/usage")
-        .unwrap_or(&Value::Null);
-    let context_window = event
-        .value
-        .pointer("/message/model_context_window")
-        .or_else(|| event.value.get("model_context_window"))
-        .and_then(Value::as_u64);
-    let record = token_record(&event.source, &event.ts, usage, context_window);
-    if record.total > 0 || record.input > 0 || record.output > 0 {
-        dataset.tokens.push(record);
-    }
-}
-
-fn token_record(
-    source: &str,
-    ts: &str,
-    usage: &Value,
-    model_context_window: Option<u64>,
-) -> TokenRecord {
-    let context = ContextSnapshot::admit(ts, model_context_window)
-        .expect("every raw event timestamp was admitted before reduction");
-    let input = integer(usage, &["input_tokens"]);
-    let cached = integer(usage, &["cached_input_tokens", "cache_read_input_tokens"]);
-    let output = integer(usage, &["output_tokens"]);
-    let reasoning = integer(usage, &["reasoning_output_tokens"]);
-    let total = integer(usage, &["total_tokens"])
-        .max(input.saturating_add(output).saturating_add(reasoning));
-    TokenRecord {
-        source: source.to_owned(),
+    dataset.tokens.push(TokenRecord {
+        source: record.source.clone(),
         ts: context.at.to_string(),
-        input,
-        cached,
-        output,
+        input: usage.input_tokens,
+        cached: usage.cached_input_tokens,
+        output: usage.output_tokens,
         reasoning,
         total,
         model_context_window: context.model_context_window,
-    }
-}
-
-fn integer(value: &Value, names: &[&str]) -> u64 {
-    names
-        .iter()
-        .find_map(|name| value.get(name).and_then(Value::as_u64))
-        .unwrap_or(0)
+    });
 }
 
 fn reconstruct_compactions(markers: &[Marker], dataset: &mut Dataset) {
@@ -1432,7 +946,7 @@ fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Refusal {
     Refusal {
         reason: reason.to_owned(),
         witness: Some("session-transcript".to_owned()),
-        expected: Some("readable bounded JSONL transcript evidence".to_owned()),
+        expected: Some("one current typed transcript evidence stream".to_owned()),
         observed,
         remedy: remedy.to_owned(),
     }

@@ -6,28 +6,16 @@
 //! ranges. Anything the evidence cannot prove stays visible as an unavailable
 //! row and never contributes to an aggregate.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wire::body::{self, SourceBoundary, TranscriptPosition};
-use wire::intent::{EffortAnswer, EffortPhaseAnswer, EffortUnavailableCode};
-use wire::{FactKind, Instant, Seq, TaskHandle};
+use wire::intent::{
+    EffortAggregateAnswer, EffortAnswer, EffortAvailability, EffortIdentity, EffortPhaseAnswer,
+    EffortSegmentAnswer, EffortUnavailable, EffortUnavailableCode, EffortUsage,
+};
+use wire::{CanonicalUuid, FactKind, Instant, Phase, Seq, TaskHandle};
 
 use crate::{FactPlane, FoldId, Materialization, Reducer, Reduction, Source};
-
-mod accounting;
-mod state;
-mod support;
-
-use accounting::{Evidence, aggregate, finish};
-use state::{CarryCut, Closing, OpenPhase, TaskState};
-use support::{epoch, first_locus, push_reason, read, reason};
-
-#[cfg(test)]
-use support::zero_usage;
-#[cfg(test)]
-use wire::intent::{EffortAvailability, EffortIdentity, EffortUnavailable, EffortUsage};
-#[cfg(test)]
-use wire::{CanonicalUuid, Name, Phase};
 
 const ORIGIN: TranscriptPosition = TranscriptPosition {
     member: 1,
@@ -241,7 +229,7 @@ fn record_claim_won(
             evidence,
         ));
     }
-    let lineage = evidence.lineage_at(body.lane, envelope.seq);
+    let lineage = evidence.lineages.at(body.lane, envelope.seq);
     let mut reasons = Vec::new();
     if state.phase_index_overflow {
         push_reason(
@@ -431,6 +419,486 @@ fn interrupt(
         ));
     }
 }
+
+fn finish(
+    open: OpenPhase,
+    closing: Option<Closing>,
+    interruption: Option<EffortUnavailable>,
+    terminal_seq: Seq,
+    terminal_at: Instant,
+    evidence: &Evidence,
+) -> EffortPhaseAnswer {
+    let mut reasons = open.reasons.clone();
+    if let Some(interruption) = interruption {
+        reasons.push(interruption);
+    }
+    let closing_boundary = closing.as_ref().map(|closing| closing.boundary.clone());
+    let closing_seq = closing.as_ref().map(|closing| closing.seq);
+    let end_seq = closing_seq.unwrap_or(terminal_seq);
+    let end_at = closing.as_ref().map_or(terminal_at, |closing| closing.at);
+    let mut segments = Vec::new();
+
+    if let Some(closing) = &closing {
+        let cuts = cuts(&open, closing, evidence, &mut reasons);
+        for pair in cuts.windows(2) {
+            segments.extend(segments_between(
+                &pair[0],
+                &pair[1],
+                open.lane,
+                evidence,
+                &mut reasons,
+            ));
+        }
+    } else {
+        // The cut list is what reads each boundary, and there is none to build
+        // without a closing fact, so the opening bound is recorded here. This
+        // is the only path that reads it directly: once a cut list exists the
+        // opening is its first cut and recording it here as well would leave
+        // one bound checked twice, where severing either check still withholds.
+        record_incomplete_boundary(&open.opening_boundary, open.opening, &mut reasons);
+        push_reason(
+            &mut reasons,
+            EffortUnavailableCode::MissingEnd,
+            format!(
+                "phase opened at {} has no terminal source boundary",
+                open.opening
+            ),
+        );
+    }
+
+    let identity = one_identity(&segments, &open, end_seq, evidence, &mut reasons);
+    let usage = sum_segments(&segments, &mut reasons);
+    let wall_ms = wall_millis(open.opened_at, end_at, &mut reasons);
+    reasons.sort_by(|left, right| (left.code, &left.detail).cmp(&(right.code, &right.detail)));
+    reasons.dedup_by(|left, right| left.code == right.code && left.detail == right.detail);
+
+    let availability = match (reasons.is_empty(), identity, usage, wall_ms) {
+        (true, Some(identity), Some(usage), Some(wall_ms)) => EffortAvailability::Available {
+            identity,
+            usage,
+            wall_ms,
+        },
+        _ => EffortAvailability::Unavailable { reasons },
+    };
+    EffortPhaseAnswer {
+        task: open.task,
+        phase: open.phase,
+        phase_index: open.phase_index,
+        opening: open.opening,
+        closing: closing_seq,
+        renewals: open.renewals,
+        opening_boundary: open.opening_boundary,
+        closing_boundary,
+        segments,
+        availability,
+    }
+}
+
+fn record_incomplete_boundary(
+    boundary: &SourceBoundary,
+    seq: Seq,
+    reasons: &mut Vec<EffortUnavailable>,
+) {
+    if let SourceBoundary::Incomplete { reason: detail } = boundary {
+        push_reason(
+            reasons,
+            EffortUnavailableCode::IncompleteBoundary,
+            format!("boundary at {seq}: {detail}"),
+        );
+    }
+}
+
+fn cuts(
+    open: &OpenPhase,
+    closing: &Closing,
+    evidence: &Evidence,
+    reasons: &mut Vec<EffortUnavailable>,
+) -> Vec<Cut> {
+    let mut events = open
+        .carries
+        .iter()
+        .map(|carry| CutEvent::Carry(carry.clone()))
+        .chain(
+            evidence
+                .lineages
+                .between(open.lane, open.opening, closing.seq)
+                .into_iter()
+                .map(CutEvent::Membership),
+        )
+        .collect::<Vec<_>>();
+    events.sort_by_key(CutEvent::seq);
+
+    let mut occupant = open.occupant;
+    let mut lineage = open.lineage;
+    let mut cuts = vec![Cut {
+        seq: open.opening,
+        boundary: open.opening_boundary.clone(),
+        occupant,
+        lineage,
+    }];
+    for event in events {
+        match event {
+            CutEvent::Carry(carry) => {
+                if carry.ancestor != occupant {
+                    push_reason(
+                        reasons,
+                        EffortUnavailableCode::OccupantDisagreement,
+                        format!(
+                            "carry at {} expected ancestor {}, found {}",
+                            carry.seq, occupant, carry.ancestor
+                        ),
+                    );
+                }
+                occupant = carry.occupant;
+                lineage = evidence
+                    .lineages
+                    .at(open.lane, carry.seq)
+                    .unwrap_or(lineage);
+                cuts.push(Cut {
+                    seq: carry.seq,
+                    boundary: carry.boundary,
+                    occupant,
+                    lineage,
+                });
+            }
+            CutEvent::Membership(member) => {
+                lineage = member.lineage;
+                cuts.push(Cut {
+                    seq: member.seq,
+                    boundary: member.boundary,
+                    occupant,
+                    lineage,
+                });
+            }
+        }
+    }
+    cuts.push(Cut {
+        seq: closing.seq,
+        boundary: closing.boundary.clone(),
+        occupant,
+        lineage,
+    });
+    cuts
+}
+
+fn segments_between(
+    left: &Cut,
+    right: &Cut,
+    lane: CanonicalUuid,
+    evidence: &Evidence,
+    reasons: &mut Vec<EffortUnavailable>,
+) -> Vec<EffortSegmentAnswer> {
+    let Some(left_heads) = heads(&left.boundary, left.seq, reasons) else {
+        return Vec::new();
+    };
+    let Some(right_heads) = heads(&right.boundary, right.seq, reasons) else {
+        return Vec::new();
+    };
+    let Some(left_by_key) = keyed(left_heads, left.seq, reasons) else {
+        return Vec::new();
+    };
+    let Some(right_by_key) = keyed(right_heads, right.seq, reasons) else {
+        return Vec::new();
+    };
+    let keys = left_by_key
+        .keys()
+        .chain(right_by_key.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut segments = Vec::new();
+
+    for key in keys {
+        let left_head = left_by_key.get(&key);
+        let Some(right_head) = right_by_key.get(&key) else {
+            push_reason(
+                reasons,
+                EffortUnavailableCode::TranscriptMissing,
+                format!("stream {key} disappeared before {}", right.seq),
+            );
+            continue;
+        };
+        let (source, from) = match left_head {
+            Some(head) if head.source == right_head.source => (head.source, head.next),
+            Some(head) if evidence.supersedes_between(right_head, head, left.seq, right.seq) => {
+                (right_head.source, ORIGIN)
+            }
+            Some(head) => {
+                push_reason(
+                    reasons,
+                    EffortUnavailableCode::SourceReplaced,
+                    format!(
+                        "stream {key} changed generation from {} to {}",
+                        head.source, right_head.source
+                    ),
+                );
+                continue;
+            }
+            None => (right_head.source, ORIGIN),
+        };
+        if position(right_head.next) < position(from) {
+            push_reason(
+                reasons,
+                EffortUnavailableCode::SourceGap,
+                format!("stream {key} retreated across the phase boundary"),
+            );
+            continue;
+        }
+        segments.extend(evidence.account(
+            AccountRequest {
+                lane,
+                occupant: left.occupant,
+                lineage: left.lineage,
+                vendor: &right_head.vendor,
+                stream: &right_head.stream,
+                source,
+                from,
+                to: right_head.next,
+                after: left.seq,
+                before: right.seq,
+            },
+            reasons,
+        ));
+    }
+    segments
+}
+
+fn heads<'a>(
+    boundary: &'a SourceBoundary,
+    seq: Seq,
+    reasons: &mut Vec<EffortUnavailable>,
+) -> Option<&'a [wire::TranscriptSourceHead]> {
+    match boundary {
+        SourceBoundary::Proven { heads } => Some(heads),
+        SourceBoundary::Incomplete { reason: detail } => {
+            push_reason(
+                reasons,
+                EffortUnavailableCode::IncompleteBoundary,
+                format!("boundary at {seq}: {detail}"),
+            );
+            None
+        }
+    }
+}
+
+fn keyed<'a>(
+    heads: &'a [wire::TranscriptSourceHead],
+    seq: Seq,
+    reasons: &mut Vec<EffortUnavailable>,
+) -> Option<BTreeMap<String, &'a wire::TranscriptSourceHead>> {
+    let keys = heads
+        .iter()
+        .map(|head| head.key().as_str().to_owned())
+        .collect::<Vec<_>>();
+    if !keys.windows(2).all(|pair| pair[0] < pair[1]) {
+        push_reason(
+            reasons,
+            EffortUnavailableCode::SourceGap,
+            format!("boundary at {seq} has duplicate or unordered stream heads"),
+        );
+        return None;
+    }
+    Some(keys.into_iter().zip(heads).collect())
+}
+
+fn one_identity(
+    segments: &[EffortSegmentAnswer],
+    open: &OpenPhase,
+    before: Seq,
+    evidence: &Evidence,
+    reasons: &mut Vec<EffortUnavailable>,
+) -> Option<EffortIdentity> {
+    if segments.iter().any(|segment| segment.session.is_none()) {
+        push_reason(
+            reasons,
+            EffortUnavailableCode::SessionDisagreement,
+            "at least one source segment has no exact session declaration",
+        );
+    }
+    let mut identities = segments
+        .iter()
+        .filter_map(|segment| segment.identity.clone())
+        .collect::<BTreeSet<_>>();
+    if segments.iter().any(|segment| segment.identity.is_none()) {
+        push_reason(
+            reasons,
+            EffortUnavailableCode::UntaggedLaunch,
+            "at least one source segment has no complete vendor/model/effort declaration",
+        );
+    }
+    let mut occupant = open.occupant;
+    for (occupant_end, next_occupant) in open
+        .carries
+        .iter()
+        .map(|carry| (carry.seq, Some(carry.occupant)))
+        .chain(std::iter::once((before, None)))
+    {
+        match evidence.latest_session(open.lane, occupant, None, occupant_end) {
+            Some(session) => match session.identity() {
+                Some(identity) => {
+                    identities.insert(identity);
+                }
+                None => push_reason(
+                    reasons,
+                    EffortUnavailableCode::UntaggedLaunch,
+                    format!("occupant {occupant} has no complete launch identity"),
+                ),
+            },
+            None => push_reason(
+                reasons,
+                EffortUnavailableCode::SessionDisagreement,
+                format!("occupant {occupant} has no exact session declaration"),
+            ),
+        }
+        if let Some(next_occupant) = next_occupant {
+            occupant = next_occupant;
+        }
+    }
+    match identities.len() {
+        1 => identities.into_iter().next(),
+        0 => {
+            push_reason(
+                reasons,
+                EffortUnavailableCode::UntaggedLaunch,
+                "phase has no complete vendor/model/effort declaration",
+            );
+            None
+        }
+        _ => {
+            push_reason(
+                reasons,
+                EffortUnavailableCode::MixedLaunch,
+                "phase crosses more than one vendor/model/effort identity",
+            );
+            None
+        }
+    }
+}
+
+fn sum_segments(
+    segments: &[EffortSegmentAnswer],
+    reasons: &mut Vec<EffortUnavailable>,
+) -> Option<EffortUsage> {
+    let mut total = zero_usage();
+    for segment in segments {
+        let Some(next) = add_usage(&total, &segment.usage) else {
+            push_reason(
+                reasons,
+                EffortUnavailableCode::ArithmeticOverflow,
+                "usage counters overflowed u64",
+            );
+            return None;
+        };
+        total = next;
+    }
+    Some(total)
+}
+
+fn wall_millis(
+    opening: Instant,
+    closing: Instant,
+    reasons: &mut Vec<EffortUnavailable>,
+) -> Option<u64> {
+    let Some(delta) = closing
+        .get()
+        .as_millisecond()
+        .checked_sub(opening.get().as_millisecond())
+    else {
+        push_reason(
+            reasons,
+            EffortUnavailableCode::ArithmeticOverflow,
+            "wall-time subtraction overflowed",
+        );
+        return None;
+    };
+    match u64::try_from(delta) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            push_reason(
+                reasons,
+                EffortUnavailableCode::MalformedUsage,
+                "closing instant precedes opening instant",
+            );
+            None
+        }
+    }
+}
+
+fn aggregate(phases: &[EffortPhaseAnswer]) -> Result<Vec<EffortAggregateAnswer>, String> {
+    let mut groups = BTreeMap::<(EffortIdentity, Phase), Aggregate>::new();
+    for phase in phases {
+        let EffortAvailability::Available {
+            identity,
+            usage,
+            wall_ms,
+        } = &phase.availability
+        else {
+            continue;
+        };
+        groups
+            .entry((identity.clone(), phase.phase.clone()))
+            .or_insert_with(Aggregate::new)
+            .add(usage, *wall_ms)?;
+    }
+    groups
+        .into_iter()
+        .map(|((identity, phase), total)| total.answer(identity, phase))
+        .collect()
+}
+
+#[derive(Debug)]
+struct Aggregate {
+    count: u64,
+    usage: EffortUsage,
+    wall_ms: u64,
+}
+
+impl Aggregate {
+    fn new() -> Self {
+        Self {
+            count: 0,
+            usage: zero_usage(),
+            wall_ms: 0,
+        }
+    }
+
+    fn add(&mut self, usage: &EffortUsage, wall_ms: u64) -> Result<(), String> {
+        self.count = self
+            .count
+            .checked_add(1)
+            .ok_or_else(|| "task::effort aggregate count overflow".to_owned())?;
+        self.usage = add_usage(&self.usage, usage)
+            .ok_or_else(|| "task::effort aggregate usage overflow".to_owned())?;
+        self.wall_ms = self
+            .wall_ms
+            .checked_add(wall_ms)
+            .ok_or_else(|| "task::effort aggregate wall time overflow".to_owned())?;
+        Ok(())
+    }
+
+    fn answer(
+        self,
+        identity: EffortIdentity,
+        phase: Phase,
+    ) -> Result<EffortAggregateAnswer, String> {
+        if self.count == 0 {
+            return Err("task::effort aggregate has zero members".to_owned());
+        }
+        Ok(EffortAggregateAnswer {
+            identity,
+            phase,
+            count: self.count,
+            usage_average: divide_usage(&self.usage, self.count),
+            wall_ms_average: self.wall_ms / self.count,
+            usage_sum: self.usage,
+            wall_ms_sum: self.wall_ms,
+        })
+    }
+}
+
+// Keep evidence traversal and usage arithmetic below the reducer orchestration seam.
+#[path = "task_effort/accounting.rs"]
+mod accounting;
+use accounting::*;
 
 #[cfg(test)]
 #[path = "task_effort_tests.rs"]
