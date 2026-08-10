@@ -97,6 +97,7 @@ export async function assertPrimaryComposerDragging(
     session: source.session,
     worktree: source.worktree,
   };
+  const sameTeamTopologyRevision = laneSnapshot.body.topology_revision;
   const retainedDraft = "draft follows the primary composer across teams";
   await primaryComposer(source.lane).getByRole("textbox").fill(retainedDraft);
   await primaryComposer(source.lane).dragTo(
@@ -122,6 +123,7 @@ export async function assertPrimaryComposerDragging(
     { lineage: secondaryLineage, sourceLane: source.lane, expected: destinationOrder },
   );
   const crossTeamDurable = await reply(fixture, ["lane"]);
+  const crossTeamTopologyRevision = sameTeamDurable.body.topology_revision;
   const transferred = crossTeamDurable.body.lanes.find((lane) => lane.lane === source.lane);
   assert.ok(transferred, "the transferred member keeps its stable lane identity");
   assert.deepEqual(
@@ -159,8 +161,16 @@ export async function assertPrimaryComposerDragging(
   assert.deepEqual(
     await page.evaluate(() => window.__laneArrangeCommands),
     [
-      { lane: source.lane, before: sameTeamTarget.lane },
-      { lane: source.lane, before: crossTeamTarget.lane },
+      {
+        lane: source.lane,
+        before: sameTeamTarget.lane,
+        topology_revision: sameTeamTopologyRevision,
+      },
+      {
+        lane: source.lane,
+        before: crossTeamTarget.lane,
+        topology_revision: crossTeamTopologyRevision,
+      },
     ],
     "each primary-composer drop sends exactly one lane arrangement command",
   );
