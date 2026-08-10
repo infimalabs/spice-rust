@@ -69,7 +69,7 @@ impl<'a> Active<'a> {
         }
 
         Ok(Self {
-            handle: &entry.statement().handle,
+            handle: entry.handle(),
             actor,
             lane: claim.lane,
             occupant: claim.occupant,

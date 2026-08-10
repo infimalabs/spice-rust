@@ -34,6 +34,7 @@ pub mod report;
 pub mod state;
 #[cfg(not(target_arch = "wasm32"))]
 mod structural;
+pub mod test_evidence;
 pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
@@ -140,6 +141,12 @@ pub use state::{
     ClaimStatus, CurrentState, KeyError, LatchEntry, LatchKind, LatchObservation, LatchTransition,
     PeerClaim, PendingState, RenameMap, StateDecision, StateError, StateErrorKind, StateKey,
     StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
+};
+pub use test_evidence::{
+    CanonicalTestExecution, CoverageCompleteness, CoveredSource, MutationCoverageFinding,
+    MutationCoverageReport, MutationExecution, MutationObservation, StandingMutationWaiver,
+    SubsumptionRelation, SuiteSeamFinding, SuiteSeamReport, TestCoverage, TestEvidenceError,
+    TestEvidenceGraph, TestEvidenceStanding, TestSubsumptionFinding, TestSubsumptionReport,
 };
 /// Private `cargo xtask app` argument used by the native full verifier to
 /// publish a selected-source app build into its live worktree.

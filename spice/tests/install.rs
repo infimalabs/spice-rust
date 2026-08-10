@@ -326,7 +326,7 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_exact() {
     let Outcome::Refusal(refusal) = invalid else {
         panic!("invalid install digest must refuse");
     };
-    assert_eq!(refusal.reason, "install::digest-refused");
+    assert_eq!(refusal.reason(), "install::digest-refused");
     assert!(!installed_binary(&scratch.repository()).exists());
 
     let text_plan = invoke(scratch.path(), &["install"]);

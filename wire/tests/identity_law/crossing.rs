@@ -16,13 +16,12 @@ fn committed(position: u64) -> ReplyPosition {
 
 /// The refusal the reply frames reuse, carrying every optional field.
 fn stale_witness() -> Refusal {
-    Refusal {
-        reason: "witness::stale".to_owned(),
-        witness: Some("task".to_owned()),
-        expected: Some("48190".to_owned()),
-        observed: Some("48213".to_owned()),
-        remedy: "re-read the task head and retry".to_owned(),
-    }
+    Refusal::bare(wire::RefusalDiagnostic::new(
+        "witness::stale".to_owned(),
+        Some("task".to_owned()),
+        Some("48190".to_owned()),
+        Some("48213".to_owned()),
+    ))
 }
 
 /// The fault the reply frames reuse.
@@ -163,6 +162,11 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         "TaskHandle",
         &[handle("SPICE-aBcD"), handle("WIRE-1kJJP2Qc")],
     );
+    spelling_law(
+        covered,
+        "TaskStamp",
+        &[stamp("00000000"), stamp("00000001"), stamp("0000000B")],
+    );
     spelling_law(covered, "Phase", &[phase("todo"), phase("review")]);
     spelling_law(
         covered,
@@ -265,16 +269,14 @@ fn any_fact<F: wire::Body>(fact: Fact<F>) -> AnyFact {
 /// Task statement and workflow heads.
 fn cover_task_heads(covered: &mut BTreeSet<String>) {
     let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
-    let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
-    let task = handle("SPICE-aBcD");
+    let task = stamp("1kKRRsDP");
 
     law(
         covered,
         "TaskHead",
         &[
             TaskHead {
-                handle: task.clone(),
-                uuid: first_uuid,
+                incepted: task.clone(),
                 queue_origin: seq(9),
                 title: "Build the gate".to_owned(),
                 description: None,
@@ -286,16 +288,15 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
                 revision: seq(10),
             },
             TaskHead {
-                handle: task.clone(),
-                uuid: second_uuid,
+                incepted: task.clone(),
                 queue_origin: seq(9),
                 title: "Review the gate".to_owned(),
                 description: Some("Confirm every edge".to_owned()),
                 acceptance: vec!["The gate passes".to_owned()],
                 project: "gate".to_owned(),
                 tags: vec!["guard".to_owned(), "review".to_owned()],
-                dependencies: vec![handle("WIRE-eFgH")],
-                provenance: "task:SPICE-aBcD".parse().expect("origin"),
+                dependencies: vec![stamp("1kKRRsDQ")],
+                provenance: "task:1kKRRsDP".parse().expect("origin"),
                 revision: seq(11),
             },
         ],
@@ -527,12 +528,14 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
             ResidencyHead {
                 epoch: first_uuid,
                 state: ResidentState::Seated,
+                topology_revision: 2,
                 lanes: vec![occupied],
                 subscriptions: vec![drive],
             },
             ResidencyHead {
                 epoch: second_uuid,
                 state: ResidentState::Dark,
+                topology_revision: 7,
                 lanes: vec![empty],
                 subscriptions: vec![steer],
             },
@@ -897,11 +900,11 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
         "Witness",
         &[
             Witness::Task {
-                task: handle("SPICE-aBcD"),
+                task: stamp("1kKRRsDP"),
                 head: seq(48190),
             },
             Witness::Workflow {
-                task: handle("SPICE-aBcD"),
+                task: stamp("1kKRRsDP"),
                 head: seq(48190),
                 phase: "todo".parse().expect("phase"),
             },
@@ -988,16 +991,47 @@ fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
     );
     law(
         covered,
+        "RefusalDiagnostic",
+        &[
+            wire::RefusalDiagnostic::new("wire::mismatch", None, None, None),
+            wire::RefusalDiagnostic::new(
+                "witness::stale",
+                Some("task".to_owned()),
+                Some("48190".to_owned()),
+                Some("48213".to_owned()),
+            )
+            .with_detail("read the current task"),
+        ],
+    );
+    law(
+        covered,
+        "SpiceCommand",
+        &[
+            wire::SpiceCommand::new("fold", std::iter::empty::<&str>())
+                .expect("fixture command is valid"),
+            wire::SpiceCommand::new("task", ["show", "CLAIM-1kFixture"])
+                .expect("fixture command is valid"),
+        ],
+    );
+    law(
+        covered,
         "Refusal",
         &[
-            Refusal {
-                reason: "wire::mismatch".to_owned(),
-                witness: None,
-                expected: None,
-                observed: None,
-                remedy: "reconnect with the resident's current wire".to_owned(),
-            },
+            Refusal::repairable(
+                wire::SpiceCommand::new("task", ["show", "CLAIM-1kFixture"])
+                    .expect("fixture command is valid"),
+                wire::RefusalDiagnostic::new("claim::not-held", None, None, None),
+            ),
             stale_witness(),
+            Refusal::invocation(
+                "gate::instrument-unregistered",
+                "spice gate findings INSTRUMENT requires one registered instrument",
+            ),
+            Refusal::evidence(
+                "gate::regressed",
+                "file-shape: regressed",
+                "repair the reported regression",
+            ),
         ],
     );
     law(

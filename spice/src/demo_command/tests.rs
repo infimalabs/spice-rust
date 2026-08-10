@@ -178,12 +178,13 @@ fn reuse_refuses_a_seeded_root_whose_branch_or_commit_moved() {
         let Outcome::Refusal(refusal) = outcome else {
             panic!("a moved seed must refuse: {outcome:?}");
         };
-        assert_eq!(refusal.reason, "demo::commit-moved");
-        assert_eq!(refusal.expected.as_deref(), Some(expected_head().as_str()));
-        assert_eq!(refusal.observed.as_deref(), Some(observed));
+        assert_eq!(refusal.reason(), "demo::commit-moved");
+        let diagnostic = refusal.diagnostic().expect("demo refusal is diagnostic");
+        assert_eq!(diagnostic.expected(), Some(expected_head().as_str()));
+        assert_eq!(diagnostic.observed(), Some(observed));
         assert_eq!(
-            refusal.remedy,
-            "reset this demo root to its seeded commit or seed a new one"
+            diagnostic.detail(),
+            Some("reset this demo root to its seeded commit or seed a new one")
         );
     };
 
@@ -218,7 +219,7 @@ fn new_seed_refuses_nonempty_and_non_directory_roots_without_mutation() {
             panic!("protected root must refuse: {outcome:?}");
         };
         assert!(matches!(
-            refusal.reason.as_str(),
+            refusal.reason(),
             "demo::root-not-empty" | "demo::root-refused"
         ));
     }
@@ -241,7 +242,7 @@ fn non_utf8_executable_refuses_before_the_demo_root_exists() {
     let Outcome::Refusal(refusal) = outcome else {
         panic!("non-UTF-8 executable path must refuse: {outcome:?}");
     };
-    assert_eq!(refusal.reason, "demo::path-refused");
+    assert_eq!(refusal.reason(), "demo::path-refused");
     assert!(!root.exists(), "path refusal must precede seed mutation");
 }
 

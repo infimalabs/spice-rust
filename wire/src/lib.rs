@@ -85,17 +85,17 @@ pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, FoldReport, FoldState, JournalBackup,
     JournalReindex, JournalReport, JournalRestore, JournalVerification, Outcome, ProofEvidence,
-    Refusal, ReleaseNotes, ReleaseNotesEntry, ReleasePlan, ReleasePlanObservations,
-    ReleaseRegistryEvidence, Reply, ReplyPosition, Response, RestoreVerification, SeqRange,
-    SeqRangeError, ThreadReport, Version,
+    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
+    ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, Response,
+    RestoreVerification, SeqRange, SeqRangeError, SpiceCommand, ThreadReport, Version,
 };
 pub use stream::{
     AgentActivityKind, AgentMessage, MessageLocus, StreamAdmissionError, StreamCursor, StreamFact,
     StreamFrame, StreamRequest, TrustView, ViewSubject,
 };
 pub use witness::{
-    Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError, Witness,
-    WitnessKind,
+    Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,
+    TaskStamp, TaskStampError, TaskStampMintError, Witness, WitnessKind,
 };
 
 /// Decode wire bytes into a DTO.

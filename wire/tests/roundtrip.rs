@@ -10,9 +10,9 @@ use wire::intent::{EffortAnswer, EffortRead};
 use wire::manifest::ReleaseTarget;
 use wire::{
     Actor, CanonicalUuid, CanvasBootstrap, Command, Envelope, Fact, FactKind, Fault, FaultClass,
-    Hello, Instant, Origin, Outcome, Overflow, Packed, ProofEvidence, Refusal, Rejected,
-    ReleaseNotes, Reply, ReplyPosition, Response, Seq, SeqRange, TaskHandle, Version, WireVersion,
-    Witness, body,
+    Hello, Instant, Origin, Outcome, Overflow, Packed, ProofEvidence, Refusal, RefusalDiagnostic,
+    Rejected, ReleaseNotes, Reply, ReplyPosition, Response, Seq, SeqRange, SpiceCommand,
+    TaskHandle, Version, WireVersion, Witness, body,
 };
 
 /// Body of the `task::done` command this fixture pins.
@@ -66,7 +66,7 @@ const ENVELOPE: &str = r#"{
   "cause": 48190,
   "fact": {
     "kind": "task::phased",
-    "task": "SPICE-aBcD",
+    "task": "0000000B",
     "phase": "verify"
   }
 }"#;
@@ -94,10 +94,10 @@ const COMMAND: &str = r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "kind": "task::done",
   "expected": [
-    { "kind": "task", "task": "SPICE-aBcD", "head": 48168 },
-    { "kind": "workflow", "task": "SPICE-aBcD", "head": 48169, "phase": "verify" },
-    { "kind": "claim", "task": "SPICE-aBcD", "head": 48172 },
-    { "kind": "lease", "task": "SPICE-aBcD", "head": 48173 },
+    { "kind": "task", "task": "0000000B", "head": 48168 },
+    { "kind": "workflow", "task": "0000000B", "head": 48169, "phase": "verify" },
+    { "kind": "claim", "task": "0000000B", "head": 48172 },
+    { "kind": "lease", "task": "0000000B", "head": 48173 },
     {
       "kind": "residency",
       "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -140,7 +140,7 @@ const PROOF_EVIDENCE: &str = concat!(
 
 const TASK_EFFORT: &str = r#"{
   "phases": [{
-    "task": "EFFORT-a1",
+    "task": "0000000B",
     "phase": "todo",
     "phase_index": 0,
     "opening": 10,
@@ -443,7 +443,7 @@ fn envelope_omits_cause_at_a_chain_root() {
         origin: "task:SPICE-aBcD".parse::<Origin>().expect("origin"),
         cause: None,
         fact: Fact::new(body::TaskPhased {
-            task: "SPICE-aBcD".parse().expect("handle"),
+            task: "0000000B".parse().expect("stamp"),
             phase: "todo".parse().expect("phase"),
         }),
     };
@@ -554,8 +554,9 @@ fn a_wire_mismatch_refuses_and_names_both_versions() {
     let Rejected::Wire(refusal) = rejected else {
         panic!("a version this resident does not speak is a refusal, not a fault");
     };
-    assert_eq!(refusal.expected.as_deref(), Some("1"));
-    assert_eq!(refusal.observed.as_deref(), Some("2"));
+    let diagnostic = refusal.diagnostic().expect("wire mismatch is diagnostic");
+    assert_eq!(diagnostic.expected(), Some("1"));
+    assert_eq!(diagnostic.observed(), Some("2"));
 }
 
 #[test]
@@ -731,28 +732,68 @@ fn one_reply_cannot_carry_two_position_keys() {
 }
 
 #[test]
-fn a_refusal_round_trips() {
-    let response: Response<DoneResult> = Response {
-        v: WireVersion::CURRENT,
-        id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
-        epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
-        outcome: Outcome::Refusal(Refusal {
-            reason: "claim::not-held".to_owned(),
-            witness: Some("claim".to_owned()),
-            expected: Some("48172".to_owned()),
-            observed: Some("48180".to_owned()),
-            remedy: "reclaim the task before completing its phase".to_owned(),
-        }),
+fn every_refusal_form_round_trips_after_semantic_narrowing() {
+    let diagnostic = || {
+        RefusalDiagnostic::new(
+            "claim::not-held".to_owned(),
+            Some("claim".to_owned()),
+            Some("48172".to_owned()),
+            Some("48180".to_owned()),
+        )
     };
+    let samples = [
+        (
+            "repairable",
+            Refusal::repairable(
+                SpiceCommand::new("task", ["show", "CLAIM-1kFixture"])
+                    .expect("fixture command is valid"),
+                diagnostic(),
+            ),
+        ),
+        ("bare", Refusal::bare(diagnostic())),
+        (
+            "invocation",
+            Refusal::invocation(
+                "gate::instrument-unregistered",
+                "spice gate findings INSTRUMENT requires one registered instrument",
+            ),
+        ),
+        (
+            "evidence",
+            Refusal::evidence(
+                "gate::regressed",
+                "file-shape: regressed",
+                "repair the reported regression",
+            ),
+        ),
+    ];
 
-    let encoded = wire::encode(&response).expect("encodes");
-    let decoded: Response<DoneResult> = wire::decode(&encoded).expect("decodes");
+    for (form, refusal) in samples {
+        let response: Response<DoneResult> = Response {
+            v: WireVersion::CURRENT,
+            id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+            epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+            outcome: Outcome::Refusal(refusal),
+        };
+        let encoded = wire::encode(&response).expect("encodes");
+        let document: serde_json::Value =
+            serde_json::from_slice(&encoded).expect("encoded refusal is JSON");
+        let outcome = &document[concat!("out", "come")];
+        let observed_form = outcome["form"]
+            .as_str()
+            .expect("refusal has a semantic discriminant");
+        assert_eq!(observed_form, form);
+        match observed_form {
+            "repairable" => assert!(outcome.get("command").is_some()),
+            "bare" => assert!(outcome.get("diagnostic").is_some()),
+            "invocation" => assert!(outcome.get("contract").is_some()),
+            "evidence" => assert!(outcome.get("evidence").is_some()),
+            unknown => panic!("unknown refusal form {unknown}"),
+        }
 
-    assert_eq!(decoded, response);
-    let Outcome::Refusal(refusal) = &decoded.outcome else {
-        panic!("a refusal decodes as a refusal");
-    };
-    assert_eq!(refusal.witness.as_deref(), Some("claim"));
+        let decoded: Response<DoneResult> = wire::decode(&encoded).expect("decodes");
+        assert_eq!(decoded, response);
+    }
 }
 
 #[test]

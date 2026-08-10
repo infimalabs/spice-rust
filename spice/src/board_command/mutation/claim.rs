@@ -113,8 +113,8 @@ pub(in crate::board_command) fn claim_grant(
 /// Nothing here refuses on what the caller asked for; by this point the command
 /// is already admitted and the plan already decided, so every failure below is
 /// a fault rather than a refusal the caller could have avoided: a validated
-/// handle that will not form an origin is a protocol fault, and the mint and the
-/// receipt are store faults.
+/// inception stamp that will not form an origin is a protocol fault, and the
+/// mint and the receipt are store faults. The public handle is answer text only.
 ///
 /// The plan arrives whole rather than as loose arguments so the guard's
 /// observation can only come from the snapshot the decision was made against.
@@ -132,8 +132,9 @@ pub(in crate::board_command) fn commit_claim(
         next,
         possession,
     } = plan;
-    let task = selected.statement().handle.clone();
-    let origin = match task_origin(&task) {
+    let task = selected.handle().clone();
+    let incepted = selected.incepted().clone();
+    let origin = match task_origin(&incepted) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -155,7 +156,7 @@ pub(in crate::board_command) fn commit_claim(
         &mut write,
         command,
         &selected,
-        &task,
+        &incepted,
         grant.lane,
         grant.occupant,
         grant.at,
@@ -305,12 +306,12 @@ fn claim_selection<'a>(
                     "task next has no selected task witness",
                 )
             })?;
-        if witnessed != &selected.statement().handle {
+        if witnessed != selected.incepted() {
             return Err(refusal(
                 "board::witness-moved",
                 Some(format!(
                     "witnessed {witnessed}; selected {}",
-                    selected.statement().handle
+                    selected.handle()
                 )),
                 "read the current board subscription and retry task next",
             ));
@@ -333,7 +334,7 @@ fn claim_selection<'a>(
     let entry = snapshot
         .entries
         .iter()
-        .find(|entry| entry.statement().handle == *task)
+        .find(|entry| entry.incepted() == task)
         .ok_or_else(|| {
             refusal(
                 "task::unknown",
@@ -477,7 +478,7 @@ fn append_claim_heads(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
     selected: &Entry,
-    task: &TaskHandle,
+    task: &wire::TaskStamp,
     lane: wire::CanonicalUuid,
     occupant: wire::CanonicalUuid,
     at: Instant,

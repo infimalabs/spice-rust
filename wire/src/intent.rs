@@ -36,15 +36,11 @@ pub use board::{
     BoardActorRoute, BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead,
     BoardStatement, BoardTask, DocLedger, Positioned, ProjectVisibility, TextAnswer,
 };
+mod simple_answers;
+pub use simple_answers::{RecognitionAnswer, TasteAnswer};
 
 mod task;
-pub use task::{
-    ClaimCarry, ClaimRenew, ClaimWin, DocApply, EffortAggregateAnswer, EffortAnswer,
-    EffortAvailability, EffortIdentity, EffortPhaseAnswer, EffortRead, EffortSegmentAnswer,
-    EffortUnavailable, EffortUnavailableCode, EffortUsage, GateFindings, ReviewFollowup, TaskAdd,
-    TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd,
-    TaskPhase, TaskRef, TaskReview,
-};
+pub use task::*;
 
 /// Append one durable directive to a lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +136,8 @@ pub struct LaneRead {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneSeat {
+    /// Topology revision observed before this seat was requested.
+    pub topology_revision: u64,
     /// Independently steerable member seat being created.
     pub lane: CanonicalUuid,
     /// Canvas lineage whose lane receives the member.
@@ -229,6 +227,8 @@ pub enum TaskSubscriptionScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineageConfigure {
+    /// Topology revision observed before this configuration was requested.
+    pub topology_revision: u64,
     /// Stable Canvas lineage identifying the group.
     pub lineage_id: CanonicalUuid,
     /// One seated member to move into this lineage, or absent to preserve membership.
@@ -275,6 +275,8 @@ pub struct LineageArrangement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineageArrange {
+    /// Topology revision of the complete arrangement being restated.
+    pub topology_revision: u64,
     /// Every surviving lineage, in the order the operator arranged them.
     pub lineages: Vec<LineageArrangement>,
 }
@@ -287,6 +289,8 @@ pub struct LineageArrange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneArrange {
+    /// Topology revision observed before this member move was requested.
+    pub topology_revision: u64,
     /// Existing member whose primary composer moves.
     pub lane: CanonicalUuid,
     /// Existing member the moved lane is placed immediately before.
@@ -379,89 +383,6 @@ pub struct ReleasePublish {
 pub struct UpChange {
     /// State the resident is asked to reach.
     pub state: ResidentState,
-}
-
-/// The answer a task command returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAnswer {
-    /// Task the answer concerns.
-    pub task: TaskHandle,
-    /// Its status after the transaction.
-    pub status: String,
-    /// Best-effort learning continuation run after a successful completion.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub learning: Option<Box<TaskLearning>>,
-    /// Exact CLI command admitted as the next action, when one is available.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub next: Option<Box<str>>,
-}
-
-/// Bounded task-completion learning distillation report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskLearning {
-    /// Records atomically retained after confirmation and eviction.
-    pub stored: u64,
-    /// Bounded candidates extracted from the exact claim-to-completion span.
-    pub candidates: u64,
-    /// One reason for each candidate the independent judge skipped.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skipped: Vec<String>,
-    /// Whole-operation skip reason when no record could be retained.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub reason: Option<String>,
-    /// Bounded diagnostic detail for the skip, when useful.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub detail: Option<String>,
-}
-
-/// The answer a claim command returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimAnswer {
-    /// Task whose possession moved.
-    pub task: TaskHandle,
-    /// Actor holding it after the transaction.
-    pub holder: Actor,
-    /// Non-blocking overlap warnings discovered from the claim-time board.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<ClaimWarning>,
-    /// Exact CLI command admitted as the next action, when one is available.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub next: Option<Box<str>>,
-}
-
-/// One active claim whose acceptance names the same implementation surface.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimWarning {
-    /// Other in-flight task.
-    pub task: TaskHandle,
-    /// Lane holding the other claim.
-    pub lane: CanonicalUuid,
-    /// Exact normalized acceptance terms shared by both tasks.
-    pub surface: Vec<String>,
 }
 
 /// The answer a document application returns.
@@ -821,6 +742,8 @@ pub struct LaneAnswer {
     pub epoch: CanonicalUuid,
     /// Resident state at the read barrier.
     pub state: ResidentState,
+    /// Monotonic authority for this exact topology and policy snapshot.
+    pub topology_revision: u64,
     /// Current lane rows in stable lane order.
     pub lanes: Vec<LaneAnswerRow>,
     /// One authoritative task-subscription policy per returned lineage.
@@ -833,6 +756,8 @@ pub struct LaneAnswer {
 pub struct LaneChangeAnswer {
     /// Lane whose disposition changed.
     pub lane: CanonicalUuid,
+    /// Topology authority after the transaction committed.
+    pub topology_revision: u64,
     /// Disposition held before the transaction.
     pub from: String,
     /// Disposition held after the transaction.
@@ -972,26 +897,6 @@ pub struct RecallAnswer {
     pub residency: LaneAnswer,
     /// Most recent relevant events, newest first and explicitly bounded.
     pub recent: Vec<RecallEntry>,
-}
-
-/// The answer a taste verdict returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TasteAnswer {
-    /// Bag the verdict landed in.
-    pub name: Name,
-    /// Whether the judge confirmed the hit.
-    pub confirmed: bool,
-}
-
-/// The answer a recognition returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecognitionAnswer {
-    /// Observation key that was recognized.
-    pub key: Digest,
-    /// False when the key had already been recognized.
-    pub fresh: bool,
 }
 
 mod binding;

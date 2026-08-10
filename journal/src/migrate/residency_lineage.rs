@@ -203,11 +203,11 @@ fn decode(table: &'static str, row: &str, bytes: &[u8]) -> Result<Value, OpenErr
 
 fn encode_residency(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
     let bytes = intermediate("residency_head", row, value)?;
-    let head: wire::ResidencyHead = wire::decode(&bytes).map_err(|error| {
+    let head: PreTopologyResidencyHead = wire::decode(&bytes).map_err(|error| {
         invalid(
             "residency_head",
             row,
-            &format!("migrated body is not current residency wire: {error}"),
+            &format!("migrated body is not schema-three residency wire: {error}"),
         )
     })?;
     wire::encode(&head).map_err(|error| {
@@ -217,6 +217,16 @@ fn encode_residency(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
             &format!("migrated body cannot encode canonically: {error}"),
         )
     })
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreTopologyResidencyHead {
+    epoch: wire::CanonicalUuid,
+    state: wire::ResidentState,
+    lanes: Vec<wire::LaneResidency>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    subscriptions: Vec<wire::LineageSubscription>,
 }
 
 fn encode_fact(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
@@ -239,11 +249,11 @@ fn encode_fact(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
 
 fn encode_command(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
     let bytes = intermediate("command_receipts", row, value)?;
-    let command: wire::Command<wire::intent::LaneSeat> = wire::decode(&bytes).map_err(|error| {
+    let command: wire::Command<PreTopologyLaneSeat> = wire::decode(&bytes).map_err(|error| {
         invalid(
             "command_receipts",
             row,
-            &format!("migrated request is not current command wire: {error}"),
+            &format!("migrated request is not schema-three lane wire: {error}"),
         )
     })?;
     command
@@ -256,6 +266,20 @@ fn encode_command(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
                 &format!("migrated request cannot encode canonically: {error}"),
             )
         })
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreTopologyLaneSeat {
+    lane: wire::CanonicalUuid,
+    lineage_id: wire::CanonicalUuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    worktree: String,
+    life: String,
+    vendor: wire::Name,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resume: Option<String>,
 }
 
 fn intermediate(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {

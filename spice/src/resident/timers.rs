@@ -380,7 +380,10 @@ fn desired_claims(
                 "bus::timer-lease-missing",
                 &format!(
                     "active task {} has no durable lease head",
-                    heads.statement().body().handle
+                    wire::TaskHandle::for_project(
+                        &heads.statement().body().project,
+                        &heads.statement().body().incepted,
+                    )
                 ),
             )
         })?;
@@ -389,7 +392,10 @@ fn desired_claims(
                 "bus::timer-lease-epoch",
                 &format!(
                     "task {} claim and lease epochs disagree",
-                    heads.statement().body().handle
+                    wire::TaskHandle::for_project(
+                        &heads.statement().body().project,
+                        &heads.statement().body().incepted,
+                    )
                 ),
             ));
         }
@@ -401,11 +407,17 @@ fn desired_claims(
                 "bus::timer-lease-incoherent",
                 &format!(
                     "task {} lease does not satisfy start <= renewal <= expiry <= maximum",
-                    heads.statement().body().handle
+                    wire::TaskHandle::for_project(
+                        &heads.statement().body().project,
+                        &heads.statement().body().incepted,
+                    )
                 ),
             ));
         }
-        let task = heads.statement().body().handle.clone();
+        let task = wire::TaskHandle::for_project(
+            &heads.statement().body().project,
+            &heads.statement().body().incepted,
+        );
         desired.insert(
             task.clone(),
             ClaimAuthority {
@@ -521,6 +533,12 @@ mod tests {
         start: Instant,
         expiry: Instant,
         maximum: Instant,
+    }
+
+    impl Authority {
+        fn incepted(&self) -> wire::TaskStamp {
+            self.task.incepted().expect("fixture task carries a stamp")
+        }
     }
 
     #[test]
@@ -864,8 +882,7 @@ mod tests {
         let added = write
             .fact(
                 body::TaskAdded {
-                    task: authority.task.clone(),
-                    uuid: uuid(1),
+                    task: authority.incepted(),
                     title: "Capture commit after lapse".to_owned(),
                     description: None,
                     acceptance: Vec::new(),
@@ -882,7 +899,7 @@ mod tests {
         let won = write
             .fact(
                 body::ClaimWon {
-                    task: authority.task.clone(),
+                    task: authority.incepted(),
                     actor: Actor::Lane(authority.lane),
                     lane: authority.lane,
                     occupant: authority.occupant,
@@ -926,11 +943,10 @@ mod tests {
         seated: PendingFact,
     ) {
         let statement_origin = origin;
-        let statement_task = authority.task.clone();
+        let statement_task = authority.incepted();
         let statement_phase = phase.clone();
         write.task_head(added, move |position| TaskHead {
-            handle: statement_task,
-            uuid: uuid(1),
+            incepted: statement_task,
             queue_origin: position,
             title: "Capture commit after lapse".to_owned(),
             description: None,
@@ -941,7 +957,7 @@ mod tests {
             provenance: statement_origin,
             revision: position,
         });
-        let workflow_task = authority.task.clone();
+        let workflow_task = authority.incepted();
         write.workflow_head(workflow_task, added, move |_| WorkflowHead {
             flow: vec![statement_phase.clone()],
             phase: statement_phase,
@@ -951,7 +967,7 @@ mod tests {
             deferral: None,
             completion: None,
         });
-        let claim_task = authority.task.clone();
+        let claim_task = authority.incepted();
         let lane = authority.lane;
         let occupant = authority.occupant;
         let epoch = authority.epoch;
@@ -968,7 +984,7 @@ mod tests {
             epoch,
             disposition: ClaimDisposition::Active,
         });
-        let lease_task = authority.task.clone();
+        let lease_task = authority.incepted();
         let start = authority.start;
         let expiry = authority.expiry;
         let maximum = authority.maximum;
@@ -982,6 +998,7 @@ mod tests {
         write.residency_head(seated, move |_| ResidencyHead {
             epoch,
             state: ResidentState::Seated,
+            topology_revision: 1,
             lanes: vec![LaneResidency {
                 lane,
                 lineage_id: lane,
@@ -1011,7 +1028,7 @@ mod tests {
             .expect("lapsed heads read")
             .tasks()
             .iter()
-            .find(|heads| heads.statement().body().handle == fixture.authority.task)
+            .find(|heads| heads.statement().body().incepted == fixture.authority.incepted())
             .expect("fixture task remains")
             .clone()
     }
@@ -1047,16 +1064,16 @@ mod tests {
             kind: CommandKind::ClaimWin,
             expected: vec![
                 Witness::Task {
-                    task: fixture.authority.task.clone(),
+                    task: fixture.authority.incepted(),
                     head: heads.statement().position(),
                 },
                 Witness::Workflow {
-                    task: fixture.authority.task.clone(),
+                    task: fixture.authority.incepted(),
                     head: heads.workflow().position(),
                     phase: heads.workflow().body().phase.clone(),
                 },
                 Witness::Claim {
-                    task: fixture.authority.task.clone(),
+                    task: fixture.authority.incepted(),
                     head: Some(heads.claim().expect("lapsed claim head").position()),
                 },
                 Witness::Eligibility {
@@ -1137,7 +1154,10 @@ mod tests {
     }
 
     fn task() -> TaskHandle {
-        "TIMER-claim01".parse().expect("fixture task")
+        TaskHandle::for_project(
+            "timer.claim",
+            &"1kKRRsDP".parse().expect("fixture task stamp"),
+        )
     }
 
     fn uuid(last: u8) -> CanonicalUuid {

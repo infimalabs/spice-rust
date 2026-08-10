@@ -234,8 +234,27 @@ fn the_client_grants_a_publication_the_bound_this_battery_needs() {
     );
 }
 
-fn preview_publication(fixture: &Fixture, notes: &str) -> ReleasePlan {
-    let text = fixture.invoke(&["release", "publish", "--notes-file", notes]);
+#[test]
+fn publication_plans_commits_replays_and_survives_restart() {
+    let fixture = Fixture::new("durable");
+    let resident = Resident::start(&fixture);
+
+    // Keep the lifecycle phases explicit so a failure identifies whether
+    // preview, application, recovery, or durable replay broke its contract.
+    let (notes, plan) = preview_publication(&fixture);
+    let (apply, first) = apply_publication(&fixture, &notes, &plan);
+    recover_publication(&fixture, &notes);
+    replay_and_stop(&fixture, &notes, &apply, resident);
+    replay_after_restart(&fixture, &notes, &apply, &first);
+}
+
+fn preview_publication(fixture: &Fixture) -> (String, ReleasePlan) {
+    let notes = fixture
+        .notes
+        .to_str()
+        .expect("notes path is UTF-8")
+        .to_owned();
+    let text = fixture.invoke(&["release", "publish", "--notes-file", &notes]);
     assert!(
         text.status.success(),
         "text preview failed: {}",
@@ -286,11 +305,8 @@ fn preview_publication(fixture: &Fixture, notes: &str) -> ReleasePlan {
         remote_refs(fixture).is_empty(),
         "preview changed remote refs"
     );
-    text_plan
-}
 
-fn assert_json_preview(fixture: &Fixture, notes: &str, text_plan: &ReleasePlan) {
-    let json = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
+    let json = fixture.invoke(&["--json", "release", "publish", "--notes-file", &notes]);
     assert!(
         json.status.success(),
         "JSON preview failed: {}",
@@ -302,16 +318,24 @@ fn assert_json_preview(fixture: &Fixture, notes: &str, text_plan: &ReleasePlan) 
         panic!("JSON preview did not reply")
     };
     assert_eq!(json_plan.position, ReplyPosition::Direct {});
-    assert_eq!(&json_plan.body, text_plan);
+    assert_eq!(json_plan.body, text_plan);
+    (notes, text_plan)
 }
 
 fn apply_publication(
     fixture: &Fixture,
     notes: &str,
-    apply: &str,
-    text_plan: &ReleasePlan,
-) -> (ReplyPosition, RecognitionAnswer) {
-    let first = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes, apply]);
+    plan: &ReleasePlan,
+) -> (String, (ReplyPosition, RecognitionAnswer)) {
+    let apply = format!("--apply={}", plan.key);
+    let first = fixture.invoke(&[
+        "--json",
+        "release",
+        "publish",
+        "--notes-file",
+        notes,
+        &apply,
+    ]);
     assert!(
         first.status.success(),
         "first apply failed: {}",
@@ -334,14 +358,14 @@ fn apply_publication(
     );
     assert_eq!(
         remote_object(fixture, "refs/spice/packages/v0.0.0"),
-        text_plan.package_object
+        plan.package_object
     );
     let operation_journal = fixture
         .journal
         .parent()
         .expect("journal data directory")
         .join("release-operations")
-        .join(format!("{}.json", text_plan.key));
+        .join(format!("{}.json", plan.key));
     let operation_journal: serde_json::Value = serde_json::from_slice(
         &fs::read(operation_journal).expect("external operation journal exists"),
     )
@@ -351,16 +375,16 @@ fn apply_publication(
             .as_array()
             .expect("accepted operation rows")
             .len(),
-        text_plan.operations.len()
+        plan.operations.len()
     );
     assert_eq!(
         operation_journal["receipts"]
             .as_array()
             .expect("operation receipt rows")
             .len(),
-        text_plan.operations.len()
+        plan.operations.len()
     );
-    first
+    (apply, first)
 }
 
 fn recover_publication(fixture: &Fixture, notes: &str) {
@@ -422,18 +446,8 @@ fn recover_publication(fixture: &Fixture, notes: &str) {
     assert!(!recognition(&recovered).1.fresh);
 }
 
-#[test]
-fn publication_plans_commits_replays_and_survives_restart() {
-    let fixture = Fixture::new("durable");
-    let resident = Resident::start(&fixture);
-    let notes = fixture.notes.to_str().expect("notes path is UTF-8");
-    let text_plan = preview_publication(&fixture, notes);
-    assert_json_preview(&fixture, notes, &text_plan);
-    let apply = format!("--apply={}", text_plan.key);
-    let first = apply_publication(&fixture, notes, &apply, &text_plan);
-    recover_publication(&fixture, notes);
-
-    let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, &apply]);
+fn replay_and_stop(fixture: &Fixture, notes: &str, apply: &str, resident: Resident) {
+    let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, apply]);
     assert!(
         replay.status.success(),
         "text replay failed: {}",
@@ -442,9 +456,9 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let replay_answer: RecognitionAnswer =
         wire::decode(&replay.stdout).expect("text replay body is typed");
     assert!(!replay_answer.fresh);
-    let snapshot = facts(&fixture);
+    let snapshot = facts(fixture);
     assert_eq!(kind_count(&snapshot, FactKind::ReleasePublished), 1);
-    resident.stop(&fixture);
+    resident.stop(fixture);
     assert_eq!(
         journal::Journal::open(&fixture.journal)
             .expect("journal opens")
@@ -453,16 +467,17 @@ fn publication_plans_commits_replays_and_survives_restart() {
             .receipts,
         1
     );
+}
 
-    let restarted = Resident::start(&fixture);
-    let after_restart = fixture.invoke(&[
-        "--json",
-        "release",
-        "publish",
-        "--notes-file",
-        notes,
-        &apply,
-    ]);
+fn replay_after_restart(
+    fixture: &Fixture,
+    notes: &str,
+    apply: &str,
+    first: &(ReplyPosition, RecognitionAnswer),
+) {
+    let restarted = Resident::start(fixture);
+    let after_restart =
+        fixture.invoke(&["--json", "release", "publish", "--notes-file", notes, apply]);
     assert!(
         after_restart.status.success(),
         "restart replay failed: {}",
@@ -471,8 +486,8 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let after_restart = recognition(&after_restart);
     assert!(!after_restart.1.fresh);
     assert_eq!(after_restart.0, first.0);
-    assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 1);
-    restarted.stop(&fixture);
+    assert_eq!(kind_count(&facts(fixture), FactKind::ReleasePublished), 1);
+    restarted.stop(fixture);
 }
 
 #[test]
@@ -497,7 +512,7 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
     else {
         panic!("stale apply did not refuse")
     };
-    assert_eq!(refusal.reason, "release::plan-moved");
+    assert_eq!(refusal.reason(), "release::plan-moved");
 
     fs::remove_file(fixture.receipt_path(1)).expect("remove one detached receipt");
 
@@ -508,7 +523,7 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
     else {
         panic!("missing evidence did not refuse")
     };
-    assert_eq!(refusal.reason, "release::manifest-refused");
+    assert_eq!(refusal.reason(), "release::manifest-refused");
     assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 0);
     resident.stop(&fixture);
 }
@@ -707,7 +722,7 @@ fn assert_notes_refusal(output: &Output) {
     else {
         panic!("uncurated notes did not refuse: {}", spoken(output))
     };
-    assert_eq!(refusal.reason, "release::notes-refused");
+    assert_eq!(refusal.reason(), "release::notes-refused");
 }
 
 fn facts(fixture: &Fixture) -> journal::FactSnapshot {

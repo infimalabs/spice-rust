@@ -149,13 +149,14 @@ fn admit_decision(
     decide: &ConsentDecide,
 ) -> SurfaceResult<(consent::Queue, Vec<Witness>)> {
     if !matches!(decide.answer, wire::Answer::Granted | wire::Answer::Denied) {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "consent::ruling-invalid".to_owned(),
-            witness: Some(decide.request.to_string()),
-            expected: Some("granted or denied".to_owned()),
-            observed: Some(format!("{:?}", decide.answer).to_lowercase()),
-            remedy: "choose allow or deny for the queued request".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "consent::ruling-invalid".to_owned(),
+                Some(decide.request.to_string()),
+                Some("granted or denied".to_owned()),
+                Some(format!("{:?}", decide.answer).to_lowercase()),
+            ),
+        )));
     }
     let (_, queue) = consent_snapshot(bus, policy)?;
     let answer = queue
@@ -168,13 +169,14 @@ fn admit_decision(
         .ok_or_else(|| consent_not_held(decide.request))?;
     let exact = consent::decision_witnesses(pending, decide.answer).map_err(Outcome::Refusal)?;
     if !same_witnesses(command.expected(), &exact) {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "consent::witness-moved".to_owned(),
-            witness: Some(decide.request.to_string()),
-            expected: Some(format!("{exact:?}")),
-            observed: Some(format!("{:?}", command.expected())),
-            remedy: "re-read the consent queue and retry its exact current request".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "consent::witness-moved".to_owned(),
+                Some(decide.request.to_string()),
+                Some(format!("{exact:?}")),
+                Some(format!("{:?}", command.expected())),
+            ),
+        )));
     }
     Ok((queue, exact))
 }
@@ -490,26 +492,27 @@ fn same_witnesses(left: &[Witness], right: &[Witness]) -> bool {
 }
 
 fn consent_not_held(request: CanonicalUuid) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: "consent::request-not-held".to_owned(),
-        witness: Some(request.to_string()),
-        expected: Some("a request in the current consent queue".to_owned()),
-        observed: Some("absent or terminal".to_owned()),
-        remedy: "re-read the consent queue and decide a request that is still pending".to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        "consent::request-not-held".to_owned(),
+        Some(request.to_string()),
+        Some("a request in the current consent queue".to_owned()),
+        Some("absent or terminal".to_owned()),
+    )))
 }
 
 fn trust_refusal(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("executable-policy".to_owned()),
-        expected,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("executable-policy".to_owned()),
+            expected,
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }

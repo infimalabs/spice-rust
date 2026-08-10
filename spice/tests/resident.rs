@@ -658,13 +658,12 @@ fn send_capability_echo<S: Read + Write>(
 ) {
     send_server(
         socket,
-        &wire::Refusal {
-            reason: "hello::fixture".to_owned(),
-            witness: None,
-            expected: None,
-            observed: Some(capability.to_string()),
-            remedy: "read current discovery".to_owned(),
-        },
+        &wire::Refusal::bare(wire::RefusalDiagnostic::new(
+            "hello::fixture".to_owned(),
+            None,
+            None,
+            Some(capability.to_string()),
+        )),
     );
 }
 
@@ -838,8 +837,8 @@ fn assert_lane_session(
     assert_eq!((response.id, response.epoch), (request_id, discovery.epoch));
     assert!(matches!(
         response.outcome,
-        Outcome::Refusal(wire::Refusal { ref reason, .. })
-            if reason == "command::authority"
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "command::authority"
     ));
 }
 
@@ -865,8 +864,7 @@ fn hold(path: &Path, identity: &str) -> sill::Possession {
 fn seed_active_claim(fixture: &Fixture) {
     let journal = journal::Journal::open(fixture.journal()).expect("journal opens for fixture");
     let bus = Bus::start(journal).expect("fixture bus starts");
-    let task: wire::TaskHandle = "RESIDEN-active".parse().expect("task handle");
-    let task_uuid = uuid("00000000-0000-4000-8000-000000000010");
+    let task: wire::TaskStamp = "1kKRRsDP".parse().expect("task stamp");
     let lane = uuid("00000000-0000-4000-8000-000000000011");
     let occupant = uuid("00000000-0000-4000-8000-000000000012");
     let epoch = uuid("00000000-0000-4000-8000-000000000013");
@@ -886,7 +884,6 @@ fn seed_active_claim(fixture: &Fixture) {
         .fact(
             wire::body::TaskAdded {
                 task: task.clone(),
-                uuid: task_uuid,
                 title: "Preserve an active claim".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
@@ -903,8 +900,7 @@ fn seed_active_claim(fixture: &Fixture) {
     let task_for_head = task.clone();
     let origin_for_head = origin.clone();
     add.task_head(added, move |seq| TaskHead {
-        handle: task_for_head,
-        uuid: task_uuid,
+        incepted: task_for_head,
         queue_origin: seq,
         title: "Preserve an active claim".to_owned(),
         description: None,

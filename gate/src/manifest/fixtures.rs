@@ -61,10 +61,10 @@ fn error(repository: &str, worktree: &str) -> MigrationError {
 }
 
 #[test]
-fn current_manifest_is_exactly_the_ordered_compiled_battery() {
+fn current_manifest_is_exactly_the_ordered_instrument_registry() {
     let manifest = GateManifest::default();
     assert_eq!(manifest.version(), GATE_MANIFEST_VERSION);
-    assert_eq!(manifest.gates().len(), 27);
+    assert_eq!(manifest.gates().len(), 30);
     assert_eq!(
         manifest
             .gates()
@@ -207,6 +207,23 @@ fn an_omitted_builtin_selects_its_compiled_id_from_the_packaged_registry_root() 
             declaration.enabled_provenance(),
             declaration.id_provenance()
         );
+    }
+}
+
+#[test]
+fn repository_root_false_disables_only_predecessor_builtins() {
+    let manifest = migrate("[policy]\npre_commit_builtins = false\n", "");
+
+    for declaration in manifest.gates() {
+        let provenance = declaration.enabled_provenance();
+        if declaration.id().predecessor_declared() {
+            assert!(!declaration.enabled(), "{}", declaration.id());
+            assert_eq!(provenance.layer(), OriginLayer::Repository);
+            assert_eq!(provenance.field(), ["policy", "pre_commit_builtins"]);
+        } else {
+            assert!(declaration.enabled(), "{}", declaration.id());
+            assert_eq!(provenance.layer(), OriginLayer::System);
+        }
     }
 }
 
@@ -372,7 +389,13 @@ fn release_standard_arm_table_is_complete_and_names_what_the_release_declared() 
         .collect();
     assert_eq!(
         grown_past,
-        vec![GateId::RustTypecheck, GateId::CsharpUnusedCandidates]
+        vec![
+            GateId::RustTypecheck,
+            GateId::CsharpUnusedCandidates,
+            GateId::SuiteSeam,
+            GateId::MutationCoverage,
+            GateId::TestSubsumption,
+        ]
     );
     for id in GateId::ALL {
         assert_eq!(id.predecessor_declared(), !absent_from_battery(id), "{id}");
@@ -540,7 +563,7 @@ fn malformed_registry_and_syntax_name_the_exact_source() {
     for (repository, kind, field) in [
         ("policy = false\n", MigrationErrorKind::Malformed, "policy"),
         (
-            "[policy]\npre_commit_builtins = false\n",
+            "[policy]\npre_commit_builtins = true\n",
             MigrationErrorKind::Malformed,
             "pre_commit_builtins",
         ),

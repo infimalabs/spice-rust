@@ -143,6 +143,7 @@ pub(super) fn render_lineage(
     let render = FleetRender {
         runtime,
         epoch: lanes.epoch,
+        topology_revision: lanes.topology_revision,
         can_send,
         can_wake,
         can_arrange_lanes,
@@ -161,6 +162,7 @@ pub(super) fn render_lineage(
 struct FleetRender<'a> {
     runtime: &'a CanvasRuntime,
     epoch: CanonicalUuid,
+    topology_revision: u64,
     can_send: bool,
     can_wake: bool,
     can_arrange_lanes: bool,
@@ -237,6 +239,7 @@ fn render_populated_fleet(
                         ondrop={lineage_drop(
                             render.can_arrange_lineages,
                             &render.topology,
+                            render.topology_revision,
                             lineage.lane,
                             render.sender,
                         )}
@@ -256,6 +259,7 @@ fn render_populated_fleet(
                                     lineage,
                                     &lineage_standings,
                                     render.epoch,
+                                    render.topology_revision,
                                     render.can_send,
                                     render.can_wake,
                                     render.can_arrange_lanes,
@@ -348,6 +352,7 @@ fn lineage_dragover(can_arrange: bool) -> Callback<DragEvent> {
 fn lineage_drop(
     can_arrange: bool,
     topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    topology_revision: u64,
     target: CanonicalUuid,
     sender: &SenderHandle,
 ) -> Callback<DragEvent> {
@@ -384,6 +389,7 @@ fn lineage_drop(
         send_action(
             &sender,
             ClientAction::ArrangeLineages {
+                topology_revision,
                 lineages: arranged
                     .into_iter()
                     .map(|(lineage_id, lanes)| LineageArrangement { lineage_id, lanes })
@@ -495,6 +501,7 @@ fn render_compose(
     lineage: &crate::runtime::LaneRow,
     standings: &[Standing],
     epoch: CanonicalUuid,
+    topology_revision: u64,
     can_send: bool,
     can_wake: bool,
     can_arrange: bool,
@@ -547,6 +554,7 @@ fn render_compose(
                             member,
                             standing,
                             epoch,
+                            topology_revision,
                             standing.pending,
                             can_send,
                             can_wake,
@@ -562,6 +570,7 @@ fn render_compose(
                 {render_lineage_controls(
                     lineage.lane,
                     authoritative_life,
+                    topology_revision,
                     &control,
                     lineage_controls,
                     sender,
@@ -893,6 +902,7 @@ fn lane_drag_transfer(event: &DragEvent) -> Option<web_sys::DataTransfer> {
 fn primary_composer_dragging(
     lane: CanonicalUuid,
     enabled: bool,
+    topology_revision: u64,
     sender: &SenderHandle,
 ) -> PrimaryComposerDragging {
     let start = Callback::from(move |event: DragEvent| {
@@ -928,6 +938,7 @@ fn primary_composer_dragging(
             let _sent = send_action(
                 &sender,
                 ClientAction::ArrangeLane {
+                    topology_revision,
                     lane: source,
                     before: lane,
                 },
@@ -950,6 +961,7 @@ fn render_agent_composer(
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     epoch: CanonicalUuid,
+    topology_revision: u64,
     pending: usize,
     can_send: bool,
     can_wake: bool,
@@ -988,7 +1000,7 @@ fn render_agent_composer(
         sender.clone(),
         drafts.clone(),
     );
-    let dragging = primary_composer_dragging(lane_id, can_arrange, sender);
+    let dragging = primary_composer_dragging(lane_id, can_arrange, topology_revision, sender);
     html! {
         <section
             key={lane_key.clone()}

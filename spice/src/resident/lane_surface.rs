@@ -38,7 +38,7 @@ pub(super) use lineage::{arrange as arrange_lineages, configure};
 use propose::{commit_restored, propose_drain, propose_seat, propose_wake};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
-    missing_lane, recall_provenance, relevant, typed_environment_fault,
+    missing_lane, next_topology_revision, recall_provenance, relevant, typed_environment_fault,
 };
 pub(super) use session::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, await_session,
@@ -244,7 +244,7 @@ pub(super) fn seat(
     command: &wire::AdmittedCommand,
     request: &LaneSeat,
 ) -> Outcome<CommandAnswer> {
-    let observed = match admit_seat(bus, paths, epoch, request) {
+    let (observed, topology_revision) = match admit_seat(bus, paths, epoch, request) {
         Ok(observed) => observed,
         Err(outcome) => return outcome,
     };
@@ -254,11 +254,19 @@ pub(super) fn seat(
     };
     let answer = LaneChangeAnswer {
         lane: request.lane,
+        topology_revision,
         from: "absent".to_owned(),
         to: OCCUPIED.to_owned(),
         git: Some(prepared.proven.git.clone().into_boxed_str()),
     };
-    let proposal = propose_seat(command, request, &observed, epoch, &prepared);
+    let proposal = propose_seat(
+        command,
+        request,
+        &observed,
+        epoch,
+        &prepared,
+        answer.clone(),
+    );
     let proposal = match proposal {
         Ok(proposal) => proposal,
         Err(outcome) => {
@@ -291,6 +299,11 @@ pub(super) fn arrange(
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let topology_revision = match next_topology_revision(observed.body(), request.topology_revision)
+    {
+        Ok(revision) => revision,
+        Err(outcome) => return outcome,
+    };
     let Arrangement {
         next,
         from_lineage,
@@ -299,6 +312,8 @@ pub(super) fn arrange(
         Ok(arrangement) => arrangement,
         Err(outcome) => return outcome,
     };
+    let mut next = next;
+    next.topology_revision = topology_revision;
     let lane_answer = match answer(&next, None, seats) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -432,7 +447,7 @@ fn admit_seat(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     request: &LaneSeat,
-) -> Result<journal::JournalHead<wire::ResidencyHead>, Outcome<CommandAnswer>> {
+) -> Result<(journal::JournalHead<wire::ResidencyHead>, u64), Outcome<CommandAnswer>> {
     if request
         .name
         .as_ref()
@@ -454,6 +469,7 @@ fn admit_seat(
         ));
     }
     let observed = current_residency(bus, epoch).map_err(typed_outcome)?;
+    let topology_revision = next_topology_revision(observed.body(), request.topology_revision)?;
     if observed.body().state != ResidentState::Seated {
         return Err(lane_refusal(
             "lane::resident-not-seated",
@@ -489,7 +505,7 @@ fn admit_seat(
         ));
     }
     validate_worktree(paths, &request.worktree).map_err(typed_outcome)?;
-    Ok(observed)
+    Ok((observed, topology_revision))
 }
 
 struct PreparedSeat {
@@ -919,22 +935,24 @@ fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> 
     let repository = Repository::discover(worktree)
         .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
     if repository.common_dir() != paths.common {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lane::foreign-worktree".to_owned(),
-            witness: Some("git-common-directory".to_owned()),
-            expected: Some(paths.common.display().to_string()),
-            observed: Some(repository.common_dir().display().to_string()),
-            remedy: "choose one existing worktree from the resident repository".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::foreign-worktree".to_owned(),
+                Some("git-common-directory".to_owned()),
+                Some(paths.common.display().to_string()),
+                Some(repository.common_dir().display().to_string()),
+            ),
+        )));
     }
     if repository.worktree_root() != Path::new(worktree) {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lane::worktree-not-root".to_owned(),
-            witness: Some("worktree".to_owned()),
-            expected: Some(repository.worktree_root().display().to_string()),
-            observed: Some(worktree.to_owned()),
-            remedy: "name the canonical root of one existing worktree".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::worktree-not-root".to_owned(),
+                Some("worktree".to_owned()),
+                Some(repository.worktree_root().display().to_string()),
+                Some(worktree.to_owned()),
+            ),
+        )));
     }
     Ok(())
 }

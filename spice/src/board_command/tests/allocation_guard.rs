@@ -84,8 +84,7 @@ pub(super) fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
     )
     .expect("allocation guard fixture selects a task")
     .entry()
-    .statement()
-    .handle
+    .handle()
     .clone()
 }
 
@@ -151,6 +150,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
+        topology_revision: 0,
         lanes,
         subscriptions,
     });
@@ -338,19 +338,19 @@ fn a_winner_that_was_never_the_selection_refuses_the_allocator_write() {
 
 /// The reason the guard itself refused, from inside the outer refusal.
 fn guard_refusal(outcome: Outcome<CommandAnswer>) -> String {
-    let Outcome::Refusal(Refusal {
-        reason,
-        observed: Some(observed),
-        ..
-    }) = outcome
-    else {
+    let Outcome::Refusal(refusal) = outcome else {
         panic!("expected the claim commit to refuse, found {outcome:?}");
     };
     assert_eq!(
-        reason, "board::witness-moved",
+        refusal.reason(),
+        "board::witness-moved",
         "every guard refusal reaches the caller under this one outer reason"
     );
-    observed
+    refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::observed)
+        .expect("guard refusal carries its comparison")
+        .to_owned()
 }
 
 /// The `task next` command a lane sends for the winner it just read.
@@ -423,8 +423,8 @@ fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
     let command = claim_next_command(epoch, &actor, &answer, &winner, &seats[0]);
     let plan = plan_claim(&bus, &command);
     assert_eq!(
-        plan.selected.statement().handle,
-        winner,
+        plan.selected.handle(),
+        &winner,
         "the production plan decided the winner this command witnessed"
     );
 
@@ -532,7 +532,12 @@ fn a_moved_witness_refuses_before_any_allocator_comparison_is_reached() {
 
     let refusal = commit_planned_claim(&bus, &command, plan);
     assert!(
-        refusal.contains(winner.as_str()),
+        refusal.contains(
+            winner
+                .incepted()
+                .expect("fixture winner carries an inception stamp")
+                .as_str()
+        ),
         "the refusal names the client witness that moved, not a comparison: {refusal}"
     );
     assert!(

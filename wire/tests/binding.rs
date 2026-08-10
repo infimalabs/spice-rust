@@ -166,6 +166,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::LaneSeat,
         r#"{
+  "topology_revision": 9,
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "worktree": "worktrees/h",
@@ -184,6 +185,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::LaneArrange,
         r#"{
+  "topology_revision": 9,
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "before": "018f82d4-6f59-7d06-92e3-bce9131163c3"
 }"#,
@@ -191,6 +193,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::LineageConfigure,
         r#"{
+  "topology_revision": 9,
   "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "life": "drain"
 }"#,
@@ -198,6 +201,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::LineageArrange,
         r#"{
+  "topology_revision": 9,
   "lineages": [
     {
       "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -315,14 +319,14 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         "position": 2,
         "body": {
           "handle": "SPICE-aBcD",
-          "uuid": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+          "incepted": "1kKRRsDP",
           "queue_origin": 2,
           "description": "One task spelled through every field the shape carries.",
           "acceptance": ["the row decodes", "the row re-encodes unchanged"],
           "project": "wire.binding",
           "tags": ["binding"],
-          "dependencies": ["SPICE-eFgH"],
-          "provenance": "task:SPICE-aBcD",
+          "dependencies": ["1kKRRsDQ"],
+          "provenance": "task:1kKRRsDP",
           "revision": 2
         }
       },
@@ -371,6 +375,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "body": {
       "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
       "state": "seated",
+      "topology_revision": 0,
       "lanes": [{
         "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
         "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -486,7 +491,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         AnswerShape::Effort,
         r#"{
   "phases": [{
-    "task": "SPICE-aBcD",
+    "task": "1kKRRsDP",
     "phase": "todo",
     "phase_index": 0,
     "opening": 41,
@@ -546,7 +551,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
       "wall_ms": 903000
     }
   }, {
-    "task": "SPICE-aBcD",
+    "task": "1kKRRsDP",
     "phase": "review",
     "phase_index": 1,
     "opening": 58,
@@ -597,6 +602,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "state": "seated",
+  "topology_revision": 9,
   "subscriptions": [{
     "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
     "policy": "drive"
@@ -633,6 +639,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         AnswerShape::LaneChange,
         r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "topology_revision": 10,
   "from": "occupied",
   "to": "vacant"
 }"#,
@@ -649,6 +656,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
   "residency": {
     "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
     "state": "seated",
+    "topology_revision": 9,
     "lanes": [{
       "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
       "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -878,7 +886,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             position: seq(2),
             body: BoardStatement {
                 handle: handle("SPICE-aBcD"),
-                uuid: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+                incepted: "1kKRRsDP".parse().expect("a task stamp"),
                 queue_origin: seq(2),
                 description: Some(
                     "One task spelled through every field the shape carries.".to_owned(),
@@ -889,8 +897,8 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 ],
                 project: "wire.binding".to_owned(),
                 tags: vec!["binding".to_owned()],
-                dependencies: vec![handle("SPICE-eFgH")],
-                provenance: "task:SPICE-aBcD".parse().expect("an origin"),
+                dependencies: vec!["1kKRRsDQ".parse().expect("a task stamp")],
+                provenance: "task:1kKRRsDP".parse().expect("an origin"),
                 revision: seq(2),
             },
         },

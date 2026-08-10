@@ -14,7 +14,7 @@ use journal::FactCause;
 use lane::hold::{Death, Holds};
 use lane::occupant::Seats;
 use spice::repository::Repository;
-use wire::{Actor, CanonicalUuid, ClaimDisposition, Instant, Outcome, Producer, Seq, TaskHandle};
+use wire::{Actor, CanonicalUuid, ClaimDisposition, Instant, Outcome, Producer, Seq, TaskStamp};
 
 use super::lane_surface;
 use super::shutdown::{current_residency, guard_residency};
@@ -204,7 +204,7 @@ impl Runtime {
                             "lifecycle refused trigger={} lane={} reason={} retry={}",
                             trigger.as_str(),
                             lane,
-                            refusal.reason,
+                            refusal.reason(),
                             deadline
                         );
                         Some(WakeDeadline {
@@ -469,17 +469,18 @@ fn unit_outcome(outcome: Outcome<wire::intent::CommandAnswer>) -> Outcome<()> {
     }
 }
 
+const RETRYABLE_START_REFUSALS: [&str; 4] = [
+    "lifecycle::wake-capacity-moved",
+    "lifecycle::snapshot-moved",
+    "lifecycle::held-claim-head-moved",
+    "lifecycle::held-claim-lease-moved",
+];
+
 fn pending_start_failure_is_terminal(failure: &Outcome<()>) -> bool {
     matches!(
         failure,
         Outcome::Refusal(refusal)
-            if !matches!(
-                refusal.reason.as_str(),
-                "lifecycle::wake-capacity-moved"
-                    | "lifecycle::snapshot-moved"
-                    | "lifecycle::held-claim-head-moved"
-                    | "lifecycle::held-claim-lease-moved"
-            )
+            if !RETRYABLE_START_REFUSALS.contains(&refusal.reason())
     )
 }
 
@@ -516,7 +517,7 @@ fn project_targets(
                     "lifecycle::task-head-invalid",
                     &format!(
                         "task {} current heads are invalid: {error}",
-                        heads.statement().body().handle
+                        heads.statement().body().incepted
                     ),
                 )
             })
@@ -624,11 +625,11 @@ fn fact_body<T: serde::de::DeserializeOwned>(
 fn ready_instants(
     snapshot: &bus::TaskSnapshot,
     entries: &[Entry],
-) -> CommandResult<BTreeMap<TaskHandle, Instant>> {
+) -> CommandResult<BTreeMap<TaskStamp, Instant>> {
     let heads = snapshot
         .tasks()
         .iter()
-        .map(|heads| (heads.statement().body().handle.clone(), heads))
+        .map(|heads| (heads.statement().body().incepted.clone(), heads))
         .collect::<BTreeMap<_, _>>();
     let facts = snapshot
         .facts()
@@ -639,7 +640,7 @@ fn ready_instants(
     entries
         .iter()
         .map(|entry| {
-            let task = &entry.statement().handle;
+            let task = entry.incepted();
             let task_heads = heads.get(task).ok_or_else(|| {
                 store_fault(
                     "lifecycle::task-head-missing",
@@ -678,7 +679,7 @@ fn ready_instants(
 
 fn available_deadline(
     entries: &[Entry],
-    ready_at: &BTreeMap<TaskHandle, Instant>,
+    ready_at: &BTreeMap<TaskStamp, Instant>,
     actor: &Actor,
     subscription: &wire::LineageSubscription,
 ) -> CommandResult<Available> {
@@ -688,7 +689,7 @@ fn available_deadline(
     let mut eligible = entries
         .iter()
         .filter(|entry| board::selectable_entry(entries, entry, actor, subscription))
-        .filter_map(|entry| ready_at.get(&entry.statement().handle).copied())
+        .filter_map(|entry| ready_at.get(entry.incepted()).copied())
         .collect::<Vec<_>>();
     available_from_ready_instants(&mut eligible)
 }
@@ -908,13 +909,10 @@ mod tests {
     #[test]
     fn pending_parks_permanent_start_refusals_but_retries_moved_authority() {
         let failure = |reason: &str| {
-            Outcome::Refusal(wire::Refusal {
-                reason: reason.to_owned(),
-                witness: None,
-                expected: None,
-                observed: None,
-                remedy: "fixture remedy".to_owned(),
-            })
+            Outcome::Refusal(wire::Refusal::bare(
+                wire::RefusalDiagnostic::new(reason.to_owned(), None, None, None)
+                    .with_detail("fixture diagnostic"),
+            ))
         };
         assert!(pending_start_failure_is_terminal(&failure(
             "lane::session-authority-missing"

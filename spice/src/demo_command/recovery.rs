@@ -46,10 +46,14 @@ fn append_recovery(
     );
     match failure {
         Outcome::Refusal(mut refusal) => {
-            refusal.observed = Some(match refusal.observed {
+            let diagnostic = refusal
+                .diagnostic_mut()
+                .expect("demo recovery augments only diagnostic refusals");
+            let observed = diagnostic.replace_observed(None);
+            let _ = diagnostic.replace_observed(Some(match observed {
                 Some(observed) => format!("{observed}; {recovery}"),
                 None => recovery,
-            });
+            }));
             Outcome::Refusal(refusal)
         }
         Outcome::Fault(mut fault) => {

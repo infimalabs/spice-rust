@@ -16,7 +16,7 @@ use crate::envelope::{Actor, WireVersion};
 use crate::hello::Accepted;
 use crate::ident::CanonicalUuid;
 use crate::intent::{CommandAnswer, Intent};
-use crate::reply::{Fault, FaultClass, Outcome, Refusal, Response};
+use crate::reply::{Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Response};
 use crate::witness::{Witness, WitnessKind};
 
 /// Every admitted command discriminant.
@@ -231,7 +231,7 @@ impl Law {
 /// under the same predicates whether it is carried, renewed, freed, or
 /// lapsed. Every doc comment restates the row it implements.
 impl Law {
-    /// Intended handle is absent and every dependency handle exists at its
+    /// Intended inception stamp is absent and every dependency exists at its
     /// named workflow head.
     pub const ADD: Self = Self {
         required: &[WitnessKind::Absence],
@@ -300,7 +300,7 @@ impl Law {
     };
     /// The review path is the one that always carries the assignment, and the
     /// only one that may also carry follow-up tracking: the absence of each
-    /// handle it mints and of each edge it wires, exactly the predicates
+    /// stamp it mints and of each edge it wires, exactly the predicates
     /// [`Self::ADD`] and [`Self::DEPENDS`] require of those moves alone.
     pub const REVIEW: Self = Self {
         required: &[
@@ -1008,13 +1008,14 @@ impl Command<serde_json::Value> {
     /// epoch or a malformed kind-selected body.
     pub fn admit(self, accepted: &Accepted) -> Result<AdmittedCommand, CommandRejection> {
         if !self.v.is_current() {
-            return Err(CommandRejection::Refusal(Refusal {
-                reason: "command::wire-mismatch".to_owned(),
-                witness: None,
-                expected: Some(WireVersion::CURRENT.to_string()),
-                observed: Some(self.v.to_string()),
-                remedy: "reconnect with a client built from this resident's wire crate".to_owned(),
-            }));
+            return Err(CommandRejection::Refusal(Refusal::bare(
+                RefusalDiagnostic::new(
+                    "command::wire-mismatch",
+                    None,
+                    Some(WireVersion::CURRENT.to_string()),
+                    Some(self.v.to_string()),
+                ),
+            )));
         }
         if self.epoch != accepted.epoch {
             return Err(CommandRejection::Fault(Fault {
@@ -1036,27 +1037,27 @@ impl Command<serde_json::Value> {
                 Authority::Connected => "operator or lane",
                 Authority::Operator => "operator",
             };
-            return Err(CommandRejection::Refusal(Refusal {
-                reason: "command::authority".to_owned(),
-                witness: Some("principal".to_owned()),
-                expected: Some(expected.to_owned()),
-                observed: Some(accepted.actor.to_string()),
-                remedy: "reconnect with a capability authorized for this command".to_owned(),
-            }));
+            return Err(CommandRejection::Refusal(Refusal::bare(
+                RefusalDiagnostic::new(
+                    "command::authority",
+                    Some("principal".to_owned()),
+                    Some(expected.to_owned()),
+                    Some(accepted.actor.to_string()),
+                ),
+            )));
         }
         if let Err(error) = self.witnessed() {
-            return Err(CommandRejection::Refusal(Refusal {
-                reason: "command::witness-law".to_owned(),
-                witness: Some(error.to_string()),
-                expected: Some(format!("{:?}", law.required)),
-                observed: Some(format!(
-                    "{:?}",
-                    self.expected.iter().map(Witness::kind).collect::<Vec<_>>()
-                )),
-                remedy:
-                    "refresh current heads and submit exactly the predicates this command names"
-                        .to_owned(),
-            }));
+            return Err(CommandRejection::Refusal(Refusal::bare(
+                RefusalDiagnostic::new(
+                    "command::witness-law",
+                    Some(error.to_string()),
+                    Some(format!("{:?}", law.required)),
+                    Some(format!(
+                        "{:?}",
+                        self.expected.iter().map(Witness::kind).collect::<Vec<_>>()
+                    )),
+                ),
+            )));
         }
         let encoded = serde_json::to_vec(&self.body).map_err(|error| {
             CommandRejection::Fault(Fault {

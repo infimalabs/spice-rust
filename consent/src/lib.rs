@@ -60,12 +60,14 @@ impl Outcome {
     pub fn refusal(&self) -> Option<wire::Refusal> {
         match self {
             Self::Granted(_) | Self::Queued(_) => None,
-            Self::Denied(denied) => Some(wire::Refusal {
-                reason: "consent denied the operation".to_owned(),
-                witness: Some(denied.rule.clone()),
-                expected: None,
-                observed: None,
-                remedy: if denied.rule == OPERATOR {
+            Self::Denied(denied) => Some(wire::Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "consent denied the operation",
+                    Some(denied.rule.clone()),
+                    None,
+                    None,
+                )
+                .with_detail(if denied.rule == OPERATOR {
                     concat!(
                         "the operator refused this request; ",
                         "it never proceeds under this identity, so ask again only as a new request"
@@ -79,8 +81,8 @@ impl Outcome {
                         ),
                         denied.rule
                     )
-                },
-            }),
+                }),
+            )),
         }
     }
 
@@ -206,27 +208,30 @@ impl Actuator {
     /// policy rather than by an exhausted budget.
     pub fn renew(&mut self, request: wire::CanonicalUuid) -> Result<Outcome, wire::Refusal> {
         let Some(held) = self.pending.get(request) else {
-            return Err(wire::Refusal {
-                reason: "consent::request-not-held".to_owned(),
-                witness: Some(request.to_string()),
-                expected: Some("a held budget-exhausted request".to_owned()),
-                observed: Some("no held request".to_owned()),
-                remedy: "re-read the consent queue and renew a request that is still held"
-                    .to_owned(),
-            });
+            return Err(wire::Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "consent::request-not-held",
+                    Some(request.to_string()),
+                    Some("a held budget-exhausted request".to_owned()),
+                    Some("no held request".to_owned()),
+                )
+                .with_detail("re-read the consent queue and renew a request that is still held"),
+            ));
         };
         match held.cause() {
             ConsentQueueCause::Policy {} => {
-                return Err(wire::Refusal {
-                    reason: "consent::renewal-not-required".to_owned(),
-                    witness: Some(held.rule().to_owned()),
-                    expected: Some("budget-exhausted queue".to_owned()),
-                    observed: Some("policy queue".to_owned()),
-                    remedy: format!(
+                return Err(wire::Refusal::bare(
+                    wire::RefusalDiagnostic::new(
+                        "consent::renewal-not-required",
+                        Some(held.rule().to_owned()),
+                        Some("budget-exhausted queue".to_owned()),
+                        Some("policy queue".to_owned()),
+                    )
+                    .with_detail(format!(
                         "decide request {request} directly; the `{}` rule did not exhaust a budget",
                         held.rule()
-                    ),
-                });
+                    )),
+                ));
             }
             ConsentQueueCause::BudgetExhausted { .. } => {}
         }

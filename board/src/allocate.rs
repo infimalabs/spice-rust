@@ -13,7 +13,7 @@ use std::fmt;
 
 use journal::{BuildError, FactCause, JournalWrite, PendingFact};
 use wire::{
-    Actor, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Instant, LeaseHead, TaskHandle,
+    Actor, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Instant, LeaseHead, TaskStamp,
     WorkflowHead, body,
 };
 
@@ -25,7 +25,7 @@ use wire::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Mint<'a> {
     /// Task the claim takes possession of.
-    pub task: &'a TaskHandle,
+    pub task: &'a TaskStamp,
     /// Principal the claim is minted for.
     pub actor: &'a Actor,
     /// Workflow head as it stands, read for the review assignment and rewritten

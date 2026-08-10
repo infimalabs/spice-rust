@@ -36,7 +36,7 @@ pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> 
             let claim = entry
                 .claim()
                 .filter(|claim| claim.disposition == ClaimDisposition::Active)?;
-            if entry.statement().handle == selected.statement().handle {
+            if entry.incepted() == selected.incepted() {
                 return None;
             }
             let entry_acceptance = acceptance_terms(entry);
@@ -53,7 +53,7 @@ pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> 
                 })
                 .collect::<Vec<_>>();
             (!surface.is_empty()).then(|| ClaimOverlap {
-                task: entry.statement().handle.clone(),
+                task: entry.handle().clone(),
                 lane: claim.lane,
                 surface,
             })

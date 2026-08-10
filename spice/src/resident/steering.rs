@@ -54,25 +54,29 @@ pub(super) fn dead_letter_pending(
         store_fault("steer::dead-letter-snapshot-unreadable", &error.to_string())
     })?;
     if snapshot.cursor() != Some(cursor) {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "steer::dead-letter-snapshot-moved".to_owned(),
-            witness: Some("task-snapshot-cursor".to_owned()),
-            expected: Some(cursor.to_string()),
-            observed: snapshot.cursor().map(|observed| observed.to_string()),
-            remedy: "reconcile pending inbox standing before parking it".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "steer::dead-letter-snapshot-moved".to_owned(),
+                Some("task-snapshot-cursor".to_owned()),
+                Some(cursor.to_string()),
+                snapshot.cursor().map(|observed| observed.to_string()),
+            )
+            .with_detail("reconcile pending inbox standing before parking it"),
+        )));
     }
     let ledger = steer::Ledger::from_snapshot(snapshot.facts())
         .map_err(|error| store_fault("steer::dead-letter-replay-invalid", &error.to_string()))?;
     let pending = ledger.pending(lane);
     if pending.is_empty() {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "steer::dead-letter-standing-moved".to_owned(),
-            witness: Some("pending-inbox".to_owned()),
-            expected: Some(lane.to_string()),
-            observed: Some("empty".to_owned()),
-            remedy: "reconcile the current pending-inbox arm".to_owned(),
-        }));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "steer::dead-letter-standing-moved".to_owned(),
+                Some("pending-inbox".to_owned()),
+                Some(lane.to_string()),
+                Some("empty".to_owned()),
+            )
+            .with_detail("reconcile the current pending-inbox arm"),
+        )));
     }
     let reason = lifecycle_failure_reason(failure);
     let mut parked = Vec::with_capacity(pending.len());
@@ -114,7 +118,7 @@ pub(super) fn dead_letter_pending(
 
 fn lifecycle_failure_reason(failure: &Outcome<()>) -> String {
     match failure {
-        Outcome::Refusal(refusal) => refusal.reason.clone(),
+        Outcome::Refusal(refusal) => refusal.reason().to_owned(),
         Outcome::Fault(fault) => fault.reason.clone(),
         Outcome::Reply(_) => unreachable!("a successful lifecycle start was not dead-lettered"),
     }
@@ -609,15 +613,17 @@ fn refusal(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("steering-standing".to_owned()),
-        expected,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("steering-standing".to_owned()),
+            expected,
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {

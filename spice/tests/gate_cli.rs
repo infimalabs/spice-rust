@@ -17,7 +17,7 @@ use sill::{
     StdinPolicy, StreamPolicy, WaitPolicy,
 };
 use spice::placeholder::PlaceholderReason;
-use wire::{Digest, Domain, Outcome, ReplyPosition};
+use wire::{Digest, Domain, Outcome, Refusal, ReplyPosition};
 
 const REFUSAL_EXIT: i32 = 2;
 const FAULT_EXIT: i32 = 1;
@@ -257,16 +257,20 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     // for is bypassing the hook. The remedy names that command rather than the
     // gate growing a second way to record one, and it is asserted here, on the
     // shipped binary's own output, rather than beside the string that builds it.
+    let Refusal::Evidence {
+        evidence, summary, ..
+    } = &refusal
+    else {
+        panic!("pre-commit gate report must use evidence refusal: {refusal:?}")
+    };
     assert!(
-        refusal.remedy.contains("git commit"),
-        "the pre-commit refusal names how a merge is recorded: {}",
-        refusal.remedy
+        summary.contains("git commit"),
+        "the pre-commit refusal names how a merge is recorded: {summary}"
     );
+    let pre_commit_report = BatteryReport::decode(evidence.as_bytes())
+        .expect("pre-commit refusal carries a canonical report");
     assert_eq!(
-        refusal
-            .observed
-            .as_deref()
-            .expect("pre-commit retains its complete refusal board"),
+        pre_commit_report.refusal_fold().as_str(),
         report.refusal_fold().as_str(),
         "the commit surface renders the same complete failure projection as the canonical report",
     );
@@ -286,7 +290,7 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     );
     assert_eq!(receipt.gate_set(), report.gate_set());
     assert_equivalent_except_rust_elapsed(receipt.results(), report.results());
-    assert_eq!(gate::GateId::ALL.len(), 27);
+    assert_eq!(gate::GateId::BATTERY.len(), 27);
     assert_eq!(report.results().len(), 27);
     assert_eq!(
         report
@@ -294,7 +298,7 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
             .iter()
             .map(|result| result.gate_id())
             .collect::<Vec<_>>(),
-        gate::GateId::ALL
+        gate::GateId::BATTERY
     );
     assert!(
         !marker.exists(),
@@ -405,7 +409,7 @@ fn ordinary_gate_uses_only_the_captured_index_and_one_selected_commit() {
     let json = invoke(&["--json", "gate"], repository.path());
     let text_report = report_body(&text);
     assert_structured_body(&json, &text_report);
-    assert_eq!(text_report.results().len(), gate::GateId::ALL.len());
+    assert_eq!(text_report.results().len(), gate::GateId::BATTERY.len());
     assert!(
         text_report.admits(),
         "fixture battery must admit publication: {:?}",
@@ -483,7 +487,7 @@ fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_state() {
     assert!(receipt_text.err.is_empty());
     let receipt_text = receipt_body(&receipt_text);
     assert_structured_body(&receipt_json, &receipt_text);
-    assert_eq!(receipt_text.results().len(), gate::GateId::ALL.len());
+    assert_eq!(receipt_text.results().len(), gate::GateId::BATTERY.len());
 
     let kill = invoke(&["--json", "gate", "kill"], repository.path());
     assert_eq!(kill.code, Some(REFUSAL_EXIT));
@@ -494,7 +498,7 @@ fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_state() {
     let Outcome::Refusal(kill) = kill else {
         panic!("fixture mutation tool cannot complete: {kill:?}");
     };
-    assert_eq!(kill.reason, "gate::kill-refused");
+    assert_eq!(kill.reason(), "gate::kill-refused");
 
     assert_eq!(
         fs::read(repository.path().join("baseline.toml")).expect("reread baseline"),
@@ -548,7 +552,7 @@ fn repository_selection_and_contract_failures_are_named_and_never_fall_through()
     let Outcome::Refusal(revision) = revision else {
         panic!("missing revision must refuse: {revision:?}");
     };
-    assert_eq!(revision.reason, "gate::selection-refused");
+    assert_eq!(revision.reason(), "gate::selection-refused");
 
     fs::write(repository.path().join("baseline.toml"), "version = 77\n")
         .expect("write malformed current baseline");
@@ -560,10 +564,12 @@ fn repository_selection_and_contract_failures_are_named_and_never_fall_through()
     let Outcome::Refusal(contract) = contract else {
         panic!("foreign contract must refuse: {contract:?}");
     };
-    assert_eq!(contract.reason, "gate::contract-refused");
+    assert_eq!(contract.reason(), "gate::contract-refused");
     assert!(
         !contract
-            .remedy
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::detail)
+            .expect("contract refusal carries detail")
             .contains(PlaceholderReason::NotLanded.as_str())
     );
 }
@@ -582,7 +588,8 @@ fn gate_findings_refuse_unregistered_and_cannot_run_before_board_dispatch() {
     let Outcome::Refusal(unregistered) = unregistered else {
         panic!("unregistered focused instrument must refuse: {unregistered:?}");
     };
-    assert_eq!(unregistered.reason, "gate::instrument-unregistered");
+    assert_eq!(unregistered.reason(), "gate::instrument-unregistered");
+    assert!(matches!(unregistered, Refusal::Invocation { .. }));
     assert!(
         !repository.path().join(".git/.spice-rs").exists(),
         "an unregistered instrument must not reach board state"
@@ -600,11 +607,11 @@ fn gate_findings_refuse_unregistered_and_cannot_run_before_board_dispatch() {
     let Outcome::Refusal(cannot_run) = cannot_run else {
         panic!("unavailable focused instrument must refuse: {cannot_run:?}");
     };
-    assert_eq!(cannot_run.reason, "gate::instrument-cannot-run");
+    assert_eq!(cannot_run.reason(), "gate::instrument-cannot-run");
     assert!(
         cannot_run
-            .observed
-            .as_deref()
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
             .is_some_and(|observed| observed.contains("gate::repository-unresolved"))
     );
 }

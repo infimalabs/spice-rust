@@ -47,13 +47,10 @@ fn refusal(error: &TaskMigrationError) -> Refusal {
     if let Some(token) = error.token() {
         witness.push_str(&format!(" token={token:?}"));
     }
-    Refusal {
-        reason: format!("task-migration::{}", error.kind()),
-        witness: Some(witness),
-        expected: Some(
-            "a complete release-0.31.0 version-1 export with no raw task overrides".to_owned(),
-        ),
-        observed: Some(error.to_string()),
-        remedy: error.recovery().to_owned(),
-    }
+    Refusal::bare(wire::RefusalDiagnostic::new(
+        format!("task-migration::{}", error.kind()),
+        Some(witness),
+        Some("a complete release-0.31.0 version-1 export with no raw task overrides".to_owned()),
+        Some(error.to_string()),
+    ))
 }

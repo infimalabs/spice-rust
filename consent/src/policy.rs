@@ -357,13 +357,10 @@ impl PolicyError {
     /// This refusal in the one shape every spice surface refuses with.
     #[must_use]
     pub fn refusal(&self) -> wire::Refusal {
-        wire::Refusal {
-            reason: self.reason().to_owned(),
-            witness: self.rule().map(str::to_owned),
-            expected: None,
-            observed: None,
-            remedy: self.remedy(),
-        }
+        wire::Refusal::bare(
+            wire::RefusalDiagnostic::new(self.reason(), self.rule().map(str::to_owned), None, None)
+                .with_detail(self.remedy()),
+        )
     }
 }
 

@@ -18,7 +18,7 @@ struct Fixture {
     lane: CanonicalUuid,
     ancestor: CanonicalUuid,
     successor: CanonicalUuid,
-    task: wire::TaskHandle,
+    task: wire::TaskStamp,
     at: wire::Instant,
     expiry: wire::Instant,
     maximum: wire::Instant,
@@ -45,7 +45,7 @@ fn fixture() -> Fixture {
         lane: uuid(3),
         ancestor: uuid(4),
         successor: uuid(5),
-        task: "CARRY-active01".parse().expect("fixture task"),
+        task: "1kKRRsDP".parse().expect("fixture task"),
         at: "2026-08-01T06:00:00.000Z".parse().expect("fixture instant"),
         expiry: "2030-08-01T07:00:00.000Z".parse().expect("fixture expiry"),
         maximum: "2030-08-01T08:00:00.000Z".parse().expect("fixture maximum"),
@@ -108,6 +108,7 @@ fn seed_residency(fixture: &Fixture, seed: &mut JournalWrite, lanes: Vec<wire::L
     seed.residency_head(seated, move |_| wire::ResidencyHead {
         epoch,
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes,
         subscriptions: Vec::new(),
     });
@@ -118,7 +119,6 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
         .fact(
             wire::body::TaskAdded {
                 task: fixture.task.clone(),
-                uuid: uuid(7),
                 title: "Carry active work".into(),
                 description: None,
                 acceptance: Vec::new(),
@@ -134,8 +134,7 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
         .expect("task fact");
     let task = fixture.task.clone();
     seed.task_head(added, move |position| wire::TaskHead {
-        handle: task,
-        uuid: uuid(7),
+        incepted: task,
         queue_origin: position,
         title: "Carry active work".into(),
         description: None,
@@ -394,8 +393,8 @@ fn import_refuses_an_active_head_whose_lease_is_no_longer_live() {
             fixture.ancestor,
             fixture.expiry,
         ),
-        Err(Outcome::Refusal(Refusal { ref reason, .. }))
-            if reason == "lane::claim-lease-stale"
+        Err(Outcome::Refusal(ref refusal))
+            if refusal.reason() == "lane::claim-lease-stale"
     ));
 
     finish(fixture);
@@ -443,7 +442,7 @@ fn real_worktree(fixture: &Fixture) -> (String, std::path::PathBuf) {
 
 fn refusal_reason<T>(result: CommandResult<T>) -> String {
     match result {
-        Err(Outcome::Refusal(refusal)) => refusal.reason,
+        Err(Outcome::Refusal(refusal)) => refusal.reason().to_owned(),
         Err(Outcome::Fault(fault)) => fault.reason,
         Err(Outcome::Reply(_)) | Ok(_) => panic!("import admitted a lane it must refuse"),
     }
@@ -467,6 +466,7 @@ fn admit_row_reason(
     let residency = wire::ResidencyHead {
         epoch: fixture.old_epoch,
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes: lanes.to_vec(),
         subscriptions: Vec::new(),
     };
@@ -512,7 +512,7 @@ fn import_refuses_a_worktree_bearing_action_that_is_not_wake() {
         &request,
     );
     match outcome {
-        Outcome::Refusal(refusal) => assert_eq!(refusal.reason, "lane::state-shape"),
+        Outcome::Refusal(refusal) => assert_eq!(refusal.reason(), "lane::state-shape"),
         Outcome::Reply(_) | Outcome::Fault(_) => {
             panic!("import admitted a drain action carrying a successor worktree")
         }
@@ -631,6 +631,7 @@ fn import_refuses_a_vacant_row_whose_lane_seat_is_still_live() {
     let residency = wire::ResidencyHead {
         epoch: fixture.old_epoch,
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes: vec![row.clone()],
         subscriptions: Vec::new(),
     };
@@ -673,6 +674,7 @@ fn watchband_drain_does_not_end_a_drive_lanes_import_life() {
     let residency = wire::ResidencyHead {
         epoch: fixture.old_epoch,
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes: vec![row.clone()],
         subscriptions: vec![wire::LineageSubscription {
             lineage_id: row.lineage_id,
@@ -792,7 +794,12 @@ fn session_refusal(session: SessionProof) -> Refusal {
         Ok(admitted) => panic!("session proof admitted {}", admitted.identity),
         Err(error) => {
             let refusal = error.refusal();
-            assert_eq!(refusal.witness.as_deref(), Some("session-declaration"));
+            assert_eq!(
+                refusal
+                    .diagnostic()
+                    .and_then(wire::RefusalDiagnostic::witness),
+                Some("session-declaration")
+            );
             refusal
         }
     }
@@ -800,10 +807,13 @@ fn session_refusal(session: SessionProof) -> Refusal {
 
 /// The identifying triple a refused declaration carries.
 fn session_evidence(refusal: &Refusal) -> (&str, Option<&str>, Option<&str>) {
+    let diagnostic = refusal
+        .diagnostic()
+        .expect("session proof refusal is diagnostic");
     (
-        refusal.reason.as_str(),
-        refusal.expected.as_deref(),
-        refusal.observed.as_deref(),
+        refusal.reason(),
+        diagnostic.expected(),
+        diagnostic.observed(),
     )
 }
 
@@ -946,13 +956,16 @@ fn session_proof_refuses_a_terminal_capture_failure() {
         },
     });
     let refusal = session_refusal(proof.session);
-    assert_eq!(refusal.reason, "lane::session-capture-failed");
+    assert_eq!(refusal.reason(), "lane::session-capture-failed");
     assert_eq!(
-        refusal.expected.as_deref(),
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::expected),
         Some("one intact selected-stream capture")
     );
     let observed = refusal
-        .observed
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::observed)
         .expect("a capture failure witnesses its detail");
     assert!(
         observed.contains("selected pipe closed"),
@@ -994,9 +1007,11 @@ fn session_proof_separates_a_silent_launch_from_a_talkative_one() {
     // Both refuse for the same reason, so only the observation separates an
     // occupant that wrote nothing from one that wrote records it never
     // declared in.
-    assert_eq!(talkative.reason, session_refusal(silent.session).reason);
+    assert_eq!(talkative.reason(), session_refusal(silent.session).reason());
     assert_eq!(
-        talkative.observed.as_deref(),
+        talkative
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
         Some("records on the selected stream, none declaring a session"),
     );
 }
@@ -1017,7 +1032,9 @@ fn session_proof_witnesses_only_the_stream_it_waits_on() {
     // A vendor whose only output is diagnostics on the other stream has said
     // nothing on the one the deadline waits on, so it stays the silent case.
     assert_eq!(
-        refusal.observed.as_deref(),
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
         Some("no record on the selected stream"),
     );
 }
@@ -1145,6 +1162,7 @@ fn import_moves_seat_lineage_session_and_claim_into_the_successor_worktree() {
     let request = wake(fixture.lane, Some(SUCCESSOR));
     let answer = LaneChangeAnswer {
         lane: fixture.lane,
+        topology_revision: context.observed.body().topology_revision,
         from: context.row.worktree.clone(),
         to: context.worktree.clone(),
         git: Some("current".into()),

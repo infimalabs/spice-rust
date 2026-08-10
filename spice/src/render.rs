@@ -28,7 +28,7 @@ use wire::Outcome;
 /// Which rendering of an outcome the caller asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Form {
-    /// One sentence for a person reading a terminal.
+    /// Ordered terminal text for a person reading a terminal.
     Text,
     /// The typed DTO, for a program.
     Json,
@@ -80,9 +80,9 @@ impl Rendering {
 /// Renders one outcome in the requested form.
 ///
 /// Text replies are the stable machine document of the body alone; JSON
-/// replies retain the complete typed outcome. Refusals and faults keep their
-/// one-sentence text form. Both forms therefore carry the same value without
-/// inventing prose fields for a successful body.
+/// replies retain the complete typed outcome. Refusals keep their typed arm's
+/// output order and faults keep their one-sentence form. Both forms therefore
+/// carry the same value without inventing prose fields for a successful body.
 /// Transcript streams use [`render_stream`] because each successful wake is
 /// the stream document itself rather than a reply envelope.
 ///
@@ -103,12 +103,11 @@ pub fn render<B: Serialize>(outcome: &Outcome<B>, form: Form) -> Result<Renderin
     })
 }
 
-/// Render the commit gate's refusal evidence while keeping admission silent.
+/// Render the commit gate's evidence-first refusal while keeping admission silent.
 ///
-/// A human refusal is the gate-owned board stored in `observed`, not the
-/// generic one-sentence refusal envelope. JSON retains the complete typed
-/// outcome. Both successful forms return no rendering at all, so a caller
-/// cannot accidentally turn an admitted battery back into output.
+/// The shared refusal renderer owns both text and JSON grammar. Successful
+/// forms return no rendering at all, so a caller cannot accidentally turn an
+/// admitted battery back into output.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render_commit_gate<B: Serialize>(
     outcome: &Outcome<B>,
@@ -116,15 +115,6 @@ pub fn render_commit_gate<B: Serialize>(
 ) -> Result<Option<Rendering>, String> {
     match outcome {
         Outcome::Reply(_) => Ok(None),
-        Outcome::Refusal(refusal) if form == Form::Text => {
-            if let Some(observed) = refusal.observed.as_deref() {
-                return Ok(Some(Rendering {
-                    stream: Stream::Err,
-                    document: terminated(observed.as_bytes().to_vec()),
-                }));
-            }
-            render(outcome, form).map(Some)
-        }
         Outcome::Refusal(_) | Outcome::Fault(_) => render(outcome, form).map(Some),
     }
 }
@@ -169,24 +159,57 @@ fn terminated(mut document: Vec<u8>) -> Vec<u8> {
 
 /// The one document an outcome renders to in text form.
 ///
-/// A refusal and a fault are each one sentence naming what happened and what
-/// to do about it. A reply has no envelope sentence: what a successful command
-/// prints is the body's stable wire document.
+/// Refusal ordering is selected by its semantic arm. A reply has no envelope
+/// sentence: what a successful command prints is the body's stable wire
+/// document.
 fn text<B: Serialize>(outcome: &Outcome<B>) -> Result<Vec<u8>, String> {
     let document = match outcome {
         Outcome::Reply(reply) => wire::encode(&reply.body).map_err(|error| error.to_string())?,
-        Outcome::Refusal(refusal) => {
-            format!("spice: {}; {}", refusal.reason, refusal.remedy).into_bytes()
-        }
+        Outcome::Refusal(refusal) => refusal_text(refusal).into_bytes(),
         Outcome::Fault(fault) => format!("spice: {}; {}", fault.reason, fault.detail).into_bytes(),
     };
     Ok(line(document))
 }
 
+fn refusal_text(refusal: &wire::Refusal) -> String {
+    match refusal {
+        wire::Refusal::Repairable {
+            command,
+            diagnostic,
+        } => {
+            let command =
+                std::iter::once("spice").chain(command.arguments().iter().map(String::as_str));
+            format!(
+                "{}\n{}",
+                shell_words::join(command),
+                diagnostic_text(diagnostic)
+            )
+        }
+        wire::Refusal::Bare { diagnostic } => diagnostic_text(diagnostic),
+        wire::Refusal::Invocation { contract, .. } => contract.clone(),
+        wire::Refusal::Evidence {
+            reason,
+            evidence,
+            summary,
+        } => format!(
+            "{}\nspice: {reason}; {summary}",
+            evidence.trim_end_matches('\n')
+        ),
+    }
+}
+
+fn diagnostic_text(diagnostic: &wire::RefusalDiagnostic) -> String {
+    diagnostic.detail().map_or_else(
+        || format!("spice: {}", diagnostic.reason()),
+        |detail| format!("spice: {}; {detail}", diagnostic.reason()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use spice::placeholder::PlaceholderReason;
-    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
+    use wire::{
+        Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply, ReplyPosition, SpiceCommand,
+    };
 
     use super::{Form, Stream, render, render_commit_gate};
 
@@ -197,14 +220,45 @@ mod tests {
         })
     }
 
-    fn refusal() -> Outcome<()> {
-        Outcome::Refusal(Refusal {
-            reason: PlaceholderReason::NotLanded.to_reason(),
-            witness: None,
-            expected: None,
-            observed: Some("task next".to_owned()),
-            remedy: "finish the battery".to_owned(),
-        })
+    fn repairable() -> Outcome<()> {
+        Outcome::Refusal(Refusal::repairable(
+            SpiceCommand::new("task", ["show", "CLAIM with space"])
+                .expect("fixture command is valid"),
+            RefusalDiagnostic::new(
+                "claim::not-held",
+                Some("claim".to_owned()),
+                Some("one current claim".to_owned()),
+                Some("absent".to_owned()),
+            )
+            .with_detail("the task is not held"),
+        ))
+    }
+
+    fn bare() -> Outcome<()> {
+        Outcome::Refusal(Refusal::bare(
+            RefusalDiagnostic::new(
+                "claim::not-held",
+                Some("claim".to_owned()),
+                Some("one current claim".to_owned()),
+                Some("absent".to_owned()),
+            )
+            .with_detail("the task is not held"),
+        ))
+    }
+
+    fn invocation() -> Outcome<()> {
+        Outcome::Refusal(Refusal::invocation(
+            "gate::instrument-unregistered",
+            "spice gate findings INSTRUMENT requires one registered instrument",
+        ))
+    }
+
+    fn evidence() -> Outcome<()> {
+        Outcome::Refusal(Refusal::evidence(
+            "gate::regressed",
+            "file-shape: regressed\nrust: held\n",
+            "repair the reported regression",
+        ))
     }
 
     fn fault() -> Outcome<()> {
@@ -227,12 +281,15 @@ mod tests {
 
     #[test]
     fn the_commit_gate_leads_with_its_board_and_keeps_json_typed() {
-        let outcome = refusal();
+        let outcome = evidence();
         let text = render_commit_gate(&outcome, Form::Text)
             .expect("commit gate refusal renders")
             .expect("a refusal is loud");
         assert_eq!(text.stream, Stream::Err);
-        assert_eq!(text.document, b"task next\n");
+        assert_eq!(
+            text.document,
+            b"file-shape: regressed\nrust: held\nspice: gate::regressed; repair the reported regression\n"
+        );
 
         let json = render_commit_gate(&outcome, Form::Json)
             .expect("commit gate refusal encodes")
@@ -251,7 +308,14 @@ mod tests {
     /// uses, not merely parse.
     #[test]
     fn every_outcome_renders_as_the_dto_it_is() {
-        for outcome in [reply(), refusal(), fault()] {
+        for outcome in [
+            reply(),
+            repairable(),
+            bare(),
+            invocation(),
+            evidence(),
+            fault(),
+        ] {
             let rendered = render(&outcome, Form::Json).expect("outcome encodes");
             let decoded: Outcome<()> =
                 wire::decode(&rendered.document).expect("rendering decodes as the wire DTO");
@@ -290,7 +354,7 @@ mod tests {
     fn the_form_selects_bytes_and_never_a_stream() {
         for (outcome, expected) in [
             (reply(), Stream::Out),
-            (refusal(), Stream::Err),
+            (bare(), Stream::Err),
             (fault(), Stream::Err),
         ] {
             for form in [Form::Text, Form::Json] {
@@ -303,13 +367,20 @@ mod tests {
         }
     }
 
-    /// A rendering is one document, terminated once.
+    /// A rendering is one document with exactly one terminal newline.
     ///
     /// Two documents on one stream is the shape a reader cannot parse, and an
     /// unterminated one is the shape a line reader waits forever on.
     #[test]
     fn a_rendering_is_one_terminated_document() {
-        for outcome in [reply(), refusal(), fault()] {
+        for outcome in [
+            reply(),
+            repairable(),
+            bare(),
+            invocation(),
+            evidence(),
+            fault(),
+        ] {
             for form in [Form::Text, Form::Json] {
                 let rendered = render(&outcome, form).expect("outcome renders");
                 assert_eq!(
@@ -317,32 +388,40 @@ mod tests {
                     Some(&b'\n'),
                     "{outcome:?} in {form:?} terminates",
                 );
-                assert_eq!(
-                    rendered
-                        .document
-                        .iter()
-                        .filter(|byte| **byte == b'\n')
-                        .count(),
-                    1,
-                    "{outcome:?} in {form:?} is one line",
+                assert!(
+                    !rendered.document.ends_with(b"\n\n"),
+                    "{outcome:?} in {form:?} has one terminal newline",
                 );
             }
         }
     }
 
-    /// A declined request renders the sentence CLI fixes, and a fault renders
-    /// the same shape.
+    /// Each refusal arm owns one exact output order.
     #[test]
-    fn a_declined_request_renders_the_documented_sentence() {
+    fn refusal_forms_render_their_contractual_order() {
         assert_eq!(
-            render(&refusal(), Form::Text)
-                .expect("refusal renders")
+            render(&repairable(), Form::Text)
+                .expect("repairable refusal renders")
                 .document,
-            format!(
-                "spice: {}; finish the battery\n",
-                PlaceholderReason::NotLanded.as_str()
-            )
-            .into_bytes(),
+            b"spice task show 'CLAIM with space'\nspice: claim::not-held; the task is not held\n",
+        );
+        assert_eq!(
+            render(&bare(), Form::Text)
+                .expect("bare refusal renders")
+                .document,
+            b"spice: claim::not-held; the task is not held\n",
+        );
+        assert_eq!(
+            render(&invocation(), Form::Text)
+                .expect("invocation refusal renders")
+                .document,
+            b"spice gate findings INSTRUMENT requires one registered instrument\n",
+        );
+        assert_eq!(
+            render(&evidence(), Form::Text)
+                .expect("evidence refusal renders")
+                .document,
+            b"file-shape: regressed\nrust: held\nspice: gate::regressed; repair the reported regression\n",
         );
         assert_eq!(
             render(&fault(), Form::Text)

@@ -4,9 +4,9 @@ use std::str::FromStr;
 use serde::de::{Deserializer, Error as _};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
-use wire::{Digest, Instant, TaskHandle};
+use wire::{Digest, Instant, TaskHandle, TaskStamp};
 
-pub(crate) const STORE_VERSION: u16 = 1;
+pub(crate) const STORE_VERSION: u16 = 2;
 
 /// Retention policy attached to one artifact citation.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -165,7 +165,8 @@ pub enum ArtifactAnswer {
 #[serde(deny_unknown_fields)]
 pub struct PruneOperation {
     pub order: u64,
-    pub task: TaskHandle,
+    pub incepted: TaskStamp,
+    pub handle: TaskHandle,
     pub artifact_id: String,
     pub name: String,
 }
@@ -175,7 +176,9 @@ pub struct PruneOperation {
 #[serde(deny_unknown_fields)]
 pub struct PruneSkip {
     pub order: u64,
-    pub task: TaskHandle,
+    pub incepted: TaskStamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<TaskHandle>,
     pub status: String,
 }
 
@@ -194,7 +197,7 @@ pub struct PrunePlan {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PruneChange {
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     pub original: Vec<Artifact>,
     pub remaining: Vec<Artifact>,
     pub remove: Vec<Artifact>,
@@ -204,12 +207,12 @@ pub(crate) struct PruneChange {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Manifest {
     pub version: u16,
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     pub artifacts: Vec<Artifact>,
 }
 
 impl Manifest {
-    pub(crate) fn empty(task: TaskHandle) -> Self {
+    pub(crate) fn empty(task: TaskStamp) -> Self {
         Self {
             version: STORE_VERSION,
             task,
@@ -238,7 +241,7 @@ pub struct BackupFile {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackupImage {
     pub(crate) files: Vec<BackupFile>,
-    pub(crate) tasks: Vec<TaskHandle>,
+    pub(crate) tasks: Vec<TaskStamp>,
 }
 
 impl BackupImage {
@@ -249,7 +252,7 @@ impl BackupImage {
 
     /// Artifact-bearing tasks named by this admitted generation.
     #[must_use]
-    pub fn tasks(&self) -> &[TaskHandle] {
+    pub fn tasks(&self) -> &[TaskStamp] {
         &self.tasks
     }
 }

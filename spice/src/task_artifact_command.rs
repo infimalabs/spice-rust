@@ -6,7 +6,9 @@ use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, ErrorClass, Retentio
 use spice::cli::Contract;
 use spice::config::LoadError;
 use spice::repository::{Repository, StateError, StatePaths};
-use wire::{Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, TaskHandle};
+use wire::{
+    Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, TaskHandle, TaskStamp,
+};
 
 pub(crate) fn run(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<ArtifactAnswer> {
     match run_inner(matches, contract) {
@@ -27,7 +29,7 @@ fn run_inner(
     let position = ReplyPosition::Snapshot(snapshot.cursor);
     match contract.path {
         ["task", "artifact", "add"] => {
-            let task = selected_task(matches, &snapshot)?;
+            let selected = selected_task(matches, &snapshot)?;
             let source = matches
                 .get_one::<String>("PATH")
                 .expect("generated artifact add parser requires PATH");
@@ -45,7 +47,7 @@ fn run_inner(
             let created_at = now()?;
             let artifact = store
                 .add(AddRequest {
-                    task: &task,
+                    task: &selected.incepted,
                     source: Path::new(source),
                     name: matches.get_one::<String>("name").map(String::as_str),
                     media_type: matches.get_one::<String>("type").map(String::as_str),
@@ -53,26 +55,40 @@ fn run_inner(
                     created_at,
                 })
                 .map_err(artifact_failure)?;
-            Ok((position, ArtifactAnswer::Added { task, artifact }))
+            Ok((
+                position,
+                ArtifactAnswer::Added {
+                    task: selected.handle,
+                    artifact,
+                },
+            ))
         }
         ["task", "artifact", "list"] => {
-            let task = selected_task(matches, &snapshot)?;
-            let artifacts = store.list(&task).map_err(artifact_failure)?;
-            Ok((position, ArtifactAnswer::Listed { task, artifacts }))
+            let selected = selected_task(matches, &snapshot)?;
+            let artifacts = store.list(&selected.incepted).map_err(artifact_failure)?;
+            Ok((
+                position,
+                ArtifactAnswer::Listed {
+                    task: selected.handle,
+                    artifacts,
+                },
+            ))
         }
         ["task", "artifact", "show"] => {
-            let task = selected_task(matches, &snapshot)?;
+            let selected = selected_task(matches, &snapshot)?;
             let artifact_id = matches
                 .get_one::<String>("ARTIFACT")
                 .expect("generated artifact show parser requires ARTIFACT");
-            let (artifact, bytes) = store.show(&task, artifact_id).map_err(artifact_failure)?;
+            let (artifact, bytes) = store
+                .show(&selected.incepted, artifact_id)
+                .map_err(artifact_failure)?;
             let content = if artifact.media_type.is_text() {
                 ArtifactContent::Text {
                     text: String::from_utf8(bytes).expect("store proved text artifact UTF-8"),
                 }
             } else {
                 ArtifactContent::Binary {
-                    path: payload_path(store.root(), &task, &artifact.digest)
+                    path: payload_path(store.root(), &selected.incepted, &artifact.digest)
                         .display()
                         .to_string(),
                 }
@@ -80,7 +96,7 @@ fn run_inner(
             Ok((
                 position,
                 ArtifactAnswer::Shown {
-                    task,
+                    task: selected.handle,
                     artifact,
                     content,
                 },
@@ -109,7 +125,7 @@ fn run_inner(
 struct Snapshot {
     state: StatePaths,
     cursor: Seq,
-    statuses: BTreeMap<TaskHandle, String>,
+    statuses: BTreeMap<TaskStamp, (TaskHandle, String)>,
 }
 
 fn snapshot() -> Result<Snapshot, Failure> {
@@ -164,8 +180,8 @@ fn snapshot() -> Result<Snapshot, Failure> {
                 )
             })?;
         statuses.insert(
-            entry.statement().handle.clone(),
-            entry.workflow().status.clone(),
+            entry.incepted().clone(),
+            (entry.handle().clone(), entry.workflow().status.clone()),
         );
     }
     Ok(Snapshot {
@@ -181,7 +197,12 @@ fn task_project_policy(repository: &Repository) -> Result<board::ProjectPolicy, 
     Ok(resolved.root().tasks().project_policy())
 }
 
-fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<TaskHandle, Failure> {
+struct SelectedTask {
+    handle: TaskHandle,
+    incepted: TaskStamp,
+}
+
+fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<SelectedTask, Failure> {
     let text = matches
         .get_one::<String>("HANDLE")
         .expect("generated artifact parser requires HANDLE");
@@ -193,15 +214,25 @@ fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<Task
             "read board and pass the exact task handle",
         )
     })?;
-    if snapshot.statuses.contains_key(&task) {
-        Ok(task)
-    } else {
-        Err(Failure::refusal(
+    let incepted = task.incepted().map_err(|error| {
+        Failure::refusal(
+            "artifact::task-invalid",
+            "one current handle carrying a canonical inception stamp",
+            error.to_string(),
+            "read board and pass the exact current task handle",
+        )
+    })?;
+    match snapshot.statuses.get(&incepted) {
+        Some((current, _)) if current == &task => Ok(SelectedTask {
+            handle: task,
+            incepted,
+        }),
+        _ => Err(Failure::refusal(
             "artifact::task-unknown",
             "one canonical current task handle",
             task.to_string(),
-            "read board and pass the exact task handle",
-        ))
+            "read board and pass the exact current task handle",
+        )),
     }
 }
 
@@ -273,7 +304,7 @@ fn cutoff(duration: &Duration) -> Result<Instant, Failure> {
     })
 }
 
-fn payload_path(root: &Path, task: &TaskHandle, digest: &wire::Digest) -> PathBuf {
+fn payload_path(root: &Path, task: &TaskStamp, digest: &wire::Digest) -> PathBuf {
     root.join(task.as_str())
         .join("objects")
         .join(digest.as_str())
@@ -333,15 +364,17 @@ impl Failure {
         reason: impl Into<String>,
         expected: impl Into<String>,
         observed: impl Into<String>,
-        remedy: impl Into<String>,
+        detail: impl Into<String>,
     ) -> Self {
-        Self::Refusal(Refusal {
-            reason: reason.into(),
-            witness: Some("task-artifact".to_owned()),
-            expected: Some(expected.into()),
-            observed: Some(observed.into()),
-            remedy: remedy.into(),
-        })
+        Self::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                reason.into(),
+                Some("task-artifact".to_owned()),
+                Some(expected.into()),
+                Some(observed.into()),
+            )
+            .with_detail(detail),
+        ))
     }
 
     fn fault(class: FaultClass, reason: impl Into<String>, detail: impl Into<String>) -> Self {

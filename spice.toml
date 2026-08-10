@@ -59,17 +59,22 @@ project_max_depth = 3
 enabled = true
 
 [policy]
+# The installed predecessor owns the hook but not a second Python battery.
+pre_commit_builtins = false
+
 # The native Git publisher runs this cheap repository load over every
 # synthesized integration before it can reach the shared baseline.
 admission = [
     "cargo", "metadata", "--no-deps", "--offline", "--format-version", "1",
 ]
 
-# The installed predecessor still owns the active Git hook path. Its one
-# repository command crosses directly into the current-source Rust gate, which
-# admits this declaration but never dispatches it again.
+# The installed predecessor still owns the active Git hook path. Keep the
+# commit surface to the two focused typed arms that catch structural drift in
+# staged source and the repository's declared environment vocabulary; the full
+# battery remains owned by `cargo xtask verify`.
 pre_commit = [
-    { label = "Rust gate", run = ["cargo", "run", "--locked", "--package", "spice", "--", "gate", "pre-commit"] },
+    { label = "File shape", run = ["cargo", "xtask", "gate", "file-shape"] },
+    { label = "Environment ledger", run = ["cargo", "xtask", "gate", "env-name-ledger"] },
 ]
 
 # Every environment name this workspace defines, spelled once.
@@ -108,7 +113,7 @@ pre_commit = [
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the names Spice owns, so these seven are the
+# again. Doctor reports only the names Spice owns, so these nine are the
 # difference wire pins between this manifest and SpiceVariable.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
@@ -134,6 +139,7 @@ env_names = [
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
     "SPICE_NATIVE_SHELL",
+    "SPICE_PROOF",
     "TMPDIR",
 ]
 

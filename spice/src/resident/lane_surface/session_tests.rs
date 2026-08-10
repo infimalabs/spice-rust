@@ -170,7 +170,7 @@ fn refusal(fixture: &Fixture, row: &wire::LaneResidency) -> Refusal {
 }
 
 fn reason(fixture: &Fixture, row: &wire::LaneResidency) -> String {
-    refusal(fixture, row).reason
+    refusal(fixture, row).reason().to_owned()
 }
 
 #[test]
@@ -193,7 +193,9 @@ fn a_refused_resume_witnesses_the_durable_session_head() {
     let mut row = row(&fixture);
     row.session = None;
     assert_eq!(
-        refusal(&fixture, &row).witness.as_deref(),
+        refusal(&fixture, &row)
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::witness),
         Some("lane-session-head")
     );
     finish(fixture);
@@ -304,8 +306,13 @@ fn resume_refuses_a_locus_naming_a_record_that_declares_no_session() {
         br#"{"type":"system","subtype":"compact_boundary"}"#,
     );
     let refusal = refusal(&fixture, &row);
-    assert_eq!(refusal.reason, "lane::session-tape-moved");
-    assert_eq!(refusal.observed, None);
+    assert_eq!(refusal.reason(), "lane::session-tape-moved");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        None
+    );
     finish(fixture);
 }
 
@@ -319,9 +326,11 @@ fn resume_refuses_a_locus_declaring_an_identity_the_head_never_named() {
         &declaration("018f0000-0000-7000-8000-000000000000"),
     );
     let refusal = refusal(&fixture, &row);
-    assert_eq!(refusal.reason, "lane::session-tape-moved");
+    assert_eq!(refusal.reason(), "lane::session-tape-moved");
     assert_eq!(
-        refusal.observed.as_deref(),
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
         Some("018f0000-0000-7000-8000-000000000000")
     );
     finish(fixture);

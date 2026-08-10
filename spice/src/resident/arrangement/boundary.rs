@@ -109,14 +109,13 @@ fn account_transcript(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, sour
 
 /// Seed the task a claim is bound to.
 ///
-/// `claim_heads.handle` references `task_heads(handle)` under enforced foreign
+/// `claim_heads.stamp` references `task_heads(stamp)` under enforced foreign
 /// keys, so the claim cannot stand without one.
-fn seed_task(write: &mut JournalWrite, task: &wire::TaskHandle) -> journal::PendingFact {
+fn seed_task(write: &mut JournalWrite, task: &wire::TaskStamp) -> journal::PendingFact {
     let added = write
         .fact(
             wire::body::TaskAdded {
                 task: task.clone(),
-                uuid: test_uuid(70),
                 title: "Boundary fixture".into(),
                 description: None,
                 acceptance: Vec::new(),
@@ -130,10 +129,9 @@ fn seed_task(write: &mut JournalWrite, task: &wire::TaskHandle) -> journal::Pend
             FactCause::Root,
         )
         .expect("task fact");
-    let handle = task.clone();
+    let incepted = task.clone();
     write.task_head(added, move |position| wire::TaskHead {
-        handle,
-        uuid: test_uuid(70),
+        incepted,
         queue_origin: position,
         title: "Boundary fixture".into(),
         description: None,
@@ -146,8 +144,8 @@ fn seed_task(write: &mut JournalWrite, task: &wire::TaskHandle) -> journal::Pend
             .expect("fixture origin"),
         revision: position,
     });
-    let handle = task.clone();
-    write.workflow_head(handle, added, move |_| wire::WorkflowHead {
+    let incepted = task.clone();
+    write.workflow_head(incepted, added, move |_| wire::WorkflowHead {
         flow: vec!["todo".parse().expect("fixture phase")],
         phase: "todo".parse().expect("fixture phase"),
         status: "pending".into(),
@@ -171,7 +169,10 @@ fn seed_active_claim(
     occupant: CanonicalUuid,
     handle: &str,
 ) {
-    let task: wire::TaskHandle = handle.parse().expect("fixture task handle");
+    let millis = handle.bytes().fold(0_i64, |value, byte| {
+        (value * 131 + i64::from(byte)) % 10_000_000_000_000
+    });
+    let task = wire::TaskStamp::for_millis(millis).expect("fixture task stamp");
     let mut write =
         write(Actor::Operator, epoch, Producer::CommandDoor).expect("fixture write starts");
     let added = seed_task(&mut write, &task);
@@ -224,6 +225,7 @@ fn configure_member(
     member: CanonicalUuid,
 ) {
     let request = wire::intent::LineageConfigure {
+        topology_revision: fixture.head().topology_revision,
         lineage_id: lineage,
         member: Some(member),
         life: wire::intent::LineageLife::Drive,

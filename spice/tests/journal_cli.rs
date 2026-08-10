@@ -326,8 +326,8 @@ fn assert_reindex(fixture: &Fixture) {
     };
     assert!(
         refusal
-            .observed
-            .as_deref()
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
             .is_some_and(|observed| observed.contains("Thread")),
         "verification omitted the named thread defect: {refusal:?}"
     );
@@ -343,6 +343,46 @@ fn assert_reindex(fixture: &Fixture) {
     let reader = journal::JournalReader::open(&fixture.authority).expect("rebuilt authority opens");
     reader.verify().expect("rebuilt authority verifies");
     assert_eq!(reader.thread("2").expect("rebuilt thread").entries.len(), 2);
+}
+
+#[test]
+fn unknown_fold_refusal_puts_its_executable_recovery_first() {
+    let fixture = Fixture::new();
+    let resident = fixture.start();
+    let arguments = ["journal", "replay", "not::a-registered-fold"];
+
+    let json = fixture.invoke(&arguments);
+    assert_eq!(
+        json.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    assert!(json.stdout.is_empty());
+    let Outcome::<FoldReport>::Refusal(refusal) =
+        wire::decode(&json.stderr).expect("fold refusal is typed")
+    else {
+        panic!("unknown fold did not refuse")
+    };
+    let wire::Refusal::Repairable {
+        command,
+        diagnostic,
+    } = refusal
+    else {
+        panic!("unknown fold must carry one executable recovery")
+    };
+    assert_eq!(command.arguments(), ["fold"]);
+    assert_eq!(diagnostic.reason(), "fold::selection-refused");
+
+    let text = fixture.invoke_form(&arguments, false);
+    assert_eq!(text.status.code(), Some(2));
+    assert!(text.stdout.is_empty());
+    let document = std::str::from_utf8(&text.stderr).expect("text refusal is UTF-8");
+    assert!(
+        document.starts_with("spice fold\nspice: fold::selection-refused\n"),
+        "recovery command did not precede the diagnostic: {document:?}"
+    );
+    resident.terminate(&fixture);
 }
 
 fn assert_backup(fixture: &Fixture) {
@@ -505,7 +545,7 @@ fn active_writer_refuses_maintenance_in_a_typed_envelope() {
     else {
         panic!("contended backup did not return a refusal")
     };
-    assert_eq!(refusal.reason, "journal::writer-active");
+    assert_eq!(refusal.reason(), "journal::writer-active");
     assert!(!fixture.bundle.exists(), "contended backup created output");
 }
 
@@ -606,7 +646,7 @@ fn assert_refusal(output: &Output, reason: &str) {
     else {
         panic!("recovery did not refuse")
     };
-    assert_eq!(refusal.reason, reason);
+    assert_eq!(refusal.reason(), reason);
 }
 
 #[cfg(unix)]
@@ -629,8 +669,7 @@ fn seed_authority(path: &Path) {
             None,
             FactKind::TaskAdded,
             json!({
-                "task": "JOURNAL-a1",
-                "uuid": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+                "task": "1kKRRsDP",
                 "title": "Journal fixture",
                 "project": "journal",
                 "tags": [],
@@ -644,7 +683,7 @@ fn seed_authority(path: &Path) {
             2,
             Some(1),
             FactKind::TaskPhased,
-            json!({"task": "JOURNAL-a1", "phase": "review"}),
+            json!({"task": "1kKRRsDP", "phase": "review"}),
         ),
     ] {
         let bytes = wire::encode(&envelope).expect("encode fact fixture");
@@ -673,8 +712,8 @@ fn seed_authority(path: &Path) {
     connection
         .execute_batch(
             "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
-                (1, 'task:JOURNAL-a1', NULL, 1, 0),
-                (2, 'task:JOURNAL-a1', 1, 1, 1);
+                (1, 'task:1kKRRsDP', NULL, 1, 0),
+                (2, 'task:1kKRRsDP', 1, 1, 1);
              UPDATE cursor_head SET seq = 2, wake = 1 WHERE singleton = 1;",
         )
         .expect("insert index and cursor fixture");
@@ -687,7 +726,7 @@ fn append_note_facts(path: &Path, through: u64) {
             seq,
             Some(seq - 1),
             FactKind::TaskNoted,
-            json!({"task": "JOURNAL-a1", "note": format!("note {seq}")}),
+            json!({"task": "1kKRRsDP", "note": format!("note {seq}")}),
         );
         let bytes = wire::encode(&envelope).expect("encode bounded-report fact");
         connection
@@ -746,7 +785,7 @@ fn fact(
         seq: Seq::new(seq).expect("nonzero fixture seq"),
         at: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         actor: Actor::Spice,
-        origin: "task:JOURNAL-a1".parse::<Origin>().expect("fixture origin"),
+        origin: "task:1kKRRsDP".parse::<Origin>().expect("fixture origin"),
         cause: cause.map(|cause| Seq::new(cause).expect("nonzero fixture cause")),
         fact,
     }

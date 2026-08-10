@@ -312,13 +312,14 @@ impl Subscription {
             ))
         })?;
         if cursor.seq != expected {
-            return Err(Failure::Refusal(Refusal {
-                reason: "stream::continuation-moved".to_owned(),
-                witness: Some("cursor".to_owned()),
-                expected: Some(expected.to_string()),
-                observed: Some(cursor.seq.to_string()),
-                remedy: "continue from the exact cursor in the preceding overflow".to_owned(),
-            }));
+            return Err(Failure::Refusal(Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "stream::continuation-moved",
+                    Some("cursor".to_owned()),
+                    Some(expected.to_string()),
+                    Some(cursor.seq.to_string()),
+                ),
+            )));
         }
         let frame = self.page(*subject, Some(cursor.seq), *id)?;
         let horizon = required_horizon(
@@ -577,13 +578,14 @@ fn admit_subject(actor: &Actor, subject: ViewSubject) -> Result<(), Failure> {
     if matches!(subject, ViewSubject::Trust | ViewSubject::Messages)
         && !matches!(actor, Actor::Operator)
     {
-        return Err(Failure::Refusal(Refusal {
-            reason: "stream::subject-authority".to_owned(),
-            witness: Some("principal".to_owned()),
-            expected: Some("operator".to_owned()),
-            observed: Some(actor.to_string()),
-            remedy: "subscribe only to subjects visible to this authenticated principal".to_owned(),
-        }));
+        return Err(Failure::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "stream::subject-authority",
+                Some("principal".to_owned()),
+                Some("operator".to_owned()),
+                Some(actor.to_string()),
+            ),
+        )));
     }
     Ok(())
 }
@@ -660,13 +662,12 @@ fn pack_unique<T>(
 }
 
 fn refusal(reason: &str, detail: &str) -> Refusal {
-    Refusal {
-        reason: reason.to_owned(),
-        witness: None,
-        expected: None,
-        observed: Some(detail.to_owned()),
-        remedy: "use the exact current stream contract and retry".to_owned(),
-    }
+    Refusal::bare(wire::RefusalDiagnostic::new(
+        reason,
+        None,
+        None,
+        Some(detail.to_owned()),
+    ))
 }
 
 fn protocol_fault(reason: &str, detail: &str) -> Fault {
@@ -738,7 +739,7 @@ mod tests {
             "2030-04-12T18:44:09.271Z".parse().expect("instant"),
             Producer::CommandDoor,
         );
-        let task: wire::TaskHandle = "STREAM-a1".parse().expect("task handle");
+        let task: wire::TaskStamp = "1kKRRsDP".parse().expect("task stamp");
         let mut cause = FactCause::Root;
         for index in 0..notes {
             let fact = write
@@ -850,8 +851,8 @@ mod tests {
         };
         assert!(matches!(
             subscription.continue_page(&moved),
-            Err(Failure::Refusal(Refusal { ref reason, .. }))
-                if reason == "stream::continuation-moved"
+            Err(Failure::Refusal(ref refusal))
+                if refusal.reason() == "stream::continuation-moved"
         ));
         assert_eq!(subscription.cursor(), Some(seq(2)));
 
@@ -1004,8 +1005,8 @@ mod tests {
 
             assert!(matches!(
                 failure,
-                Failure::Refusal(Refusal { ref reason, .. })
-                    if reason == "stream::subject-authority"
+                Failure::Refusal(ref refusal)
+                    if refusal.reason() == "stream::subject-authority"
             ));
         }
         drop(source);

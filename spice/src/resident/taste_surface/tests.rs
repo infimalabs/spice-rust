@@ -42,6 +42,7 @@ impl Fixture {
         startup.residency_head(seated, move |_| ResidencyHead {
             epoch,
             state: ResidentState::Seated,
+            topology_revision: 0,
             lanes: Vec::new(),
             subscriptions: Vec::new(),
         });
@@ -79,6 +80,7 @@ impl Fixture {
         lane_start.residency_head(started, move |_| ResidencyHead {
             epoch,
             state: ResidentState::Seated,
+            topology_revision: 1,
             lanes: vec![wire::LaneResidency {
                 lane,
                 lineage_id: lane,

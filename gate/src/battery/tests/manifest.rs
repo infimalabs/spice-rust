@@ -9,7 +9,7 @@ fn canonical_manifest_is_the_exact_27_arm_compiled_contract() {
     assert_eq!(manifest.predecessor_release(), PREDECESSOR_GATE_RELEASE);
     assert_eq!(manifest.arms().len(), 27);
 
-    for (position, (arm, expected)) in manifest.arms().iter().zip(GateId::ALL).enumerate() {
+    for (position, (arm, expected)) in manifest.arms().iter().zip(GateId::BATTERY).enumerate() {
         assert_eq!(
             arm.predecessor(),
             expected

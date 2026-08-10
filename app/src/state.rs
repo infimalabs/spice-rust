@@ -63,7 +63,7 @@ impl Applied {
 /// runs to tens of links, so a window of 1024 leaves roughly a hundredfold of
 /// headroom before a reader meets a dangle where the whole chain would
 /// otherwise have rendered. And a retained header costs about a hundred bytes: a
-/// [`Seq`], an [`Origin`] such as `task:SPICE-aBcD` or `lane:<uuid>`, an
+/// [`Seq`], an [`Origin`] such as `task:1kKRRsDP` or `lane:<uuid>`, an
 /// optional [`Seq`], plus the map node that keys it. The window is therefore near
 /// 100 KiB — a fixed price a tab pays once against a cost that previously had no
 /// ceiling at all.

@@ -43,7 +43,7 @@ pub(super) fn renew_and_assert(
                 lease_seconds: 30 * 60,
             },
         ),
-        Outcome::Refusal(Refusal { ref reason, .. }) if reason == "board::witness-moved"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"
     ));
     assert!(
         bus.fact_snapshot()
@@ -83,9 +83,8 @@ pub(super) fn assert_reclaim_survives_restart(
         )
         .expect("allocator still has unclaimed work")
         .entry()
-        .statement()
-        .handle,
-        *available_task,
+        .handle(),
+        available_task,
         "the renewed claim remains excluded from allocation after restart",
     );
     clean(root, reopened);

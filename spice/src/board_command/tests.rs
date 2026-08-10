@@ -134,7 +134,38 @@ fn clean(root: &Path, bus: Bus) {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
+fn add_incepted(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    incepted: wire::TaskStamp,
+    title: &str,
+) -> TaskHandle {
+    let task = TaskHandle::for_project("board.identity", &incepted);
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence {
+            task: incepted.clone(),
+        }],
+        &TaskAdd {
+            title: title.to_owned(),
+            project: Some("board.identity".to_owned()),
+            description: None,
+            acceptance: Vec::new(),
+            origin: Some("fixture:identity".parse().expect("fixture origin")),
+            flow: Some("todo".to_owned()),
+            depends: Vec::new(),
+        },
+    ));
+    task
+}
+
 fn creation_fact_origin(bus: &Bus, task: &TaskHandle) -> wire::Origin {
+    let incepted = task
+        .incepted()
+        .expect("fixture handle carries an inception stamp");
     bus.fact_snapshot()
         .expect("creation facts read")
         .facts()
@@ -146,7 +177,7 @@ fn creation_fact_origin(bus: &Bus, task: &TaskHandle) -> wire::Origin {
                     .body()
                     .get("task")
                     .and_then(serde_json::Value::as_str)
-                    == Some(task.as_str())
+                    == Some(incepted.as_str())
         })
         .unwrap_or_else(|| panic!("task {task} has one creation fact"))
         .origin
@@ -172,6 +203,108 @@ fn native_task_handles_use_the_predecessor_stamp_alphabet() {
         );
         assert_eq!(stamp.as_bytes()[steer::Key::WIDTH - 1], expected);
     }
+}
+
+/// Shape CASE 147 / INVARIANTS ID-02: lexical identity order is inception order.
+#[test]
+fn plain_string_stamp_and_handle_order_is_inception_order() {
+    let millis = [2_705_i64, 51, 2_704, 52, 53];
+    let mut stamps = millis
+        .into_iter()
+        .map(|millis| wire::TaskStamp::for_millis(millis).expect("fixture inception"))
+        .collect::<Vec<_>>();
+    stamps.sort();
+    let expected = [51_i64, 52, 53, 2_704, 2_705]
+        .into_iter()
+        .map(|millis| wire::TaskStamp::for_millis(millis).expect("fixture inception"))
+        .collect::<Vec<_>>();
+    assert_eq!(stamps, expected);
+
+    let mut handles = millis
+        .into_iter()
+        .map(|millis| {
+            TaskHandle::for_project(
+                "task.identity",
+                &wire::TaskStamp::for_millis(millis).expect("fixture inception"),
+            )
+        })
+        .collect::<Vec<_>>();
+    handles.sort();
+    assert_eq!(
+        handles
+            .iter()
+            .map(|handle| handle.incepted().expect("sorted handle stamp"))
+            .collect::<Vec<_>>(),
+        expected
+    );
+}
+
+/// Shape CASE 148 / INVARIANTS ID-03: every creation route advances collisions.
+#[test]
+fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps() {
+    let alphabet = (0..52_i64)
+        .map(|millis| {
+            wire::TaskStamp::for_millis(millis)
+                .expect("alphabet fixture inception")
+                .as_str()
+                .as_bytes()[wire::TaskStamp::WIDTH - 1]
+        })
+        .collect::<Vec<_>>();
+    assert!(alphabet.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(
+        alphabet.iter().all(|byte| !b"AEIOUaeiou".contains(byte)),
+        "task stamp alphabet must remain vowel-free"
+    );
+
+    let (root, bus, epoch, _seats) = fixture("identity-collision", 0);
+    let candidate_millis = 90_000_i64;
+    let first_stamp =
+        wire::TaskStamp::for_millis(candidate_millis).expect("first fixture inception");
+    add_incepted(
+        &bus,
+        epoch,
+        first_stamp.clone(),
+        "First same-millisecond task",
+    );
+
+    let after_first = board(&bus, epoch, Actor::Operator);
+    let second_stamp = allocate_inception(&after_first, candidate_millis);
+    assert_eq!(
+        second_stamp,
+        wire::TaskStamp::for_millis(candidate_millis + 1).expect("second fixture inception")
+    );
+    add_incepted(
+        &bus,
+        epoch,
+        second_stamp.clone(),
+        "Second same-millisecond task",
+    );
+
+    let after_second = board(&bus, epoch, Actor::Operator);
+    let followups = allocate_inceptions(&after_second, candidate_millis, 3);
+    let expected = (2..5)
+        .map(|offset| {
+            wire::TaskStamp::for_millis(candidate_millis + offset)
+                .expect("advanced fixture inception")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        followups, expected,
+        "review follow-up planning advances +1 ms"
+    );
+
+    let preview = board::Preview::classify("# Goal\n\n- First node\n- Second node\n")
+        .expect("document collision fixture classifies");
+    let document = document_handles(preview.document(), &after_second, candidate_millis);
+    assert_eq!(
+        document
+            .iter()
+            .map(|handle| handle.incepted().expect("document handle stamp"))
+            .collect::<Vec<_>>(),
+        expected,
+        "authored-document creation advances over the same occupied instants"
+    );
+    clean(&root, bus);
 }
 
 #[test]
@@ -211,16 +344,15 @@ fn a_nonfinal_review_phase_prints_the_transition_it_can_accept() {
 #[test]
 fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
     let (root, bus, epoch, _) = fixture("task-bootstrap", 1);
-    let task = "CLI-context01"
-        .parse::<TaskHandle>()
-        .expect("fixture task handle");
+    let incepted = wire::TaskStamp::for_millis(8_001).expect("fixture task stamp");
+    let task = TaskHandle::for_project("task.cli", &incepted);
     let origin: wire::Origin = "ack:1kLGp2NJ".parse().expect("fixture origin");
     assert_committed(issue(
         &bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
-        vec![Witness::Absence { task: task.clone() }],
+        vec![Witness::Absence { task: incepted }],
         &TaskAdd {
             title: "Carry native bootstrap context".to_owned(),
             project: Some("task.cli".to_owned()),
@@ -353,39 +485,52 @@ fn default_task_list_selects_each_complete_actor_route_branch_only() {
         .origin_thread = "someone_else".to_owned();
 
     let mut actor_private = template.clone();
-    actor_private.statement.body.handle = "CLI-route0002"
-        .parse()
-        .expect("actor-private fixture handle");
-    actor_private.statement.body.uuid = uuid(8_002);
+    actor_private.statement.body.incepted =
+        wire::TaskStamp::for_millis(8_002).expect("fixture task stamp");
     actor_private.statement.body.project = answer.actor_route.project.clone();
-    actor_private.statement.body.provenance = "task:CLI-route0002"
+    actor_private.statement.body.handle = TaskHandle::for_project(
+        &actor_private.statement.body.project,
+        &actor_private.statement.body.incepted,
+    );
+    actor_private.statement.body.provenance = "task:0000002z"
         .parse()
         .expect("actor-private fixture origin");
     actor_private.origin_thread = "someone_else".to_owned();
     actor_private.presentation_title = "Actor-private route row".to_owned();
 
     let mut origin_thread = template.clone();
-    origin_thread.statement.body.handle = "CLI-route0003"
-        .parse()
-        .expect("origin-thread fixture handle");
-    origin_thread.statement.body.uuid = uuid(8_003);
+    origin_thread.statement.body.incepted =
+        wire::TaskStamp::for_millis(8_003).expect("fixture task stamp");
     origin_thread.statement.body.project = "external.route".to_owned();
-    origin_thread.statement.body.provenance = "task:CLI-route0003"
+    origin_thread.statement.body.handle = TaskHandle::for_project(
+        &origin_thread.statement.body.project,
+        &origin_thread.statement.body.incepted,
+    );
+    origin_thread.statement.body.provenance = "task:0000002B"
         .parse()
         .expect("origin-thread fixture provenance");
     origin_thread.origin_thread = answer.actor_route.origin_thread.clone();
     origin_thread.presentation_title = "Origin-thread route row".to_owned();
 
     let mut outside = template;
-    outside.statement.body.handle = "CLI-route0004".parse().expect("outside fixture handle");
-    outside.statement.body.uuid = uuid(8_004);
+    outside.statement.body.incepted =
+        wire::TaskStamp::for_millis(8_004).expect("fixture task stamp");
     outside.statement.body.project = "agent.someone_else.task".to_owned();
-    outside.statement.body.provenance = "task:CLI-route0004"
-        .parse()
-        .expect("outside fixture provenance");
+    outside.statement.body.handle = TaskHandle::for_project(
+        &outside.statement.body.project,
+        &outside.statement.body.incepted,
+    );
+    outside.statement.body.provenance =
+        "task:0000002C".parse().expect("outside fixture provenance");
     outside.origin_thread = "someone_else".to_owned();
     outside.presentation_title = "Outside route row".to_owned();
 
+    let included = [
+        public.clone(),
+        actor_private.statement.body.handle.clone(),
+        origin_thread.statement.body.handle.clone(),
+    ];
+    let excluded = outside.statement.body.handle.clone();
     answer.tasks.extend([actor_private, origin_thread, outside]);
     let listed = task_list(
         &answer,
@@ -396,10 +541,13 @@ fn default_task_list_selects_each_complete_actor_route_branch_only() {
             status: None,
         },
     );
-    for included in ["CLI-route0001", "CLI-route0002", "CLI-route0003"] {
-        assert!(listed.contains(included), "missing {included}: {listed}");
+    for included in included {
+        assert!(
+            listed.contains(included.as_str()),
+            "missing {included}: {listed}"
+        );
     }
-    assert!(!listed.contains("CLI-route0004"), "{listed}");
+    assert!(!listed.contains(excluded.as_str()), "{listed}");
     assert!(listed.starts_with(concat!(
         "scope actor-route filter ",
         "( project:agent.operator.task or origin_thread.is:operator or ",
@@ -587,10 +735,11 @@ fn assert_task_list_queries(
         "( project:agent.operator.task or origin_thread.is:operator or ",
         "( project:board or project:rim or project:serve or project:task ) )\n"
     )));
-    assert!(default.contains("CLI-list0001 [todo] P:M task.cli First task route"));
-    assert!(default.contains("CLI-list0002 [todo] task.cli.deep Descendant task route"));
-    assert!(!default.contains("CLI-list0003"), "{default}");
-    assert!(!default.contains("CLI-list0004"), "{default}");
+    assert!(default.contains(&format!("{first} [todo] P:M task.cli First task route")));
+    assert!(default.contains(&format!(
+        "{descendant} [todo] task.cli.deep Descendant task route"
+    )));
+    assert!(!default.contains(waiting.as_str()), "{default}");
 
     let project = task_list(
         answer,
@@ -627,7 +776,7 @@ fn assert_task_list_queries(
             status: Some(TaskListStatus::Completed),
         },
     );
-    assert!(completed_only.contains("CLI-list0004"));
+    assert!(completed_only.contains("board.test Completed board route"));
     assert!(!completed_only.contains(first.as_str()));
 
     let newest_global = task_list(
@@ -639,12 +788,20 @@ fn assert_task_list_queries(
             status: None,
         },
     );
+    let completed = answer
+        .tasks
+        .iter()
+        .find(|task| task.presentation_title() == "Completed board route")
+        .expect("completed fixture row");
     assert_eq!(
         newest_global,
-        concat!(
-            "scope global --all\n",
-            "limited --limit 1 original 4 withheld 3\n",
-            "CLI-list0004 [done] board.test Completed board route"
+        format!(
+            concat!(
+                "scope global --all\n",
+                "limited --limit 1 original 4 withheld 3\n",
+                "{} [done] board.test Completed board route"
+            ),
+            completed.statement.body.handle
         )
     );
 }
@@ -666,11 +823,8 @@ fn fixture_instant(context: &str) -> Instant {
 #[test]
 fn task_status_names_the_claim_the_asking_principal_holds() {
     let (root, bus, epoch, seats) = fixture("task-bootstrap-claim", 2);
-    let held = "CLI-held00001"
-        .parse::<TaskHandle>()
-        .expect("fixture held handle");
     let lane = Actor::Lane(seats[0].lane);
-    add(
+    let held = add(
         &bus,
         epoch,
         Actor::Operator,
@@ -692,7 +846,7 @@ fn task_status_names_the_claim_the_asking_principal_holds() {
 
     let holder = task_status(&board(&bus, epoch, lane)).expect("holder reads status");
     assert!(
-        holder.lines().any(|line| line == "claim CLI-held00001"),
+        holder.lines().any(|line| line == format!("claim {held}")),
         "{holder}"
     );
     assert!(holder.lines().any(|line| line == "active 1"), "{holder}");
@@ -757,9 +911,8 @@ fn capture_claims_one_exact_eligible_non_allocator_task() {
         )
         .expect("allocator winner")
         .entry()
-        .statement()
-        .handle,
-        alpha,
+        .handle(),
+        &alpha,
     );
     let heads = at(&available, &beta);
     let rule: Name = "capture".parse().expect("capture rule");
@@ -934,8 +1087,8 @@ fn stealing_takes_a_live_claim_at_once_where_capture_is_refused() {
     assert!(
         matches!(
             declined,
-            Outcome::Refusal(Refusal { ref reason, .. })
-                if reason == "claim::capture-ineligible"
+            Outcome::Refusal(ref refusal)
+                if refusal.reason() == "claim::capture-ineligible"
         ),
         "capture took a held claim: {declined:?}",
     );
@@ -997,11 +1150,11 @@ fn reclaim_renews_only_the_lane_owned_claim_and_survives_restart() {
     let lease = before.lease.as_ref().expect("active lease");
     let expected = vec![
         Witness::Claim {
-            task: held_task.clone(),
+            task: before.statement.body.incepted.clone(),
             head: Some(claim.position),
         },
         Witness::Lease {
-            task: held_task.clone(),
+            task: before.statement.body.incepted.clone(),
             head: lease.position,
         },
         residency(&held, &seats[0]),

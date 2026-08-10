@@ -9,14 +9,14 @@
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use wire::{Actor, CanonicalUuid, Instant, TaskHandle, TranscriptSourceHead, body};
+use wire::{Actor, CanonicalUuid, Instant, TaskStamp, TranscriptSourceHead, body};
 
 fn uuid(text: &str) -> CanonicalUuid {
     text.parse().expect("fixture uuid")
 }
 
-fn handle(text: &str) -> TaskHandle {
-    text.parse().expect("fixture handle")
+fn stamp() -> TaskStamp {
+    "1kKRRsDP".parse().expect("fixture task stamp")
 }
 
 fn instant(text: &str) -> Instant {
@@ -45,7 +45,7 @@ fn proven() -> body::SourceBoundary {
 
 fn claim_won() -> body::ClaimWon {
     body::ClaimWon {
-        task: handle("EFFORT-a1"),
+        task: stamp(),
         actor: Actor::Operator,
         lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
         occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
@@ -62,7 +62,7 @@ fn claim_won() -> body::ClaimWon {
 
 fn task_done() -> body::TaskDone {
     body::TaskDone {
-        task: handle("EFFORT-a1"),
+        task: stamp(),
         validation: "the fixture validated".to_owned(),
         git: None,
         source: proven(),
@@ -71,7 +71,7 @@ fn task_done() -> body::TaskDone {
 
 fn task_reviewed() -> body::TaskReviewed {
     body::TaskReviewed {
-        task: handle("EFFORT-a1"),
+        task: stamp(),
         reviewer: Actor::Operator,
         verdict: body::Verdict::Clean,
         finding: None,
@@ -82,7 +82,7 @@ fn task_reviewed() -> body::TaskReviewed {
 
 fn claim_carried() -> body::ClaimCarried {
     body::ClaimCarried {
-        task: handle("EFFORT-a1"),
+        task: stamp(),
         lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
         occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
         ancestor: uuid("018f82d4-6f59-7d06-92e3-bce913116306"),
@@ -98,7 +98,7 @@ fn claim_carried() -> body::ClaimCarried {
 /// today's types would follow the types if the field were ever renamed away.
 const CLAIM_WON: &str = r#"{
   "kind": "claim::won",
-  "task": "EFFORT-a1",
+  "task": "1kKRRsDP",
   "actor": "operator",
   "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
   "occupant": "018f82d4-6f59-7d06-92e3-bce913116304",
@@ -108,20 +108,20 @@ const CLAIM_WON: &str = r#"{
 
 const TASK_DONE: &str = r#"{
   "kind": "task::done",
-  "task": "EFFORT-a1",
+  "task": "1kKRRsDP",
   "validation": "the fixture validated"
 }"#;
 
 const TASK_REVIEWED: &str = r#"{
   "kind": "task::reviewed",
-  "task": "EFFORT-a1",
+  "task": "1kKRRsDP",
   "reviewer": "operator",
   "verdict": "clean"
 }"#;
 
 const CLAIM_CARRIED: &str = r#"{
   "kind": "claim::carried",
-  "task": "EFFORT-a1",
+  "task": "1kKRRsDP",
   "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
   "occupant": "018f82d4-6f59-7d06-92e3-bce913116304",
   "ancestor": "018f82d4-6f59-7d06-92e3-bce913116306",
@@ -333,7 +333,7 @@ fn a_recorded_membership_boundary_survives_the_registry() {
 fn a_renewal_records_no_boundary_at_all() {
     let document: serde_json::Value = serde_json::from_slice(
         &wire::encode(&body::ClaimRenewed {
-            task: handle("EFFORT-a1"),
+            task: stamp(),
             epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116305"),
             until: instant("2030-04-12T19:44:09.271828Z"),
             maximum: instant("2030-04-12T23:44:09.271828Z"),

@@ -46,10 +46,10 @@ fn task_fact(position: u64, cause: Option<u64>) -> serde_json::Value {
         "seq": position,
         "at": "2030-04-12T18:44:09.271Z",
         "actor": "operator",
-        "origin": "task:SPICE-aBcD",
+        "origin": "task:1kKRRsDP",
         "fact": {
             "kind": "task::phased",
-            "task": "SPICE-aBcD",
+            "task": "1kKRRsDP",
             "phase": "verify",
         },
     });
@@ -140,7 +140,14 @@ fn admitted_stream(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame
         .expect("stream frame is admitted")
 }
 
-fn board_task(handle: &str, id: &str, title: &str, project: &str) -> wire::intent::BoardTask {
+fn fixture_stamp(label: &str) -> wire::TaskStamp {
+    let value = label.bytes().fold(0_i64, |value, byte| {
+        (value * 131 + i64::from(byte)) % 10_000_000_000_000
+    });
+    wire::TaskStamp::for_millis(value).expect("fixture task stamp")
+}
+
+fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::intent::BoardTask {
     let visibility = if project.starts_with('.') {
         wire::intent::ProjectVisibility::Hidden {
             stem: "oops".to_owned(),
@@ -148,6 +155,7 @@ fn board_task(handle: &str, id: &str, title: &str, project: &str) -> wire::inten
     } else {
         wire::intent::ProjectVisibility::Public
     };
+    let incepted = fixture_stamp(label);
     wire::intent::BoardTask {
         visibility,
         origin_thread: "operator".to_owned(),
@@ -155,15 +163,15 @@ fn board_task(handle: &str, id: &str, title: &str, project: &str) -> wire::inten
         statement: wire::intent::Positioned {
             position: seq(1),
             body: wire::intent::BoardStatement {
-                handle: handle.parse().expect("fixture task handle"),
-                uuid: uuid(id),
+                handle: wire::TaskHandle::for_project(project, &incepted),
+                incepted: incepted.clone(),
                 queue_origin: seq(1),
                 description: None,
                 acceptance: Vec::new(),
                 project: project.to_owned(),
                 tags: Vec::new(),
                 dependencies: Vec::new(),
-                provenance: format!("task:{handle}").parse().expect("fixture origin"),
+                provenance: format!("task:{incepted}").parse().expect("fixture origin"),
                 revision: seq(1),
             },
         },
@@ -218,6 +226,7 @@ fn board_response(
             body: wire::ResidencyHead {
                 epoch: uuid(EPOCH),
                 state: wire::ResidentState::Seated,
+                topology_revision: 0,
                 lanes: Vec::new(),
                 subscriptions: Vec::new(),
             },
@@ -297,6 +306,7 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
             body: wire::intent::LaneAnswer {
                 epoch: uuid(EPOCH),
                 state: wire::ResidentState::Seated,
+                topology_revision: 9,
                 lanes,
                 subscriptions,
             },
@@ -629,7 +639,10 @@ fn browser_state_retains_hidden_evidence_without_hidden_title_prose() {
     let board = runtime.board().expect("board response is retained");
     let hidden = &board.tasks[0];
     assert_eq!(hidden.presentation_title(), "Hidden task");
-    assert_eq!(hidden.statement.body.handle.to_string(), "HIDDEN-oops1");
+    assert_eq!(
+        hidden.statement.body.handle,
+        wire::TaskHandle::for_project(".oops.correctness", &fixture_stamp("HIDDEN-oops1"))
+    );
     assert_eq!(hidden.statement.body.project, ".oops.correctness");
     assert_eq!(hidden.visibility.hidden_stem(), Some("oops"));
     assert_eq!(hidden.workflow.body.status, "pending");
@@ -928,7 +941,7 @@ fn launch(model: &str, effort: &str) -> wire::intent::EffortIdentity {
 
 fn effort_phase(availability: wire::intent::EffortAvailability) -> wire::intent::EffortPhaseAnswer {
     wire::intent::EffortPhaseAnswer {
-        task: "SPICE-aBcD".parse().expect("fixture handle is canonical"),
+        task: "1kKRRsDP".parse().expect("fixture stamp is canonical"),
         phase: "todo".parse().expect("fixture phase is a phase"),
         phase_index: 0,
         opening: seq(41),
@@ -990,13 +1003,10 @@ fn an_effort_refusal_replaces_the_held_fold_rather_than_standing_beside_it() {
 
     runtime.apply_effort(&effort_response(
         &session,
-        Outcome::Refusal(Refusal {
-            reason: "effort::selection-failed".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "name a task that exists".to_owned(),
-        }),
+        Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new("effort::selection-failed", None, None, None)
+                .with_detail("name a task that exists"),
+        )),
     ));
     // The counters are gone rather than dimmed: a refusal that left the last
     // good total readable would show a number no read behind it produced.

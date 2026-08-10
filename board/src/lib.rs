@@ -29,7 +29,7 @@ pub use config::{Config, NextConfig};
 pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
-    Selection, eligible_entry, project_subscription_history, recent_claim_cell, satisfied_handles,
+    Selection, eligible_entry, project_subscription_history, recent_claim_cell, satisfied_tasks,
     select, selectable_entry, stealable_entry,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
@@ -88,7 +88,7 @@ impl Snapshot {
             .into_iter()
             .map(|heads| {
                 let (statement, workflow, claim, lease) = heads.into_bodies();
-                let handle = statement.handle.clone();
+                let handle = wire::TaskHandle::for_project(&statement.project, &statement.incepted);
                 Entry::new(statement, workflow, claim, lease, projects)
                     .map_err(|source| SnapshotReadError::Task { handle, source })
             })

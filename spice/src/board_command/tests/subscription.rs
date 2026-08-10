@@ -64,7 +64,7 @@ pub(super) fn selectable_handles(answer: &BoardAnswer, actor: &Actor) -> BTreeSe
     entries
         .iter()
         .filter(|entry| board::selectable_entry(&entries, entry, actor, subscription))
-        .map(|entry| entry.statement().handle.to_string())
+        .map(|entry| entry.handle().to_string())
         .collect()
 }
 
@@ -192,7 +192,7 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
     assert!(
         matches!(
             stale,
-            Outcome::Refusal(Refusal { ref reason, .. }) if reason == "board::witness-moved"
+            Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"
         ),
         "a command prepared under Steer crossed into Drive: {stale:?}",
     );

@@ -9,7 +9,7 @@ use crate::Name;
 use crate::body::{LaneLaunchIdentity, TranscriptPosition};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
-use crate::witness::{Phase, TaskHandle};
+use crate::witness::{Phase, TaskStamp};
 
 /// One allocator locality coordinate captured when a claim is won.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -25,10 +25,8 @@ pub struct ClaimCell {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskHead {
-    /// Public task name.
-    pub handle: TaskHandle,
-    /// Stable task identity.
-    pub uuid: CanonicalUuid,
+    /// Sole task identity, minted from its inception instant.
+    pub incepted: TaskStamp,
     /// Fact that first placed this task in the queue.
     pub queue_origin: Seq,
     /// Authored title.
@@ -48,7 +46,7 @@ pub struct TaskHead {
     /// Authored task labels.
     pub tags: Vec<String>,
     /// Tasks that must complete first.
-    pub dependencies: Vec<TaskHandle>,
+    pub dependencies: Vec<TaskStamp>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: Origin,
     /// Fact that established this statement revision.
@@ -532,6 +530,12 @@ pub struct ResidencyHead {
     pub epoch: CanonicalUuid,
     /// Durable resident life.
     pub state: ResidentState,
+    /// Monotonic authority for Canvas team membership, order, and policy.
+    ///
+    /// Zero is the legacy and freshly seated baseline. Every transaction that
+    /// changes topology advances this value exactly once, while lifecycle-only
+    /// residency writes preserve it.
+    pub topology_revision: u64,
     /// Current lanes, occupants, lineage, capabilities, and dispositions.
     pub lanes: Vec<LaneResidency>,
     /// One durable task-subscription policy per Canvas lineage.

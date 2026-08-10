@@ -266,12 +266,13 @@ impl Pending {
 }
 
 fn replayed_request(request: CanonicalUuid, observed: &str) -> wire::Refusal {
-    wire::Refusal {
-        reason: "consent::request-already-known".to_owned(),
-        witness: Some(request.to_string()),
-        expected: Some("a request identity consent has not seen".to_owned()),
-        observed: Some(observed.to_owned()),
-        remedy: "use the existing disposition, or ask again under a new request identity"
-            .to_owned(),
-    }
+    wire::Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            "consent::request-already-known",
+            Some(request.to_string()),
+            Some("a request identity consent has not seen".to_owned()),
+            Some(observed.to_owned()),
+        )
+        .with_detail("use the existing disposition, or ask again under a new request identity"),
+    )
 }

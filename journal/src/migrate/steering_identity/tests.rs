@@ -145,9 +145,8 @@ fn old_recovery_receipt_loses_its_lineage_witness_and_rebinds_to_the_root() {
     assert_eq!(command.kind, wire::CommandKind::SteerRecover);
     assert_eq!(
         command.expected,
-        [wire::Witness::Directive {
+        [wire::Witness::Recoverable {
             steer: FIRST.parse().expect("root UUID"),
-            disposition: wire::Disposition::Lapsed,
         }]
     );
     assert_eq!(command.body["directive"], FIRST);
@@ -188,9 +187,8 @@ fn refused_old_recovery_receipt_is_renamed_without_a_committed_fact_range() {
     assert_eq!(command.body["directive"], FIRST);
     assert_eq!(
         command.expected,
-        [wire::Witness::Directive {
+        [wire::Witness::Recoverable {
             steer: FIRST.parse().expect("root UUID"),
-            disposition: wire::Disposition::Lapsed,
         }]
     );
     command.witnessed().expect("migrated command obeys its law");
@@ -201,7 +199,16 @@ fn refused_old_recovery_receipt_is_renamed_without_a_committed_fact_range() {
     let wire::Outcome::Refusal(refusal) = response.outcome else {
         panic!("receipt remains a refusal");
     };
-    assert_eq!(refusal.reason, "steer::recovery-live");
+    assert_eq!(
+        refusal.reason(),
+        "steer::recovery-live",
+        "migration preserves the refusal code through its semantic accessor"
+    );
+    assert_eq!(
+        refusal.explanation(),
+        "recover only a lapsed directive",
+        "the historical remedy becomes non-runnable diagnostic detail"
+    );
 }
 
 #[test]
