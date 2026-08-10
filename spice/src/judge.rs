@@ -1,17 +1,18 @@
 //! One bounded external YES/NO adjudication process shared by every question.
 
-use std::io::{Read, Write};
-use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::env;
+use std::time::Duration;
 
-#[cfg(unix)]
-use std::os::unix::process::CommandExt as _;
+use sill::{
+    Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
+    ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
+};
 
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(3);
-const MAX_REPLY_BYTES: u64 = 4 * 1024;
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const MAX_REPLY_BYTES: usize = 4 * 1024;
+const OUTPUT_DRAIN: Duration = Duration::from_millis(250);
+const REAP_DEADLINE: Duration = Duration::from_millis(500);
+const TERMINATE_GRACE: Duration = Duration::from_millis(100);
 
 /// One semantically complete framing, identified independently of its order.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,6 +96,7 @@ impl Error {
 pub(crate) struct Process {
     binary: String,
     timeout: Duration,
+    cancellation: CancellationToken,
 }
 
 impl Default for Process {
@@ -102,6 +104,7 @@ impl Default for Process {
         Self {
             binary: crate::cli::JUDGE_EXECUTABLE.to_owned(),
             timeout: ATTEMPT_TIMEOUT,
+            cancellation: CancellationToken::new(),
         }
     }
 }
@@ -111,12 +114,39 @@ impl Process {
     pub(crate) fn adjudicate(&mut self, prompts: &[Prompt]) -> Result<Decision, Error> {
         let binary = self.binary.clone();
         let timeout = self.timeout;
-        adjudicate_with(prompts, |prompt| invoke(&binary, prompt, timeout))
+        let cancellation = self.cancellation.clone();
+        adjudicate_with(prompts, |prompt| {
+            invoke_with(&binary, prompt, timeout, cancellation.clone())
+        })
     }
 
     #[cfg(test)]
     pub(crate) fn with(binary: String, timeout: Duration) -> Self {
-        Self { binary, timeout }
+        Self {
+            binary,
+            timeout,
+            cancellation: CancellationToken::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_contract(
+        binary: String,
+        timeout: Duration,
+        cancellation: CancellationToken,
+    ) -> Self {
+        Self {
+            binary,
+            timeout,
+            cancellation,
+        }
+    }
+
+    pub(crate) fn with_cancellation(cancellation: CancellationToken) -> Self {
+        Self {
+            cancellation,
+            ..Self::default()
+        }
     }
 }
 
@@ -125,7 +155,7 @@ pub(crate) fn adjudicate_with(
     mut invoke_prompt: impl FnMut(&str) -> Result<String, Error>,
 ) -> Result<Decision, Error> {
     if prompts.is_empty() {
-        return Err(failure(
+        return Err(failure_error(
             "judge_error",
             "an adjudication question declared no framing",
         ));
@@ -170,65 +200,53 @@ pub(crate) fn adjudicate_with(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn invoke(binary: &str, prompt: &str, timeout: Duration) -> Result<String, Error> {
-    let mut command = Command::new(binary);
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    command.process_group(0);
-    let mut child = command.spawn().map_err(|error| Error {
+    invoke_with(binary, prompt, timeout, CancellationToken::new())
+}
+
+fn invoke_with(
+    binary: &str,
+    prompt: &str,
+    timeout: Duration,
+    cancellation: CancellationToken,
+) -> Result<String, Error> {
+    let spec = process_spec(binary, timeout, cancellation)?;
+    let mut child = sill::spawn(spec).map_err(|error| Error {
         reason: "unavailable",
         detail: format!("could not launch {binary}: {error}"),
     })?;
-    let Some(mut input) = child.stdin.take() else {
-        stop(&mut child);
-        return Err(failure("judge_error", "judge stdin was unavailable"));
-    };
-    if let Err(error) = input.write_all(prompt.as_bytes()) {
-        stop(&mut child);
-        return Err(Error {
+    child
+        .write_stdin(prompt.as_bytes())
+        .map_err(|error| Error {
             reason: "judge_error",
             detail: format!("could not write judge prompt: {error}"),
-        });
+        })?;
+    let outcome = child.wait().map_err(|error| Error {
+        reason: "judge_error",
+        detail: format!("judge process boundary failed: {error}"),
+    })?;
+    if !outcome.outputs_drained() {
+        return Err(failure_error(
+            "judge_error",
+            "judge descendants retained an output pipe past the drain deadline",
+        ));
     }
-    drop(input);
-
-    let Some(stdout) = child.stdout.take() else {
-        stop(&mut child);
-        return Err(failure("judge_error", "judge stdout was unavailable"));
-    };
-    let Some(stderr) = child.stderr.take() else {
-        stop(&mut child);
-        return Err(failure("judge_error", "judge stderr was unavailable"));
-    };
-    let stdout_reader = reader(stdout);
-    let stderr_reader = reader(stderr);
-
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL),
-            Ok(None) => {
-                stop(&mut child);
-                return Err(Error {
-                    reason: "timeout",
-                    detail: format!("judge exceeded {}ms", timeout.as_millis()),
-                });
-            }
-            Err(error) => {
-                stop(&mut child);
-                return Err(Error {
-                    reason: "judge_error",
-                    detail: format!("could not observe judge: {error}"),
-                });
-            }
+    match outcome.completion() {
+        Completion::TimedOut(_) => {
+            return Err(Error {
+                reason: "timeout",
+                detail: format!("judge exceeded {}ms", timeout.as_millis()),
+            });
         }
-    };
-    let stdout = receive_reader(stdout_reader)?;
-    let stderr = receive_reader(stderr_reader)?;
+        Completion::Cancelled(_) => {
+            return Err(failure_error("cancelled", "judge request was cancelled"));
+        }
+        Completion::Exited(_) => {}
+    }
+    let stdout = captured_output(outcome.stdout(), "stdout")?;
+    let stderr = captured_output(outcome.stderr(), "stderr")?;
+    let status = outcome.completion().status();
     if !status.success() {
         return Err(Error {
             reason: "unavailable",
@@ -248,63 +266,71 @@ pub(crate) fn invoke(binary: &str, prompt: &str, timeout: Duration) -> Result<St
     Ok(stdout)
 }
 
-fn bounded_read(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader
-        .by_ref()
-        .take(MAX_REPLY_BYTES.saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn reader(input: impl Read + Send + 'static) -> Receiver<std::io::Result<Vec<u8>>> {
-    let (sender, receiver) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let _ = sender.send(bounded_read(input));
-    });
-    receiver
-}
-
-fn receive_reader(reader: Receiver<std::io::Result<Vec<u8>>>) -> Result<String, Error> {
-    let bytes = reader
-        .recv_timeout(Duration::from_millis(250))
-        .map_err(|error| Error {
+fn process_spec(
+    binary: &str,
+    timeout: Duration,
+    cancellation: CancellationToken,
+) -> Result<Spec, Error> {
+    let capture = StreamPolicy::Capture {
+        limit: MAX_REPLY_BYTES,
+    };
+    Ok(Spec {
+        argv: Argv::new(binary, std::iter::empty::<String>()).map_err(spec_error)?,
+        cwd: env::current_dir().map_err(|error| Error {
             reason: "judge_error",
-            detail: format!("judge output reader did not finish: {error}"),
-        })?
-        .map_err(|error| Error {
-            reason: "judge_error",
-            detail: format!("judge output was unreadable: {error}"),
-        })?;
-    if bytes.len() as u64 > MAX_REPLY_BYTES {
-        return Err(Error {
-            reason: "ambiguous",
-            detail: format!("judge reply exceeded {MAX_REPLY_BYTES} bytes"),
-        });
-    }
-    String::from_utf8(bytes).map_err(|error| Error {
-        reason: "ambiguous",
-        detail: format!("judge reply was not UTF-8: {error}"),
+            detail: format!("could not resolve judge working directory: {error}"),
+        })?,
+        environment: ambient_environment().map_err(spec_error)?,
+        group: ProcessGroup::New,
+        deadlines: Deadlines::new(timeout, OUTPUT_DRAIN, REAP_DEADLINE).map_err(spec_error)?,
+        wait: WaitPolicy::new(
+            "shared optional judge",
+            Cancellation::Token(cancellation),
+            RestartDisposition::Never,
+        )
+        .map_err(spec_error)?,
+        output: Output::new(StdinPolicy::Pipe, capture, capture),
+        redaction: Redaction::All,
+        grace: TERMINATE_GRACE,
     })
 }
 
-fn stop(child: &mut std::process::Child) {
-    #[cfg(unix)]
-    let group_signaled = i32::try_from(child.id())
-        .ok()
-        .and_then(rustix::process::Pid::from_raw)
-        .is_some_and(|group| {
-            matches!(
-                rustix::process::kill_process_group(group, rustix::process::Signal::KILL),
-                Ok(()) | Err(rustix::io::Errno::SRCH)
-            )
-        });
-    #[cfg(not(unix))]
-    let group_signaled = false;
-    if !group_signaled {
-        let _ = child.kill();
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the shared external-process rim captures the caller environment once"
+)]
+fn ambient_environment() -> Result<Environment, sill::SpecError> {
+    Environment::new(env::vars_os())
+}
+
+fn spec_error(error: sill::SpecError) -> Error {
+    Error {
+        reason: "judge_error",
+        detail: format!("judge process contract is invalid: {error}"),
     }
-    let _ = child.wait();
+}
+
+fn captured_output(output: Option<&sill::CapturedOutput>, stream: &str) -> Result<String, Error> {
+    let output = output.ok_or_else(|| Error {
+        reason: "judge_error",
+        detail: format!("judge {stream} capture was unavailable"),
+    })?;
+    if output.truncated() {
+        return Err(Error {
+            reason: "ambiguous",
+            detail: format!("judge {stream} exceeded {MAX_REPLY_BYTES} bytes"),
+        });
+    }
+    if !output.complete() {
+        return Err(Error {
+            reason: "judge_error",
+            detail: format!("judge {stream} did not close within the output deadline"),
+        });
+    }
+    String::from_utf8(output.bytes().to_vec()).map_err(|error| Error {
+        reason: "ambiguous",
+        detail: format!("judge {stream} was not UTF-8: {error}"),
+    })
 }
 
 pub(crate) fn parse_yes_no(raw: &str) -> Option<bool> {
@@ -324,7 +350,7 @@ pub(crate) fn compact(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub(crate) fn failure(reason: &'static str, detail: &str) -> Error {
+pub(crate) fn failure_error(reason: &'static str, detail: &str) -> Error {
     Error {
         reason,
         detail: detail.to_owned(),
@@ -334,6 +360,42 @@ pub(crate) fn failure(reason: &'static str, detail: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_SCRIPT: AtomicU64 = AtomicU64::new(0);
+    const PROCESS_RUNTIME: Duration = Duration::from_secs(5);
+
+    struct Script(PathBuf);
+
+    impl Script {
+        fn new(body: &str) -> Self {
+            let path = env::temp_dir().join(format!(
+                "spice-judge-test-{}-{}",
+                std::process::id(),
+                NEXT_SCRIPT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write judge fixture");
+            let mut permissions = fs::metadata(&path)
+                .expect("judge fixture metadata")
+                .permissions();
+            permissions.set_mode(0o700);
+            fs::set_permissions(&path, permissions).expect("make judge fixture executable");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Script {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
 
     fn prompts() -> Vec<Prompt> {
         vec![
@@ -397,6 +459,81 @@ mod tests {
 
         assert_eq!(error.reason(), "unavailable");
         assert!(error.detail().contains("could not launch"));
+    }
+
+    #[test]
+    fn decisive_process_reads_the_complete_prompt_and_closes_both_pipes() {
+        let script = Script::new("input=$(cat); test -n \"$input\"; printf 'YES\\n'");
+
+        let reply = invoke(
+            script.path().to_str().expect("UTF-8 fixture path"),
+            "one complete proposition",
+            PROCESS_RUNTIME,
+        )
+        .expect("decisive judge completes");
+
+        assert_eq!(reply, "YES\n");
+    }
+
+    #[test]
+    fn ambiguous_process_exhausts_only_the_declared_framings() {
+        let script = Script::new("cat >/dev/null; printf 'perhaps\\n'");
+        let mut process = Process::with(
+            script
+                .path()
+                .to_str()
+                .expect("UTF-8 fixture path")
+                .to_owned(),
+            PROCESS_RUNTIME,
+        );
+
+        let error = process
+            .adjudicate(&prompts())
+            .expect_err("ambiguous process never supplies a verdict");
+
+        assert_eq!(error.reason(), "ambiguous");
+        assert!(error.detail().contains("3 attempts"));
+    }
+
+    #[test]
+    fn timeout_and_output_overflow_are_bounded_failures() {
+        let timeout = Script::new("cat >/dev/null; exec /usr/bin/tail -f /dev/null");
+        let error = invoke(
+            timeout.path().to_str().expect("UTF-8 fixture path"),
+            "prompt",
+            Duration::from_millis(40),
+        )
+        .expect_err("nonterminating judge times out");
+        assert_eq!(error.reason(), "timeout");
+
+        let overflow = Script::new(
+            "cat >/dev/null; i=0; while [ $i -le 4096 ]; do printf x; i=$((i + 1)); done",
+        );
+        let error = invoke(
+            overflow.path().to_str().expect("UTF-8 fixture path"),
+            "prompt",
+            PROCESS_RUNTIME,
+        )
+        .expect_err("oversized reply is rejected");
+        assert_eq!(error.reason(), "ambiguous");
+        assert!(error.detail().contains("exceeded 4096 bytes"));
+    }
+
+    #[test]
+    fn inherited_descendant_pipe_is_killed_and_named() {
+        let script = Script::new("cat >/dev/null; sleep 30 & printf 'YES\\n'");
+        let started = std::time::Instant::now();
+
+        let error = invoke(
+            script.path().to_str().expect("UTF-8 fixture path"),
+            "prompt",
+            PROCESS_RUNTIME,
+        )
+        .expect_err("a retained descendant pipe is not a clean answer");
+
+        assert_eq!(error.reason(), "judge_error");
+        assert!(error.detail().contains("retained an output pipe"));
+        assert!(started.elapsed() < PROCESS_RUNTIME);
     }
 
     #[test]

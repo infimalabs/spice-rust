@@ -7,8 +7,9 @@
 //! until an operator commit moved one of them, which is precisely the drift
 //! sourcing the set from configuration exists to prevent.
 
+use gate::PolicyContext;
 use listen::{Event, Locus, Prose};
-use taste::{Bag, ConfigError, configured};
+use taste::{Bag, ConfigError, bag_identity, configured};
 
 /// The tracked curation document, which owns the seeds and their rationale.
 const TASTES: &str = include_str!("../../TASTES.md");
@@ -48,6 +49,11 @@ fn refusal(document: &str) -> ConfigError {
     configured(document).expect_err("this document must be refused")
 }
 
+fn matching_hits(bag: &Bag, event: &Event) -> Vec<taste::Hit> {
+    bag.hits(event, &PolicyContext::new())
+        .expect("unconstrained taste context")
+}
+
 #[test]
 fn the_documented_seed_block_decodes_as_a_complete_tracked_document() {
     let bag = configured(documented_seeds()).expect("the published seeds decode");
@@ -69,7 +75,7 @@ fn every_documented_seed_selects_prose_containing_its_own_tracked_words() {
         // the probe below is built from whatever the decoder returned and
         // would match its own corruption. Each decoded value is therefore
         // first required to appear in the tracked block as TOML spells it:
-        // quoted in full, so a truncated `word*` no longer matches.
+        // quoted in full, so a truncated selector no longer matches.
         let block = documented_seeds();
         assert!(
             block.contains(&format!("[taste.{}]", taste.name())),
@@ -91,10 +97,9 @@ fn every_documented_seed_selects_prose_containing_its_own_tracked_words() {
             );
 
             // The probe is built from the tracked selector itself, so this
-            // file still names no word. Dropping the one admitted trailing
-            // `*` turns a suffix glob into a word it must cover.
-            let probe = trigger.as_str().replace('*', "");
-            let hits = bag.hits(&prose(&format!("we should {probe} instead")));
+            // file still names no word while exercising every literal entry.
+            let probe = trigger.as_str();
+            let hits = matching_hits(&bag, &prose(&format!("we should {probe} instead")));
             let hit = hits
                 .iter()
                 .find(|hit| hit.taste() == taste.name() && hit.trigger() == trigger.as_str())
@@ -158,12 +163,12 @@ message = "Prefer the first letter."
             .map(|taste| taste.name().as_str())
             .collect::<Vec<_>>(),
         vec!["zulu", "alpha"],
-        "the active set must follow the tracked document, not an imposed sort",
+        "the configured set must follow the tracked document, not an imposed sort",
     );
 }
 
 #[test]
-fn adding_editing_and_removing_a_row_moves_the_active_set_with_no_rust_edit() {
+fn adding_editing_and_removing_a_row_moves_the_configured_set_with_no_rust_edit() {
     let one = configured(
         r#"
 [taste.alpha]
@@ -204,22 +209,134 @@ message = "Prefer the third letter."
     assert_eq!(names(&edited), vec!["alpha"]);
 
     // Identity is not the whole claim: matching must move too.
-    assert!(one.hits(&prose("one buffalo here")).is_empty());
-    assert_eq!(added.hits(&prose("one buffalo here")).len(), 1);
-    assert_eq!(added.hits(&prose("one aardvark here")).len(), 1);
+    assert!(matching_hits(&one, &prose("one buffalo here")).is_empty());
+    assert_eq!(matching_hits(&added, &prose("one buffalo here")).len(), 1);
+    assert_eq!(matching_hits(&added, &prose("one aardvark here")).len(), 1);
 
     // Removing the added row retires exactly the matching it brought.
-    assert_eq!(one.hits(&prose("one aardvark here")).len(), 1);
+    assert_eq!(matching_hits(&one, &prose("one aardvark here")).len(), 1);
 
     // Editing one row replaces both its words and its message under a name
     // that did not change, which no identity check alone would notice.
-    assert!(edited.hits(&prose("one aardvark here")).is_empty());
-    let hit = edited
-        .hits(&prose("one chinchilla here"))
+    assert!(matching_hits(&edited, &prose("one aardvark here")).is_empty());
+    let hit = matching_hits(&edited, &prose("one chinchilla here"))
         .into_iter()
         .next()
         .expect("the edited words select");
     assert_eq!(hit.message(), "Prefer the third letter.");
+}
+
+#[test]
+fn a_vendor_and_model_scoped_bag_only_fires_in_its_shared_applicability_context() {
+    let bag = configured(
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+scopes = { vendors = ["codex"], models = ["gpt-5"] }
+"#,
+    )
+    .expect("scoped row decodes");
+    let codex = PolicyContext::new()
+        .with_vendor("codex")
+        .with_model("gpt-5");
+    let claude = PolicyContext::new()
+        .with_vendor("claude")
+        .with_model("gpt-5");
+
+    assert_eq!(
+        bag.hits(&prose("one aardvark here"), &codex)
+            .expect("codex model context resolves")
+            .len(),
+        1,
+    );
+    assert!(
+        bag.hits(&prose("one aardvark here"), &claude)
+            .expect("other vendor resolves")
+            .is_empty(),
+        "spice-shape case 438: a vendor-scoped bag cannot fire elsewhere",
+    );
+    assert!(
+        bag.hits(
+            &prose("one aardvark here"),
+            &PolicyContext::new().with_vendor("codex").with_model("o3"),
+        )
+        .expect("other model resolves")
+        .is_empty(),
+        "the same shared grammar constrains another admitted context axis",
+    );
+}
+
+#[test]
+fn a_disabled_named_row_remains_tracked_enumerable_clone_stable_and_inert() {
+    let document = r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+enabled = false
+scopes = { vendors = ["codex"] }
+"#;
+    let bag = configured(document).expect("disabled row decodes");
+    let enabled = configured(
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+scopes = { vendors = ["codex"] }
+"#,
+    )
+    .expect("enabled row decodes");
+    let other_clone = bag.clone();
+    let taste = &bag.tastes()[0];
+
+    assert_eq!(taste.name().as_str(), "alpha");
+    assert!(!taste.enabled());
+    assert_eq!(taste.scopes().vendors(), ["codex"]);
+    assert_eq!(other_clone, bag);
+    assert_eq!(bag_identity(&other_clone), bag_identity(&bag));
+    assert_ne!(
+        bag_identity(&enabled),
+        bag_identity(&bag),
+        "tracked disablement changes the effective bag identity",
+    );
+    assert!(
+        bag.hits(&prose("one aardvark here"), &PolicyContext::new())
+            .expect("disabled row needs no applicability evaluation")
+            .is_empty(),
+        "spice-shape case 439: the named tracked disablement is inert",
+    );
+}
+
+#[test]
+fn malformed_or_incomplete_applicability_refuses_loudly() {
+    let malformed = refusal(
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+scopes = { vendors = [""] }
+"#,
+    );
+    assert!(matches!(&malformed, ConfigError::Taste { name, .. } if name == "alpha"));
+    assert!(
+        malformed.to_string().contains("scopes.vendors"),
+        "the shared compiler must name the malformed selector axis: {malformed}",
+    );
+
+    let bag = configured(
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+scopes = { vendors = ["codex"] }
+"#,
+    )
+    .expect("valid constrained row decodes");
+    let missing = bag
+        .hits(&prose("one aardvark here"), &PolicyContext::new())
+        .expect_err("missing constrained vendor must refuse");
+    assert_eq!(missing.code(), "policy::context-missing");
+    assert_eq!(missing.dimension(), Some(gate::ScopeAxis::Vendors));
 }
 
 #[test]

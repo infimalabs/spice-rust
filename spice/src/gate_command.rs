@@ -110,19 +110,9 @@ fn pre_commit_report(
     match result {
         Ok(report) if report.admits() => direct(report),
         Ok(report) => {
-            let evidence = match report
-                .encode()
-                .map_err(|error| error.to_string())
-                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
-            {
+            let evidence = match canonical_battery_evidence(&report) {
                 Ok(evidence) => evidence,
-                Err(detail) => {
-                    return Outcome::Fault(Fault {
-                        class: FaultClass::Protocol,
-                        reason: "gate::battery-report-unavailable".to_owned(),
-                        detail,
-                    });
-                }
+                Err(fault) => return Outcome::Fault(fault),
             };
             Outcome::Refusal(Refusal::evidence(
                 "gate::battery-regressed",
@@ -132,6 +122,19 @@ fn pre_commit_report(
         }
         Err(error) => battery_failure(error),
     }
+}
+
+fn canonical_battery_evidence(report: &BatteryReport) -> Result<String, Fault> {
+    let bytes = report.encode().map_err(|error| Fault {
+        class: FaultClass::Protocol,
+        reason: "gate::battery-report-unencodable".to_owned(),
+        detail: error.to_string(),
+    })?;
+    String::from_utf8(bytes).map_err(|error| Fault {
+        class: FaultClass::Protocol,
+        reason: "gate::battery-report-non-utf8".to_owned(),
+        detail: error.to_string(),
+    })
 }
 
 /// Audit the compiled shared bound without changing a tracked floor.

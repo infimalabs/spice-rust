@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use wire::{Digest, Domain};
 
-use super::repository_executor::RepositoryExecutor;
+use super::repository_executor::{RepositoryExecutor, VerifierContractAcquisition};
 use super::{
     BatteryArmResult, BatteryError, BatteryInputs, BatteryReceipt, BatteryReport, BatteryScope,
     BatteryToolEvidence, ConfigurationEvidence, RepositoryExecutionEvent, run_battery,
@@ -281,6 +281,25 @@ impl<'trace> BatteryCapture<'trace> {
             .verifier_compiler_contract(gate_id, environment)
     }
 
+    /// Capture a compiler contract only when the selected tree makes its arm applicable.
+    ///
+    /// # Errors
+    ///
+    /// Refuses selected-arm captures, foreign arms, or unusable tool evidence.
+    pub fn applicable_verifier_compiler_contract(
+        &self,
+        gate_id: crate::GateId,
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<Option<VerifierCompilerContract>, BatteryError> {
+        match self
+            .executor
+            .verifier_compiler_contract_acquisition(gate_id, environment)?
+        {
+            VerifierContractAcquisition::Applicable(contract) => Ok(Some(contract)),
+            VerifierContractAcquisition::NotApplicable(_) => Ok(None),
+        }
+    }
+
     /// Run the complete battery with successful full-verifier compiler proof.
     ///
     /// Invalid evidence never admits an arm: the toolchain family ignores it
@@ -295,12 +314,38 @@ impl<'trace> BatteryCapture<'trace> {
         evidence: &[VerifierCompilerEvidence],
         environment: Vec<(OsString, OsString)>,
     ) -> Result<BatteryReport, BatteryError> {
+        self.execute_with_verifier_evidence_mode(evidence, environment, false)
+    }
+
+    /// Run the complete battery with compiler proof that must remain valid.
+    ///
+    /// Unlike the general full-verifier seam, rejected evidence refuses the
+    /// compiler arms instead of falling back to compiler execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::execute_with_verifier_evidence`].
+    pub fn execute_with_required_verifier_evidence(
+        &mut self,
+        evidence: &[VerifierCompilerEvidence],
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<BatteryReport, BatteryError> {
+        self.execute_with_verifier_evidence_mode(evidence, environment, true)
+    }
+
+    fn execute_with_verifier_evidence_mode(
+        &mut self,
+        evidence: &[VerifierCompilerEvidence],
+        environment: Vec<(OsString, OsString)>,
+        required: bool,
+    ) -> Result<BatteryReport, BatteryError> {
         if self.selected.is_some() {
             return Err(BatteryError::new(
                 "selected capture cannot execute a complete battery",
             ));
         }
-        self.executor.set_verifier_evidence(evidence, environment)?;
+        self.executor
+            .set_verifier_evidence(evidence, environment, required)?;
         let inputs = self.authorities.inputs()?;
         run_battery(&inputs, &mut self.executor)
     }

@@ -19,8 +19,10 @@ use crate::surface::process_state;
 use crate::{HeldShard, LockAttempt, LockConfig, LockTopology};
 use std::ffi::{CString, OsString};
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write as _};
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -51,6 +53,71 @@ type DrainResult = Result<RecordedDrain, ObservationFailure>;
 /// twelve thousand shell iterations on no additional bound.
 const DRAIN_RECORD_COUNT: usize = 4_096;
 const DRAIN_COMPLETION_LIMIT: Duration = Duration::from_secs(10);
+
+#[test]
+fn one_bounded_stdin_write_is_closed_before_event_driven_completion() {
+    let mut spec = test_spec(
+        "/bin/sh",
+        ["-c", "input=$(cat); printf 'received:%s' \"$input\""],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(1),
+        StreamPolicy::Capture { limit: 64 },
+    );
+    spec.output = Output::new(
+        StdinPolicy::Pipe,
+        StreamPolicy::Capture { limit: 64 },
+        StreamPolicy::Capture { limit: 64 },
+    );
+    let mut running = spawn(spec).expect("piped-input child launches");
+
+    running
+        .write_stdin(b"one complete request")
+        .expect("request writes and closes");
+    let outcome = running.wait().expect("child completes after input EOF");
+
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+    assert_eq!(
+        outcome.stdout().expect("stdout captured").bytes(),
+        b"received:one complete request"
+    );
+}
+
+#[test]
+fn a_child_that_never_reads_stdin_cannot_pin_cleanup() {
+    let mut spec = test_spec(
+        "/bin/sh",
+        ["-c", "while :; do /bin/sleep 60; done"],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_millis(50),
+        StreamPolicy::Capture { limit: 64 },
+    );
+    spec.output = Output::new(
+        StdinPolicy::Pipe,
+        StreamPolicy::Capture { limit: 64 },
+        StreamPolicy::Capture { limit: 64 },
+    );
+    let mut running = spawn(spec).expect("non-reading child launches");
+    let request = vec![b'x'; 1024 * 1024];
+
+    running
+        .write_stdin(&request)
+        .expect("large request enters the supervised writer");
+    let started = Instant::now();
+    match running.wait() {
+        Ok(outcome) => {
+            assert!(matches!(outcome.completion(), Completion::TimedOut(_)));
+            assert!(outcome.outputs_drained());
+        }
+        Err(WaitError::Io {
+            operation: "writing stdin",
+            ..
+        }) => {}
+        Err(error) => panic!("blocked input ended through an unexpected boundary: {error}"),
+    }
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
 
 #[derive(Debug)]
 struct DrainObserver {
@@ -225,18 +292,113 @@ const OBSERVER_BOUND: Duration = Duration::from_secs(10);
 /// after this returns zero, so announcing it here is what lets a test know the
 /// reader half of completion is settled without watching a clock for it.
 struct AnnouncedEof {
-    bytes: io::Cursor<Vec<u8>>,
+    stream: UnixStream,
     ended: mpsc::Sender<()>,
 }
 
 impl Read for AnnouncedEof {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let read = self.bytes.read(buffer)?;
+        let read = self.stream.read(buffer)?;
         if read == 0 {
             let _sent = self.ended.send(());
         }
         Ok(read)
     }
+}
+
+impl AsRawFd for AnnouncedEof {
+    fn as_raw_fd(&self) -> RawFd {
+        self.stream.as_raw_fd()
+    }
+}
+
+struct DropAnnouncedReader {
+    stream: UnixStream,
+    identity: OutputStream,
+    dropped: mpsc::Sender<OutputStream>,
+}
+
+impl Read for DropAnnouncedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.stream.read(buffer)
+    }
+}
+
+impl AsRawFd for DropAnnouncedReader {
+    fn as_raw_fd(&self) -> RawFd {
+        self.stream.as_raw_fd()
+    }
+}
+
+impl Drop for DropAnnouncedReader {
+    fn drop(&mut self) {
+        let _dropped = self.dropped.send(self.identity);
+    }
+}
+
+#[test]
+fn opaque_capture_interrupts_and_joins_before_foreign_writer_eof() {
+    let running = spawn(test_spec(
+        "/usr/bin/true",
+        std::iter::empty::<&str>(),
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(10),
+        StreamPolicy::Null,
+    ))
+    .expect("capture-interrupt child launches");
+    let context = Arc::new(FailureContext {
+        pid: running.pid,
+        group: running.spec.group,
+        owner: running.spec.wait.owner().to_owned(),
+        grace: running.spec.grace,
+        reap: running.spec.deadlines.reap(),
+        process: Arc::clone(&running.process),
+        wake: running
+            .cancellation_wake
+            .try_clone()
+            .expect("fixture wake clones"),
+        failed: std::sync::atomic::AtomicBool::new(false),
+    });
+    let (dropped, reader_dropped) = mpsc::channel();
+
+    for stream in [OutputStream::Stdout, OutputStream::Stderr] {
+        let (reader, writer) = UnixStream::pair().expect("fixture pipe opens");
+        let reader = DropAnnouncedReader {
+            stream: reader,
+            identity: stream,
+            dropped: dropped.clone(),
+        };
+        let capture = start_capture(
+            reader,
+            64,
+            CaptureWorker {
+                stream,
+                observation: None,
+                failure_observer: None,
+                sink_deadline: Duration::from_millis(50),
+                failure: Arc::clone(&context),
+                wake: running
+                    .cancellation_wake
+                    .try_clone()
+                    .expect("capture wake clones"),
+                observer_wake: None,
+            },
+        );
+
+        capture
+            .finish()
+            .expect("opaque reader interrupts and joins");
+        assert_eq!(
+            reader_dropped
+                .recv_timeout(Duration::from_secs(1))
+                .expect("joined worker drops its reader"),
+            stream,
+        );
+        drop(writer);
+    }
+
+    running.wait().expect("fixture child reaps");
 }
 
 #[test]
@@ -279,9 +441,14 @@ fn an_observer_still_working_at_the_drain_deadline_is_named_rather_than_read_as_
     // The record ends in a newline, so the framer has nothing left to flush at
     // end of output and the worker goes straight from the announcement below to
     // recording it.
+    let (reader, mut writer) = UnixStream::pair().expect("announced EOF pipe opens");
+    writer
+        .write_all(b"record\n")
+        .expect("announced EOF record writes");
+    drop(writer);
     running.stderr = Some(start_capture(
         AnnouncedEof {
-            bytes: io::Cursor::new(b"record\n".to_vec()),
+            stream: reader,
             ended,
         },
         64,
@@ -433,12 +600,24 @@ fn sink_refusal_and_framing_overflow_are_named_and_reaped() {
     ));
 }
 
-struct FailingReader;
+struct FailingReader(UnixStream);
 
 impl Read for FailingReader {
     fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
         Err(io::Error::other("fixture reader failure"))
     }
+}
+
+impl AsRawFd for FailingReader {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0.as_raw_fd()
+    }
+}
+
+fn failing_reader() -> FailingReader {
+    let (reader, writer) = UnixStream::pair().expect("failing-reader descriptor opens");
+    drop(writer);
+    FailingReader(reader)
 }
 
 #[test]
@@ -471,7 +650,7 @@ fn selected_reader_failure_uses_the_same_bounded_cleanup_path() {
         failed: std::sync::atomic::AtomicBool::new(false),
     });
     let _capture = start_capture(
-        FailingReader,
+        failing_reader(),
         32,
         CaptureWorker {
             stream: OutputStream::Stdout,
@@ -531,7 +710,7 @@ fn opaque_reader_failure_uses_the_selected_observer_cleanup_path() {
         failed: std::sync::atomic::AtomicBool::new(false),
     });
     running.stderr = Some(start_capture(
-        FailingReader,
+        failing_reader(),
         32,
         CaptureWorker {
             stream: OutputStream::Stderr,

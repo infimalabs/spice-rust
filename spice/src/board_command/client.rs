@@ -776,14 +776,30 @@ pub(crate) fn submit_taste_proposal(
     contract: &Contract,
     body: TasteProposalAdd,
 ) -> Outcome<CommandAnswer> {
-    mutate_from_board(repository, contract, |board| {
-        let task = allocate_inception(&board, jiff::Timestamp::now().as_millisecond());
-        Ok((
-            CommandKind::TasteProposalAdd,
-            vec![Witness::Absence { task }],
-            serde_json::to_value(body).expect("typed intent encodes"),
-        ))
-    })
+    for attempt in 0..2 {
+        let outcome = mutate_from_board(repository, contract, |board| {
+            let task = allocate_inception(&board, jiff::Timestamp::now().as_millisecond());
+            Ok((
+                CommandKind::TasteProposalAdd,
+                vec![Witness::Absence { task }],
+                serde_json::to_value(body.clone()).expect("typed intent encodes"),
+            ))
+        });
+        if attempt == 0
+            && matches!(
+                &outcome,
+                Outcome::Refusal(refusal)
+                    if matches!(
+                        refusal.reason(),
+                        "board::witness-moved" | "taste::proposal-predecessor-moved"
+                    )
+            )
+        {
+            continue;
+        }
+        return outcome;
+    }
+    unreachable!("taste proposal retry loop always returns")
 }
 
 fn mutate_task<F>(

@@ -1,6 +1,8 @@
 //! Durable taste recognition over the sole admitted lane-capture path.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::thread;
 
 use bus::{Bus, JournalCommit};
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
@@ -16,6 +18,7 @@ use super::{
 };
 
 const COMMIT_RETRIES: usize = 4;
+const ADJUDICATION_CAPACITY: usize = 16;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Candidate {
@@ -39,6 +42,21 @@ pub(super) struct Judgment {
 struct JudgedCandidate {
     candidate: Candidate,
     judgment: Judgment,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedJudgment {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    anchor: Seq,
+    bag: Digest,
+    candidates: Vec<Candidate>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct CompletedJudgment {
+    prepared: PreparedJudgment,
+    decisions: Vec<JudgedCandidate>,
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +97,14 @@ impl Adjudicator for ProcessAdjudicator {
     }
 }
 
+impl ProcessAdjudicator {
+    fn with_cancellation(cancellation: sill::CancellationToken) -> Self {
+        Self {
+            process: crate::judge::Process::with_cancellation(cancellation),
+        }
+    }
+}
+
 #[cfg(test)]
 pub(super) struct FunctionAdjudicator<F>(pub(super) F);
 
@@ -89,6 +115,203 @@ where
 {
     fn adjudicate(&mut self, candidate: &Candidate) -> Result<Judgment, crate::judge::Error> {
         (self.0)(candidate)
+    }
+}
+
+/// Bounded authority for submitting prepared questions to the one judge worker.
+pub(super) struct AdjudicationSubmitter {
+    requests: Option<SyncSender<PreparedJudgment>>,
+    cancellation: sill::CancellationToken,
+    worker: Option<thread::JoinHandle<()>>,
+    pending: BTreeSet<(Digest, Digest, u64)>,
+}
+
+/// The bounded completion side stays distinct so the resident select loop can
+/// await it while another branch mutably submits a newly admitted record.
+pub(super) struct AdjudicationCompletions {
+    receiver: tokio::sync::mpsc::Receiver<CompletedJudgment>,
+}
+
+pub(super) struct AdjudicationRuntime {
+    submitter: AdjudicationSubmitter,
+    completions: AdjudicationCompletions,
+}
+
+pub(super) fn start_adjudication() -> CommandResult<AdjudicationRuntime> {
+    start_adjudication_with(ProcessAdjudicator::with_cancellation)
+}
+
+#[cfg(test)]
+pub(super) fn start_process_adjudication(
+    binary: String,
+    timeout: std::time::Duration,
+) -> CommandResult<AdjudicationRuntime> {
+    start_adjudication_with(move |cancellation| ProcessAdjudicator {
+        process: crate::judge::Process::with_contract(binary, timeout, cancellation),
+    })
+}
+
+fn start_adjudication_with<A>(
+    make_adjudicator: impl FnOnce(sill::CancellationToken) -> A + Send + 'static,
+) -> CommandResult<AdjudicationRuntime>
+where
+    A: Adjudicator + Send + 'static,
+{
+    let cancellation = sill::CancellationToken::new();
+    let worker_cancellation = cancellation.clone();
+    let worker_stop = cancellation.clone();
+    let (request_sender, request_receiver) =
+        mpsc::sync_channel::<PreparedJudgment>(ADJUDICATION_CAPACITY);
+    let (completion_sender, completion_receiver) =
+        tokio::sync::mpsc::channel(ADJUDICATION_CAPACITY);
+    let worker = thread::Builder::new()
+        .name("spice-taste-judge".to_owned())
+        .spawn(move || {
+            let mut adjudicator = make_adjudicator(worker_cancellation);
+            while let Ok(prepared) = request_receiver.recv() {
+                if worker_stop.is_cancelled() {
+                    break;
+                }
+                let mut cache = BTreeMap::new();
+                let decisions = adjudicate_candidates(
+                    prepared.candidates.clone(),
+                    prepared.anchor,
+                    &mut cache,
+                    &mut adjudicator,
+                );
+                if completion_sender
+                    .blocking_send(CompletedJudgment {
+                        prepared,
+                        decisions,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .map_err(|error| {
+            environment_fault("taste::judge-worker-unavailable", &error.to_string())
+        })?;
+    Ok(AdjudicationRuntime {
+        submitter: AdjudicationSubmitter {
+            requests: Some(request_sender),
+            cancellation,
+            worker: Some(worker),
+            pending: BTreeSet::new(),
+        },
+        completions: AdjudicationCompletions {
+            receiver: completion_receiver,
+        },
+    })
+}
+
+impl AdjudicationRuntime {
+    pub(super) fn parts(&mut self) -> (&mut AdjudicationSubmitter, &mut AdjudicationCompletions) {
+        (&mut self.submitter, &mut self.completions)
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_len(&self) -> usize {
+        self.submitter.pending.len()
+    }
+}
+
+impl Drop for AdjudicationRuntime {
+    fn drop(&mut self) {
+        // Unblock a worker waiting to publish before cancellation and join.
+        self.completions.receiver.close();
+        self.submitter.shutdown();
+    }
+}
+
+impl AdjudicationSubmitter {
+    pub(super) fn recognize(
+        &mut self,
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        bag: &taste::Bag,
+        record: &lane::capture::CaptureRecord,
+    ) -> CommandResult<()> {
+        let Some(mut prepared) = prepare_judgment(bus, epoch, bag, record)? else {
+            return Ok(());
+        };
+        prepared.candidates.retain(|candidate| {
+            self.pending
+                .insert(judgment_key(candidate, prepared.anchor))
+        });
+        if prepared.candidates.is_empty() {
+            return Ok(());
+        }
+        let sender = self.requests.as_ref().ok_or_else(|| {
+            environment_fault(
+                "taste::judge-worker-closed",
+                "the judge request authority closed while the resident was live",
+            )
+        })?;
+        match sender.try_send(prepared) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(prepared)) => {
+                self.forget(&prepared);
+                Err(environment_fault(
+                    "taste::judge-worker-saturated",
+                    "the bounded judge request authority reached capacity",
+                ))
+            }
+            Err(TrySendError::Disconnected(prepared)) => {
+                self.forget(&prepared);
+                Err(environment_fault(
+                    "taste::judge-worker-closed",
+                    "the judge request authority closed while the resident was live",
+                ))
+            }
+        }
+    }
+
+    pub(super) fn finished(&mut self, completed: &CompletedJudgment) {
+        self.forget(&completed.prepared);
+    }
+
+    fn forget(&mut self, prepared: &PreparedJudgment) {
+        for candidate in &prepared.candidates {
+            self.pending
+                .remove(&judgment_key(candidate, prepared.anchor));
+        }
+    }
+}
+
+impl Drop for AdjudicationSubmitter {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+impl AdjudicationSubmitter {
+    fn shutdown(&mut self) {
+        self.cancellation.cancel();
+        self.requests.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl AdjudicationCompletions {
+    pub(super) async fn recv(&mut self) -> CommandResult<CompletedJudgment> {
+        self.receiver.recv().await.ok_or_else(|| {
+            environment_fault(
+                "taste::judge-completions-closed",
+                "the judge completion authority closed while the resident was live",
+            )
+        })
+    }
+}
+
+impl Drop for AdjudicationCompletions {
+    fn drop(&mut self) {
+        // Closing this side releases a worker blocked on a full completion
+        // queue before the submitter cancels and joins it.
+        self.receiver.close();
     }
 }
 
@@ -120,6 +343,41 @@ pub(super) fn recognize(
     )
 }
 
+fn has_authored_prose(record: &lane::capture::CaptureRecord) -> bool {
+    record.decoded.events().iter().any(|event| {
+        let listen::Event::Prose(prose) = event else {
+            return false;
+        };
+        authored_prose(prose).is_some()
+    })
+}
+
+fn applicability_context(
+    residency: &ResidencyHead,
+    record: &lane::capture::CaptureRecord,
+) -> CommandResult<gate::PolicyContext> {
+    let row = residency
+        .lanes
+        .iter()
+        .find(|row| row.lane == record.lane && row.occupant == Some(record.occupant))
+        .ok_or_else(|| {
+            store_fault(
+                "taste::occupant-moved",
+                "the reminder capture no longer belongs to the current occupant",
+            )
+        })?;
+    let mut context = gate::PolicyContext::new().with_vendor(row.vendor.as_str());
+    if let Some(model) = row
+        .session
+        .as_ref()
+        .and_then(|session| session.launch.as_ref())
+        .map(|launch| launch.model.as_str())
+    {
+        context = context.with_model(model);
+    }
+    Ok(context)
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the test seam names both durable commit and disposable publication"
@@ -139,7 +397,12 @@ where
     C: FnMut(&Bus, &[Opening], JournalWrite) -> CommandResult<JournalCommit>,
     P: FnMut(&Bus, &RuntimePaths, &ResidencyHead, CanonicalUuid) -> CommandResult<()>,
 {
-    let candidates = candidates(bag, record)?;
+    if !bag.tastes().iter().any(taste::Taste::enabled) || !has_authored_prose(record) {
+        return Ok(());
+    }
+    let observed = current_residency(bus, epoch)?;
+    let context = applicability_context(observed.body(), record)?;
+    let candidates = candidates(bag, &context, record)?;
     if candidates.is_empty() {
         return Ok(());
     }
@@ -153,7 +416,7 @@ where
             .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
         let anchor = context_anchor(&snapshot, record.lane, record.occupant)
             .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
-        let unsuppressed = unsuppressed(&candidates, &snapshot, anchor);
+        let unsuppressed = unsuppressed_candidates(&candidates, &snapshot, anchor);
         if unsuppressed.is_empty() {
             return Ok(());
         }
@@ -163,24 +426,20 @@ where
             .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
         let at = current_instant()?;
         let expires = expiry(at, steering_config.expiry().get())?;
-        let (openings, proposal) = if let Some(adjudicator) = judge.as_deref_mut() {
-            let decisions =
-                adjudicate_candidates(unsuppressed, anchor, &mut decision_cache, adjudicator);
-            if decisions.is_empty() {
-                return Ok(());
-            }
-            judged_proposal(
+        let proposal = if let Some(adjudicator) = judge.as_deref_mut() {
+            judged_recognition_proposal(
                 epoch,
-                record.lane,
-                record.occupant,
+                record,
                 anchor,
-                decisions,
+                unsuppressed,
                 minted_millis,
                 at,
                 expires,
+                &mut decision_cache,
+                adjudicator,
             )?
         } else {
-            reminder_proposal(
+            Some(reminder_proposal(
                 epoch,
                 record.lane,
                 record.occupant,
@@ -189,7 +448,10 @@ where
                 minted_millis,
                 at,
                 expires,
-            )?
+            )?)
+        };
+        let Some((openings, proposal)) = proposal else {
+            return Ok(());
         };
 
         match commit_write(bus, &openings, proposal) {
@@ -214,7 +476,7 @@ where
     unreachable!("the final commit attempt returns instead of retrying")
 }
 
-fn unsuppressed(
+fn unsuppressed_candidates(
     candidates: &[Candidate],
     snapshot: &journal::FactSnapshot,
     anchor: Seq,
@@ -227,6 +489,38 @@ fn unsuppressed(
         })
         .cloned()
         .collect()
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "proposal construction names the authority snapshot, indexed key clock, and cache boundary"
+)]
+fn judged_recognition_proposal(
+    epoch: CanonicalUuid,
+    record: &lane::capture::CaptureRecord,
+    anchor: Seq,
+    unsuppressed: Vec<Candidate>,
+    minted_millis: Option<i64>,
+    at: Instant,
+    expires: Instant,
+    decision_cache: &mut BTreeMap<(Digest, Digest, u64), Option<Judgment>>,
+    adjudicator: &mut dyn Adjudicator,
+) -> CommandResult<Option<(Vec<Opening>, JournalWrite)>> {
+    let decisions = adjudicate_candidates(unsuppressed, anchor, decision_cache, adjudicator);
+    if decisions.is_empty() {
+        return Ok(None);
+    }
+    judged_proposal(
+        epoch,
+        record.lane,
+        record.occupant,
+        anchor,
+        decisions,
+        minted_millis,
+        at,
+        expires,
+    )
+    .map(Some)
 }
 
 #[allow(
@@ -254,6 +548,7 @@ fn judged_proposal(
     )?;
     let origin = resident_origin(epoch)?;
     let mut proposal = JournalWrite::new(Actor::Spice, origin.clone(), at, Producer::Judge);
+
     proposal.guard(judgment_guard(
         epoch,
         lane,
@@ -263,20 +558,7 @@ fn judged_proposal(
         openings.clone(),
     ));
     for decided in &decisions {
-        let decision = if decided.judgment.confirmed {
-            let opening = openings
-                .iter()
-                .find(|opening| opening.candidate.content == decided.candidate.content)
-                .expect("every confirmed decision owns one opening");
-            TasteDecision::Confirmed {
-                directive: opening.directive,
-                key: opening.key.to_string(),
-                text: opening.candidate.text.clone(),
-                expires,
-            }
-        } else {
-            TasteDecision::Cleared
-        };
+        let decision = taste_decision(decided, &openings, expires);
         let judged = TasteJudged {
             lane,
             occupant,
@@ -303,6 +585,27 @@ fn judged_proposal(
         }
     }
     Ok((openings, proposal))
+}
+
+fn taste_decision(
+    decided: &JudgedCandidate,
+    openings: &[Opening],
+    expires: Instant,
+) -> TasteDecision {
+    if decided.judgment.confirmed {
+        let opening = openings
+            .iter()
+            .find(|opening| opening.candidate.content == decided.candidate.content)
+            .expect("every confirmed decision owns one opening");
+        TasteDecision::Confirmed {
+            directive: opening.directive,
+            key: opening.key.to_string(),
+            text: opening.candidate.text.clone(),
+            expires,
+        }
+    } else {
+        TasteDecision::Cleared
+    }
 }
 
 #[allow(
@@ -365,8 +668,136 @@ fn resident_origin(epoch: CanonicalUuid) -> CommandResult<wire::Origin> {
         .map_err(|error| store_fault("resident::origin-invalid", &error.to_string()))
 }
 
+fn prepare_judgment(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    bag: &taste::Bag,
+    record: &lane::capture::CaptureRecord,
+) -> CommandResult<Option<PreparedJudgment>> {
+    if !bag.tastes().iter().any(taste::Taste::enabled) || !has_authored_prose(record) {
+        return Ok(None);
+    }
+    let observed = current_residency(bus, epoch)?;
+    let context = applicability_context(observed.body(), record)?;
+    let candidates = candidates(bag, &context, record)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    require_current_occupant(observed.body(), record.lane, record.occupant)?;
+    let snapshot = bus
+        .fact_snapshot()
+        .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
+    let anchor = context_anchor(&snapshot, record.lane, record.occupant)
+        .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
+    let candidates = unsuppressed_candidates(&candidates, &snapshot, anchor);
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(PreparedJudgment {
+        lane: record.lane,
+        occupant: record.occupant,
+        anchor,
+        bag: taste::bag_identity(bag),
+        candidates,
+    }))
+}
+
+/// Re-admit a completed external decision under the resident's current
+/// authority before appending any durable fact or publishing an opening.
+pub(super) fn complete_judgment(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    bag: &taste::Bag,
+    steering_config: &steer::Config,
+    completed: CompletedJudgment,
+) -> CommandResult<()> {
+    if taste::bag_identity(bag) != completed.prepared.bag {
+        return Ok(());
+    }
+    for attempt in 0..COMMIT_RETRIES {
+        let observed = current_residency(bus, epoch)?;
+        if !is_current_occupant(
+            observed.body(),
+            completed.prepared.lane,
+            completed.prepared.occupant,
+        ) {
+            return Ok(());
+        }
+        let snapshot = bus
+            .fact_snapshot()
+            .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
+        let current_anchor = context_anchor(
+            &snapshot,
+            completed.prepared.lane,
+            completed.prepared.occupant,
+        )
+        .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
+        if current_anchor != completed.prepared.anchor {
+            return Ok(());
+        }
+        let decisions = completed
+            .decisions
+            .iter()
+            .filter(|decided| {
+                decided.candidate.bag == completed.prepared.bag
+                    && !was_judged(
+                        &snapshot,
+                        &decided.candidate.content,
+                        &decided.candidate.bag,
+                        completed.prepared.anchor,
+                    )
+                    && !was_reminded(
+                        &snapshot,
+                        &decided.candidate.content,
+                        completed.prepared.anchor,
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if decisions.is_empty() {
+            return Ok(());
+        }
+        let minted_millis = bus
+            .read(|read| read.steering_minted_millis())
+            .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
+        let at = current_instant()?;
+        let expires = expiry(at, steering_config.expiry().get())?;
+        let (openings, proposal) = judged_proposal(
+            epoch,
+            completed.prepared.lane,
+            completed.prepared.occupant,
+            completed.prepared.anchor,
+            decisions,
+            minted_millis,
+            at,
+            expires,
+        )?;
+        match commit(bus, proposal) {
+            Ok(_) => {
+                if !openings.is_empty() {
+                    steering::publish_inbox(bus, paths, observed.body(), completed.prepared.lane)?;
+                }
+                return Ok(());
+            }
+            Err(Outcome::Refusal(_)) if attempt + 1 < COMMIT_RETRIES => {}
+            Err(outcome) => return Err(outcome),
+        }
+    }
+    unreachable!("the final commit attempt returns instead of retrying")
+}
+
+fn judgment_key(candidate: &Candidate, anchor: Seq) -> (Digest, Digest, u64) {
+    (
+        candidate.content.clone(),
+        candidate.bag.clone(),
+        anchor.get(),
+    )
+}
+
 fn candidates(
     bag: &taste::Bag,
+    context: &gate::PolicyContext,
     record: &lane::capture::CaptureRecord,
 ) -> CommandResult<Vec<Candidate>> {
     if bag.tastes().is_empty() {
@@ -378,15 +809,9 @@ fn candidates(
         let listen::Event::Prose(prose) = decoded else {
             continue;
         };
-        let classified = classify(&prose.text);
-        let Some(authored) = classified.authored else {
+        let Some(authored) = authored_prose(prose) else {
             continue;
         };
-        // Echo classification precedes bag matching. No trigger can make a
-        // resident-authored reminder become a candidate again.
-        if taste::is_reminder_echo(&authored) {
-            continue;
-        }
         let authored = listen::Event::Prose(listen::Prose {
             role: prose.role,
             text: authored,
@@ -396,7 +821,10 @@ fn candidates(
             locus: prose.locus,
         });
         let event = checked_locus(event)?;
-        for hit in bag.hits(&authored) {
+        let hits = bag
+            .hits(&authored, context)
+            .map_err(|error| store_fault("taste::applicability-refused", &error.to_string()))?;
+        for hit in hits {
             let content = taste::reminder_identity(hit.taste(), hit.context());
             if candidates
                 .iter()
@@ -412,6 +840,7 @@ fn candidates(
                 vendor: hit.message().to_owned(),
                 source: hit.context().to_owned(),
                 locus: TranscriptLocus {
+                    source: None,
                     member: hit.locus().member,
                     offset: hit.locus().offset,
                     length: hit.locus().length,
@@ -424,6 +853,13 @@ fn candidates(
         }
     }
     Ok(candidates)
+}
+
+fn authored_prose(prose: &listen::Prose) -> Option<String> {
+    let authored = classify(&prose.text).authored?;
+    // Echo classification precedes bag matching. No trigger can make a
+    // resident-authored reminder become a candidate again.
+    (!taste::is_reminder_echo(&authored)).then_some(authored)
 }
 
 fn adjudicate_candidates(
@@ -504,11 +940,7 @@ fn require_current_occupant(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> CommandResult<()> {
-    if residency
-        .lanes
-        .iter()
-        .any(|row| row.lane == lane && row.occupant == Some(occupant))
-    {
+    if is_current_occupant(residency, lane, occupant) {
         Ok(())
     } else {
         Err(store_fault(
@@ -516,6 +948,17 @@ fn require_current_occupant(
             "the reminder capture no longer belongs to the current occupant",
         ))
     }
+}
+
+fn is_current_occupant(
+    residency: &ResidencyHead,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> bool {
+    residency
+        .lanes
+        .iter()
+        .any(|row| row.lane == lane && row.occupant == Some(occupant))
 }
 
 fn openings(

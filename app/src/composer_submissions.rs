@@ -18,6 +18,7 @@ use crate::composer_drafts::ComposerDraft;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Submission {
     pub(crate) id: CanonicalUuid,
+    pub(crate) fanout: CanonicalUuid,
     pub(crate) lane: CanonicalUuid,
     pub(crate) message: String,
     pub(crate) attachments: Vec<DirectiveAttachment>,
@@ -28,15 +29,17 @@ pub(crate) struct Submission {
 impl Submission {
     pub(crate) fn new(
         id: CanonicalUuid,
+        fanout: CanonicalUuid,
         lane: CanonicalUuid,
-        occupant: CanonicalUuid,
-        epoch: CanonicalUuid,
+        residency: (CanonicalUuid, CanonicalUuid),
         message: String,
         attachments: Vec<DirectiveAttachment>,
         snapshot: ComposerDraft,
     ) -> Self {
+        let (occupant, epoch) = residency;
         Self {
             id,
+            fanout,
             lane,
             message,
             attachments,
@@ -52,6 +55,7 @@ impl Submission {
     /// steering command.
     pub(crate) fn wake(
         id: CanonicalUuid,
+        fanout: CanonicalUuid,
         lane: CanonicalUuid,
         message: String,
         attachments: Vec<DirectiveAttachment>,
@@ -59,6 +63,7 @@ impl Submission {
     ) -> Self {
         Self {
             id,
+            fanout,
             lane,
             message,
             attachments,
@@ -566,6 +571,7 @@ mod tests {
     const ID_A: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const ID_B: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const ID_C: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const FANOUT: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
     fn uuid(value: &str) -> CanonicalUuid {
         value.parse().expect("fixture UUID is canonical")
@@ -583,9 +589,9 @@ mod tests {
     fn submission(id: &str, lane: &str, body: &str) -> Submission {
         Submission::new(
             uuid(id),
+            uuid(id),
             uuid(lane),
-            uuid(OCCUPANT),
-            uuid(EPOCH),
+            (uuid(OCCUPANT), uuid(EPOCH)),
             body.to_owned(),
             Vec::new(),
             draft(body),
@@ -594,6 +600,7 @@ mod tests {
 
     fn wake_submission(id: &str, lane: &str, body: &str) -> Submission {
         Submission::wake(
+            uuid(id),
             uuid(id),
             uuid(lane),
             body.to_owned(),
@@ -615,6 +622,44 @@ mod tests {
             escalations: Vec::new(),
             expires: "2030-01-01T00:05:00.000Z".parse::<Instant>().unwrap(),
         }
+    }
+
+    #[test]
+    fn one_lineage_submit_keeps_one_fanout_across_distinct_target_commands() {
+        let mut queue = SubmissionQueue::default();
+        for (id, lane) in [(ID_A, LANE_A), (ID_B, LANE_B)] {
+            queue
+                .enqueue(Submission::new(
+                    uuid(id),
+                    uuid(FANOUT),
+                    uuid(lane),
+                    (uuid(OCCUPANT), uuid(EPOCH)),
+                    "prefer rg for repository searches".to_owned(),
+                    Vec::new(),
+                    draft("prefer rg for repository searches"),
+                ))
+                .unwrap();
+        }
+
+        let ready = queue.ready();
+        assert_eq!(ready.len(), 2);
+        assert_ne!(ready[0].id, ready[1].id);
+        assert!(
+            ready
+                .iter()
+                .all(|submission| submission.fanout == uuid(FANOUT))
+        );
+
+        for id in [ID_A, ID_B] {
+            queue.sent(uuid(id)).unwrap();
+        }
+        queue.reconnect();
+        assert!(
+            queue
+                .ready()
+                .iter()
+                .all(|submission| submission.fanout == uuid(FANOUT))
+        );
     }
 
     #[test]

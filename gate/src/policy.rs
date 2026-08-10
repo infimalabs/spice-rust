@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize, Serializer};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use matcher::{PathPattern, compile_stem_expression};
 pub use migration::{MigrationError, migrate_predecessor_policy};
-pub use runtime::{CompileError, Policy, ResolveError};
+pub use runtime::{Applicability, CompileError, Policy, ResolveError};
 
 /// The explicitly supported stem-pattern dialect.
 pub const REGEX_DIALECT_NAME: &str = "rust-regex-1";

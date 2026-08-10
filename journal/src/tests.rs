@@ -30,6 +30,7 @@ mod steering_index;
 mod steering_verification;
 mod topology_revision_migration;
 mod transcript;
+mod vocabulary_migration;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 

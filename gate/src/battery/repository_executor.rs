@@ -59,6 +59,11 @@ enum FamilyExecution {
     Refused(String),
 }
 
+pub(super) enum VerifierContractAcquisition {
+    Applicable(VerifierCompilerContract),
+    NotApplicable(String),
+}
+
 /// One capture-owning production implementation of [`BatteryExecutor`].
 ///
 /// A family is projected when its first arm is requested. A complete capture
@@ -102,6 +107,7 @@ pub struct RepositoryExecutor<'trace> {
     families: [Option<FamilyExecution>; FAMILY_COUNT],
     verifier_environment: Vec<(OsString, OsString)>,
     verifier_evidence: Vec<VerifierCompilerEvidence>,
+    verifier_evidence_required: bool,
     selected: Option<GateId>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 }
@@ -247,6 +253,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             families: std::array::from_fn(|_| None),
             verifier_environment: Vec::new(),
             verifier_evidence: Vec::new(),
+            verifier_evidence_required: false,
             selected,
             trace,
         })
@@ -281,14 +288,31 @@ impl<'trace> RepositoryExecutor<'trace> {
         gate_id: GateId,
         environment: Vec<(OsString, OsString)>,
     ) -> Result<VerifierCompilerContract, BatteryError> {
+        match self.verifier_compiler_contract_acquisition(gate_id, environment)? {
+            VerifierContractAcquisition::Applicable(contract) => Ok(contract),
+            VerifierContractAcquisition::NotApplicable(reason) => Err(BatteryError::new(reason)),
+        }
+    }
+
+    pub(super) fn verifier_compiler_contract_acquisition(
+        &self,
+        gate_id: GateId,
+        environment: Vec<(OsString, OsString)>,
+    ) -> Result<VerifierContractAcquisition, BatteryError> {
         if self.selected.is_some() {
             return Err(BatteryError::new(
                 "selected-arm captures cannot mint full-verifier evidence contracts",
             ));
         }
         let source = ToolchainSource::capture(&self.tree, self.rim.clone());
-        let tools =
-            acquire_verifier_tools(&source, &self.contract, gate_id).map_err(BatteryError::new)?;
+        let tools = match acquire_verifier_tools(&source, &self.contract, gate_id)
+            .map_err(BatteryError::new)?
+        {
+            Ok(tools) => tools,
+            Err(reason) => {
+                return Ok(VerifierContractAcquisition::NotApplicable(reason));
+            }
+        };
         VerifierCompilerContract::new(
             gate_id,
             self.source.clone(),
@@ -297,6 +321,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             tools,
             environment,
         )
+        .map(VerifierContractAcquisition::Applicable)
         .map_err(BatteryError::new)
     }
 
@@ -305,6 +330,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         &mut self,
         evidence: &[VerifierCompilerEvidence],
         environment: Vec<(OsString, OsString)>,
+        required: bool,
     ) -> Result<(), BatteryError> {
         if self.selected.is_some() {
             return Err(BatteryError::new(
@@ -318,6 +344,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         }
         self.verifier_environment = environment;
         self.verifier_evidence = evidence.to_vec();
+        self.verifier_evidence_required = required;
         Ok(())
     }
 
@@ -411,6 +438,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             &self.source,
             &self.verifier_environment,
             &self.verifier_evidence,
+            self.verifier_evidence_required,
         );
         if let Some(gate_id) = self.selected {
             let observation = acquire_toolchain_arm(&source, &self.contract, gate_id)

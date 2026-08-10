@@ -35,6 +35,74 @@ fn empty_database_reaches_the_same_finalized_baseline_once() {
     assert_eq!(verified.threads, 0);
 }
 
+#[test]
+fn schema_nine_steps_through_wire_only_expansions_without_rewriting_authority() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("schema-nine.sqlite3");
+    let journal = authority_file_fixture(&path);
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE journal_schema SET version = 9 WHERE singleton = 1;
+             PRAGMA user_version = 9;",
+        )
+        .expect("downgrade source-unaware fixture identity");
+    let mut before = table_census(&journal.connection);
+    before.remove("journal_schema");
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("schema-nine authority migrates");
+    let migration = journal.migration().expect("wire-only steps run");
+    assert_eq!((migration.from(), migration.to()), (9, SCHEMA_VERSION));
+    assert_eq!(
+        version_records(&journal.connection),
+        (SCHEMA_VERSION, SCHEMA_VERSION)
+    );
+    let mut after = table_census(&journal.connection);
+    after.remove("journal_schema");
+    assert_eq!(
+        after, before,
+        "the wire-only step rewrites no authority row"
+    );
+    journal
+        .verify()
+        .expect("migrated authority remains coherent");
+}
+
+#[test]
+fn schema_ten_steps_to_fanout_aware_steering_without_rewriting_authority() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("schema-ten.sqlite3");
+    let journal = authority_file_fixture(&path);
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE journal_schema SET version = 10 WHERE singleton = 1;
+             PRAGMA user_version = 10;",
+        )
+        .expect("downgrade fanout-unaware fixture identity");
+    let mut before = table_census(&journal.connection);
+    before.remove("journal_schema");
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("schema-ten authority migrates");
+    let migration = journal.migration().expect("fanout-aware step runs");
+    assert_eq!((migration.from(), migration.to()), (10, SCHEMA_VERSION));
+    assert_eq!(
+        version_records(&journal.connection),
+        (SCHEMA_VERSION, SCHEMA_VERSION)
+    );
+    let mut after = table_census(&journal.connection);
+    after.remove("journal_schema");
+    assert_eq!(
+        after, before,
+        "the fanout wire step rewrites no authority row"
+    );
+    journal
+        .verify()
+        .expect("fanout-aware authority remains coherent");
+}
+
 /// Every row of every table, so a migration cannot quietly recreate one.
 ///
 /// Reading the columns back as SQLite values rather than counting rows is the

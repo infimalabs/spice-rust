@@ -339,6 +339,54 @@ struct CompiledSelector {
     paths: Vec<PathPattern>,
 }
 
+/// One named, compiled applicability selector shared by policy consumers.
+#[derive(Debug, Clone)]
+pub struct Applicability {
+    subject: RuleId,
+    selector: CompiledSelector,
+}
+
+impl Applicability {
+    /// Compile one selector through the current shared scope grammar.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact malformed selector field under `subject`.
+    pub fn compile(subject: RuleId, selector: &ScopeSelector) -> Result<Self, CompileError> {
+        Ok(Self {
+            selector: CompiledSelector::compile(&subject, selector)?,
+            subject,
+        })
+    }
+
+    /// Canonical selector retained after compilation.
+    #[must_use]
+    pub const fn selector(&self) -> &ScopeSelector {
+        &self.selector.canonical
+    }
+
+    /// Whether the supplied context satisfies this selector.
+    ///
+    /// # Errors
+    ///
+    /// Refuses malformed context and every constrained axis the caller omitted.
+    pub fn matches(&self, context: &PolicyContext) -> Result<bool, ResolveError> {
+        let normalized = NormalizedContext::new(context)?;
+        Ok(self
+            .selector
+            .evaluate(&self.subject, "applicability", &normalized)?
+            .matched)
+    }
+}
+
+impl PartialEq for Applicability {
+    fn eq(&self, other: &Self) -> bool {
+        self.subject == other.subject && self.selector.canonical == other.selector.canonical
+    }
+}
+
+impl Eq for Applicability {}
+
 impl CompiledSelector {
     fn compile(rule: &RuleId, selector: &ScopeSelector) -> Result<Self, CompileError> {
         let paths = normalize_paths(rule, &selector.paths)?;

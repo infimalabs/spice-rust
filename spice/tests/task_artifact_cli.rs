@@ -181,7 +181,7 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
 }
 
 #[test]
-fn task_artifact_refuses_malformed_project_policy_before_state_access() {
+fn task_artifact_refuses_malformed_mount_registry_before_state_access() {
     let fixture = Fixture::new();
     fs::write(
         fixture.root.join("spice-rust.toml"),
@@ -201,12 +201,12 @@ fn task_artifact_refuses_malformed_project_policy_before_state_access() {
     else {
         panic!("malformed project policy did not refuse")
     };
-    assert_eq!(refusal.reason(), "artifact::configuration-refused");
+    assert_eq!(refusal.reason(), "cli::mount-registry-refused");
     assert_eq!(
         refusal
             .diagnostic()
             .and_then(wire::RefusalDiagnostic::expected),
-        Some("one admitted tracked task-project policy and machine-local configuration")
+        Some("one valid tracked command mount registry")
     );
     let observed = refusal
         .diagnostic()
@@ -228,7 +228,7 @@ fn task_artifact_refuses_opaque_binary_without_panicking_or_publishing() {
             "--project".to_owned(),
             "rim.artifact".to_owned(),
             "--origin".to_owned(),
-            "fixture:task-artifact-cli".to_owned(),
+            "fixture:task-artifact-cli-opaque".to_owned(),
         ])
         .body
         .task;

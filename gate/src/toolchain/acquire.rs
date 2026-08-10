@@ -168,6 +168,7 @@ pub struct ToolchainSource<'a> {
     identity: Option<&'a Digest>,
     verifier_environment: &'a [(OsString, OsString)],
     verifier_evidence: &'a [VerifierCompilerEvidence],
+    verifier_evidence_required: bool,
 }
 
 impl<'a> ToolchainSource<'a> {
@@ -186,6 +187,7 @@ impl<'a> ToolchainSource<'a> {
             identity: None,
             verifier_environment: &[],
             verifier_evidence: &[],
+            verifier_evidence_required: false,
         }
     }
 
@@ -198,6 +200,7 @@ impl<'a> ToolchainSource<'a> {
         identity: &'a Digest,
         verifier_environment: &'a [(OsString, OsString)],
         verifier_evidence: &'a [VerifierCompilerEvidence],
+        verifier_evidence_required: bool,
     ) -> Self {
         Self {
             root: tree.root(),
@@ -207,6 +210,7 @@ impl<'a> ToolchainSource<'a> {
             identity: Some(identity),
             verifier_environment,
             verifier_evidence,
+            verifier_evidence_required,
         }
     }
 
@@ -241,6 +245,11 @@ impl<'a> ToolchainSource<'a> {
     /// Ambient compiler environment captured by the consuming verifier.
     pub(super) const fn verifier_environment(&self) -> &[(OsString, OsString)] {
         self.verifier_environment
+    }
+
+    /// Whether compiler arms must refuse rather than execute on evidence drift.
+    pub(super) const fn verifier_evidence_required(&self) -> bool {
+        self.verifier_evidence_required
     }
 
     /// Selected-tree-relative paths the rim captured as changed.
@@ -351,11 +360,14 @@ pub(crate) fn acquire_toolchain_arm(
 
 /// Probe and validate the exact declared tools a reusable verifier contract
 /// must bind, without running the arm's analysis.
+///
+/// The inner result distinguishes an inapplicable arm from acquired tools;
+/// the outer result retains actual acquisition failures.
 pub(crate) fn acquire_verifier_tools(
     source: &ToolchainSource<'_>,
     contract: &Contract,
     gate_id: GateId,
-) -> Result<Vec<ToolEvidence>, String> {
+) -> Result<Result<Vec<ToolEvidence>, String>, String> {
     let declaration = TOOLCHAIN_ARMS
         .into_iter()
         .find(|declaration| declaration.id == gate_id)
@@ -367,7 +379,11 @@ pub(crate) fn acquire_verifier_tools(
         ));
     }
     if let Some(analysis) = analyze::before_tools(declaration, source.root()) {
-        return Err(analysis.reason);
+        return if analysis.outcome == ArmOutcome::NotApplicable {
+            Ok(Err(analysis.reason))
+        } else {
+            Err(analysis.reason)
+        };
     }
     let tools = declaration
         .tools
@@ -377,7 +393,7 @@ pub(crate) fn acquire_verifier_tools(
     if let Some(analysis) = refusal(declaration, &tools) {
         return Err(analysis.reason);
     }
-    Ok(tools)
+    Ok(Ok(tools))
 }
 
 fn observe(
@@ -454,6 +470,20 @@ fn examine(
     }
     if let Some(reused) = reusable_verifier_analysis(declaration, source, bounds, tools) {
         return reused;
+    }
+    if source.verifier_evidence_required()
+        && matches!(
+            declaration.id,
+            GateId::RustTypecheck | GateId::CanvasWebTypecheck
+        )
+    {
+        return Analysis::terminal(
+            ArmOutcome::ParseFailure,
+            format!(
+                "{} required admitted verifier evidence, but current tool evidence no longer matches",
+                declaration.id.as_str()
+            ),
+        );
     }
     let Some(owed) = owed_analyzer(declaration.id) else {
         return match declaration.id {

@@ -147,6 +147,42 @@ pub enum DoctorObservation {
     },
 }
 
+/// Stateful subsystem contributing one bounded Doctor diagnosis row.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DoctorSubsystem {
+    /// Current task heads and board policy admission.
+    Board,
+    /// Canonical authority schema, cursor, facts, and heads.
+    Journal,
+    /// Disposable fold materializations.
+    Fold,
+    /// Durable steering replay.
+    Steering,
+    /// Current resident lane head.
+    Lane,
+    /// Published resident transport discovery.
+    Transport,
+    /// Durable installation receipt.
+    Installation,
+    /// Durable release publication facts.
+    Release,
+}
+
+impl DoctorSubsystem {
+    /// The complete stateful subsystem roster in report order.
+    pub const ALL: &[Self] = &[
+        Self::Board,
+        Self::Journal,
+        Self::Fold,
+        Self::Steering,
+        Self::Lane,
+        Self::Transport,
+        Self::Installation,
+        Self::Release,
+    ];
+}
+
 /// Whether a declared external tool may be launched by its command.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -320,6 +356,16 @@ pub struct DoctorEnvironment {
     pub observation: DoctorObservation,
 }
 
+/// One stateful subsystem's side-effect-free diagnosis.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DoctorSubsystemDiagnosis {
+    /// Closed subsystem identity.
+    pub subsystem: DoctorSubsystem,
+    /// Current bounded observation.
+    pub observation: DoctorObservation,
+}
+
 /// Winning source for one effective configuration leaf.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -402,6 +448,8 @@ pub struct DoctorReport<C> {
     pub locations: DoctorLocations,
     /// Presence of every known ambient variable.
     pub environment: Vec<DoctorEnvironment>,
+    /// One deterministic row for every stateful subsystem.
+    pub subsystems: Vec<DoctorSubsystemDiagnosis>,
     /// Fully admitted effective typed configuration.
     pub configuration: C,
     /// One source row for every concrete effective leaf.
@@ -414,7 +462,7 @@ pub struct DoctorReport<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DoctorObservation, DoctorReport, SpiceVariable};
+    use super::{DoctorObservation, DoctorReport, DoctorSubsystem, SpiceVariable};
 
     #[test]
     fn observation_objects_reject_unknown_fields_and_variants() {
@@ -442,6 +490,29 @@ mod tests {
     }
 
     #[test]
+    fn subsystem_roster_has_one_stable_wire_spelling_per_row() {
+        let expected = [
+            "\"board\"",
+            "\"journal\"",
+            "\"fold\"",
+            "\"steering\"",
+            "\"lane\"",
+            "\"transport\"",
+            "\"installation\"",
+            "\"release\"",
+        ];
+        assert_eq!(DoctorSubsystem::ALL.len(), expected.len());
+        for (subsystem, expected) in DoctorSubsystem::ALL.iter().zip(expected) {
+            let bytes = crate::encode(subsystem).expect("subsystem encodes");
+            assert_eq!(bytes, expected.as_bytes());
+            assert_eq!(
+                crate::decode::<DoctorSubsystem>(&bytes).expect("subsystem decodes"),
+                *subsystem,
+            );
+        }
+    }
+
+    #[test]
     fn report_structures_reject_unknown_fields_at_every_level() {
         const REPORT: &str = concat!(
             r#"{"target":{"os":"linux","architecture":"x86_64"}"#,
@@ -450,6 +521,8 @@ mod tests {
             r#","tracked_configuration":"/repo/spice-rust.toml""#,
             r#","local_configuration":"/repo/.git/.spice-rs/config.toml"}"#,
             r#","environment":[{"variable":"SPICE_RS_HOOKS""#, // env-policy: allow
+            r#","observation":{"status":"ready"}}]"#,
+            r#","subsystems":[{"subsystem":"journal""#,
             r#","observation":{"status":"ready"}}]"#,
             r#","configuration":null"#,
             r#","provenance":[{"path":"lane.lease","source":"builtin"}]"#,
@@ -466,12 +539,14 @@ mod tests {
         let admitted: DoctorReport<()> =
             crate::decode(REPORT.as_bytes()).expect("complete report decodes");
         assert_eq!(admitted.commands[0].command, "doctor");
+        assert_eq!(admitted.subsystems[0].subsystem, DoctorSubsystem::Journal);
 
         for pointer in [
             "",
             "/target",
             "/locations",
             "/environment/0",
+            "/subsystems/0",
             "/provenance/0",
             "/commands/0",
             "/commands/0/tools/0",

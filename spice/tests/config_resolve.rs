@@ -167,7 +167,7 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
     let tracked = concat!(
         "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
         "[policy]\nenv_names = ['FIXTURE_INBOX']\n",
-        "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
+        "[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n",
     );
     let local = "[lock.worker]\ndirectory = 'locks/worker'\nshards = 2\n";
 
@@ -588,7 +588,7 @@ const TRACKED_ALL_DESCRIPTOR_DOCUMENT: &str = r#"
 "report.inspect" = ["tool", "report", "inspect"]
 
 [taste.alpha]
-words = ["done*"]
+words = ["done"]
 message = "Done."
 
 [tasks]
@@ -842,11 +842,11 @@ resend = ["2m", "4m", "6m"]
 skip = ["target/**"]
 
 [taste.zeta]
-words = ["wait*"]
+words = ["wait"]
 message = "Wait."
 
 [taste.alpha]
-words = ["done*"]
+words = ["done"]
 message = "Done."
 "#,
         ),

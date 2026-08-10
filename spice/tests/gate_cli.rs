@@ -173,7 +173,7 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
                 "    ;;\n",
                 "  test) exit 0 ;;\n",
                 "  fmt) exit 0 ;;\n",
-                "  check)\n",
+                "  clippy|check)\n",
                 "    /bin/sleep 30 & child=$!\n",
                 "    printf '%s\\n' \"$child\" > '{}'\n",
                 "    wait\n",
@@ -364,6 +364,11 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     }
     std::os::unix::fs::symlink(env!("CARGO"), tripwires.path().join("cargo"))
         .expect("make canonical test runner Cargo available inside the process tripwire path");
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO")).with_file_name("rustc"),
+        tripwires.path().join("rustc"),
+    )
+    .expect("make Cargo's exact Rust compiler available inside the process tripwire path");
 
     let gate = invoke_with_path(&["gate"], repository.path(), Some(tripwires.path()));
     let report = report_body(&gate);

@@ -1,6 +1,7 @@
 //! Process coverage for the resident's transcript-backed steering path.
 
 use std::fs;
+use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
@@ -9,6 +10,10 @@ use std::sync::{Arc, Barrier};
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
+use serde::de::DeserializeOwned;
+use tungstenite::client::IntoClientRequest;
+use tungstenite::http::header::ORIGIN;
+use tungstenite::{Message, WebSocket};
 use wire::{Actor, FactKind, Instant, Outcome, Producer};
 
 #[path = "support/fixture_root.rs"]
@@ -29,6 +34,41 @@ const SESSION_RECORD: &str =
 struct Fixture {
     root: PathBuf,
     runtime: PathBuf,
+}
+
+struct InboxPermissionBlock {
+    path: PathBuf,
+    original: Option<fs::Permissions>,
+}
+
+impl InboxPermissionBlock {
+    fn new(path: PathBuf) -> Self {
+        let original = fs::metadata(&path)
+            .expect("fixture inbox metadata")
+            .permissions();
+        let mut blocked = original.clone();
+        blocked.set_readonly(true);
+        fs::set_permissions(&path, blocked)
+            .expect("fixture blocks inbox publication without changing its admitted shape");
+        Self {
+            path,
+            original: Some(original),
+        }
+    }
+
+    fn restore(mut self) {
+        let original = self.original.take().expect("permission block is armed");
+        fs::set_permissions(&self.path, original)
+            .expect("fixture restores inbox publication permissions");
+    }
+}
+
+impl Drop for InboxPermissionBlock {
+    fn drop(&mut self) {
+        if let Some(original) = self.original.take() {
+            let _ = fs::set_permissions(&self.path, original);
+        }
+    }
 }
 
 impl Fixture {
@@ -56,7 +96,12 @@ impl Fixture {
         fs::write(
             root.join("spice-rust.toml"),
             format!(
-                "[lane]\nlease = \"1s\"\n\n[vendor.claude]\nbinary = {:?}\n",
+                concat!(
+                    "[lane]\nlease = \"1s\"\n\n",
+                    "[tasks]\nstems = [\"taste\"]\n\n",
+                    "[policy]\ntaste_mining_threshold = 3\n\n",
+                    "[vendor.claude]\nbinary = {:?}\n",
+                ),
                 vendor.display().to_string()
             ),
         )
@@ -70,6 +115,11 @@ impl Fixture {
 
     fn canvas(&self) -> PathBuf {
         self.runtime.join("canvas")
+    }
+
+    fn discovery(&self) -> canvas::Discovery {
+        wire::decode(&fs::read(self.canvas()).expect("operator discovery reads"))
+            .expect("operator discovery decodes")
     }
 
     fn tape(&self, lane: wire::CanonicalUuid) -> PathBuf {
@@ -225,6 +275,94 @@ fn text_directive(output: &Output) -> wire::intent::DirectiveAnswer {
 fn text_inbox(output: &Output) -> wire::intent::InboxAnswer {
     assert!(output.status.success(), "inbox failed: {:?}", output.stderr);
     wire::decode(&output.stdout).expect("text reply carries the inbox body")
+}
+
+fn operator_socket(fixture: &Fixture) -> (WebSocket<TcpStream>, canvas::Discovery) {
+    let discovery = fixture.discovery();
+    let authority = discovery
+        .endpoint
+        .strip_prefix("http://")
+        .expect("fixture endpoint is HTTP");
+    let stream = TcpStream::connect(authority).expect("operator socket connects");
+    let mut request = format!("ws://{authority}/socket")
+        .into_client_request()
+        .expect("operator socket request");
+    request
+        .headers_mut()
+        .insert(ORIGIN, discovery.endpoint.parse().expect("operator origin"));
+    let (mut socket, _) = tungstenite::client(request, stream).expect("operator socket opens");
+    socket_send(
+        &mut socket,
+        &wire::Hello {
+            wire: wire::WireVersion::CURRENT,
+            capability: discovery.capability,
+            epoch: discovery.epoch,
+        },
+    );
+    let accepted: wire::Accepted = socket_receive(&mut socket);
+    assert_eq!(accepted.actor, Actor::Operator);
+    assert_eq!(accepted.epoch, discovery.epoch);
+    (socket, discovery)
+}
+
+fn socket_send<T: serde::Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) {
+    socket
+        .send(Message::Binary(
+            wire::encode(value).expect("socket value encodes").into(),
+        ))
+        .expect("socket value sends");
+}
+
+fn socket_receive<T: DeserializeOwned>(socket: &mut WebSocket<TcpStream>) -> T {
+    loop {
+        match socket.read().expect("socket value arrives") {
+            Message::Binary(bytes) => {
+                return wire::decode(&bytes).expect("binary socket value decodes");
+            }
+            Message::Text(text) => {
+                return wire::decode(text.as_bytes()).expect("text socket value decodes");
+            }
+            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
+            Message::Close(_) => panic!("resident closed before its answer"),
+        }
+    }
+}
+
+fn send_operator_direction(
+    socket: &mut WebSocket<TcpStream>,
+    discovery: &canvas::Discovery,
+    directive: wire::CanonicalUuid,
+    fanout: wire::CanonicalUuid,
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+    message: &str,
+) -> wire::intent::DirectiveAnswer {
+    socket_send(
+        socket,
+        &wire::Command {
+            v: wire::WireVersion::CURRENT,
+            id: directive,
+            epoch: discovery.epoch,
+            kind: wire::CommandKind::SteerSend,
+            expected: vec![wire::Witness::Residency {
+                lane,
+                occupant,
+                epoch: discovery.epoch,
+            }],
+            body: wire::intent::SteerSend {
+                fanout,
+                lane,
+                message: message.to_owned(),
+                attachments: Vec::new(),
+            },
+        },
+    );
+    let response: wire::Response<wire::intent::DirectiveAnswer> = socket_receive(socket);
+    assert_eq!((response.id, response.epoch), (directive, discovery.epoch));
+    let Outcome::Reply(reply) = response.outcome else {
+        panic!("operator steering did not reply")
+    };
+    reply.body
 }
 
 fn setup() -> (Fixture, RunningResident, Lanes) {
@@ -420,8 +558,10 @@ fn record_reply(
     bytes.push(b'\n');
     let tape = tape::Tape::open(fixture.tape(lane)).expect("lane tape opens");
     let locus = tape.tee(&bytes).expect("assistant record reaches tape");
+    let source = tape.source_id().expect("assistant tape source reads");
     let column = text.find(token).expect("reply names its token") + 1;
     wire::body::TranscriptLocus {
+        source: Some(source.as_str().parse().expect("tape source is canonical")),
         member: locus.member,
         offset: locus.offset,
         length: locus.length,
@@ -720,8 +860,7 @@ fn rendering_failure_path(
     // its disposable inbox rendering fails, and the failure is observable.
     let lane = lane.to_string();
     let inbox_root = fixture.runtime.join("inbox");
-    fs::remove_dir_all(&inbox_root).expect("fixture removes disposable inbox renderings");
-    fs::write(&inbox_root, b"blocked").expect("fixture blocks inbox publication");
+    let publication_block = InboxPermissionBlock::new(inbox_root.clone());
     let sent = text_directive(&invoke(
         fixture,
         &["steer", &lane, "remain authoritative without a rendering"],
@@ -774,12 +913,15 @@ fn rendering_failure_path(
         "startup replay regressed the parked source cursor"
     );
     assert_eq!(replayed_keys, keys);
-    assert_eq!(replayed_failure, failure);
+    assert!(
+        replayed_failure.contains("steer::inbox-unwritable"),
+        "restart changed the parked failure class: {replayed_failure}"
+    );
     assert_eq!(replayed_repair, repair);
     let duplicate = invoke_as_lane(fixture, &lane, &["ack", historical_key], true);
     assert_refusal(&duplicate, "steer::ack-missed");
 
-    fs::remove_file(&inbox_root).expect("fixture unblocks inbox publication");
+    publication_block.restore();
     let repaired = invoke(fixture, &["steer", "repair", &lane], true);
     let Outcome::Reply(repaired): Outcome<wire::intent::DeliveryAnswer> = json_outcome(&repaired)
     else {
@@ -990,4 +1132,301 @@ fn instant(value: &str) -> Instant {
     value.parse().expect("canonical fixture instant")
 }
 
-include!("steering/tail.rs");
+#[test]
+fn resend_before_the_first_horizon_redelivers_one_unchanged_stable_directive() {
+    let (fixture, resident, lanes) = setup();
+    let lane = lanes.target.to_string();
+    let sent = text_directive(&invoke(
+        &fixture,
+        &["steer", &lane, "deliver this stable direction again"],
+        false,
+    ));
+    let resent = text_directive(&invoke(
+        &fixture,
+        &["steer", "resend", &sent.directive.to_string()],
+        false,
+    ));
+    assert_eq!(resent, sent);
+
+    let inbox = text_inbox(&invoke(&fixture, &["inbox", &lane], false));
+    let pending = inbox.lanes[0]
+        .pending
+        .iter()
+        .find(|pending| pending.directive == sent.directive)
+        .expect("redelivered directive remains pending");
+    assert_eq!(pending.key, sent.key);
+    assert_eq!(pending.stage, wire::body::SteeringStage::Published);
+    assert!(pending.escalations.is_empty());
+
+    let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
+    let snapshot = journal.fact_snapshot().expect("steering facts read");
+    assert!(snapshot.facts().iter().all(|envelope| {
+        envelope
+            .fact
+            .read::<wire::body::SteerEscalated>()
+            .is_none_or(|body| body.directive != sent.directive)
+    }));
+
+    let canceled = text_directive(&invoke(
+        &fixture,
+        &["steer", "cancel", &sent.directive.to_string()],
+        false,
+    ));
+    assert_eq!(canceled.directive, sent.directive);
+    assert_eq!(canceled.key, sent.key);
+    assert_eq!(canceled.disposition, wire::Disposition::Canceled);
+    stop(&fixture, resident);
+}
+
+#[test]
+fn transcript_ack_persists_the_tape_generation_source() {
+    let (fixture, resident, lanes) = setup();
+    let lane = lanes.target.to_string();
+    let sent = text_directive(&invoke(
+        &fixture,
+        &["steer", &lane, "persist the transcript source"],
+        false,
+    ));
+    let expected = record_reply(
+        &fixture,
+        lanes.target,
+        &format!("ACK {}: source captured", sent.key),
+        &sent.key,
+    );
+    let acknowledged = text_directive(&invoke_as_lane(&fixture, &lane, &["ack", &sent.key], false));
+    assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
+
+    let facts = journal::Journal::open(fixture.journal())
+        .expect("steering journal opens")
+        .fact_snapshot()
+        .expect("steering facts read");
+    let observed = facts
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.fact.read::<wire::body::SteerAcked>())
+        .find(|body| body.directive == sent.directive)
+        .expect("acknowledgment fact is durable");
+    assert_eq!(observed.locus, expected);
+    let source = tape::Tape::open_existing(fixture.tape(lanes.target))
+        .expect("lane tape opens")
+        .source_id()
+        .expect("lane tape source reads")
+        .as_str()
+        .parse()
+        .expect("tape source is canonical");
+    assert_eq!(observed.locus.source, Some(source));
+    stop(&fixture, resident);
+}
+
+fn shared_canvas_fanout(
+    fixture: &Fixture,
+    lanes: Lanes,
+    correction: &str,
+) -> (
+    wire::CanonicalUuid,
+    wire::intent::DirectiveAnswer,
+    wire::intent::DirectiveAnswer,
+) {
+    let fanout = uuid("00000000-0000-4000-8000-000000000080");
+    let (mut socket, discovery) = operator_socket(fixture);
+    let target = send_operator_direction(
+        &mut socket,
+        &discovery,
+        uuid("00000000-0000-4000-8000-000000000081"),
+        fanout,
+        lanes.target,
+        current_occupant(fixture, lanes.target),
+        correction,
+    );
+    let other = send_operator_direction(
+        &mut socket,
+        &discovery,
+        uuid("00000000-0000-4000-8000-000000000082"),
+        fanout,
+        lanes.other,
+        current_occupant(fixture, lanes.other),
+        correction,
+    );
+    drop(socket);
+
+    let target_locus = acknowledge(fixture, lanes.target, &target);
+    let other_locus = acknowledge(fixture, lanes.other, &other);
+    assert_ne!(target_locus.source, other_locus.source);
+    assert_eq!(
+        (
+            target_locus.member,
+            target_locus.offset,
+            target_locus.length,
+            target_locus.event,
+            target_locus.line,
+            target_locus.column,
+        ),
+        (
+            other_locus.member,
+            other_locus.offset,
+            other_locus.length,
+            other_locus.event,
+            other_locus.line,
+            other_locus.column,
+        ),
+        "separate real tapes deliberately share local coordinates"
+    );
+    (fanout, target, other)
+}
+
+fn acknowledge(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+    sent: &wire::intent::DirectiveAnswer,
+) -> wire::body::TranscriptLocus {
+    let locus = record_reply(
+        fixture,
+        lane,
+        &format!("ACK {}: applied", sent.key),
+        &sent.key,
+    );
+    let acknowledged = text_directive(&invoke_as_lane(
+        fixture,
+        &lane.to_string(),
+        &["ack", &sent.key],
+        false,
+    ));
+    assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
+    locus
+}
+
+fn distinct_cli_fanouts(
+    fixture: &Fixture,
+    lanes: Lanes,
+    correction: &str,
+) -> (wire::intent::DirectiveAnswer, wire::intent::DirectiveAnswer) {
+    let target_lane = lanes.target.to_string();
+    let other_lane = lanes.other.to_string();
+    let target = text_directive(&invoke(
+        fixture,
+        &["steer", &target_lane, correction],
+        false,
+    ));
+    let other = text_directive(&invoke(fixture, &["steer", &other_lane, correction], false));
+    acknowledge(fixture, lanes.target, &target);
+    acknowledge(fixture, lanes.other, &other);
+    (target, other)
+}
+
+fn assert_fanout_authority(
+    fixture: &Fixture,
+    fanout: wire::CanonicalUuid,
+    target: &wire::intent::DirectiveAnswer,
+    other: &wire::intent::DirectiveAnswer,
+    cli_target: &wire::intent::DirectiveAnswer,
+    cli_other: &wire::intent::DirectiveAnswer,
+) {
+    let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
+    let facts = journal.fact_snapshot().expect("steering facts read");
+    let sent_fanout = |directive| {
+        facts
+            .facts()
+            .iter()
+            .filter_map(|fact| fact.fact.read::<wire::body::SteerSent>())
+            .find(|sent| sent.directive == directive)
+            .expect("operator direction is durable")
+            .fanout
+            .expect("current operator direction carries fanout")
+    };
+    assert_eq!(sent_fanout(target.directive), fanout);
+    assert_eq!(sent_fanout(other.directive), fanout);
+    let cli_target_fanout = sent_fanout(cli_target.directive);
+    let cli_other_fanout = sent_fanout(cli_other.directive);
+    assert_ne!(cli_target_fanout, fanout);
+    assert_ne!(cli_other_fanout, fanout);
+    assert_ne!(cli_target_fanout, cli_other_fanout);
+    for directive in [
+        target.directive,
+        other.directive,
+        cli_target.directive,
+        cli_other.directive,
+    ] {
+        let head = journal
+            .read(|read| read.steering_head(directive))
+            .expect("steering head reads")
+            .expect("steering head exists");
+        assert_eq!(head.body().fanout, Some(sent_fanout(directive)));
+    }
+}
+
+fn assert_fanout_mining(
+    fixture: &Fixture,
+    target: &wire::intent::DirectiveAnswer,
+    other: &wire::intent::DirectiveAnswer,
+    cli_target: &wire::intent::DirectiveAnswer,
+    cli_other: &wire::intent::DirectiveAnswer,
+) {
+    let mined = invoke(fixture, &["taste", "mine"], true);
+    assert!(mined.status.success(), "mining failed: {:?}", mined.stderr);
+    let Outcome::Reply(report): Outcome<serde_json::Value> = json_outcome(&mined) else {
+        panic!("mining did not reply: {:?}", mined.stderr)
+    };
+    assert_eq!(report.body["threshold"], 3);
+    assert_eq!(report.body["scanned"], 4);
+    assert_eq!(report.body["excluded"], 0);
+    assert_eq!(report.body["qualifying"], 1);
+    assert_eq!(report.body["findings"][0]["recurrence"], 3);
+    assert_eq!(report.body["findings"][0]["standing"], "filed");
+
+    let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
+    let final_facts = journal.fact_snapshot().expect("mined facts read");
+    let proposals = final_facts
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.fact.read::<wire::body::TaskAdded>())
+        .filter(|added| added.project.starts_with(".maxim_proposal.taste."))
+        .collect::<Vec<_>>();
+    assert_eq!(proposals.len(), 1);
+    let description = proposals[0]
+        .description
+        .as_deref()
+        .expect("mined proposal describes its evidence");
+    assert!(description.contains("Recurrence count: 3"), "{description}");
+    assert!(description.contains(&target.key), "{description}");
+    assert!(!description.contains(&other.key), "{description}");
+    assert!(description.contains(&cli_target.key), "{description}");
+    assert!(description.contains(&cli_other.key), "{description}");
+}
+
+#[test]
+fn mining_deduplicates_one_real_canvas_fanout_across_distinct_lane_tapes() {
+    const CORRECTION: &str = "Do not use grep for repository searches; use rg instead.";
+
+    let (fixture, resident, lanes) = setup();
+    let tracked_before =
+        fs::read_to_string(fixture.root.join("spice-rust.toml")).expect("tracked policy reads");
+    let (fanout, target, other) = shared_canvas_fanout(&fixture, lanes, CORRECTION);
+    let (cli_target, cli_other) = distinct_cli_fanouts(&fixture, lanes, CORRECTION);
+    assert_fanout_authority(&fixture, fanout, &target, &other, &cli_target, &cli_other);
+    assert_fanout_mining(&fixture, &target, &other, &cli_target, &cli_other);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("spice-rust.toml"))
+            .expect("tracked policy still reads"),
+        tracked_before,
+        "mining proposes review work without editing tracked policy"
+    );
+    stop(&fixture, resident);
+}
+
+#[test]
+fn steering_commands_preserve_principals_races_and_restart_state() {
+    let (fixture, mut resident, lanes) = setup();
+    let (acknowledged, historical_key) = acknowledgment_paths(&fixture, &mut resident, lanes);
+    let declined = decline_path(&fixture, lanes.target);
+    let (race, raced) = cancellation_race(&fixture, lanes.target);
+    assert!(matches!(
+        race,
+        wire::Disposition::Canceled | wire::Disposition::Acked
+    ));
+    cancellation_path(&fixture, lanes.target);
+    direct_input_cannot_ack(&fixture, lanes.target);
+    rendering_failure_path(&fixture, resident, lanes.target, &historical_key);
+    let mut expected = vec![acknowledged, declined];
+    expected.extend(raced);
+    verify_authority(&fixture, lanes.target, race, &expected);
+}

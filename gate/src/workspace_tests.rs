@@ -1,4 +1,5 @@
 //! Deterministic, bounded execution of every workspace Rust test target.
+//! Inventory and selection stay here; shard execution lives in `coordinator`.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
@@ -21,6 +22,14 @@ use syn::{Expr, Item, Lit, LitStr, Meta};
 
 use crate::WORKSPACE_TEST_CONCURRENCY_CAP;
 
+mod coordinator;
+
+use coordinator::{
+    Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
+};
+#[cfg(test)]
+use coordinator::{LastTest, isolate_shard_target, target_arguments};
+
 const TARGETS_PER_SHARD: usize = 12;
 const SHARD_DEADLINE: Duration = Duration::from_secs(180);
 const COORDINATOR_DEADLINE: Duration = Duration::from_secs(180);
@@ -35,6 +44,7 @@ const RECORD_FRAME_LIMIT: usize = 256 * 1024;
 const RECORD_QUEUE_CAPACITY: usize = 4_096;
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
+const TEST_WRITABLE_ROOT: &str = "SPICE_WORKSPACE_TEST_WRITABLE_ROOT"; // env-policy: allow
 const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
@@ -219,7 +229,8 @@ pub fn run_at(
 /// Select and run only test targets reached by staged Rust sources according to
 /// canonical Cargo target roots. A reached library target expands to every
 /// test-enabled target in that package because those targets may link the
-/// library.
+/// library. A non-library target reaches only its root and exact `#[path]`
+/// module declarations.
 ///
 /// Unknown or incomplete package reach returns a non-admitting typed report
 /// without launching a narrowed test set. A complete report is emitted only
@@ -396,6 +407,10 @@ impl Inventory {
         entries.insert(
             OsString::from(CARGO_BUILD_BUILD_DIR),
             build.into_os_string(),
+        );
+        entries.insert(
+            OsString::from(TEST_WRITABLE_ROOT),
+            writable_root.into_os_string(),
         );
         Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
     }
@@ -676,11 +691,13 @@ fn selection_report(
 /// Resolve only reach that the Cargo target root or an exact Rust `#[path]`
 /// module declaration establishes; ordinary directory proximity is not reach.
 fn target_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
+    if source == target.source {
+        return true;
+    }
     let direct_root = target_is_library(target)
         .then(|| target.source.parent())
         .flatten();
-    source == target.source
-        || direct_root.is_some_and(|root| source.starts_with(root))
+    direct_root.is_some_and(|root| source.starts_with(root))
         || target
             .declared_path_sources
             .iter()
@@ -780,45 +797,6 @@ fn count_differences<T: Ord + fmt::Debug>(
         })
         .collect()
 }
-
-#[derive(Clone, Copy, Debug)]
-struct RunPolicy {
-    concurrency: usize,
-    shard_deadline: Duration,
-    coordinator_deadline: Duration,
-    progress_interval: Duration,
-    output_drain: Duration,
-    reap: Duration,
-    grace: Duration,
-}
-
-impl RunPolicy {
-    fn production(concurrency: usize) -> Result<Self, WorkspaceTestError> {
-        if !(1..=WORKSPACE_TEST_CONCURRENCY_CAP).contains(&concurrency) {
-            return Err(WorkspaceTestError::new(format!(
-                "workspace test concurrency must be between 1 and {}, \
-                 got {concurrency}",
-                WORKSPACE_TEST_CONCURRENCY_CAP,
-            )));
-        }
-        Ok(Self {
-            concurrency,
-            shard_deadline: SHARD_DEADLINE,
-            coordinator_deadline: COORDINATOR_DEADLINE,
-            progress_interval: PROGRESS_INTERVAL,
-            output_drain: OUTPUT_DRAIN_DEADLINE,
-            reap: REAP_DEADLINE,
-            grace: TERMINATION_GRACE,
-        })
-    }
-
-    fn for_shards(mut self, shards: usize) -> Self {
-        self.concurrency = self.concurrency.min(if shards == 0 { 1 } else { shards });
-        self
-    }
-}
-
-include!("workspace_tests/runtime.rs");
 
 #[cfg(test)]
 mod tests;

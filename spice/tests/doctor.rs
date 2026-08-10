@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use spice::config::Root;
 use spice::placeholder::PlaceholderReason;
 use wire::{
-    ConfigSource, DoctorCommand, DoctorObservation, DoctorReport, DoctorToolSource, Outcome,
-    ReplyPosition, SpiceVariable,
+    ConfigSource, DoctorCommand, DoctorObservation, DoctorReport, DoctorSubsystem,
+    DoctorSubsystemDiagnosis, DoctorToolSource, Outcome, ReplyPosition, SpiceVariable,
 };
 
 const SECRET: &str = "doctor-must-not-render-this-value";
@@ -103,6 +103,14 @@ fn command<'a>(report: &'a DoctorReport<Root>, name: &str) -> &'a DoctorCommand 
         .unwrap_or_else(|| panic!("Doctor omitted command {name:?}"))
 }
 
+fn subsystem(report: &DoctorReport<Root>, name: DoctorSubsystem) -> &DoctorSubsystemDiagnosis {
+    report
+        .subsystems
+        .iter()
+        .find(|row| row.subsystem == name)
+        .unwrap_or_else(|| panic!("Doctor omitted subsystem {name:?}"))
+}
+
 fn non_ready_reason(observation: &DoctorObservation) -> Option<&str> {
     match observation {
         DoctorObservation::Ready {} => None,
@@ -119,6 +127,8 @@ struct HealthyFixture {
     bin: PathBuf,
     marker: PathBuf,
     journal: PathBuf,
+    install: PathBuf,
+    canvas: PathBuf,
     before: BTreeMap<PathBuf, Entry>,
 }
 
@@ -132,6 +142,30 @@ fn healthy_fixture() -> HealthyFixture {
         .path()
         .join(".git/.spice-rs/data/spicejournal.sqlite3");
     fs::write(&journal, b"not an opened journal\n").expect("write authority sentinel");
+    let install = repository.path().join(".git/.spice-rs/install.json");
+    fs::write(&install, b"not an install receipt\n").expect("write install sentinel");
+    let canvas = repository.path().join(".git/.spice-rs/canvas");
+    fs::write(&canvas, b"not a discovery document\n").expect("write transport sentinel");
+    fs::set_permissions(&canvas, fs::Permissions::from_mode(0o600))
+        .expect("secure transport sentinel");
+
+    for (relative, bytes) in [
+        (
+            ".git/.spice/hooks/pre-commit",
+            b"hook sentinel\n".as_slice(),
+        ),
+        (".git/.spice-rs/inbox/steering", b"steering sentinel\n"),
+        (
+            ".git/.spice-rs/artifacts/tasks/projection",
+            b"projection sentinel\n",
+        ),
+        (".spice/team", b"team sentinel\n"),
+    ] {
+        let path = repository.path().join(relative);
+        fs::create_dir_all(path.parent().expect("sentinel parent"))
+            .expect("create state sentinel parent");
+        fs::write(path, bytes).expect("write state sentinel");
+    }
 
     let bin = repository.path().join("fixture-bin");
     fs::create_dir(&bin).expect("create fixture executable directory");
@@ -155,6 +189,8 @@ fn healthy_fixture() -> HealthyFixture {
         bin,
         marker,
         journal,
+        install,
+        canvas,
         before,
     }
 }
@@ -172,6 +208,14 @@ fn same_report(text: &Spoken, json: &Spoken) -> DoctorReport<Root> {
 }
 
 fn assert_task_metadata(report: &DoctorReport<Root>) {
+    assert_eq!(
+        report
+            .subsystems
+            .iter()
+            .map(|row| row.subsystem)
+            .collect::<Vec<_>>(),
+        DoctorSubsystem::ALL,
+    );
     assert_eq!(
         report.configuration.tasks().stems(),
         [
@@ -210,6 +254,21 @@ fn assert_task_metadata(report: &DoctorReport<Root>) {
         report.configuration.tasks().project_max_depth(),
         dialect::PROJECT_MAX_DEPTH as u64
     );
+    assert_tracked_environment_vocabulary(report);
+    for path in [
+        "tasks.stems",
+        "tasks.project_min_depth",
+        "tasks.project_max_depth",
+        "policy.env_names",
+    ] {
+        assert!(
+            report
+                .provenance
+                .iter()
+                .any(|row| { row.path == path && row.source == ConfigSource::Tracked }),
+            "missing tracked provenance for {path}"
+        );
+    }
 }
 
 #[test]
@@ -235,31 +294,33 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
     let report = same_report(&text, &json);
 
     assert_task_metadata(&report);
+    assert_eq!(
+        fs::read(repository.path().join("spice-rust.toml")).unwrap(),
+        tracked
+    );
+    assert_eq!(fs::read(&hook).unwrap(), b"active operator hook sentinel\n");
+    assert_eq!(directory_state(repository.path()), before);
+}
+
+fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
     // Doctor reports the variables Spice owns, while the tracked vocabulary also
-    // accounts the ones its fixtures and Git shadow use: three local Git
-    // names, three Git configuration names, the hygiene fixture's TMPDIR, the
-    // verifier's isolated Canvas/proof binary paths, and predecessor Spice
-    // handoff names used as coexistence sentinels.
-    // The gate's name ledger accounts every name the tree references. That the
-    // manifest holds these and nothing besides Doctor's rows is stated once in
-    // wire/tests/environment_vocabulary.rs. The class is spelled again here
-    // rather than derived from the list under test, so this stays an equality
-    // rather than a containment that could not see an added row; both pins read
-    // the one document, so a copy that fell out of step reds itself.
-    const UNOWNED: [&str; 13] = [
-        "GIT_CONFIG_COUNT",    // env-policy: allow
-        "GIT_CONFIG_SYSTEM",   // env-policy: allow
-        "GIT_DIR",             // env-policy: allow
-        "GIT_EDITOR",          // env-policy: allow
-        "GIT_INDEX_FILE",      // env-policy: allow
-        "GIT_WORK_TREE",       // env-policy: allow
-        "SPICE_CANVAS_BINARY", // env-policy: allow
-        "SPICE_HOOKS",         // env-policy: allow
-        "SPICE_INBOX",         // env-policy: allow
-        "SPICE_LANE",          // env-policy: allow
-        "SPICE_NATIVE_SHELL",  // env-policy: allow
-        "SPICE_PROOF",         // env-policy: allow
-        "TMPDIR",              // env-policy: allow
+    // accounts the ones its fixtures and Git shadow use. The gate's name ledger
+    // is pinned separately in wire/tests/environment_vocabulary.rs.
+    const UNOWNED: [&str; 14] = [
+        "GIT_CONFIG_COUNT",                   // env-policy: allow
+        "GIT_CONFIG_SYSTEM",                  // env-policy: allow
+        "GIT_DIR",                            // env-policy: allow
+        "GIT_EDITOR",                         // env-policy: allow
+        "GIT_INDEX_FILE",                     // env-policy: allow
+        "GIT_WORK_TREE",                      // env-policy: allow
+        "SPICE_CANVAS_BINARY",                // env-policy: allow
+        "SPICE_HOOKS",                        // env-policy: allow
+        "SPICE_INBOX",                        // env-policy: allow
+        "SPICE_LANE",                         // env-policy: allow
+        "SPICE_NATIVE_SHELL",                 // env-policy: allow
+        "SPICE_PROOF",                        // env-policy: allow
+        "SPICE_WORKSPACE_TEST_WRITABLE_ROOT", // env-policy: allow
+        "TMPDIR",                             // env-policy: allow
     ];
     let vocabulary = report.configuration.policy().env_names();
     assert_eq!(
@@ -279,26 +340,6 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
             "the tracked vocabulary accounts {name}, which Doctor reports no row for"
         );
     }
-    for path in [
-        "tasks.stems",
-        "tasks.project_min_depth",
-        "tasks.project_max_depth",
-        "policy.env_names",
-    ] {
-        assert!(
-            report
-                .provenance
-                .iter()
-                .any(|row| { row.path == path && row.source == ConfigSource::Tracked }),
-            "missing tracked provenance for {path}"
-        );
-    }
-    assert_eq!(
-        fs::read(repository.path().join("spice-rust.toml")).unwrap(),
-        tracked
-    );
-    assert_eq!(fs::read(&hook).unwrap(), b"active operator hook sentinel\n");
-    assert_eq!(directory_state(repository.path()), before);
 }
 
 fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, repository: &Path) {
@@ -409,6 +450,12 @@ fn assert_tool_posture_and_text(report: &DoctorReport<Root>, text: &[u8]) {
                 .iter()
                 .filter_map(|tool| non_ready_reason(&tool.observation))
         }))
+        .chain(
+            report
+                .subsystems
+                .iter()
+                .filter_map(|row| non_ready_reason(&row.observation)),
+        )
     {
         assert!(text.contains(reason), "text omitted {reason:?}");
     }
@@ -449,6 +496,33 @@ fn both_forms_report_the_same_read_only_state_without_executing_rtk_or_leaking_e
     assert_locations_configuration_and_provenance(&report, fixture.repository.path());
     assert_environment_presence(&report);
     assert_tool_posture_and_text(&report, &text.out);
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Journal).observation,
+        DoctorObservation::Unavailable { .. }
+    ));
+    for name in [
+        DoctorSubsystem::Board,
+        DoctorSubsystem::Steering,
+        DoctorSubsystem::Lane,
+        DoctorSubsystem::Release,
+    ] {
+        assert!(matches!(
+            subsystem(&report, name).observation,
+            DoctorObservation::Unavailable { .. }
+        ));
+    }
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Fold).observation,
+        DoctorObservation::NotApplicable { .. }
+    ));
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Transport).observation,
+        DoctorObservation::Unavailable { .. }
+    ));
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Installation).observation,
+        DoctorObservation::Unavailable { .. }
+    ));
 
     assert!(
         !fixture.marker.exists(),
@@ -458,7 +532,134 @@ fn both_forms_report_the_same_read_only_state_without_executing_rtk_or_leaking_e
         fs::read(&fixture.journal).expect("read authority sentinel"),
         b"not an opened journal\n"
     );
+    assert_eq!(
+        fs::read(&fixture.install).expect("read install sentinel"),
+        b"not an install receipt\n"
+    );
+    assert_eq!(
+        fs::read(&fixture.canvas).expect("read transport sentinel"),
+        b"not a discovery document\n"
+    );
     assert_eq!(directory_state(fixture.repository.path()), fixture.before);
+}
+
+#[test]
+fn initialized_authority_and_folds_are_diagnosed_without_writing_any_state() {
+    let repository = Scratch::repository("initialized-state");
+    repository.tracked("");
+    let journal_path = repository
+        .path()
+        .join(".git/.spice-rs/data/spicejournal.sqlite3");
+    let journal = journal::Journal::open(&journal_path).expect("initialize journal fixture");
+    assert_eq!(
+        journal.schema_version().expect("fixture schema"),
+        journal::SCHEMA_VERSION
+    );
+    drop(journal);
+    let folds_path = repository
+        .path()
+        .join(".git/.spice-rs/data/spicefolds.sqlite3");
+    drop(fold::Store::open(&folds_path).expect("initialize fold fixture"));
+    let epoch: wire::CanonicalUuid = "00000000-0000-4000-8000-000000000051"
+        .parse()
+        .expect("fixture epoch");
+    let resident_path = repository.path().join(".git/.spice-rs/resident");
+    let lock = sill::LockFile::new(
+        sill::LockName::new("resident").expect("fixture lock name"),
+        &resident_path,
+    );
+    let sill::Acquisition::Acquired(publisher) =
+        lock.try_acquire().expect("acquire fixture resident lock")
+    else {
+        panic!("fixture resident lock must be available");
+    };
+    publisher
+        .rewrite_record(
+            spice::resident_lock::holder_record(std::process::id(), Some(epoch)).as_bytes(),
+        )
+        .expect("publish fixture holder record");
+    canvas::Discovery {
+        endpoint: "http://127.0.0.1:1".to_owned(),
+        capability: "00000000-0000-4000-8000-000000000052"
+            .parse()
+            .expect("fixture capability"),
+        epoch,
+    }
+    .publish(repository.path().join(".git/.spice-rs/canvas"))
+    .expect("publish fixture discovery");
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+    let before = directory_state(repository.path());
+
+    let text = invoke(repository.path(), &["doctor"], empty_path.as_os_str(), &[]);
+    let json = invoke(
+        repository.path(),
+        &["--json", "doctor"],
+        empty_path.as_os_str(),
+        &[],
+    );
+    let report = same_report(&text, &json);
+
+    for name in [
+        DoctorSubsystem::Board,
+        DoctorSubsystem::Journal,
+        DoctorSubsystem::Fold,
+        DoctorSubsystem::Steering,
+        DoctorSubsystem::Transport,
+    ] {
+        assert!(matches!(
+            subsystem(&report, name).observation,
+            DoctorObservation::Ready {}
+        ));
+    }
+    for name in [
+        DoctorSubsystem::Lane,
+        DoctorSubsystem::Installation,
+        DoctorSubsystem::Release,
+    ] {
+        assert!(matches!(
+            subsystem(&report, name).observation,
+            DoctorObservation::NotApplicable { .. }
+        ));
+    }
+    assert_eq!(directory_state(repository.path()), before);
+}
+
+#[test]
+fn canonical_journal_violation_is_unavailable_without_writing_any_state() {
+    let repository = Scratch::repository("corrupt-journal");
+    repository.tracked("");
+    let journal_path = repository
+        .path()
+        .join(".git/.spice-rs/data/spicejournal.sqlite3");
+    drop(journal::Journal::open(&journal_path).expect("initialize journal fixture"));
+    let connection = rusqlite::Connection::open(&journal_path).expect("open corruption fixture");
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO thread_index(seq, origin, cause, root, depth)
+             VALUES (9, 'task:DOCTOR-review', NULL, 9, 0);",
+        )
+        .expect("insert orphan thread row");
+    drop(connection);
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+    let before = directory_state(repository.path());
+
+    let spoken = invoke(
+        repository.path(),
+        &["doctor", "--json"],
+        empty_path.as_os_str(),
+        &[],
+    );
+    let report = reply(&spoken).body;
+
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Journal).observation,
+        DoctorObservation::Unavailable { ref reason }
+            if reason.contains("journal authority verification failed")
+    ));
+    assert_eq!(directory_state(repository.path()), before);
 }
 
 #[test]

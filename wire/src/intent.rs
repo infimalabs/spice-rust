@@ -46,6 +46,8 @@ pub use task::*;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SteerSend {
+    /// One operator submit action shared only by its target-specific directives.
+    pub fanout: CanonicalUuid,
     /// Lane the directive lands on.
     pub lane: CanonicalUuid,
     /// The intent being sent.

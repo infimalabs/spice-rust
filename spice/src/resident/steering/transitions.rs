@@ -75,6 +75,7 @@ pub(in crate::resident) fn send(
     };
     let sent = wire::body::SteerSent {
         directive: command.id(),
+        fanout: Some(send.fanout),
         key: key.to_string(),
         lane: send.lane,
         text: send.message.clone(),

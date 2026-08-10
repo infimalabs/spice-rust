@@ -12,8 +12,10 @@ use std::fmt;
 use std::fs::File;
 use std::io;
 #[cfg(unix)]
-use std::process::Child;
+use std::io::Write as _;
 use std::process::ExitStatus;
+#[cfg(unix)]
+use std::process::{Child, ChildStdin};
 #[cfg(unix)]
 use std::sync::atomic::Ordering;
 #[cfg(unix)]
@@ -170,10 +172,61 @@ pub struct Running {
     wake_receiver: std::os::unix::net::UnixDatagram,
     cancellation_wake: std::os::unix::net::UnixDatagram,
     child: Option<Child>,
+    stdin: Option<InputHandle>,
     process: Arc<ProcessState>,
     stdout: Option<CaptureHandle>,
     stderr: Option<CaptureHandle>,
     guardian: Option<guardian::Guardian>,
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct InputHandle {
+    result: Arc<Mutex<Option<Result<(), IoFailure>>>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl InputHandle {
+    fn start(
+        mut input: ChildStdin,
+        bytes: Vec<u8>,
+        wake: std::os::unix::net::UnixDatagram,
+    ) -> Self {
+        let result = Arc::new(Mutex::new(None));
+        let worker_result = Arc::clone(&result);
+        let worker = std::thread::spawn(move || {
+            let written = input.write_all(&bytes).map_err(IoFailure::capture);
+            drop(input);
+            if let Ok(mut result) = worker_result.lock() {
+                *result = Some(written);
+            }
+            let _wake_result = wake.send(WAKE_BYTE);
+        });
+        Self {
+            result,
+            worker: Some(worker),
+        }
+    }
+
+    fn failure(&self) -> io::Result<()> {
+        self.result
+            .lock()
+            .map_err(|_| io::Error::other("input state lock is poisoned"))?
+            .as_ref()
+            .map_or(Ok(()), |result| {
+                result.as_ref().map_err(IoFailure::error).map(|_| ())
+            })
+    }
+
+    fn finish(mut self) -> io::Result<()> {
+        if let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| io::Error::other("input worker panicked"))?;
+        }
+        self.failure()
+    }
 }
 
 #[cfg(unix)]
@@ -340,6 +393,27 @@ impl Running {
             .saturating_sub(self.started.elapsed())
     }
 
+    /// Begin writing one complete input and close standard input after it.
+    ///
+    /// The handle is single-use so a process cannot wait on an accidentally
+    /// retained writer after the declared request has been delivered.
+    pub fn write_stdin(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if self.stdin.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "child stdin already owns a request",
+            ));
+        }
+        let input = self
+            .child
+            .as_mut()
+            .and_then(|child| child.stdin.take())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "child stdin is not piped"))?;
+        let wake = self.cancellation_wake.try_clone()?;
+        self.stdin = Some(InputHandle::start(input, bytes.to_vec(), wake));
+        Ok(())
+    }
+
     pub fn wait_for(mut self, duration: Duration) -> Result<WaitStep, WaitError> {
         let started = Instant::now();
         loop {
@@ -456,25 +530,41 @@ impl Running {
         };
 
         let observation_failure = self.observation_failure()?;
+        // Preserve the declared drain-bound answer before cleanup closes any
+        // inherited descriptors. Cleanup may let a reader reach EOF, but it
+        // cannot retroactively make output complete inside the earlier bound.
         let stdout = self
             .stdout
+            .as_ref()
+            .map(CaptureHandle::snapshot)
+            .transpose()
+            .map_err(|source| self.io_error("snapshotting stdout capture", source))?;
+        let stderr = self
+            .stderr
+            .as_ref()
+            .map(CaptureHandle::snapshot)
+            .transpose()
+            .map_err(|source| self.io_error("snapshotting stderr capture", source))?;
+        // A child may exit while a descendant retains one of its pipes. End
+        // that process group before joining the capture workers so the join is
+        // a proof of cleanup rather than another unbounded wait.
+        if !self.execution_group_terminal() {
+            self.terminate_and_reap()?;
+        }
+        let input = self.stdin.take().map(InputHandle::finish).transpose();
+        if matches!(completion, Completion::Exited(_)) {
+            input.map_err(|source| self.io_error("finishing stdin", source))?;
+        }
+        self.stdout
             .take()
             .map(CaptureHandle::finish)
             .transpose()
             .map_err(|source| self.io_error("finishing stdout capture", source))?;
-        let stderr = self
-            .stderr
+        self.stderr
             .take()
             .map(CaptureHandle::finish)
             .transpose()
             .map_err(|source| self.io_error("finishing stderr capture", source))?;
-        // No condition guards this beyond the decision's own first question.
-        // [`Self::execution_group_terminal`] already answers true for a child
-        // that never led a group of its own, so re-asking that here would only
-        // hide which of the two spellings the behaviour actually depends on.
-        if !self.execution_group_terminal() {
-            self.terminate_and_reap()?;
-        }
         let outcome = WaitOutcome {
             completion,
             observation_failure,
@@ -630,6 +720,13 @@ impl Running {
     }
 
     fn drain_outputs(&mut self) -> Result<(), WaitError> {
+        if let Some(stdin) = &self.stdin {
+            stdin.failure().map_err(|source| WaitError::Io {
+                owner: self.spec.wait.owner().to_owned(),
+                operation: "writing stdin",
+                source,
+            })?;
+        }
         if let Some(stdout) = &self.stdout {
             stdout.failure().map_err(|source| WaitError::Io {
                 owner: self.spec.wait.owner().to_owned(),
@@ -698,6 +795,13 @@ impl Running {
         self.spec.deadlines.runtime()
     }
 
+    pub fn write_stdin(&mut self, _bytes: &[u8]) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "process input requires a native release target",
+        ))
+    }
+
     pub fn wait_for(self, _duration: Duration) -> Result<WaitStep, WaitError> {
         Err(WaitError::Io {
             owner: self.spec.wait.owner().to_owned(),
@@ -744,6 +848,12 @@ impl Drop for Running {
             let _signal_result = self.signal(platform::SIGKILL);
             let _reap_result = self.await_execution_for(self.spec.deadlines.reap());
         }
+        let _stdin = self.stdin.take().and_then(|input| input.finish().ok());
+        // Opaque capture workers are Sill-owned and joinable after the group
+        // cleanup above. Selected observers intentionally detach in
+        // `CaptureHandle::finish`, so caller code cannot make this drop block.
+        let _stdout = self.stdout.take().and_then(|capture| capture.finish().ok());
+        let _stderr = self.stderr.take().and_then(|capture| capture.finish().ok());
     }
 }
 

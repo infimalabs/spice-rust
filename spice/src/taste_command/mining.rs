@@ -50,10 +50,11 @@ enum ProposalStanding {
 struct Correction {
     seq: Seq,
     directive: CanonicalUuid,
+    fanout: Option<CanonicalUuid>,
     key: String,
-    lane: CanonicalUuid,
     excerpt: String,
     tokens: BTreeSet<String>,
+    lane: CanonicalUuid,
     locus: TranscriptLocus,
     disposition: &'static str,
     decline_reason: Option<String>,
@@ -218,6 +219,7 @@ fn file_candidates(
         let body = TasteProposalAdd {
             finding: candidate.finding.clone(),
             occurrence: candidate.occurrence.clone(),
+            recurrence: candidate.corrections.len(),
             title: format!("Review mined taste: {}", headline(&candidate.message)),
             description: description(candidate, threshold, predecessor.as_ref()),
             acceptance: acceptance(candidate),
@@ -237,7 +239,11 @@ fn file_candidates(
                 findings.push(report_finding(
                     candidate,
                     answer.task,
-                    ProposalStanding::Filed,
+                    match answer.status.as_str() {
+                        "reused-active" => ProposalStanding::ReusedActive,
+                        "reused-completed" => ProposalStanding::ReusedCompleted,
+                        _ => ProposalStanding::Filed,
+                    },
                 ));
             }
             Outcome::Refusal(refusal) => return Outcome::Refusal(refusal),
@@ -313,8 +319,7 @@ fn corrections(
             continue;
         }
         if decline_reason.as_ref().is_some_and(|reason| {
-            reason.chars().count() > MAX_EXCERPT_CHARS
-                || contains_sensitive(&reason.to_ascii_lowercase())
+            reason.chars().count() > MAX_EXCERPT_CHARS || super::contains_sensitive_text(reason)
         }) {
             continue;
         }
@@ -324,10 +329,11 @@ fn corrections(
         rows.push(Correction {
             seq: *seq,
             directive,
+            fanout: published.fanout,
             key,
-            lane,
             excerpt,
             tokens,
+            lane,
             locus,
             disposition,
             decline_reason,
@@ -360,27 +366,13 @@ fn authored_correction(sent: &SteerSent) -> Option<(String, BTreeSet<String>)> {
     (tokens.len() >= 2).then(|| (excerpt.to_owned(), tokens))
 }
 
-fn contains_sensitive(lower: &str) -> bool {
-    [
-        "api_key", "api key", "password", "secret", "token=", "bearer ",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
-
 fn excluded_text(lower: &str) -> bool {
-    const EXCLUDED: [&str; 27] = [
+    const EXCLUDED: [&str; 21] = [
         "diff --git",
         "```",
         "tool output",
         "tool result",
         "begin patch",
-        "api_key",
-        "api key",
-        "password",
-        "secret",
-        "token=",
-        "bearer ",
         "maybe",
         "perhaps",
         "might want",
@@ -398,7 +390,7 @@ fn excluded_text(lower: &str) -> bool {
         "last maxim",
         "working state:",
     ];
-    EXCLUDED.iter().any(|needle| lower.contains(needle))
+    super::contains_sensitive_text(lower) || EXCLUDED.iter().any(|needle| lower.contains(needle))
 }
 
 fn correction_cue(lower: &str) -> bool {
@@ -436,29 +428,41 @@ fn tokens(text: &str) -> BTreeSet<String> {
 }
 
 fn cluster(corrections: &[Correction], threshold: usize) -> Vec<Candidate> {
-    let mut parent = (0..corrections.len()).collect::<Vec<_>>();
-    for left in 0..corrections.len() {
-        for right in left + 1..corrections.len() {
-            if related(&corrections[left].tokens, &corrections[right].tokens) {
-                unite(&mut parent, left, right);
+    let mut independent = corrections.to_vec();
+    independent.sort_by_key(|row| row.seq);
+    let mut seen = BTreeSet::new();
+    independent.retain(|row| seen.insert(occurrence_identity(row)));
+
+    let mut by_theme = BTreeMap::<(String, String), Vec<Correction>>::new();
+    for correction in independent {
+        let words = correction.tokens.iter().collect::<Vec<_>>();
+        for left in 0..words.len() {
+            for right in left + 1..words.len() {
+                by_theme
+                    .entry((words[left].clone(), words[right].clone()))
+                    .or_default()
+                    .push(correction.clone());
             }
         }
     }
-    let mut groups = BTreeMap::<usize, Vec<Correction>>::new();
-    for (index, correction) in corrections.iter().enumerate() {
-        let root = root(&mut parent, index);
-        groups.entry(root).or_default().push(correction.clone());
+
+    // Several token pairs can describe the same near-duplicate evidence set.
+    // Collapse that set once and retain the lexically first shared pair as its
+    // stable finding identity. Unlike transitive union, every retained row
+    // directly contains both theme tokens.
+    let mut groups = BTreeMap::<Vec<String>, ((String, String), Vec<Correction>)>::new();
+    for (theme, mut rows) in by_theme {
+        if rows.len() < threshold {
+            continue;
+        }
+        rows.sort_by_key(|row| row.seq);
+        let loci = rows.iter().map(occurrence_identity).collect::<Vec<_>>();
+        groups.entry(loci).or_insert((theme, rows));
     }
     let mut candidates = groups
         .into_values()
-        .filter_map(|mut rows| {
-            rows.sort_by_key(|row| row.seq);
-            let mut seen = BTreeSet::new();
-            rows.retain(|row| seen.insert(locus_identity(row)));
-            if rows.len() < threshold {
-                return None;
-            }
-            let candidate = candidate(rows);
+        .filter_map(|(theme, rows)| {
+            let candidate = candidate(rows, theme);
             (!candidate.triggers.is_empty()).then_some(candidate)
         })
         .collect::<Vec<_>>();
@@ -466,32 +470,14 @@ fn cluster(corrections: &[Correction], threshold: usize) -> Vec<Candidate> {
     candidates
 }
 
-fn related(left: &BTreeSet<String>, right: &BTreeSet<String>) -> bool {
-    let shared = left.intersection(right).count();
-    let smaller = left.len().min(right.len());
-    shared >= 2 && shared * 3 >= smaller * 2
-}
-
-fn root(parent: &mut [usize], index: usize) -> usize {
-    if parent[index] != index {
-        parent[index] = root(parent, parent[index]);
-    }
-    parent[index]
-}
-
-fn unite(parent: &mut [usize], left: usize, right: usize) {
-    let left = root(parent, left);
-    let right = root(parent, right);
-    let chosen = left.min(right);
-    parent[left] = chosen;
-    parent[right] = chosen;
-}
-
-fn candidate(corrections: Vec<Correction>) -> Candidate {
+fn candidate(corrections: Vec<Correction>, theme: (String, String)) -> Candidate {
     let oldest = corrections.first().expect("candidate has corrections");
-    let fingerprint = oldest.tokens.iter().cloned().collect::<Vec<_>>().join("\0");
+    let fingerprint = format!("{}\0{}", theme.0, theme.1);
     let finding = Digest::compute(Domain::TasteProse, fingerprint.as_bytes());
-    let mut loci = corrections.iter().map(locus_identity).collect::<Vec<_>>();
+    let mut loci = corrections
+        .iter()
+        .map(occurrence_identity)
+        .collect::<Vec<_>>();
     loci.sort();
     let occurrence_seed = format!("{}\0{}", finding, loci.join("\0"));
     let occurrence = Digest::compute(Domain::BoardTaskIdentity, occurrence_seed.as_bytes());
@@ -529,9 +515,16 @@ fn frequent_tokens(corrections: &[Correction]) -> Vec<String> {
         .collect()
 }
 
-fn locus_identity(correction: &Correction) -> String {
+fn occurrence_identity(correction: &Correction) -> String {
+    if let Some(fanout) = correction.fanout {
+        return format!("fanout:{fanout}");
+    }
+    let source = correction
+        .locus
+        .source
+        .map_or_else(|| "absent".to_owned(), |source| source.to_string());
     format!(
-        "{}:{}:{}:{}:{}:{}:{}",
+        "pre-fanout:lane:{}:source:{source}:{}:{}:{}:{}:{}:{}",
         correction.lane,
         correction.locus.member,
         correction.locus.offset,
@@ -686,9 +679,13 @@ fn description(
         predecessor.map_or("none", TaskHandle::as_str),
     );
     for correction in &candidate.corrections {
+        let fanout = correction
+            .fanout
+            .map_or_else(|| "pre-fanout".to_owned(), |fanout| fanout.to_string());
         description.push_str(&format!(
-            "- directive {} key {} ({}) at {}: {:?}",
+            "- directive {} fanout {} key {} ({}) at {}: {:?}",
             correction.directive,
+            fanout,
             correction.key,
             correction.disposition,
             locus_text(&correction.locus),
@@ -768,152 +765,4 @@ fn evidence_fault(error: EvidenceError) -> Outcome<TasteMiningReport> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sent(text: &str) -> SteerSent {
-        SteerSent {
-            directive: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-            key: "taste-1".to_owned(),
-            lane: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
-            text: text.to_owned(),
-            control: None,
-            attachments: Vec::new(),
-            expires: "2026-08-09T20:00:00.000Z".parse().unwrap(),
-        }
-    }
-
-    #[test]
-    fn correction_filter_preserves_exact_authored_excerpt_and_excludes_noise() {
-        let text = "Context.\n  Do not use grep here; use rg instead.\nThanks";
-        let (excerpt, words) = authored_correction(&sent(text)).expect("correction qualifies");
-        assert_eq!(excerpt, "  Do not use grep here; use rg instead.");
-        assert!(words.contains("grep"));
-        assert!(words.contains("rg"));
-        for excluded in [
-            "Maybe use rg instead.",
-            "Status update: use rg.",
-            "```diff\n-use grep\n+use rg\n```",
-            "Tool output: do not use grep",
-            "API key secret: do not use grep",
-            "🌶️ last maxim: do not use grep",
-        ] {
-            assert!(authored_correction(&sent(excluded)).is_none(), "{excluded}");
-        }
-        assert!(contains_sensitive(
-            "declined because bearer abc was exposed"
-        ));
-    }
-
-    #[test]
-    fn near_duplicate_theme_qualifies_once_and_nonrecurrence_does_not() {
-        let corrections = [
-            "Do not use grep here; use rg instead.",
-            "Prefer rg rather than grep for searches.",
-            "Never reach for grep; always use rg.",
-            "Always validate config with cargo metadata.",
-        ]
-        .into_iter()
-        .enumerate()
-        .map(|(index, text)| correction(index as u64 + 1, text))
-        .collect::<Vec<_>>();
-        let candidates = cluster(&corrections, 3);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].corrections.len(), 3);
-        assert_eq!(candidates[0].message, corrections[0].excerpt);
-    }
-
-    #[test]
-    fn completed_predecessor_refiles_only_after_genuine_new_recurrence() {
-        let base = vec![
-            correction(1, "Do not use grep; use rg instead."),
-            correction(2, "Prefer rg rather than grep."),
-            correction(3, "Never use grep; always use rg."),
-        ];
-        let first = candidate(base.clone());
-        let prior = PriorProposal {
-            handle: "TASTE-0123456789abcdef".parse().unwrap(),
-            occurrence: first.occurrence.clone(),
-            recurrence: 3,
-            completed: true,
-        };
-        let priors = BTreeMap::from([(first.finding.clone(), vec![prior.clone()])]);
-        let (standing, _, dependency) = plan(&first, &priors);
-        assert_eq!(standing, ProposalStanding::ReusedCompleted);
-        assert!(dependency.is_none());
-
-        let mut expanded = base;
-        expanded.push(correction(4, "Avoid grep and use rg for searches."));
-        let later = candidate(expanded);
-        let (standing, _, dependency) = plan(&later, &priors);
-        assert_eq!(standing, ProposalStanding::Filed);
-        assert_eq!(dependency, Some(prior.handle));
-    }
-
-    #[test]
-    fn unavailable_ack_context_is_a_loud_store_fault() {
-        let directive = "00000000-0000-4000-8000-000000000099".parse().unwrap();
-        let fact = wire::Fact::new(SteerAcked {
-            directive,
-            key: "missing-ack".to_owned(),
-            lane: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
-            epoch: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
-            locus: TranscriptLocus {
-                member: 1,
-                offset: 10,
-                length: 50,
-                event: 0,
-                line: 1,
-                column: 1,
-            },
-        });
-        let opaque = wire::decode::<wire::AnyFact>(&wire::encode(&fact).unwrap()).unwrap();
-        let snapshot = journal::FactSnapshot::from_facts(vec![wire::Envelope {
-            v: wire::WireVersion::CURRENT,
-            seq: Seq::new(1).unwrap(),
-            at: "2026-08-09T20:00:00.000Z".parse().unwrap(),
-            actor: Actor::Spice,
-            origin: "taste:test".parse().unwrap(),
-            cause: None,
-            fact: opaque,
-        }])
-        .unwrap();
-        assert!(matches!(
-            corrections(&snapshot),
-            Err(EvidenceError::AnswerWithoutSent(missing)) if missing == directive
-        ));
-        let Outcome::Fault(fault) = evidence_fault(EvidenceError::AnswerWithoutSent(directive))
-        else {
-            panic!("unavailable evidence must fault")
-        };
-        assert_eq!(fault.reason, "taste::mining-evidence-invalid");
-        assert!(
-            fault
-                .detail
-                .contains("unavailable operator steering directive")
-        );
-    }
-
-    fn correction(position: u64, text: &str) -> Correction {
-        Correction {
-            seq: Seq::new(position).unwrap(),
-            directive: format!("00000000-0000-4000-8000-{position:012}")
-                .parse()
-                .unwrap(),
-            key: format!("taste-{position}"),
-            lane: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
-            excerpt: text.to_owned(),
-            tokens: tokens(text),
-            locus: TranscriptLocus {
-                member: position,
-                offset: position * 10,
-                length: 50,
-                event: 0,
-                line: 1,
-                column: 1,
-            },
-            disposition: "acked",
-            decline_reason: None,
-        }
-    }
-}
+mod tests;

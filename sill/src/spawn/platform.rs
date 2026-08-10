@@ -36,6 +36,10 @@ impl PollFd {
             returned_events: 0,
         }
     }
+
+    pub const fn ready(&self) -> bool {
+        self.returned_events != 0
+    }
 }
 
 unsafe extern "C" {

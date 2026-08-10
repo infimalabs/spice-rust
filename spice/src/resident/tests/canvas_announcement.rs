@@ -39,8 +39,9 @@ pub(super) fn seed_lane(
     epoch: CanonicalUuid,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
+    worktree: &std::path::Path,
 ) {
-    seed_lane_in_lineage(bus, epoch, lane, lane, occupant);
+    seed_lane_in_lineage(bus, epoch, lane, lane, occupant, worktree);
 }
 
 pub(super) fn seed_lane_in_lineage(
@@ -49,8 +50,14 @@ pub(super) fn seed_lane_in_lineage(
     lane: CanonicalUuid,
     lineage_id: CanonicalUuid,
     occupant: CanonicalUuid,
+    worktree: &std::path::Path,
 ) {
-    seed_lane_in_lineage_at(bus, epoch, lane, lineage_id, occupant, "/fixture");
+    let worktree = worktree
+        .canonicalize()
+        .expect("fixture worktree canonicalizes")
+        .to_string_lossy()
+        .into_owned();
+    seed_lane_in_lineage_at(bus, epoch, lane, lineage_id, occupant, &worktree);
 }
 
 pub(super) fn seed_lane_in_worktree(
@@ -468,16 +475,16 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     let lane = test_uuid(5);
     let occupant = test_uuid(6);
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    seed_lane_in_worktree(
-        &bus,
-        epoch,
-        lane,
-        occupant,
-        root.to_str().expect("fixture worktree is UTF-8"),
-    );
+    seed_lane(&bus, epoch, lane, occupant, &root);
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
     let publisher = source.message_publisher();
-    let (record, bag) = reminder_capture(lane, occupant);
+    let record = taste_record(
+        lane,
+        occupant,
+        listen::Locus::new(4, 120, 48),
+        "Polling is not a completion event.",
+    );
+    let bag = taste_bag("polling", "polling", "Wait for a terminal event.");
     let mut seats = Seats::new();
     seats
         .seat(
@@ -507,19 +514,16 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
         .expect("current capture admits");
     }
 
-    assert_reminder_published(&bus, &paths, lane);
+    assert_direct_taste_reminder(&bus, &paths, lane);
 
-    let (judged_record, judged_bag) = judged_capture(&record);
-    let mut judge = taste_surface::FunctionAdjudicator(|_: &taste_surface::Candidate| {
-        Ok(taste_surface::Judgment {
-            confirmed: true,
-            attempts: vec![wire::body::TasteJudgeAttempt {
-                framing: 1,
-                reply: "YES".to_owned(),
-                verdict: wire::body::TasteJudgeReply::Yes,
-            }],
-        })
-    });
+    let judged_record = taste_record(
+        lane,
+        occupant,
+        listen::Locus::new(4, 180, 48),
+        "A fallback path is masking the failure.",
+    );
+    let judged_bag = taste_bag("fallbacks", "fallback", "Keep one deterministic path.");
+    let mut judge = confirming_taste_judge();
     let judged_surfaces = CaptureSurfaces::new(&paths, &judged_bag, &steering, &publisher);
     accept_capture_record(
         &bus,
@@ -559,12 +563,13 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-fn reminder_capture(
+fn taste_record(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-) -> (lane::capture::CaptureRecord, taste::Bag) {
-    let locus = listen::Locus::new(4, 120, 48);
-    let record = lane::capture::CaptureRecord {
+    locus: listen::Locus,
+    text: &str,
+) -> lane::capture::CaptureRecord {
+    lane::capture::CaptureRecord {
         lane,
         occupant,
         stream: vendor::RecordStream::Stdout,
@@ -575,26 +580,39 @@ fn reminder_capture(
             context: Default::default(),
             events: vec![listen::Event::Prose(listen::Prose {
                 role: listen::ProseRole::Assistant,
-                text: "Polling is not a completion event.".to_owned(),
+                text: text.to_owned(),
                 phase: None,
                 media: Vec::new(),
                 locus,
             })],
         },
-    };
-    let bag = taste::Bag::new(vec![
-        taste::Taste::new(
-            "polling".parse().expect("taste name"),
-            ["poll*"],
-            "Wait for a terminal event.",
-        )
-        .expect("taste row"),
-    ])
-    .expect("taste bag");
-    (record, bag)
+    }
 }
 
-fn assert_reminder_published(bus: &Bus, paths: &RuntimePaths, lane: CanonicalUuid) {
+fn taste_bag(name: &str, trigger: &str, message: &str) -> taste::Bag {
+    taste::Bag::new(vec![
+        taste::Taste::new(name.parse().expect("taste name"), [trigger], message)
+            .expect("taste row"),
+    ])
+    .expect("taste bag")
+}
+
+fn confirming_taste_judge() -> taste_surface::FunctionAdjudicator<
+    impl FnMut(&taste_surface::Candidate) -> Result<taste_surface::Judgment, crate::judge::Error>,
+> {
+    taste_surface::FunctionAdjudicator(|_: &taste_surface::Candidate| {
+        Ok(taste_surface::Judgment {
+            confirmed: true,
+            attempts: vec![wire::body::TasteJudgeAttempt {
+                framing: 1,
+                reply: "YES".to_owned(),
+                verdict: wire::body::TasteJudgeReply::Yes,
+            }],
+        })
+    })
+}
+
+fn assert_direct_taste_reminder(bus: &Bus, paths: &RuntimePaths, lane: CanonicalUuid) {
     let snapshot = bus.fact_snapshot().expect("capture facts read");
     assert_eq!(
         snapshot
@@ -617,36 +635,6 @@ fn assert_reminder_published(bus: &Bus, paths: &RuntimePaths, lane: CanonicalUui
             .expect("inbox rendering")
             .contains("[TASTE] polling: Wait for a terminal event.")
     );
-}
-
-fn judged_capture(
-    record: &lane::capture::CaptureRecord,
-) -> (lane::capture::CaptureRecord, taste::Bag) {
-    let judged_locus = listen::Locus::new(4, 180, 48);
-    let judged_record = lane::capture::CaptureRecord {
-        locus: judged_locus,
-        decoded: listen::Decoded::Events {
-            context: Default::default(),
-            events: vec![listen::Event::Prose(listen::Prose {
-                role: listen::ProseRole::Assistant,
-                text: "A fallback path is masking the failure.".to_owned(),
-                phase: None,
-                media: Vec::new(),
-                locus: judged_locus,
-            })],
-        },
-        ..record.clone()
-    };
-    let judged_bag = taste::Bag::new(vec![
-        taste::Taste::new(
-            "fallbacks".parse().expect("taste name"),
-            ["fallback*"],
-            "Keep one deterministic path.",
-        )
-        .expect("taste row"),
-    ])
-    .expect("taste bag");
-    (judged_record, judged_bag)
 }
 
 fn assert_tool_media_and_prose_activity(

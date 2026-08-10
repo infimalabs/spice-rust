@@ -1,28 +1,44 @@
 //! Opaque compiler evidence passed from the full verifier into one battery run.
 //!
 //! The verifier already compiles the native workspace and the browser target
-//! before it reaches the canonical battery.  These values let that one caller
-//! hand the successful process evidence forward without turning success into a
-//! string, an environment flag, or a reusable file. A process token can only
-//! be minted by executing a [`VerifierCompilerContract`], and a complete arm
-//! token can only be assembled from the exact successful stages that arm requires.
+//! before it reaches the canonical battery. These values let that caller retain
+//! successful process evidence in memory or encode only its source-bound
+//! identities for one cross-process receipt. Admission reconstructs authority
+//! against a fresh contract; raw environment values never cross the boundary.
+//! A process token can only be minted by executing a [`VerifierCompilerContract`],
+//! and a complete arm token can only be assembled from the exact successful
+//! stages that arm requires.
 
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
 use sill::{
-    Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
-    ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
+    Acquisition, Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
+    Possession, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 use wire::{Digest, Domain};
 
 use super::ToolEvidence;
+use super::analyze::{
+    CANVAS_SOURCE_LABEL, CANVAS_SOURCE_LOCK, canvas_source_root, make_cache_writable,
+    rust_analysis_workspace, synchronize_source,
+};
 use crate::VERIFIER_APP_PUBLISH_FLAG;
 use crate::battery::CANONICAL_BATTERY_MANIFEST;
 use crate::manifest::GateId;
+
+#[path = "verifier_receipt.rs"]
+mod receipt;
+
+pub use receipt::{admit_verifier_compiler_receipt, encode_verifier_compiler_receipt};
+
+#[cfg(test)]
+use receipt::VerifierCompilerReceiptSet;
 
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
@@ -55,7 +71,8 @@ const CANVAS_CHECK_TARGETS: &[&str] = &["wasm32-unknown-unknown", "workspace", "
 const CANVAS_APP_TARGETS: &[&str] = &["wasm32-unknown-unknown", "app", "release"];
 
 /// One full-verifier compiler process which can contribute to reusable proof.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum VerifierCompilerStage {
     /// Clippy's native workspace/all-targets compiler analysis.
     NativeClippy,
@@ -207,6 +224,31 @@ impl VerifierCompilerContract {
         self.gate_id
     }
 
+    /// Exact compiler stages required to prove this arm.
+    #[must_use]
+    pub fn stages(&self) -> &'static [VerifierCompilerStage] {
+        expected_stages(self.gate_id)
+    }
+
+    /// Mirror this contract's immutable selection into its stable compiler root.
+    ///
+    /// The returned preparation holds the source-cache possession until every
+    /// stage has completed. Unchanged bytes retain their mtimes, so Cargo can
+    /// reuse exact fingerprints without a compiler wrapper or a live-worktree
+    /// input. The contract itself remains reusable by callers whose compiler
+    /// scheduling already owns a different source-root policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns source-root resolution, possession, synchronization, or
+    /// permission failures.
+    pub fn prepare_stable(self) -> io::Result<PreparedVerifierCompiler> {
+        let source = StableCompilerSource::capture(&self)?;
+        let mut contract = self;
+        contract.selection_root = source.root().to_path_buf();
+        Ok(PreparedVerifierCompiler { contract, source })
+    }
+
     /// Run one exact compiler stage and mint evidence only after a clean exit.
     ///
     /// The process runs from the immutable selected source root. Compiler
@@ -271,7 +313,7 @@ impl VerifierCompilerContract {
             argv: Argv::new(program, arguments.iter().cloned()).map_err(io::Error::other)?,
             cwd: self.selection_root.clone(),
             environment: process_environment,
-            group: ProcessGroup::New,
+            group: crate::measure::bounded_process_group(),
             deadlines,
             wait,
             output: Output::new(
@@ -364,6 +406,130 @@ impl VerifierCompilerContract {
             }
         }
         Ok(VerifierCompilerEvidence::mint(self, selected))
+    }
+}
+
+/// One compiler contract bound to a verified stable mirror of its selection.
+pub struct PreparedVerifierCompiler {
+    contract: VerifierCompilerContract,
+    source: StableCompilerSource,
+}
+
+impl PreparedVerifierCompiler {
+    /// Exact stages this prepared arm must complete.
+    #[must_use]
+    pub fn stages(&self) -> &'static [VerifierCompilerStage] {
+        self.contract.stages()
+    }
+
+    /// Run one exact stage from the held stable source mirror.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same supervision failures as [`VerifierCompilerContract::run`].
+    pub fn run(&self, stage: VerifierCompilerStage) -> io::Result<VerifierCompilerRun> {
+        self.contract.run(stage)
+    }
+
+    /// Complete the arm proof and release its stable source possession.
+    ///
+    /// # Errors
+    ///
+    /// Refuses incomplete evidence or a source mirror that cannot be returned
+    /// to its writable persistent state.
+    pub fn complete(
+        mut self,
+        processes: &[VerifierCompilerProcessEvidence],
+    ) -> Result<VerifierCompilerEvidence, String> {
+        let evidence = self.contract.complete(processes)?;
+        self.source.release().map_err(|error| {
+            format!(
+                "{} {} could not be released: {error}",
+                self.source.label,
+                self.source.root.display(),
+            )
+        })?;
+        Ok(evidence)
+    }
+}
+
+struct StableCompilerSource {
+    root: PathBuf,
+    label: &'static str,
+    possession: Option<Possession>,
+}
+
+impl StableCompilerSource {
+    fn capture(contract: &VerifierCompilerContract) -> io::Result<Self> {
+        let (root, lock, label) = stable_source_contract(contract)?;
+        let parent = root.parent().ok_or_else(|| {
+            io::Error::other(format!(
+                "{label} {} has no parent directory",
+                root.display()
+            ))
+        })?;
+        fs::create_dir_all(parent)?;
+        let source_lock =
+            crate::held_root::held_root_lock(&root, lock, label).map_err(io::Error::other)?;
+        let possession = match source_lock.try_acquire().map_err(io::Error::other)? {
+            Acquisition::Acquired(possession) => possession,
+            Acquisition::Contended => {
+                return Err(io::Error::other(format!(
+                    "{label} {} is in use by another canonical gate",
+                    root.display(),
+                )));
+            }
+        };
+        synchronize_source(&contract.selection_root, &root)?;
+        Ok(Self {
+            root,
+            label,
+            possession: Some(possession),
+        })
+    }
+
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn release(&mut self) -> io::Result<()> {
+        make_cache_writable(&self.root)?;
+        drop(self.possession.take());
+        Ok(())
+    }
+}
+
+impl Drop for StableCompilerSource {
+    fn drop(&mut self) {
+        if self.possession.is_some() {
+            let _ = make_cache_writable(&self.root);
+            drop(self.possession.take());
+        }
+    }
+}
+
+fn stable_source_contract(
+    contract: &VerifierCompilerContract,
+) -> io::Result<(PathBuf, &'static str, &'static str)> {
+    match contract.gate_id {
+        GateId::RustTypecheck => rust_analysis_workspace(&contract.repository)
+            .map(|workspace| {
+                (
+                    workspace.source().to_path_buf(),
+                    "rust-analysis-source-cache",
+                    "rust analysis source cache",
+                )
+            })
+            .map_err(io::Error::other),
+        GateId::CanvasWebTypecheck => Ok((
+            canvas_source_root(&contract.repository),
+            CANVAS_SOURCE_LOCK,
+            CANVAS_SOURCE_LABEL,
+        )),
+        gate_id => Err(io::Error::other(format!(
+            "{} has no stable verifier compiler source",
+            gate_id.as_str(),
+        ))),
     }
 }
 
@@ -672,405 +838,5 @@ fn frame(into: &mut Vec<u8>, bytes: &[u8]) {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use super::*;
-
-    fn source(label: &[u8]) -> Digest {
-        Digest::compute(Domain::GateTree, label)
-    }
-
-    fn tool(name: &str, program: &str) -> ToolEvidence {
-        ToolEvidence::Identified {
-            name: format!("fixture {name}"),
-            requested_program: name.to_owned(),
-            resolved_program: program.to_owned(),
-            version: format!("{name} fixture-version"),
-            digest: Digest::compute(Domain::GateTool, program.as_bytes()).to_string(),
-        }
-    }
-
-    fn contract(gate_id: GateId) -> VerifierCompilerContract {
-        let tools = match gate_id {
-            GateId::RustTypecheck => vec![tool("cargo", "/usr/bin/true")],
-            GateId::CanvasWebTypecheck => vec![
-                tool("cargo", "/usr/bin/true"),
-                tool("trunk", "/usr/bin/true"),
-            ],
-            _ => panic!("fixture supports compiler arms only"),
-        };
-        VerifierCompilerContract::new(
-            gate_id,
-            source(b"fixture selected tree"),
-            PathBuf::from("/fixture/repository"),
-            PathBuf::from("/fixture/selection"),
-            tools,
-            Vec::new(),
-        )
-        .expect("fixture compiler contract")
-    }
-
-    fn complete_processes(
-        contract: &VerifierCompilerContract,
-    ) -> Vec<VerifierCompilerProcessEvidence> {
-        expected_stages(contract.gate_id)
-            .iter()
-            .enumerate()
-            .map(|(index, stage)| {
-                VerifierCompilerProcessEvidence::mint(
-                    contract,
-                    *stage,
-                    compiler_environment(&contract.environment, &contract.repository),
-                    stage_arguments(*stage, &contract.repository),
-                    u64::try_from(index + 1).expect("small fixture duration"),
-                    Some(0),
-                )
-            })
-            .collect()
-    }
-
-    fn admits(candidate: &VerifierCompilerEvidence, contract: &VerifierCompilerContract) -> bool {
-        candidate.admits(
-            contract.gate_id,
-            &contract.source,
-            &contract.repository,
-            &contract.selection_root,
-            &contract.environment,
-            &contract.tools,
-        )
-    }
-
-    fn first_process_mut(
-        candidate: &mut VerifierCompilerEvidence,
-    ) -> &mut VerifierCompilerProcessEvidence {
-        candidate
-            .processes
-            .first_mut()
-            .expect("complete evidence has a compiler process")
-    }
-
-    #[test]
-    fn exact_complete_evidence_admits_each_compiler_arm() {
-        for gate_id in [GateId::RustTypecheck, GateId::CanvasWebTypecheck] {
-            let contract = contract(gate_id);
-            let evidence = contract
-                .complete(&complete_processes(&contract))
-                .expect("complete evidence");
-
-            assert!(evidence.admits(
-                gate_id,
-                &contract.source,
-                &contract.repository,
-                &contract.selection_root,
-                &contract.environment,
-                &contract.tools,
-            ));
-        }
-    }
-
-    #[test]
-    fn partial_or_duplicate_stage_sets_cannot_mint_evidence() {
-        let contract = contract(GateId::CanvasWebTypecheck);
-        let complete = complete_processes(&contract);
-
-        assert!(contract.complete(&complete[..1]).is_err());
-        assert!(
-            contract
-                .complete(&[complete[0].clone(), complete[0].clone()])
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn every_bound_field_mutation_invalidates_evidence() {
-        let contract = contract(GateId::CanvasWebTypecheck);
-        let exact = contract
-            .complete(&complete_processes(&contract))
-            .expect("complete evidence");
-
-        let mut candidate = exact.clone();
-        candidate.gate_id = GateId::RustTypecheck;
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        candidate.source = source(b"stale selected tree");
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        candidate.manifest = Digest::compute(Domain::GateBatteryManifest, b"foreign manifest");
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        candidate.repository = PathBuf::from("/foreign/repository");
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        candidate.selection_root = PathBuf::from("/foreign/selection");
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        candidate.tools[0] = tool("cargo", "/forged/cargo");
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        candidate
-            .environment
-            .push((OsString::from("FORGED"), OsString::from("forged")));
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        candidate.processes.pop();
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact;
-        candidate.seal = Digest::compute(Domain::GateReceipt, b"forged seal");
-        assert!(!admits(&candidate, &contract));
-    }
-
-    #[test]
-    fn every_bound_process_field_mutation_invalidates_evidence() {
-        let contract = contract(GateId::CanvasWebTypecheck);
-        let exact = contract
-            .complete(&complete_processes(&contract))
-            .expect("complete evidence");
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).gate_id = GateId::RustTypecheck;
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).stage = VerifierCompilerStage::NativeClippy;
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).source = source(b"stale process source");
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).manifest =
-            Digest::compute(Domain::GateBatteryManifest, b"stale process manifest");
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).repository = PathBuf::from("/forged/repository");
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).selection_root = PathBuf::from("/forged/selection");
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).tools = vec![tool("cargo", "/forged/process-cargo")];
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate)
-            .environment
-            .push((OsString::from("FORGED"), OsString::from("forged")));
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate)
-            .targets
-            .push("foreign-target".to_owned());
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate)
-            .arguments
-            .push(OsString::from("--forged"));
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).exit_code = 17;
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).elapsed_ms += 1;
-        assert!(!admits(&candidate, &contract));
-
-        let mut candidate = exact.clone();
-        first_process_mut(&mut candidate).seal =
-            Digest::compute(Domain::GateReceipt, b"forged process seal");
-        assert!(!admits(&candidate, &contract));
-    }
-
-    #[test]
-    fn sealed_evidence_cannot_cross_a_consumer_environment_or_capture_root() {
-        let mut producer = contract(GateId::RustTypecheck);
-        producer.environment.push((
-            OsString::from("RUSTFLAGS"),
-            OsString::from("--cfg=producer"),
-        ));
-        producer.environment.sort();
-        let evidence = producer
-            .complete(&complete_processes(&producer))
-            .expect("producer evidence");
-
-        let mut consumer_environment = producer.environment.clone();
-        let (_, rustflags) = consumer_environment
-            .iter_mut()
-            .find(|(name, _)| name == "RUSTFLAGS")
-            .expect("fixture RUSTFLAGS");
-        *rustflags = OsString::from("--cfg=consumer");
-        assert!(!evidence.admits(
-            producer.gate_id,
-            &producer.source,
-            &producer.repository,
-            &producer.selection_root,
-            &consumer_environment,
-            &producer.tools,
-        ));
-        assert!(!evidence.admits(
-            producer.gate_id,
-            &producer.source,
-            &producer.repository,
-            Path::new("/another/capture/root"),
-            &producer.environment,
-            &producer.tools,
-        ));
-    }
-
-    #[test]
-    fn ignored_live_compiler_inputs_cannot_mint_selected_source_evidence() {
-        let root = crate::toolchain::exclusive_scratch_root("gate-verifier-selected-source");
-        let repository = root.join("repository");
-        let selection = root.join("selection");
-        fs::create_dir_all(repository.join(".cargo")).expect("live Cargo configuration root");
-        fs::create_dir_all(repository.join("ignored")).expect("live ignored build root");
-        fs::create_dir(&selection).expect("immutable selected root");
-        let manifest = concat!(
-            "[package]\n",
-            "name = \"selected-source-fixture\"\n",
-            "version = \"0.0.0\"\n",
-            "edition = \"2024\"\n",
-            "build = \"ignored/build.rs\"\n",
-        );
-        for root in [&repository, &selection] {
-            fs::write(root.join("Cargo.toml"), manifest).expect("tracked fixture manifest");
-            fs::write(root.join(".gitignore"), ".cargo/config.toml\nignored/\n")
-                .expect("tracked ignored-input policy");
-        }
-        fs::write(
-            repository.join(".cargo/config.toml"),
-            "[build]\nrustflags = []\n",
-        )
-        .expect("ignored live Cargo configuration");
-        fs::write(repository.join("ignored/build.rs"), "fn main() {}\n")
-            .expect("ignored live build script");
-        for (label, live_only_input) in [
-            ("ignored-cargo-config", ".cargo/config.toml"),
-            ("ignored-build-script", "ignored/build.rs"),
-        ] {
-            let cargo = root.join(label);
-            fs::write(
-                &cargo,
-                format!(
-                    concat!(
-                        "#!/bin/sh\n",
-                        "if [ -f '{live_only_input}' ]; then\n",
-                        "  exit 0\n",
-                        "fi\n",
-                        "exit 19\n",
-                    ),
-                    live_only_input = live_only_input,
-                ),
-            )
-            .expect("write compiler-input witness");
-            fs::set_permissions(
-                &cargo,
-                fs::metadata("/usr/bin/true")
-                    .expect("read fixture executable permissions")
-                    .permissions(),
-            )
-            .expect("make compiler-input witness executable");
-            let contract = VerifierCompilerContract::new(
-                GateId::RustTypecheck,
-                source(label.as_bytes()),
-                repository.clone(),
-                selection.clone(),
-                vec![tool("cargo", cargo.to_str().expect("UTF-8 fixture path"))],
-                Vec::new(),
-            )
-            .expect("selected-source compiler contract");
-
-            let run = contract
-                .run(VerifierCompilerStage::NativeClippy)
-                .expect("compiler-input witness launches");
-
-            assert!(!run.success());
-            assert!(
-                run.into_evidence().is_none(),
-                "{live_only_input} minted evidence from outside the selected root"
-            );
-            assert!(
-                contract.complete(&[]).is_err(),
-                "{live_only_input} admitted evidence without a successful process token"
-            );
-        }
-        fs::remove_dir_all(root).expect("remove selected-source fixture");
-    }
-
-    #[test]
-    fn a_failed_process_returns_no_reusable_token() {
-        let mut contract = contract(GateId::RustTypecheck);
-        contract.repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("gate crate has a workspace parent")
-            .to_path_buf();
-        contract.selection_root = contract.repository.clone();
-        contract.tools = vec![tool("cargo", "/usr/bin/false")];
-
-        let run = contract
-            .run(VerifierCompilerStage::NativeClippy)
-            .expect("false launches");
-
-        assert!(!run.success());
-        assert!(run.into_evidence().is_none());
-    }
-
-    #[test]
-    fn failed_process_feedback_is_captured_completely_without_minting_evidence() {
-        let root = crate::toolchain::exclusive_scratch_root("gate-verifier-captured-output");
-        let repository = root.join("repository");
-        let selection = root.join("selection");
-        fs::create_dir(&repository).expect("fixture repository");
-        fs::create_dir(&selection).expect("fixture selected root");
-        let cargo = root.join("cargo");
-        fs::write(
-            &cargo,
-            "#!/bin/sh\nprintf 'bounded stdout\\n'\nprintf 'bounded stderr\\n' >&2\nexit 23\n",
-        )
-        .expect("write fixture Cargo executable");
-        fs::set_permissions(
-            &cargo,
-            fs::metadata("/usr/bin/true")
-                .expect("read fixture executable permissions")
-                .permissions(),
-        )
-        .expect("make fixture Cargo executable");
-        let contract = VerifierCompilerContract::new(
-            GateId::RustTypecheck,
-            source(b"captured output selected tree"),
-            repository,
-            selection,
-            vec![tool("cargo", cargo.to_str().expect("UTF-8 fixture path"))],
-            Vec::new(),
-        )
-        .expect("captured output contract");
-
-        let run = contract
-            .run(VerifierCompilerStage::NativeClippy)
-            .expect("fixture Cargo launches");
-
-        assert!(!run.success());
-        assert_eq!(run.code(), Some(23));
-        assert_eq!(run.stdout(), b"bounded stdout\n");
-        assert_eq!(run.stderr(), b"bounded stderr\n");
-        assert!(!run.cancelled());
-        assert!(!run.timed_out());
-        assert!(run.into_evidence().is_none());
-        fs::remove_dir_all(root).expect("remove captured output fixture");
-    }
-}
+#[path = "verifier_evidence/tests.rs"]
+mod tests;

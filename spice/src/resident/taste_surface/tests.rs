@@ -1,6 +1,9 @@
 use std::cell::Cell;
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::time::Duration;
 
 use super::*;
 use crate::resident::write;
@@ -8,7 +11,14 @@ use steer::Standing as _;
 use wire::intent::DeliveryStanding;
 use wire::{Disposition, ResidentState};
 
+#[path = "tests/fold.rs"]
+mod fold;
+
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+fn taste_context() -> gate::PolicyContext {
+    gate::PolicyContext::new().with_vendor("claude")
+}
 
 struct Fixture {
     root: std::path::PathBuf,
@@ -22,6 +32,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
+        Self::with_vendor(name, "claude")
+    }
+
+    fn with_vendor(name: &str, vendor: &str) -> Self {
+        let vendor = vendor.parse::<wire::Name>().expect("vendor name");
         let root = std::env::temp_dir().join(format!(
             "spice-taste-runtime-{name}-{}-{}",
             std::process::id(),
@@ -66,7 +81,7 @@ impl Fixture {
                     name: None,
                     worktree: worktree.clone(),
                     life: "drive".to_owned(),
-                    vendor: "claude".parse().expect("vendor name"),
+                    vendor: vendor.clone(),
                 },
                 FactCause::Existing(observed.position()),
             )
@@ -93,7 +108,7 @@ impl Fixture {
                 name: None,
                 worktree: head_worktree,
                 life: "drive".to_owned(),
-                vendor: "claude".parse().expect("vendor name"),
+                vendor,
                 occupant: Some(occupant),
                 lineage: vec![occupant],
                 capabilities: vec![capability],
@@ -245,8 +260,8 @@ impl Fixture {
 fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
     let fixture = Fixture::new("two-tastes");
     let bag = bag(&[
-        ("polling", &["poll*"], "Wait for the terminal event."),
-        ("fallbacks", &["fallback*"], "Keep one current path."),
+        ("polling", &["polling"], "Wait for the terminal event."),
+        ("fallbacks", &["fallback"], "Keep one current path."),
     ]);
     let record = prose_record(
         fixture.lane,
@@ -274,19 +289,56 @@ fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
     let snapshot = fixture.bus.fact_snapshot().expect("snapshot");
     let ledger = steer::Ledger::from_snapshot(&snapshot).expect("reminders replay");
     assert_eq!(ledger.pending(fixture.lane).len(), 2);
-    let rendered = fs::read_to_string(steer::inbox::path(&fixture.paths.inbox, fixture.lane))
-        .expect("post-commit inbox renders");
+    let inbox = steer::inbox::path(&fixture.paths.inbox, fixture.lane);
+    let rendered = fs::read_to_string(&inbox)
+        .unwrap_or_else(|error| panic!("post-commit inbox {} renders: {error}", inbox.display()));
     assert!(rendered.contains("[TASTE] polling: Wait for the terminal event."));
     assert!(rendered.contains("[TASTE] fallbacks: Keep one current path."));
     fixture.finish();
 }
 
 #[test]
+fn vendor_scoped_tastes_follow_the_durable_lane_vendor() {
+    let bag = taste::configured(
+        r#"
+[taste.polling]
+words = ["polling"]
+message = "Wait for the terminal event."
+scopes = { vendors = ["codex"] }
+"#,
+    )
+    .expect("vendor-scoped bag");
+    let codex = Fixture::with_vendor("scoped-codex", "codex");
+    let claude = Fixture::with_vendor("scoped-claude", "claude");
+    let codex_record = prose_record(codex.lane, codex.occupant, "Polling is not completion.");
+    let claude_record = prose_record(claude.lane, claude.occupant, "Polling is not completion.");
+
+    assert!(
+        prepare_judgment(&codex.bus, codex.epoch, &bag, &codex_record)
+            .expect("codex judgment preparation resolves")
+            .is_some()
+    );
+    assert!(
+        prepare_judgment(&claude.bus, claude.epoch, &bag, &claude_record)
+            .expect("claude judgment preparation resolves")
+            .is_none()
+    );
+
+    codex.recognize(&bag, &codex_record);
+    claude.recognize(&bag, &claude_record);
+
+    assert_eq!(codex.reminders().len(), 1);
+    assert!(claude.reminders().is_empty());
+    codex.finish();
+    claude.finish();
+}
+
+#[test]
 fn distinct_contents_in_separate_records_both_commit_in_one_suppression_epoch() {
     let fixture = Fixture::new("distinct-records");
     let bag = bag(&[
-        ("polling", &["poll*"], "Wait."),
-        ("fallbacks", &["fallback*"], "Keep one path."),
+        ("polling", &["polling"], "Wait."),
+        ("fallbacks", &["fallback"], "Keep one path."),
     ]);
 
     fixture.recognize(
@@ -314,7 +366,7 @@ fn duplicate_hits_records_and_restart_replay_create_one_reminder_in_the_epoch() 
     let fixture = Fixture::new("deduplicate");
     let bag = bag(&[(
         "polling",
-        &["poll*", "polling"],
+        &["polling", "POLLING"],
         "Wait for the terminal event.",
     )]);
     let first = prose_record(fixture.lane, fixture.occupant, "  POLLING now ");
@@ -348,13 +400,13 @@ fn duplicate_hits_records_and_restart_replay_create_one_reminder_in_the_epoch() 
 #[test]
 fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_directive() {
     let fixture = Fixture::new("judge-confirmed");
-    let bag = bag(&[("polling", &["poll*"], "Wait for the terminal event.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait for the terminal event.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "Polling is not completion.");
     let calls = Cell::new(0_u8);
     let mut judge = FunctionAdjudicator(|candidate: &Candidate| {
         calls.set(calls.get() + 1);
         assert_eq!(candidate.taste, "polling");
-        assert_eq!(candidate.trigger, "poll*");
+        assert_eq!(candidate.trigger, "polling");
         assert_eq!(candidate.vendor, "Wait for the terminal event.");
         assert_eq!(candidate.source, "Polling is not completion.");
         Ok(judgment(
@@ -374,7 +426,7 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
     assert_eq!(judgments.len(), 1);
     let evidence = &judgments[0];
     assert_eq!(evidence.bag, taste::bag_identity(&bag));
-    assert_eq!(evidence.trigger, "poll*");
+    assert_eq!(evidence.trigger, "polling");
     assert_eq!(evidence.vendor, "Wait for the terminal event.");
     assert_eq!(evidence.source, "Polling is not completion.");
     assert_eq!(evidence.compaction, fixture.anchor.get());
@@ -411,7 +463,7 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
 #[test]
 fn enabled_clearance_is_durable_evidence_and_never_opens_steering() {
     let fixture = Fixture::new("judge-cleared");
-    let bag = bag(&[("fallbacks", &["fallback*"], "Keep one path.")]);
+    let bag = bag(&[("fallbacks", &["fallback"], "Keep one path.")]);
     let record = prose_record(
         fixture.lane,
         fixture.occupant,
@@ -458,10 +510,10 @@ fn enabled_clearance_is_durable_evidence_and_never_opens_steering() {
 #[test]
 fn unavailable_judge_abandons_candidate_without_fact_or_reminder() {
     let fixture = Fixture::new("judge-unavailable");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let record = prose_record(fixture.lane, fixture.occupant, "polling now");
     let mut judge = FunctionAdjudicator(|_: &Candidate| {
-        Err(crate::judge::failure(
+        Err(crate::judge::failure_error(
             "unavailable",
             "fixture judge is absent",
         ))
@@ -481,12 +533,183 @@ fn unavailable_judge_abandons_candidate_without_fact_or_reminder() {
 }
 
 #[test]
+fn current_thread_progresses_while_bounded_adjudication_is_held_open() {
+    let fixture = Fixture::new("judge-current-thread-progress");
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let worker_release = Arc::clone(&release);
+    let mut adjudication = start_adjudication_with(move |_| {
+        FunctionAdjudicator(move |_: &Candidate| {
+            entered_sender.send(()).expect("announce held judge");
+            let (lock, changed) = &*worker_release;
+            let released = lock.lock().expect("release lock");
+            let _released = changed
+                .wait_while(released, |released| !*released)
+                .expect("release wait");
+            Ok(judgment(
+                true,
+                vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+            ))
+        })
+    })
+    .expect("bounded adjudication starts");
+    let resident = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("current-thread runtime");
+
+    resident.block_on(async {
+        let (submitter, completions) = adjudication.parts();
+        submitter
+            .recognize(&fixture.bus, fixture.epoch, &bag, &record)
+            .expect("candidate submits without waiting for judge");
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker holds the judge open");
+
+        let (progressed, observed_progress) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            let _ = progressed.send(());
+        });
+        tokio::time::timeout(Duration::from_millis(100), observed_progress)
+            .await
+            .expect("resident executor remains live")
+            .expect("progress task reports");
+        assert!(
+            fixture.judgments().is_empty(),
+            "held external authority committed prematurely"
+        );
+
+        let (lock, changed) = &*release;
+        *lock.lock().expect("release lock") = true;
+        changed.notify_all();
+        let completed = tokio::time::timeout(Duration::from_secs(1), completions.recv())
+            .await
+            .expect("worker completes after release")
+            .expect("completion authority stays live");
+        submitter.finished(&completed);
+        complete_judgment(
+            &fixture.bus,
+            &fixture.paths,
+            fixture.epoch,
+            &bag,
+            &steer::Config::default(),
+            completed,
+        )
+        .expect("resident revalidates and commits completion");
+    });
+
+    drop(adjudication);
+    assert_eq!(fixture.judgments().len(), 1);
+    fixture.finish();
+}
+
+#[test]
+fn delayed_completion_is_abandoned_after_compaction_or_bag_movement() {
+    let mut fixture = Fixture::new("judge-delayed-authority");
+    let original_bag = bag(&[("polling", &["polling"], "Wait.")]);
+    let changed_bag = bag(&[("polling", &["polling"], "Choose another action.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let prepared = prepare_judgment(&fixture.bus, fixture.epoch, &original_bag, &record)
+        .expect("candidate prepares")
+        .expect("candidate exists");
+    let completed = CompletedJudgment {
+        decisions: vec![JudgedCandidate {
+            candidate: prepared.candidates[0].clone(),
+            judgment: judgment(
+                true,
+                vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+            ),
+        }],
+        prepared,
+    };
+
+    complete_judgment(
+        &fixture.bus,
+        &fixture.paths,
+        fixture.epoch,
+        &changed_bag,
+        &steer::Config::default(),
+        completed.clone(),
+    )
+    .expect("changed bag abandons stale answer");
+    fixture.compact();
+    complete_judgment(
+        &fixture.bus,
+        &fixture.paths,
+        fixture.epoch,
+        &original_bag,
+        &steer::Config::default(),
+        completed,
+    )
+    .expect("changed compaction abandons stale answer");
+
+    assert!(fixture.judgments().is_empty());
+    fixture.finish();
+}
+
+#[test]
+fn shutdown_cancels_and_joins_an_inflight_process_request() {
+    let fixture = Fixture::new("judge-shutdown");
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let script = std::env::temp_dir().join(format!(
+        "spice-taste-judge-shutdown-{}-{}",
+        std::process::id(),
+        NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(
+        &script,
+        "#!/bin/sh\ncat >/dev/null\nexec /usr/bin/tail -f /dev/null\n",
+    )
+    .expect("write shutdown judge fixture");
+    let mut permissions = fs::metadata(&script)
+        .expect("shutdown judge metadata")
+        .permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&script, permissions).expect("make shutdown judge executable");
+    let binary = script
+        .to_str()
+        .expect("UTF-8 shutdown judge path")
+        .to_owned();
+    let mut adjudication = start_adjudication_with(move |cancellation| ProcessAdjudicator {
+        process: crate::judge::Process::with_contract(
+            binary,
+            Duration::from_secs(30),
+            cancellation,
+        ),
+    })
+    .expect("cancellable adjudication starts");
+    {
+        let (submitter, _) = adjudication.parts();
+        submitter
+            .recognize(&fixture.bus, fixture.epoch, &bag, &record)
+            .expect("inflight request submits");
+    }
+
+    let started = std::time::Instant::now();
+    drop(adjudication);
+
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "shutdown waited for the process runtime deadline"
+    );
+    fs::remove_file(script).expect("remove shutdown judge fixture");
+    fixture.finish();
+}
+
+#[test]
 fn taste_framings_are_complete_and_deterministically_shuffled() {
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let candidate = (0..128)
         .find_map(|index| {
             let record = prose_record(uuid(2), uuid(3), &format!("polling candidate {index}"));
-            let candidate = candidates(&bag, &record).expect("candidate scan").remove(0);
+            let candidate = candidates(&bag, &taste_context(), &record)
+                .expect("candidate scan")
+                .remove(0);
             let order = judge_prompts(&candidate)
                 .iter()
                 .map(crate::judge::Prompt::framing)
@@ -514,7 +737,7 @@ fn taste_framings_are_complete_and_deterministically_shuffled() {
 #[test]
 fn compaction_and_occupant_renewal_each_open_one_later_suppression_epoch() {
     let mut fixture = Fixture::new("epochs");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let started = fixture.anchor;
     let original = prose_record(fixture.lane, fixture.occupant, "polling now");
     fixture.recognize(&bag, &original);
@@ -544,7 +767,7 @@ fn compaction_and_occupant_renewal_each_open_one_later_suppression_epoch() {
 #[test]
 fn quoted_echo_and_every_non_prose_surface_are_inert() {
     let fixture = Fixture::new("inert-surfaces");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let echo = prose_record(
         fixture.lane,
         fixture.occupant,
@@ -591,7 +814,11 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
             ],
         },
     );
-    assert!(candidates(&bag, &typed).expect("typed scan").is_empty());
+    assert!(
+        candidates(&bag, &taste_context(), &typed)
+            .expect("typed scan")
+            .is_empty()
+    );
     let residue = record(
         fixture.lane,
         fixture.occupant,
@@ -603,14 +830,18 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
             },
         }),
     );
-    assert!(candidates(&bag, &residue).expect("residue scan").is_empty());
+    assert!(
+        candidates(&bag, &taste_context(), &residue)
+            .expect("residue scan")
+            .is_empty()
+    );
     assert!(fixture.reminders().is_empty());
     fixture.finish();
 }
 
 #[test]
 fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
     let lane = uuid(90);
     let occupant = uuid(91);
     let patch = prose_record(
@@ -634,21 +865,25 @@ fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
         "*** Begin Patch\n+polling forever\n*** End Patch\nPolling after the patch is authored.",
     );
 
-    assert!(candidates(&bag, &patch).expect("patch scans").is_empty());
     assert!(
-        candidates(&bag, &mixed)
+        candidates(&bag, &taste_context(), &patch)
+            .expect("patch scans")
+            .is_empty()
+    );
+    assert!(
+        candidates(&bag, &taste_context(), &mixed)
             .expect("mixed diff scans")
             .is_empty()
     );
     assert_eq!(
-        candidates(&bag, &authored)
+        candidates(&bag, &taste_context(), &authored)
             .expect("authored prefix scans")
             .len(),
         1,
         "only the authored prefix remains eligible"
     );
     assert_eq!(
-        candidates(&bag, &tail)
+        candidates(&bag, &taste_context(), &tail)
             .expect("post-patch authored tail scans")
             .len(),
         1,
@@ -657,142 +892,297 @@ fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
 }
 
 #[test]
-fn transaction_guard_retries_after_both_key_and_directive_command_races() {
-    let fixture = Fixture::new("guard-races");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
-    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
-    let attempts = Cell::new(0_u8);
-
-    recognize_with(
-        &fixture.bus,
-        &fixture.paths,
-        fixture.epoch,
+fn emitted_reminders_ack_decline_escalate_and_expire_as_ordinary_steering() {
+    let fixture = Fixture::new("ordinary-steering");
+    let bag = bag(&[
+        ("polling", &["polling"], "Wait."),
+        ("fallbacks", &["fallback"], "Keep one path."),
+    ]);
+    fixture.recognize(
         &bag,
-        &steer::Config::default(),
-        None,
-        &record,
-        |bus, openings, proposal| {
-            let attempt = attempts.get();
-            attempts.set(attempt + 1);
-            if attempt < 2 {
-                let opening = &openings[0];
-                let (directive, key) = if attempt == 0 {
-                    (uuid(80), opening.key.to_string())
-                } else {
-                    (opening.directive, "00000000".to_owned())
-                };
-                append_send(
-                    bus,
-                    fixture.epoch,
-                    fixture.lane,
-                    directive,
-                    &key,
-                    fixture.anchor,
-                );
-            }
-            commit(bus, proposal)
-        },
-        steering::publish_inbox,
-    )
-    .expect("guard retries from current authority");
-
-    assert_eq!(attempts.get(), 3, "both collision guards forced a rebuild");
-    assert_eq!(fixture.reminders().len(), 1);
+        &prose_record(fixture.lane, fixture.occupant, "polling fallback"),
+    );
     let snapshot = fixture.bus.fact_snapshot().expect("snapshot");
+    let reminders = reminders(&snapshot);
+    let mut disposed = steer::Ledger::from_snapshot(&snapshot).expect("ledger");
+    disposed
+        .absorb(steer::Steering::Acked(&wire::body::SteerAcked {
+            directive: reminders[0].directive,
+            key: reminders[0].key.clone(),
+            lane: fixture.lane,
+            epoch: fixture.epoch,
+            locus: reminders[0].locus,
+        }))
+        .expect("semantic ACK retires reminder");
+    disposed
+        .absorb(steer::Steering::Declined(&wire::body::SteerDeclined {
+            directive: reminders[1].directive,
+            key: reminders[1].key.clone(),
+            lane: fixture.lane,
+            epoch: fixture.epoch,
+            locus: reminders[1].locus,
+            reason: "not applicable".to_owned(),
+        }))
+        .expect("semantic NACK retires reminder");
     assert_eq!(
-        snapshot
-            .facts()
-            .iter()
-            .filter(|fact| fact.fact.kind() == wire::FactKind::SteerSent)
-            .count(),
-        2
+        disposed.disposition(&reminders[0].key.parse().expect("key")),
+        Some(Disposition::Acked)
     );
-    steer::Ledger::from_snapshot(&snapshot).expect("all three directives replay distinctly");
-    fixture.finish();
-}
-
-#[test]
-fn transaction_guard_rebuilds_when_compaction_moves_after_recognition() {
-    let fixture = Fixture::new("epoch-guard");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
-    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
-    let attempts = Cell::new(0_u8);
-    let moved = Cell::new(0_u64);
-
-    recognize_with(
-        &fixture.bus,
-        &fixture.paths,
-        fixture.epoch,
-        &bag,
-        &steer::Config::default(),
-        None,
-        &record,
-        |bus, _, proposal| {
-            let attempt = attempts.get();
-            attempts.set(attempt + 1);
-            if attempt == 0 {
-                moved.set(
-                    append_compaction(
-                        bus,
-                        fixture.epoch,
-                        fixture.lane,
-                        fixture.occupant,
-                        fixture.anchor,
-                    )
-                    .get(),
-                );
-            }
-            commit(bus, proposal)
-        },
-        steering::publish_inbox,
-    )
-    .expect("epoch movement rebuilds");
-
-    assert_eq!(attempts.get(), 2, "the stale epoch proposal was refused");
-    assert_eq!(fixture.reminders()[0].compaction, moved.get());
-    fixture.finish();
-}
-
-#[test]
-fn transaction_guard_treats_a_concurrent_same_content_winner_as_success() {
-    let fixture = Fixture::new("content-guard");
-    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
-    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
-    let attempts = Cell::new(0_u8);
-
-    recognize_with(
-        &fixture.bus,
-        &fixture.paths,
-        fixture.epoch,
-        &bag,
-        &steer::Config::default(),
-        None,
-        &record,
-        |bus, openings, proposal| {
-            attempts.set(attempts.get() + 1);
-            if attempts.get() == 1 {
-                append_reminder(
-                    bus,
-                    fixture.epoch,
-                    fixture.lane,
-                    fixture.occupant,
-                    fixture.anchor,
-                    &openings[0].candidate,
-                );
-            }
-            commit(bus, proposal)
-        },
-        steering::publish_inbox,
-    )
-    .expect("the concurrent winner suppresses retry work");
-
-    assert_eq!(attempts.get(), 1);
     assert_eq!(
-        fixture.reminders().len(),
-        1,
-        "same content and epoch has one durable winner"
+        disposed.disposition(&reminders[1].key.parse().expect("key")),
+        Some(Disposition::Declined)
+    );
+
+    let mut lifecycle = steer::Ledger::from_snapshot(&snapshot).expect("ledger");
+    lifecycle
+        .absorb(steer::Steering::Escalated(&wire::body::SteerEscalated {
+            directive: reminders[0].directive,
+            key: reminders[0].key.clone(),
+            lane: fixture.lane,
+            stage: wire::body::SteeringStage::Reminded,
+        }))
+        .expect("reminder escalates");
+    lifecycle
+        .absorb(steer::Steering::Lapsed(&wire::body::SteerLapsed {
+            key: reminders[0].key.clone(),
+            lane: fixture.lane,
+            expires: reminders[0].expires,
+        }))
+        .expect("stable reminder expires");
+    assert_eq!(
+        lifecycle.disposition(&reminders[0].key.parse().expect("key")),
+        Some(Disposition::Lapsed)
     );
     fixture.finish();
 }
 
-include!("tests/tail.rs");
+fn bag(rows: &[(&str, &[&str], &str)]) -> taste::Bag {
+    taste::Bag::new(
+        rows.iter()
+            .map(|(name, words, message)| {
+                taste::Taste::new(
+                    name.parse().expect("taste name"),
+                    words.iter().copied(),
+                    *message,
+                )
+                .expect("taste row")
+            })
+            .collect(),
+    )
+    .expect("taste bag")
+}
+
+fn prose_record(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    text: &str,
+) -> lane::capture::CaptureRecord {
+    let locus = listen::Locus::new(7, 120, text.len() as u64);
+    record(
+        lane,
+        occupant,
+        listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: text.to_owned(),
+                phase: Some("final".to_owned()),
+                media: Vec::new(),
+                locus,
+            })],
+        },
+    )
+}
+
+fn record(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    decoded: listen::Decoded,
+) -> lane::capture::CaptureRecord {
+    lane::capture::CaptureRecord {
+        lane,
+        occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus: listen::Locus::new(7, 120, 64),
+        declaration: None,
+        decoded,
+    }
+}
+
+fn reminders(snapshot: &journal::FactSnapshot) -> Vec<wire::body::TasteReminded> {
+    snapshot
+        .facts()
+        .iter()
+        .filter_map(|envelope| envelope.fact.read())
+        .collect()
+}
+
+fn judgments(snapshot: &journal::FactSnapshot) -> Vec<wire::body::TasteJudged> {
+    snapshot
+        .facts()
+        .iter()
+        .filter_map(|envelope| envelope.fact.read())
+        .collect()
+}
+
+fn judgment(confirmed: bool, attempts: Vec<wire::body::TasteJudgeAttempt>) -> Judgment {
+    Judgment {
+        confirmed,
+        attempts,
+    }
+}
+
+fn attempt(
+    framing: u8,
+    reply: &str,
+    verdict: wire::body::TasteJudgeReply,
+) -> wire::body::TasteJudgeAttempt {
+    wire::body::TasteJudgeAttempt {
+        framing,
+        reply: reply.to_owned(),
+        verdict,
+    }
+}
+
+fn append_send(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    directive: CanonicalUuid,
+    key: &str,
+    cause: Seq,
+) {
+    let at = current_instant().expect("command instant");
+    let origin: wire::Origin = format!("resident:{epoch}").parse().expect("command origin");
+    let mut proposal =
+        JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let body = wire::body::SteerSent {
+        directive,
+        fanout: None,
+        key: key.to_owned(),
+        lane,
+        text: "concurrent command".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: "2030-01-01T00:00:00.000Z".parse().expect("expiry"),
+    };
+    let pending = proposal
+        .fact(body.clone(), FactCause::Existing(cause))
+        .expect("command fact");
+    proposal.steering_head(pending, move |seq| {
+        steer::Ledger::sent_head(&body, origin, at, seq).expect("command head")
+    });
+    commit(bus, proposal).expect("concurrent command commits");
+}
+
+fn append_compaction(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    cause: Seq,
+) -> Seq {
+    let mut proposal =
+        write(Actor::Spice, epoch, Producer::ResidentRecognition).expect("compaction proposal");
+    proposal
+        .fact(
+            wire::body::LaneCompacted {
+                lane,
+                occupant,
+                stream: "stdout".to_owned(),
+                member: 12,
+                offset: 500,
+                length: 32,
+            },
+            FactCause::Existing(cause),
+        )
+        .expect("compaction fact");
+    Seq::new(commit(bus, proposal).expect("compaction commits").last()).expect("nonzero compaction")
+}
+
+fn append_reminder(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    anchor: Seq,
+    candidate: &Candidate,
+) {
+    let at = current_instant().expect("reminder instant");
+    let origin: wire::Origin = format!("resident:{epoch}")
+        .parse()
+        .expect("reminder origin");
+    let mut proposal = JournalWrite::new(
+        Actor::Spice,
+        origin.clone(),
+        at,
+        Producer::ResidentRecognition,
+    );
+    let body = wire::body::TasteReminded {
+        directive: uuid(70),
+        key: "00000000".to_owned(),
+        lane,
+        taste: candidate.taste.clone(),
+        content: candidate.content.clone(),
+        occupant,
+        compaction: anchor.get(),
+        locus: candidate.locus,
+        text: candidate.text.clone(),
+        expires: "2030-01-01T00:00:00.000Z".parse().expect("expiry"),
+    };
+    let pending = proposal
+        .fact(body.clone(), FactCause::Existing(anchor))
+        .expect("reminder fact");
+    proposal.steering_head(pending, move |seq| {
+        steer::Ledger::reminded_head(&body, origin, at, seq).expect("reminder head")
+    });
+    commit(bus, proposal).expect("concurrent reminder commits");
+}
+
+fn append_judgment(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    anchor: Seq,
+    opening: &Opening,
+) {
+    let at = current_instant().expect("judgment instant");
+    let origin: wire::Origin = format!("resident:{epoch}")
+        .parse()
+        .expect("judgment origin");
+    let mut proposal = JournalWrite::new(Actor::Spice, origin.clone(), at, Producer::Judge);
+    let body = wire::body::TasteJudged {
+        lane,
+        occupant,
+        compaction: anchor.get(),
+        taste: opening.candidate.taste.clone(),
+        content: opening.candidate.content.clone(),
+        bag: opening.candidate.bag.clone(),
+        trigger: opening.candidate.trigger.clone(),
+        vendor: opening.candidate.vendor.clone(),
+        source: opening.candidate.source.clone(),
+        locus: opening.candidate.locus,
+        attempts: vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+        decision: wire::body::TasteDecision::Confirmed {
+            directive: opening.directive,
+            key: opening.key.to_string(),
+            text: opening.candidate.text.clone(),
+            expires: "2030-01-01T00:00:00.000Z".parse().expect("expiry"),
+        },
+    };
+    let pending = proposal
+        .fact(body.clone(), FactCause::Existing(anchor))
+        .expect("judgment fact");
+    proposal.steering_head(pending, move |seq| {
+        steer::Ledger::judged_head(&body, origin, at, seq).expect("judgment head")
+    });
+    commit(bus, proposal).expect("concurrent judgment commits");
+}
+
+fn uuid(last: u8) -> CanonicalUuid {
+    format!("018f82d4-6f59-7d06-92e3-bce9131163{last:02}")
+        .parse()
+        .expect("fixture UUID")
+}

@@ -62,7 +62,8 @@ fn gate_findings_file_exact_deferred_tasks() {
             creation_fact_origin(&bus, &task.statement.body.handle),
             causal
         );
-        assert!(task.statement.body.tags.contains(&finding_tag(finding)));
+        let tag = finding_tag(finding);
+        assert!(task.statement.body.tags.contains(&tag));
         assert_eq!(task.statement.body.acceptance, finding.acceptance);
         let description = task
             .statement

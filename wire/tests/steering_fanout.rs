@@ -1,0 +1,76 @@
+use wire::body::SteerSent;
+use wire::intent::SteerSend;
+use wire::{CanonicalUuid, Instant};
+
+const DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116301";
+const FANOUT: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
+const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
+const EXPIRES: &str = "2030-04-12T19:44:09.271Z";
+
+#[test]
+fn pre_fanout_sent_fact_remains_byte_canonical() {
+    let bytes = wire::encode(&sent(None)).expect("pre-fanout fact encodes");
+    assert_eq!(
+        std::str::from_utf8(&bytes).expect("wire JSON is UTF-8"),
+        concat!(
+            r#"{"directive":"018f82d4-6f59-7d06-92e3-bce913116301","#,
+            r#""key":"1kFanout","lane":"018f82d4-6f59-7d06-92e3-bce913116303","#,
+            r#""text":"hold the line","expires":"2030-04-12T19:44:09.271Z"}"#,
+        )
+    );
+    assert_eq!(
+        wire::decode::<SteerSent>(&bytes).expect("pre-fanout fact decodes"),
+        sent(None)
+    );
+}
+
+#[test]
+fn current_fanout_roundtrips_and_explicit_null_is_refused() {
+    let current = sent(Some(uuid(FANOUT)));
+    let bytes = wire::encode(&current).expect("fanout-aware fact encodes");
+    assert_eq!(
+        wire::decode::<SteerSent>(&bytes).expect("fanout-aware fact decodes"),
+        current
+    );
+    let null = std::str::from_utf8(&bytes)
+        .expect("wire JSON is UTF-8")
+        .replace(&format!(r#""fanout":"{FANOUT}""#), r#""fanout":null"#);
+    assert!(
+        wire::decode::<SteerSent>(null.as_bytes()).is_err(),
+        "present fanout cannot erase provenance with null"
+    );
+}
+
+#[test]
+fn current_send_intent_requires_fanout_identity() {
+    let missing = format!(r#"{{"lane":"{LANE}","message":"hold the line","attachments":[]}}"#);
+    assert!(wire::decode::<SteerSend>(missing.as_bytes()).is_err());
+    let send = SteerSend {
+        fanout: uuid(FANOUT),
+        lane: uuid(LANE),
+        message: "hold the line".to_owned(),
+        attachments: Vec::new(),
+    };
+    assert_eq!(
+        wire::decode::<SteerSend>(&wire::encode(&send).expect("send encodes"))
+            .expect("send decodes"),
+        send
+    );
+}
+
+fn sent(fanout: Option<CanonicalUuid>) -> SteerSent {
+    SteerSent {
+        directive: uuid(DIRECTIVE),
+        fanout,
+        key: "1kFanout".to_owned(),
+        lane: uuid(LANE),
+        text: "hold the line".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: EXPIRES.parse::<Instant>().expect("fixture instant"),
+    }
+}
+
+fn uuid(value: &str) -> CanonicalUuid {
+    value.parse().expect("fixture UUID")
+}

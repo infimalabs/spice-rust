@@ -179,8 +179,9 @@ impl MountLoadError {
     /// Whether this refusal names authority the command-mount rim owns.
     ///
     /// A generated built-in still owns syntax and domain errors in unrelated
-    /// configuration. Mount collisions and structured `commands.*` issues must
-    /// instead refuse before that built-in dispatches.
+    /// configuration. Mount collisions, structured `commands.*` issues, and
+    /// task-project stem issues that shape public routing must instead refuse
+    /// before that built-in dispatches.
     #[must_use]
     pub fn affects_mounts(&self) -> bool {
         match self {
@@ -190,7 +191,12 @@ impl MountLoadError {
                 resolution.issues().iter().any(|issue| {
                     issue.path().is_some_and(|path| {
                         let path = path.to_string();
-                        path == "commands" || path.starts_with("commands.")
+                        path == "commands"
+                            || path.starts_with("commands.")
+                            || path == "tasks.stems"
+                            || path.starts_with("tasks.stems[")
+                            || path == "tasks.hidden_stems"
+                            || path.starts_with("tasks.hidden_stems[")
                     })
                 })
             }),

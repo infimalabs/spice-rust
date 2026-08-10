@@ -254,17 +254,23 @@ fn seed_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Enviro
 
 fn seed_prepared_root(root: &Path, executable: &Path, automatic: bool) -> DemoResult<Environment> {
     born_repository(root)?;
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
+    let source_root = application_source_root()?;
+    let source = canvas::AppSource::resolve(source_root)
+        .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
+    finish_seed_prepared_root(root, executable, automatic, &source)
+}
+
+fn application_source_root() -> DemoResult<&'static Path> {
+    option_env!("SPICE_WORKSPACE_TEST_WRITABLE_ROOT") // env-policy: allow
+        .map(Path::new)
+        .or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).parent())
         .ok_or_else(|| {
             environment_fault(
                 "demo::source-repository-unavailable",
                 "the spice crate has no workspace parent".to_owned(),
             )
-        })?;
-    let source = canvas::AppSource::resolve(source_root)
-        .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
-    finish_seed_prepared_root(root, executable, automatic, &source)
+            .into()
+        })
 }
 
 fn finish_seed_prepared_root(

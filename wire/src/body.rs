@@ -42,6 +42,17 @@ pub struct DocApplied {
 pub struct SteerSent {
     /// Durable directive identity, equal to the command that created it.
     pub directive: CanonicalUuid,
+    /// Operator submit action that may fan out into target-specific directives.
+    ///
+    /// Facts written before fanout provenance omit this value. Current operator
+    /// sends always carry it; consumers must use their named compatibility rule
+    /// for an absent value rather than infer equality from transcript loci.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fanout: Option<CanonicalUuid>,
     /// Directive key.
     pub key: String,
     /// Lane the directive addresses.
@@ -152,6 +163,17 @@ pub struct SteerRecovered {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TranscriptLocus {
+    /// Opaque identity of the durable tape generation carrying this record.
+    ///
+    /// Legacy facts predate source-aware transcript evidence. Consumers must
+    /// treat an absent source as lane-scoped rather than guessing that equal
+    /// numeric coordinates came from one tape.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub source: Option<CanonicalUuid>,
     /// Tape member containing the complete vendor record.
     pub member: u64,
     /// Byte offset of the record within its member.

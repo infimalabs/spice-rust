@@ -880,6 +880,7 @@ fn expires() -> Instant {
 fn sent(key: &str) -> SteerSent {
     SteerSent {
         directive: directive(key),
+        fanout: None,
         key: key.to_owned(),
         lane: lane(),
         text: "hold the line".to_owned(),
@@ -953,6 +954,7 @@ fn declined(key: &str) -> SteerDeclined {
 
 fn transcript_locus(line: u32, column: u32) -> TranscriptLocus {
     TranscriptLocus {
+        source: None,
         member: 1,
         offset: 40,
         length: 80,
