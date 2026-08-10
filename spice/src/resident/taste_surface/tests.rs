@@ -398,6 +398,42 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
 }
 
 #[test]
+fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
+    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let lane = uuid(90);
+    let occupant = uuid(91);
+    let patch = prose_record(
+        lane,
+        occupant,
+        "*** Begin Patch\n+polling forever\n*** End Patch",
+    );
+    let mixed = prose_record(
+        lane,
+        occupant,
+        "Authored delivery.\ndiff --git a/a b/a\n@@ -1 +1 @@\n-pause\n+polling",
+    );
+    let authored = prose_record(
+        lane,
+        occupant,
+        "Polling is discussed here.\ndiff --git a/a b/a\n+polling",
+    );
+
+    assert!(candidates(&bag, &patch).expect("patch scans").is_empty());
+    assert!(
+        candidates(&bag, &mixed)
+            .expect("mixed diff scans")
+            .is_empty()
+    );
+    assert_eq!(
+        candidates(&bag, &authored)
+            .expect("authored prefix scans")
+            .len(),
+        1,
+        "only the authored prefix remains eligible"
+    );
+}
+
+#[test]
 fn transaction_guard_retries_after_both_key_and_directive_command_races() {
     let fixture = Fixture::new("guard-races");
     let bag = bag(&[("polling", &["poll*"], "Wait.")]);

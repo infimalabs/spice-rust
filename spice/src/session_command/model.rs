@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
+use crate::message_shape::MessageShape;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Vendor {
@@ -50,7 +52,8 @@ pub(crate) struct MessageRecord {
     pub(crate) primary_flavor: String,
     pub(crate) flavor_tags: Vec<String>,
     pub(crate) matched_cues: Vec<String>,
-    pub(crate) human: bool,
+    pub(crate) shape: MessageShape,
+    pub(crate) authored: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -61,6 +64,7 @@ pub(crate) struct MessageView {
     pub(crate) turn_id: Option<String>,
     pub(crate) side: String,
     pub(crate) phase: String,
+    pub(crate) shape: MessageShape,
     pub(crate) flavor: String,
     pub(crate) tags: Vec<String>,
     pub(crate) cues: Vec<String>,
