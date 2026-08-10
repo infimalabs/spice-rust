@@ -92,11 +92,7 @@ pub(in crate::resident) fn configure(
     // A policy-only change moves no member, so it names no lane and crosses no
     // lane's attribution; the empty read is the honest answer rather than a
     // skipped one.
-    let moved: Vec<CanonicalUuid> = membership
-        .as_ref()
-        .map(|change| change.member)
-        .into_iter()
-        .collect();
+    let moved = moved_members(membership.as_ref());
     let sources = match bus.lane_source_boundaries(&moved) {
         Ok(sources) => sources,
         Err(error) => {
@@ -154,6 +150,10 @@ pub(in crate::resident) fn configure(
         }),
         Err(outcome) => typed_outcome(outcome),
     }
+}
+
+fn moved_members(membership: Option<&MembershipChange>) -> Vec<CanonicalUuid> {
+    membership.map(|change| change.member).into_iter().collect()
 }
 
 fn previous_subscription(

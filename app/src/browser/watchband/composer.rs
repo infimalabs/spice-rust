@@ -122,6 +122,11 @@ pub(super) fn render_agent_message_card(
         message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
     );
     let reported_tasks = watchband::reported_tasks(&message.text);
+    let unlinked_media = message
+        .media
+        .iter()
+        .filter(|media| !message.text.contains(&media.data_url))
+        .collect::<Vec<_>>();
     html! {
         <article
             key={source_id.clone()}
@@ -149,6 +154,18 @@ pub(super) fn render_agent_message_card(
             data-measure-span={layout.measure_span.to_string()}
         >
             <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
+            if !unlinked_media.is_empty() {
+                <div class="message-attachments">
+                    {for unlinked_media.into_iter().map(|media| html! {
+                        <img
+                            src={media.data_url.clone()}
+                            alt={media.name.clone()}
+                            title={media.name.clone()}
+                            data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
+                        />
+                    })}
+                </div>
+            }
             <footer class="message-meta">
                 <span class="message-classifiers">
                     <span class="message-key">{"agent"}</span>
@@ -502,14 +519,16 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
         let Some(data_url) = value.as_string() else {
             return;
         };
-        drafts.dispatch(ComposerAction::AddAttachment {
-            lane: lane_key.clone(),
-            attachment: DirectiveAttachment {
-                name: name.clone(),
-                content_type: content_type.clone(),
-                data_url,
-            },
-        });
+        match DirectiveAttachment::admit(name.clone(), content_type.clone(), data_url) {
+            Ok(attachment) => drafts.dispatch(ComposerAction::AddAttachment {
+                lane: lane_key.clone(),
+                attachment,
+            }),
+            Err(error) => drafts.dispatch(ComposerAction::SetIssue {
+                lane: lane_key.clone(),
+                issue: format!("Image was refused: {error}."),
+            }),
+        }
     });
     reader.set_onload(Some(onload.as_ref().unchecked_ref()));
     if reader.read_as_data_url(&file).is_ok() {

@@ -487,19 +487,7 @@ fn resolve_external_preconditions(
         remote_ref(root, authority.remote(), refs.announcement())?,
         release_commit,
     );
-    if let Some(object) = &source_ref {
-        return Err(format!(
-            "the source ref names {object}, not {release_commit}"
-        ));
-    }
-    if let Some(object) = &tag_ref {
-        return Err(format!("the tag ref names {object}, not {release_commit}"));
-    }
-    if let Some(object) = &announcement_ref {
-        return Err(format!(
-            "the announcement ref names {object}, not {release_commit}"
-        ));
-    }
+    admit_unpublished_refs(&source_ref, &tag_ref, &announcement_ref, release_commit)?;
     Ok(ExternalPreconditions {
         requested_version,
         source_commit,
@@ -516,6 +504,28 @@ fn resolve_external_preconditions(
         tag_ref,
         announcement_ref,
     })
+}
+
+fn admit_unpublished_refs(
+    source_ref: &Option<String>,
+    tag_ref: &Option<String>,
+    announcement_ref: &Option<String>,
+    release_commit: &str,
+) -> Result<(), String> {
+    if let Some(object) = &source_ref {
+        return Err(format!(
+            "the source ref names {object}, not {release_commit}"
+        ));
+    }
+    if let Some(object) = &tag_ref {
+        return Err(format!("the tag ref names {object}, not {release_commit}"));
+    }
+    if let Some(object) = &announcement_ref {
+        return Err(format!(
+            "the announcement ref names {object}, not {release_commit}"
+        ));
+    }
+    Ok(())
 }
 
 fn bind_external_plan(

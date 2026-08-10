@@ -444,24 +444,15 @@ pub struct SteerSent {
         deserialize_with = "crate::optional::present"
     )]
     pub control: Option<String>,
-    /// Opaque attachment payloads carried with this direction.
+    /// Admitted browsable images carried with this direction.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<DirectiveAttachment>,
     /// Instant the directive expires without a disposition.
     pub expires: Instant,
 }
 
-/// One exact attachment carried by a durable directive.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DirectiveAttachment {
-    /// Operator-facing attachment name.
-    pub name: String,
-    /// Declared media type.
-    pub content_type: String,
-    /// Exact opaque data URL admitted with the directive.
-    pub data_url: String,
-}
+/// Compatibility spelling for the one shared media value.
+pub type DirectiveAttachment = crate::Media;
 
 /// How urgently one stable directive is currently presented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

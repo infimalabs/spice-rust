@@ -240,6 +240,16 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let resident = Resident::start(&fixture);
 
     let notes = fixture.notes.to_str().expect("notes path is UTF-8");
+    let text_plan = preview_release(&fixture, notes);
+
+    let (apply, first) = publish_release(&fixture, notes, &text_plan);
+
+    recover_and_replay_release(&fixture, notes, &apply);
+    resident.stop(&fixture);
+    replay_after_restart(&fixture, notes, &apply, &first.0);
+}
+
+fn preview_release(fixture: &Fixture, notes: &str) -> ReleasePlan {
     let text = fixture.invoke(&["release", "publish", "--notes-file", notes]);
     assert!(
         text.status.success(),
@@ -288,7 +298,7 @@ fn publication_plans_commits_replays_and_survives_restart() {
     assert_eq!(text_plan.notes, expected_notes.identity);
     assert_eq!(text_plan.notes_document, expected_notes.document);
     assert!(
-        remote_refs(&fixture).is_empty(),
+        remote_refs(fixture).is_empty(),
         "preview changed remote refs"
     );
 
@@ -305,8 +315,15 @@ fn publication_plans_commits_replays_and_survives_restart() {
     };
     assert_eq!(json_plan.position, ReplyPosition::Direct {});
     assert_eq!(json_plan.body, text_plan);
+    text_plan
+}
 
-    let apply = format!("--apply={}", text_plan.key);
+fn publish_release(
+    fixture: &Fixture,
+    notes: &str,
+    plan: &ReleasePlan,
+) -> (String, (ReplyPosition, RecognitionAnswer)) {
+    let apply = format!("--apply={}", plan.key);
     let first = fixture.invoke(&[
         "--json",
         "release",
@@ -323,7 +340,7 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let first = recognition(&first);
     assert!(first.1.fresh);
     assert_eq!(
-        remote_refs(&fixture),
+        remote_refs(fixture),
         [
             "refs/heads/main",
             "refs/spice/packages/v0.0.0",
@@ -332,19 +349,19 @@ fn publication_plans_commits_replays_and_survives_restart() {
         ]
     );
     assert_eq!(
-        remote_object_type(&fixture, "refs/spice/packages/v0.0.0"),
+        remote_object_type(fixture, "refs/spice/packages/v0.0.0"),
         "tree"
     );
     assert_eq!(
-        remote_object(&fixture, "refs/spice/packages/v0.0.0"),
-        text_plan.package_object
+        remote_object(fixture, "refs/spice/packages/v0.0.0"),
+        plan.package_object
     );
     let operation_journal = fixture
         .journal
         .parent()
         .expect("journal data directory")
         .join("release-operations")
-        .join(format!("{}.json", text_plan.key));
+        .join(format!("{}.json", plan.key));
     let operation_journal: serde_json::Value = serde_json::from_slice(
         &fs::read(operation_journal).expect("external operation journal exists"),
     )
@@ -354,16 +371,19 @@ fn publication_plans_commits_replays_and_survives_restart() {
             .as_array()
             .expect("accepted operation rows")
             .len(),
-        text_plan.operations.len()
+        plan.operations.len()
     );
     assert_eq!(
         operation_journal["receipts"]
             .as_array()
             .expect("operation receipt rows")
             .len(),
-        text_plan.operations.len()
+        plan.operations.len()
     );
+    (apply, first)
+}
 
+fn recover_and_replay_release(fixture: &Fixture, notes: &str, apply: &str) {
     let recovery = fixture.invoke(&[
         "--json",
         "release",
@@ -421,7 +441,7 @@ fn publication_plans_commits_replays_and_survives_restart() {
     );
     assert!(!recognition(&recovered).1.fresh);
 
-    let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, &apply]);
+    let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, apply]);
     assert!(
         replay.status.success(),
         "text replay failed: {}",
@@ -430,9 +450,15 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let replay_answer: RecognitionAnswer =
         wire::decode(&replay.stdout).expect("text replay body is typed");
     assert!(!replay_answer.fresh);
-    let snapshot = facts(&fixture);
-    assert_eq!(kind_count(&snapshot, FactKind::ReleasePublished), 1);
-    resident.stop(&fixture);
+    assert_eq!(kind_count(&facts(fixture), FactKind::ReleasePublished), 1);
+}
+
+fn replay_after_restart(
+    fixture: &Fixture,
+    notes: &str,
+    apply: &str,
+    first_position: &ReplyPosition,
+) {
     assert_eq!(
         journal::Journal::open(&fixture.journal)
             .expect("journal opens")
@@ -441,16 +467,9 @@ fn publication_plans_commits_replays_and_survives_restart() {
             .receipts,
         1
     );
-
-    let restarted = Resident::start(&fixture);
-    let after_restart = fixture.invoke(&[
-        "--json",
-        "release",
-        "publish",
-        "--notes-file",
-        notes,
-        &apply,
-    ]);
+    let restarted = Resident::start(fixture);
+    let after_restart =
+        fixture.invoke(&["--json", "release", "publish", "--notes-file", notes, apply]);
     assert!(
         after_restart.status.success(),
         "restart replay failed: {}",
@@ -458,9 +477,9 @@ fn publication_plans_commits_replays_and_survives_restart() {
     );
     let after_restart = recognition(&after_restart);
     assert!(!after_restart.1.fresh);
-    assert_eq!(after_restart.0, first.0);
-    assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 1);
-    restarted.stop(&fixture);
+    assert_eq!(&after_restart.0, first_position);
+    assert_eq!(kind_count(&facts(fixture), FactKind::ReleasePublished), 1);
+    restarted.stop(fixture);
 }
 
 #[test]

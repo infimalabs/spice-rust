@@ -499,46 +499,7 @@ impl dist::EffectPort for SystemEffects {
                 let result = self.prior(plan, operation)?;
                 Ok((result, dist::Convergence::AlreadyConverged))
             }
-            Op::RebuildArtifacts => {
-                let package = crate::release_package::materialize(
-                    &self.root,
-                    &plan.requested_version,
-                    plan.notes_identity.clone(),
-                    &plan.notes,
-                    &manifest_bytes(&self.root, plan)?,
-                )
-                .map_err(|error| match error {
-                    crate::release_package::PackageFailure::Moved(detail) => {
-                        dist::EffectError::Moved(detail)
-                    }
-                    crate::release_package::PackageFailure::Environment(detail) => {
-                        dist::EffectError::Environment(detail)
-                    }
-                })?;
-                if package.identity != plan.package || package.git_tree != plan.package_object {
-                    return Err(dist::EffectError::Moved(
-                        "rebuilt package identity or Git tree changed".to_owned(),
-                    ));
-                }
-                let convergence = if matches!(
-                    prior,
-                    dist::OperationState::Package {
-                        object: Some(object),
-                        ..
-                    } if object == &plan.package_object
-                ) {
-                    dist::Convergence::AlreadyConverged
-                } else {
-                    dist::Convergence::Applied
-                };
-                Ok((
-                    dist::OperationState::Package {
-                        identity: Some(package.identity),
-                        object: Some(package.git_tree),
-                    },
-                    convergence,
-                ))
-            }
+            Op::RebuildArtifacts => self.rebuild_artifacts(plan, prior),
             Op::InstallAndProbeArtifacts => self.install_and_probe(plan),
             Op::RehearseUpload => {
                 let command = self
@@ -618,6 +579,51 @@ impl dist::EffectPort for SystemEffects {
 }
 
 impl SystemEffects {
+    fn rebuild_artifacts(
+        &self,
+        plan: &dist::ReleasePlan,
+        prior: &dist::OperationState,
+    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        let package = crate::release_package::materialize(
+            &self.root,
+            &plan.requested_version,
+            plan.notes_identity.clone(),
+            &plan.notes,
+            &manifest_bytes(&self.root, plan)?,
+        )
+        .map_err(|error| match error {
+            crate::release_package::PackageFailure::Moved(detail) => {
+                dist::EffectError::Moved(detail)
+            }
+            crate::release_package::PackageFailure::Environment(detail) => {
+                dist::EffectError::Environment(detail)
+            }
+        })?;
+        if package.identity != plan.package || package.git_tree != plan.package_object {
+            return Err(dist::EffectError::Moved(
+                "rebuilt package identity or Git tree changed".to_owned(),
+            ));
+        }
+        let convergence = if matches!(
+            prior,
+            dist::OperationState::Package {
+                object: Some(object),
+                ..
+            } if object == &plan.package_object
+        ) {
+            dist::Convergence::AlreadyConverged
+        } else {
+            dist::Convergence::Applied
+        };
+        Ok((
+            dist::OperationState::Package {
+                identity: Some(package.identity),
+                object: Some(package.git_tree),
+            },
+            convergence,
+        ))
+    }
+
     fn converge_immutable(
         &self,
         plan: &dist::ReleasePlan,

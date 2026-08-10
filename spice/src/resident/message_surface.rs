@@ -99,17 +99,28 @@ pub(super) fn publish_agent_messages(
     previews: &mut CallPreviews,
 ) -> CommandResult<()> {
     for (event, decoded) in record.decoded.events().iter().enumerate() {
-        let (activity, locus, text) = match decoded {
-            listen::Event::Prose(prose) => {
-                (AgentActivityKind::Prose, prose.locus, prose.text.clone())
-            }
+        let (activity, locus, text, media) = match decoded {
+            listen::Event::Prose(prose) => (
+                AgentActivityKind::Prose,
+                prose.locus,
+                prose.text.clone(),
+                prose.media.clone(),
+            ),
             listen::Event::Tool(tool) => (
                 AgentActivityKind::Tool,
                 tool.locus,
                 tool_preview::activity(record.lane, tool, previews),
+                match &tool.moment {
+                    listen::ToolMoment::Result(outcome) => outcome.media.clone(),
+                    listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => {
+                        Vec::new()
+                    }
+                },
             ),
             _ => continue,
         };
+        wire::media::admit_media(&media)
+            .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
         let event = u32::try_from(event)
             .map_err(|error| store_fault("canvas::message-locus-invalid", &error.to_string()))?;
         publisher
@@ -124,6 +135,7 @@ pub(super) fn publish_agent_messages(
                 },
                 activity,
                 text,
+                media,
             })
             .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     }

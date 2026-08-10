@@ -555,7 +555,12 @@ fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
                 next: None,
             },
         }),
-        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new("task::missing".to_owned(), None, None, None))),
+        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "task::missing".to_owned(),
+            None,
+            None,
+            None,
+        ))),
         Outcome::Fault(Fault {
             class: FaultClass::Protocol,
             reason: "command::stale".to_owned(),
@@ -585,7 +590,12 @@ fn the_second_command_outcome_is_the_ticker_source() {
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
     let outcomes: [Outcome<wire::intent::TaskAnswer>; 2] = [
-        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new("task::first".to_owned(), None, None, None))),
+        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "task::first".to_owned(),
+            None,
+            None,
+            None,
+        ))),
         Outcome::Fault(Fault {
             class: FaultClass::Protocol,
             reason: "command::second".to_owned(),

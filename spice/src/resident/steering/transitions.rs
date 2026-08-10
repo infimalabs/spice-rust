@@ -13,6 +13,18 @@ pub(in crate::resident) fn send(
     command: &wire::AdmittedCommand,
     send: &wire::intent::SteerSend,
 ) -> Outcome<CommandAnswer> {
+    if let Err(error) = wire::media::admit_media(&send.attachments) {
+        return refusal(
+            "steer::media-invalid",
+            Some(format!(
+                "at most {} admitted images of at most {} decoded bytes each",
+                wire::media::MAX_MEDIA_ITEMS,
+                wire::media::MAX_MEDIA_BYTES,
+            )),
+            Some(error.to_string()),
+            "remove or replace the invalid attachment and retry the same authored message",
+        );
+    }
     if send.message.trim().is_empty() {
         return refusal(
             "steer::message-empty",

@@ -156,6 +156,7 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
         },
         activity: AgentActivityKind::Prose,
         text: "settled".to_owned(),
+        media: Vec::new(),
     };
     let encoded = wire::encode(&prose).expect("prose activity encodes");
     assert!(

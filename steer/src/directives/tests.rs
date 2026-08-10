@@ -828,9 +828,9 @@ fn sent(key: &str) -> SteerSent {
         text: "hold the line".to_owned(),
         control: Some("drive-drain-queue".to_owned()),
         attachments: vec![DirectiveAttachment {
-            name: "operator-note.txt".to_owned(),
-            content_type: "text/plain".to_owned(),
-            data_url: "data:text/plain;base64,aG9sZCB0aGUgbGluZQ==".to_owned(),
+            name: "operator-capture.png".to_owned(),
+            content_type: "image/png".to_owned(),
+            data_url: "data:image/png;base64,iVBORw0KGgo=".to_owned(),
         }],
         expires: expires(),
     }
