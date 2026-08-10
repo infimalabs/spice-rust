@@ -1,22 +1,24 @@
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
-
-use flate2::Compression;
-use flate2::write::GzEncoder;
-use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 
+#[path = "session_cli/authority.rs"]
+mod authority;
+#[path = "session_cli/discovery.rs"]
+mod discovery;
+#[path = "session_cli/fixtures.rs"]
+mod fixtures;
+#[path = "session_cli/recovery.rs"]
+mod recovery;
+#[path = "session_cli/window_planner.rs"]
+mod window_planner;
+
+use fixtures::{codex_event, codex_message, token_payload, transcript_event};
+
 const REFUSAL_EXIT: i32 = 2;
-const CODEX_THREAD: &str = "0123456789abcdef0123456789abcdef";
-const CODEX_THREAD_DASHED: &str = "01234567-89ab-cdef-0123-456789abcdef";
-const CLAUDE_THREAD: &str = "fedcba9876543210fedcba9876543210";
-const CLAUDE_THREAD_DASHED: &str = "fedcba98-7654-3210-fedc-ba9876543210";
 
 struct Scratch(PathBuf);
 
@@ -49,39 +51,6 @@ impl Drop for Scratch {
     }
 }
 
-#[cfg(unix)]
-struct PermissionRestore {
-    path: PathBuf,
-    permissions: Option<fs::Permissions>,
-}
-
-#[cfg(unix)]
-impl PermissionRestore {
-    fn new(path: &Path, permissions: fs::Permissions) -> Self {
-        Self {
-            path: path.to_path_buf(),
-            permissions: Some(permissions),
-        }
-    }
-
-    fn restore(mut self) {
-        let permissions = self
-            .permissions
-            .take()
-            .expect("permission restoration remains armed");
-        fs::set_permissions(&self.path, permissions).expect("restore fixture permissions");
-    }
-}
-
-#[cfg(unix)]
-impl Drop for PermissionRestore {
-    fn drop(&mut self) {
-        if let Some(permissions) = self.permissions.take() {
-            let _ = fs::set_permissions(&self.path, permissions);
-        }
-    }
-}
-
 struct Spoken {
     code: Option<i32>,
     out: Vec<u8>,
@@ -89,6 +58,14 @@ struct Spoken {
 }
 
 fn invoke(argv: &[String], environment: &[(&str, String)]) -> Spoken {
+    invoke_in(None, argv, environment)
+}
+
+fn invoke_in(
+    current_dir: Option<&Path>,
+    argv: &[String],
+    environment: &[(&str, String)],
+) -> Spoken {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
     command
         .args(argv)
@@ -98,6 +75,9 @@ fn invoke(argv: &[String], environment: &[(&str, String)]) -> Spoken {
         .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
         .env_remove(steer::hook::INBOX);
+    if let Some(current_dir) = current_dir {
+        command.current_dir(current_dir);
+    }
     for (name, value) in environment {
         command.env(name, value);
     }
@@ -110,7 +90,16 @@ fn invoke(argv: &[String], environment: &[(&str, String)]) -> Spoken {
 }
 
 fn reply_forms(argv: &[String], environment: &[(&str, String)], expected: &str) -> Value {
-    let text = invoke(argv, environment);
+    reply_forms_in(None, argv, environment, expected)
+}
+
+fn reply_forms_in(
+    current_dir: Option<&Path>,
+    argv: &[String],
+    environment: &[(&str, String)],
+    expected: &str,
+) -> Value {
+    let text = invoke_in(current_dir, argv, environment);
     assert_eq!(text.code, Some(0), "text stderr: {}", utf8(&text.err));
     assert!(text.err.is_empty(), "successful text reply has no stderr");
     let body: Value = serde_json::from_slice(&text.out).expect("text form is the typed body");
@@ -118,7 +107,7 @@ fn reply_forms(argv: &[String], environment: &[(&str, String)], expected: &str) 
 
     let mut structured_argv = vec!["--json".to_owned()];
     structured_argv.extend_from_slice(argv);
-    let structured = invoke(&structured_argv, environment);
+    let structured = invoke_in(current_dir, &structured_argv, environment);
     assert_eq!(
         structured.code,
         Some(0),
@@ -156,14 +145,29 @@ fn refusal(argv: &[String], environment: &[(&str, String)], expected_reason: &st
     let envelope: Value =
         serde_json::from_slice(&spoken.err).expect("refusal is a structured outcome DTO");
     assert_eq!(envelope["kind"], "refusal");
-    assert_eq!(envelope["reason"], expected_reason);
+    let reason = envelope["reason"]
+        .as_str()
+        .or_else(|| envelope["diagnostic"]["reason"].as_str());
+    assert_eq!(reason, Some(expected_reason));
     assert!(
         envelope["remedy"]
             .as_str()
+            .or_else(|| envelope["diagnostic"]["detail"].as_str())
             .is_some_and(|value| !value.is_empty()),
         "every refusal carries explicit recovery guidance"
     );
     envelope
+}
+
+fn refusal_value<'a>(envelope: &'a Value, field: &str) -> Option<&'a str> {
+    envelope[field]
+        .as_str()
+        .or_else(|| envelope["diagnostic"][field].as_str())
+        .or_else(|| {
+            (field == "remedy")
+                .then(|| envelope["diagnostic"]["detail"].as_str())
+                .flatten()
+        })
 }
 
 fn utf8(bytes: &[u8]) -> String {
@@ -178,53 +182,6 @@ fn write_jsonl(path: &Path, rows: &[Value]) -> Vec<u8> {
     }
     fs::write(path, &bytes).expect("fixture transcript is written");
     bytes
-}
-
-fn write_gzip(path: &Path, bytes: &[u8]) {
-    let file = File::create(path).expect("gzip fixture is created");
-    let mut encoder = GzEncoder::new(file, Compression::default());
-    encoder
-        .write_all(bytes)
-        .expect("gzip fixture payload is written");
-    encoder.finish().expect("gzip fixture is finalized");
-}
-
-fn transcript_event(timestamp: &str, kind: &str, fields: Value) -> Value {
-    let Value::Object(mut fields) = fields else {
-        panic!("transcript fixture fields must be an object");
-    };
-    fields.insert("timestamp".to_owned(), Value::String(timestamp.to_owned()));
-    fields.insert("type".to_owned(), Value::String(kind.to_owned()));
-    Value::Object(fields)
-}
-
-fn codex_event(timestamp: &str, kind: &str, payload: Value) -> Value {
-    transcript_event(timestamp, kind, json!({"payload": payload}))
-}
-
-fn codex_message(timestamp: &str, role: &str, phase: Option<&str>, text: &str) -> Value {
-    let mut payload = json!({
-        "type": "message",
-        "role": role,
-        "content": [{"type": "output_text", "text": text}],
-    });
-    if let Some(phase) = phase {
-        payload["phase"] = Value::String(phase.to_owned());
-    }
-    codex_event(timestamp, "response_item", payload)
-}
-
-fn token_payload(input: u64, cached: u64, output: u64, reasoning: u64, total: u64) -> Value {
-    json!({
-        "type": "token_count",
-        "info": {"last_token_usage": {
-            "input_tokens": input,
-            "cached_input_tokens": cached,
-            "output_tokens": output,
-            "reasoning_output_tokens": reasoning,
-            "total_tokens": total,
-        }},
-    })
 }
 
 fn codex_first_turn_rows() -> Vec<Value> {
@@ -524,6 +481,10 @@ fn assert_recall_and_commands(file: &str, start: &str, end: &str) {
     );
     assert_eq!(recall["window"]["turns"].as_array().map(Vec::len), Some(1));
     assert!(recall["pruning"]["explanation"].is_string());
+    assert_eq!(
+        recall["window"]["turns"][0]["touched_paths"],
+        json!(["spice/src/session.rs"])
+    );
 
     let commands = reply_forms(
         &strings(&[
@@ -790,6 +751,185 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     scratch.remove();
 }
 
+fn message_shape_rows() -> Vec<Value> {
+    vec![
+        codex_event(
+            "2026-01-03T00:00:00Z",
+            "event_msg",
+            json!({"type": "task_started", "turn_id": "shape-turn"}),
+        ),
+        codex_message(
+            "2026-01-03T00:00:01Z",
+            "user",
+            None,
+            "Please preserve the authored ask.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:02Z",
+            "user",
+            None,
+            "[$spice](.agents/skills/spice/SKILL.md)",
+        ),
+        codex_message(
+            "2026-01-03T00:00:03Z",
+            "user",
+            None,
+            "1. Primary Request and Intent:\nContinue.\n2. Work Completed:\nNone.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:04Z",
+            "user",
+            None,
+            "<future-envelope>tool output</future-envelope>",
+        ),
+        codex_message(
+            "2026-01-03T00:00:05Z",
+            "user",
+            None,
+            "[Please keep this bracketed ask.]",
+        ),
+        codex_message(
+            "2026-01-03T00:00:06Z",
+            "user",
+            None,
+            "The malformed tool call was discussed before retrying with valid syntax.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:07Z",
+            "user",
+            None,
+            "Lead prose.\n[$spice](.agents/skills/spice/SKILL.md)\nTail prose.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:08Z",
+            "user",
+            None,
+            "Malformed <future-envelope>tool output",
+        ),
+        codex_message(
+            "2026-01-03T00:00:09Z",
+            "user",
+            None,
+            "Same text at a distinct source position.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:10Z",
+            "user",
+            None,
+            "Same text at a distinct source position.",
+        ),
+        codex_message(
+            "2026-01-03T00:00:11Z",
+            "assistant",
+            Some("commentary"),
+            "Authored commentary.\ndiff --git a/a.rs b/a.rs\n+generated body",
+        ),
+        codex_message(
+            "2026-01-03T00:00:12Z",
+            "assistant",
+            Some("commentary"),
+            "*** Begin Patch\n+generated body\n*** End Patch",
+        ),
+    ]
+}
+
+fn assert_message_shapes(file: &str) {
+    let messages = reply_forms(
+        &strings(&[
+            "session",
+            "messages",
+            file,
+            "--side",
+            "user",
+            "--oldest-first",
+        ]),
+        &[],
+        "messages",
+    );
+    assert_eq!(
+        messages["rows"]
+            .as_array()
+            .expect("message rows")
+            .iter()
+            .map(|row| row["shape"].as_str().expect("message shape"))
+            .collect::<Vec<_>>(),
+        [
+            "authored-ask",
+            "scaffolding",
+            "compaction-rehydration",
+            "tool-generated-envelope",
+            "authored-ask",
+            "authored-ask",
+            "authored-ask",
+            "authored-ask",
+            "authored-ask",
+            "authored-ask",
+        ]
+    );
+}
+
+fn assert_recent_prompt_shapes(file: &str) {
+    let summary = reply_forms(
+        &strings(&["session", "summary", file, "--recent", "8"]),
+        &[],
+        "summary",
+    );
+    assert_eq!(
+        summary["recent_prompts"]
+            .as_array()
+            .expect("recent prompts")
+            .iter()
+            .map(|row| row["text"].as_str().expect("prompt text"))
+            .collect::<Vec<_>>(),
+        [
+            "Please preserve the authored ask.",
+            "[Please keep this bracketed ask.]",
+            "The malformed tool call was discussed before retrying with valid syntax.",
+            "Lead prose.\nTail prose.",
+            "Malformed <future-envelope>tool output",
+            "Same text at a distinct source position.",
+            "Same text at a distinct source position.",
+        ]
+    );
+}
+
+fn assert_rehydration_dialogue(file: &str) {
+    let briefing = reply_forms(
+        &strings(&["session", "briefing", file, "--deadline-seconds", "5"]),
+        &[],
+        "recall",
+    );
+    assert_eq!(
+        briefing["window"]["turns"][0]["dialogue"],
+        json!([
+            {"side": "user", "text": "Please preserve the authored ask."},
+            {"side": "user", "text": "[Please keep this bracketed ask.]"},
+            {
+                "side": "user",
+                "text": "The malformed tool call was discussed before retrying with valid syntax."
+            },
+            {"side": "user", "text": "Lead prose. Tail prose."},
+            {"side": "user", "text": "Malformed <future-envelope>tool output"},
+            {"side": "user", "text": "Same text at a distinct source position."},
+            {"side": "user", "text": "Same text at a distinct source position."},
+            {"side": "assistant", "text": "Authored commentary."},
+        ])
+    );
+}
+
+#[test]
+fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
+    let scratch = Scratch::new("message-shapes");
+    let transcript = scratch.path().join("message-shapes.jsonl");
+    write_jsonl(&transcript, &message_shape_rows());
+    let file = transcript.to_string_lossy().into_owned();
+
+    assert_message_shapes(&file);
+    assert_recent_prompt_shapes(&file);
+    assert_rehydration_dialogue(&file);
+    scratch.remove();
+}
+
 fn assert_codex_final_rows(codex: &str) {
     let finals = reply_forms(
         &strings(&[
@@ -1002,371 +1142,5 @@ fn token_reporting_refuses_invalid_time_and_keeps_an_unknown_context_unknown() {
     assert_eq!(tokens["usage"][0]["snapshots"], 1);
     assert_eq!(tokens["usage"][0]["model_context_window"], Value::Null);
     assert_eq!(tokens["residues"], json!([]));
-    scratch.remove();
-}
-
-#[test]
-fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
-    let scratch = Scratch::new("discovery");
-    let codex_home = scratch.path().join("codex-home");
-    fs::create_dir_all(codex_home.join("sessions")).expect("Codex session root exists");
-    let codex_path = codex_home.join("sessions/codex-thread.jsonl");
-    let codex_bytes = write_jsonl(&codex_path, &codex_rows());
-    let state =
-        Connection::open(codex_home.join("state_5.sqlite")).expect("Codex state fixture opens");
-    state
-        .execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)", [])
-        .expect("Codex thread table exists");
-    state
-        .execute(
-            "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
-            params![CODEX_THREAD_DASHED, codex_path.to_string_lossy()],
-        )
-        .expect("Codex thread path is indexed");
-    drop(state);
-    let codex_env = [
-        ("CODEX_THREAD_ID", CODEX_THREAD_DASHED.to_owned()), // env-policy: allow
-        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
-    ];
-
-    let root = reply_forms(&strings(&["session"]), &codex_env, "recall");
-    assert_eq!(root["sources"][0]["thread"], CODEX_THREAD);
-    assert_eq!(root["sources"][0]["vendor"], "codex");
-
-    let codex_thread = reply_forms(
-        &strings(&["session", "thread", CODEX_THREAD_DASHED]),
-        &[("CODEX_HOME", codex_home.to_string_lossy().into_owned())],
-        "thread",
-    );
-    assert_eq!(codex_thread["thread"]["id"], CODEX_THREAD);
-    assert_eq!(codex_thread["thread"]["vendor"], "codex");
-
-    let claude_home = scratch.path().join("claude-home");
-    let claude_project = claude_home.join("projects/project-a");
-    fs::create_dir_all(&claude_project).expect("Claude project root exists");
-    let claude_path = claude_project.join(format!("session-{CLAUDE_THREAD}.jsonl"));
-    write_jsonl(&claude_path, &claude_rows());
-    let claude_thread = reply_forms(
-        &strings(&["session", "thread", CLAUDE_THREAD_DASHED]),
-        &[
-            (
-                "CLAUDE_CONFIG_DIR",
-                claude_home.to_string_lossy().into_owned(),
-            ),
-            ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
-        ],
-        "thread",
-    );
-    assert_eq!(claude_thread["thread"]["id"], CLAUDE_THREAD);
-    assert_eq!(claude_thread["thread"]["vendor"], "claude");
-    assert_eq!(
-        claude_thread["thread"]["latest_turn"]["turn_id"],
-        "prompt-two"
-    );
-
-    let resolved_as_input = reply_forms(
-        &strings(&["session", "summary", CLAUDE_THREAD_DASHED]),
-        &[
-            (
-                "CLAUDE_CONFIG_DIR",
-                claude_home.to_string_lossy().into_owned(),
-            ),
-            ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
-        ],
-        "summary",
-    );
-    assert_eq!(resolved_as_input["sources"][0]["thread"], CLAUDE_THREAD);
-
-    let gzip_path = scratch.path().join("codex-session.jsonl.gz");
-    write_gzip(&gzip_path, &codex_bytes);
-    let gzip = gzip_path.to_string_lossy().into_owned();
-    let deduped = reply_forms(
-        &strings(&["session", "summary", &gzip, &gzip, "--recent", "2"]),
-        &[],
-        "summary",
-    );
-    assert_eq!(deduped["sources"].as_array().map(Vec::len), Some(1));
-    assert_eq!(deduped["sources"][0]["compressed"], true);
-    assert_eq!(deduped["turns"], 2);
-
-    scratch.remove();
-}
-
-#[cfg(unix)]
-#[test]
-fn public_thread_refusal_preserves_an_incomplete_claude_search_before_codex() {
-    let scratch = Scratch::new("unreadable-thread");
-    let claude_home = scratch.path().join("claude-home");
-    let projects = claude_home.join("projects");
-    let denied = projects.join("denied");
-    fs::create_dir_all(&denied).expect("denied Claude project branch exists");
-    let original = fs::metadata(&denied)
-        .expect("denied branch metadata exists")
-        .permissions();
-    let restore = PermissionRestore::new(&denied, original.clone());
-    let mut blocked = original;
-    blocked.set_mode(0o0);
-    fs::set_permissions(&denied, blocked).expect("deny Claude project branch reads");
-
-    let read_error = fs::read_dir(&denied)
-        .expect_err("fixture must force a real read_dir failure")
-        .to_string();
-    let codex_home = scratch.path().join("codex-home");
-    fs::create_dir_all(codex_home.join("sessions")).expect("empty Codex session storage exists");
-    let spoken = invoke(
-        &strings(&["--json", "session", "thread", CLAUDE_THREAD_DASHED]),
-        &[
-            (
-                "CLAUDE_CONFIG_DIR",
-                claude_home.to_string_lossy().into_owned(),
-            ),
-            ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
-            ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
-        ],
-    );
-    restore.restore();
-
-    assert_eq!(
-        spoken.code,
-        Some(REFUSAL_EXIT),
-        "refusal stdout: {} stderr: {}",
-        utf8(&spoken.out),
-        utf8(&spoken.err)
-    );
-    assert!(
-        spoken.out.is_empty(),
-        "refusal does not impersonate a reply"
-    );
-    assert_eq!(
-        spoken.err.iter().filter(|byte| **byte == b'\n').count(),
-        1,
-        "public refusal is one JSON outcome"
-    );
-    let envelope: Value =
-        serde_json::from_slice(&spoken.err).expect("refusal is a structured outcome DTO");
-    assert_eq!(envelope["kind"], "refusal");
-    assert_eq!(envelope["reason"], "session::thread-unresolved");
-    let remedy = envelope["remedy"]
-        .as_str()
-        .expect("thread refusal carries a remedy");
-    let claude_failure = format!(
-        "transcript search was incomplete: could not read directory {}: {read_error}",
-        denied.display()
-    );
-    let codex_failure = format!(
-        "missing Codex state database {}",
-        codex_home.join("state_5.sqlite").display()
-    );
-    assert_eq!(
-        remedy,
-        format!(
-            "restore the owning Codex state index or Claude project transcript, then retry; \
-             {claude_failure}; {codex_failure}"
-        ),
-        "selected Claude failure precedes the prepared Codex failure"
-    );
-    let former_absence = format!(
-        "Claude thread {CLAUDE_THREAD} is absent beneath {}",
-        projects.display()
-    );
-    assert!(!remedy.contains(&former_absence), "{remedy}");
-
-    scratch.remove();
-}
-
-fn damaged_fixture(scratch: &Scratch) -> String {
-    let damaged_path = scratch.path().join("damaged.jsonl");
-    let valid = serde_json::to_vec(&json!({
-        "timestamp":"2026-01-03T00:00:00Z",
-        "type":"event_msg",
-        "payload":{"type":"task_started","turn_id":"readable-prefix"}
-    }))
-    .expect("valid prefix serializes");
-    let mut damaged = valid;
-    damaged.extend_from_slice(b"\n{malformed}\n{\"timestamp\":");
-    fs::write(&damaged_path, damaged).expect("damaged transcript is written");
-    damaged_path.to_string_lossy().into_owned()
-}
-
-fn assert_damaged_recovery(damaged: &str) {
-    let first = refusal(
-        &strings(&["session", "summary", damaged]),
-        &[],
-        "session::transcript-evidence-invalid",
-    );
-    let second = refusal(
-        &strings(&["session", "summary", damaged]),
-        &[],
-        "session::transcript-evidence-invalid",
-    );
-    assert_eq!(first, second, "malformed-evidence refusal is deterministic");
-    assert!(
-        first["observed"]
-            .as_str()
-            .is_some_and(|observed| observed.contains(":2: Malformed"))
-    );
-}
-
-fn assert_invalid_query_arguments(transcript: &str) {
-    refusal(
-        &strings(&["session", "briefing", transcript, "--deadline-seconds", "0"]),
-        &[],
-        "session::deadline-invalid",
-    );
-    refusal(
-        &strings(&[
-            "session",
-            "turns",
-            transcript,
-            "--start",
-            "2026-01-04T00:00:00Z",
-            "--end",
-            "2026-01-03T00:00:00Z",
-        ]),
-        &[],
-        "session::bounds-reversed",
-    );
-    refusal(
-        &strings(&[
-            "session",
-            "timeline",
-            transcript,
-            "--start",
-            "not-a-timestamp",
-        ]),
-        &[],
-        "session::timestamp-invalid",
-    );
-    refusal(
-        &strings(&["session", "summary", transcript, "--recent", "many"]),
-        &[],
-        "session::bound-invalid",
-    );
-}
-
-fn assert_unavailable_files(scratch: &Scratch) {
-    let corrupt_gzip_path = scratch.path().join("corrupt.jsonl.gz");
-    fs::write(&corrupt_gzip_path, b"not a gzip stream")
-        .expect("corrupt compressed transcript is written");
-    let corrupt_gzip = corrupt_gzip_path.to_string_lossy().into_owned();
-    let interrupted = reply_forms(
-        &strings(&["session", "summary", &corrupt_gzip]),
-        &[],
-        "summary",
-    );
-    assert_eq!(interrupted["residues"][0]["kind"], "read-interrupted");
-    assert!(interrupted["residues"][0]["recovery"].is_string());
-
-    let missing_path = scratch.path().join("missing.jsonl");
-    let missing = missing_path.to_string_lossy().into_owned();
-    let refusal_one = refusal(
-        &strings(&["session", "summary", &missing]),
-        &[],
-        "session::transcript-missing",
-    );
-    let refusal_two = refusal(
-        &strings(&["session", "summary", &missing]),
-        &[],
-        "session::transcript-missing",
-    );
-    assert_eq!(refusal_one, refusal_two, "missing-state refusal is stable");
-
-    let directory = scratch.path().join("directory.jsonl");
-    fs::create_dir(&directory).expect("non-regular transcript fixture exists");
-    refusal(
-        &strings(&["session", "summary", &directory.to_string_lossy()]),
-        &[],
-        "session::transcript-not-regular",
-    );
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
-
-        let real = scratch.path().join("real.jsonl");
-        write_jsonl(&real, &codex_rows());
-        let link = scratch.path().join("linked.jsonl");
-        symlink(&real, &link).expect("transcript symlink fixture exists");
-        refusal(
-            &strings(&["session", "summary", &link.to_string_lossy()]),
-            &[],
-            "session::transcript-not-regular",
-        );
-    }
-}
-
-fn assert_unavailable_turn_identity(scratch: &Scratch) {
-    let claude_path = scratch.path().join("claude.jsonl");
-    let mut rows = claude_rows();
-    for row in &mut rows {
-        row.as_object_mut()
-            .expect("fixture row is an object")
-            .remove("promptId");
-    }
-    write_jsonl(&claude_path, &rows);
-    let claude = claude_path.to_string_lossy().into_owned();
-    let unavailable_turn = refusal(
-        &strings(&["session", "turns", &claude, "--turn-id", "codex-only-id"]),
-        &[],
-        "session::turn-id-unavailable",
-    );
-    assert!(
-        unavailable_turn["remedy"]
-            .as_str()
-            .is_some_and(|remedy| remedy.contains("--start"))
-    );
-}
-
-#[test]
-fn recall_and_sweep_deadlines_name_inputs_without_partial_report_data() {
-    let scratch = Scratch::new("deadline");
-    let transcript = scratch.path().join("private-session.jsonl");
-    write_jsonl(&transcript, &codex_rows());
-    let input = transcript.to_string_lossy().into_owned();
-    for argv in [
-        strings(&[
-            "session",
-            "briefing",
-            &input,
-            "--deadline-seconds",
-            "0.000000001",
-        ]),
-        strings(&[
-            "session",
-            "sweep",
-            &input,
-            "--deadline-seconds",
-            "0.000000001",
-        ]),
-    ] {
-        let action = &argv[1];
-        let envelope = refusal(&argv, &[], "session::deadline-exceeded");
-        assert_eq!(
-            envelope["observed"],
-            format!(
-                "action={action} inputs=requested[{:?}] budget=0.000000001s",
-                input
-            )
-        );
-        assert!(
-            !envelope
-                .to_string()
-                .contains("Please implement parity; it must preserve evidence."),
-            "a deadline refusal must not carry partial transcript prose"
-        );
-    }
-    scratch.remove();
-}
-
-#[test]
-fn malformed_truncated_missing_and_unavailable_state_is_accounted_with_recovery() {
-    let scratch = Scratch::new("residue");
-    let damaged = damaged_fixture(&scratch);
-    assert_damaged_recovery(&damaged);
-    let valid_path = scratch.path().join("valid.jsonl");
-    write_jsonl(&valid_path, &codex_rows());
-    assert_invalid_query_arguments(&valid_path.to_string_lossy());
-    assert_unavailable_files(&scratch);
-    assert_unavailable_turn_identity(&scratch);
     scratch.remove();
 }

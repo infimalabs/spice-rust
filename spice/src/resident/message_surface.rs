@@ -38,6 +38,21 @@ impl<'a, P> CaptureSurfaces<'a, P> {
     }
 }
 
+/// Mutable per-record projection state at the admitted capture boundary.
+pub(super) struct CaptureViews<'a> {
+    previews: &'a mut CallPreviews,
+    diagnostic: &'a mut dyn io::Write,
+}
+
+impl<'a> CaptureViews<'a> {
+    pub(super) fn new(previews: &'a mut CallPreviews, diagnostic: &'a mut dyn io::Write) -> Self {
+        Self {
+            previews,
+            diagnostic,
+        }
+    }
+}
+
 pub(super) trait AgentMessagePublisher {
     fn publish(
         &self,
@@ -59,9 +74,9 @@ pub(super) fn accept_capture_record<P: AgentMessagePublisher>(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     surfaces: &CaptureSurfaces<'_, P>,
+    judge: Option<&mut dyn taste_surface::Adjudicator>,
     record: &lane::capture::CaptureRecord,
-    previews: &mut CallPreviews,
-    diagnostic: &mut dyn io::Write,
+    views: CaptureViews<'_>,
 ) -> CommandResult<()> {
     if !lane_surface::capture_record(bus, epoch, seats, record)? {
         return Ok(());
@@ -70,20 +85,21 @@ pub(super) fn accept_capture_record<P: AgentMessagePublisher>(
     // keeps the transcript head level with the records the resident has taken
     // responsibility for, rather than leaving the gap for the next start to
     // find. A record the resident did not accept above does not account either.
-    super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), diagnostic)?;
+    super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), views.diagnostic)?;
     taste_surface::recognize(
         bus,
         surfaces.paths,
         epoch,
         surfaces.tastes,
         surfaces.steering,
+        judge,
         record,
     )?;
-    match publish_agent_messages(surfaces.publisher, record, previews) {
+    match publish_agent_messages(surfaces.publisher, record, views.previews) {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(
-                diagnostic,
+                views.diagnostic,
                 "canvas message unavailable: {}: {}",
                 fault.reason, fault.detail
             );

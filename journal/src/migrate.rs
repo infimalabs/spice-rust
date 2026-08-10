@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod identity_stamp;
 mod release_notes;
 mod residency_lineage;
 mod steering_identity;
@@ -453,12 +454,17 @@ fn migrate_schema_3(connection: &Connection) -> Result<(), OpenError> {
     task_allocation::migrate(connection)
 }
 
+fn migrate_schema_5(connection: &Connection) -> Result<(), OpenError> {
+    identity_stamp::migrate(connection)?;
+    topology_revision::migrate(connection)
+}
+
 const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (1, MigrationStep::Sql(MIGRATE_1_TO_2_SQL)),
     (2, MigrationStep::Rust(residency_lineage::migrate)),
     (3, MigrationStep::Rust(migrate_schema_3)),
     (4, MigrationStep::Rust(release_notes::migrate)),
-    (5, MigrationStep::Rust(topology_revision::migrate)),
+    (5, MigrationStep::Rust(migrate_schema_5)),
 ];
 
 /// Schema 1 to 2: the table transcript accounting reads its heads from.
@@ -535,22 +541,22 @@ CREATE TABLE command_receipts (
 ) STRICT;
 
 CREATE TABLE task_heads (
-    handle TEXT PRIMARY KEY,
+    stamp TEXT PRIMARY KEY,
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
 CREATE TABLE workflow_heads (
-    handle TEXT PRIMARY KEY REFERENCES task_heads(handle),
+    stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
 CREATE TABLE claim_heads (
-    handle TEXT PRIMARY KEY REFERENCES task_heads(handle),
+    stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
 CREATE TABLE lease_heads (
-    handle TEXT PRIMARY KEY REFERENCES task_heads(handle),
+    stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;

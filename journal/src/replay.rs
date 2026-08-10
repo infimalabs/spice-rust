@@ -617,9 +617,9 @@ fn verify_heads(
         "task_heads",
         violations,
         |key, seq, head| {
-            (head.handle.as_str() == key && head.revision.get() == seq)
+            (head.incepted.as_str() == key && head.revision.get() == seq)
                 .then_some(())
-                .ok_or_else(|| "task handle or revision disagrees with the row".to_owned())
+                .ok_or_else(|| "task stamp or revision disagrees with the row".to_owned())
         },
     )?;
     count += verify_keyed_heads::<wire::WorkflowHead>(
@@ -745,7 +745,7 @@ where
 /// agreement this row owes.
 ///
 /// Every other head table proves agreement against its key: a task head names
-/// its own handle, a witness head names its own fact. A lease head carries
+/// its own stamp, a witness head names its own fact. A lease head carries
 /// neither, so checking it against the row would only compare the row to
 /// itself. What it does carry is the order its own fields declare: possession
 /// begins, is renewed, expires at the instant the latest renewal bought, and is
@@ -766,7 +766,7 @@ fn lease_agrees(head: &wire::LeaseHead) -> Result<(), String> {
 
 fn head_key(table: &str) -> &'static str {
     match table {
-        "task_heads" | "workflow_heads" | "claim_heads" | "lease_heads" => "handle",
+        "task_heads" | "workflow_heads" | "claim_heads" | "lease_heads" => "stamp",
         "witness_heads" => "name",
         "trust_heads" => "digest",
         "finding_heads" => "identity",

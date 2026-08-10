@@ -1,21 +1,45 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum Vendor {
-    Codex,
-    Claude,
-    Unknown,
-}
+use crate::message_shape::MessageShape;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Vendor(Option<&'static spice::extension::Vendor>);
 
 impl Vendor {
-    pub(crate) fn from_vendor(vendor: &spice::extension::Vendor) -> Self {
-        match vendor.dialect() {
-            listen::Dialect::Codex => Self::Codex,
-            listen::Dialect::Claude => Self::Claude,
-        }
+    pub(crate) const UNKNOWN: Self = Self(None);
+
+    pub(crate) const fn declared(vendor: &'static spice::extension::Vendor) -> Self {
+        Self(Some(vendor))
+    }
+
+    pub(crate) fn inferred(dialect: listen::Dialect) -> Self {
+        let vendor = spice::extension::registry()
+            .expect("compiled extension declarations are validated by the test gate")
+            .session_vendors()
+            .into_iter()
+            .find(|vendor| vendor.session_study().dialect() == dialect)
+            .expect("every compiled transcript dialect has one study declaration");
+        Self::declared(vendor)
+    }
+
+    pub(crate) const fn is_unknown(self) -> bool {
+        self.0.is_none()
+    }
+
+    fn identity(self) -> &'static str {
+        self.0
+            .map_or("unknown", |vendor| vendor.session_study().identity())
+    }
+}
+
+impl Serialize for Vendor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.identity())
     }
 }
 
@@ -50,7 +74,8 @@ pub(crate) struct MessageRecord {
     pub(crate) primary_flavor: String,
     pub(crate) flavor_tags: Vec<String>,
     pub(crate) matched_cues: Vec<String>,
-    pub(crate) human: bool,
+    pub(crate) shape: MessageShape,
+    pub(crate) authored: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -61,6 +86,7 @@ pub(crate) struct MessageView {
     pub(crate) turn_id: Option<String>,
     pub(crate) side: String,
     pub(crate) phase: String,
+    pub(crate) shape: MessageShape,
     pub(crate) flavor: String,
     pub(crate) tags: Vec<String>,
     pub(crate) cues: Vec<String>,
@@ -107,6 +133,7 @@ pub(crate) struct TurnView {
     pub(crate) errors: u64,
     pub(crate) web_searches: u64,
     pub(crate) compactions: u64,
+    pub(crate) touched_paths: Vec<String>,
     pub(crate) dialogue: Vec<DialogueLine>,
 }
 
@@ -299,6 +326,74 @@ pub(crate) struct PruningView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct AuthorityFoldView {
+    pub(crate) mode: String,
+    pub(crate) probes: Vec<String>,
+    pub(crate) writes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DecisionPriorityView {
+    pub(crate) order: Vec<String>,
+    pub(crate) end_pruning_preserves: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OutstandingAskView {
+    pub(crate) lane: String,
+    pub(crate) directive: String,
+    pub(crate) key: String,
+    pub(crate) stage: String,
+    pub(crate) text: String,
+    pub(crate) authored: String,
+    pub(crate) expires: String,
+    pub(crate) preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HeldClaimView {
+    pub(crate) handle: String,
+    pub(crate) project: String,
+    pub(crate) phase: String,
+    pub(crate) status: String,
+    pub(crate) title: String,
+    pub(crate) lease_expiry: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HeldWorkView {
+    pub(crate) thread: Option<String>,
+    pub(crate) lane: Option<String>,
+    pub(crate) own_claim: Option<HeldClaimView>,
+    pub(crate) peer_claims: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AuthorityUnknown {
+    pub(crate) authority: String,
+    pub(crate) probe: String,
+    pub(crate) detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BriefingAuthorities {
+    pub(crate) fold: AuthorityFoldView,
+    pub(crate) priority: DecisionPriorityView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) asks: Vec<OutstandingAskView>,
+    pub(crate) held_work: HeldWorkView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unknowns: Vec<AuthorityUnknown>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ThreadView {
     pub(crate) id: String,
     pub(crate) vendor: Vendor,
@@ -312,12 +407,17 @@ pub(crate) struct ThreadView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "session", rename_all = "kebab-case", deny_unknown_fields)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "boxing a complete typed CLI document would add a second representation at the serialization boundary"
+)]
 pub(crate) enum Report {
     Recall {
         sources: Vec<SourceView>,
         horizon_basis: String,
         requested_compactions: usize,
         selected_compactions: usize,
+        authorities: Box<BriefingAuthorities>,
         window: RecallWindow,
         pruning: PruningView,
         residues: Vec<Residue>,

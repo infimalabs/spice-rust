@@ -53,7 +53,7 @@ fn configuration() -> HygieneConfiguration {
 fn multifile_tree() -> FixtureTree {
     let tree = FixtureTree::new();
     tree.write("pyproject.toml", "[project]\nname = 'fixture'\n");
-    tree.write("spice.toml", "[policy]\n");
+    tree.write("spice-rust.toml", "[policy]\n");
     tree.write(
         "app/__init__.py",
         concat!(
@@ -569,7 +569,7 @@ fn native_boundaries_derive_pass_applicability_exclusion_parse_and_failure() {
         HygieneProvenance {
             release: "current".to_owned(),
             layer: "repository".to_owned(),
-            document: "spice.toml".to_owned(),
+            document: "spice-rust.toml".to_owned(),
             field: "policy.exclude[0]".to_owned(),
         },
         "tracked fixture exclusion",
@@ -661,7 +661,7 @@ fn a_suppression_missing_any_part_of_its_origin_is_refused_at_admission() {
         provenance: HygieneProvenance {
             release: "current".to_owned(),
             layer: "repository".to_owned(),
-            document: "spice.toml".to_owned(),
+            document: "spice-rust.toml".to_owned(),
             field: "gate.walk.skip[0]".to_owned(),
         },
     };

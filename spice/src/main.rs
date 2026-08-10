@@ -37,12 +37,18 @@ mod journal_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod journal_lock;
 #[cfg(not(target_arch = "wasm32"))]
+mod judge;
+#[cfg(not(target_arch = "wasm32"))]
 mod lane_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod message_shape;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod release_commit;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_execution;
 #[cfg(not(target_arch = "wasm32"))]
@@ -124,6 +130,10 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
 }
 
 fn main() {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(code) = gate_command::pre_commit_worker_entry(std::env::args_os()) {
+        terminate_code(code);
+    }
     let matches = cli::command().get_matches();
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -337,6 +347,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         ["taste"] => deliver(&taste_command::report(contract), form),
         ["taste", "add"] => deliver(&taste_command::add(leaf, contract), form),
         ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract), form),
+        ["taste", "mine"] => deliver(&taste_command::mine(contract), form),
         _ => {}
     }
 }
@@ -915,7 +926,7 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 pub(crate) fn session_environment() -> session_command::Environment {
     let vendors = spice::extension::registry()
         .expect("compiled extension declarations are validated by the test gate")
-        .vendors()
+        .session_vendors()
         .into_iter()
         .map(|vendor| {
             let layout = vendor.transcript_layout();

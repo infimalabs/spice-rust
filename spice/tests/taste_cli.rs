@@ -9,7 +9,7 @@ use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
 use serde::de::DeserializeOwned;
 use wire::body::{
-    LaneSeated, SteerAcked, SteerDeclined, SteerEscalated, TasteCleared, TasteConfirmed,
+    LaneSeated, SteerAcked, SteerDeclined, SteerEscalated, SteerSent, TasteCleared, TasteConfirmed,
     TasteReminded, TranscriptLocus,
 };
 use wire::intent::{BoardAnswer, CommandAnswer, TaskAdd, TaskAnswer, TextAnswer};
@@ -35,6 +35,9 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 const POLICY: &str = r#"
 [tasks]
 stems = ["taste"]
+
+[policy]
+taste_mining_threshold = 3
 
 [taste.zeta]
 words = ["wait*", "sleep*"]
@@ -70,7 +73,7 @@ impl Fixture {
         fs::create_dir_all(requested.join(".git")).expect("fixture Git directory");
         let root = fs::canonicalize(requested).expect("fixture root canonicalizes");
         staged_app::seed(&root);
-        fs::write(root.join("spice.toml"), POLICY).expect("tracked taste policy");
+        fs::write(root.join("spice-rust.toml"), POLICY).expect("tracked taste policy");
         let runtime = root.join(".git/.spice-rs");
         let fixture = Self {
             journal: runtime.join("data/spicejournal.sqlite3"),
@@ -486,12 +489,115 @@ fn native_task_add_carries_authored_context_through_client_add() {
     resident.stop(&fixture);
 }
 
+#[test]
+fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
+    let fixture = Fixture::new();
+    seed_mining_corrections(&fixture);
+    let tracked_before = fs::read_to_string(fixture.root.join("spice.toml")).unwrap();
+    let resident = Resident::start(&fixture);
+
+    let first = json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste", "mine"]));
+    assert_eq!(first.body["threshold"], 3);
+    assert_eq!(first.body["scanned"], 8);
+    assert_eq!(first.body["excluded"], 4);
+    assert_eq!(first.body["qualifying"], 1);
+    assert_eq!(first.body["findings"][0]["recurrence"], 3);
+    assert_eq!(first.body["findings"][0]["standing"], "filed");
+    assert_eq!(
+        first.body["findings"][0]["message"],
+        "Do not use grep for repository searches; use rg instead."
+    );
+
+    let reader = journal::JournalReader::open(&fixture.journal).unwrap();
+    let facts = reader.fact_snapshot().unwrap();
+    let proposals = facts
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.fact.read::<wire::body::TaskAdded>())
+        .filter(|added| added.project.starts_with(".maxim_proposal.taste."))
+        .collect::<Vec<_>>();
+    assert_eq!(proposals.len(), 1);
+    let description = proposals[0].description.as_deref().unwrap();
+    assert!(description.contains("Recurrence count: 3"), "{description}");
+    assert!(description.contains("\"Do not use grep for repository searches; use rg instead.\""));
+    assert!(description.contains("(declined)"), "{description}");
+    assert!(description.contains("NACK reason"), "{description}");
+    assert_eq!(proposals[0].acceptance.len(), 3);
+    drop(reader);
+
+    let second = json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste", "mine"]));
+    assert_eq!(second.body["findings"][0]["standing"], "reused-active");
+    let facts = journal::JournalReader::open(&fixture.journal)
+        .unwrap()
+        .fact_snapshot()
+        .unwrap();
+    assert_eq!(
+        facts
+            .facts()
+            .iter()
+            .filter_map(|fact| fact.fact.read::<wire::body::TaskAdded>())
+            .filter(|added| added.project.starts_with(".maxim_proposal.taste."))
+            .count(),
+        1
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("spice.toml")).unwrap(),
+        tracked_before
+    );
+    let predecessor = first.body["findings"][0]["task"]
+        .as_str()
+        .unwrap()
+        .parse::<wire::TaskHandle>()
+        .unwrap();
+    resident.stop(&fixture);
+
+    complete_mined_proposal(&fixture, &predecessor);
+    seed_later_mining_correction(&fixture);
+    let restarted = Resident::start(&fixture);
+    let later = json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste", "mine"]));
+    assert_eq!(later.body["findings"][0]["standing"], "filed");
+    assert_eq!(later.body["findings"][0]["recurrence"], 4);
+    let successor = later.body["findings"][0]["task"]
+        .as_str()
+        .unwrap()
+        .parse::<wire::TaskHandle>()
+        .unwrap();
+    assert_ne!(successor, predecessor);
+    let proposals = journal::JournalReader::open(&fixture.journal)
+        .unwrap()
+        .fact_snapshot()
+        .unwrap()
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.fact.read::<wire::body::TaskAdded>())
+        .filter(|added| added.project.starts_with(".maxim_proposal.taste."))
+        .collect::<Vec<_>>();
+    assert_eq!(proposals.len(), 2);
+    let successor_add = proposals
+        .iter()
+        .find(|added| added.task == successor.incepted().unwrap())
+        .unwrap();
+    assert_eq!(successor_add.depends, [predecessor.incepted().unwrap()]);
+    assert!(
+        successor_add
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("Recurrence count: 4")
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("spice.toml")).unwrap(),
+        tracked_before
+    );
+    restarted.stop(&fixture);
+}
+
 fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
     assert_eq!(report["provenance"]["source"], "tracked");
     assert_eq!(report["provenance"]["present"], true);
     assert_eq!(
         report["provenance"]["location"],
-        fixture.root.join("spice.toml").display().to_string()
+        fixture.root.join("spice-rust.toml").display().to_string()
     );
     assert_eq!(report["provenance"]["digest"], report["digest"]);
     assert_eq!(
@@ -609,6 +715,190 @@ fn seed_judgments(fixture: &Fixture) {
         CommitOutcome::Committed(_)
     ));
     bus.shutdown().expect("fixture bus stops");
+}
+
+fn seed_mining_corrections(fixture: &Fixture) {
+    let bus = open_bus(fixture);
+    let rows = [
+        (
+            "1kMine01",
+            "Do not use grep for repository searches; use rg instead.",
+        ),
+        (
+            "1kMine02",
+            "Prefer rg rather than grep for repository searches.",
+        ),
+        (
+            "1kMine03",
+            "Never reach for grep in repository searches; always use rg.",
+        ),
+        (
+            "1kMine04",
+            "Always validate configuration with cargo metadata.",
+        ),
+        (
+            "1kMine05",
+            "Status update: do not use grep while I continue working.",
+        ),
+        ("1kMine06", "```diff\n-do not use grep\n+use rg\n```"),
+        ("1kMine07", "API key secret: do not use grep."),
+        ("1kMine08", "🌶️ last maxim: do not use grep; use rg."),
+    ];
+    let mut sent = JournalWrite::new(
+        Actor::Operator,
+        "taste:mining-fixture".parse().unwrap(),
+        "2030-04-12T19:10:00.000Z".parse().unwrap(),
+        Producer::CommandDoor,
+    );
+    for (key, text) in rows {
+        sent.fact(
+            SteerSent {
+                directive: directive(key),
+                key: key.to_owned(),
+                lane: uuid(0x20),
+                text: text.to_owned(),
+                control: None,
+                attachments: Vec::new(),
+                expires: "2031-01-01T00:00:00.000Z".parse().unwrap(),
+            },
+            FactCause::Root,
+        )
+        .unwrap();
+    }
+    assert!(matches!(
+        bus.commit(sent).unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    let mut acked = JournalWrite::new(
+        Actor::Spice,
+        "taste:mining-fixture".parse().unwrap(),
+        "2030-04-12T19:11:00.000Z".parse().unwrap(),
+        Producer::AckScanner,
+    );
+    for (index, (key, _)) in rows.into_iter().enumerate() {
+        if index == 2 {
+            acked
+                .fact(
+                    SteerDeclined {
+                        directive: directive(key),
+                        key: key.to_owned(),
+                        lane: uuid(0x20),
+                        epoch: uuid(0x2f),
+                        locus: mining_locus(index as u32 + 1),
+                        reason: "repository search should use the indexed path".to_owned(),
+                    },
+                    FactCause::Root,
+                )
+                .unwrap();
+        } else {
+            acked
+                .fact(
+                    SteerAcked {
+                        directive: directive(key),
+                        key: key.to_owned(),
+                        lane: uuid(0x20),
+                        epoch: uuid(0x2f),
+                        locus: mining_locus(index as u32 + 1),
+                    },
+                    FactCause::Root,
+                )
+                .unwrap();
+        }
+    }
+    assert!(matches!(
+        bus.commit(acked).unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    bus.shutdown().unwrap();
+}
+
+fn complete_mined_proposal(fixture: &Fixture, task: &wire::TaskHandle) {
+    let bus = open_bus(fixture);
+    let completed_at = "2030-04-12T19:12:00.000Z".parse::<Instant>().unwrap();
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "taste:mining-review".parse().unwrap(),
+        completed_at,
+        Producer::CommandDoor,
+    );
+    let done = write
+        .fact(
+            wire::body::TaskDone {
+                task: task.incepted().unwrap(),
+                validation: "operator reviewed the first mined recurrence".to_owned(),
+                git: None,
+                source: wire::body::SourceBoundary::unrecorded(),
+            },
+            FactCause::Root,
+        )
+        .unwrap();
+    write.workflow_head(task.incepted().unwrap(), done, move |_| {
+        wire::WorkflowHead {
+            flow: vec!["todo".parse().unwrap(), "review".parse().unwrap()],
+            phase: "review".parse().unwrap(),
+            status: "completed".to_owned(),
+            review: "clean".to_owned(),
+            assignment: None,
+            deferral: None,
+            completion: Some(completed_at),
+        }
+    });
+    assert!(matches!(
+        bus.commit(write).unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    bus.shutdown().unwrap();
+}
+
+fn seed_later_mining_correction(fixture: &Fixture) {
+    let bus = open_bus(fixture);
+    let key = "1kMine09";
+    let mut sent = JournalWrite::new(
+        Actor::Operator,
+        "taste:mining-fixture".parse().unwrap(),
+        "2030-04-12T19:13:00.000Z".parse().unwrap(),
+        Producer::CommandDoor,
+    );
+    sent.fact(
+        SteerSent {
+            directive: directive(key),
+            key: key.to_owned(),
+            lane: uuid(0x20),
+            text: "Do not run grep for repository searches; choose rg.".to_owned(),
+            control: None,
+            attachments: Vec::new(),
+            expires: "2031-01-01T00:00:00.000Z".parse().unwrap(),
+        },
+        FactCause::Root,
+    )
+    .unwrap();
+    assert!(matches!(
+        bus.commit(sent).unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    let mut acked = JournalWrite::new(
+        Actor::Spice,
+        "taste:mining-fixture".parse().unwrap(),
+        "2030-04-12T19:14:00.000Z".parse().unwrap(),
+        Producer::AckScanner,
+    );
+    acked
+        .fact(
+            SteerAcked {
+                directive: directive(key),
+                key: key.to_owned(),
+                lane: uuid(0x20),
+                epoch: uuid(0x2f),
+                locus: mining_locus(9),
+            },
+            FactCause::Root,
+        )
+        .unwrap();
+    assert!(matches!(
+        bus.commit(acked).unwrap(),
+        CommitOutcome::Committed(_)
+    ));
+    bus.shutdown().unwrap();
 }
 
 /// Seed the live reminder evidence the report derives its fire rows from.
@@ -787,6 +1077,17 @@ fn locus(line: u32) -> TranscriptLocus {
         length: 80,
         event: 0,
         line,
+        column: 1,
+    }
+}
+
+fn mining_locus(index: u32) -> TranscriptLocus {
+    TranscriptLocus {
+        member: 5,
+        offset: u64::from(index) * 100,
+        length: 90,
+        event: index,
+        line: index,
         column: 1,
     }
 }

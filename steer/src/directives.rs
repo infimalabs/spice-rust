@@ -21,7 +21,8 @@ use std::fmt;
 
 use wire::body::{
     DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed,
-    SteerMissed, SteerRecovered, SteerSent, SteeringStage, SteeringTransition, TasteReminded,
+    SteerMissed, SteerRecovered, SteerSent, SteeringStage, SteeringTransition, TasteDecision,
+    TasteJudged, TasteReminded,
 };
 use wire::steering::SteerDeadLettered;
 use wire::{CanonicalUuid, Disposition, Instant};
@@ -140,6 +141,11 @@ pub enum Steering<'a> {
     /// also carries is read by the taste plane from the same row, and never by
     /// anything here.
     Reminded(&'a TasteReminded),
+    /// A judge-confirmed taste candidate opened a directive.
+    ///
+    /// Cleared judgments are also replayed through this arm but deliberately
+    /// alter no steering standing.
+    Judged(&'a TasteJudged),
 }
 
 /// Why a steering fact could not be folded into standing.
@@ -356,6 +362,8 @@ impl Ledger {
                 ledger.absorb_recorded(Steering::Sent(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<TasteReminded>() {
                 ledger.absorb_recorded(Steering::Reminded(&body), Some(envelope.at))
+            } else if let Some(body) = fact.read::<TasteJudged>() {
+                ledger.absorb_recorded(Steering::Judged(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerEscalated>() {
                 ledger.absorb_recorded(Steering::Escalated(&body), Some(envelope.at))
             } else if let Some(body) = fact.read::<SteerRecovered>() {
@@ -402,6 +410,7 @@ impl Ledger {
         match steering {
             Steering::Sent(body) => self.send(body, at),
             Steering::Reminded(body) => self.remind(body, at),
+            Steering::Judged(body) => self.judged(body, at),
             Steering::Escalated(body) => self.escalate(body, at),
             Steering::Recovered(body) => self.recover(body),
             Steering::Acked(body) => {
@@ -512,6 +521,32 @@ impl Ledger {
             control: None,
             attachments: Vec::new(),
             expires: body.expires,
+            published,
+            stage: SteeringStage::Published,
+            escalations: Vec::new(),
+            disposition: Disposition::Live,
+        })
+    }
+
+    /// Open only the confirmed half of canonical adjudication evidence.
+    fn judged(&mut self, body: &TasteJudged, published: Option<Instant>) -> Result<(), Refusal> {
+        let TasteDecision::Confirmed {
+            directive,
+            key,
+            text,
+            expires,
+        } = &body.decision
+        else {
+            return Ok(());
+        };
+        self.open(Directive {
+            directive: *directive,
+            key: read("key", key)?,
+            lane: body.lane,
+            text: text.clone(),
+            control: None,
+            attachments: Vec::new(),
+            expires: *expires,
             published,
             stage: SteeringStage::Published,
             escalations: Vec::new(),

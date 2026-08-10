@@ -12,8 +12,8 @@ use crate::config::Root;
 
 /// Child variable understood by Claude Code's auto-compaction boundary.
 pub const CLAUDE_AUTO_COMPACT_WINDOW: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
-/// Child variable binding every supervised shell to its durable lane.
-pub const SPICE_LANE: &str = "SPICE_LANE"; // env-policy: allow
+/// Child variable binding every supervised Rust shell to its durable lane.
+pub const SPICE_RS_LANE: &str = wire::SpiceVariable::Lane.as_str();
 /// Claude's native commit attribution trailer.
 pub const CLAUDE_ATTRIBUTION_TRAILER: &str = "Co-Authored-By";
 
@@ -105,13 +105,13 @@ fn compose_with_registry(
     if inputs.executable.is_empty() || inputs.executable.contains('\0') {
         return Err(ComposeError::Empty("launch.executable"));
     }
-    if environment_contains(&inputs.environment, SPICE_LANE) {
-        return Err(ComposeError::ReservedEnvironment(SPICE_LANE));
+    if environment_contains(&inputs.environment, SPICE_RS_LANE) {
+        return Err(ComposeError::ReservedEnvironment(SPICE_RS_LANE));
     }
 
     let mut environment = inputs.environment.entries().to_vec();
     environment.push((
-        OsString::from(SPICE_LANE),
+        OsString::from(SPICE_RS_LANE),
         OsString::from(inputs.lane.to_string()),
     ));
     let attribution = if root
@@ -234,7 +234,7 @@ mod tests {
     const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c7";
     const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
     const FIXTURE_VENDOR: crate::extension::Vendor =
-        crate::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration);
+        crate::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
     const FIXTURE_DECLARATIONS: &[crate::extension::Declaration] =
         &[crate::extension::Declaration {
             namespace: crate::extension::Namespace::Vendor,

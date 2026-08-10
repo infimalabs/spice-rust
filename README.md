@@ -159,6 +159,15 @@ the canonical gate action. It does not share the full verifier's retained
 compiler evidence, is not a completion verifier, and has no legacy alias;
 ordinary callers use `cargo xtask verify`.
 
+The configured commit command, `spice gate pre-commit`, runs that ordered
+battery in one isolated worker process. It stops work at 135 seconds and
+reserves termination, reap, and output-drain time inside a 150-second hard
+envelope, below the fixed 180-second extension limit. A clean worker is silent;
+a finding renders the complete refusal fold, while a deadline or lost worker
+exits nonzero with its last exact gate phase and explicitly incomplete findings.
+The supervisor owns the worker's complete process group, including Cargo,
+rustc, Trunk, parsers, and their descendants.
+
 For fast feedback while changing one Cargo package, scope the formatter,
 Clippy, all-target tests, and doctests to that package:
 

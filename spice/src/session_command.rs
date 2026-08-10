@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::ArgMatches;
 use wire::{Outcome, Refusal, Reply, ReplyPosition};
 
+mod authority;
 mod dataset;
 pub(crate) mod learnings;
 mod model;
@@ -44,10 +45,16 @@ impl VendorEnvironment {
 
 impl Environment {
     pub(crate) fn new(
-        vendors: Vec<VendorEnvironment>,
+        mut vendors: Vec<VendorEnvironment>,
         preferred_vendor: Option<OsString>,
         home: Option<OsString>,
     ) -> Self {
+        vendors.sort_by_key(|row| {
+            (
+                row.vendor.session_study().ambient_precedence(),
+                row.vendor.session_study().identity(),
+            )
+        });
         Self {
             vendors,
             preferred_vendor,
@@ -170,7 +177,7 @@ fn deadline_worker(
         return;
     }
     let path = path.iter().map(String::as_str).collect::<Vec<_>>();
-    let result = build_resolved(&matches, &path, &action, sources);
+    let result = build_resolved(&matches, &path, &action, sources, &environment);
     let _ = sender.send(DeadlineEvent::Complete(result, std::time::Instant::now()));
 }
 
@@ -290,7 +297,7 @@ fn build(
 
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
-    build_resolved(matches, path, action, sources)
+    build_resolved(matches, path, action, sources, environment)
 }
 
 fn build_resolved(
@@ -298,11 +305,22 @@ fn build_resolved(
     path: &[&str],
     action: &str,
     sources: Vec<source::ResolvedSource>,
+    environment: &Environment,
 ) -> Result<Report, Refusal> {
-    let data = dataset::load(&sources)?;
     let filters = project::Filters::from_matches(matches)?;
+    let data = if matches!(action, "briefing" | "sweep") {
+        let count = project::horizon_count(matches, action)?;
+        let horizon = dataset::recent_compaction_horizon(&sources, count, filters.end_bound())?;
+        let start = filters.start_bound().or(horizon.start.as_deref());
+        dataset::load_since(&sources, start)?
+    } else {
+        dataset::load(&sources)?
+    };
     match action {
-        "briefing" => project::recall(&data, matches, &filters),
+        "briefing" => {
+            let authorities = authority::observe(&sources, environment);
+            project::recall(&data, matches, &filters, authorities)
+        }
         "sweep" => project::sweep(&data, matches, &filters),
         "summary" => project::summary(&data, matches),
         "tokens" => Ok(project::tokens(&data, matches)),

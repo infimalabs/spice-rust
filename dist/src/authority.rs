@@ -119,6 +119,22 @@ impl ReleaseAuthority {
         ))
     }
 
+    /// Prove the configured source transport accepts a write without changing refs.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a noncanonical Git object spelling.
+    pub fn source_rehearsal(&self, object: &str) -> Result<GitCommand, AuthorityError> {
+        object_id(object)?;
+        Ok(push_command(
+            &self.document.remote,
+            object,
+            &self.document.source,
+            None,
+            true,
+        ))
+    }
+
     /// Rehearse the exact guarded package publication without changing refs.
     ///
     /// # Errors
@@ -621,6 +637,19 @@ mod tests {
                 "--force-with-lease=refs/spice/packages/v1.2.3:",
                 "origin",
                 "1111111111111111111111111111111111111111:refs/spice/packages/v1.2.3",
+            ]
+        );
+        assert_eq!(
+            authority
+                .source_rehearsal(OBJECT)
+                .expect("source rehearsal")
+                .arguments(),
+            [
+                "push",
+                "--dry-run",
+                "--porcelain",
+                "origin",
+                "1111111111111111111111111111111111111111:refs/heads/main",
             ]
         );
         assert_eq!(

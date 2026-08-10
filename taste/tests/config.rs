@@ -14,7 +14,7 @@ use taste::{Bag, ConfigError, configured};
 const TASTES: &str = include_str!("../../TASTES.md");
 
 /// The tracked repository configuration, in full and unedited.
-const TRACKED: &str = include_str!("../../spice.toml");
+const TRACKED: &str = include_str!("../../spice-rust.toml");
 
 /// The seed block exactly as `TASTES.md` publishes it.
 ///
@@ -133,7 +133,7 @@ fn the_tracked_root_configuration_installs_the_documented_seed_set() {
     assert_eq!(
         configured(TRACKED).expect("the tracked taste set decodes"),
         configured(documented_seeds()).expect("the published seeds decode"),
-        "spice.toml must install exactly the seed behavior TASTES.md publishes",
+        "spice-rust.toml must install exactly the seed behavior TASTES.md publishes",
     );
 }
 

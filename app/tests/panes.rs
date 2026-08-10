@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use wire::{
     Accepted, Answer, Authority, CanonicalUuid, Command, CommandKind, Derived, Digest, Fault,
     FaultClass, FoldName, Name, Outcome, Overflow, Packed, Refusal, Reply, ReplyPosition, Response,
-    Seq, SeqRange, TaskHandle, TrustState, WireVersion, Witness, WitnessKind,
+    Seq, SeqRange, TrustState, WireVersion, Witness, WitnessKind,
 };
 
 mod support;
@@ -123,7 +123,7 @@ fn answered() -> BrowserState<Row> {
 /// The one witness `task::note` requires.
 fn existence() -> Vec<Witness> {
     vec![Witness::Existence {
-        task: "SPICE-aBcD".parse::<TaskHandle>().expect("fixture handle"),
+        task: "1kKRRsDP".parse().expect("fixture task stamp"),
     }]
 }
 
@@ -689,7 +689,7 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
     }
 
     assert_eq!(operator, 19);
-    assert_eq!(connected, 32);
+    assert_eq!(connected, 33);
     assert_eq!(
         CommandKind::TaskOopsAdd.law().authority,
         Authority::Connected,
@@ -702,7 +702,7 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
     );
     assert_eq!(
         CommandKind::ALL.len(),
-        51,
+        52,
         "a command joined or left the registry; the counts above are the claim \
          to re-make, not the number to bump"
     );

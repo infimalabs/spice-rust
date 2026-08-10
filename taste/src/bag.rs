@@ -138,6 +138,34 @@ pub fn reminder_identity(taste: &Name, prose: &str) -> Digest {
     Digest::compute(Domain::TasteProse, &framed)
 }
 
+/// Canonical identity of one complete ordered active taste bag.
+///
+/// Names, triggers, and drivers are length-framed in their admitted order, so
+/// any policy movement produces a new identity without a second serializer.
+#[must_use]
+pub fn bag_identity(bag: &Bag) -> Digest {
+    let mut framed = Vec::new();
+    frame_count(&mut framed, bag.tastes.len());
+    for taste in &bag.tastes {
+        frame_text(&mut framed, taste.name.as_str());
+        frame_count(&mut framed, taste.triggers.len());
+        for trigger in &taste.triggers {
+            frame_text(&mut framed, trigger.as_str());
+        }
+        frame_text(&mut framed, &taste.message);
+    }
+    Digest::compute(Domain::TasteBag, &framed)
+}
+
+fn frame_count(framed: &mut Vec<u8>, count: usize) {
+    framed.extend_from_slice(&(count as u64).to_be_bytes());
+}
+
+fn frame_text(framed: &mut Vec<u8>, text: &str) {
+    frame_count(framed, text.len());
+    framed.extend_from_slice(text.as_bytes());
+}
+
 /// Whether authored prose is a reminder echo rather than a fresh candidate.
 #[must_use]
 pub fn is_reminder_echo(prose: &str) -> bool {

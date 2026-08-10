@@ -257,6 +257,8 @@ vocabulary! {
     TasteConfirmed = "taste::confirmed" by Judge;
     /// The judge cleared a taste at an evidence locus.
     TasteCleared = "taste::cleared" by Judge;
+    /// The resident judge durably adjudicated one live taste candidate.
+    TasteJudged = "taste::judged" by Judge;
     /// A taste fired on authored prose and raised one live directive.
     TasteReminded = "taste::reminded" by ResidentRecognition;
 
@@ -335,7 +337,7 @@ impl fmt::Display for FactKind {
 /// let fact = wire::Fact {
 ///     kind: wire::FactKind::TaskDone,
 ///     body: wire::body::TaskWoken {
-///         task: "WIRE-aBcD".parse().expect("task handle"),
+///         task: "1kKRRsDP".parse().expect("task stamp"),
 ///     },
 /// };
 /// ```

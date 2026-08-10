@@ -16,7 +16,7 @@ mod tests {
             language: "python".to_owned(),
             selected_files: u32::from(applicable) * 6,
             project_markers: if applicable {
-                vec!["spice.toml".to_owned(), "pyproject.toml".to_owned()]
+                vec!["spice-rust.toml".to_owned(), "pyproject.toml".to_owned()]
             } else {
                 Vec::new()
             },
@@ -270,7 +270,7 @@ mod tests {
                     provenance: HygieneProvenance {
                         release: "current".to_owned(),
                         layer: "repository".to_owned(),
-                        document: "spice.toml".to_owned(),
+                        document: "spice-rust.toml".to_owned(),
                         field: "policy.exclude[0]".to_owned(),
                     },
                     reason: "generated fixture tree".to_owned(),
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn declarations_are_the_exact_final_battery_interval() {
         let ids: Vec<_> = HYGIENE_ARMS.iter().map(|arm| arm.id()).collect();
-        assert_eq!(ids, GateId::ALL[22..]);
+        assert_eq!(ids, GateId::BATTERY[22..]);
         for arm in HYGIENE_ARMS {
             assert!(
                 arm.native_component()
@@ -519,7 +519,7 @@ mod tests {
             "graph evidence retains the reach ranking widest first"
         );
 
-        for gate in GateId::ALL[22..].iter().copied() {
+        for gate in GateId::BATTERY[22..].iter().copied() {
             let report = report_with(gate, HygieneOutcome::Findings);
             let measured = report
                 .arms
@@ -530,7 +530,7 @@ mod tests {
         }
 
         let stale = HygieneFinding {
-            path: "spice.toml".to_owned(),
+            path: "spice-rust.toml".to_owned(),
             line: None,
             detail: HygieneFindingDetail::StalePrivateException {
                 test_name: "test_private".to_owned(),
@@ -731,7 +731,7 @@ mod tests {
             provenance: HygieneProvenance {
                 release: "current".to_owned(),
                 layer: "repository".to_owned(),
-                document: "spice.toml".to_owned(),
+                document: "spice-rust.toml".to_owned(),
                 field: "gate.walk.skip[0]".to_owned(),
             },
         }
@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn predecessor_builtins_are_equivalent_and_old_providers_refuse() {
-        for gate in GateId::ALL[22..].iter().copied() {
+        for gate in GateId::BATTERY[22..].iter().copied() {
             for outcome in [HygieneOutcome::Passed, HygieneOutcome::Findings] {
                 let report = report_with(gate, outcome);
                 let current = report
@@ -887,7 +887,7 @@ mod tests {
             HygieneOutcome::ParseFailure,
             HygieneOutcome::Failed,
         ];
-        for gate in GateId::ALL[22..].iter().copied() {
+        for gate in GateId::BATTERY[22..].iter().copied() {
             for outcome in states {
                 let report = report_with(gate, outcome);
                 let current = report

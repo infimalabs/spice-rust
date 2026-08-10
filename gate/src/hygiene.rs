@@ -238,7 +238,7 @@ const COMMON_EXCLUDES: &[&str] = &[
     "**/__pycache__/**",
     "node_modules/**",
     "site-packages/**",
-    "spice.toml:policy.exclude",
+    "spice-rust.toml:policy.exclude",
 ];
 const PYTHON_GRAPH_CONFIG: &[HygieneConfigurationSource] = &[
     HygieneConfigurationSource {
@@ -246,14 +246,14 @@ const PYTHON_GRAPH_CONFIG: &[HygieneConfigurationSource] = &[
         field: "gate::hygiene::PYTHON_PRODUCTION_ROOTS_V1",
     },
     HygieneConfigurationSource {
-        source: "spice.toml",
+        source: "spice-rust.toml",
         field: concat!(
             "policy.test_paths -> ",
             "pyproject.toml:tool.pytest.ini_options.testpaths -> tests"
         ),
     },
     HygieneConfigurationSource {
-        source: "spice.toml",
+        source: "spice-rust.toml",
         field: "policy.exclude + policy.reachability_providers",
     },
 ];
@@ -267,19 +267,19 @@ const PYTHON_UNUSED_CONFIG: &[HygieneConfigurationSource] = &[
         field: "gate::hygiene::PYTHON_UNUSED_EXEMPTIONS_V1",
     },
     HygieneConfigurationSource {
-        source: "spice.toml",
+        source: "spice-rust.toml",
         field: "commands + policy.test_paths + policy.exclude",
     },
 ];
 const ASSERTION_CONFIG: &[HygieneConfigurationSource] = &[HygieneConfigurationSource {
-    source: "spice.toml",
+    source: "spice-rust.toml",
     field: concat!(
         "policy.test_paths + policy.exclude + policy.assertion_helpers + ",
         "policy.debt.assertion_free_tests"
     ),
 }];
 const PRIVATE_CONFIG: &[HygieneConfigurationSource] = &[HygieneConfigurationSource {
-    source: "spice.toml",
+    source: "spice-rust.toml",
     field: concat!(
         "policy.test_paths + policy.exclude + ",
         "policy.internal_couplings"
@@ -321,7 +321,7 @@ pub const HYGIENE_ARMS: [HygieneDeclaration; 5] = [
                 "spice/release.py",
                 "configured test roots",
             ],
-            includes: &["pyproject.toml", "spice.toml", "**/*.py", "**/*.pyi"],
+            includes: &["pyproject.toml", "spice-rust.toml", "**/*.py", "**/*.pyi"],
             excludes: COMMON_EXCLUDES,
             applicability: concat!(
                 "a selected Python package, production root, and test root ",
@@ -337,7 +337,7 @@ pub const HYGIENE_ARMS: [HygieneDeclaration; 5] = [
         analyzer: HygieneAnalyzer::PythonSymbolGraph,
         jurisdiction: HygieneJurisdiction {
             roots: &["production-reachable modules", "configured test roots"],
-            includes: &["pyproject.toml", "spice.toml", "**/*.py", "**/*.pyi"],
+            includes: &["pyproject.toml", "spice-rust.toml", "**/*.py", "**/*.pyi"],
             excludes: COMMON_EXCLUDES,
             applicability: concat!(
                 "reachability applies and at least one production-reachable ",
@@ -356,7 +356,7 @@ pub const HYGIENE_ARMS: [HygieneDeclaration; 5] = [
                 "production-reachable Python package",
                 "configured test roots",
             ],
-            includes: &["pyproject.toml", "spice.toml", "**/*.py", "**/*.pyi"],
+            includes: &["pyproject.toml", "spice-rust.toml", "**/*.py", "**/*.pyi"],
             excludes: COMMON_EXCLUDES,
             applicability: concat!(
                 "a selected Python package contains a production-reachable ",
@@ -385,7 +385,7 @@ pub const HYGIENE_ARMS: [HygieneDeclaration; 5] = [
         analyzer: HygieneAnalyzer::PythonPrivateBoundaries,
         jurisdiction: HygieneJurisdiction {
             roots: &["configured test roots", "selected production packages"],
-            includes: &["spice.toml", "test*.py", "*_test.py"],
+            includes: &["spice-rust.toml", "test*.py", "*_test.py"],
             excludes: COMMON_EXCLUDES,
             applicability: concat!(
                 "at least one selected Python test and production package ",

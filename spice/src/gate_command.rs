@@ -17,6 +17,8 @@ use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosi
 use crate::cli::Contract;
 use spice::repository::Repository;
 
+mod pre_commit;
+
 /// Run the ordinary gate against the captured index or one selected commit.
 pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {
     let selector = matches
@@ -35,7 +37,7 @@ pub(crate) fn findings(matches: &clap::ArgMatches, contract: &Contract) -> Outco
     let instrument = matches
         .get_one::<String>("INSTRUMENT")
         .expect("required instrument is parsed");
-    let Some(gate_id) = GateId::ALL
+    let Some(gate_id) = GateId::BATTERY
         .into_iter()
         .find(|candidate| candidate.as_str() == instrument)
     else {
@@ -93,7 +95,19 @@ fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport>
 
 /// Run the release-scoped native pre-commit battery without command recursion.
 pub(crate) fn pre_commit() -> Outcome<BatteryReport> {
-    match spice::gate::run(Selector::staged()) {
+    pre_commit::run()
+}
+
+pub(crate) fn pre_commit_worker_entry(
+    arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Option<i32> {
+    pre_commit::worker_entry(arguments)
+}
+
+fn pre_commit_report(
+    result: Result<BatteryReport, spice::gate::RunError>,
+) -> Outcome<BatteryReport> {
+    match result {
         Ok(report) if report.admits() => direct(report),
         Ok(report) => {
             let evidence = report.refusal_fold().to_string();
@@ -267,7 +281,8 @@ impl SelectedContract {
             reason: "gate::contract-refused",
             expected: "one complete current tracked gate contract".to_owned(),
             observed: error.to_string(),
-            detail: "repair the selected spice.toml, baseline.toml, or compiled tool".to_owned(),
+            detail: "repair the selected spice-rust.toml, baseline.toml, or compiled tool"
+                .to_owned(),
         })?;
         Ok(Self { tree, contract })
     }

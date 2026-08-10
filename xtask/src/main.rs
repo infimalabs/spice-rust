@@ -65,7 +65,7 @@ fn main() -> ExitCode {
             )
         }
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
-            run_gate(arguments.next(), &mut output)
+            run_gate(arguments.next(), &mut output, &mut io::stderr().lock())
         }
         Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), &mut output),
         Some(value) if value == OsStr::new("activate-hooks") && arguments.len() == 0 => {
@@ -159,7 +159,11 @@ fn run_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResu
     }
 }
 
-fn run_gate(argument: Option<OsString>, output: &mut impl io::Write) -> CommandResult {
+fn run_gate(
+    argument: Option<OsString>,
+    output: &mut impl io::Write,
+    progress: &mut impl io::Write,
+) -> CommandResult {
     let arm = argument.expect("one gate arm was admitted");
     let Some(arm) = arm.to_str() else {
         eprintln!("{}", help());
@@ -172,6 +176,25 @@ fn run_gate(argument: Option<OsString>, output: &mut impl io::Write) -> CommandR
         eprintln!("unknown gate arm {arm:?}; run `cargo xtask help` for accepted gate arms");
         return Err(usage_error().into());
     };
+    if gate::GateId::TEST_EVIDENCE.contains(&gate_id) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let report = xtask::run_test_evidence(ambient_environment()?, progress, output)?;
+            return if report
+                .instrument_admits(gate_id)
+                .expect("a registered test-evidence ID has one report decision")
+            {
+                Ok(())
+            } else {
+                Err(xtask::GateArmError::Refused(gate_id).into())
+            };
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (output, progress);
+            return Err(xtask::GateArmError::Unavailable.into());
+        }
+    }
     xtask::gate_arm(gate_id, output).map_err(Into::into)
 }
 
@@ -424,7 +447,9 @@ fn workspace_tests(
         .ok_or("workspace-test concurrency is not UTF-8")?
         .parse::<usize>()?;
     let environment = ambient_environment()?;
-    xtask::run_workspace_tests(environment, concurrency, output).map_err(Into::into)
+    xtask::run_workspace_tests(environment, concurrency, output)
+        .map(|_execution| ())
+        .map_err(Into::into)
 }
 
 fn release_environment() -> xtask::ReleaseEnvironment {
@@ -478,5 +503,13 @@ mod tests {
         let help = help();
         assert!(help.contains("verify-action battery"));
         assert!(help.contains("not a completion verifier"));
+    }
+
+    #[test]
+    fn help_exposes_every_shared_test_evidence_instrument() {
+        let help = help();
+        for instrument in ["suite-seam", "mutation-coverage", "test-subsumption"] {
+            assert!(help.contains(instrument));
+        }
     }
 }

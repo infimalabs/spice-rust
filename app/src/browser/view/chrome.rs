@@ -323,7 +323,7 @@ fn task_pills(runtime: Option<&CanvasRuntime>) -> Vec<TaskPill> {
         } else if workflow.deferral.is_some()
             || task.statement.body.dependencies.iter().any(|dependency| {
                 board.tasks.iter().any(|candidate| {
-                    candidate.statement.body.handle == *dependency
+                    candidate.statement.body.incepted == *dependency
                         && candidate.workflow.body.completion.is_none()
                 })
             })

@@ -33,7 +33,7 @@ impl Scratch {
     }
 
     fn tracked(&self, text: &str) {
-        fs::write(self.0.join("spice.toml"), text).expect("write tracked configuration");
+        fs::write(self.0.join("spice-rust.toml"), text).expect("write tracked configuration");
     }
 
     fn local(&self, text: &str) {
@@ -171,28 +171,7 @@ fn same_report(text: &Spoken, json: &Spoken) -> DoctorReport<Root> {
     json_reply.body
 }
 
-#[test]
-fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
-    let repository = Scratch::repository("shared-metadata");
-    let tracked = include_bytes!("../../spice.toml");
-    fs::write(repository.path().join("spice.toml"), tracked)
-        .expect("copy exact tracked configuration");
-    let hook = repository.path().join(".git/.spice/hooks/pre-commit");
-    fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hook directory");
-    fs::write(&hook, b"active operator hook sentinel\n").expect("write active hook sentinel");
-    let empty_path = repository.path().join("empty-path");
-    fs::create_dir(&empty_path).expect("create empty executable search path");
-    let before = directory_state(repository.path());
-
-    let text = invoke(repository.path(), &["doctor"], empty_path.as_os_str(), &[]);
-    let json = invoke(
-        repository.path(),
-        &["--json", "doctor"],
-        empty_path.as_os_str(),
-        &[],
-    );
-    let report = same_report(&text, &json);
-
+fn assert_task_metadata(report: &DoctorReport<Root>) {
     assert_eq!(
         report.configuration.tasks().stems(),
         [
@@ -231,17 +210,43 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         report.configuration.tasks().project_max_depth(),
         dialect::PROJECT_MAX_DEPTH as u64
     );
+}
+
+#[test]
+fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
+    let repository = Scratch::repository("shared-metadata");
+    let tracked = include_bytes!("../../spice-rust.toml");
+    fs::write(repository.path().join("spice-rust.toml"), tracked)
+        .expect("copy exact tracked configuration");
+    let hook = repository.path().join(".git/.spice/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hook directory");
+    fs::write(&hook, b"active operator hook sentinel\n").expect("write active hook sentinel");
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+    let before = directory_state(repository.path());
+
+    let text = invoke(repository.path(), &["doctor"], empty_path.as_os_str(), &[]);
+    let json = invoke(
+        repository.path(),
+        &["--json", "doctor"],
+        empty_path.as_os_str(),
+        &[],
+    );
+    let report = same_report(&text, &json);
+
+    assert_task_metadata(&report);
     // Doctor reports the variables Spice owns, while the tracked vocabulary also
     // accounts the ones its fixtures and Git shadow use: three local Git
-    // names, three Git configuration names, the hygiene fixture's TMPDIR, and
-    // the verifier's isolated Canvas binary path.
+    // names, three Git configuration names, the hygiene fixture's TMPDIR, the
+    // verifier's isolated Canvas/proof binary paths, and predecessor Spice
+    // handoff names used as coexistence sentinels.
     // The gate's name ledger accounts every name the tree references. That the
     // manifest holds these and nothing besides Doctor's rows is stated once in
     // wire/tests/environment_vocabulary.rs. The class is spelled again here
     // rather than derived from the list under test, so this stays an equality
     // rather than a containment that could not see an added row; both pins read
     // the one document, so a copy that fell out of step reds itself.
-    const UNOWNED: [&str; 8] = [
+    const UNOWNED: [&str; 13] = [
         "GIT_CONFIG_COUNT",    // env-policy: allow
         "GIT_CONFIG_SYSTEM",   // env-policy: allow
         "GIT_DIR",             // env-policy: allow
@@ -249,6 +254,11 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         "GIT_INDEX_FILE",      // env-policy: allow
         "GIT_WORK_TREE",       // env-policy: allow
         "SPICE_CANVAS_BINARY", // env-policy: allow
+        "SPICE_HOOKS",         // env-policy: allow
+        "SPICE_INBOX",         // env-policy: allow
+        "SPICE_LANE",          // env-policy: allow
+        "SPICE_NATIVE_SHELL",  // env-policy: allow
+        "SPICE_PROOF",         // env-policy: allow
         "TMPDIR",              // env-policy: allow
     ];
     let vocabulary = report.configuration.policy().env_names();
@@ -284,7 +294,7 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         );
     }
     assert_eq!(
-        fs::read(repository.path().join("spice.toml")).unwrap(),
+        fs::read(repository.path().join("spice-rust.toml")).unwrap(),
         tracked
     );
     assert_eq!(fs::read(&hook).unwrap(), b"active operator hook sentinel\n");
@@ -303,7 +313,7 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
     );
     assert_eq!(
         report.locations.tracked_configuration,
-        canonical.join("spice.toml").display().to_string()
+        canonical.join("spice-rust.toml").display().to_string()
     );
     assert_eq!(
         report.locations.local_configuration,
@@ -510,7 +520,7 @@ fn missing_required_proof_runtime_is_an_unhealthy_row_inside_a_direct_reply() {
 #[test]
 fn malformed_and_unknown_configuration_are_typed_refusals_from_both_exact_paths() {
     for (label, tracked, local, expected) in [
-        ("tracked-syntax", "[lane\n", "", "spice.toml"),
+        ("tracked-syntax", "[lane\n", "", "spice-rust.toml"),
         (
             "local-syntax",
             "",

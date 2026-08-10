@@ -254,7 +254,7 @@ pub(in crate::resident) fn wake_automatic(
 
 #[derive(Clone)]
 struct AutomaticClaimAuthority {
-    task: wire::TaskHandle,
+    task: wire::TaskStamp,
     claim: journal::JournalHead<wire::ClaimHead>,
     lease: journal::JournalHead<wire::LeaseHead>,
     source: wire::body::SourceBoundary,
@@ -300,7 +300,7 @@ fn automatic_claim_authority(
             ));
         }
         authority = Some(AutomaticClaimAuthority {
-            task: heads.statement().body().handle.clone(),
+            task: heads.statement().body().incepted.clone(),
             claim: claim.clone(),
             lease: lease.clone(),
             source: bus.source_boundary(&lane).map_err(|error| {

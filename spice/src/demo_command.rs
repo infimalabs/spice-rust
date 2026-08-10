@@ -22,12 +22,12 @@ use recovery::{preserve_environment_failure, preserve_failure, require_utf8, she
 
 const MANIFEST_NAME: &str = ".spice-demo.json";
 const TRANSCRIPT_NAME: &str = "spice-demo-transcript.jsonl";
-const CONFIG_NAME: &str = "spice.toml";
+const CONFIG_NAME: &str = "spice-rust.toml";
 const CONFIG_BYTES: &[u8] = b"[tasks]\nstems = [\"rim\"]\n";
-const DEMO_TASK: &str = "DEMO-preview";
+const DEMO_TASK: &str = "DEMO-1kKRRsDP";
+const DEMO_STAMP: &str = "1kKRRsDP";
 const DEMO_TITLE: &str = "Add machine-readable status output";
 const DEMO_PROJECT: &str = "rim.canvas.demo";
-const DEMO_UUID: &str = "018f82d4-6f59-7d06-92e3-bce913116410";
 const DEMO_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116411";
 const DEMO_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce913116412";
 const DEMO_EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116413";
@@ -620,9 +620,11 @@ fn seed_journal(state: &spice::repository::StatePaths, root: &Path) -> DemoResul
 }
 
 fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoResult<wire::Seq> {
-    let task_uuid = uuid(DEMO_UUID);
+    let incepted = task
+        .incepted()
+        .expect("demo task carries a canonical stamp");
     let phase: wire::Phase = "todo".parse().expect("demo phase is valid");
-    let origin: wire::Origin = format!("task:{DEMO_TASK}")
+    let origin: wire::Origin = format!("task:{DEMO_STAMP}")
         .parse()
         .expect("demo task origin is valid");
     let mut write = JournalWrite::new(
@@ -634,8 +636,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
     let added = write
         .fact(
             body::TaskAdded {
-                task: task.clone(),
-                uuid: task_uuid,
+                task: incepted.clone(),
                 title: DEMO_TITLE.to_owned(),
                 description: None,
                 acceptance: Vec::new(),
@@ -650,12 +651,11 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
         )
         .map_err(build_failure)?;
     let statement_origin = origin;
-    let statement_task = task.clone();
-    let workflow_task = task.clone();
+    let statement_task = incepted.clone();
+    let workflow_task = incepted.clone();
     let workflow_phase = phase.clone();
     write.task_head(added, move |revision| TaskHead {
-        handle: statement_task,
-        uuid: task_uuid,
+        incepted: statement_task,
         queue_origin: revision,
         title: DEMO_TITLE.to_owned(),
         description: None,
@@ -686,7 +686,7 @@ fn seed_turns(
     for (timestamp, text) in CANNED_TRANSCRIPT {
         let mut write = JournalWrite::new(
             Actor::Spice,
-            format!("task:{DEMO_TASK}")
+            format!("task:{DEMO_STAMP}")
                 .parse()
                 .expect("demo task origin is valid"),
             instant(timestamp),
@@ -695,7 +695,9 @@ fn seed_turns(
         write
             .fact(
                 body::TaskNoted {
-                    task: task.clone(),
+                    task: task
+                        .incepted()
+                        .expect("demo task carries a canonical stamp"),
                     note: text.to_owned(),
                 },
                 FactCause::Existing(previous),
@@ -791,7 +793,7 @@ fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<
                 .body()
                 .get("task")
                 .and_then(serde_json::Value::as_str)
-                == Some(DEMO_TASK)
+                == Some(DEMO_STAMP)
     });
     let lanes = DEMO_LANES.iter().all(|seed| {
         snapshot.facts().iter().any(|envelope| {

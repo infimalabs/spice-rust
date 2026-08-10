@@ -448,6 +448,79 @@ pub struct TasteCleared {
     pub locus: String,
 }
 
+/// How one bounded judge invocation classified its reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TasteJudgeReply {
+    /// The reply was exactly one normalized YES.
+    Yes,
+    /// The reply was exactly one normalized NO.
+    No,
+    /// The reply was malformed, mixed, or otherwise not decisive.
+    Ambiguous,
+}
+
+/// One ordered framing and the bounded reply it produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TasteJudgeAttempt {
+    /// Stable framing identity, independent of shuffled presentation order.
+    pub framing: u8,
+    /// Whitespace-normalized bounded reply or ambiguity diagnostic.
+    pub reply: String,
+    /// Strict classification of that reply.
+    pub verdict: TasteJudgeReply,
+}
+
+/// The decision-specific portion of one taste judgment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "verdict", rename_all = "lowercase", deny_unknown_fields)]
+pub enum TasteDecision {
+    /// The candidate genuinely exhibits the taste and opens ordinary steering.
+    Confirmed {
+        /// Durable directive identity.
+        directive: CanonicalUuid,
+        /// Human-sized acknowledgment key.
+        key: String,
+        /// Reminder text presented through the ordinary steering plane.
+        text: String,
+        /// Instant the reminder expires without a disposition.
+        expires: Instant,
+    },
+    /// The candidate was only a mention or otherwise did not exhibit the taste.
+    Cleared,
+}
+
+/// One canonical, provenance-complete adjudication of a taste candidate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TasteJudged {
+    /// Lane whose authored prose was judged.
+    pub lane: CanonicalUuid,
+    /// Occupant whose context contained the prose.
+    pub occupant: CanonicalUuid,
+    /// Journal position opening the occupant's current context epoch.
+    pub compaction: u64,
+    /// Taste selected from the active bag.
+    pub taste: String,
+    /// Identity of the taste name and normalized source prose.
+    pub content: Digest,
+    /// Identity of the complete active bag judged against.
+    pub bag: Digest,
+    /// Exact configured trigger that selected the candidate.
+    pub trigger: String,
+    /// Exact configured reminder driver.
+    pub driver: String,
+    /// Exact authored source prose supplied to the judge.
+    pub source: String,
+    /// Exact transcript locus of the selected trigger.
+    pub locus: TranscriptLocus,
+    /// Ordered bounded attempts through the shared judge boundary.
+    pub attempts: Vec<TasteJudgeAttempt>,
+    /// Confirmed candidates alone carry an ordinary steering publication.
+    pub decision: TasteDecision,
+}
+
 /// A taste fired on authored prose and became one live directive.
 ///
 /// This is one fact, not a fire recorded here and a directive raised somewhere

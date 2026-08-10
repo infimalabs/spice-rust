@@ -47,7 +47,7 @@ mod compile;
 mod csharp;
 mod rust;
 
-use build_root::CanvasWorkspace;
+use build_root::{CanvasSource, CanvasWorkspace};
 
 pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
 pub(super) use csharp::csharp_unused;
@@ -799,6 +799,10 @@ fn canvas_analysis(
             format!("{} declares no {TRUNK} program", declaration.id.as_str()),
         );
     };
+    let source = match CanvasSource::create(root, repository, removal) {
+        Ok(source) => source,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
     let workspace = match CanvasWorkspace::create(root, removal) {
         Ok(workspace) => workspace,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
@@ -812,13 +816,14 @@ fn canvas_analysis(
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
 
-    let app = root.join("app");
+    let source = source.path();
+    let app = source.join("app");
     let invocations = [
         CompileInvocation {
             name: "cargo wasm32 check",
             program: cargo,
             arguments: CARGO_WASM_ARGUMENTS,
-            cwd: root,
+            cwd: source,
         },
         CompileInvocation {
             name: "trunk canvas build",
@@ -830,7 +835,7 @@ fn canvas_analysis(
     for invocation in invocations {
         if let Err(failure) = run_compile_analysis(
             declaration.id,
-            root,
+            source,
             invocation,
             bounds,
             &environment,
@@ -865,6 +870,8 @@ fn canvas_environment(
             CARGO_BUILD_DIRECTORY,
             outputs.cargo_build.as_os_str().to_owned(),
         ),
+        ("RUSTC_WORKSPACE_WRAPPER", std::ffi::OsString::new()),
+        ("RUSTC_WRAPPER", std::ffi::OsString::new()),
         (
             TRUNK_DISTRIBUTION_DIRECTORY,
             outputs.trunk_dist.as_os_str().to_owned(),

@@ -2,6 +2,9 @@ use serde_json::Value;
 
 use super::*;
 
+const STAMP: &str = "1kKRRsDP";
+const HANDLE: &str = "JOURNAL-1kKRRsDP";
+
 fn seq(value: u64) -> Seq {
     Seq::new(value).expect("non-zero sequence")
 }
@@ -24,6 +27,7 @@ fn schema_three_heads_gain_durable_queue_and_claim_origins_once() {
         .read(|read| read.task_heads())
         .expect("migrated heads read");
     let task = heads.first().expect("one task");
+    assert_eq!(task.statement().body().incepted.as_str(), STAMP);
     assert_eq!(task.statement().body().queue_origin, seq(1));
     let claim = task.claim().expect("one claim").body();
     assert_eq!(claim.fact, seq(3));
@@ -39,8 +43,7 @@ fn schema_three_heads_gain_durable_queue_and_claim_origins_once() {
 }
 
 struct AllocationFixture {
-    task: TaskHandle,
-    task_uuid: CanonicalUuid,
+    task: TaskStamp,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
@@ -50,12 +53,11 @@ struct AllocationFixture {
 
 fn allocation_fixture() -> AllocationFixture {
     AllocationFixture {
-        task: "JOURNAL-age1".parse().expect("task handle"),
-        task_uuid: uuid("018f82d4-6f59-7d06-92e3-bce913116370"),
+        task: STAMP.parse().expect("task stamp"),
         lane: uuid("018f82d4-6f59-7d06-92e3-bce913116371"),
         occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116372"),
         epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116373"),
-        origin: "task:JOURNAL-root".parse().expect("origin"),
+        origin: format!("task:{STAMP}").parse().expect("origin"),
         cell: wire::ClaimCell {
             project: "journal.allocate".to_owned(),
             phase: phase("todo"),
@@ -83,7 +85,6 @@ fn seed_task(journal: &mut Journal, fixture: &AllocationFixture) {
         .fact(
             wire::body::TaskAdded {
                 task: fixture.task.clone(),
-                uuid: fixture.task_uuid,
                 title: "Preserve queue age".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
@@ -99,11 +100,9 @@ fn seed_task(journal: &mut Journal, fixture: &AllocationFixture) {
         .expect("task fact");
     let statement_task = fixture.task.clone();
     let statement_project = fixture.cell.project.clone();
-    let task_uuid = fixture.task_uuid;
     let origin = fixture.origin.clone();
     add.task_head(added, move |position| TaskHead {
-        handle: statement_task,
-        uuid: task_uuid,
+        incepted: statement_task,
         queue_origin: position,
         title: "Preserve queue age".to_owned(),
         description: None,
@@ -132,7 +131,7 @@ fn seed_claim(journal: &mut Journal, fixture: &AllocationFixture) {
     let actor = Actor::Lane(fixture.lane);
     let mut claim = crate::JournalWrite::new(
         actor.clone(),
-        "task:JOURNAL-age1".parse().expect("claim origin"),
+        format!("task:{STAMP}").parse().expect("claim origin"),
         instant(),
         wire::Producer::CommandDoor,
     );
@@ -182,7 +181,7 @@ fn seed_free(journal: &mut Journal, fixture: &AllocationFixture) {
     let lane = fixture.lane;
     let mut free = crate::JournalWrite::new(
         Actor::Lane(lane),
-        "task:JOURNAL-age1".parse().expect("free origin"),
+        format!("task:{STAMP}").parse().expect("free origin"),
         instant(),
         wire::Producer::CommandDoor,
     );
@@ -213,16 +212,17 @@ fn seed_free(journal: &mut Journal, fixture: &AllocationFixture) {
 }
 
 fn downgrade(connection: &Connection) {
+    downgrade_task_identity_to_five(connection);
     remove_fields(
         connection,
-        "SELECT body FROM task_heads WHERE handle = 'JOURNAL-age1'",
-        "UPDATE task_heads SET body = ?1 WHERE handle = 'JOURNAL-age1'",
+        &format!("SELECT body FROM task_heads WHERE handle = '{HANDLE}'"),
+        &format!("UPDATE task_heads SET body = ?1 WHERE handle = '{HANDLE}'"),
         &["queue_origin"],
     );
     remove_fields(
         connection,
-        "SELECT body FROM claim_heads WHERE handle = 'JOURNAL-age1'",
-        "UPDATE claim_heads SET body = ?1 WHERE handle = 'JOURNAL-age1'",
+        &format!("SELECT body FROM claim_heads WHERE handle = '{HANDLE}'"),
+        &format!("UPDATE claim_heads SET body = ?1 WHERE handle = '{HANDLE}'"),
         &["claimed", "cell"],
     );
     remove_pointer(
@@ -270,13 +270,10 @@ fn remove_pointer(connection: &Connection, select: &str, update: &str, pointer: 
             .is_some(),
         "fixture carries pointer",
     );
-    let intermediate = serde_json::to_vec(&value).expect("encode intermediate envelope");
-    let envelope: Envelope<AnyFact> =
-        wire::decode(&intermediate).expect("legacy envelope remains valid wire");
     connection
         .execute(
             update,
-            params![wire::encode(&envelope).expect("encode canonical envelope")],
+            params![serde_json::to_vec(&value).expect("encode legacy envelope")],
         )
         .expect("store envelope");
 }

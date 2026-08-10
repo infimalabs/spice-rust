@@ -142,7 +142,7 @@ fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandA
                 "add or wake eligible work before requesting task next",
             )
         })?;
-        let task = selected.entry().statement().handle.clone();
+        let task = selected.entry().handle().clone();
         let heads = task_heads(&board, &task)?;
         let (lane, occupant) = actor_seat(&board)?;
         let rule = "next".parse::<Name>().expect("next is a wire name");
@@ -225,11 +225,11 @@ fn client_reclaim(
             CommandKind::ClaimRenew,
             vec![
                 Witness::Claim {
-                    task: task.clone(),
+                    task: heads.statement.body.incepted.clone(),
                     head: Some(claim.position),
                 },
                 Witness::Lease {
-                    task: task.clone(),
+                    task: heads.statement.body.incepted.clone(),
                     head: lease.position,
                 },
                 residency_witness(&board, lane, occupant),
@@ -400,14 +400,16 @@ fn client_note(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    mutate_task(repository, contract, matches, |task, _| {
+    mutate_task(repository, contract, matches, |task, heads| {
         let note = TaskNote {
             task: task.clone(),
             note: required(matches, "TEXT"),
         };
         Ok((
             CommandKind::TaskNote,
-            vec![Witness::Existence { task }],
+            vec![Witness::Existence {
+                task: heads.statement.body.incepted.clone(),
+            }],
             serde_json::to_value(note).expect("typed intent encodes"),
         ))
     })
@@ -477,7 +479,7 @@ fn client_free(
             vec![
                 claim_witness(heads),
                 Witness::Lease {
-                    task: task.clone(),
+                    task: heads.statement.body.incepted.clone(),
                     head: lease.position,
                 },
                 residency_witness(board, lane, occupant),
@@ -505,8 +507,8 @@ fn client_depends(
             expected.push(statement_witness(dependency_heads));
             expected.push(workflow_witness(dependency_heads));
             expected.push(Witness::Edge {
-                task: task.clone(),
-                after: dependency.clone(),
+                task: heads.statement.body.incepted.clone(),
+                after: dependency_heads.statement.body.incepted.clone(),
             });
         }
         Ok((
@@ -745,21 +747,10 @@ fn submit_oops_add(
     body: TaskOopsAdd,
 ) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
-        let handle = mint_handle(Some(".oops"), &body.title);
-        if board
-            .tasks
-            .iter()
-            .any(|task| task.statement.body.handle == handle)
-        {
-            return Err(refusal(
-                "task::identity-collision",
-                Some(handle.to_string()),
-                "retry task oops so the authority can mint a fresh handle",
-            ));
-        }
+        let stamp = allocate_inception(&board, jiff::Timestamp::now().as_millisecond());
         Ok((
             CommandKind::TaskOopsAdd,
-            vec![Witness::Absence { task: handle }],
+            vec![Witness::Absence { task: stamp }],
             serde_json::to_value(body).expect("typed intent encodes"),
         ))
     })
@@ -771,21 +762,25 @@ pub(crate) fn submit_task_add(
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
-        let handle = mint_handle(body.project.as_deref(), &body.title);
-        if board
-            .tasks
-            .iter()
-            .any(|task| task.statement.body.handle == handle)
-        {
-            return Err(refusal(
-                "task::identity-collision",
-                Some(handle.to_string()),
-                "retry task add so the authority can mint a fresh handle",
-            ));
-        }
+        let stamp = allocate_inception(&board, jiff::Timestamp::now().as_millisecond());
         Ok((
             CommandKind::TaskAdd,
-            vec![Witness::Absence { task: handle }],
+            vec![Witness::Absence { task: stamp }],
+            serde_json::to_value(body).expect("typed intent encodes"),
+        ))
+    })
+}
+
+pub(crate) fn submit_taste_proposal(
+    repository: &Repository,
+    contract: &Contract,
+    body: TasteProposalAdd,
+) -> Outcome<CommandAnswer> {
+    mutate_from_board(repository, contract, |board| {
+        let task = allocate_inception(&board, jiff::Timestamp::now().as_millisecond());
+        Ok((
+            CommandKind::TasteProposalAdd,
+            vec![Witness::Absence { task }],
             serde_json::to_value(body).expect("typed intent encodes"),
         ))
     })
@@ -847,7 +842,7 @@ where
     crate::command_client::execute_typed(repository, contract, kind, expected, &body)
 }
 
-pub(super) fn current_board(
+pub(crate) fn current_board(
     repository: &Repository,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["board"]).expect("board read contract is registered");
@@ -913,16 +908,32 @@ pub(super) fn task_heads<'a>(
         })
 }
 
+fn task_heads_by_stamp<'a>(
+    board: &'a BoardAnswer,
+    task: &wire::TaskStamp,
+) -> Result<&'a BoardTask, Outcome<CommandAnswer>> {
+    board
+        .tasks
+        .iter()
+        .find(|heads| heads.statement.body.incepted == *task)
+        .ok_or_else(|| {
+            protocol_fault(
+                "task::board-incoherent",
+                "a stored dependency has no visible board task",
+            )
+        })
+}
+
 pub(super) fn statement_witness(heads: &BoardTask) -> Witness {
     Witness::Task {
-        task: heads.statement.body.handle.clone(),
+        task: heads.statement.body.incepted.clone(),
         head: heads.statement.position,
     }
 }
 
 pub(super) fn workflow_witness(heads: &BoardTask) -> Witness {
     Witness::Workflow {
-        task: heads.statement.body.handle.clone(),
+        task: heads.statement.body.incepted.clone(),
         head: heads.workflow.position,
         phase: heads.workflow.body.phase.clone(),
     }
@@ -930,14 +941,14 @@ pub(super) fn workflow_witness(heads: &BoardTask) -> Witness {
 
 pub(super) fn claim_witness(heads: &BoardTask) -> Witness {
     Witness::Claim {
-        task: heads.statement.body.handle.clone(),
+        task: heads.statement.body.incepted.clone(),
         head: heads.claim.as_ref().map(|head| head.position),
     }
 }
 
 pub(super) fn deferral_witness(heads: &BoardTask) -> Witness {
     Witness::Deferral {
-        task: heads.statement.body.handle.clone(),
+        task: heads.statement.body.incepted.clone(),
         head: heads.workflow.position,
         deferred: heads.workflow.body.deferral.is_some(),
     }
@@ -1047,11 +1058,11 @@ pub(super) fn progress_witnesses(
         statement_witness(heads),
         workflow_witness(heads),
         Witness::Claim {
-            task: heads.statement.body.handle.clone(),
+            task: heads.statement.body.incepted.clone(),
             head: Some(claim.position),
         },
         Witness::Lease {
-            task: heads.statement.body.handle.clone(),
+            task: heads.statement.body.incepted.clone(),
             head: lease.position,
         },
         residency_witness(board, lane, occupant),
@@ -1065,14 +1076,14 @@ pub(super) fn progress_witnesses(
             )
         })?;
         expected.push(Witness::Assignment {
-            task: heads.statement.body.handle.clone(),
+            task: heads.statement.body.incepted.clone(),
             head: heads.workflow.position,
             reviewer,
         });
     }
     if heads.workflow.body.phase.as_str() == "plan" {
         for dependency in &heads.statement.body.dependencies {
-            let child = task_heads(board, dependency)?;
+            let child = task_heads_by_stamp(board, dependency)?;
             if child.workflow.body.status == "pending"
                 && !child.statement.body.acceptance.is_empty()
             {
@@ -1084,34 +1095,47 @@ pub(super) fn progress_witnesses(
     Ok(expected)
 }
 
-fn mint_handle(project: Option<&str>, title: &str) -> TaskHandle {
-    mint_handle_at(project, title, jiff::Timestamp::now().as_millisecond())
-}
-
-pub(super) fn mint_handle_at(project: Option<&str>, title: &str, epoch_millis: i64) -> TaskHandle {
-    let stem = project
-        .and_then(|project| project.rsplit('.').next())
-        .map(stem)
-        .filter(|stem| !stem.is_empty())
-        .unwrap_or_else(|| stem(title));
-    let stem = if stem.is_empty() {
-        "TASK".to_owned()
-    } else {
-        stem
-    };
-    let key = steer::Key::for_millis(epoch_millis)
+#[cfg(test)]
+pub(super) fn mint_handle_at(project: Option<&str>, _title: &str, epoch_millis: i64) -> TaskHandle {
+    let project = project.unwrap_or("task.private");
+    let stamp = wire::TaskStamp::for_millis(epoch_millis)
         .expect("the current epoch millisecond fits the task stamp codec");
-    format!("{stem}-{key}")
-        .parse()
-        .expect("generated handle uses admitted ASCII components")
+    TaskHandle::for_project(project, &stamp)
 }
 
-pub(super) fn stem(text: &str) -> String {
-    text.bytes()
-        .filter(|byte| byte.is_ascii_alphanumeric())
-        .map(|byte| char::from(byte.to_ascii_uppercase()))
-        .take(7)
-        .collect()
+pub(super) fn allocate_inception(board: &BoardAnswer, mut epoch_millis: i64) -> wire::TaskStamp {
+    loop {
+        let candidate = wire::TaskStamp::for_millis(epoch_millis)
+            .expect("the current epoch millisecond fits the task stamp codec");
+        if board
+            .tasks
+            .iter()
+            .all(|task| task.statement.body.incepted != candidate)
+        {
+            return candidate;
+        }
+        epoch_millis = epoch_millis
+            .checked_add(1)
+            .expect("task inception collision increment fits i64");
+    }
+}
+
+pub(super) fn allocate_inceptions(
+    board: &BoardAnswer,
+    mut epoch_millis: i64,
+    count: usize,
+) -> Vec<wire::TaskStamp> {
+    let mut planned = Vec::with_capacity(count);
+    while planned.len() < count {
+        let candidate = allocate_inception(board, epoch_millis);
+        epoch_millis = epoch_millis
+            .checked_add(1)
+            .expect("task inception collision increment fits i64");
+        if planned.iter().all(|incepted| incepted != &candidate) {
+            planned.push(candidate);
+        }
+    }
+    planned
 }
 
 /// Dispatch one board-family request after transport admission.
@@ -1154,6 +1178,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects, allocation),
         wire::intent::Intent::TaskOopsAdd(add) => {
             task_oops_add(bus, command, add, projects, allocation)
+        }
+        wire::intent::Intent::TasteProposalAdd(add) => {
+            taste_proposal_add(bus, command, add, projects, allocation)
         }
         wire::intent::Intent::GateFindings(findings) => {
             gate_findings(bus, command, findings, projects, allocation)

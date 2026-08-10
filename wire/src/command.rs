@@ -40,6 +40,8 @@ pub enum CommandKind {
     TaskAdd,
     /// Add one task through the fixed server-owned `.oops` route.
     TaskOopsAdd,
+    /// File one mined taste candidate through the fixed hidden proposal route.
+    TasteProposalAdd,
     /// File gate findings as deferred board work.
     GateFindings,
     /// Replace an unsettled task statement.
@@ -231,7 +233,7 @@ impl Law {
 /// under the same predicates whether it is carried, renewed, freed, or
 /// lapsed. Every doc comment restates the row it implements.
 impl Law {
-    /// Intended handle is absent and every dependency handle exists at its
+    /// Intended inception stamp is absent and every dependency exists at its
     /// named workflow head.
     pub const ADD: Self = Self {
         required: &[WitnessKind::Absence],
@@ -300,7 +302,7 @@ impl Law {
     };
     /// The review path is the one that always carries the assignment, and the
     /// only one that may also carry follow-up tracking: the absence of each
-    /// handle it mints and of each edge it wires, exactly the predicates
+    /// stamp it mints and of each edge it wires, exactly the predicates
     /// [`Self::ADD`] and [`Self::DEPENDS`] require of those moves alone.
     pub const REVIEW: Self = Self {
         required: &[
@@ -511,6 +513,7 @@ impl CommandKind {
         Self::EffortRead,
         Self::TaskAdd,
         Self::TaskOopsAdd,
+        Self::TasteProposalAdd,
         Self::GateFindings,
         Self::TaskEdit,
         Self::TaskDelete,
@@ -572,6 +575,7 @@ impl CommandKind {
             | Self::EffortRead
             | Self::TaskAdd
             | Self::TaskOopsAdd
+            | Self::TasteProposalAdd
             | Self::GateFindings
             | Self::TaskEdit
             | Self::TaskDelete
@@ -628,6 +632,7 @@ impl CommandKind {
             Self::EffortRead => "effort::read",
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
+            Self::TasteProposalAdd => "taste::proposal-add",
             Self::GateFindings => "gate::findings",
             Self::TaskEdit => "task::edit",
             Self::TaskDelete => "task::delete",
@@ -700,7 +705,7 @@ impl CommandKind {
         match self {
             Self::BoardRead | Self::BoardGraph | Self::DocLedger | Self::EffortRead => Law::READ,
             Self::BoardHandout => Law::OPERATOR_READ,
-            Self::TaskAdd | Self::TaskOopsAdd => Law::ADD,
+            Self::TaskAdd | Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
             Self::GateFindings => Law::GATE_FINDINGS,
             Self::TaskEdit => Law::EDIT,
             Self::TaskDelete => Law::DELETE,

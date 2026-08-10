@@ -796,20 +796,19 @@ fn open_session_with(
 }
 
 fn ambient_lane_identity() -> ClientResult<Option<CanonicalUuid>> {
-    let Some(value) = crate::bootstrap_environment("SPICE_LANE") else {
-        // env-policy: allow
+    let Some(value) = crate::bootstrap_environment(steer::hook::LANE) else {
         return Ok(None);
     };
     let Some(value) = value.to_str() else {
         return Err(protocol_fault(
             "hello::lane-identity-invalid",
-            "SPICE_LANE is not UTF-8",
+            &format!("{} is not UTF-8", steer::hook::LANE),
         ));
     };
     value.parse().map(Some).map_err(|_| {
         protocol_fault(
             "hello::lane-identity-invalid",
-            "SPICE_LANE is not one canonical lane UUID",
+            &format!("{} is not one canonical lane UUID", steer::hook::LANE),
         )
     })
 }

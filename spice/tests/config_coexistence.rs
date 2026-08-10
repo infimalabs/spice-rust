@@ -1,75 +1,47 @@
-//! Who may add a root table to the tracked `spice.toml`, and what that costs.
+//! Tracked configuration ownership for coexisting Python and Rust Spice.
 //!
-//! One file has two strict readers. This port loads it as its tracked layer and
-//! refuses anything outside its release registry; the Python predecessor loads
-//! the same bytes as its `repository` layer from its own checkout, and refuses
-//! the first key outside `spice/config/schema.py`. Neither reader knows
-//! the other's schema, and neither is going away -- the two systems coexist
-//! permanently, so this is a standing hazard rather than a migration step.
-//!
-//! **The predecessor owns the root schema.** This port may author a root table
-//! into tracked `spice.toml` only where the predecessor already declares one.
-//! The tie breaks that way because the two refusals are not symmetric:
-//!
-//! - The predecessor validates this file on *every* agent tool call, through
-//!   the shared hook. A root it does not declare stops every lane's shell at
-//!   once, and the message names a file this port owns, so the lane that reads
-//!   the failure is generally not the lane that caused it.
-//! - This port's refusal (`IssueKind::Unknown`, "path is not present in the
-//!   release configuration registry") is raised while a port command resolves
-//!   configuration -- in that command, in front of whoever ran it.
-//!
-//! The cost is real and is pinned below, not hypothetical. This registry admits
-//! ten root tables into the tracked layer that the predecessor refuses, and
-//! they are legitimate port configuration that simply may not live in this
-//! file. It belongs in the repository-local layer instead, which the
-//! predecessor does not read. One of the ten is `lock` against the
-//! predecessor's `locks`: a single character, and the refusal is fleet-wide.
-//!
-//! Re-derive both sides (read-only, neither writes the shared file):
-//!
-//! ```text
-//! cargo test -p spice --test config_coexistence
-//! python3 -c "from spice.config.schema import CONFIG_SCHEMA; print(sorted(CONFIG_SCHEMA.children))"
-//! ```
+//! Python owns `spice.toml`; Rust owns `spice-rust.toml`. Equal table or key
+//! names in those files are data equality, not a shared authority. Rust loads
+//! only its named document, while the predecessor remains free to validate and
+//! evolve its own repository layer without admitting Rust-only roots.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use spice::config::descriptors;
+use spice::config::{Document, Inputs, descriptors, locations, resolve};
 use wire::ConfigSource;
 
 /// Root tables `spice/config/schema.py` declares, as `CONFIG_SCHEMA.children`.
 ///
-/// Authoring outside this list is what the decision above forbids. The list is
-/// transcribed rather than read, because the predecessor is a separate checkout
-/// that may be absent: a test that skipped itself when it went missing would be
-/// a check that stops checking exactly when the two systems drift apart.
+/// The list is transcribed because the predecessor checkout is not a test
+/// dependency of this repository. It protects the Python-owned file without
+/// making Rust's independent schema answer to it.
 const PREDECESSOR_ROOTS: &[&str] = &[
     "agent", "commands", "judge", "locks", "maxim", "maxims", "policy", "rtk", "say", "serve",
     "tasks", "taste", "wrappers",
 ];
 
-/// Roots this registry admits into the tracked layer that the predecessor
-/// refuses -- the standing hazard list, pinned so it cannot grow unnoticed.
-const REFUSED_BY_PREDECESSOR: &[&str] = &[
+/// Rust tracked roots the predecessor does not declare.
+const RUST_ONLY_ROOTS: &[&str] = &[
     "board", "canvas", "consent", "gate", "lane", "listen", "lock", "proof", "steer", "vendor",
 ];
 
-/// The shared file this decision governs.
-fn tracked_configuration() -> PathBuf {
+fn workspace() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("spice.toml")
+        .parent()
+        .expect("spice crate has a workspace parent")
+        .to_path_buf()
 }
 
-/// Root tables a document authors that the predecessor does not declare.
-///
-/// This is the whole check. It runs against a document rather than a path so a
-/// violation can be proven caught while it is still a candidate edit -- the
-/// point is to answer before the bytes reach the file, because once they do,
-/// every lane's next shell command is already refused.
+fn python_configuration() -> PathBuf {
+    workspace().join("spice.toml")
+}
+
+fn rust_configuration() -> PathBuf {
+    workspace().join("spice-rust.toml")
+}
+
 fn roots_the_predecessor_refuses(document: &str) -> Vec<String> {
     let parsed: toml::Table = document
         .parse()
@@ -81,75 +53,65 @@ fn roots_the_predecessor_refuses(document: &str) -> Vec<String> {
         .collect()
 }
 
-/// The shared file authors nothing the predecessor would refuse.
 #[test]
-fn tracked_configuration_authors_no_root_the_predecessor_refuses() {
-    let path = tracked_configuration();
-    let document = fs::read_to_string(&path).expect("read the tracked configuration");
+fn rust_and_python_tracked_configuration_paths_are_distinct() {
+    let root = workspace();
+    let repository = spice::repository::Repository::discover(&root).expect("workspace discovers");
+    let rust = locations(&repository);
+
+    assert_eq!(rust.tracked(), root.join("spice-rust.toml"));
+    assert_ne!(rust.tracked(), python_configuration());
+    assert!(rust.tracked().is_file(), "Rust tracked policy is present");
+    assert!(
+        python_configuration().is_file(),
+        "Python tracked policy is present"
+    );
+}
+
+#[test]
+fn python_configuration_authors_no_root_its_schema_refuses() {
+    let document = fs::read_to_string(python_configuration()).expect("read Python configuration");
 
     assert_eq!(
         roots_the_predecessor_refuses(&document),
         Vec::<String>::new(),
-        "{} authors a root table the predecessor's validator refuses, which stops \
-         every lane's shell through the shared hook",
-        path.display(),
+        "Python's own tracked document must satisfy the predecessor schema",
     );
 }
 
-/// Planting one of the ten reproduces the refusal; removing it passes.
-///
-/// The planted root is not a typo. It is a root this registry genuinely admits
-/// into the tracked layer, so what fails here is coexistence alone, and the
-/// check is shown able to fail on precisely the edit it exists to stop.
 #[test]
-fn a_planted_port_root_is_named_and_the_same_document_passes_without_it() {
-    let clean =
-        fs::read_to_string(tracked_configuration()).expect("read the tracked configuration");
-    let planted = format!("{clean}\n[gate]\n");
+fn a_rust_only_root_is_admitted_without_entering_python_configuration() {
+    let rust = fs::read_to_string(rust_configuration()).expect("read Rust configuration");
+    let candidate = format!("{rust}\n[gate]\n");
+    resolve(Inputs::new(
+        Some(Document::new("spice-rust.toml", &candidate)),
+        None,
+        &[],
+    ))
+    .expect("Rust-only root is admitted in the Rust-owned document");
 
+    let python = fs::read_to_string(python_configuration()).expect("read Python configuration");
+    let planted = format!("{python}\n[gate]\n");
+    assert_eq!(roots_the_predecessor_refuses(&planted), ["gate"]);
     assert_eq!(
-        roots_the_predecessor_refuses(&planted),
-        vec!["gate".to_string()],
-        "planting a port-only root was not caught, or was not named",
-    );
-    assert!(
-        REFUSED_BY_PREDECESSOR.contains(&"gate"),
-        "the planted root is one this registry admits, not an invented key",
-    );
-    assert_eq!(
-        roots_the_predecessor_refuses(&clean),
+        roots_the_predecessor_refuses(&python),
         Vec::<String>::new(),
-        "the same check must pass on the same document with the planted root removed",
+        "the Python-owned bytes remain unchanged and valid",
     );
 }
 
-/// The hazard list is exactly what the registry admits and the predecessor
-/// refuses.
-///
-/// Admitting a new root into the tracked layer fails here until it is either
-/// declared by the predecessor or added above deliberately, so the cost of the
-/// decision is restated by the registry itself rather than by this transcript.
 #[test]
-fn the_registry_roots_the_predecessor_refuses_are_the_pinned_hazard_list() {
+fn the_independent_rust_schema_keeps_all_rust_only_roots() {
     let admitted: BTreeSet<&str> = descriptors()
         .iter()
         .filter(|descriptor| descriptor.layers().contains(&ConfigSource::Tracked))
         .filter_map(|descriptor| descriptor.template().as_str().split('.').next())
         .collect();
-
-    let refused: Vec<&str> = admitted
+    let rust_only: Vec<&str> = admitted
         .iter()
         .copied()
         .filter(|root| !PREDECESSOR_ROOTS.contains(root))
         .collect();
 
-    assert_eq!(
-        refused, REFUSED_BY_PREDECESSOR,
-        "the tracked-layer roots the predecessor refuses moved; the shared file's \
-         hazard list is stale",
-    );
-    assert!(
-        admitted.iter().any(|root| PREDECESSOR_ROOTS.contains(root)),
-        "no tracked root is shared, so the two schemas no longer overlap at all",
-    );
+    assert_eq!(rust_only, RUST_ONLY_ROOTS);
 }

@@ -10,6 +10,7 @@
 use std::fmt;
 use std::fmt::Write as _;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use sill::{
@@ -19,6 +20,43 @@ use sill::{
 use wire::{Digest, Domain};
 
 use crate::jurisdiction::{Ignore, IgnoreError, Jurisdiction, Rule, Shape};
+
+/// Whether the current process is an already-contained gate worker.
+///
+/// Ordinary library callers keep each bounded child in a new process group.
+/// The commit gate instead runs in a fresh supervisor-owned group and enters
+/// this scope before acquiring anything. Its children must stay in that same
+/// group so one deadline signal reaches the worker, Cargo, rustc, Trunk, and
+/// every parser together.
+static INHERIT_PROCESS_GROUP: AtomicBool = AtomicBool::new(false);
+
+/// Process-global containment authority for one isolated gate worker.
+///
+/// This scope is deliberately exclusive. It is intended only for a fresh
+/// worker process whose complete lifetime belongs to an outer supervisor; an
+/// ordinary in-process caller must retain the default per-child groups.
+#[derive(Debug)]
+pub struct InheritedProcessGroup {
+    _private: (),
+}
+
+impl Drop for InheritedProcessGroup {
+    fn drop(&mut self) {
+        INHERIT_PROCESS_GROUP.store(false, Ordering::Release);
+    }
+}
+
+/// Keep every bounded gate child in the caller's existing process group.
+///
+/// # Errors
+///
+/// Refuses a second simultaneous scope in the same process.
+pub fn inherit_process_group() -> Result<InheritedProcessGroup, &'static str> {
+    INHERIT_PROCESS_GROUP
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map(|_| InheritedProcessGroup { _private: () })
+        .map_err(|_| "gate process-group containment is already active")
+}
 
 /// The external program that turns a file list into one number.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,7 +186,11 @@ impl Bounds {
             argv,
             cwd: cwd.to_path_buf(),
             environment: Environment::empty(),
-            group: ProcessGroup::New,
+            group: if INHERIT_PROCESS_GROUP.load(Ordering::Acquire) {
+                ProcessGroup::Inherit
+            } else {
+                ProcessGroup::New
+            },
             deadlines: self.deadlines,
             wait: self.wait.clone(),
             output: Output::new(

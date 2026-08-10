@@ -36,15 +36,11 @@ pub use board::{
     BoardActorRoute, BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead,
     BoardStatement, BoardTask, DocLedger, Positioned, ProjectVisibility, TextAnswer,
 };
+mod simple_answers;
+pub use simple_answers::{RecognitionAnswer, TasteAnswer};
 
 mod task;
-pub use task::{
-    ClaimCarry, ClaimRenew, ClaimWin, DocApply, EffortAggregateAnswer, EffortAnswer,
-    EffortAvailability, EffortIdentity, EffortPhaseAnswer, EffortRead, EffortSegmentAnswer,
-    EffortUnavailable, EffortUnavailableCode, EffortUsage, GateFindings, ReviewFollowup, TaskAdd,
-    TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd,
-    TaskPhase, TaskRef, TaskReview,
-};
+pub use task::*;
 
 /// Append one durable directive to a lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -387,89 +383,6 @@ pub struct ReleasePublish {
 pub struct UpChange {
     /// State the resident is asked to reach.
     pub state: ResidentState,
-}
-
-/// The answer a task command returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAnswer {
-    /// Task the answer concerns.
-    pub task: TaskHandle,
-    /// Its status after the transaction.
-    pub status: String,
-    /// Best-effort learning continuation run after a successful completion.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub learning: Option<Box<TaskLearning>>,
-    /// Exact CLI command admitted as the next action, when one is available.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub next: Option<Box<str>>,
-}
-
-/// Bounded task-completion learning distillation report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskLearning {
-    /// Records atomically retained after confirmation and eviction.
-    pub stored: u64,
-    /// Bounded candidates extracted from the exact claim-to-completion span.
-    pub candidates: u64,
-    /// One reason for each candidate the independent judge skipped.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skipped: Vec<String>,
-    /// Whole-operation skip reason when no record could be retained.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub reason: Option<String>,
-    /// Bounded diagnostic detail for the skip, when useful.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub detail: Option<String>,
-}
-
-/// The answer a claim command returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimAnswer {
-    /// Task whose possession moved.
-    pub task: TaskHandle,
-    /// Actor holding it after the transaction.
-    pub holder: Actor,
-    /// Non-blocking overlap warnings discovered from the claim-time board.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<ClaimWarning>,
-    /// Exact CLI command admitted as the next action, when one is available.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub next: Option<Box<str>>,
-}
-
-/// One active claim whose acceptance names the same implementation surface.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimWarning {
-    /// Other in-flight task.
-    pub task: TaskHandle,
-    /// Lane holding the other claim.
-    pub lane: CanonicalUuid,
-    /// Exact normalized acceptance terms shared by both tasks.
-    pub surface: Vec<String>,
 }
 
 /// The answer a document application returns.
@@ -984,26 +897,6 @@ pub struct RecallAnswer {
     pub residency: LaneAnswer,
     /// Most recent relevant events, newest first and explicitly bounded.
     pub recent: Vec<RecallEntry>,
-}
-
-/// The answer a taste verdict returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TasteAnswer {
-    /// Bag the verdict landed in.
-    pub name: Name,
-    /// Whether the judge confirmed the hit.
-    pub confirmed: bool,
-}
-
-/// The answer a recognition returns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecognitionAnswer {
-    /// Observation key that was recognized.
-    pub key: Digest,
-    /// False when the key had already been recognized.
-    pub fresh: bool,
 }
 
 mod binding;

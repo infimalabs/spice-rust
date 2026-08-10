@@ -383,7 +383,7 @@ export async function configureFixture(
     "",
   ].join("\n"));
   await chmod(vendor, 0o700);
-  await writeFile(join(fixture, "spice.toml"), [
+  await writeFile(join(fixture, "spice-rust.toml"), [
     "[consent]",
     'posture = "queue"',
     "",
@@ -412,7 +412,7 @@ export async function configureFixture(
     ["dist/stage-app", ".spice-tool-trigger", ".spice-prose-trigger", VENDOR_PID_LEDGER, ""]
       .join("\n"),
   );
-  await execute("git", ["add", ".gitignore", "fake-claude", "spice.toml"], { cwd: fixture });
+  await execute("git", ["add", ".gitignore", "fake-claude", "spice-rust.toml"], { cwd: fixture });
   await execute("git", [
     "-c", "user.name=Canvas Fixture",
     "-c", "user.email=canvas@example.invalid",
@@ -453,7 +453,7 @@ export async function journalExtent(fixture) {
 // `lane_surface/launch.rs` calls `config::load_repository` on the way in -- so a
 // section rewritten between two launches is what makes the second one differ.
 export async function declareVendorModel(fixture, model) {
-  const path = join(fixture, "spice.toml");
+  const path = join(fixture, "spice-rust.toml");
   const text = await readFile(path, "utf8");
   const cleared = text.replace(/^model = .*\n/m, "");
   const declared = cleared.replace(
@@ -466,7 +466,7 @@ export async function declareVendorModel(fixture, model) {
   // is closed by `task done`, which refuses a dirty worktree with
   // `git::worktree-dirty`. Leaving the rewrite uncommitted would end the seeding
   // on that refusal instead of on the identity it exists to move.
-  await execute("git", ["add", "spice.toml"], { cwd: fixture });
+  await execute("git", ["add", "spice-rust.toml"], { cwd: fixture });
   await execute("git", [
     "-c", "user.name=Canvas Fixture",
     "-c", "user.email=canvas@example.invalid",
@@ -478,7 +478,7 @@ export async function declareVendorModel(fixture, model) {
 //
 // The worktrees seated at fixture setup are detached at the commit that created
 // them, so a section rewritten afterwards is invisible from any of them.
-// `spice.toml` is resolved from the launching worktree's own checkout
+// `spice-rust.toml` is resolved from the launching worktree's own checkout
 // (`config::load_repository` on the path `lane_surface/launch.rs` hands it), so
 // a successor that must launch under the rewrite needs a worktree checked out
 // after it.

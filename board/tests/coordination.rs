@@ -14,11 +14,18 @@ use fold::Cursor;
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Digest, Domain, Instant, LeaseHead, Origin,
-    Phase, Producer, Seq, TaskHandle, TaskHead, WorkflowHead, body,
+    Phase, Producer, Seq, TaskHandle, TaskHead, TaskStamp, WorkflowHead, body,
 };
 
+fn stamp(text: &str) -> TaskStamp {
+    let value = text.bytes().fold(0_i64, |value, byte| {
+        (value * 131 + i64::from(byte)) % 10_000_000_000_000
+    });
+    TaskStamp::for_millis(value).expect("fixture name fits the task stamp codec")
+}
+
 fn handle(text: &str) -> TaskHandle {
-    text.parse().expect("task handle")
+    TaskHandle::for_project("board.kernel", &stamp(text))
 }
 
 fn phase(text: &str) -> Phase {
@@ -75,9 +82,9 @@ fn admitted(
 }
 
 fn statement(name: &str) -> TaskHead {
+    let incepted = stamp(name);
     TaskHead {
-        handle: handle(name),
-        uuid: uuid("019fbbde-5105-75a3-a76a-722afde1e407"),
+        incepted: incepted.clone(),
         queue_origin: seq(1),
         title: format!("Implement {name}"),
         description: None,
@@ -85,7 +92,9 @@ fn statement(name: &str) -> TaskHead {
         project: "board.kernel".to_owned(),
         tags: Vec::new(),
         dependencies: Vec::new(),
-        provenance: "task:BOARD-root".parse::<Origin>().expect("origin"),
+        provenance: format!("task:{incepted}")
+            .parse::<Origin>()
+            .expect("origin"),
         revision: seq(1),
     }
 }
@@ -157,7 +166,7 @@ fn completed_entry(name: &str) -> Entry {
 
 fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journal {
     let mut journal = Journal::in_memory().expect("board journal fixture");
-    let task = statement.handle.clone();
+    let task = statement.incepted.clone();
     let mut write = JournalWrite::new(
         Actor::Spice,
         statement.provenance.clone(),
@@ -168,7 +177,6 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
         .fact(
             body::TaskAdded {
                 task: task.clone(),
-                uuid: statement.uuid,
                 title: statement.title.clone(),
                 description: statement.description.clone(),
                 acceptance: statement.acceptance.clone(),
@@ -195,11 +203,11 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
 #[test]
 fn statement_views_preserve_project_family_handle_and_dependency_heads() {
     let mut head = statement("BOARD-a1");
-    head.dependencies = vec![handle("WIRE-b2"), handle("JOURNAL-c3")];
+    head.dependencies = vec![stamp("WIRE-b2"), stamp("JOURNAL-c3")];
     let entry = admitted(head, workflow("todo"), None, None).expect("valid heads");
 
     assert_eq!(entry.project().as_str(), "board.kernel");
-    assert_eq!(entry.family().as_str(), "BOARD");
+    assert_eq!(entry.family().as_str(), "KERNEL");
     let projects = board::ProjectPolicy::new(
         ["board".to_owned(), "agent".to_owned()],
         Vec::new(),
@@ -217,25 +225,25 @@ fn statement_views_preserve_project_family_handle_and_dependency_heads() {
         entry.dependencies().collect::<Vec<_>>(),
         vec![
             board::Dependency {
-                task: handle("BOARD-a1"),
-                after: handle("WIRE-b2"),
+                task: stamp("BOARD-a1"),
+                after: stamp("WIRE-b2"),
             },
             board::Dependency {
-                task: handle("BOARD-a1"),
-                after: handle("JOURNAL-c3"),
+                task: stamp("BOARD-a1"),
+                after: stamp("JOURNAL-c3"),
             },
         ]
     );
 
     let mut self_dependent = statement("BOARD-a1");
-    self_dependent.dependencies = vec![handle("BOARD-a1")];
+    self_dependent.dependencies = vec![stamp("BOARD-a1")];
     assert!(matches!(
         admitted(self_dependent, workflow("todo"), None, None),
         Err(board::TaskError::SelfDependency(_))
     ));
 
     let mut duplicate = statement("BOARD-a1");
-    duplicate.dependencies = vec![handle("WIRE-b2"), handle("WIRE-b2")];
+    duplicate.dependencies = vec![stamp("WIRE-b2"), stamp("WIRE-b2")];
     assert!(matches!(
         admitted(duplicate, workflow("todo"), None, None),
         Err(board::TaskError::DuplicateDependency { .. })
@@ -268,6 +276,92 @@ fn statement_views_preserve_project_family_handle_and_dependency_heads() {
         admitted(statement("BOARD-a1"), unknown_status, None, None),
         Err(board::TaskError::WorkflowStatus(_))
     ));
+}
+
+#[test]
+fn board_graph_views_render_independent_relations_in_stable_order() {
+    let reviewer = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e411"));
+    let mut alpha_head = statement("BOARD-a1");
+    alpha_head.provenance = "task:BOARD-root".parse().expect("fixture origin");
+    alpha_head.dependencies.push(stamp("BOARD-b2"));
+    let mut alpha_workflow = workflow("review");
+    alpha_workflow.review = "assigned".to_owned();
+    alpha_workflow.assignment = Some(reviewer.clone());
+    let alpha = admitted(
+        alpha_head,
+        alpha_workflow,
+        Some(claim(ClaimDisposition::Active)),
+        Some(lease()),
+    )
+    .expect("valid reviewed and claimed entry");
+    let beta = entry("BOARD-b2");
+    let entries = vec![beta.clone(), alpha.clone()];
+    let stable_entries = vec![alpha.clone(), beta.clone()];
+
+    for view in View::ALL {
+        assert_eq!(
+            graph::render(view, &entries).text(),
+            graph::render(view, &stable_entries).text(),
+            "{} graph depends on input order",
+            view.as_str()
+        );
+    }
+    assert_eq!(
+        View::ALL.map(View::as_str),
+        ["origin", "dependencies", "review", "workflow", "claims"]
+    );
+
+    let origin = graph::render(View::Origin, &entries).text().to_owned();
+    assert!(origin.contains(&format!("task:BOARD-root -> {}", alpha.handle())));
+    assert!(origin.contains(&format!(
+        "{} -> {}",
+        beta.statement().provenance,
+        beta.handle()
+    )));
+    assert!(!origin.contains("[assigned]"));
+
+    let dependencies = graph::render(View::Dependencies, &entries)
+        .text()
+        .to_owned();
+    assert_eq!(
+        dependencies,
+        format!(
+            "graph dependencies\n{} -> {}\n",
+            alpha.handle(),
+            beta.handle()
+        )
+    );
+
+    let review = graph::render(View::Review, &entries).text().to_owned();
+    assert_eq!(
+        review,
+        format!(
+            "graph review\n{} -> {} [assigned]\n",
+            reviewer,
+            alpha.handle()
+        )
+    );
+    assert!(!review.contains("active"));
+
+    let workflow = graph::render(View::Workflow, &entries).text().to_owned();
+    assert!(workflow.contains(&format!("{}: review [pending]\n", alpha.handle())));
+    assert!(workflow.contains(&format!("{}: todo [pending]\n", beta.handle())));
+    assert!(!workflow.contains(&reviewer.to_string()));
+
+    let claims = graph::render(View::Claims, &entries).text().to_owned();
+    assert!(claims.contains(&format!("{}: {} [active]\n", alpha.handle(), Actor::Spice)));
+    assert!(!claims.contains("assigned"));
+
+    let handout = handout::compose(&entries);
+    let sections = [
+        "## origin",
+        "## dependencies",
+        "## review",
+        "## workflow",
+        "## claims",
+    ];
+    let positions = sections.map(|section| handout.find(section).expect("section is present"));
+    assert!(positions.windows(2).all(|window| window[0] < window[1]));
 }
 
 #[test]
@@ -384,6 +478,7 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
     let hidden_maxim = admitted("BOARD-maxim", ".maxim_proposal.theme_2", true);
     let hidden_sandbox = admitted("BOARD-sandbox", ".sandbox.audit", true);
     let entries = vec![hidden_sandbox, hidden_oops, public, hidden_maxim];
+    let public_handle = entries[2].handle().clone();
 
     let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
     for actor in [Actor::Spice, Actor::Operator, Actor::Lane(lane)] {
@@ -391,9 +486,8 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
             select(&entries, &actor, &all_projects(), 2)
                 .expect("public task remains eligible")
                 .entry()
-                .statement()
-                .handle,
-            handle("BOARD-public")
+                .handle(),
+            &public_handle
         );
         for hidden in [&entries[0], &entries[1], &entries[3]] {
             assert!(!board::eligible_entry(&entries, hidden, &actor));
@@ -402,10 +496,7 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
 
     let inventory = board::Inventory::new(&entries);
     assert_eq!(inventory.public().len(), 1);
-    assert_eq!(
-        inventory.public()[0].statement().handle,
-        handle("BOARD-public")
-    );
+    assert_eq!(inventory.public()[0].handle(), &public_handle);
     assert_eq!(
         inventory
             .hidden()
@@ -424,7 +515,7 @@ fn stealing_waives_possession_alone_and_waits_on_no_lease() {
     let actor = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e408"));
     let dependent = {
         let mut head = statement("BOARD-blocked");
-        head.dependencies.push(handle("BOARD-absent"));
+        head.dependencies.push(stamp("BOARD-absent"));
         head
     };
     let deferred = {
@@ -504,7 +595,7 @@ fn durable_snapshot_owns_one_validated_journal_answer() {
     assert_eq!(snapshot.schema_version(), journal::SCHEMA_VERSION);
     assert_eq!(snapshot.cursor(), Cursor::at(seq(1)));
     assert_eq!(snapshot.entries().len(), 1);
-    assert_eq!(snapshot.entries()[0].statement().handle, handle("BOARD-a1"));
+    assert_eq!(snapshot.entries()[0].handle(), &handle("BOARD-a1"));
 }
 
 #[test]
@@ -522,11 +613,10 @@ fn durable_snapshot_names_the_task_whose_heads_violate_board_policy() {
             source: board::TaskError::EmptyFlow,
         } if observed == &handle("BOARD-a1")
     ));
-    assert!(
-        error
-            .to_string()
-            .contains("board snapshot task BOARD-a1 is invalid")
-    );
+    assert!(error.to_string().contains(&format!(
+        "board snapshot task {} is invalid",
+        handle("BOARD-a1")
+    )));
 }
 
 #[test]
@@ -768,7 +858,7 @@ fn urgency_is_durable_queue_age_and_ignores_unrelated_edits() {
     edited_head.queue_origin = plain.statement().queue_origin;
     edited_head.revision = seq(99);
     edited_head.tags.push("priority:high".to_owned());
-    edited_head.dependencies.push(handle("BOARD-d4"));
+    edited_head.dependencies.push(stamp("BOARD-d4"));
     let edited = admitted(edited_head, workflow("review"), None, None).expect("valid heads");
     let mut newer_head = statement("BOARD-c3");
     newer_head.queue_origin = seq(2);
@@ -795,15 +885,12 @@ fn urgency_band_changes_only_the_winner_inside_one_priority_class() {
     let reversed = [higher_handle, lower_handle];
 
     let outside = select(&ordered, &Actor::Spice, &all_projects(), 99).expect("eligible task");
-    assert_eq!(outside.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(outside.entry().handle(), &handle("BOARD-z1"));
     let inside = select(&ordered, &Actor::Spice, &all_projects(), 100).expect("eligible task");
     let reversed_inside =
         select(&reversed, &Actor::Spice, &all_projects(), 100).expect("eligible task");
-    assert_eq!(inside.entry().statement().handle, handle("BOARD-a1"));
-    assert_eq!(
-        reversed_inside.entry().statement().handle,
-        inside.entry().statement().handle,
-    );
+    assert_eq!(inside.entry().handle(), &handle("BOARD-a1"));
+    assert_eq!(reversed_inside.entry().handle(), inside.entry().handle(),);
 }
 
 #[test]
@@ -822,11 +909,11 @@ fn self_review_is_a_last_resort_class_instead_of_an_exclusion() {
     let entries = [self_review.clone(), peer_work];
     let selected =
         select(&entries, &Actor::Spice, &all_projects(), 2).expect("peer work remains eligible");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
     let fallback_entries = [self_review];
     let fallback = select(&fallback_entries, &Actor::Spice, &all_projects(), 2)
         .expect("own review remains eligible on a quiet board");
-    assert_eq!(fallback.entry().statement().handle, handle("BOARD-a1"));
+    assert_eq!(fallback.entry().handle(), &handle("BOARD-a1"));
 }
 
 #[test]
@@ -836,7 +923,7 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
 
     let mut blocked_head = statement("BOARD-z9");
     blocked_head.tags.push("priority:critical".to_owned());
-    blocked_head.dependencies.push(handle("WIRE-missing"));
+    blocked_head.dependencies.push(stamp("WIRE-missing"));
     let blocked =
         admitted(blocked_head, workflow("todo"), None, None).expect("valid blocked heads");
 
@@ -878,11 +965,8 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     let selected = select(&ordered, &Actor::Spice, &all_projects(), 2).expect("eligible task");
     let selected_again =
         select(&reversed, &Actor::Spice, &all_projects(), 2).expect("eligible task");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-a1"));
-    assert_eq!(
-        selected_again.entry().statement().handle,
-        selected.entry().statement().handle
-    );
+    assert_eq!(selected.entry().handle(), &handle("BOARD-a1"));
+    assert_eq!(selected_again.entry().handle(), selected.entry().handle());
     assert_eq!(selected_again.urgency(), selected.urgency());
 }
 
@@ -891,7 +975,7 @@ fn prerequisite_inherits_the_critical_priority_it_directly_unblocks() {
     let prerequisite = entry("BOARD-z1");
     let mut critical_head = statement("BOARD-c1");
     critical_head.tags.push("priority:critical".to_owned());
-    critical_head.dependencies.push(handle("BOARD-z1"));
+    critical_head.dependencies.push(stamp("BOARD-z1"));
     let critical = admitted(critical_head, workflow("todo"), None, None).expect("critical task");
     let mut medium_head = statement("BOARD-m1");
     medium_head.tags.push("priority:medium".to_owned());
@@ -902,11 +986,8 @@ fn prerequisite_inherits_the_critical_priority_it_directly_unblocks() {
     let selected = select(&ordered, &Actor::Spice, &all_projects(), 2).expect("eligible task");
     let selected_again =
         select(&reversed, &Actor::Spice, &all_projects(), 2).expect("eligible task");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
-    assert_eq!(
-        selected_again.entry().statement().handle,
-        selected.entry().statement().handle,
-    );
+    assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
+    assert_eq!(selected_again.entry().handle(), selected.entry().handle(),);
     assert_eq!(selected_again.urgency(), selected.urgency());
 }
 
@@ -914,11 +995,11 @@ fn prerequisite_inherits_the_critical_priority_it_directly_unblocks() {
 fn prerequisite_inherits_priority_through_a_two_edge_chain() {
     let first = entry("BOARD-z1");
     let mut second_head = statement("BOARD-z2");
-    second_head.dependencies.push(handle("BOARD-z1"));
+    second_head.dependencies.push(stamp("BOARD-z1"));
     let second = admitted(second_head, workflow("todo"), None, None).expect("second prerequisite");
     let mut critical_head = statement("BOARD-c1");
     critical_head.tags.push("priority:critical".to_owned());
-    critical_head.dependencies.push(handle("BOARD-z2"));
+    critical_head.dependencies.push(stamp("BOARD-z2"));
     let critical = admitted(critical_head, workflow("todo"), None, None).expect("critical task");
     let mut medium_head = statement("BOARD-m1");
     medium_head.tags.push("priority:medium".to_owned());
@@ -926,24 +1007,24 @@ fn prerequisite_inherits_priority_through_a_two_edge_chain() {
     let entries = [first, second, critical, medium];
 
     let selected = select(&entries, &Actor::Spice, &all_projects(), 2).expect("eligible task");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
 }
 
 #[test]
 fn priority_inheritance_terminates_on_a_dependency_cycle() {
     let mut first_head = statement("BOARD-z1");
     first_head.tags.push("priority:critical".to_owned());
-    first_head.dependencies.push(handle("BOARD-z2"));
+    first_head.dependencies.push(stamp("BOARD-z2"));
     let first = admitted(first_head, workflow("todo"), None, None).expect("first cycle entry");
     let mut second_head = statement("BOARD-z2");
-    second_head.dependencies.push(handle("BOARD-z1"));
+    second_head.dependencies.push(stamp("BOARD-z1"));
     let second = admitted(second_head, workflow("todo"), None, None).expect("second cycle entry");
     let medium = entry("BOARD-m1");
 
     let entries = [first, second, medium];
     let selected = select(&entries, &Actor::Spice, &all_projects(), 2)
         .expect("cycle leaves the independent task eligible");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-m1"));
+    assert_eq!(selected.entry().handle(), &handle("BOARD-m1"));
 }
 
 #[test]
@@ -956,10 +1037,10 @@ fn downstream_weight_precedes_native_urgency_and_handle_order() {
     let weighted = admitted(weighted_head, weighted_workflow, None, None)
         .expect("assigned weighted candidate");
     let mut direct_head = statement("BOARD-z2");
-    direct_head.dependencies.push(handle("BOARD-z1"));
+    direct_head.dependencies.push(stamp("BOARD-z1"));
     let direct = admitted(direct_head, workflow("todo"), None, None).expect("direct dependent");
     let mut transitive_head = statement("BOARD-z3");
-    transitive_head.dependencies.push(handle("BOARD-z2"));
+    transitive_head.dependencies.push(stamp("BOARD-z2"));
     let transitive =
         admitted(transitive_head, workflow("todo"), None, None).expect("transitive dependent");
 
@@ -981,12 +1062,9 @@ fn downstream_weight_precedes_native_urgency_and_handle_order() {
         select(&ordered, &Actor::Spice, &all_projects(), 2).expect("weighted candidate is ready");
     let selected_again = select(&reversed, &Actor::Spice, &all_projects(), 2)
         .expect("reversed weighted candidate is ready");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
     assert_eq!(selected.downstream_weight(), 2);
-    assert_eq!(
-        selected_again.entry().statement().handle,
-        selected.entry().statement().handle,
-    );
+    assert_eq!(selected_again.entry().handle(), selected.entry().handle(),);
     assert_eq!(
         selected_again.downstream_weight(),
         selected.downstream_weight(),
@@ -1002,10 +1080,10 @@ fn effective_priority_precedes_greater_downstream_weight() {
         admitted(priority_head, workflow("todo"), None, None).expect("higher-priority candidate");
     let weighted = entry("BOARD-a1");
     let mut direct_head = statement("BOARD-a2");
-    direct_head.dependencies.push(handle("BOARD-a1"));
+    direct_head.dependencies.push(stamp("BOARD-a1"));
     let direct = admitted(direct_head, workflow("todo"), None, None).expect("direct dependent");
     let mut transitive_head = statement("BOARD-a3");
-    transitive_head.dependencies.push(handle("BOARD-a2"));
+    transitive_head.dependencies.push(stamp("BOARD-a2"));
     let transitive =
         admitted(transitive_head, workflow("todo"), None, None).expect("transitive dependent");
     let entries = [weighted, direct, transitive, priority];
@@ -1013,7 +1091,7 @@ fn effective_priority_precedes_greater_downstream_weight() {
     // Moving downstream weight above effective priority makes BOARD-a1 win.
     let selected =
         select(&entries, &Actor::Spice, &all_projects(), 2).expect("priority candidate is ready");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z9"));
+    assert_eq!(selected.entry().handle(), &handle("BOARD-z9"));
     assert_eq!(selected.downstream_weight(), 0);
 }
 
@@ -1022,15 +1100,15 @@ fn downstream_weight_ignores_hidden_and_settled_branches() {
     let root = entry("BOARD-a1");
     let mut hidden_head = statement("BOARD-h1");
     hidden_head.project = ".oops.correctness".to_owned();
-    hidden_head.dependencies.push(handle("BOARD-a1"));
+    hidden_head.dependencies.push(stamp("BOARD-a1"));
     let hidden = admitted(hidden_head, workflow("todo"), None, None).expect("hidden dependent");
     let mut after_hidden_head = statement("BOARD-z1");
-    after_hidden_head.dependencies.push(handle("BOARD-h1"));
+    after_hidden_head.dependencies.push(stamp("BOARD-h1"));
     let after_hidden = admitted(after_hidden_head, workflow("todo"), None, None)
         .expect("public task beyond hidden branch");
 
     let mut settled_head = statement("BOARD-s1");
-    settled_head.dependencies.push(handle("BOARD-a1"));
+    settled_head.dependencies.push(stamp("BOARD-a1"));
     let mut settled_workflow = workflow("review");
     settled_workflow.status = "completed".to_owned();
     settled_workflow.completion = Some(instant("2026-08-01T06:06:00.000Z"));
@@ -1042,7 +1120,7 @@ fn downstream_weight_ignores_hidden_and_settled_branches() {
     )
     .expect("settled dependent");
     let mut after_settled_head = statement("BOARD-z2");
-    after_settled_head.dependencies.push(handle("BOARD-s1"));
+    after_settled_head.dependencies.push(stamp("BOARD-s1"));
     let after_settled = admitted(after_settled_head, workflow("todo"), None, None)
         .expect("public task beyond settled branch");
     let ordered = [
@@ -1058,12 +1136,9 @@ fn downstream_weight_ignores_hidden_and_settled_branches() {
         .expect("root remains an unweighted candidate");
     let selected_again = select(&reversed, &Actor::Spice, &all_projects(), 2)
         .expect("reversed root remains an unweighted candidate");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-a1"));
+    assert_eq!(selected.entry().handle(), &handle("BOARD-a1"));
     assert_eq!(selected.downstream_weight(), 0);
-    assert_eq!(
-        selected_again.entry().statement().handle,
-        selected.entry().statement().handle,
-    );
+    assert_eq!(selected_again.entry().handle(), selected.entry().handle(),);
     assert_eq!(selected_again.downstream_weight(), 0);
 }
 
@@ -1073,10 +1148,10 @@ fn downstream_weight_terminates_on_a_dependency_cycle() {
     let mut first_head = statement("BOARD-z2");
     first_head
         .dependencies
-        .extend([handle("BOARD-z1"), handle("BOARD-z3")]);
+        .extend([stamp("BOARD-z1"), stamp("BOARD-z3")]);
     let first = admitted(first_head, workflow("todo"), None, None).expect("first cycle entry");
     let mut second_head = statement("BOARD-z3");
-    second_head.dependencies.push(handle("BOARD-z2"));
+    second_head.dependencies.push(stamp("BOARD-z2"));
     let second = admitted(second_head, workflow("todo"), None, None).expect("second cycle entry");
     let ordered = [root.clone(), first.clone(), second.clone()];
     let reversed = [second, first, root];
@@ -1085,12 +1160,9 @@ fn downstream_weight_terminates_on_a_dependency_cycle() {
         select(&ordered, &Actor::Spice, &all_projects(), 2).expect("cycle root is ready");
     let selected_again =
         select(&reversed, &Actor::Spice, &all_projects(), 2).expect("reversed cycle root is ready");
-    assert_eq!(selected.entry().statement().handle, handle("BOARD-z1"));
+    assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
     assert_eq!(selected.downstream_weight(), 2);
-    assert_eq!(
-        selected_again.entry().statement().handle,
-        selected.entry().statement().handle,
-    );
+    assert_eq!(selected_again.entry().handle(), selected.entry().handle(),);
     assert_eq!(selected_again.downstream_weight(), 2);
 }
 
@@ -1119,11 +1191,14 @@ fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
             Some(Actor::Lane(other)),
         ),
     ];
+    let manual = entries[0].handle().to_string();
+    let automatic = entries[1].handle().to_string();
+    let open = entries[2].handle().to_string();
     let handles = |subscription: &wire::LineageSubscription| {
         entries
             .iter()
             .filter(|entry| board::selectable_entry(&entries, entry, &actor, subscription))
-            .map(|entry| entry.statement().handle.to_string())
+            .map(|entry| entry.handle().to_string())
             .collect::<BTreeSet<_>>()
     };
     let subscription = |policy| wire::LineageSubscription {
@@ -1135,19 +1210,15 @@ fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
 
     assert_eq!(
         handles(&subscription(wire::intent::LineageLife::Steer)),
-        BTreeSet::from(["SCOPE-manual1".to_owned()]),
+        BTreeSet::from([manual.clone()]),
     );
     assert_eq!(
         handles(&subscription(wire::intent::LineageLife::Drive)),
-        BTreeSet::from(["SCOPE-auto001".to_owned(), "SCOPE-manual1".to_owned(),]),
+        BTreeSet::from([automatic.clone(), manual.clone()]),
     );
     assert_eq!(
         handles(&subscription(wire::intent::LineageLife::Drain)),
-        BTreeSet::from([
-            "SCOPE-auto001".to_owned(),
-            "SCOPE-manual1".to_owned(),
-            "SCOPE-open001".to_owned(),
-        ]),
+        BTreeSet::from([automatic, manual.clone(), open.clone(),]),
     );
     assert_eq!(
         select(
@@ -1158,9 +1229,8 @@ fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
         )
         .expect("steer has manual work")
         .entry()
-        .statement()
-        .handle,
-        handle("SCOPE-manual1"),
+        .handle(),
+        entries[0].handle(),
         "a higher-urgency unrelated task must not cross the Steer boundary",
     );
     assert_eq!(
@@ -1172,9 +1242,8 @@ fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
         )
         .expect("drain has all assignable work")
         .entry()
-        .statement()
-        .handle,
-        handle("SCOPE-open001"),
+        .handle(),
+        entries[2].handle(),
     );
 }
 
@@ -1273,8 +1342,9 @@ fn one_digest_never_admits_two_different_documents() {
 fn diagrams_and_handout_are_stable_across_input_order() {
     let prerequisite = entry("BOARD-a1");
     let mut dependent_head = statement("BOARD-b2");
-    dependent_head.dependencies.push(handle("BOARD-a1"));
+    dependent_head.dependencies.push(stamp("BOARD-a1"));
     let dependent = admitted(dependent_head, workflow("todo"), None, None).expect("valid heads");
+    let expected_edge = format!("{} -> {}", dependent.handle(), prerequisite.handle());
     let first = [dependent.clone(), prerequisite.clone()];
     let second = [prerequisite, dependent];
 
@@ -1282,7 +1352,7 @@ fn diagrams_and_handout_are_stable_across_input_order() {
         assert_eq!(graph::render(view, &first), graph::render(view, &second));
     }
     assert_eq!(handout::compose(&first), handout::compose(&second));
-    assert!(handout::compose(&first).contains("BOARD-b2 -> BOARD-a1"));
+    assert!(handout::compose(&first).contains(&expected_edge));
 }
 
 #[test]

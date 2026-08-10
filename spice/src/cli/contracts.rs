@@ -405,7 +405,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Local,
         Resident,
         [JournalMigrated, TrustPended, UpSeated],
-        [JournalLock],
+        [JournalLock, Toolful],
+        UP_TOOLS,
         Stream,
         "spice::up"
     ),
@@ -894,6 +895,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         [Resident, OperatorCapability],
         Reply,
         "taste::drop"
+    ),
+    row!(
+        ["taste", "mine"],
+        "taste mine",
+        Operator,
+        Command,
+        [TaskAdded],
+        [Resident, OperatorCapability],
+        Reply,
+        "taste::mine"
     ),
     row!(
         ["trust"],

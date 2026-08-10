@@ -28,6 +28,11 @@ fn schema_two_pre_lineage_rows_derive_the_lane_once() {
             .map(|migration| (migration.from(), migration.to())),
         Some((2, SCHEMA_VERSION))
     );
+    assert_eq!(
+        residency_head_from(&journal.connection).topology_revision,
+        0,
+        "schema six derives the revision from the schema-two head position"
+    );
     assert_all_carriers(&journal.connection, LANE);
 }
 
@@ -47,13 +52,17 @@ fn current_rows_cross_schema_two_without_an_alternate_rewrite() {
     let scratch = Scratch::new();
     let path = scratch.path().join("current.sqlite3");
     schema_two_lineage_authority(&path, [StoredLineage::Current; 3]);
-    let before = carrier_bytes(&Connection::open(&path).expect("open current fixture"));
+    let before = lineage_payloads(&Connection::open(&path).expect("open current fixture"));
 
     let journal = Journal::open(&path).expect("the current authority migrates");
 
-    let after = carrier_bytes(&journal.connection);
-    assert_eq!(&after[..2], &before[..2]);
-    assert_eq!(without_topology_revision(&after[2]), before[2]);
+    let mut after = lineage_payloads(&journal.connection);
+    after[2]
+        .as_object_mut()
+        .expect("lane seat request body")
+        .remove("topology_revision")
+        .expect("schema-six request carries topology revision");
+    assert_eq!(after, before);
     assert_all_carriers(&journal.connection, LINEAGE);
 }
 
@@ -152,6 +161,8 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
         "/body",
         shapes[2],
     );
+    downgrade_task_identity_to_five(&journal.connection);
+    remove_head_topology_revision(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -161,6 +172,35 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
              PRAGMA user_version = 2;",
         )
         .expect("downgrade lineage fixture to schema 2");
+    let stored = carrier_bytes(&journal.connection);
+    let head: Value = serde_json::from_slice(&stored[0]).expect("decode schema-two head");
+    assert!(
+        head.get("topology_revision").is_none(),
+        "an authentic schema-two head predates topology revision"
+    );
+}
+
+fn remove_head_topology_revision(connection: &Connection) {
+    let bytes: Vec<u8> = connection
+        .query_row(
+            "SELECT body FROM residency_head WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read current residency head");
+    let mut document: Value =
+        serde_json::from_slice(&bytes).expect("decode current residency head");
+    document
+        .as_object_mut()
+        .expect("residency head object")
+        .remove("topology_revision")
+        .expect("current fixture carries topology revision");
+    connection
+        .execute(
+            "UPDATE residency_head SET body = ?1 WHERE singleton = 1",
+            params![serde_json::to_vec(&document).expect("encode schema-two residency head")],
+        )
+        .expect("store schema-two residency head");
 }
 
 fn seed_head_identity(connection: &Connection) {
@@ -331,15 +371,29 @@ fn carrier_bytes(connection: &Connection) -> Vec<Vec<u8>> {
         .collect()
 }
 
-fn without_topology_revision(bytes: &[u8]) -> Vec<u8> {
-    let mut document: Value = serde_json::from_slice(bytes).expect("decode migrated request");
-    document
-        .pointer_mut("/body")
-        .and_then(Value::as_object_mut)
-        .expect("lane seat request body")
-        .remove("topology_revision")
-        .expect("schema-six request carries topology revision");
-    serde_json::to_vec(&document).expect("encode pre-topology request")
+fn lineage_payloads(connection: &Connection) -> Vec<Value> {
+    carrier_bytes(connection)
+        .into_iter()
+        .zip(["/lanes/0", "/fact", "/body"])
+        .map(|(bytes, pointer)| {
+            serde_json::from_slice::<Value>(&bytes)
+                .expect("decode lineage carrier")
+                .pointer(pointer)
+                .expect("lineage payload")
+                .clone()
+        })
+        .collect()
+}
+
+fn residency_head_from(connection: &Connection) -> ResidencyHead {
+    let bytes: Vec<u8> = connection
+        .query_row(
+            "SELECT body FROM residency_head WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read migrated residency head");
+    wire::decode(&bytes).expect("migrated residency head decodes")
 }
 
 fn version_records(connection: &Connection) -> (u32, u32) {

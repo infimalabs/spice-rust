@@ -46,6 +46,68 @@ remain in orchestration, validation, and serialization. The emitted report was
 approximately 23 MB in this run, so success-path report construction and output
 are themselves material hook work.
 
+## 2026-08-09 canonical-hook regression
+
+Task `THROUGH-1kLJJQ8K` profiled the installed Rust pre-commit command itself:
+`cargo run --locked --package spice -- gate pre-commit`. The runner had 12
+physical/logical cores and 10 active lanes. Every complete experiment used
+`/usr/bin/time -p`; aggregate CPU below is user plus system time. The historical
+one-lane arm profile above remains the stage-level baseline: the 78.77-second
+battery was dominated by `rust-typecheck` at 22.662 seconds,
+`canvas-web-typecheck` at 35.773 seconds, metrics capture at 8.252 seconds, and
+about 4.14 seconds of orchestration, validation, and report serialization.
+
+| Run | Concurrent allocation at launch | Wall | Aggregate CPU | Result |
+| --- | --- | ---: | ---: | --- |
+| Before, direct canonical gate | Four gates across the 12-lane runner | 195.61 s | 122.68 s | Clean battery |
+| After, cold persistent native cache | Fourth gate; 10 active lanes | 131.67 s | 118.15 s | All compiler arms passed; unrelated `file-shape` refusal |
+| After, warm diagnostic rendering | Two peer gates and three Cargo processes | 80.08 s | 96.86 s | Native arm passed in 15.990 s; unrelated `file-shape` refusal |
+| After, warm repeat | Two peer gates and two Cargo processes | 131.94 s | 103.13 s | All compiler arms passed; unrelated `file-shape` refusal |
+| After, ordinary-target reuse | One peer gate and three Cargo processes | 131.30 s | 108.96 s | All compiler arms passed; unrelated `file-shape` refusal |
+| Clean exact gate, cold launcher | One peer gate and one Cargo process | 164.42 s | 110.64 s | Clean battery |
+| Clean exact gate, warm repeat | One peer gate and one Cargo process | **104.45 s** | 108.12 s | Clean battery |
+| Before stable source cache, high load | Four peer gates and seven Cargo processes | 196.10 s | 120.08 s | Clean battery, but over the unchanged 180-second limit |
+| Stable source cache, queue-bound | One peer gate and two Cargo processes | 166.58 s | 83.03 s | Clean battery; native arm passed in 0.864 s |
+| Stable source cache, immediate repeat | One peer gate and no Cargo processes | **99.23 s** | 75.11 s | Clean battery; native arm passed in 0.551 s |
+
+The first persistent-output repair reduced the original four-gate wall time by
+63.94 seconds, or 32.7%, while aggregate CPU changed by only 4.53 seconds. A
+later clean run with four peer gates and seven Cargo processes still crossed the
+hard limit, however, because fresh source mtimes continued to invalidate local
+workspace fingerprints. After stabilizing those inputs, the two exact repeats
+used 83.03 and 75.11 seconds of aggregate CPU. Their 67.35-second wall spread is
+queueing rather than a second validation path: native compilation took less
+than one second in both. An earlier incomplete attempt likewise spent 28.97
+seconds waiting for and rebuilding the `cargo run` launcher, then correctly
+refused an index that moved during selection at 33.02 seconds wall and only
+1.18 seconds aggregate CPU. More compute or fewer simultaneous Cargo jobs can
+reduce that wait; more agent lanes cannot.
+
+The regression came from `rust-typecheck` creating a nonce-derived scratch
+workspace with fresh source mtimes, `cargo-target`, and `cargo-build`
+directories, then deleting the output pair after every
+`cargo check --locked --workspace --all-targets`. That forced a cold dependency
+build first and continued to invalidate local workspace crates after output was
+made persistent. The repaired path keeps the immutable selected tree and exact
+command. It synchronizes selected source into one worktree-Git-directory cache,
+preserves bytes and mtimes for unchanged files, verifies the complete mirror,
+and seals it while Cargo reads it. Native artifacts reuse the live worktree's
+already-required ordinary `target`, while build-script output uses one stable
+gate-owned subdirectory. A same-worktree cache possession explicitly refuses a
+concurrent mirror instead of selecting a fallback path. Cargo remains the one
+concurrency authority for overlapping worktree builds. The canvas arm retains
+its separate persistent wasm/release pair because those artifacts do not
+overlap the native launcher or all-target check.
+
+The intermediate post-change refusals were not runtime or compiler failures.
+They named latched debt in `fold/src/task_effort.rs` (1,504 lines against 1,500)
+and `wire/src/intent.rs` (1,502 against 1,495). The final staged tree repaired
+both through cohesive submodules without changing either floor. Exact clean
+gates then completed under concurrent load without changing the 180-second
+limit. The stable-source queue-bound case stayed below that limit, and its
+immediate repeat met the sub-120-second target with lower aggregate CPU than
+the earlier persistent-output runs.
+
 ## Verify battery
 
 “No catch found” means SPICE transcript forensics found no instance in this
@@ -123,7 +185,7 @@ per arm.
 | `csharp-unused-candidates` | 4.868 ms | No C# input; no catch found | Remove until C# exists in the port. |
 | `python-typecheck` | 0.004 ms | No Python input; no catch found | Remove until Python exists in the port. |
 | `env-policy` | 0.006 ms | No distinct catch found; the reported three-name event was an `env-name-ledger` refusal, not this arm | Defer to post-cutover. Reconsider only after an applicable-path benchmark and a demonstrated catch. |
-| `env-name-ledger` | 1.375 s | Caught `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` missing from `spice.toml`, but also blocked every lane on `SPICE_123`, a task-handle negative fixture mistaken for an env read | Move out of pre-commit until its jurisdiction and false-positive policy are repaired. Run in verify/CI meanwhile. |
+| `env-name-ledger` | 1.375 s | Caught `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE` missing from `spice-rust.toml`, but also blocked every lane on `SPICE_123`, a task-handle negative fixture mistaken for an env read | Move out of pre-commit until its jurisdiction and false-positive policy are repaired. Run in verify/CI meanwhile. |
 | `file-shape` | 196.425 ms | Caught a new bound breach and caused work to split files; no functional defect was demonstrated | Defer to post-cutover. It is a structure preference with cross-lane coupling. |
 | `complexity` | **3.544 s** | Caught an 80-line test routine, but also mis-measured a bodyless `extern "C"` declaration through EOF | Defer to post-cutover. The observed catches were shape debt, not behavior defects. |
 | `magic-numbers` | 1.137 s | No catch found | Defer to post-cutover. |
@@ -137,7 +199,7 @@ per arm.
 `VERIFY-1kKFmwQ8` records the three-Git-name event precisely: each access still
 carried an `env-policy: allow` marker that the environment-access arm honored,
 while the separate environment-name ledger has no waiver concept and refused
-because `spice.toml` did not account `GIT_DIR`, `GIT_WORK_TREE`, or
+because `spice-rust.toml` did not account `GIT_DIR`, `GIT_WORK_TREE`, or
 `GIT_INDEX_FILE`. The event is therefore evidence for `env-name-ledger`, not an
 `env-policy` catch.
 

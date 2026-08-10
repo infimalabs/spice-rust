@@ -345,7 +345,7 @@ async fn dispatch_action(
             life,
             vendor,
         } => {
-            send_seat(
+            send_lane_seat(
                 principal,
                 writer,
                 pending,
@@ -381,19 +381,7 @@ async fn dispatch_action(
             topology_revision,
             lineages,
         } => {
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::LineageArrange,
-                CommandKind::LineageArrange,
-                vec![],
-                LineageArrange {
-                    topology_revision,
-                    lineages,
-                },
-            )
-            .await
+            send_lineage_arrangement(principal, writer, pending, topology_revision, lineages).await
         }
         ClientAction::ConfigureLineage {
             topology_revision,
@@ -442,38 +430,7 @@ async fn dispatch_action(
     }
 }
 
-async fn send_seat(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    topology_revision: u64,
-    name: Option<String>,
-    worktree: String,
-    life: String,
-    vendor: wire::Name,
-) -> Result<(), String> {
-    let lane = random_uuid()?;
-    send_typed(
-        principal,
-        writer,
-        pending,
-        PendingKind::LaneSeat,
-        CommandKind::LaneSeat,
-        vec![],
-        LaneSeat {
-            topology_revision,
-            lane,
-            lineage_id: lane,
-            name,
-            worktree,
-            life,
-            vendor,
-            resume: None,
-        },
-    )
-    .await
-}
-
+#[allow(clippy::too_many_arguments)]
 async fn send_steer(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -484,21 +441,79 @@ async fn send_steer(
     message: String,
     attachments: Vec<DirectiveAttachment>,
 ) -> Result<(), String> {
+    let body = SteerSend {
+        lane,
+        message,
+        attachments,
+    };
+    let expected = vec![Witness::Residency {
+        lane,
+        occupant,
+        epoch,
+    }];
     send_typed(
         principal,
         writer,
         pending,
         PendingKind::Steer { lane },
         CommandKind::SteerSend,
-        vec![Witness::Residency {
-            lane,
-            occupant,
-            epoch,
-        }],
-        SteerSend {
-            lane,
-            message,
-            attachments,
+        expected,
+        body,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_lane_seat(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    topology_revision: u64,
+    name: Option<String>,
+    worktree: String,
+    life: String,
+    vendor: wire::Name,
+) -> Result<(), String> {
+    let lane = random_uuid()?;
+    let body = LaneSeat {
+        topology_revision,
+        lane,
+        lineage_id: lane,
+        name,
+        worktree,
+        life,
+        vendor,
+        resume: None,
+    };
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::LaneSeat,
+        CommandKind::LaneSeat,
+        vec![],
+        body,
+    )
+    .await
+}
+
+async fn send_lineage_arrangement(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    topology_revision: u64,
+    lineages: Vec<LineageArrangement>,
+) -> Result<(), String> {
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::LineageArrange,
+        CommandKind::LineageArrange,
+        vec![],
+        LineageArrange {
+            topology_revision,
+            lineages,
         },
     )
     .await
@@ -603,11 +618,14 @@ async fn send_task_note(
     task: TaskHandle,
     note: String,
 ) -> Result<(), String> {
+    let incepted = task
+        .incepted()
+        .map_err(|error| format!("task handle {task} has no canonical inception stamp: {error}"))?;
     let body = TaskNote {
         task: task.clone(),
         note,
     };
-    let expected = vec![Witness::Existence { task: task.clone() }];
+    let expected = vec![Witness::Existence { task: incepted }];
     send_typed(
         principal,
         writer,

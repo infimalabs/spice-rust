@@ -22,7 +22,7 @@ use super::*;
 const ESCAPING_DOC: &str = "../outside.md";
 
 /// The tracked document a declaring repository is refused at.
-const TRACKED_SOURCE: &str = "spice.toml";
+const TRACKED_SOURCE: &str = "spice-rust.toml";
 
 /// A packaged default that fails normalization is refused as packaged.
 ///
@@ -33,7 +33,7 @@ const TRACKED_SOURCE: &str = "spice.toml";
 /// has nothing to edit and the recovery is a release fix.
 ///
 /// The tracked source is asserted absent from both halves of the error rather
-/// than from the field alone, because naming `spice.toml` as the document while
+/// than from the field alone, because naming `spice-rust.toml` as the document while
 /// the field says otherwise sends the same operator to the same wrong file.
 #[test]
 fn a_packaged_document_that_fails_normalization_is_refused_as_packaged() {

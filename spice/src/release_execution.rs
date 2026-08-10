@@ -304,6 +304,40 @@ impl SystemEffects {
         }
     }
 
+    fn gate_state(
+        &self,
+        plan: &dist::ReleasePlan,
+    ) -> Result<dist::OperationState, dist::EffectError> {
+        let path = self
+            .probe_root
+            .join(plan.key.as_str())
+            .join("correctness-gate.receipt");
+        let receipt = match fs::read(&path) {
+            Ok(bytes) => Some(
+                String::from_utf8(bytes)
+                    .map_err(|error| dist::EffectError::Environment(error.to_string()))?
+                    .trim()
+                    .parse::<Digest>()
+                    .map_err(|error| dist::EffectError::Environment(error.to_string()))?,
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(dist::EffectError::Environment(error.to_string())),
+        };
+        Ok(dist::OperationState::Gate { receipt })
+    }
+
+    fn run_cargo(&self, arguments: &[&str]) -> Result<String, String> {
+        run(&self.root, "cargo", arguments)
+    }
+
+    fn rehearse_source(&self, object: &str) -> Result<(), dist::EffectError> {
+        let command = self
+            .authority
+            .source_rehearsal(object)
+            .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
+        self.git_owned(&command).map(|_| ())
+    }
+
     fn install_and_probe(
         &self,
         plan: &dist::ReleasePlan,
@@ -379,14 +413,23 @@ impl dist::EffectPort for SystemEffects {
                 "release repository authority changed".to_owned(),
             ));
         }
-        observed.head = self.git_local(&["rev-parse", "--verify", "HEAD^{commit}"])?;
-        observed.clean = self
-            .git_local(&["status", "--porcelain=v1", "--untracked-files=no"])?
-            .is_empty();
+        let head = self.git_local(&["rev-parse", "--verify", "HEAD^{commit}"])?;
+        let status = self.git_local(&["status", "--porcelain=v1", "--untracked-files=no"])?;
         let version = fs::read_to_string(self.root.join("dist/VERSION"))
             .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        observed.release_version = dist::ProductVersion::parse(version.trim())
+        let version = dist::ProductVersion::parse(version.trim())
             .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        if !admitted_local_progress(plan, &head, &version, &status) {
+            observed.head = head.clone();
+            observed.clean = status.is_empty();
+            observed.release_version = version;
+        }
+        let credential_object = if object_exists(&self.root, &plan.release_commit)? {
+            &plan.release_commit
+        } else {
+            &plan.source_commit
+        };
+        self.rehearse_source(credential_object)?;
         let refs = self.authority.refs(&plan.requested_version);
         observed.source_ref = stable_source_observation(
             plan.observations.source_ref.as_ref(),
@@ -440,9 +483,7 @@ impl dist::EffectPort for SystemEffects {
                 .map_err(dist::EffectError::Environment)?;
                 Ok(dist::OperationState::Binding { identity })
             }
-            Op::RunCorrectnessGate => Ok(dist::OperationState::Gate {
-                receipt: Some(plan.manifest.clone()),
-            }),
+            Op::RunCorrectnessGate => self.gate_state(plan),
             Op::BumpAndVerifyVersion => {
                 let version = fs::read_to_string(self.root.join("dist/VERSION"))
                     .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
@@ -492,98 +533,226 @@ impl dist::EffectPort for SystemEffects {
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         use dist::Operation as Op;
         match operation {
-            Op::ResolvePreconditionsAndCredentials
-            | Op::RunCorrectnessGate
-            | Op::BumpAndVerifyVersion
-            | Op::CreateReleaseCommit => {
-                let result = self.prior(plan, operation)?;
-                Ok((result, dist::Convergence::AlreadyConverged))
-            }
-            Op::RebuildArtifacts => self.rebuild_artifacts(plan, prior),
+            Op::ResolvePreconditionsAndCredentials => self.converge_preconditions(plan),
+            Op::RunCorrectnessGate => self.converge_gate(plan, prior),
+            Op::BumpAndVerifyVersion => self.converge_version(plan, prior),
+            Op::CreateReleaseCommit => self.converge_commit(plan, prior),
+            Op::RebuildArtifacts => self.converge_rebuild(plan, prior),
             Op::InstallAndProbeArtifacts => self.install_and_probe(plan),
-            Op::RehearseUpload => {
-                let command = self
-                    .authority
-                    .package_rehearsal(&plan.requested_version, &plan.package_object)
-                    .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
-                self.git_owned(&command)?;
-                Ok((
-                    dist::OperationState::Package {
-                        identity: Some(plan.package.clone()),
-                        object: Some(plan.package_object.clone()),
-                    },
-                    dist::Convergence::Applied,
-                ))
-            }
-            Op::PublishSource => {
-                let reference = self
-                    .authority
-                    .refs(&plan.requested_version)
-                    .source()
-                    .to_owned();
-                if !matches!(prior, dist::OperationState::RemoteRef { .. }) {
-                    return Err(dist::EffectError::Environment(
-                        "publish source received the wrong prior-state shape".to_owned(),
-                    ));
-                }
-                match self.remote_ref(&reference)? {
-                    Some(object) if object == plan.release_commit => {
-                        return Ok((
-                            dist::OperationState::RemoteRef {
-                                reference,
-                                object: Some(object),
-                            },
-                            dist::Convergence::AlreadyConverged,
-                        ));
-                    }
-                    Some(object) if object != plan.source_commit => {
-                        return Err(dist::EffectError::RemoteRefused(format!(
-                            "{reference} moved to {object} after preflight"
-                        )));
-                    }
-                    Some(_) | None => {}
-                }
-                let command = self
-                    .authority
-                    .source_push(&plan.release_commit)
-                    .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
-                self.git_owned(&command)?;
-                Ok((
-                    dist::OperationState::RemoteRef {
-                        reference,
-                        object: Some(plan.release_commit.clone()),
-                    },
-                    dist::Convergence::Applied,
-                ))
-            }
+            Op::RehearseUpload => self.converge_rehearsal(plan),
+            Op::PublishSource => self.converge_source(plan, prior),
             Op::UploadPackage | Op::CreateImmutableTag | Op::Announce => {
                 self.converge_immutable(plan, operation, prior)
             }
-            Op::AwaitRegistryVisibility => {
-                for _ in 0..VISIBILITY_ATTEMPTS {
-                    let observed = self.registry_state(plan)?;
-                    if matches!(
-                        observed,
-                        dist::OperationState::Registry { evidence: Some(_) }
-                    ) {
-                        return Ok((observed, dist::Convergence::AlreadyConverged));
-                    }
-                }
-                Err(dist::EffectError::RemoteRefused(format!(
-                    "package v{} did not become visible within {VISIBILITY_ATTEMPTS} responses",
-                    plan.requested_version
-                )))
-            }
+            Op::AwaitRegistryVisibility => self.await_registry(plan),
         }
     }
 }
 
 impl SystemEffects {
-    fn rebuild_artifacts(
+    fn converge_preconditions(
+        &self,
+        plan: &dist::ReleasePlan,
+    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        let identity =
+            crate::release_command::repository_identity(&self.root, self.authority.remote())
+                .map_err(dist::EffectError::Environment)?;
+        if identity != plan.repository {
+            return Err(dist::EffectError::Moved(
+                "release repository authority changed".to_owned(),
+            ));
+        }
+        let object = if object_exists(&self.root, &plan.release_commit)? {
+            &plan.release_commit
+        } else {
+            &plan.source_commit
+        };
+        self.rehearse_source(object)?;
+        Ok((
+            dist::OperationState::Binding { identity },
+            dist::Convergence::Applied,
+        ))
+    }
+
+    fn converge_gate(
         &self,
         plan: &dist::ReleasePlan,
         prior: &dist::OperationState,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        let current = self.gate_state(plan)?;
+        if current
+            == (dist::OperationState::Gate {
+                receipt: Some(plan.gate_receipt()),
+            })
+        {
+            return Ok((current, dist::Convergence::AlreadyConverged));
+        }
+        if matches!(current, dist::OperationState::Gate { receipt: Some(_) }) {
+            return Err(dist::EffectError::Moved(
+                "correctness gate receipt identity changed".to_owned(),
+            ));
+        }
+        if matches!(prior, dist::OperationState::Gate { receipt: Some(_) }) {
+            return Ok((prior.clone(), dist::Convergence::AlreadyConverged));
+        }
+        if !matches!(prior, dist::OperationState::Gate { receipt: None }) {
+            return Err(dist::EffectError::Environment(
+                "correctness gate received the wrong prior-state shape".to_owned(),
+            ));
+        }
+        self.run_cargo(&["xtask", "verify"])
+            .map_err(dist::EffectError::GateRefused)?;
+        let head = self.git_local(&["rev-parse", "--verify", "HEAD^{commit}"])?;
+        let status = self.git_local(&["status", "--porcelain=v1", "--untracked-files=no"])?;
+        if head != plan.source_commit || !status.is_empty() {
+            return Err(dist::EffectError::GateRefused(format!(
+                "correctness gate moved source state: HEAD={head} status={status:?}"
+            )));
+        }
+        let receipt = plan.gate_receipt();
+        let path = self
+            .probe_root
+            .join(plan.key.as_str())
+            .join("correctness-gate.receipt");
+        let parent = path.parent().expect("gate receipt has one parent");
+        fs::create_dir_all(parent)
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        let mut staged = atomic::Destination::new(&path)
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?
+            .stage()
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        staged
+            .write_all(format!("{receipt}\n").as_bytes())
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        staged
+            .commit()
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        Ok((
+            dist::OperationState::Gate {
+                receipt: Some(receipt),
+            },
+            dist::Convergence::Applied,
+        ))
+    }
+
+    fn converge_version(
+        &self,
+        plan: &dist::ReleasePlan,
+        prior: &dist::OperationState,
+    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        let dist::OperationState::Version { version: prior } = prior else {
+            return Err(dist::EffectError::Environment(
+                "version bump received the wrong prior-state shape".to_owned(),
+            ));
+        };
+        let path = self.root.join("dist/VERSION");
+        let current = fs::read_to_string(&path)
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        let current = dist::ProductVersion::parse(current.trim())
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        if current == plan.requested_version {
+            return Ok((
+                dist::OperationState::Version { version: current },
+                dist::Convergence::AlreadyConverged,
+            ));
+        }
+        if &current != prior || current != plan.observations.source_version {
+            return Err(dist::EffectError::Moved(format!(
+                "release version moved from {prior} to {current}"
+            )));
+        }
+        let mut staged = atomic::Destination::new(&path)
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?
+            .stage()
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        staged
+            .write_all(format!("{}\n", plan.requested_version).as_bytes())
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        staged
+            .commit()
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        let observed = fs::read_to_string(&path)
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        let observed = dist::ProductVersion::parse(observed.trim())
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        if observed != plan.requested_version {
+            return Err(dist::EffectError::Moved(
+                "version bump did not converge to the requested version".to_owned(),
+            ));
+        }
+        Ok((
+            dist::OperationState::Version { version: observed },
+            dist::Convergence::Applied,
+        ))
+    }
+
+    fn converge_commit(
+        &self,
+        plan: &dist::ReleasePlan,
+        prior: &dist::OperationState,
+    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        let dist::OperationState::Commit { head: prior_head } = prior else {
+            return Err(dist::EffectError::Environment(
+                "release commit received the wrong prior-state shape".to_owned(),
+            ));
+        };
+        let current = self.git_local(&["rev-parse", "--verify", "HEAD^{commit}"])?;
+        if current == plan.release_commit {
+            return Ok((
+                dist::OperationState::Commit { head: current },
+                dist::Convergence::AlreadyConverged,
+            ));
+        }
+        if prior_head != &plan.source_commit || current != plan.source_commit {
+            return Err(dist::EffectError::Moved(format!(
+                "release HEAD moved from {} to {current}",
+                plan.source_commit
+            )));
+        }
+        let version = fs::read_to_string(self.root.join("dist/VERSION"))
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        let version = dist::ProductVersion::parse(version.trim())
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        let status = self.git_local(&["status", "--porcelain=v1", "--untracked-files=no"])?;
+        let bump_is_exact = if plan.requested_version == plan.observations.source_version {
+            status.is_empty()
+        } else {
+            exact_version_bump(&status)
+        };
+        if version != plan.requested_version || !bump_is_exact {
+            return Err(dist::EffectError::Moved(format!(
+                "release bump moved before commit: version={version} status={status:?}"
+            )));
+        }
+        let projection = crate::release_commit::project(
+            &self.root,
+            &plan.source_commit,
+            &plan.requested_version,
+        )
+        .map_err(dist::EffectError::Environment)?;
+        if projection.commit != plan.release_commit {
+            return Err(dist::EffectError::Moved(
+                "deterministic release commit identity changed".to_owned(),
+            ));
+        }
+        let head =
+            crate::release_commit::materialize(&self.root, &projection, &plan.requested_version)
+                .map_err(dist::EffectError::Environment)?;
+        Ok((
+            dist::OperationState::Commit { head },
+            dist::Convergence::Applied,
+        ))
+    }
+
+    fn converge_rebuild(
+        &mut self,
+        plan: &dist::ReleasePlan,
+        prior: &dist::OperationState,
+    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        for target in &plan.targets {
+            self.run_cargo(&["xtask", "stage-target", &target.target])
+                .map_err(dist::EffectError::Environment)?;
+        }
         let package = crate::release_package::materialize(
             &self.root,
             &plan.requested_version,
@@ -616,12 +785,89 @@ impl SystemEffects {
             dist::Convergence::Applied
         };
         Ok((
-            dist::OperationState::Package {
-                identity: Some(package.identity),
-                object: Some(package.git_tree),
-            },
+            package_state(package.identity, package.git_tree),
             convergence,
         ))
+    }
+
+    fn converge_rehearsal(
+        &mut self,
+        plan: &dist::ReleasePlan,
+    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        let command = self
+            .authority
+            .package_rehearsal(&plan.requested_version, &plan.package_object)
+            .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
+        self.git_owned(&command)?;
+        Ok((
+            package_state(plan.package.clone(), plan.package_object.clone()),
+            dist::Convergence::Applied,
+        ))
+    }
+
+    fn converge_source(
+        &mut self,
+        plan: &dist::ReleasePlan,
+        prior: &dist::OperationState,
+    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        let reference = self
+            .authority
+            .refs(&plan.requested_version)
+            .source()
+            .to_owned();
+        if !matches!(prior, dist::OperationState::RemoteRef { .. }) {
+            return Err(dist::EffectError::Environment(
+                "publish source received the wrong prior-state shape".to_owned(),
+            ));
+        }
+        match self.remote_ref(&reference)? {
+            Some(object) if object == plan.release_commit => {
+                return Ok((
+                    dist::OperationState::RemoteRef {
+                        reference,
+                        object: Some(object),
+                    },
+                    dist::Convergence::AlreadyConverged,
+                ));
+            }
+            Some(object) if object != plan.source_commit => {
+                return Err(dist::EffectError::RemoteRefused(format!(
+                    "{reference} moved to {object} after preflight"
+                )));
+            }
+            Some(_) | None => {}
+        }
+        let command = self
+            .authority
+            .source_push(&plan.release_commit)
+            .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
+        self.git_owned(&command)?;
+        Ok((
+            dist::OperationState::RemoteRef {
+                reference,
+                object: Some(plan.release_commit.clone()),
+            },
+            dist::Convergence::Applied,
+        ))
+    }
+
+    fn await_registry(
+        &self,
+        plan: &dist::ReleasePlan,
+    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        for _ in 0..VISIBILITY_ATTEMPTS {
+            let observed = self.registry_state(plan)?;
+            if matches!(
+                observed,
+                dist::OperationState::Registry { evidence: Some(_) }
+            ) {
+                return Ok((observed, dist::Convergence::AlreadyConverged));
+            }
+        }
+        Err(dist::EffectError::RemoteRefused(format!(
+            "package v{} did not become visible within {VISIBILITY_ATTEMPTS} responses",
+            plan.requested_version
+        )))
     }
 
     fn converge_immutable(
@@ -690,6 +936,13 @@ fn ref_state(object: Option<&str>) -> dist::RefState<'_> {
     object.map_or(dist::RefState::Absent, dist::RefState::Present)
 }
 
+fn package_state(identity: Digest, object: String) -> dist::OperationState {
+    dist::OperationState::Package {
+        identity: Some(identity),
+        object: Some(object),
+    }
+}
+
 fn stable_ref_observation(
     previewed: Option<&String>,
     current: Option<String>,
@@ -699,6 +952,38 @@ fn stable_ref_observation(
         Some(object) if object == release => previewed.cloned(),
         other => other,
     }
+}
+
+fn admitted_local_progress(
+    plan: &dist::ReleasePlan,
+    head: &str,
+    version: &dist::ProductVersion,
+    status: &str,
+) -> bool {
+    match plan.action {
+        dist::ReleaseAction::Publish => {
+            (head == plan.source_commit
+                && version == &plan.observations.source_version
+                && status.is_empty())
+                || (head == plan.source_commit
+                    && version == &plan.requested_version
+                    && exact_version_bump(status))
+                || (head == plan.release_commit
+                    && version == &plan.requested_version
+                    && status.is_empty())
+        }
+        dist::ReleaseAction::TagAndAnnounce => {
+            head == plan.release_commit && version == &plan.requested_version && status.is_empty()
+        }
+    }
+}
+
+fn exact_version_bump(status: &str) -> bool {
+    let mut lines = status.lines();
+    matches!(
+        lines.next(),
+        Some(" M dist/VERSION") | Some("M  dist/VERSION") | Some("M dist/VERSION")
+    ) && lines.next().is_none()
 }
 
 fn stable_source_observation(

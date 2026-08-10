@@ -79,8 +79,8 @@ fn envelope_bytes_with_cause(version: u32, seq: u64, cause: Option<u64>) -> Vec<
   "seq": {seq},
   "at": "2030-04-12T18:44:09.271Z",
   "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "origin": "task:SPICE-aBcD",
-{cause}  "fact": {{ "kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify" }}
+  "origin": "task:1kKRRsDP",
+{cause}  "fact": {{ "kind": "task::phased", "task": "1kKRRsDP", "phase": "verify" }}
 }}"#
     )
     .into_bytes()
@@ -117,7 +117,7 @@ fn response(version: u32, epoch: &str) -> Vec<u8> {
                 last: seq(48214),
             }),
             body: Status {
-                task: "SPICE-aBcD".to_owned(),
+                task: "SPICE-1kKRRsDP".to_owned(),
                 status: "done".to_owned(),
             },
         }),
@@ -401,7 +401,7 @@ fn a_chain_walk_ends_at_the_received_envelope_that_omits_cause() {
     assert!(
         walk.links()
             .iter()
-            .all(|link| link.origin().to_string() == "task:SPICE-aBcD")
+            .all(|link| link.origin().to_string() == "task:1kKRRsDP")
     );
 }
 

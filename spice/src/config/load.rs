@@ -25,7 +25,7 @@ use std::path::Component;
 use super::{Document, FlagOverride, Inputs, ResolveError, Resolved, resolve};
 use crate::repository::{Repository, ResolveError as RepositoryError};
 
-const TRACKED_FILE: &str = "spice.toml";
+const TRACKED_FILE: &str = "spice-rust.toml";
 const LOCAL_FILE: &str = ".spice-rs/config.toml";
 
 /// Exact repository configuration locations.

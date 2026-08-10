@@ -410,9 +410,9 @@ fn durable_capture_projects_one_media_record_for_a_paired_tool_call_and_result()
         test_uuid(4),
         &mut seats,
         &surfaces,
+        None,
         &record,
-        &mut previews,
-        &mut diagnostics,
+        CaptureViews::new(&mut previews, &mut diagnostics),
     )
     .expect("current capture projects");
     assert_tool_media_and_prose_activity(&mut updates, &record, &media);
@@ -449,6 +449,92 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     seed_lane(&bus, epoch, lane, occupant);
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
     let publisher = source.message_publisher();
+    let (record, bag) = reminder_capture(lane, occupant);
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            lane,
+            occupant,
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("capture fixture occupant starts");
+    let mut diagnostics = Vec::new();
+    let mut previews = CallPreviews::default();
+    let steering = steer::Config::default();
+    let surfaces = CaptureSurfaces::new(&paths, &bag, &steering, &publisher);
+
+    for _ in 0..2 {
+        accept_capture_record(
+            &bus,
+            epoch,
+            &mut seats,
+            &surfaces,
+            None,
+            &record,
+            CaptureViews::new(&mut previews, &mut diagnostics),
+        )
+        .expect("current capture admits");
+    }
+
+    assert_reminder_published(&bus, &paths, lane);
+
+    let (judged_record, judged_bag) = judged_capture(&record);
+    let mut judge = taste_surface::FunctionAdjudicator(|_: &taste_surface::Candidate| {
+        Ok(taste_surface::Judgment {
+            confirmed: true,
+            attempts: vec![wire::body::TasteJudgeAttempt {
+                framing: 1,
+                reply: "YES".to_owned(),
+                verdict: wire::body::TasteJudgeReply::Yes,
+            }],
+        })
+    });
+    let judged_surfaces = CaptureSurfaces::new(&paths, &judged_bag, &steering, &publisher);
+    accept_capture_record(
+        &bus,
+        epoch,
+        &mut seats,
+        &judged_surfaces,
+        Some(&mut judge),
+        &judged_record,
+        CaptureViews::new(&mut previews, &mut diagnostics),
+    )
+    .expect("enabled capture reaches resident adjudication");
+    let snapshot = bus.fact_snapshot().expect("adjudicated facts read");
+    assert_eq!(
+        snapshot
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::TasteJudged)
+            .count(),
+        1,
+        "the admitted capture path persists the adjudicator verdict"
+    );
+    assert_eq!(
+        steer::Ledger::from_snapshot(&snapshot)
+            .expect("direct and judged publications replay")
+            .pending(lane)
+            .len(),
+        2,
+    );
+    assert!(diagnostics.is_empty());
+    seats
+        .vacate(lane)
+        .expect("occupant remains supervised")
+        .wait()
+        .expect("occupant stops");
+    drop(source);
+    bus.shutdown().expect("message bus stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+fn reminder_capture(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> (lane::capture::CaptureRecord, taste::Bag) {
     let locus = listen::Locus::new(4, 120, 48);
     let record = lane::capture::CaptureRecord {
         lane,
@@ -477,35 +563,10 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
         .expect("taste row"),
     ])
     .expect("taste bag");
-    let mut seats = Seats::new();
-    seats
-        .seat(
-            lane,
-            occupant,
-            process_spec(
-                "exec /usr/bin/tail -f /dev/null",
-                Duration::from_millis(100),
-            ),
-        )
-        .expect("capture fixture occupant starts");
-    let mut diagnostics = Vec::new();
-    let mut previews = CallPreviews::default();
-    let steering = steer::Config::default();
-    let surfaces = CaptureSurfaces::new(&paths, &bag, &steering, &publisher);
+    (record, bag)
+}
 
-    for _ in 0..2 {
-        accept_capture_record(
-            &bus,
-            epoch,
-            &mut seats,
-            &surfaces,
-            &record,
-            &mut previews,
-            &mut diagnostics,
-        )
-        .expect("current capture admits");
-    }
-
+fn assert_reminder_published(bus: &Bus, paths: &RuntimePaths, lane: CanonicalUuid) {
     let snapshot = bus.fact_snapshot().expect("capture facts read");
     assert_eq!(
         snapshot
@@ -528,15 +589,36 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
             .expect("inbox rendering")
             .contains("[TASTE] polling: Wait for a terminal event.")
     );
-    assert!(diagnostics.is_empty());
-    seats
-        .vacate(lane)
-        .expect("occupant remains supervised")
-        .wait()
-        .expect("occupant stops");
-    drop(source);
-    bus.shutdown().expect("message bus stops");
-    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+fn judged_capture(
+    record: &lane::capture::CaptureRecord,
+) -> (lane::capture::CaptureRecord, taste::Bag) {
+    let judged_locus = listen::Locus::new(4, 180, 48);
+    let judged_record = lane::capture::CaptureRecord {
+        locus: judged_locus,
+        decoded: listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: "A fallback path is masking the failure.".to_owned(),
+                phase: None,
+                media: Vec::new(),
+                locus: judged_locus,
+            })],
+        },
+        ..record.clone()
+    };
+    let judged_bag = taste::Bag::new(vec![
+        taste::Taste::new(
+            "fallbacks".parse().expect("taste name"),
+            ["fallback*"],
+            "Keep one deterministic path.",
+        )
+        .expect("taste row"),
+    ])
+    .expect("taste bag");
+    (judged_record, judged_bag)
 }
 
 fn assert_tool_media_and_prose_activity(
@@ -645,9 +727,9 @@ fn assert_stale_capture_ignored<P: AgentMessagePublisher>(
         test_uuid(4),
         seats,
         surfaces,
+        None,
         &stale,
-        previews,
-        diagnostics,
+        CaptureViews::new(previews, diagnostics),
     )
     .expect("stale capture is ignored");
     assert!(matches!(
@@ -774,9 +856,9 @@ fn a_live_capture_record_accounts_the_tape_behind_its_lane() {
         epoch,
         &mut seats,
         &surfaces,
+        None,
         &record,
-        &mut previews,
-        &mut diagnostics,
+        CaptureViews::new(&mut previews, &mut diagnostics),
     )
     .expect("the live capture record is accepted");
 

@@ -73,7 +73,7 @@ pub(super) fn inspect() -> Result<Report, Error> {
         path: PathBuf::from("."),
         source,
     })?;
-    let configuration_path = root.join("spice.toml");
+    let configuration_path = root.join("spice-rust.toml");
     let configuration = read_text(&configuration_path)?;
     Ok(evaluate(
         rust_inputs(),
@@ -104,7 +104,7 @@ fn read_text(path: &Path) -> Result<String, Error> {
 
 fn admit_tracked_configuration(text: &str) -> Result<(), String> {
     spice::config::resolve(Inputs::new(
-        Some(Document::new("spice.toml", text)),
+        Some(Document::new("spice-rust.toml", text)),
         None,
         &[],
     ))
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn current_registries_and_tracked_documents_produce_one_admitted_report() {
-        let configuration = include_str!("../../spice.toml");
+        let configuration = include_str!("../../spice-rust.toml");
         let report = evaluate(rust_inputs(), admit_tracked_configuration(configuration));
 
         assert!(report.admitted);
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn tracked_configuration_uses_the_current_typed_admission() {
-        let current = include_str!("../../spice.toml");
+        let current = include_str!("../../spice-rust.toml");
         assert!(admit_tracked_configuration(current).is_ok());
         assert!(admit_tracked_configuration("[unknown]\nvalue = true\n").is_err());
 
@@ -305,7 +305,7 @@ mod tests {
     /// The tracked document admits every current structural-policy spelling.
     #[test]
     fn tracked_configuration_admits_current_structural_policy() {
-        let current = include_str!("../../spice.toml");
+        let current = include_str!("../../spice-rust.toml");
         // Four advertised keys sit directly under `[policy]`, and TOML refuses a
         // reopened table, so they join the one the document already carries.
         assert_eq!(current.matches("[policy]\n").count(), 1);

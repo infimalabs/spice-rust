@@ -50,7 +50,10 @@ pub(crate) fn execute_steering(
             let Some(lane) = lane_context else {
                 return environment_fault(
                     "steer::lane-context-absent",
-                    "ack requires the SPICE_LANE identity of an activated lane shell",
+                    &format!(
+                        "ack requires the {} identity of an activated Rust lane shell",
+                        steer::hook::LANE
+                    ),
                 );
             };
             let inbox = match read_inbox(discovery_path, Connection::Lane(lane), None) {

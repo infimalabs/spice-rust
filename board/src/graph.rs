@@ -6,20 +6,30 @@ use wire::ClaimDisposition;
 /// Named deterministic diagrams the board exposes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum View {
+    Origin,
     Dependencies,
+    Review,
     Workflow,
     Claims,
 }
 
 impl View {
     /// Every named view in handout order.
-    pub const ALL: [Self; 3] = [Self::Dependencies, Self::Workflow, Self::Claims];
+    pub const ALL: [Self; 5] = [
+        Self::Origin,
+        Self::Dependencies,
+        Self::Review,
+        Self::Workflow,
+        Self::Claims,
+    ];
 
     /// Stable view name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Origin => "origin",
             Self::Dependencies => "dependencies",
+            Self::Review => "review",
             Self::Workflow => "workflow",
             Self::Claims => "claims",
         }
@@ -51,15 +61,55 @@ impl Diagram {
 #[must_use]
 pub fn render(view: View, entries: &[Entry]) -> Diagram {
     let mut ordered: Vec<&Entry> = entries.iter().collect();
-    ordered.sort_by(|left, right| left.statement().handle.cmp(&right.statement().handle));
+    ordered.sort_by(|left, right| left.handle().cmp(right.handle()));
+    let handles = entries
+        .iter()
+        .map(|entry| (entry.incepted(), entry.handle()))
+        .collect::<std::collections::BTreeMap<_, _>>();
 
     let mut text = String::new();
     writeln!(text, "graph {}", view.as_str()).expect("String writes are infallible");
     match view {
+        View::Origin => {
+            for entry in ordered {
+                writeln!(
+                    text,
+                    "{} -> {}",
+                    entry.statement().provenance,
+                    entry.handle()
+                )
+                .expect("String writes are infallible");
+            }
+        }
         View::Dependencies => {
             for entry in ordered {
                 for edge in entry.dependencies() {
-                    writeln!(text, "{} -> {}", edge.task, edge.after)
+                    let task = handles.get(&edge.task).copied();
+                    let after = handles.get(&edge.after).copied();
+                    writeln!(
+                        text,
+                        "{} -> {}",
+                        task.map_or(edge.task.as_str(), wire::TaskHandle::as_str),
+                        after.map_or(edge.after.as_str(), wire::TaskHandle::as_str)
+                    )
+                    .expect("String writes are infallible");
+                }
+            }
+        }
+        View::Review => {
+            for entry in ordered {
+                let workflow = entry.workflow();
+                if let Some(reviewer) = &workflow.assignment {
+                    writeln!(
+                        text,
+                        "{} -> {} [{}]",
+                        reviewer,
+                        entry.handle(),
+                        workflow.review
+                    )
+                    .expect("String writes are infallible");
+                } else if workflow.review != "unassigned" {
+                    writeln!(text, "{}: {}", entry.handle(), workflow.review)
                         .expect("String writes are infallible");
                 }
             }
@@ -69,7 +119,7 @@ pub fn render(view: View, entries: &[Entry]) -> Diagram {
                 writeln!(
                     text,
                     "{}: {} [{}]",
-                    entry.statement().handle,
+                    entry.handle(),
                     entry.workflow().phase,
                     entry.workflow().status
                 )
@@ -82,7 +132,7 @@ pub fn render(view: View, entries: &[Entry]) -> Diagram {
                     writeln!(
                         text,
                         "{}: {} [{}]",
-                        entry.statement().handle,
+                        entry.handle(),
                         claim.actor,
                         disposition(claim.disposition)
                     )

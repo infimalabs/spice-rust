@@ -56,7 +56,7 @@ impl Fixture {
         )
         .expect("write Spice local configuration sentinel");
         let tracked_bytes = b"[tasks]\nmax_parallel = 7\n\n[policy]\nowner = \"spice\"\n".to_vec();
-        fs::write(root.join("spice.toml"), &tracked_bytes).expect("write tracked intent");
+        fs::write(root.join("spice-rust.toml"), &tracked_bytes).expect("write tracked intent");
         Self {
             root,
             tracked_bytes,
@@ -150,7 +150,7 @@ impl Fixture {
             self.root.join(".git/.spice-rs.parked")
         };
         assert_eq!(
-            fs::read(self.root.join("spice.toml")).unwrap(),
+            fs::read(self.root.join("spice-rust.toml")).unwrap(),
             self.tracked_bytes
         );
         assert_eq!(

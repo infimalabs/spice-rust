@@ -216,12 +216,35 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
             &error.to_string(),
         ))
     })?;
-    let canonical = crate::release_history::draft(
+    let history = crate::release_history::draft(
         repository.worktree_root(),
         matches
             .get_one::<String>("release-commit")
             .map(String::as_str),
         matches.get_one::<String>("version").map(String::as_str),
+    )
+    .map_err(|error| {
+        Box::new(notes_refusal::<ReleasePlan>(
+            "release::history-refused",
+            &error,
+        ))
+    })?;
+    let external = resolve_external_preconditions(
+        repository.worktree_root(),
+        matches,
+        &history.release_commit,
+    )
+    .map_err(|error| {
+        Box::new(refusal::<ReleasePlan>(
+            "release::external-plan-refused",
+            &error,
+        ))
+    })?;
+    let canonical = crate::release_history::projected_draft(
+        repository.worktree_root(),
+        &external.source_commit,
+        matches.get_one::<String>("version").map(String::as_str),
+        &external.release_commit,
     )
     .map_err(|error| {
         Box::new(notes_refusal::<ReleasePlan>(
@@ -244,17 +267,6 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
             &error,
         ))
     })?;
-    let external = resolve_external_preconditions(
-        repository.worktree_root(),
-        matches,
-        &canonical.release_commit,
-    )
-    .map_err(|error| {
-        Box::new(refusal::<ReleasePlan>(
-            "release::external-plan-refused",
-            &error,
-        ))
-    })?;
     let app = app_digest(repository.worktree_root())
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::app-stage-refused", &error)))?;
     let release = admit_stage(
@@ -265,7 +277,6 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
     .map_err(|error| Box::new(refusal::<ReleasePlan>("release::manifest-refused", &error)))?;
     let release = bind_external_plan(
         repository.worktree_root(),
-        &canonical.release_commit,
         &notes.document,
         release,
         external,
@@ -393,6 +404,7 @@ pub(crate) fn admit_stage(
 struct ExternalPreconditions {
     requested_version: ProductVersion,
     source_commit: String,
+    release_commit: String,
     action: dist::ReleaseAction,
     repository: Digest,
     head: String,
@@ -407,11 +419,72 @@ struct ExternalPreconditions {
     announcement_ref: Option<String>,
 }
 
+struct LocalPreconditions {
+    source_commit: String,
+    release_commit: String,
+    head: String,
+    clean: bool,
+    bump_claimed: bool,
+    release_version: ProductVersion,
+}
+
+struct ReleaseVersions {
+    requested: ProductVersion,
+    source: ProductVersion,
+    observed: ProductVersion,
+}
+
+struct ExternalRefs {
+    source_ref: Option<String>,
+    package_ref: Option<String>,
+    tag_ref: Option<String>,
+    announcement_ref: Option<String>,
+}
+
 fn resolve_external_preconditions(
     root: &Path,
     matches: &ArgMatches,
-    release_commit: &str,
+    revision_commit: &str,
 ) -> Result<ExternalPreconditions, String> {
+    let versions = release_versions(root, matches)?;
+    let action = release_action(matches)?;
+    let local = resolve_local_preconditions(
+        root,
+        &action,
+        revision_commit,
+        &versions.source,
+        &versions.requested,
+        &versions.observed,
+    )?;
+    let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
+    let external_refs = resolve_external_refs(
+        root,
+        &authority,
+        &versions.requested,
+        &local.source_commit,
+        &local.release_commit,
+    )?;
+    validate_external_refs(&external_refs, &local.release_commit)?;
+    Ok(ExternalPreconditions {
+        requested_version: versions.requested,
+        source_commit: local.source_commit,
+        release_commit: local.release_commit,
+        action,
+        repository: repository_identity(root, authority.remote())?,
+        head: local.head,
+        clean: local.clean,
+        bump_claimed: local.bump_claimed,
+        unrecorded_local_commits: 0,
+        source_version: versions.source,
+        release_version: local.release_version,
+        source_ref: external_refs.source_ref,
+        package_ref: external_refs.package_ref,
+        tag_ref: external_refs.tag_ref,
+        announcement_ref: external_refs.announcement_ref,
+    })
+}
+
+fn release_versions(root: &Path, matches: &ArgMatches) -> Result<ReleaseVersions, String> {
     let requested = matches
         .get_one::<String>("version")
         .map_or(env!("CARGO_PKG_VERSION"), String::as_str);
@@ -422,60 +495,49 @@ fn resolve_external_preconditions(
         .map_err(|error| format!("cannot read dist/VERSION: {error}"))?;
     let release_version =
         ProductVersion::parse(release_version_text.trim()).map_err(|error| error.to_string())?;
-    let head = git_required(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    let release_subject = git_required(root, &["show", "-s", "--format=%s", release_commit])?;
-    let bump_claimed = source_version == requested_version
-        || release_subject == format!("release: bump to {requested_version}");
-    let unrecorded_local_commits = git_required(
-        root,
-        &["rev-list", "--count", &format!("{release_commit}..HEAD")],
-    )?
-    .parse::<u64>()
-    .map_err(|error| format!("Git returned an invalid local commit count: {error}"))?;
-    let source_commit = if release_subject.starts_with("release: bump to ") {
-        git_optional(
-            root,
-            &["rev-parse", "--verify", &format!("{release_commit}^")],
-        )?
-        .unwrap_or_else(|| release_commit.to_owned())
-    } else {
-        release_commit.to_owned()
-    };
-    let clean = tracked_worktree_clean(root)?;
-    if !clean {
-        return Err("the release worktree is dirty".to_owned());
-    }
-    if source_version != release_version && !bump_claimed {
-        return Err("the observed version bump is not claimed by this release".to_owned());
-    }
-    if unrecorded_local_commits != 0 {
-        return Err(format!(
-            "{unrecorded_local_commits} local commits have not been recorded on the \
-             publication baseline"
-        ));
-    }
-    if release_version != requested_version {
-        return Err(format!(
-            "requested version {requested_version} disagrees with observed release version \
-             {release_version}"
-        ));
-    }
-    if head != release_commit {
-        return Err(format!(
-            "release commit {release_commit} is not HEAD {head}"
-        ));
-    }
-    let action = match matches.get_one::<String>("action").map(String::as_str) {
-        None | Some("publish") => dist::ReleaseAction::Publish,
-        Some("tag-and-announce") => dist::ReleaseAction::TagAndAnnounce,
-        Some(other) => return Err(format!("unsupported release action {other:?}")),
-    };
-    let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
-    let refs = authority.refs(&requested_version);
+    Ok(ReleaseVersions {
+        requested: requested_version,
+        source: source_version,
+        observed: release_version,
+    })
+}
+
+fn release_action(matches: &ArgMatches) -> Result<dist::ReleaseAction, String> {
+    Ok(
+        match matches.get_one::<String>("action").map(String::as_str) {
+            None | Some("publish") => dist::ReleaseAction::Publish,
+            Some("tag-and-announce") => dist::ReleaseAction::TagAndAnnounce,
+            Some(other) => return Err(format!("unsupported release action {other:?}")),
+        },
+    )
+}
+
+fn resolve_external_refs(
+    root: &Path,
+    authority: &dist::ReleaseAuthority,
+    requested_version: &ProductVersion,
+    source_commit: &str,
+    release_commit: &str,
+) -> Result<ExternalRefs, String> {
+    let refs = authority.refs(requested_version);
     git_required(root, &["ls-remote", "--refs", authority.remote()])?;
+    let credential_object = if commit_exists(root, release_commit)? {
+        release_commit
+    } else {
+        source_commit
+    };
+    let rehearsal = authority
+        .source_rehearsal(credential_object)
+        .map_err(|error| error.to_string())?;
+    let rehearsal_arguments = rehearsal
+        .arguments()
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    git_required(root, &rehearsal_arguments)?;
     let source_ref = normalize_source_ref(
         remote_ref(root, authority.remote(), refs.source())?,
-        &source_commit,
+        source_commit,
         release_commit,
     );
     let package_ref = remote_ref(root, authority.remote(), refs.package())?;
@@ -487,18 +549,7 @@ fn resolve_external_preconditions(
         remote_ref(root, authority.remote(), refs.announcement())?,
         release_commit,
     );
-    admit_unpublished_refs(&source_ref, &tag_ref, &announcement_ref, release_commit)?;
-    Ok(ExternalPreconditions {
-        requested_version,
-        source_commit,
-        action,
-        repository: repository_identity(root, authority.remote())?,
-        head,
-        clean,
-        bump_claimed,
-        unrecorded_local_commits,
-        source_version,
-        release_version,
+    Ok(ExternalRefs {
         source_ref,
         package_ref,
         tag_ref,
@@ -506,31 +557,136 @@ fn resolve_external_preconditions(
     })
 }
 
-fn admit_unpublished_refs(
-    source_ref: &Option<String>,
-    tag_ref: &Option<String>,
-    announcement_ref: &Option<String>,
+fn validate_external_refs(refs: &ExternalRefs, release_commit: &str) -> Result<(), String> {
+    ensure_release_ref_absent("source", &refs.source_ref, release_commit)?;
+    ensure_release_ref_absent("tag", &refs.tag_ref, release_commit)?;
+    ensure_release_ref_absent("announcement", &refs.announcement_ref, release_commit)
+}
+
+fn ensure_release_ref_absent(
+    label: &str,
+    observed: &Option<String>,
     release_commit: &str,
 ) -> Result<(), String> {
-    if let Some(object) = &source_ref {
+    if let Some(object) = observed {
         return Err(format!(
-            "the source ref names {object}, not {release_commit}"
-        ));
-    }
-    if let Some(object) = &tag_ref {
-        return Err(format!("the tag ref names {object}, not {release_commit}"));
-    }
-    if let Some(object) = &announcement_ref {
-        return Err(format!(
-            "the announcement ref names {object}, not {release_commit}"
+            "the {label} ref names {object}, not {release_commit}"
         ));
     }
     Ok(())
 }
 
+fn resolve_local_preconditions(
+    root: &Path,
+    action: &dist::ReleaseAction,
+    revision_commit: &str,
+    source_version: &ProductVersion,
+    requested_version: &ProductVersion,
+    observed_version: &ProductVersion,
+) -> Result<LocalPreconditions, String> {
+    let head = git_required(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let subject = git_required(root, &["show", "-s", "--format=%s", &head])?;
+    let expected_subject = format!("release: bump to {requested_version}");
+    let status = tracked_worktree_status(root)?;
+    match action {
+        dist::ReleaseAction::Publish => {
+            let source_commit = if subject == expected_subject {
+                git_required(root, &["rev-parse", "--verify", &format!("{head}^")])?
+            } else {
+                revision_commit.to_owned()
+            };
+            let projection =
+                crate::release_commit::project(root, &source_commit, requested_version)?;
+            if subject == expected_subject && projection.commit != head {
+                return Err(format!(
+                    "release commit {head} disagrees with deterministic projection {}",
+                    projection.commit
+                ));
+            }
+            admit_publish_progress(
+                &head,
+                &source_commit,
+                &projection.commit,
+                observed_version,
+                source_version,
+                requested_version,
+                &status,
+            )?;
+            Ok(LocalPreconditions {
+                source_commit: source_commit.clone(),
+                release_commit: projection.commit,
+                head: source_commit,
+                clean: true,
+                bump_claimed: false,
+                release_version: source_version.clone(),
+            })
+        }
+        dist::ReleaseAction::TagAndAnnounce => {
+            if head != revision_commit || subject != expected_subject || !status.is_empty() {
+                return Err(
+                    "tag-and-announce requires the clean deterministic release commit at HEAD"
+                        .to_owned(),
+                );
+            }
+            let source_commit =
+                git_required(root, &["rev-parse", "--verify", &format!("{head}^")])?;
+            let projection =
+                crate::release_commit::project(root, &source_commit, requested_version)?;
+            if projection.commit != head || observed_version != requested_version {
+                return Err("tag-and-announce release identity or version moved".to_owned());
+            }
+            Ok(LocalPreconditions {
+                source_commit,
+                release_commit: head.clone(),
+                head,
+                clean: true,
+                bump_claimed: true,
+                release_version: requested_version.clone(),
+            })
+        }
+    }
+}
+
+fn admit_publish_progress(
+    head: &str,
+    source_commit: &str,
+    release_commit: &str,
+    observed_version: &ProductVersion,
+    source_version: &ProductVersion,
+    requested_version: &ProductVersion,
+    status: &str,
+) -> Result<(), String> {
+    let admitted = (head == source_commit
+        && observed_version == source_version
+        && status.is_empty())
+        || (head == source_commit
+            && observed_version == requested_version
+            && exact_version_bump(status))
+        || (head == release_commit && observed_version == requested_version && status.is_empty());
+    if admitted {
+        Ok(())
+    } else {
+        Err(format!(
+            "release source progress moved: HEAD={head} version={observed_version} status={status:?}"
+        ))
+    }
+}
+
+fn exact_version_bump(status: &str) -> bool {
+    let mut lines = status.lines();
+    matches!(
+        lines.next(),
+        Some(" M dist/VERSION" | "M  dist/VERSION" | "M dist/VERSION")
+    ) && lines.next().is_none()
+}
+
+fn commit_exists(root: &Path, commit: &str) -> Result<bool, String> {
+    git_optional(root, &["cat-file", "-e", &format!("{commit}^{{commit}}")])
+        .map(|row| row.is_some())
+}
+
 fn bind_external_plan(
     root: &Path,
-    release_commit: &str,
     notes: &str,
     release: AdmittedRelease,
     external: ExternalPreconditions,
@@ -559,7 +715,7 @@ fn bind_external_plan(
         }
         Some(dist::RegistryEvidence {
             version: external.requested_version.clone(),
-            release_commit: release_commit.to_owned(),
+            release_commit: external.release_commit.clone(),
             package: package.identity.clone(),
         })
     } else {
@@ -584,7 +740,7 @@ fn bind_external_plan(
         action: external.action,
         requested_version: external.requested_version,
         source_commit: external.source_commit,
-        release_commit: release_commit.to_owned(),
+        release_commit: external.release_commit,
         notes: notes.as_bytes().to_vec(),
         manifest: release.published.digest.clone(),
         package: package.identity,
@@ -605,8 +761,8 @@ fn bind_external_plan(
     Ok(release.bind_external(plan))
 }
 
-fn tracked_worktree_clean(root: &Path) -> Result<bool, String> {
-    Ok(git_required(root, &["status", "--porcelain=v1", "--untracked-files=no"])?.is_empty())
+fn tracked_worktree_status(root: &Path) -> Result<String, String> {
+    git_required(root, &["status", "--porcelain=v1", "--untracked-files=no"])
 }
 
 pub(super) fn repository_identity(root: &Path, remote: &str) -> Result<Digest, String> {

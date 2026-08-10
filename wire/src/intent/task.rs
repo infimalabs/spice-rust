@@ -1,14 +1,15 @@
-//! Task, claim, document, and task-effort command DTOs.
+//! Task, claim, gate-finding, and effort command contracts.
 //!
-//! Creation bodies carry authored causal authority only; the server resolves
-//! an omitted authority at the creation boundary.
+//! Commands may name projected handles for lookup. Creation plans and durable
+//! answers cross the admission boundary with inception stamps, so a later
+//! project edit only changes presentation.
 
 use serde::{Deserialize, Serialize};
 
 use crate::body::{SourceBoundary, TranscriptPosition};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
-use crate::witness::{Name, Phase, TaskHandle};
+use crate::witness::{Name, Phase, TaskHandle, TaskStamp};
 
 /// Add one task as direct intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +71,31 @@ pub struct TaskOopsAdd {
         deserialize_with = "crate::optional::present"
     )]
     pub origin: Option<Origin>,
+}
+
+/// File one evidence-backed taste candidate through the fixed hidden proposal route.
+///
+/// The route and workflow are server-owned. A caller supplies the stable finding
+/// and occurrence identities plus review material, but cannot target an
+/// arbitrary hidden project or activate tracked policy directly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TasteProposalAdd {
+    /// Stable identity of the recurring correction theme.
+    pub finding: Digest,
+    /// Identity of the exact independent-locus set this filing covers.
+    pub occurrence: Digest,
+    /// One-line statement of the proposed review work.
+    pub title: String,
+    /// Exact cited evidence and the proposed tracked row.
+    pub description: String,
+    /// Criteria the operator-reviewed proposal must satisfy.
+    pub acceptance: Vec<String>,
+    /// Causal steering directive that supplied the oldest cited correction.
+    pub origin: Origin,
+    /// Completed predecessor, present only for a later genuine recurrence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends: Vec<TaskHandle>,
 }
 
 /// File the exact findings folded from one registered gate run.
@@ -347,7 +373,7 @@ pub enum EffortAvailability {
 #[serde(deny_unknown_fields)]
 pub struct EffortPhaseAnswer {
     /// Task this phase belongs to.
-    pub task: TaskHandle,
+    pub task: TaskStamp,
     /// Workflow phase name at the opening claim.
     pub phase: Phase,
     /// Zero-based workflow attempt index advanced by each phase transition.
@@ -461,15 +487,15 @@ pub struct TaskReview {
     pub followup: Vec<TaskHandle>,
 }
 
-/// One follow-up statement a review creates, paired with its minted handle.
+/// One follow-up statement a review creates, paired with its inception stamp.
 ///
-/// The caller mints the handle and witnesses its absence, the way `task add`
+/// The caller mints the stamp and witnesses its absence, the way `task add`
 /// does, so the whole batch is decided before the review writes anything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewFollowup {
-    /// Handle minted for the statement.
-    pub task: TaskHandle,
+    /// Sole identity minted for the statement.
+    pub task: TaskStamp,
     /// The statement to create.
     pub add: TaskAdd,
 }
@@ -482,6 +508,89 @@ pub struct TaskAssign {
     pub task: TaskHandle,
     /// Actor seated as reviewer.
     pub reviewer: Actor,
+}
+
+/// The answer a task command returns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAnswer {
+    /// Task the answer concerns.
+    pub task: TaskHandle,
+    /// Its status after the transaction.
+    pub status: String,
+    /// Best-effort learning continuation run after a successful completion.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub learning: Option<Box<TaskLearning>>,
+    /// Exact CLI command admitted as the next action, when one is available.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub next: Option<Box<str>>,
+}
+
+/// Bounded task-completion learning distillation report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskLearning {
+    /// Records atomically retained after confirmation and eviction.
+    pub stored: u64,
+    /// Bounded candidates extracted from the exact claim-to-completion span.
+    pub candidates: u64,
+    /// One reason for each candidate the independent judge skipped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
+    /// Whole-operation skip reason when no record could be retained.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub reason: Option<String>,
+    /// Bounded diagnostic detail for the skip, when useful.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub detail: Option<String>,
+}
+
+/// The answer a claim command returns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimAnswer {
+    /// Task whose possession moved.
+    pub task: TaskHandle,
+    /// Actor holding it after the transaction.
+    pub holder: Actor,
+    /// Non-blocking overlap warnings discovered from the claim-time board.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<ClaimWarning>,
+    /// Exact CLI command admitted as the next action, when one is available.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub next: Option<Box<str>>,
+}
+
+/// One active claim whose acceptance names the same implementation surface.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimWarning {
+    /// Other in-flight task.
+    pub task: TaskHandle,
+    /// Lane holding the other claim.
+    pub lane: CanonicalUuid,
+    /// Exact normalized acceptance terms shared by both tasks.
+    pub surface: Vec<String>,
 }
 
 /// Run the eligibility query and atomically win its claim.

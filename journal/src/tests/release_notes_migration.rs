@@ -7,6 +7,7 @@ const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116321";
 const KEY: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const MANIFEST: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const NOTES: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const TASK_STAMP: &str = "1kKRRsDP";
 
 #[test]
 fn schema_four_publication_absence_is_materialized_once_and_remains_replayable() {
@@ -24,6 +25,14 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
     assert_eq!(
         version_records(&journal.connection),
         (SCHEMA_VERSION, SCHEMA_VERSION)
+    );
+    let heads = journal
+        .read(|read| read.task_heads())
+        .expect("combined migration task heads read");
+    assert_eq!(
+        heads[0].statement().body().incepted.as_str(),
+        TASK_STAMP,
+        "the release crossing composes through sole task identity",
     );
     let snapshot = journal.fact_snapshot().expect("migrated snapshot opens");
     let published: wire::body::ReleasePublished = snapshot
@@ -76,7 +85,7 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
 }
 
 #[test]
-fn schema_four_exact_note_identities_cross_without_rewriting_bytes() {
+fn schema_four_exact_note_identities_survive_the_combined_crossing() {
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-four-current-release.sqlite3");
     schema_four_release_authority(&path, false);
@@ -150,6 +159,7 @@ fn schema_four_release_authority(path: &Path, remove_note_identity: bool) {
             "/body",
         );
     }
+    downgrade_task_identity_to_five(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -235,18 +245,32 @@ fn release_request(connection: &Connection) -> Command<wire::intent::ReleasePubl
     wire::decode(&bytes).expect("release request decodes")
 }
 
-fn release_carriers(connection: &Connection) -> Vec<Vec<u8>> {
-    [
-        "SELECT envelope FROM fact_envelopes WHERE seq = 3".to_owned(),
-        format!("SELECT request FROM command_receipts WHERE command_id = '{COMMAND}'"),
-    ]
-    .into_iter()
-    .map(|sql| {
-        connection
-            .query_row(&sql, [], |row| row.get(0))
-            .expect("read release carrier")
-    })
-    .collect()
+#[derive(Debug, PartialEq, Eq)]
+struct ReleaseCarriers {
+    fact: Value,
+    request: Vec<u8>,
+}
+
+fn release_carriers(connection: &Connection) -> ReleaseCarriers {
+    let envelope: Vec<u8> = connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = 3",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read release fact carrier");
+    let envelope: Value = serde_json::from_slice(&envelope).expect("decode release fact carrier");
+    let request = connection
+        .query_row(
+            &format!("SELECT request FROM command_receipts WHERE command_id = '{COMMAND}'"),
+            [],
+            |row| row.get(0),
+        )
+        .expect("read release request carrier");
+    ReleaseCarriers {
+        fact: envelope["fact"].clone(),
+        request,
+    }
 }
 
 fn version_records(connection: &Connection) -> (u32, u32) {

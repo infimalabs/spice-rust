@@ -32,10 +32,10 @@ fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
     // would admit it and digest differently.
     repository.write("third_party/copied.py", "def copied():\n    return 1\n");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &format!(
             "{}\n[gate.walk]\nskip = [\"third_party/copied.py\"]\n",
-            workspace_document("spice.toml")
+            workspace_document("spice-rust.toml")
         ),
     );
     git_commit(
@@ -112,7 +112,7 @@ fn compiled_and_tracked_exclusions_are_visible_in_the_acquired_evidence() {
     let provenance = HygieneProvenance {
         release: "current".to_owned(),
         layer: "repository".to_owned(),
-        document: "spice.toml".to_owned(),
+        document: "spice-rust.toml".to_owned(),
         field: "policy.exclude[0]".to_owned(),
     };
     let exclusion = HygieneExclusion::new(
@@ -401,7 +401,7 @@ fn tracked_walk_provenance(index: usize) -> HygieneProvenance {
     HygieneProvenance {
         release: "current".to_owned(),
         layer: "repository".to_owned(),
-        document: "spice.toml".to_owned(),
+        document: "spice-rust.toml".to_owned(),
         field: format!("gate.walk.skip[{index}]"),
     }
 }
@@ -428,10 +428,10 @@ fn suppression_repository(label: &str, skip: &[&str]) -> Tree {
             .collect::<Vec<_>>()
             .join(", ");
         repository.write(
-            "spice.toml",
+            "spice-rust.toml",
             &format!(
                 "{}\n[gate.walk]\nskip = [{entries}]\n",
-                workspace_document("spice.toml")
+                workspace_document("spice-rust.toml")
             ),
         );
     }
@@ -459,10 +459,10 @@ fn directory_skip_repository(label: &str, skip: bool) -> Tree {
     repository.write("target/staged.py", "def staged():\n    return 1\n");
     if skip {
         repository.write(
-            "spice.toml",
+            "spice-rust.toml",
             &format!(
                 "{}\n[gate.walk]\nskip = [\"tests/support\"]\n",
-                workspace_document("spice.toml")
+                workspace_document("spice-rust.toml")
             ),
         );
     }
@@ -494,7 +494,7 @@ fn configuration() -> HygieneConfiguration {
 
 fn hygiene_repository(label: &str, excluded_broken_source: bool) -> Tree {
     let repository = git_repository(label);
-    repository.write("spice.toml", &workspace_document("spice.toml"));
+    repository.write("spice-rust.toml", &workspace_document("spice-rust.toml"));
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
     repository.write("pyproject.toml", "[project]\nname = 'fixture'\n");
     repository.write("app/__init__.py", "from .main import entry\n");

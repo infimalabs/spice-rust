@@ -144,7 +144,7 @@ fn bounded_parser_failure_crosses_the_ordinary_production_mapper() {
 
 #[test]
 fn confirmed_mutation_results_cross_the_production_mapper() {
-    let killed = MutationFixture::new(r#"[{"name":"Killed"}]"#);
+    let killed = MutationFixture::new(r#"[{"name":"Killed","file":"src/lib.rs"}]"#);
     let killed_report = killed.report(Some(rate(1, 1)));
     assert!(matches!(
         killed_report.movement(),
@@ -158,7 +158,7 @@ fn confirmed_mutation_results_cross_the_production_mapper() {
     assert_eq!(admitted.body, killed_report);
     killed.assert_unchanged();
 
-    let survived = MutationFixture::new(r#"[{"name":"Survived"}]"#);
+    let survived = MutationFixture::new(r#"[{"name":"Survived","file":"src/lib.rs"}]"#);
     let survived_report = survived.report(Some(rate(0, 1)));
     assert!(matches!(
         survived_report.movement(),
@@ -177,7 +177,9 @@ fn confirmed_mutation_results_cross_the_production_mapper() {
 
 #[test]
 fn flaky_and_timed_out_mutants_retain_ordered_unconfirmed_evidence() {
-    let fixture = MutationFixture::new(r#"[{"name":"Timeout"},{"name":"Flaky"}]"#);
+    let fixture = MutationFixture::new(
+        r#"[{"name":"Timeout","file":"src/lib.rs"},{"name":"Flaky","file":"src/lib.rs"}]"#,
+    );
     let report = fixture.report(Some(rate(0, 1)));
     assert_eq!(
         report.movement(),
