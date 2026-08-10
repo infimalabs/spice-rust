@@ -17,6 +17,9 @@ use wire::{CanonicalUuid, FactKind, Instant, Name, Phase, Seq, TaskHandle};
 
 use crate::{FactPlane, FoldId, Materialization, Reducer, Reduction, Source};
 
+mod unavailable;
+use unavailable::{push_reason, reason};
+
 const ORIGIN: TranscriptPosition = TranscriptPosition {
     member: 1,
     offset: 0,
@@ -1476,21 +1479,6 @@ fn read<F: wire::Body>(envelope: &wire::Envelope<wire::AnyFact>) -> F {
         .fact
         .read()
         .expect("fact kind selected its registered body")
-}
-
-fn push_reason(
-    reasons: &mut Vec<EffortUnavailable>,
-    code: EffortUnavailableCode,
-    detail: impl Into<String>,
-) {
-    reasons.push(reason(code, detail));
-}
-
-fn reason(code: EffortUnavailableCode, detail: impl Into<String>) -> EffortUnavailable {
-    EffortUnavailable {
-        code,
-        detail: detail.into(),
-    }
 }
 
 fn epoch() -> Instant {
