@@ -609,13 +609,14 @@ fn codex_and_claude_tool_results_preserve_one_admitted_image_per_call() {
 
 #[test]
 fn codex_and_claude_authored_directives_retain_delivered_media_beside_the_text() {
-    let rendered = concat!(
-        "<1kInbox>\n",
-        "directive=018f82d4-6f59-7d06-92e3-bce9131163af ",
-        "key=1kAsk001 stage=published expires=2026-08-01T06:30:00.000Z\n",
-        "inspect this capture\n\n",
-        "![operator-capture.png](data:image/png;base64,iVBORw0KGgo=)\n",
-        "</1kInbox>\n",
+    let name = r"operator](capture)\雪.png";
+    let media = wire::Media::from_base64(name, "image/png", "iVBORw0KGgo=")
+        .expect("fixture attachment admits");
+    let rendered = format!(
+        "<1kInbox>\ndirective=018f82d4-6f59-7d06-92e3-bce9131163af \
+         key=1kAsk001 stage=published expires=2026-08-01T06:30:00.000Z\n\
+         inspect this capture\n\n{}\n</1kInbox>\n",
+        media.markdown().expect("fixture Markdown renders"),
     );
     let codex = serde_json::to_vec(&serde_json::json!({
         "type": "response_item",
@@ -650,6 +651,8 @@ fn codex_and_claude_authored_directives_retain_delivered_media_beside_the_text()
     assert_eq!(claude.text, rendered);
     assert_eq!(codex.media.len(), 1);
     assert_eq!(claude.media.len(), 1);
+    assert_eq!(codex.media[0].name, name);
+    assert_eq!(claude.media[0].name, name);
     assert_eq!(
         codex.media[0].identity().unwrap(),
         claude.media[0].identity().unwrap(),

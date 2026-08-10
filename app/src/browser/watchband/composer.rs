@@ -125,7 +125,11 @@ pub(super) fn render_agent_message_card(
     let unlinked_media = message
         .media
         .iter()
-        .filter(|media| !message.text.contains(&media.data_url))
+        .filter(|media| {
+            !media
+                .is_embedded_in(&message.text)
+                .expect("message media passed admission before browser rendering")
+        })
         .collect::<Vec<_>>();
     html! {
         <article
@@ -242,7 +246,11 @@ pub(super) fn render_directive_card(
     let unlinked_attachments = directive
         .attachments
         .iter()
-        .filter(|attachment| !directive.text.contains(&attachment.data_url))
+        .filter(|attachment| {
+            !attachment
+                .is_embedded_in(&directive.text)
+                .expect("directive media passed admission before browser rendering")
+        })
         .collect::<Vec<_>>();
     html! {
         <article
