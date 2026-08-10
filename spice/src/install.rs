@@ -82,6 +82,9 @@ pub const TEST_PAUSE_ACTION: &str = "SPICE_INSTALL_TEST_PAUSE_ACTION"; // env-po
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub const TEST_PAUSE_PATH: &str = "SPICE_INSTALL_TEST_PAUSE_PATH"; // env-policy: allow
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub const TEST_EXECUTABLE: &str = "SPICE_INSTALL_TEST_EXECUTABLE"; // env-policy: allow
 
 /// Configures the process-test mutation rendezvous before installation starts.
 #[cfg(debug_assertions)]

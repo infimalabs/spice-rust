@@ -100,6 +100,10 @@ impl Request {
 }
 
 fn executable<B>() -> Result<PathBuf, Outcome<B>> {
+    #[cfg(debug_assertions)]
+    if let Some(executable) = crate::bootstrap_environment(spice::install::TEST_EXECUTABLE) {
+        return Ok(PathBuf::from(executable));
+    }
     std::env::current_exe().map_err(|error| {
         Outcome::Fault(Fault {
             class: FaultClass::Environment,

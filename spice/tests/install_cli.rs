@@ -7,7 +7,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, Barrier, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -18,16 +18,16 @@ use wire::Outcome;
 
 /// How long a paused install is given to reach its mutation rendezvous.
 ///
-/// Debug binaries are deliberately large, and unapply authenticates the
-/// installed image before reaching its first mutation. Keep this harness
-/// horizon comfortably above that validation cost; the production rendezvous
-/// retains its own ten-second release bound.
+/// Unapply authenticates the installed image before reaching its first
+/// mutation. Keep this harness horizon comfortably above that validation
+/// cost; the production rendezvous retains its own ten-second release bound.
 const RENDEZVOUS: Duration = Duration::from_secs(120);
 
 static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
+    executable: PathBuf,
     tracked_bytes: Vec<u8>,
     local_bytes: Vec<u8>,
     exclude_bytes: Vec<u8>,
@@ -62,8 +62,14 @@ impl Fixture {
         .as_bytes()
         .to_vec();
         fs::write(root.join("spice-rust.toml"), &tracked_bytes).expect("write tracked intent");
+        let executable = root.join("fixture-spice");
+        fs::write(&executable, b"fixture install executable\n")
+            .expect("write fixture install executable");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            .expect("make fixture install executable");
         Self {
             root,
+            executable,
             tracked_bytes,
             local_bytes,
             exclude_bytes,
@@ -87,6 +93,7 @@ impl Fixture {
         command
             .args(arguments)
             .current_dir(&self.root)
+            .env(spice::install::TEST_EXECUTABLE, &self.executable)
             .env_remove(steer::hook::INBOX);
         command
     }
@@ -186,6 +193,17 @@ impl Fixture {
     fn record(&self) -> PathBuf {
         self.root.join(".git/.spice-rs/install.json")
     }
+
+    fn assert_small_owned_executable(&self) {
+        assert!(self.executable.starts_with(&self.root));
+        assert!(
+            fs::metadata(&self.executable)
+                .expect("inspect fixture install executable")
+                .len()
+                < 1024,
+            "process fixture source must not copy the debug Spice binary",
+        );
+    }
 }
 
 impl Drop for Fixture {
@@ -202,6 +220,23 @@ struct Spoken {
     code: Option<i32>,
     out: Vec<u8>,
     err: Vec<u8>,
+}
+
+impl Spoken {
+    fn assert_success(&self) {
+        assert_eq!(
+            self.code,
+            Some(0),
+            "expected successful install process: stdout={} stderr={}",
+            String::from_utf8_lossy(&self.out),
+            String::from_utf8_lossy(&self.err),
+        );
+        assert!(
+            self.err.is_empty(),
+            "successful install process wrote stderr: {}",
+            String::from_utf8_lossy(&self.err),
+        );
+    }
 }
 
 /// Whether the release a paused install waits for is already in place.
@@ -354,10 +389,66 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(applied.completed(), operation_count);
     assert_eq!(
         fs::read(fixture.installed_binary()).unwrap(),
-        fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
+        fs::read(&fixture.executable).unwrap()
     );
     assert!(fixture.record().is_file());
     fixture.assert_state_unchanged();
+}
+
+#[test]
+fn preview_apply_and_unapply_overlap_with_small_fixture_owned_sources() {
+    let preview_fixture = Fixture::new("overlap-preview");
+    preview_fixture.assert_small_owned_executable();
+    let apply_fixture = Fixture::new("overlap-apply");
+    apply_fixture.assert_small_owned_executable();
+    let apply_plan: InstallPreview = reply_body(apply_fixture.invoke(&["--json", "install"]));
+    let unapply_fixture = Fixture::new("overlap-unapply");
+    unapply_fixture.assert_small_owned_executable();
+    let unapply_plan: InstallPreview = reply_body(unapply_fixture.invoke(&["--json", "install"]));
+    let _: InstallReceipt = reply_body(unapply_fixture.invoke(&[
+        "--json",
+        "install",
+        &format!("--apply={}", unapply_plan.digest()),
+    ]));
+
+    let overlap = Arc::new(Barrier::new(3));
+
+    let preview_overlap = Arc::clone(&overlap);
+    let preview = thread::spawn(move || {
+        preview_overlap.wait();
+        let _: InstallPreview = reply_body(preview_fixture.invoke(&["--json", "install"]));
+    });
+
+    let apply_overlap = Arc::clone(&overlap);
+    let apply = thread::spawn(move || {
+        apply_overlap.wait();
+        let receipt: InstallReceipt = reply_body(apply_fixture.invoke(&[
+            "--json",
+            "install",
+            &format!("--apply={}", apply_plan.digest()),
+        ]));
+        assert_eq!(receipt.status(), InstallStatus::Complete);
+        assert_eq!(
+            fs::read(apply_fixture.installed_binary())
+                .expect("read overlapped installed executable"),
+            fs::read(&apply_fixture.executable).expect("read overlapped fixture executable"),
+        );
+    });
+
+    let unapply_overlap = Arc::clone(&overlap);
+    let unapply = thread::spawn(move || {
+        unapply_overlap.wait();
+        let receipt: InstallReceipt =
+            reply_body(unapply_fixture.invoke(&["--json", "install", "--unapply"]));
+        assert_eq!(receipt.status(), InstallStatus::Uninstalled);
+        assert!(!unapply_fixture.installed_binary().exists());
+    });
+
+    for process in [preview, apply, unapply] {
+        process
+            .join()
+            .expect("overlapped install fixture completes");
+    }
 }
 
 #[test]
@@ -367,8 +458,7 @@ fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
     let operation_count = preview.plan().operations().len();
     let digest = preview.digest();
     let applied = fixture.invoke(&["install", &format!("--apply={digest}")]);
-    assert_eq!(applied.code, Some(0));
-    assert!(applied.err.is_empty());
+    applied.assert_success();
 
     let unapplied: InstallReceipt = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
     assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
@@ -387,12 +477,9 @@ fn same_image_atomic_rewrite_still_plans_and_unapplies() {
     let fixture = Fixture::new("same-image-rewrite");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest().clone();
-    assert_eq!(
-        fixture
-            .invoke(&["install", &format!("--apply={digest}")])
-            .code,
-        Some(0)
-    );
+    fixture
+        .invoke(&["install", &format!("--apply={digest}")])
+        .assert_success();
     let entry = fixture.root.join(".git/.spice-install/hooks/entry.sh");
     let replacement = fixture.root.join("replacement-entry");
     fs::write(&replacement, fs::read(&entry).unwrap()).expect("write replacement entry hook");
@@ -415,12 +502,9 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
     let fixture = Fixture::new("drift");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
-    assert_eq!(
-        fixture
-            .invoke(&["install", &format!("--apply={digest}")])
-            .code,
-        Some(0)
-    );
+    fixture
+        .invoke(&["install", &format!("--apply={digest}")])
+        .assert_success();
     let entry = fixture.root.join(".git/.spice-install/hooks/entry.sh");
     fs::write(&entry, b"operator drift\n").expect("drift installed entry hook");
 
@@ -546,7 +630,7 @@ fn apply_pause_released_before_receiver_setup_is_observed() {
     assert_eq!(applied.completed(), operation_count);
     assert_eq!(
         fs::read(fixture.installed_binary()).unwrap(),
-        fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
+        fs::read(&fixture.executable).unwrap()
     );
     assert!(fixture.record().is_file());
     fixture.assert_state_unchanged();
@@ -590,12 +674,9 @@ fn unapply_destination_replacement_at_removal_preserves_both_images() {
     let fixture = Fixture::new("unapply-target-race");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
-    assert_eq!(
-        fixture
-            .invoke(&["--json", "install", &format!("--apply={digest}")])
-            .code,
-        Some(0)
-    );
+    fixture
+        .invoke(&["--json", "install", &format!("--apply={digest}")])
+        .assert_success();
     let destination = fixture.installed_binary();
     let parked = destination.with_extension("parked");
     let installed = fs::read(&destination).unwrap();
@@ -624,12 +705,9 @@ fn unapply_destination_replacement_at_restore_preserves_both_images() {
     let fixture = Fixture::new("unapply-restore-race");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
-    assert_eq!(
-        fixture
-            .invoke(&["--json", "install", &format!("--apply={digest}")])
-            .code,
-        Some(0)
-    );
+    fixture
+        .invoke(&["--json", "install", &format!("--apply={digest}")])
+        .assert_success();
     let destination = fixture.root.join(".git/info/exclude");
     let parked = fixture.root.join(".git/info/exclude.parked");
     let installed = fs::read(&destination).unwrap();
@@ -658,12 +736,9 @@ fn unapply_directory_replacement_at_cleanup_preserves_both_trees() {
     let fixture = Fixture::new("unapply-cleanup-race");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
-    assert_eq!(
-        fixture
-            .invoke(&["--json", "install", &format!("--apply={digest}")])
-            .code,
-        Some(0)
-    );
+    fixture
+        .invoke(&["--json", "install", &format!("--apply={digest}")])
+        .assert_success();
     let destination = fixture.root.join(".git/.spice-install/bin");
     let parked = fixture.root.join(".git/.spice-install/bin.parked");
     let paused = fixture.spawn_paused(
@@ -692,12 +767,9 @@ fn unapply_record_parent_replacement_at_publication_preserves_both_trees() {
     let fixture = Fixture::new("unapply-record-race");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
-    assert_eq!(
-        fixture
-            .invoke(&["--json", "install", &format!("--apply={digest}")])
-            .code,
-        Some(0)
-    );
+    fixture
+        .invoke(&["--json", "install", &format!("--apply={digest}")])
+        .assert_success();
     let record = fixture.record();
     let record_before = fs::read(&record).unwrap();
     let binary_before = fs::read(fixture.installed_binary()).unwrap();
@@ -735,8 +807,7 @@ fn unapply_record_parent_replacement_at_publication_preserves_both_trees() {
 }
 
 fn successful_document(spoken: Spoken) -> Value {
-    assert_eq!(spoken.code, Some(0));
-    assert!(spoken.err.is_empty());
+    spoken.assert_success();
     serde_json::from_slice(&spoken.out).expect("successful output is JSON")
 }
 
@@ -747,8 +818,7 @@ fn emitted_digest(document: &Value) -> &str {
 }
 
 fn reply_body<T: DeserializeOwned + std::fmt::Debug>(spoken: Spoken) -> T {
-    assert_eq!(spoken.code, Some(0));
-    assert!(spoken.err.is_empty());
+    spoken.assert_success();
     let outcome: Outcome<T> = wire::decode(&spoken.out).expect("JSON outcome decodes");
     let Outcome::Reply(reply) = outcome else {
         panic!("install must reply: {outcome:?}");
