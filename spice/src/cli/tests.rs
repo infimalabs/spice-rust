@@ -942,6 +942,31 @@ fn bootstrap_doctor_selection_names_only_the_top_level_leaf() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn bootstrap_lock_selection_names_only_the_top_level_leaf() {
+    for argv in [
+        &["spice", "lock"][..],
+        &["spice", "--json", "lock"][..],
+        &["spice", "lock", "run", "worker"][..],
+    ] {
+        assert!(
+            bootstrap_lock_selected(argv.iter().map(|argument| OsString::from(*argument))),
+            "{argv:?} selects the top-level Lock leaf",
+        );
+    }
+    for argv in [
+        &["spice", "config", "lock.worker.shards"][..],
+        &["spice", "run", "--", "lock"][..],
+        &["spice", "--json", "task", "lock"][..],
+    ] {
+        assert!(
+            !bootstrap_lock_selected(argv.iter().map(|argument| OsString::from(*argument))),
+            "{argv:?} must not borrow Lock's configuration refusal path",
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn bootstrap_configuration_owners_are_exact_top_level_leaves() {
     for argv in [
         &["spice", "config"][..],

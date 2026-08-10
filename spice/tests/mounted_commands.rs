@@ -110,9 +110,13 @@ fn malformed_mount_configuration_refuses_loudly() {
             "[commands]\nstring = 'unused --flag'\n",
             "expected string-list",
         ),
+        (
+            "[commands]\nBad = ['unused']\n[lock.solo]\npath = ''\n",
+            "dot-separated segments",
+        ),
     ] {
         let repository = Repository::new(configuration);
-        for owner in ["config", "doctor"] {
+        for owner in ["config", "doctor", "lock"] {
             let output = repository.invoke(&["--json", owner]);
             assert_mount_refusal(&output, &[expected]);
         }
@@ -127,7 +131,7 @@ fn local_configuration_cannot_introduce_an_executable_mount() {
         .expect("create local configuration parent");
     fs::write(&local, "[commands]\nlocal = ['unused']\n").expect("write local executable intent");
 
-    for owner in ["config", "doctor"] {
+    for owner in ["config", "doctor", "lock"] {
         let output = repository.invoke(&["--json", owner]);
         assert_mount_refusal(
             &output,
