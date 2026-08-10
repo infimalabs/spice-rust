@@ -59,7 +59,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 52);
+    assert_eq!(missing.provenance().len(), 53);
     assert!(
         missing
             .provenance()
@@ -584,6 +584,9 @@ fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
 }
 
 const TRACKED_ALL_DESCRIPTOR_DOCUMENT: &str = r#"
+[commands]
+release = ["tool", "release"]
+
 [taste.alpha]
 words = ["done"]
 message = "Done."
@@ -606,6 +609,7 @@ pre_commit = [
 package_roots = ["src/fixture"]
 generated_paths = ["build/fixture"]
 name_cluster_threshold = 4
+taste_mining_threshold = 3
 test_paths = ["tests/fixture"]
 admission = ["fixture-load", "--offline"]
 [policy.repo_truth]

@@ -528,6 +528,10 @@ impl ReportPoint {
     const fn has_hung_shard(self) -> bool {
         !matches!(self, Self::Coordinator)
     }
+
+    const fn requires_started_hung_shard(self) -> bool {
+        matches!(self, Self::Progress | Self::Terminal)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -538,8 +542,16 @@ enum ReportFailure {
 
 fn reporting_failure_case(point: ReportPoint, failure: ReportFailure) {
     let fixture = reporting_process_fixture(&format!("{point:?}-{failure:?}"));
-    let ready = if point.has_hung_shard() {
+    let pid_paths = if point.has_hung_shard() {
         process_pid_paths(&fixture.root, "a")
+    } else {
+        Vec::new()
+    };
+    // A start-report failure may legitimately beat the first asynchronous
+    // shard's PID publication. Progress and terminal reports, by contrast,
+    // must observe a complete live process tree before failure is injected.
+    let ready = if point.requires_started_hung_shard() {
+        pid_paths.clone()
     } else {
         Vec::new()
     };
@@ -574,7 +586,7 @@ fn reporting_failure_case(point: ReportPoint, failure: ReportFailure) {
         started.elapsed() < Duration::from_secs(12),
         "{point:?} {failure:?} did not cancel promptly"
     );
-    for path in ready {
+    for path in pid_paths.into_iter().filter(|path| pid_path_ready(path)) {
         let role = path
             .file_stem()
             .and_then(OsStr::to_str)
@@ -687,31 +699,17 @@ fn reporting_process_fixture(label: &str) -> ReportingProcessFixture {
     let vendor = executable(
         &root,
         "report-vendor",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$ROLE.vendor.pid\"\n",
-            "exec /usr/bin/tail -f /dev/null\n",
-        ),
+        "#!/bin/sh\nexec /usr/bin/tail -f /dev/null\n",
     );
     let waiter = executable(
         &root,
         "report-waiter",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$ROLE.waiter.pid\"\n",
-            "exec /bin/cat \"$PID_ROOT/resident.fifo\"\n",
-        ),
+        "#!/bin/sh\nexec /bin/cat \"$PID_ROOT/resident.fifo\"\n",
     );
     let test_binary = executable(
         &root,
         "report-test",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/$ROLE.test.pid\"\n",
-            "ROLE=\"$ROLE\" \"$VENDOR\" &\n",
-            "ROLE=\"$ROLE\" \"$WAITER\" &\n",
-            "wait\n",
-        ),
+        "#!/bin/sh\nexec /usr/bin/tail -f /dev/null\n",
     );
     let cargo = executable(
         &root,
@@ -729,9 +727,14 @@ fn reporting_process_fixture(label: &str) -> ReportingProcessFixture {
             "  *) exit 64 ;;\n",
             "esac\n",
             "printf '%s\\n' \"$$\" > \"$PID_ROOT/$role.cargo.pid\"\n",
+            "\"$TEST_BINARY\" & test_pid=$!\n",
+            "printf '%s\\n' \"$test_pid\" > \"$PID_ROOT/$role.test.pid\"\n",
+            "\"$VENDOR\" & vendor_pid=$!\n",
+            "printf '%s\\n' \"$vendor_pid\" > \"$PID_ROOT/$role.vendor.pid\"\n",
+            "\"$WAITER\" & waiter_pid=$!\n",
+            "printf '%s\\n' \"$waiter_pid\" > \"$PID_ROOT/$role.waiter.pid\"\n",
             "printf '     Running tests/%s.rs (fixture)\\n' \"$role\" >&2\n",
             "printf 'test %s::fifo_wait ... ' \"$role\"\n",
-            "ROLE=\"$role\" \"$TEST_BINARY\" &\n",
             "wait\n",
         ),
     );

@@ -815,6 +815,12 @@ fn append_note_facts(path: &Path, through: u64) {
             [i64::try_from(through).expect("fixture cursor fits")],
         )
         .expect("advance bounded-report cursor");
+    connection
+        .execute(
+            "UPDATE steering_index SET indexed_seq = ?1 WHERE singleton = 1",
+            [i64::try_from(through).expect("fixture steering cursor fits")],
+        )
+        .expect("advance bounded-report steering cursor");
 }
 
 fn append_note_fact(path: &Path, seq: u64, cause: u64) {
@@ -860,6 +866,12 @@ fn append_note_fact(path: &Path, seq: u64, cause: u64) {
             [i64::try_from(seq).expect("fixture cursor fits")],
         )
         .expect("advance cursor for one note fact");
+    connection
+        .execute(
+            "UPDATE steering_index SET indexed_seq = ?1 WHERE singleton = 1",
+            [i64::try_from(seq).expect("fixture steering cursor fits")],
+        )
+        .expect("advance steering cursor for one note fact");
 }
 
 fn fact(
