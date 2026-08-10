@@ -49,6 +49,27 @@ pub(super) fn seed_lane_in_lineage(
     lineage_id: CanonicalUuid,
     occupant: CanonicalUuid,
 ) {
+    seed_lane_in_lineage_at(bus, epoch, lane, lineage_id, occupant, "/fixture");
+}
+
+pub(super) fn seed_lane_in_worktree(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    worktree: &str,
+) {
+    seed_lane_in_lineage_at(bus, epoch, lane, lane, occupant, worktree);
+}
+
+fn seed_lane_in_lineage_at(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    lineage_id: CanonicalUuid,
+    occupant: CanonicalUuid,
+    worktree: &str,
+) {
     let current = current_residency(bus, epoch).expect("current residency");
     let mut head = current.body().clone();
     head.topology_revision = head
@@ -59,7 +80,7 @@ pub(super) fn seed_lane_in_lineage(
         lane,
         lineage_id,
         name: None,
-        worktree: "/fixture".to_owned(),
+        worktree: worktree.to_owned(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
         occupant: Some(occupant),
@@ -92,7 +113,7 @@ pub(super) fn seed_lane_in_lineage(
                 lineage_id,
                 capability: test_uuid(9),
                 name: None,
-                worktree: "/fixture".to_owned(),
+                worktree: worktree.to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
             },
@@ -334,7 +355,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 }
 
 #[test]
-fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity() {
+fn durable_capture_projects_one_media_record_for_a_paired_tool_call_and_result() {
     let (root, paths) = resident_fixture("capture-rendering");
     let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
         .expect("message bus starts");
@@ -342,6 +363,8 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
     let publisher = source.message_publisher();
     let mut updates = source.subscribe_messages();
     let locus = listen::Locus::new(4, 120, 48);
+    let media = wire::Media::from_base64("tool-image.png", "image/png", "iVBORw0KGgo=")
+        .expect("fixture image admits");
     let record = lane::capture::CaptureRecord {
         lane: test_uuid(5),
         occupant: test_uuid(6),
@@ -366,10 +389,21 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
                     },
                     locus,
                 }),
+                listen::Event::Tool(listen::Tool {
+                    call_id: "tool-1".to_owned(),
+                    moment: listen::ToolMoment::Result(listen::ToolOutcome {
+                        result: listen::ToolResult::Succeeded,
+                        output: None,
+                        exit_code: None,
+                        media: vec![media.clone()],
+                    }),
+                    locus,
+                }),
                 listen::Event::Prose(listen::Prose {
                     role: listen::ProseRole::Assistant,
                     text: "agent-authored answer".to_owned(),
                     phase: None,
+                    media: Vec::new(),
                     locus,
                 }),
             ],
@@ -402,7 +436,7 @@ fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity(
         CaptureViews::new(&mut previews, &mut diagnostics),
     )
     .expect("current capture projects");
-    assert_tool_and_prose_activity(&mut updates, &record);
+    assert_tool_media_and_prose_activity(&mut updates, &record, &media);
     assert_stale_capture_ignored(
         &bus,
         &mut seats,
@@ -436,33 +470,7 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     seed_lane(&bus, epoch, lane, occupant);
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
     let publisher = source.message_publisher();
-    let locus = listen::Locus::new(4, 120, 48);
-    let record = lane::capture::CaptureRecord {
-        lane,
-        occupant,
-        stream: vendor::RecordStream::Stdout,
-        boundary: sill::RecordBoundary::Complete,
-        locus,
-        declaration: None,
-        decoded: listen::Decoded::Events {
-            context: Default::default(),
-            events: vec![listen::Event::Prose(listen::Prose {
-                role: listen::ProseRole::Assistant,
-                text: "Polling is not a completion event.".to_owned(),
-                phase: None,
-                locus,
-            })],
-        },
-    };
-    let bag = taste::Bag::new(vec![
-        taste::Taste::new(
-            "polling".parse().expect("taste name"),
-            ["poll*"],
-            "Wait for a terminal event.",
-        )
-        .expect("taste row"),
-    ])
-    .expect("taste bag");
+    let (record, bag) = reminder_capture(lane, occupant);
     let mut seats = Seats::new();
     seats
         .seat(
@@ -544,6 +552,41 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
+fn reminder_capture(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> (lane::capture::CaptureRecord, taste::Bag) {
+    let locus = listen::Locus::new(4, 120, 48);
+    let record = lane::capture::CaptureRecord {
+        lane,
+        occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: "Polling is not a completion event.".to_owned(),
+                phase: None,
+                media: Vec::new(),
+                locus,
+            })],
+        },
+    };
+    let bag = taste::Bag::new(vec![
+        taste::Taste::new(
+            "polling".parse().expect("taste name"),
+            ["poll*"],
+            "Wait for a terminal event.",
+        )
+        .expect("taste row"),
+    ])
+    .expect("taste bag");
+    (record, bag)
+}
+
 fn assert_reminder_published(bus: &Bus, paths: &RuntimePaths, lane: CanonicalUuid) {
     let snapshot = bus.fact_snapshot().expect("capture facts read");
     assert_eq!(
@@ -581,6 +624,7 @@ fn judged_capture(
                 role: listen::ProseRole::Assistant,
                 text: "A fallback path is masking the failure.".to_owned(),
                 phase: None,
+                media: Vec::new(),
                 locus: judged_locus,
             })],
         },
@@ -598,15 +642,20 @@ fn judged_capture(
     (judged_record, judged_bag)
 }
 
-fn assert_tool_and_prose_activity(
+fn assert_tool_media_and_prose_activity(
     updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
     record: &lane::capture::CaptureRecord,
+    media: &wire::Media,
 ) {
     let tool = updates.try_recv().expect("tool activity publishes once");
     assert_eq!(tool.lane, record.lane);
     assert_eq!(tool.author, record.occupant);
     assert_eq!(tool.activity, wire::AgentActivityKind::Tool);
     assert_eq!(tool.text, "Bash: git status --short");
+    assert!(
+        tool.media.is_empty(),
+        "the paired call does not echo result media"
+    );
     assert_eq!(
         tool.locus,
         wire::MessageLocus {
@@ -614,6 +663,20 @@ fn assert_tool_and_prose_activity(
             offset: 120,
             length: 48,
             event: 1,
+        }
+    );
+
+    let result = updates.try_recv().expect("tool result publishes once");
+    assert_eq!(result.activity, wire::AgentActivityKind::Tool);
+    assert_eq!(result.text, "Bash: git status --short succeeded");
+    assert_eq!(result.media.as_slice(), std::slice::from_ref(media));
+    assert_eq!(
+        result.locus,
+        wire::MessageLocus {
+            member: 4,
+            offset: 120,
+            length: 48,
+            event: 2,
         }
     );
 
@@ -628,7 +691,7 @@ fn assert_tool_and_prose_activity(
             member: 4,
             offset: 120,
             length: 48,
-            event: 2,
+            event: 3,
         }
     );
     assert!(matches!(
@@ -675,6 +738,7 @@ fn assert_stale_capture_ignored<P: AgentMessagePublisher>(
                 role: listen::ProseRole::Assistant,
                 text: "stale prior-occupant answer".to_owned(),
                 phase: None,
+                media: Vec::new(),
                 locus,
             })],
         },
@@ -781,6 +845,7 @@ fn a_live_capture_record_accounts_the_tape_behind_its_lane() {
                 role: listen::ProseRole::Assistant,
                 text: "agent-authored answer".to_owned(),
                 phase: None,
+                media: Vec::new(),
                 locus,
             })],
         },

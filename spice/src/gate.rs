@@ -30,13 +30,13 @@ const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 /// Keeping this capture alive is what makes every compiler token and the later
 /// battery execution name one immutable selected source rather than two
 /// independently materialized readings of the index.
-pub struct PreparedBattery {
-    capture: BatteryCapture<'static>,
+pub struct PreparedBattery<'trace> {
+    capture: BatteryCapture<'trace>,
     verifier_environment: Vec<(OsString, OsString)>,
     cargo_jobs: Option<usize>,
 }
 
-impl PreparedBattery {
+impl PreparedBattery<'_> {
     /// Identity of the immutable selected source retained by this preparation.
     #[must_use]
     pub const fn source(&self) -> &Digest {
@@ -85,6 +85,25 @@ impl PreparedBattery {
         self.capture
             .verifier_compiler_contract(gate_id, self.verifier_environment.clone())
             .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
+    }
+
+    /// Admit a cross-process compiler receipt against this retained capture.
+    ///
+    /// # Errors
+    ///
+    /// Refuses missing, stale, partial, mismatched, or untrusted evidence.
+    pub fn admit_verifier_compiler_receipt(
+        &mut self,
+        receipt: &[u8],
+        cargo_jobs: usize,
+        authority: &[u8],
+    ) -> Result<Vec<VerifierCompilerEvidence>, RunError> {
+        let contracts = [GateId::RustTypecheck, GateId::CanvasWebTypecheck]
+            .into_iter()
+            .map(|gate_id| self.verifier_compiler_contract(gate_id, cargo_jobs))
+            .collect::<Result<Vec<_>, _>>()?;
+        admit_verifier_compiler_receipt(receipt, &contracts, authority)
+            .map_err(|error| RunError::refusal("gate::verifier-receipt-refused", error))
     }
 
     /// Execute this retained capture with any completed compiler evidence.
@@ -138,7 +157,7 @@ fn bind_cargo_jobs(
 /// # Errors
 ///
 /// Returns the same rim and capture failures as [`run`].
-pub fn prepare(selector: Selector) -> Result<PreparedBattery, RunError> {
+pub fn prepare(selector: Selector) -> Result<PreparedBattery<'static>, RunError> {
     let verifier_environment = verifier_environment();
     capture(selector, None, None).map(|capture| PreparedBattery {
         capture,
@@ -208,23 +227,9 @@ pub fn run_traced_with_verifier_receipt(
     authority: &[u8],
     trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<BatteryReport, RunError> {
-    let mut environment = verifier_environment();
-    let mut bound = None;
-    bind_cargo_jobs(&mut environment, &mut bound, cargo_jobs)?;
-    let mut capture = capture(selector, None, Some(trace))?;
-    let contracts = [GateId::RustTypecheck, GateId::CanvasWebTypecheck]
-        .into_iter()
-        .map(|gate_id| {
-            capture
-                .verifier_compiler_contract(gate_id, environment.clone())
-                .map_err(|error| RunError::refusal("gate::verifier-evidence-refused", error))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let evidence = admit_verifier_compiler_receipt(receipt, &contracts, authority)
-        .map_err(|error| RunError::refusal("gate::verifier-receipt-refused", error))?;
-    capture
-        .execute_with_verifier_evidence(&evidence, environment)
-        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    let mut prepared = prepare_traced(selector, trace)?;
+    let evidence = prepared.admit_verifier_compiler_receipt(receipt, cargo_jobs, authority)?;
+    prepared.execute(&evidence)
 }
 
 fn verifier_compiler_failure(
@@ -249,6 +254,27 @@ fn bounded_compiler_output(bytes: &[u8]) -> String {
     const LIMIT: usize = 16 * 1024;
     let start = bytes.len().saturating_sub(LIMIT);
     String::from_utf8_lossy(&bytes[start..]).trim().to_owned()
+}
+
+/// Capture the selected source once while exposing execution progress.
+///
+/// The returned preparation retains the trace for its lifetime, so test
+/// selection and the later battery execution can share one immutable source
+/// without losing the supervisor's exact family/arm cursor.
+///
+/// # Errors
+///
+/// Returns the same rim and capture failures as [`prepare`].
+pub fn prepare_traced<'trace>(
+    selector: Selector,
+    trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
+) -> Result<PreparedBattery<'trace>, RunError> {
+    let verifier_environment = verifier_environment();
+    capture(selector, None, Some(trace)).map(|capture| PreparedBattery {
+        capture,
+        verifier_environment,
+        cargo_jobs: None,
+    })
 }
 
 #[expect(
@@ -324,10 +350,7 @@ pub fn run_traced(
     selector: Selector,
     trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<BatteryReport, RunError> {
-    let mut capture = capture(selector, None, Some(trace))?;
-    capture
-        .execute()
-        .map_err(|error| RunError::refusal("gate::battery-refused", error))
+    prepare_traced(selector, trace)?.execute(&[])
 }
 
 fn capture<'trace>(

@@ -91,6 +91,8 @@ pub(super) fn validated_snapshot_from(
     board::project_subscription_history(&mut residency.body, &entries, observed.facts().facts())
         .map_err(|error| store_fault("lineage::subscription-history-invalid", &error))?;
     let recent_cell = board::recent_claim_cell(&entries, observed.facts().facts(), &principal);
+    let review_history = board::graph::review_history(observed.facts().facts(), &entries)
+        .map_err(|error| error.to_string());
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
     }
@@ -113,6 +115,7 @@ pub(super) fn validated_snapshot_from(
             residency,
         },
         entries,
+        review_history,
     })
 }
 
@@ -437,10 +440,22 @@ pub(super) fn read_graph(
         Ok(entries) => entries,
         Err(outcome) => return outcome,
     };
+    let reviews = if view == View::Review {
+        match &snapshot.review_history {
+            Ok(reviews) => reviews.as_slice(),
+            Err(error) => {
+                return store_fault("board::review-history-invalid", error);
+            }
+        }
+    } else {
+        &[]
+    };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::graph::render(view, &entries).text().to_owned(),
+            text: board::graph::render(view, &entries, reviews)
+                .text()
+                .to_owned(),
         }),
     )
 }
@@ -474,10 +489,14 @@ pub(super) fn read_handout(
         Ok(entries) => entries,
         Err(outcome) => return outcome,
     };
+    let reviews = match &snapshot.review_history {
+        Ok(reviews) => reviews,
+        Err(error) => return store_fault("board::review-history-invalid", error),
+    };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::handout::compose(&entries),
+            text: board::handout::compose(&entries, reviews),
         }),
     )
 }

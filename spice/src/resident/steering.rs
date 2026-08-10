@@ -2,6 +2,7 @@
 //! Transcript-backed disposition is the sole acknowledgment path.
 
 use std::fs;
+use std::path::Path;
 use std::sync::Mutex;
 
 use bus::Bus;
@@ -35,12 +36,6 @@ pub(super) use transitions::{cancel, dispose, recover, resend, send};
 
 /// Admit or rebuild the bounded steering authority before the bus accepts work.
 pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
-    if journal
-        .steering_index_current()
-        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?
-    {
-        return Ok(());
-    }
     let snapshot = journal
         .fact_snapshot()
         .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
@@ -277,27 +272,33 @@ pub(super) fn publish_lane_discoveries(
 pub(super) fn publish_lane_surface(
     paths: &RuntimePaths,
     operator: &canvas::Discovery,
+    worktree: &str,
     lane: CanonicalUuid,
     capability: CanonicalUuid,
 ) -> CommandResult<()> {
+    let inbox = paths.inbox_for_worktree(worktree)?;
     fs::create_dir_all(&paths.lane_canvas).map_err(|error| {
         environment_fault("canvas::lane-directory-unavailable", &error.to_string())
     })?;
     publish_lane_discovery(paths, operator, lane, capability)?;
     let seal = steer::Key::for_identity(capability);
-    if let Err(error) = steer::inbox::publish(&paths.inbox, lane, &seal, &[]) {
-        remove_lane_surface(paths, lane);
+    if let Err(error) = steer::inbox::publish(&inbox, lane, &seal, &[]) {
+        remove_lane_surface(paths, worktree, lane);
         return Err(environment_fault(
             "steer::inbox-unwritable",
             &error.to_string(),
         ));
     }
+    remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane);
     Ok(())
 }
 
-pub(super) fn remove_lane_surface(paths: &RuntimePaths, lane: CanonicalUuid) {
+pub(super) fn remove_lane_surface(paths: &RuntimePaths, worktree: &str, lane: CanonicalUuid) {
     let _ = fs::remove_file(paths.lane_canvas.join(lane.to_string()));
-    let _ = fs::remove_file(steer::inbox::path(&paths.inbox, lane));
+    if let Ok(inbox) = paths.inbox_for_worktree(worktree) {
+        let _ = fs::remove_file(steer::inbox::path(&inbox, lane));
+        remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane);
+    }
 }
 
 fn publish_lane_discovery(
@@ -444,8 +445,17 @@ fn publish_lane_inbox(
     ledger: &steer::Ledger,
 ) -> CommandResult<()> {
     let seal = steer::Key::for_identity(lane_capability(lane)?);
-    steer::inbox::publish(&paths.inbox, lane.lane, &seal, &ledger.pending(lane.lane))
-        .map_err(|error| environment_fault("steer::inbox-unwritable", &error.to_string()))
+    let inbox = paths.inbox_for_worktree(&lane.worktree)?;
+    steer::inbox::publish(&inbox, lane.lane, &seal, &ledger.pending(lane.lane))
+        .map_err(|error| environment_fault("steer::inbox-unwritable", &error.to_string()))?;
+    remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane.lane);
+    Ok(())
+}
+
+fn remove_legacy_inbox(legacy: &Path, current: &Path, lane: CanonicalUuid) {
+    if current != legacy {
+        let _ = fs::remove_file(steer::inbox::path(legacy, lane));
+    }
 }
 
 pub(super) fn lane_capability(lane: &wire::LaneResidency) -> CommandResult<CanonicalUuid> {

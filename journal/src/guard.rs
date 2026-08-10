@@ -8,13 +8,15 @@ use serde::Serialize;
 use crate::Journal;
 use wire::body::SourceBoundary;
 
+mod claim_index;
+mod read_metrics;
 mod steering_index;
 
 #[cfg(test)]
-pub(crate) use steering_index::{
-    SteeringReadMetrics, reset_steering_read_metrics, steering_read_metrics,
+pub(crate) use read_metrics::{
+    IndexedReadMetrics, indexed_read_metrics, reset_indexed_read_metrics,
 };
-use steering_index::{canonical_identity, disposition_name};
+pub(crate) use steering_index::{canonical_identity, disposition_name};
 
 /// A fact added earlier in the same guarded transaction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -577,6 +579,7 @@ impl JournalRead<'_> {
 
     /// Current resident head, when an epoch has been seated.
     pub fn residency_head(&self) -> Result<Option<JournalHead<wire::ResidencyHead>>, GuardError> {
+        read_metrics::observe_query();
         let row = self
             .connection
             .query_row(
@@ -587,6 +590,8 @@ impl JournalRead<'_> {
             .optional()
             .map_err(GuardError::Store)?;
         row.map_or(Ok(None), |(position, bytes)| {
+            read_metrics::observe_row();
+            read_metrics::observe_decode(bytes.len());
             let head = decode_head(position, &bytes).map_err(|error| {
                 GuardError::Invalid(format!("residency head is invalid: {error}"))
             })?;
@@ -611,6 +616,7 @@ impl JournalRead<'_> {
         T: serde::de::DeserializeOwned + Serialize,
     {
         let statement = format!("SELECT head_seq, body FROM {table} WHERE {key_column} = ?1");
+        read_metrics::observe_query();
         let row = self
             .connection
             .query_row(&statement, [key], |row| {
@@ -619,6 +625,8 @@ impl JournalRead<'_> {
             .optional()
             .map_err(GuardError::Store)?;
         row.map_or(Ok(None), |(position, bytes)| {
+            read_metrics::observe_row();
+            read_metrics::observe_decode(bytes.len());
             let head = decode_head(position, &bytes).map_err(|error| {
                 let detail = match error {
                     GuardError::Invalid(detail) => detail,
@@ -880,7 +888,7 @@ impl JournalWrite {
                 if head.fact != seq {
                     return Err("claim head fact does not name its assigned fact".to_owned());
                 }
-                HeadRow::text("claim_heads", "stamp", task.as_str().to_owned(), seq, &head)
+                HeadRow::claim(task.as_str().to_owned(), seq, &head)
             },
         ));
     }
@@ -1113,6 +1121,12 @@ struct HeadRow {
     seq: wire::Seq,
     body: Vec<u8>,
     steering: Option<SteeringHeadColumns>,
+    claim: Option<ClaimIndexColumns>,
+}
+
+struct ClaimIndexColumns {
+    actor: String,
+    disposition: &'static str,
 }
 
 struct SteeringHeadColumns {
@@ -1141,6 +1155,7 @@ impl HeadRow {
             seq,
             body: wire::encode(body).map_err(|error| error.to_string())?,
             steering: None,
+            claim: None,
         })
     }
 
@@ -1156,6 +1171,25 @@ impl HeadRow {
             seq,
             body: wire::encode(body).map_err(|error| error.to_string())?,
             steering: None,
+            claim: None,
+        })
+    }
+
+    fn claim(key: String, seq: wire::Seq, head: &wire::ClaimHead) -> Result<Self, String> {
+        if key.is_empty() {
+            return Err("claim_heads head key must not be empty".to_owned());
+        }
+        Ok(Self {
+            table: "claim_heads",
+            key_column: "stamp",
+            key: HeadKey::Text(key),
+            seq,
+            body: wire::encode(head).map_err(|error| error.to_string())?,
+            steering: None,
+            claim: Some(ClaimIndexColumns {
+                actor: head.actor.to_string(),
+                disposition: claim_disposition_name(head.disposition),
+            }),
         })
     }
 
@@ -1179,7 +1213,16 @@ impl HeadRow {
                 created: head.created,
                 minted_millis: head.minted_millis,
             }),
+            claim: None,
         })
+    }
+}
+
+const fn claim_disposition_name(disposition: wire::ClaimDisposition) -> &'static str {
+    match disposition {
+        wire::ClaimDisposition::Active => "active",
+        wire::ClaimDisposition::Freed => "freed",
+        wire::ClaimDisposition::Lapsed => "lapsed",
     }
 }
 

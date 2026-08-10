@@ -25,8 +25,9 @@ use crate::metrics::{
 use crate::state::{BoundDecision, LatchEntry};
 use crate::toolchain::{
     RimCapture, TASTE_EXTENSIONS, TOOLCHAIN_ARMS, ToolchainSource, VerifierCompilerContract,
-    VerifierCompilerEvidence, acquire_toolchain, acquire_toolchain_arm, acquire_verifier_tools,
-    environment_baseline_suffixes, measure_toolchain, measure_toolchain_arm,
+    VerifierCompilerEvidence, acquire_toolchain_arm, acquire_toolchain_observed,
+    acquire_verifier_tools, environment_baseline_suffixes, measure_toolchain,
+    measure_toolchain_arm,
 };
 use crate::tree::{SelectedTree, Selector};
 
@@ -34,7 +35,7 @@ const FAMILY_COUNT: usize = 4;
 
 /// Observable executor boundary used by integration tests and callers that
 /// need to account for orchestration without replacing family acquisition.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RepositoryExecutionEvent {
     /// `run_battery` invoked one canonical arm position.
     ArmInvoked {
@@ -46,6 +47,11 @@ pub enum RepositoryExecutionEvent {
     FamilyInvoked { family: ArmFamily },
     /// One family began the named arm's actual analysis.
     AnalysisInvoked { gate_id: GateId, family: ArmFamily },
+    /// The sequential toolchain acquisition finished one named analysis.
+    ToolchainAnalysisCompleted {
+        gate_id: GateId,
+        reusable_workspace: Option<crate::RustAnalysisWorkspace>,
+    },
 }
 
 enum FamilyExecution {
@@ -199,8 +205,12 @@ impl<'trace> RepositoryExecutor<'trace> {
             );
             selected.sort();
             selected.dedup();
-            let baselines =
-                BaselineCapture::capture_with_paths(&repository, &selected, rim.changes());
+            let baselines = BaselineCapture::capture_with_paths(
+                &repository,
+                &selected,
+                rim.changes(),
+                captured.clean_merge_tree(),
+            );
             (captured.digest().clone(), core, bounds, baselines)
         };
         let (metrics, metric_bounds) = match selected {
@@ -408,8 +418,17 @@ impl<'trace> RepositoryExecutor<'trace> {
             let report = measure_toolchain_arm(observation).map_err(|error| error.to_string())?;
             return Ok(vec![ArmEvidence::Toolchain { report }]);
         }
-        let report = measure_toolchain(acquire_toolchain(&source, &self.contract))
-            .map_err(|error| error.to_string())?;
+        let trace = &mut self.trace;
+        let observations =
+            acquire_toolchain_observed(&source, &self.contract, |gate_id, reusable_workspace| {
+                if let Some(trace) = trace {
+                    trace(RepositoryExecutionEvent::ToolchainAnalysisCompleted {
+                        gate_id,
+                        reusable_workspace,
+                    });
+                }
+            });
+        let report = measure_toolchain(observations).map_err(|error| error.to_string())?;
         Ok(report
             .arms
             .into_iter()

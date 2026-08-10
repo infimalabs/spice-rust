@@ -39,6 +39,11 @@ pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
 pub mod verdict;
+#[cfg(not(target_arch = "wasm32"))]
+mod workspace_tests;
+
+/// Hard ceiling on canonical workspace-test shard workers.
+pub const WORKSPACE_TEST_CONCURRENCY_CAP: usize = 4;
 
 pub use battery::{
     ActorEvidence, ArmDisposition, ArmEvidence, ArmExecution, ArmFamily,
@@ -146,7 +151,8 @@ pub use test_evidence::{
     CanonicalTestExecution, CoverageCompleteness, CoveredSource, MutationCoverageFinding,
     MutationCoverageReport, MutationExecution, MutationObservation, StandingMutationWaiver,
     SubsumptionRelation, SuiteSeamFinding, SuiteSeamReport, TEST_EVIDENCE_REPORT_VERSION,
-    TestCoverage, TestEvidenceError, TestEvidenceGraph, TestEvidenceReport, TestEvidenceStanding,
+    TEST_SELECTION_REPORT_VERSION, TestCoverage, TestEvidenceError, TestEvidenceGraph,
+    TestEvidenceReport, TestEvidenceStanding, TestSelectionEdge, TestSelectionReport,
     TestSubsumptionFinding, TestSubsumptionReport,
 };
 /// Private `cargo xtask app` argument used by the native full verifier to
@@ -170,9 +176,9 @@ pub use toolchain::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use toolchain::{
-    RimCapture, RimDirectoryError, ToolchainSource, VerifierCompilerContract,
-    VerifierCompilerEvidence, VerifierCompilerProcessEvidence, VerifierCompilerRun,
-    VerifierCompilerStage, acquire_toolchain, admit_verifier_compiler_receipt,
+    RimCapture, RimDirectoryError, RustAnalysisWorkspace, ToolchainSource,
+    VerifierCompilerContract, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
+    VerifierCompilerRun, VerifierCompilerStage, acquire_toolchain, admit_verifier_compiler_receipt,
     encode_verifier_compiler_receipt, formatter_edition, formatter_sources,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -180,4 +186,9 @@ pub use tree::{SelectedTree, Selector, TreeError};
 pub use verdict::{
     CurrentRun, GATE_RECEIPT_VERSION, PublishError, ReceiptDecodeError, ReceiptTool, Run, RunError,
     Standing, Verdict,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use workspace_tests::{
+    WorkspaceTestError, WorkspaceTestExecution, WorkspaceTestRoots, run as run_workspace_tests,
+    run_at as run_workspace_tests_at, run_selected_at as run_selected_workspace_tests_at,
 };

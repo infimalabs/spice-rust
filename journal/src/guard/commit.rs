@@ -105,7 +105,7 @@ impl Journal {
         Ok(indexed == cursor)
     }
 
-    /// Atomically replace a lagging steering index with one canonical replay.
+    /// Atomically replace the steering index with one canonical replay.
     ///
     /// The caller must reduce the immutable snapshot before entering this
     /// method. Invalid or contradictory replay therefore performs no mutation;
@@ -238,85 +238,87 @@ fn ensure_steering_index_current(
 }
 
 fn validate_steering_updates(write: &JournalWrite) -> Result<(), CommitError> {
-    let mut subjects = std::collections::BTreeMap::<String, Vec<usize>>::new();
+    let mut subjects = std::collections::BTreeMap::<String, usize>::new();
     let mut misses = Vec::new();
     for (index, proposed) in write.facts.iter().enumerate() {
         if let Some(subject) = steering_subject(&proposed.fact) {
-            subjects.entry(subject).or_default().push(index);
+            subjects.insert(subject, index);
         } else if proposed.fact.kind() == wire::FactKind::SteerMissed {
             misses.push(index);
         }
     }
-    let indexed_subjects = write
+    let mut final_subjects = subjects.into_values().collect::<Vec<_>>();
+    final_subjects.sort_unstable();
+    let mut indexed_subjects = write
         .heads
         .iter()
         .filter(|head| head.kind == HeadUpdateKind::Steering)
         .map(|head| head.fact.index)
-        .collect::<std::collections::BTreeSet<_>>();
-    let indexed_misses = write
+        .collect::<Vec<_>>();
+    indexed_subjects.sort_unstable();
+    let mut indexed_misses = write
         .heads
         .iter()
         .filter(|head| head.kind == HeadUpdateKind::SteeringMiss)
         .map(|head| head.fact.index)
-        .collect::<std::collections::BTreeSet<_>>();
-    let missing_subject = subjects
-        .values()
-        .any(|facts| facts.iter().all(|index| !indexed_subjects.contains(index)));
-    let stray_subject = indexed_subjects.iter().any(|index| {
-        write
-            .facts
-            .get(*index)
-            .and_then(|fact| steering_subject(&fact.fact))
-            .is_none()
-    });
-    let missing_miss = misses.iter().any(|index| !indexed_misses.contains(index));
-    let stray_miss = indexed_misses.iter().any(|index| !misses.contains(index));
-    if missing_subject || stray_subject || missing_miss || stray_miss {
+        .collect::<Vec<_>>();
+    indexed_misses.sort_unstable();
+    if indexed_subjects != final_subjects || indexed_misses != misses {
         return Err(CommitError::Refused(GuardRefusal::new(
-            "every affected steering identity must advance its authoritative head or evidence index",
+            "every affected steering subject's final fact and every missed fact must have exactly one authoritative index update",
         )));
     }
     Ok(())
 }
 
 fn steering_subject(fact: &wire::AnyFact) -> Option<String> {
+    let (directive, key) = steering_fact_identity(fact)?;
+    Some(directive.map_or_else(
+        || format!("key:{key}"),
+        |value| format!("directive:{value}"),
+    ))
+}
+
+pub(crate) fn steering_fact_identity(
+    fact: &wire::AnyFact,
+) -> Option<(Option<wire::CanonicalUuid>, String)> {
     match fact.kind() {
         wire::FactKind::SteerSent => fact
             .read::<wire::body::SteerSent>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::TasteReminded => fact
             .read::<wire::body::TasteReminded>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::TasteJudged => {
             fact.read::<wire::body::TasteJudged>()
                 .and_then(|body| match body.decision {
-                    wire::body::TasteDecision::Confirmed { directive, .. } => {
-                        Some(format!("directive:{directive}"))
+                    wire::body::TasteDecision::Confirmed { directive, key, .. } => {
+                        Some((Some(directive), key))
                     }
                     wire::body::TasteDecision::Cleared => None,
                 })
         }
         wire::FactKind::SteerEscalated => fact
             .read::<wire::body::SteerEscalated>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerRecovered => fact
             .read::<wire::body::SteerRecovered>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerAcked => fact
             .read::<wire::body::SteerAcked>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerDeclined => fact
             .read::<wire::body::SteerDeclined>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerDeadLettered => fact
             .read::<wire::steering::SteerDeadLettered>()
-            .map(|body| format!("directive:{}", body.directive)),
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::SteerLapsed => fact
             .read::<wire::body::SteerLapsed>()
-            .map(|body| format!("key:{}", body.key)),
+            .map(|body| (None, body.key)),
         wire::FactKind::SteerCanceled => fact
             .read::<wire::body::SteerCanceled>()
-            .map(|body| format!("key:{}", body.key)),
+            .map(|body| (None, body.key)),
         _ => None,
     }
 }
@@ -611,14 +613,30 @@ fn apply_heads(
             table = row.table,
             key = row.key_column,
         );
-        match row.key {
+        let claim = row.claim;
+        match &row.key {
             HeadKey::Text(key) => transaction
-                .execute(&statement, params![key, to_sql(row.seq)?, row.body])
+                .execute(&statement, params![key, to_sql(row.seq)?, &row.body])
                 .map_err(sqlite_fault)?,
             HeadKey::Singleton => transaction
-                .execute(&statement, params![1_i64, to_sql(row.seq)?, row.body])
+                .execute(&statement, params![1_i64, to_sql(row.seq)?, &row.body])
                 .map_err(sqlite_fault)?,
         };
+        if let Some(claim) = claim {
+            let HeadKey::Text(stamp) = &row.key else {
+                unreachable!("claim head construction always supplies its task stamp")
+            };
+            transaction
+                .execute(
+                    "INSERT INTO claim_index(stamp, actor, disposition, head_seq) \
+                     VALUES (?1, ?2, ?3, ?4) \
+                     ON CONFLICT(stamp) DO UPDATE SET \
+                        actor = excluded.actor, disposition = excluded.disposition, \
+                        head_seq = excluded.head_seq",
+                    params![stamp, claim.actor, claim.disposition, to_sql(row.seq)?],
+                )
+                .map_err(sqlite_fault)?;
+        }
     }
     Ok(())
 }
@@ -653,7 +671,7 @@ fn validate_head_agreement(
     }
 }
 
-fn steering_head_agrees(
+pub(crate) fn steering_head_agrees(
     fact: &wire::AnyFact,
     origin: &wire::Origin,
     at: wire::Instant,

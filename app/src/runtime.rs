@@ -1087,7 +1087,7 @@ impl CanvasRuntime {
                 locus: message.locus,
             },
         });
-        if !message.activity.is_prose() {
+        if !message.activity.is_prose() && message.media.is_empty() {
             return;
         }
         let duplicate = self

@@ -112,7 +112,7 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         table_census(&reader)
     };
 
-    let journal = Journal::open(&path).expect("a schema-1 authority opens");
+    let mut journal = Journal::open(&path).expect("a schema-1 authority opens");
 
     // The two version records are asserted before anything that reads them
     // back, because admission refuses a disagreement between them: leaving that
@@ -153,10 +153,15 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         Some(Vec::new()),
         "the step creates the new table empty; a schema-1 authority has no head to carry"
     );
-    for table in ["steering_heads", "steering_misses", "steering_index"] {
+    for table in [
+        "steering_heads",
+        "steering_misses",
+        "steering_index",
+        "claim_index",
+    ] {
         assert!(
             after.remove(table).is_some(),
-            "the migration chain must add schema-7 table {table}"
+            "the migration chain must add indexed authority table {table}"
         );
     }
     // Compared one table at a time so a failure prints the unrelated table
@@ -189,6 +194,7 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         );
     }
 
+    admit_empty_steering_projection(&mut journal);
     let verified = journal.verify().expect("the migrated authority verifies");
     assert_eq!(verified.facts, 2);
 }

@@ -17,13 +17,16 @@ use super::*;
 // this resident root stays below the file-shape base, not merely its ratchet.
 #[path = "tests/canvas_announcement.rs"]
 mod canvas_announcement;
+#[path = "tests/media.rs"]
+mod media;
 #[path = "tests/message_unavailable.rs"]
 mod message_unavailable;
 #[path = "tests/startup_window.rs"]
 mod startup_window;
 
 use canvas_announcement::{
-    fact_u64, process_spec, resident_fixture, seed_lane, seed_lane_in_lineage, test_uuid,
+    fact_u64, process_spec, resident_fixture, seed_lane, seed_lane_in_lineage,
+    seed_lane_in_worktree, test_uuid,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);

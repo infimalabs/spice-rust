@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod claim_index;
 mod identity_stamp;
 mod release_notes;
 mod residency_lineage;
@@ -466,6 +467,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (4, MigrationStep::Rust(release_notes::migrate)),
     (5, MigrationStep::Rust(migrate_schema_5)),
     (6, MigrationStep::Sql(MIGRATE_6_TO_7_SQL)),
+    (7, MigrationStep::Rust(claim_index::migrate)),
 ];
 
 /// Schema 6 to 7: bounded current steering authority and missed-evidence index.
@@ -592,6 +594,16 @@ CREATE TABLE claim_heads (
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
+CREATE TABLE claim_index (
+    stamp TEXT PRIMARY KEY REFERENCES claim_heads(stamp),
+    actor TEXT NOT NULL,
+    disposition TEXT NOT NULL CHECK (disposition IN ('active', 'freed', 'lapsed')),
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq)
+) STRICT;
+CREATE INDEX claim_index_actor_disposition_stamp
+    ON claim_index(actor, disposition, stamp);
+CREATE INDEX claim_index_disposition_actor
+    ON claim_index(disposition, actor);
 CREATE TABLE lease_heads (
     stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -662,8 +674,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 7, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 8, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;
 "#;

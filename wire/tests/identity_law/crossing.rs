@@ -46,6 +46,7 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_task_heads(&mut covered);
     cover_claim_heads(&mut covered);
     cover_policy_heads(&mut covered);
+    cover_steering_heads(&mut covered);
     cover_residency_heads(&mut covered);
     cover_head_enums(&mut covered);
     cover_command_frames(&mut covered);
@@ -450,6 +451,56 @@ fn cover_policy_heads(covered: &mut BTreeSet<String>) {
     );
 }
 
+/// Steering heads with absent and present optional history.
+fn cover_steering_heads(covered: &mut BTreeSet<String>) {
+    let directive = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
+    law(
+        covered,
+        "SteeringHead",
+        &[
+            SteeringHead {
+                directive,
+                key: "amber-fern".to_owned(),
+                lane,
+                text: "hold the indexed line".to_owned(),
+                control: None,
+                attachments: Vec::new(),
+                published: at("2030-04-12T18:44:09.271Z"),
+                expires: at("2030-04-12T19:44:09.271Z"),
+                stage: body::SteeringStage::Published,
+                escalations: Vec::new(),
+                disposition: Disposition::Live,
+                origin: "repo:genesis".parse().expect("origin"),
+                created: seq(16),
+                minted_millis: None,
+            },
+            SteeringHead {
+                directive,
+                key: "amber-fern".to_owned(),
+                lane,
+                text: "hold the indexed line".to_owned(),
+                control: Some("drive-drain-queue".to_owned()),
+                attachments: vec![
+                    wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
+                        .expect("fixture media"),
+                ],
+                published: at("2030-04-12T18:44:09.271Z"),
+                expires: at("2030-04-12T20:44:09.271Z"),
+                stage: body::SteeringStage::Reminded,
+                escalations: vec![body::SteeringTransition {
+                    stage: body::SteeringStage::Reminded,
+                    at: at("2030-04-12T18:54:09.271Z"),
+                }],
+                disposition: Disposition::Declined,
+                origin: "task:1kKRRsDP".parse().expect("origin"),
+                created: seq(17),
+                minted_millis: Some(1_902_317_049_271),
+            },
+        ],
+    );
+}
+
 /// Resident generation, lane, and cursor heads.
 fn cover_residency_heads(covered: &mut BTreeSet<String>) {
     let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
@@ -672,6 +723,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 },
                 activity: AgentActivityKind::Prose,
                 text: "settled".to_owned(),
+                media: Vec::new(),
             },
             AgentMessage {
                 lane: second_id,
@@ -684,6 +736,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 },
                 activity: AgentActivityKind::Tool,
                 text: "Bash".to_owned(),
+                media: Vec::new(),
             },
         ],
     );

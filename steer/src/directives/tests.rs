@@ -38,6 +38,23 @@ fn a_lane_hears_only_its_own_direction() {
 }
 
 #[test]
+fn replay_refuses_invalid_media_before_it_can_enter_directive_standing() {
+    let mut malformed = sent(ROOT);
+    malformed.attachments[0].content_type = "text/plain".to_owned();
+    malformed.attachments[0].data_url = "data:text/plain;base64,aGVsbG8=".to_owned();
+    let mut ledger = Ledger::new();
+
+    assert!(matches!(
+        ledger.absorb(Steering::Sent(&malformed)),
+        Err(Refusal::InvalidMedia { directive, .. }) if directive == malformed.directive
+    ));
+    assert!(
+        ledger.directives().is_empty(),
+        "invalid media cannot partially enter durable standing",
+    );
+}
+
+#[test]
 fn a_repeated_key_is_refused() {
     let mut ledger = Ledger::new();
     ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
@@ -868,9 +885,9 @@ fn sent(key: &str) -> SteerSent {
         text: "hold the line".to_owned(),
         control: Some("drive-drain-queue".to_owned()),
         attachments: vec![DirectiveAttachment {
-            name: "operator-note.txt".to_owned(),
-            content_type: "text/plain".to_owned(),
-            data_url: "data:text/plain;base64,aG9sZCB0aGUgbGluZQ==".to_owned(),
+            name: "operator-capture.png".to_owned(),
+            content_type: "image/png".to_owned(),
+            data_url: "data:image/png;base64,iVBORw0KGgo=".to_owned(),
         }],
         expires: expires(),
     }

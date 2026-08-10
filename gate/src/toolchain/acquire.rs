@@ -36,6 +36,7 @@ use std::fmt;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use sill::{Argv, Completion, spawn};
 use wire::{Digest, Domain};
@@ -273,17 +274,62 @@ impl<'a> ToolchainSource<'a> {
 /// to [`super::measure_toolchain`], which is the only admission authority.
 #[must_use]
 pub fn acquire_toolchain(source: &ToolchainSource<'_>, contract: &Contract) -> Vec<ArmObservation> {
-    TOOLCHAIN_ARMS
-        .into_iter()
-        .map(|declaration| {
-            observe(
-                declaration,
-                source,
-                contract.bounds(),
-                contract.environment_names(),
-            )
-        })
-        .collect()
+    acquire_toolchain_observed(source, contract, |_, _| {})
+}
+
+/// Acquire every declared observation and report each completed analysis.
+///
+/// Completion is emitted only after the analyzer has returned its full
+/// observation. The repository executor uses this seam to expose a real
+/// process-order event without granting the observer execution authority.
+pub(crate) fn acquire_toolchain_observed(
+    source: &ToolchainSource<'_>,
+    contract: &Contract,
+    mut completed: impl FnMut(GateId, Option<super::RustAnalysisWorkspace>),
+) -> Vec<ArmObservation> {
+    let mut observations = Vec::with_capacity(TOOLCHAIN_ARMS.len());
+    let mut declarations = TOOLCHAIN_ARMS.into_iter();
+    while let Some(declaration) = declarations.next() {
+        if declaration.id != GateId::RustTypecheck {
+            let observation = observe_declaration(declaration, source, contract);
+            completed(declaration.id, None);
+            observations.push(observation);
+            continue;
+        }
+        let canvas = declarations
+            .next()
+            .expect("canvas analysis follows native Rust analysis");
+        assert_eq!(canvas.id, GateId::CanvasWebTypecheck);
+        let (rust_observation, canvas_observation) = thread::scope(|scope| {
+            let canvas = scope.spawn(|| observe_declaration(canvas, source, contract));
+            let rust = observe_declaration(declaration, source, contract);
+            let reusable_workspace = (rust.outcome == ArmOutcome::Passed).then(|| {
+                analyze::rust_analysis_workspace(source.repository())
+                    .expect("passed native Rust analysis must retain its exact reusable workspace")
+            });
+            completed(declaration.id, reusable_workspace);
+            let canvas = canvas
+                .join()
+                .expect("canvas toolchain analysis must not panic");
+            completed(canvas.gate_id, None);
+            (rust, canvas)
+        });
+        observations.extend([rust_observation, canvas_observation]);
+    }
+    observations
+}
+
+fn observe_declaration(
+    declaration: ToolchainDeclaration,
+    source: &ToolchainSource<'_>,
+    contract: &Contract,
+) -> ArmObservation {
+    observe(
+        declaration,
+        source,
+        contract.bounds(),
+        contract.environment_names(),
+    )
 }
 
 pub(crate) fn acquire_toolchain_arm(

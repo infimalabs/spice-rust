@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use super::baseline::{BaselineCapture, CommittedTexts, selects};
+use super::baseline::{BaselineCapture, CommittedTexts, FileShapeAuthorship, selects};
 use super::{
     ArmDeclaration, ComplexityRoutine, EvidenceError, EvidenceState, MetricEvidence, MetricFinding,
     MetricId, MetricKey, MetricMeasurement, MetricStateBinding, ParseError, ParserEvidence,
@@ -325,10 +325,12 @@ fn file_shape_metrics(
 /// measured beside a bytes row that refused would claim this file was half
 /// observed, and the arm would report a keyset its declaration forbids.
 ///
-/// A file a pending merge inherits verbatim from a parent reports both rows the
-/// same way, and for the same reason it takes no bound decision: this run is not
-/// where that shape was authored, so measuring it would hold the merging lane to
-/// a limit and hand it the flex slice for a file it never wrote.
+/// A file a pending merge inherits verbatim from a parent or from Git's exact
+/// clean merge tree reports both rows the same way, and for the same reason it
+/// takes no bound decision: this run is not where that shape was authored, so
+/// measuring it would hold the merging lane to a limit and hand it the flex
+/// slice for a file it never wrote. A conflict or one changed byte matches
+/// neither source and remains merge-authored.
 fn file_shape_rows(
     source: &MetricSource<'_>,
     declaration: ArmDeclaration,
@@ -348,28 +350,39 @@ fn file_shape_rows(
             );
         }
     };
-    if source.baselines.merge_inherits(path, &bytes) {
-        return declared_rows(
-            declaration,
-            key,
-            &EvidenceState::NotApplicable {
-                reason: format!(
-                    "{path:?} is byte-identical to a parent of this merge, so its shape was \
-                     authored by the commit that already answered for it"
-                ),
-            },
-        );
+    let inherited = match source.baselines.file_shape_authorship(path, &bytes) {
+        FileShapeAuthorship::Parent => Some(format!(
+            "{path:?} is byte-identical to a parent of this merge, so its shape was \
+             authored by the commit that already answered for it"
+        )),
+        FileShapeAuthorship::CleanMerge => Some(format!(
+            "{path:?} is byte-identical to Git's clean merge result, so its shape is \
+             inherited synthesis rather than work authored by the merge receiver"
+        )),
+        FileShapeAuthorship::MergeAuthored => None,
+    };
+    if let Some(reason) = inherited {
+        return declared_rows(declaration, key, &EvidenceState::NotApplicable { reason });
     }
     let shape = match measure_file_shape(path, &bytes) {
         Ok(shape) => shape,
         Err(error) => return declared_rows(declaration, key, &error.into_evidence_state()),
     };
+    let committed_shape = source
+        .baselines
+        .baseline_bytes(path, &bytes)
+        .filter(|committed| *committed != bytes)
+        .and_then(|committed| measure_file_shape(path, committed).ok());
     let mut rows = Vec::with_capacity(2);
-    for (metric, value) in [
-        (MetricId::FileLines, shape.lines()),
-        (MetricId::FileBytes, shape.bytes()),
+    for (metric, value, committed) in [
+        (
+            MetricId::FileLines,
+            shape.lines(),
+            committed_shape.as_ref().map(|shape| shape.lines()),
+        ),
+        (MetricId::FileBytes, shape.bytes(), None),
     ] {
-        let (row, decision) = bounded_row(source, path, key, metric, value)?;
+        let (row, decision) = bounded_row(source, path, key, metric, value, committed)?;
         rows.push(row);
         if let Some(decision) = decision {
             bounds.push(decision);
@@ -390,8 +403,9 @@ fn bounded_row(
     key: &MetricKey,
     metric: MetricId,
     value: u64,
+    committed: Option<u64>,
 ) -> Result<(MetricEvidence, Option<BoundDecision>), MetricAcquisitionError> {
-    match bounded_evidence(source, path, key, metric, value) {
+    match bounded_evidence(source, path, key, metric, value, committed) {
         Ok((evidence, decision)) => Ok((evidence, Some(decision))),
         Err(reason) => {
             MetricEvidence::new(metric, key.clone(), EvidenceState::Unavailable { reason })
@@ -405,15 +419,17 @@ fn bounded_row(
 ///
 /// The decision travels on the measurement rather than being compared here, so
 /// an over-limit file fails through the latch binding every consumer already
-/// reads. The latch is the ledger's, and a latched path is held to its base
-/// limit: the elastic headroom a ratchet lends was already spent by the breach
-/// that latched it.
+/// reads. A durable ledger latch is always held to base. A changed file-loc
+/// measurement whose committed predecessor was already above base is held to
+/// the same true limit: otherwise each edit could mint a fresh elastic slice
+/// and ratchet existing debt upward without ever crossing the elastic cap.
 fn bounded_evidence(
     source: &MetricSource<'_>,
     path: &str,
     key: &MetricKey,
     metric: MetricId,
     value: u64,
+    committed: Option<u64>,
 ) -> Result<(MetricEvidence, BoundDecision), String> {
     let name = metric.as_str();
     let rule = resolve_metric_rule(
@@ -422,6 +438,9 @@ fn bounded_evidence(
         &PolicyContext::new().with_path(path),
     )
     .map_err(|error| format!("{name} bound did not resolve for {path:?}: {error}"))?;
+    let committed_over_base = committed.is_some_and(|committed| {
+        !rule.unlimited() && committed > rule.base_limit() && committed != value
+    });
     let binding = MetricStateBinding::new(
         metric,
         key.clone(),
@@ -436,7 +455,7 @@ fn bounded_evidence(
         .actor
         .actor_inputs(path)
         .map_err(|error| format!("actor provenance for selected source {path:?}: {error}"))?;
-    let latched = source.latches.contains(binding.entry());
+    let latched = source.latches.contains(binding.entry()) || committed_over_base;
     let decision = binding
         .decide(latched, &actor_inputs)
         .map_err(|error| format!("active {name} bound for {path:?}: {error}"))?;

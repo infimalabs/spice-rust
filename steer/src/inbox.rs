@@ -34,7 +34,8 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
     let mut rendered = format!("<{seal}>\n");
     for directive in pending {
         rendered.push_str(&format!(
-            "key={} stage={} expires={}",
+            "directive={} key={} stage={} expires={}",
+            directive.directive(),
             directive.key(),
             directive.stage(),
             directive.expires()
@@ -43,10 +44,31 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
             rendered.push_str(&format!(" control={control}"));
         }
         rendered.push('\n');
-        rendered.push_str(directive.text());
+        rendered.push_str(&render_directive_body(directive));
         rendered.push('\n');
     }
     rendered.push_str(&format!("</{seal}>\n"));
+    rendered
+}
+
+fn render_directive_body(directive: &Directive) -> String {
+    let mut rendered = directive.text().to_owned();
+    for attachment in directive.attachments() {
+        let embedded = attachment
+            .is_embedded_in(directive.text())
+            .expect("a directive ledger contains only admitted media");
+        if embedded {
+            continue;
+        }
+        if !rendered.is_empty() {
+            rendered.push_str("\n\n");
+        }
+        rendered.push_str(
+            &attachment
+                .markdown()
+                .expect("a directive ledger contains only admitted media"),
+        );
+    }
     rendered
 }
 

@@ -52,6 +52,7 @@ pub mod ident;
 /// vocabularies apart, so flattening it away would forfeit that.
 pub mod intent;
 pub mod manifest;
+pub mod media;
 mod optional;
 pub mod packed;
 pub mod reply;
@@ -81,6 +82,7 @@ pub use head::{
 };
 pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected, SpeechPlayback, SpeechRequest};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
+pub use media::{Media, MediaError};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, FoldReport, FoldState, JournalBackup,

@@ -2,7 +2,10 @@
 
 use super::*;
 use crate::{CommitError, FactCause, JournalGuard, JournalHead, JournalWrite};
-use wire::body::{SteerCanceled, SteerSent, SteeringStage, TaskNoted};
+use wire::body::{
+    LaneHeld, SteerCanceled, SteerEscalated, SteerSent, SteeringStage, SteeringTransition,
+    TaskNoted,
+};
 use wire::{Disposition, Producer, SteeringHead};
 
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
@@ -89,6 +92,60 @@ fn steering_fact_and_head_publish_atomically_and_key_collision_rolls_back() {
 }
 
 #[test]
+fn batched_subject_head_targets_its_final_fact_exactly_once() {
+    let mut journal = Journal::in_memory().expect("steering journal");
+    journal
+        .apply(send_write(uuid(TARGET), TARGET_KEY))
+        .expect("publication applies");
+    let observed = journal
+        .read(|read| read.steering_key(TARGET_KEY))
+        .expect("published head reads")
+        .expect("published head exists");
+    let before = journal.fact_snapshot().expect("published history");
+
+    for (label, placement) in [
+        ("missing", BatchHead::Missing),
+        ("earlier-only", BatchHead::Earlier),
+        ("duplicate", BatchHead::Duplicate),
+        ("stray", BatchHead::Stray),
+    ] {
+        let error = journal
+            .apply(escalation_batch(&observed, placement))
+            .expect_err("invalid batch head placement refuses");
+        assert!(matches!(error, CommitError::Refused(_)), "{label}: {error}");
+        assert_eq!(
+            journal.fact_snapshot().expect("history after refusal"),
+            before,
+            "{label} head placement must not mutate the journal"
+        );
+    }
+
+    let applied = journal
+        .apply(escalation_batch(&observed, BatchHead::Final))
+        .expect("one head on the final subject fact applies");
+    let current = journal
+        .read(|read| read.steering_key(TARGET_KEY))
+        .expect("escalated head reads")
+        .expect("escalated head exists");
+    assert_eq!(current.position(), applied.last());
+    assert_eq!(current.body().stage, SteeringStage::Escalated);
+    assert_eq!(
+        current
+            .body()
+            .escalations
+            .iter()
+            .map(|transition| transition.stage)
+            .collect::<Vec<_>>(),
+        [SteeringStage::Reminded, SteeringStage::Escalated]
+    );
+    assert!(
+        journal
+            .steering_index_current()
+            .expect("authority horizon reads")
+    );
+}
+
+#[test]
 fn stale_indexed_admission_loses_the_race_without_mutation() {
     let mut journal = Journal::in_memory().expect("steering journal");
     journal
@@ -147,7 +204,13 @@ fn indexed_read_work_is_constant_as_retired_history_grows() {
     assert_eq!(measured_lane(&journal), before_lane);
     assert_eq!(measured_all_lanes(&journal), before_all);
     assert_eq!(before_key.queries, 2, "horizon plus one keyed lookup");
+    assert_eq!(before_key.rows, 2, "horizon plus one keyed row");
     assert_eq!(before_lane.queries, 2, "horizon plus one live-lane lookup");
+    assert_eq!(before_lane.rows, 2, "horizon plus one live-lane row");
+    assert!(
+        before_lane.decoded_bytes > 0,
+        "the one selected steering body was decoded"
+    );
     let plan = journal
         .connection
         .prepare(
@@ -226,34 +289,99 @@ fn schema_six_migration_requires_one_explicit_rebuild_then_stays_current() {
     );
 }
 
-fn measured_key(journal: &Journal) -> crate::guard::SteeringReadMetrics {
-    crate::guard::reset_steering_read_metrics();
+fn measured_key(journal: &Journal) -> crate::guard::IndexedReadMetrics {
+    crate::guard::reset_indexed_read_metrics();
     let head = journal
         .read(|read| read.steering_key(TARGET_KEY))
         .expect("target key reads")
         .expect("target head exists");
     assert_eq!(head.body().directive, uuid(TARGET));
-    crate::guard::steering_read_metrics()
+    crate::guard::indexed_read_metrics()
 }
 
-fn measured_lane(journal: &Journal) -> crate::guard::SteeringReadMetrics {
-    crate::guard::reset_steering_read_metrics();
+fn measured_lane(journal: &Journal) -> crate::guard::IndexedReadMetrics {
+    crate::guard::reset_indexed_read_metrics();
     let pending = journal
         .read(|read| read.pending_steering(Some(lane())))
         .expect("live lane reads");
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].body().directive, uuid(TARGET));
-    crate::guard::steering_read_metrics()
+    crate::guard::indexed_read_metrics()
 }
 
-fn measured_all_lanes(journal: &Journal) -> crate::guard::SteeringReadMetrics {
-    crate::guard::reset_steering_read_metrics();
+fn measured_all_lanes(journal: &Journal) -> crate::guard::IndexedReadMetrics {
+    crate::guard::reset_indexed_read_metrics();
     let pending = journal
         .read(|read| read.pending_steering(None))
         .expect("all live lanes read");
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].body().directive, uuid(TARGET));
-    crate::guard::steering_read_metrics()
+    crate::guard::indexed_read_metrics()
+}
+
+#[derive(Clone, Copy)]
+enum BatchHead {
+    Missing,
+    Earlier,
+    Final,
+    Duplicate,
+    Stray,
+}
+
+fn escalation_batch(observed: &JournalHead<SteeringHead>, placement: BatchHead) -> JournalWrite {
+    let at = instant();
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        observed.body().origin.clone(),
+        at,
+        Producer::BusTimer,
+    );
+    let mut next = observed.body().clone();
+    let mut facts = Vec::new();
+    for stage in [SteeringStage::Reminded, SteeringStage::Escalated] {
+        let pending = write
+            .fact(
+                SteerEscalated {
+                    directive: observed.body().directive,
+                    key: observed.body().key.clone(),
+                    lane: observed.body().lane,
+                    stage,
+                },
+                FactCause::Existing(observed.body().created),
+            )
+            .expect("escalation fact builds");
+        facts.push(pending);
+        next.stage = stage;
+        next.escalations.push(SteeringTransition { stage, at });
+    }
+    let first = facts[0];
+    let final_fact = facts[1];
+    match placement {
+        BatchHead::Missing => {}
+        BatchHead::Earlier => write.steering_head(first, move |_| next),
+        BatchHead::Final => write.steering_head(final_fact, move |_| next),
+        BatchHead::Duplicate => {
+            let duplicate = next.clone();
+            write.steering_head(final_fact, move |_| next);
+            write.steering_head(final_fact, move |_| duplicate);
+        }
+        BatchHead::Stray => {
+            let final_head = next.clone();
+            write.steering_head(final_fact, move |_| final_head);
+            let ordinary = write
+                .fact(
+                    LaneHeld {
+                        lane: lane(),
+                        evidence: "stray steering head target".to_owned(),
+                        until: at,
+                    },
+                    FactCause::Root,
+                )
+                .expect("ordinary fact builds");
+            write.steering_head(ordinary, move |_| next);
+        }
+    }
+    write
 }
 
 fn send_write(directive: CanonicalUuid, key: &str) -> JournalWrite {

@@ -20,15 +20,17 @@ use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 use sill::LockFile;
-use sill::Possession;
+use sill::{Acquisition, Possession};
 
-#[cfg(test)]
-use crate::held_root::held_root_lock;
-use crate::held_root::{hold, remove_held_root};
+use super::rust::{make_cache_writable, synchronize_source};
+use crate::held_root::{held_root_lock, hold, remove_held_root};
 
 /// How the canvas arm names itself in a refusal, and names its lock.
 const CANVAS_LABEL: &str = "canvas analysis workspace";
 const CANVAS_LOCK: &str = "canvas-analysis-workspace";
+const CANVAS_SOURCE_LABEL: &str = "canvas analysis source cache";
+const CANVAS_SOURCE_LOCK: &str = "canvas-analysis-source-cache";
+const CANVAS_SOURCE_DIRECTORY: &str = "target/xtask-app-source";
 
 /// The lock the canvas arm takes, so a fixture can hold the same one.
 ///
@@ -92,5 +94,85 @@ impl Drop for CanvasWorkspace<'_> {
         if let Some(reason) = removal.reason(CANVAS_LABEL, &self.root) {
             self.removal.set(Some(reason));
         }
+    }
+}
+
+/// One stable selected-source mirror held immutable for a Canvas analysis.
+///
+/// Cargo fingerprints include the workspace path. Keeping that path stable
+/// lets the existing persistent WASM target and build directories do useful
+/// work across commit-gate runs while the selected tree remains the sole input.
+pub(super) struct CanvasSource<'a> {
+    root: PathBuf,
+    removal: &'a Cell<Option<String>>,
+    possession: Option<Possession>,
+}
+
+impl<'a> CanvasSource<'a> {
+    pub(super) fn create(
+        selected: &Path,
+        repository: &Path,
+        removal: &'a Cell<Option<String>>,
+    ) -> Result<Self, String> {
+        let root = repository.join(CANVAS_SOURCE_DIRECTORY);
+        let Some(parent) = root.parent() else {
+            return Err(format!(
+                "{CANVAS_SOURCE_LABEL} {} has no parent directory",
+                root.display()
+            ));
+        };
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "{CANVAS_SOURCE_LABEL} parent {} could not be created: {error}",
+                parent.display()
+            )
+        })?;
+        let lock = held_root_lock(&root, CANVAS_SOURCE_LOCK, CANVAS_SOURCE_LABEL)?;
+        let possession = match lock.try_acquire() {
+            Ok(Acquisition::Acquired(possession)) => possession,
+            Ok(Acquisition::Contended) => {
+                return Err(format!(
+                    "{CANVAS_SOURCE_LABEL} {} is in use by another canonical gate",
+                    root.display()
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "{CANVAS_SOURCE_LABEL} {} could not be locked: {error}",
+                    root.display()
+                ));
+            }
+        };
+        synchronize_source(selected, &root).map_err(|error| {
+            format!(
+                "{CANVAS_SOURCE_LABEL} {} could not mirror {}: {error}",
+                root.display(),
+                selected.display()
+            )
+        })?;
+        Ok(Self {
+            root,
+            removal,
+            possession: Some(possession),
+        })
+    }
+
+    pub(super) fn path(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl Drop for CanvasSource<'_> {
+    fn drop(&mut self) {
+        if self.possession.is_none() {
+            return;
+        }
+        if let Err(error) = make_cache_writable(&self.root) {
+            self.removal.set(Some(format!(
+                "{CANVAS_SOURCE_LABEL} {} could not be made writable after analysis: {error}",
+                self.root.display()
+            )));
+        }
+        drop(self.possession.take());
     }
 }

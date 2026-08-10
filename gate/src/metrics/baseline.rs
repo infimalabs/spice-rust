@@ -17,6 +17,12 @@
 //! delete a file that the merge then restores, and treating that as a new path
 //! would erase the delta the shared history still supplies.
 //!
+//! File shape has one additional authorship source: Git's exact tree for an
+//! exit-zero clean merge. Disjoint parent edits can synthesize bytes neither
+//! parent carries, and charging that automatic result to the merge receiver can
+//! fail a limit both parents respected. Only an exact blob match is inherited;
+//! a conflict, unavailable result, or one receiver-authored byte is measured.
+//!
 //! The guarantee is for files a merge left alone, and it stops there. A file the
 //! merging lane edited matches no parent, so it is measured against the nearest
 //! one and may report content the other side had already committed. That lane is
@@ -64,7 +70,7 @@ impl BaselineCapture {
     /// Read every class-selected committed text, or retain why none could be read.
     #[must_use]
     pub fn capture(repository: &Path, suffixes: &[String]) -> Self {
-        Self::capture_with_paths(repository, suffixes, &[])
+        Self::capture_with_paths(repository, suffixes, &[], None)
     }
 
     /// Read every class-selected or explicitly selected committed text.
@@ -73,15 +79,17 @@ impl BaselineCapture {
     /// class-bound toolchain arms. `paths` is the exact rim snapshot used by
     /// every-change arms: retaining those names is what lets an extensionless
     /// file prove merge authorship without broadening capture to every blob in
-    /// every parent. Both selectors must come from the same repository capture
-    /// instant as the tree whose current bytes will be compared.
+    /// every parent. `clean_merge_tree` is the optional tree identity Git proved
+    /// for an exit-zero two-parent synthesis. All three inputs must come from the
+    /// same repository capture instant as the current bytes being compared.
     #[must_use]
     pub(crate) fn capture_with_paths(
         repository: &Path,
         suffixes: &[String],
         paths: &[String],
+        clean_merge_tree: Option<(&str, &str, &str)>,
     ) -> Self {
-        match CommittedTexts::read(repository, suffixes, paths) {
+        match CommittedTexts::read(repository, suffixes, paths, clean_merge_tree) {
             Ok(baselines) => Self::Reached(baselines),
             Err(error) => Self::Unreachable(error.to_string()),
         }
@@ -100,20 +108,56 @@ impl BaselineCapture {
             Self::Unreachable(_) => false,
         }
     }
+
+    /// The committed bytes one current source is measured against.
+    ///
+    /// An unreachable committed tree has no baseline to offer. Selection among
+    /// reachable merge parents is identical to [`CommittedTexts::baseline`],
+    /// but retaining bytes lets file-shape apply its own UTF-8 parser instead
+    /// of inheriting the lossy text projection used by text-delta metrics.
+    #[must_use]
+    pub(crate) fn baseline_bytes(&self, path: &str, current: &[u8]) -> Option<&[u8]> {
+        match self {
+            Self::Reached(baselines) => baselines.baseline_bytes(path, current),
+            Self::Unreachable(_) => None,
+        }
+    }
+
+    /// Attribute one current file's shape to a parent, Git, or this merge.
+    #[must_use]
+    pub(super) fn file_shape_authorship(&self, path: &str, current: &[u8]) -> FileShapeAuthorship {
+        match self {
+            Self::Reached(baselines) => baselines.file_shape_authorship(path, current),
+            Self::Unreachable(_) => FileShapeAuthorship::MergeAuthored,
+        }
+    }
 }
 
-/// Every selected blob captured from each parent of the pending commit.
+/// Selected blobs from each pending parent and a proven clean merge tree.
 ///
 /// The parents are held in Git's own order: `HEAD` first, then each
 /// `MERGE_HEAD` line. "Nearest" therefore means earliest in this vector, which
 /// is the same order `git log` and `git diff` name a merge's parents in. A
 /// pending merge also retains its one octopus merge base for the path no parent
-/// carries.
+/// carries. A clean two-parent result is retained separately and participates
+/// only in file-shape authorship, never in ordinary delta-baseline selection.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CommittedTexts {
     commit: Option<String>,
     parents: Vec<BTreeMap<String, CommittedText>>,
     merge_base: Option<BTreeMap<String, CommittedText>>,
+    clean_merge: Option<BTreeMap<String, CommittedText>>,
+}
+
+/// Which ancestry evidence owns one pending file's shape.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FileShapeAuthorship {
+    /// A parent already carries the exact bytes.
+    Parent,
+    /// Git's proven clean merge tree carries the exact byte-distinct synthesis.
+    CleanMerge,
+    /// Neither ancestry source carries the exact bytes; the receiver owns them.
+    MergeAuthored,
 }
 
 /// One selected blob retained both losslessly and as the text metrics read it.
@@ -141,22 +185,30 @@ impl CommittedTexts {
     /// happens to hold nothing.
     #[must_use]
     pub fn baseline(&self, path: &str, current: &[u8]) -> Option<&str> {
+        self.baseline_entry(path, current)
+            .map(|committed| committed.text.as_str())
+    }
+
+    /// The lossless committed bytes selected by the same ancestry rule as
+    /// [`Self::baseline`].
+    #[must_use]
+    fn baseline_bytes(&self, path: &str, current: &[u8]) -> Option<&[u8]> {
+        self.baseline_entry(path, current)
+            .map(|committed| committed.bytes.as_slice())
+    }
+
+    fn baseline_entry(&self, path: &str, current: &[u8]) -> Option<&CommittedText> {
         let mut nearest = None;
         for texts in &self.parents {
             let Some(committed) = texts.get(path) else {
                 continue;
             };
             if committed.bytes == current {
-                return Some(&committed.text);
+                return Some(committed);
             }
-            nearest = nearest.or(Some(committed.text.as_str()));
+            nearest = nearest.or(Some(committed));
         }
-        nearest.or_else(|| {
-            self.merge_base
-                .as_ref()?
-                .get(path)
-                .map(|committed| committed.text.as_str())
-        })
+        nearest.or_else(|| self.merge_base.as_ref()?.get(path))
     }
 
     /// The commit these texts were read from, absent on an unborn `HEAD`.
@@ -183,6 +235,23 @@ impl CommittedTexts {
                 .any(|texts| texts.get(path).is_some_and(|text| text.bytes == current))
     }
 
+    /// Classify file-shape authorship using exact parent and clean-merge bytes.
+    fn file_shape_authorship(&self, path: &str, current: &[u8]) -> FileShapeAuthorship {
+        if self.merge_inherits(path, current) {
+            return FileShapeAuthorship::Parent;
+        }
+        if self.parents.len() > 1
+            && self
+                .clean_merge
+                .as_ref()
+                .and_then(|texts| texts.get(path))
+                .is_some_and(|text| text.bytes == current)
+        {
+            return FileShapeAuthorship::CleanMerge;
+        }
+        FileShapeAuthorship::MergeAuthored
+    }
+
     /// Walk each parent and the pending merge base, retaining selected blobs.
     ///
     /// A repository with no commit yet is read as an empty baseline naming no
@@ -193,6 +262,7 @@ impl CommittedTexts {
         repository: &Path,
         suffixes: &[String],
         paths: &[String],
+        clean_merge_tree: Option<(&str, &str, &str)>,
     ) -> Result<Self, TreeError> {
         let repo = open_repository(repository)?;
         let paths = paths.iter().map(String::as_str).collect::<BTreeSet<_>>();
@@ -204,6 +274,16 @@ impl CommittedTexts {
             return Ok(Self::default());
         };
         let merging = merge_heads(&repo)?;
+        let clean_merge = match clean_merge_tree {
+            Some((captured_head, captured_merging, tree))
+                if commit_id.to_string() == captured_head
+                    && merging.len() == 1
+                    && merging[0].to_string() == captured_merging =>
+            {
+                Some(selected_tree_texts(&repo, tree, suffixes, &paths)?)
+            }
+            Some(_) | None => None,
+        };
         let merge_base = if merging.is_empty() {
             None
         } else {
@@ -225,6 +305,7 @@ impl CommittedTexts {
             commit: Some(commit_id.to_string()),
             parents,
             merge_base,
+            clean_merge,
         })
     }
 }
@@ -277,6 +358,24 @@ fn parent_texts(
         paths,
         &mut texts,
     )?;
+    Ok(texts)
+}
+
+/// Selected blobs from the exact tree Git computed for a clean pending merge.
+fn selected_tree_texts(
+    repo: &gix::Repository,
+    tree: &str,
+    suffixes: &[String],
+    paths: &BTreeSet<&str>,
+) -> Result<BTreeMap<String, CommittedText>, TreeError> {
+    let tree_id = gix::ObjectId::from_hex(tree.as_bytes()).map_err(|source| {
+        TreeError::RevisionUnresolved {
+            revision: "clean merge tree".to_owned(),
+            evidence: source.to_string(),
+        }
+    })?;
+    let mut texts = BTreeMap::new();
+    collect(repo, tree_id, "", suffixes, paths, &mut texts)?;
     Ok(texts)
 }
 

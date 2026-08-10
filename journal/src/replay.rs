@@ -8,6 +8,8 @@ use serde::de::DeserializeOwned;
 
 use crate::{Journal, JournalReader};
 
+mod steering;
+
 /// Counts proved by a successful authority verification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Verification {
@@ -349,7 +351,8 @@ pub(crate) fn verify_connection(connection: &Connection) -> Result<Verification,
     verify_sqlite(connection, &mut violations)?;
     let facts = verify_facts(connection, &mut violations)?;
     let threads = verify_threads(connection, &facts, &mut violations)?;
-    let heads = verify_heads(connection, &mut violations)?;
+    let mut heads = verify_heads(connection, &mut violations)?;
+    heads += steering::verify(connection, &facts, &mut violations)?;
     let receipts = verify_receipts(connection, &mut violations)?;
     verify_cursor(connection, &facts, &mut violations)?;
 
@@ -409,6 +412,7 @@ fn verify_sqlite(
 struct FactRecord {
     origin: String,
     cause: Option<u64>,
+    envelope: Option<wire::Envelope<wire::AnyFact>>,
 }
 
 fn verify_facts(
@@ -444,13 +448,14 @@ fn verify_facts(
             ));
         }
         expected = row.seq.saturating_add(1);
-        verify_fact_row(&row, violations);
+        let envelope = verify_fact_row(&row, violations);
         if let Ok(seq) = u64::try_from(row.seq) {
             facts.insert(
                 seq,
                 FactRecord {
                     origin: row.origin,
                     cause: row.cause.and_then(|cause| u64::try_from(cause).ok()),
+                    envelope,
                 },
             );
         }
@@ -469,13 +474,16 @@ struct FactRow {
     envelope: Vec<u8>,
 }
 
-fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
+fn verify_fact_row(
+    row: &FactRow,
+    violations: &mut Vec<Violation>,
+) -> Option<wire::Envelope<wire::AnyFact>> {
     let subject = row.seq.to_string();
     let envelope = match decode_canonical::<wire::Envelope<wire::AnyFact>>(&row.envelope) {
         Ok(envelope) => envelope,
         Err(detail) => {
             violations.push(Violation::new(ViolationClass::Envelope, subject, detail));
-            return;
+            return None;
         }
     };
     let cause = row.cause.and_then(|cause| u64::try_from(cause).ok());
@@ -493,6 +501,7 @@ fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
             "decoded envelope does not agree with its indexed columns",
         ));
     }
+    Some(envelope)
 }
 
 fn verify_threads(
@@ -643,6 +652,7 @@ fn verify_heads(
                 .ok_or_else(|| "claim winning fact disagrees with head_seq".to_owned())
         },
     )?;
+    verify_claim_index(connection, violations)?;
     count += verify_keyed_heads::<wire::LeaseHead>(
         connection,
         "lease_heads",
@@ -691,6 +701,79 @@ fn verify_heads(
     )?;
     count += verify_residency(connection, violations)?;
     Ok(count)
+}
+
+fn verify_claim_index(
+    connection: &Connection,
+    violations: &mut Vec<Violation>,
+) -> Result<(), VerifyError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT keys.stamp, heads.head_seq, heads.body, \
+                    indexed.actor, indexed.disposition, indexed.head_seq \
+             FROM (SELECT stamp FROM claim_heads UNION SELECT stamp FROM claim_index) AS keys \
+             LEFT JOIN claim_heads AS heads ON heads.stamp = keys.stamp \
+             LEFT JOIN claim_index AS indexed ON indexed.stamp = keys.stamp \
+             ORDER BY keys.stamp",
+        )
+        .map_err(VerifyError::Sqlite)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Option<Vec<u8>>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+            ))
+        })
+        .map_err(VerifyError::Sqlite)?;
+    for row in rows {
+        let (stamp, head_seq, body, actor, disposition, indexed_seq) =
+            row.map_err(VerifyError::Sqlite)?;
+        let locus = format!("claim_index:{stamp}");
+        let (Some(head_seq), Some(body)) = (head_seq, body) else {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                locus,
+                "claim index has no corresponding claim head",
+            ));
+            continue;
+        };
+        let (Some(actor), Some(disposition), Some(indexed_seq)) = (actor, disposition, indexed_seq)
+        else {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                locus,
+                "claim head has no corresponding claim index row",
+            ));
+            continue;
+        };
+        if indexed_seq != head_seq {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                locus.clone(),
+                "claim index position disagrees with claim head",
+            ));
+        }
+        let Ok(head) = decode_canonical::<wire::ClaimHead>(&body) else {
+            continue;
+        };
+        let expected_disposition = match head.disposition {
+            wire::ClaimDisposition::Active => "active",
+            wire::ClaimDisposition::Freed => "freed",
+            wire::ClaimDisposition::Lapsed => "lapsed",
+        };
+        if actor != head.actor.to_string() || disposition != expected_disposition {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                locus,
+                "claim index predicate columns disagree with claim head",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn verify_keyed_heads<T>(

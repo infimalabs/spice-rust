@@ -144,30 +144,21 @@ fn refusal(argv: &[String], environment: &[(&str, String)], expected_reason: &st
     assert!(spoken.out.is_empty(), "refusals do not impersonate replies");
     let envelope: Value =
         serde_json::from_slice(&spoken.err).expect("refusal is a structured outcome DTO");
-    assert_eq!(envelope["kind"], "refusal");
-    let reason = envelope["reason"]
-        .as_str()
-        .or_else(|| envelope["diagnostic"]["reason"].as_str());
-    assert_eq!(reason, Some(expected_reason));
+    let diagnostic = refusal_diagnostic(&envelope);
+    assert_eq!(diagnostic["reason"], expected_reason);
     assert!(
-        envelope["remedy"]
+        diagnostic["detail"]
             .as_str()
-            .or_else(|| envelope["diagnostic"]["detail"].as_str())
             .is_some_and(|value| !value.is_empty()),
         "every refusal carries explicit recovery guidance"
     );
     envelope
 }
 
-fn refusal_value<'a>(envelope: &'a Value, field: &str) -> Option<&'a str> {
-    envelope[field]
-        .as_str()
-        .or_else(|| envelope["diagnostic"][field].as_str())
-        .or_else(|| {
-            (field == "remedy")
-                .then(|| envelope["diagnostic"]["detail"].as_str())
-                .flatten()
-        })
+fn refusal_diagnostic(envelope: &Value) -> &Value {
+    assert_eq!(envelope["kind"], "refusal");
+    assert_eq!(envelope["form"], "bare");
+    &envelope["diagnostic"]
 }
 
 fn utf8(bytes: &[u8]) -> String {

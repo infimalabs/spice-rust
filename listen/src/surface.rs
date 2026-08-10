@@ -57,6 +57,9 @@ pub enum SurfaceEvent {
             deserialize_with = "present"
         )]
         phase: Option<String>,
+        /// Admitted media carried beside the prose.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        media: Vec<wire::Media>,
     },
     /// Model reasoning.
     Reasoning {
@@ -132,6 +135,7 @@ impl From<&Event> for SurfaceEvent {
             Event::Prose(event) => Self::Prose {
                 text: event.text.clone(),
                 phase: event.phase.clone(),
+                media: event.media.clone(),
             },
             Event::Reasoning(event) => Self::Reasoning {
                 content: (&event.content).into(),
@@ -160,8 +164,12 @@ impl fmt::Display for SurfaceEvent {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Session { identity } => write!(formatter, "session identity={identity:?}"),
-            Self::Prose { text, phase } => {
-                write!(formatter, "prose text={text:?} phase={phase:?}")
+            Self::Prose { text, phase, media } => {
+                write!(
+                    formatter,
+                    "prose text={text:?} phase={phase:?} media={}",
+                    media.len(),
+                )
             }
             Self::Reasoning { content } => write!(formatter, "reasoning {content}"),
             Self::Tool { call_id, moment } => {
@@ -234,26 +242,56 @@ pub enum SurfaceToolMoment {
     Call {
         /// Tool name.
         name: String,
+        /// Exact vendor call arguments.
+        arguments: String,
     },
     /// A running call published updated state.
     Update {
         /// Tool name.
         name: String,
+        /// Exact vendor update arguments.
+        arguments: String,
     },
     /// A result reports its standing.
     Result {
         /// Vendor knowledge of completion.
         standing: SurfaceToolResult,
+        /// Rendered non-media result body, when recorded.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        output: Option<String>,
+        /// Process exit code, when recorded.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        exit_code: Option<i32>,
+        /// Admitted media carried by the result.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        media: Vec<wire::Media>,
     },
 }
 
 impl From<&ToolMoment> for SurfaceToolMoment {
     fn from(moment: &ToolMoment) -> Self {
         match moment {
-            ToolMoment::Call { name, .. } => Self::Call { name: name.clone() },
-            ToolMoment::Update { name, .. } => Self::Update { name: name.clone() },
+            ToolMoment::Call { name, arguments } => Self::Call {
+                name: name.clone(),
+                arguments: arguments.clone(),
+            },
+            ToolMoment::Update { name, arguments } => Self::Update {
+                name: name.clone(),
+                arguments: arguments.clone(),
+            },
             ToolMoment::Result(outcome) => Self::Result {
                 standing: outcome.result.into(),
+                output: outcome.output.clone(),
+                exit_code: outcome.exit_code,
+                media: outcome.media.clone(),
             },
         }
     }
@@ -262,9 +300,22 @@ impl From<&ToolMoment> for SurfaceToolMoment {
 impl fmt::Display for SurfaceToolMoment {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Call { name } => write!(formatter, "call name={name:?}"),
-            Self::Update { name } => write!(formatter, "update name={name:?}"),
-            Self::Result { standing } => write!(formatter, "result standing={standing}"),
+            Self::Call { name, arguments } => {
+                write!(formatter, "call name={name:?} arguments={arguments:?}")
+            }
+            Self::Update { name, arguments } => {
+                write!(formatter, "update name={name:?} arguments={arguments:?}")
+            }
+            Self::Result {
+                standing,
+                output,
+                exit_code,
+                media,
+            } => write!(
+                formatter,
+                "result standing={standing} output={output:?} exit_code={exit_code:?} media={}",
+                media.len(),
+            ),
         }
     }
 }
