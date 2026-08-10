@@ -119,6 +119,8 @@ fn add_task(
         "spice.lifecycle",
         "--acceptance",
         "automatic lifecycle fixture reaches its asserted terminal state",
+        "--origin",
+        "fixture:automatic-lifecycle",
     ];
     let output = match lane {
         Some(lane) => invoke_lane(fixture, lane, &arguments),

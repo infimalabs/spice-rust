@@ -11,9 +11,15 @@ use wire::ReleaseNotes;
 const RECENT_LANDING_LIMIT: &str = "5";
 
 /// Resolve and fold release notes at one repository commit.
-pub(crate) fn draft(root: &Path, revision: Option<&str>) -> Result<ReleaseNotes, Error> {
+pub(crate) fn draft(
+    root: &Path,
+    revision: Option<&str>,
+    requested_version: Option<&str>,
+) -> Result<ReleaseNotes, Error> {
     let release_commit = resolve_commit(root, revision.unwrap_or("HEAD"))?;
-    let release_version = env!("CARGO_PKG_VERSION").to_owned();
+    let release_version = requested_version
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_owned();
     let current_tag = format!("v{release_version}");
     let previous_tag = reachable_tags(root, &release_commit)?
         .into_iter()

@@ -432,20 +432,109 @@ pub struct ProofEvidence {
     pub replay: Digest,
 }
 
+/// Exact registry observation rendered by a recovery preview.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseRegistryEvidence {
+    /// Canonical semantic version observed at the package authority.
+    pub version: crate::manifest::ProductVersion,
+    /// Exact release commit named by the package authority.
+    pub release_commit: String,
+    /// Canonical package identity made visible by that commit.
+    pub package: Digest,
+}
+
+/// Complete no-effect observations resolved before a release plan is sealed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleasePlanObservations {
+    /// Fully resolved HEAD commit.
+    pub head: String,
+    /// Whether tracked worktree state is clean.
+    pub clean: bool,
+    /// Whether any version transition belongs to the selected release commit.
+    pub bump_claimed: bool,
+    /// Number of commits after the selected release commit.
+    pub unrecorded_local_commits: u64,
+    /// Product version compiled into the source executable.
+    pub source_version: crate::manifest::ProductVersion,
+    /// Product version read from the selected release tree.
+    pub release_version: crate::manifest::ProductVersion,
+    /// Whether the configured remote accepted a no-effect authenticated read.
+    pub credentials_valid: bool,
+    /// Unexpected source-ref object, absent when unpublished or converged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub source_ref: Option<String>,
+    /// Unexpected package-ref object, absent when unpublished or converged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub package_ref: Option<String>,
+    /// Unexpected tag object, absent when unpublished or converged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub tag_ref: Option<String>,
+    /// Unexpected announcement object, absent when unpublished or converged.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub announcement_ref: Option<String>,
+    /// Exact package visibility required by tag-and-announce recovery.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub registry: Option<ReleaseRegistryEvidence>,
+}
+
 /// One operator-previewed publication of a complete sealed release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasePlan {
     /// Digest the apply command must re-present.
     pub key: Digest,
+    /// Identity of the repository authority observed by the planner.
+    pub repository: Digest,
+    /// Closed release action: `publish` or `tag-and-announce`.
+    pub action: String,
+    /// Canonical semantic version requested by the operator.
+    pub requested_version: crate::manifest::ProductVersion,
+    /// Immutable source commit from which release preparation began.
+    pub source_commit: String,
+    /// Exact release commit all external refs must name.
+    pub release_commit: String,
     /// Canonical identity of the sealed two-target manifest.
     pub manifest: Digest,
     /// Source identity shared by both target payloads.
     pub source: Digest,
     /// Identity of the exact curated release-note bytes approved by this plan.
     pub notes: Digest,
+    /// Exact curated bytes, not merely a digest reconstructed at apply time.
+    pub notes_document: String,
+    /// Canonical identity of the complete installable package closure.
+    pub package: Digest,
+    /// Exact Git tree object published at the immutable package ref.
+    pub package_object: String,
+    /// Exact independently installed executable identity the probe must return.
+    pub installed_artifact: Digest,
     /// Exact target payload and detached-receipt identities to publish.
     pub targets: Vec<crate::body::PublishedTarget>,
+    /// Sole ordered operation inventory shared by preview and execution.
+    pub operations: Vec<String>,
+    /// Exact no-effect preconditions and authority observations bound by `key`.
+    pub observations: ReleasePlanObservations,
 }
 
 /// An answer about an event that did not occur.
