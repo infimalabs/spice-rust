@@ -145,8 +145,9 @@ pub use state::{
 pub use test_evidence::{
     CanonicalTestExecution, CoverageCompleteness, CoveredSource, MutationCoverageFinding,
     MutationCoverageReport, MutationExecution, MutationObservation, StandingMutationWaiver,
-    SubsumptionRelation, SuiteSeamFinding, SuiteSeamReport, TestCoverage, TestEvidenceError,
-    TestEvidenceGraph, TestEvidenceStanding, TestSubsumptionFinding, TestSubsumptionReport,
+    SubsumptionRelation, SuiteSeamFinding, SuiteSeamReport, TEST_EVIDENCE_REPORT_VERSION,
+    TestCoverage, TestEvidenceError, TestEvidenceGraph, TestEvidenceReport, TestEvidenceStanding,
+    TestSubsumptionFinding, TestSubsumptionReport,
 };
 /// Private `cargo xtask app` argument used by the native full verifier to
 /// publish a selected-source app build into its live worktree.

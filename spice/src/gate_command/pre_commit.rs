@@ -13,7 +13,7 @@ use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
 };
-use wire::{Fault, FaultClass, Outcome, Refusal};
+use wire::{Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic};
 
 const WORKER_ARGUMENT: &str = "__gate-pre-commit-worker";
 const REPORT_RECORD: u8 = b'R';
@@ -334,7 +334,7 @@ fn worker_failure(failure: WorkerFailure) -> Outcome<BatteryReport> {
         })
     } else {
         Outcome::Refusal(Refusal::bare(
-            wire::RefusalDiagnostic::new(
+            RefusalDiagnostic::new(
                 failure.reason,
                 None,
                 Some("one complete canonical Rust battery capture".to_owned()),
@@ -350,7 +350,7 @@ fn worker_failure(failure: WorkerFailure) -> Outcome<BatteryReport> {
 fn deadline(progress: &Path) -> Outcome<BatteryReport> {
     let phase = last_phase(progress);
     Outcome::Refusal(Refusal::bare(
-        wire::RefusalDiagnostic::new(
+        RefusalDiagnostic::new(
             "gate::pre-commit-deadline-elapsed",
             Some("canonical-commit-gate".to_owned()),
             Some(format!(
@@ -532,7 +532,7 @@ mod tests {
         assert_eq!(refusal.reason(), "gate::pre-commit-deadline-elapsed");
         let observed = refusal
             .diagnostic()
-            .and_then(wire::RefusalDiagnostic::observed)
+            .and_then(RefusalDiagnostic::observed)
             .expect("deadline retains phase evidence");
         assert!(observed.contains("phase=family family=toolchain"));
         assert!(observed.contains("findings=incomplete"));

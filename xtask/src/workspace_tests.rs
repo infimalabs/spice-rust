@@ -128,18 +128,36 @@ pub fn run(
     concurrency: usize,
     output: &mut impl Write,
 ) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
-    let policy = RunPolicy::production(concurrency)?;
     let root = env::current_dir().map_err(|error| {
         WorkspaceTestError::new(format!("working directory unavailable: {error}"))
     })?;
-    let inventory = acquire_inventory(&root, &environment, OsStr::new("cargo"))?;
+    run_at(&root, environment, concurrency, output)
+}
+
+/// Run the canonical workspace-test coordinator against one already selected root.
+///
+/// This is the same inventory, partitioner, process contract, and coordinator as
+/// [`run`]; only the working root is supplied by the caller that owns an
+/// immutable source selection.
+///
+/// # Errors
+///
+/// Returns metadata, partition, launch, supervision, timeout, or test failures.
+pub fn run_at(
+    root: &Path,
+    environment: Environment,
+    concurrency: usize,
+    output: &mut impl Write,
+) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
+    let policy = RunPolicy::production(concurrency)?;
+    let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
     let execution = WorkspaceTestExecution::from_inventory(&inventory);
     let shards = partition(&inventory);
     validate_partition(&inventory, &shards)?;
     let policy = policy.for_shards(shards.len());
     Coordinator::new(
         shards,
-        root,
+        root.to_path_buf(),
         environment,
         OsString::from("cargo"),
         policy,

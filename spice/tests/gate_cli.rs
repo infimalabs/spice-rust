@@ -785,6 +785,40 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).expect("remove gate scratch");
+        remove_scratch(&self.0)
+            .unwrap_or_else(|error| panic!("remove gate scratch {}: {error}", self.0.display()));
+    }
+}
+
+fn remove_scratch(path: &Path) -> std::io::Result<()> {
+    for attempt in 0..20 {
+        match fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if attempt == 19 => return Err(error),
+            Err(_) => {
+                make_tree_writable(path);
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn make_tree_writable(path: &Path) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(permissions.mode() | 0o700);
+    let _ = fs::set_permissions(path, permissions);
+    if !metadata.is_dir() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        make_tree_writable(&entry.path());
     }
 }
