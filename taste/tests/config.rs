@@ -227,7 +227,7 @@ message = "Prefer the third letter."
 }
 
 #[test]
-fn a_driver_and_model_scoped_bag_only_fires_in_its_shared_applicability_context() {
+fn a_vendor_and_model_scoped_bag_only_fires_in_its_shared_applicability_context() {
     let bag = configured(
         r#"
 [taste.alpha]
@@ -252,9 +252,9 @@ scopes = { vendors = ["codex"], models = ["gpt-5"] }
     );
     assert!(
         bag.hits(&prose("one aardvark here"), &claude)
-            .expect("other driver resolves")
+            .expect("other vendor resolves")
             .is_empty(),
-        "spice-shape case 438: a driver-scoped bag cannot fire elsewhere",
+        "spice-shape case 438: a vendor-scoped bag cannot fire elsewhere",
     );
     assert!(
         bag.hits(
@@ -334,7 +334,7 @@ scopes = { vendors = ["codex"] }
     .expect("valid constrained row decodes");
     let missing = bag
         .hits(&prose("one aardvark here"), &PolicyContext::new())
-        .expect_err("missing constrained driver must refuse");
+        .expect_err("missing constrained vendor must refuse");
     assert_eq!(missing.code(), "policy::context-missing");
     assert_eq!(missing.dimension(), Some(gate::ScopeAxis::Vendors));
 }

@@ -297,7 +297,7 @@ fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
 }
 
 #[test]
-fn driver_scoped_tastes_follow_the_durable_lane_vendor() {
+fn vendor_scoped_tastes_follow_the_durable_lane_vendor() {
     let bag = taste::configured(
         r#"
 [taste.polling]
@@ -306,7 +306,7 @@ message = "Wait for the terminal event."
 scopes = { vendors = ["codex"] }
 "#,
     )
-    .expect("driver-scoped bag");
+    .expect("vendor-scoped bag");
     let codex = Fixture::with_vendor("scoped-codex", "codex");
     let claude = Fixture::with_vendor("scoped-claude", "claude");
     let codex_record = prose_record(codex.lane, codex.occupant, "Polling is not completion.");
