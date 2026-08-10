@@ -1327,13 +1327,15 @@ mod topology_tests {
 
     #[test]
     fn a_stale_topology_refusal_requires_an_authoritative_refresh() {
-        let stale = Outcome::<()>::Refusal(wire::Refusal {
-            reason: "lane::topology-moved".to_owned(),
-            witness: Some("topology_revision".to_owned()),
-            expected: Some("7".to_owned()),
-            observed: Some("8".to_owned()),
-            remedy: "read the lane table".to_owned(),
-        });
+        let stale = Outcome::<()>::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::topology-moved",
+                Some("topology_revision".to_owned()),
+                Some("7".to_owned()),
+                Some("8".to_owned()),
+            )
+            .with_detail("read the lane table"),
+        ));
         assert!(topology_mutation_requires_refresh(&stale));
 
         let current = Outcome::Reply(wire::Reply {
