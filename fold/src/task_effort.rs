@@ -73,6 +73,12 @@ pub fn task_effort_answer(materialization: &Materialization) -> Result<EffortAns
             materialization.reducer_version
         ));
     }
+    if materialization.cursor.position() != materialization.horizon.position() {
+        return Err(format!(
+            "task::effort materialization cursor {:?} is not complete through horizon {:?}",
+            materialization.cursor, materialization.horizon
+        ));
+    }
     serde_json::from_value(materialization.payload().clone()).map_err(|error| error.to_string())
 }
 

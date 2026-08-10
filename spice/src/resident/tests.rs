@@ -36,6 +36,78 @@ fn fixture(name: &str) -> PathBuf {
     ))
 }
 
+#[test]
+fn effort_surface_binds_position_and_refuses_an_ahead_generation() {
+    let (root, paths) = resident_fixture("effort-authority");
+    let mut authority = journal::Journal::open(&paths.journal).expect("fixture authority opens");
+    authority
+        .apply(effort_recognition("authority", 1))
+        .expect("authority fact commits");
+    let authority_snapshot = authority.fact_snapshot().expect("authority snapshot");
+
+    let mut future = journal::Journal::in_memory().expect("future authority opens");
+    future
+        .apply(effort_recognition("authority", 1))
+        .expect("shared authority fact commits");
+    future
+        .apply(effort_recognition("future", 2))
+        .expect("future fact commits");
+    let future_snapshot = future.fact_snapshot().expect("future snapshot");
+
+    let mut store = fold::Store::open(&paths.folds).expect("fold store opens");
+    store
+        .read_or_rebuild_snapshot(&authority_snapshot, &fold::TaskEffortReducer)
+        .expect("authority generation materializes");
+    drop(store);
+
+    let bus = Bus::start(authority).expect("authority bus starts");
+    let exact = effort_surface::read(&bus, &paths, &wire::intent::EffortRead { task: None });
+    let Outcome::Reply(Reply { position, body }) = exact else {
+        panic!("exact effort generation did not reply")
+    };
+    assert_eq!(position, ReplyPosition::Snapshot(seq(1)));
+    assert!(matches!(body, CommandAnswer::Effort(_)));
+
+    let mut store = fold::Store::open(&paths.folds).expect("fold store reopens");
+    store
+        .read_or_rebuild_snapshot(&future_snapshot, &fold::TaskEffortReducer)
+        .expect("future generation publishes");
+    drop(store);
+
+    let refused = effort_surface::read(&bus, &paths, &wire::intent::EffortRead { task: None });
+    let Outcome::Fault(fault) = refused else {
+        panic!("resident effort read did not fail closed without an answer")
+    };
+    assert_eq!(fault.reason, "effort::fold-failed");
+
+    drop(bus);
+    fs::remove_dir_all(root).expect("remove effort authority fixture");
+}
+
+fn effort_recognition(label: &str, second: u8) -> JournalWrite {
+    let at = format!("2030-04-12T18:44:{second:02}.271Z")
+        .parse()
+        .expect("fixture instant");
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("recovery:{label}")
+            .parse()
+            .expect("fixture recovery origin"),
+        at,
+        Producer::ResidentRecognition,
+    );
+    write
+        .fact(
+            wire::body::JournalBacked {
+                bundle: label.to_owned(),
+                manifest: Vec::new(),
+            },
+            FactCause::Root,
+        )
+        .expect("fixture recognition fact");
+    write
+}
+
 fn listen_for(argv: &[&str]) -> CommandResult<SocketAddr> {
     let matches = spice::cli::command()
         .try_get_matches_from(argv)

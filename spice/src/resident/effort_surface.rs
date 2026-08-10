@@ -37,9 +37,23 @@ pub(super) fn read(bus: &Bus, paths: &RuntimePaths, read: &EffortRead) -> Outcom
         Ok(answer) => answer,
         Err(error) => return typed_protocol_fault("effort::payload-invalid", &error),
     };
+    let Some(materialized_cursor) = materialization.cursor.position() else {
+        return typed_protocol_fault(
+            "effort::cursor-missing",
+            "task::effort returned an empty cursor for non-empty authority",
+        );
+    };
+    if materialized_cursor != horizon {
+        return typed_protocol_fault(
+            "effort::snapshot-mismatch",
+            &format!(
+                "task::effort materialization is at {materialized_cursor}, authority snapshot is at {horizon}"
+            ),
+        );
+    }
     match select_task_effort(answer, read) {
         Ok(selected) => Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(horizon),
+            position: ReplyPosition::Snapshot(materialized_cursor),
             body: CommandAnswer::Effort(Box::new(selected)),
         }),
         Err(error) => typed_protocol_fault("effort::selection-failed", &error),
