@@ -614,7 +614,11 @@ pub(super) fn task_review(
         Ok(decided) => decided,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&review.task) {
+    let parent = match task_origin(&review.task) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
+    let origin = match resolve_creation_origin(None, command.actor(), &snapshot, Some(parent)) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -622,7 +626,12 @@ pub(super) fn task_review(
         Ok(git) => git,
         Err(outcome) => return outcome,
     };
-    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
+    let mut write = JournalWrite::new(
+        command.actor().clone(),
+        origin.clone(),
+        at,
+        Producer::CommandDoor,
+    );
     guard(&mut write, command.expected().to_vec());
     let reviewed = match write.fact(
         body::TaskReviewed {
@@ -654,7 +663,9 @@ pub(super) fn task_review(
         fact,
         ..claim
     });
-    let tracking = record_followups(&mut write, command, &snapshot, review, reviewed, projects);
+    let tracking = record_followups(
+        &mut write, command, &snapshot, review, reviewed, &origin, projects,
+    );
     if let Err(outcome) = tracking {
         return outcome;
     }
@@ -828,10 +839,20 @@ fn commit_doc_plan(
     apply: &DocApply,
     plan: &DocPlan,
 ) -> Outcome<CommandAnswer> {
-    let origin = match task_origin(&plan.touched[0]) {
+    let intrinsic = match format!("doc:{}", apply.preview).parse::<wire::Origin>() {
         Ok(origin) => origin,
-        Err(outcome) => return outcome,
+        Err(error) => {
+            return protocol_fault(
+                "doc::origin-invalid",
+                &format!("preview digest did not form a document origin: {error}"),
+            );
+        }
     };
+    let origin =
+        match resolve_creation_origin(None, command.actor(), &plan.snapshot, Some(intrinsic)) {
+            Ok(origin) => origin,
+            Err(outcome) => return outcome,
+        };
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,

@@ -50,12 +50,16 @@ fn gate_findings_file_exact_deferred_tasks() {
     let board = gate_board(&bus, epoch, Actor::Operator);
     let tasks = gate_tasks(&board);
     assert_eq!(tasks.len(), 2);
+    let causal: wire::Origin = format!("gate:{report}")
+        .parse()
+        .expect("gate report forms origin");
     for (task, finding) in tasks.iter().zip([first, second]) {
         assert_eq!(task.statement.body.project, "gate.findings");
         assert!(task.workflow.body.deferral.is_some());
+        assert_eq!(task.statement.body.provenance, causal);
         assert_eq!(
-            task.statement.body.provenance.to_string(),
-            format!("gate:{report}")
+            creation_fact_origin(&bus, &task.statement.body.handle),
+            causal
         );
         assert!(task.statement.body.tags.contains(&finding_tag(&finding)));
     }
