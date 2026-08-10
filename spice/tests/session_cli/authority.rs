@@ -5,11 +5,13 @@ use board::allocate::{Mint, mint};
 use journal::{FactCause, Journal, JournalWrite};
 use serde_json::json;
 use wire::{
-    Actor, CanonicalUuid, Instant, LaneResidency, Origin, Phase, Producer, ResidencyHead,
-    ResidentState, TaskStamp, WorkflowHead, body,
+    Actor, CanonicalUuid, Disposition, Instant, LaneResidency, Origin, Phase, Producer,
+    ResidencyHead, ResidentState, SteeringHead, TaskStamp, WorkflowHead, body,
 };
 
 use super::{Scratch, codex_rows, reply_forms_in, strings, write_jsonl};
+
+const SESSION_PROJECT: &str = "spice.session";
 
 fn fake_repository(root: &Path) {
     fs::create_dir(root.join(".git")).expect("fixture git directory is created");
@@ -126,7 +128,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
     let seated = write
         .fact(body::UpSeated { epoch }, FactCause::Root)
         .expect("seating fact builds");
-    let lanes = briefing_lanes(lane, occupant, epoch, peer_lane, peer_occupant, thread);
+    let lanes = briefing_lanes(lane, occupant, peer_lane, peer_occupant, epoch, thread);
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
@@ -139,7 +141,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         origin.clone(),
         held.clone(),
         "Compose Rust briefings",
-        "spice.session",
+        SESSION_PROJECT,
         "todo",
     );
     task_added(
@@ -147,23 +149,38 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         origin.clone(),
         peer.clone(),
         "Peer active claim",
-        "spice.session",
+        SESSION_PROJECT,
         "todo",
     );
-    write
-        .fact(
-            body::SteerSent {
-                directive: uuid(0xaf),
-                key: "1kAsk001".to_owned(),
-                lane,
-                text: "Address this exact steering ask".to_owned(),
-                control: None,
-                attachments: Vec::new(),
-                expires: instant(30),
-            },
-            FactCause::Root,
-        )
+    let steering = body::SteerSent {
+        directive: uuid(0xaf),
+        key: "1kAsk001".to_owned(),
+        lane,
+        text: "Address this exact steering ask".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: instant(30),
+    };
+    let steering_fact = write
+        .fact(steering.clone(), FactCause::Root)
         .expect("steering fact builds");
+    let steering_origin = origin.clone();
+    write.steering_head(steering_fact, move |created| SteeringHead {
+        directive: steering.directive,
+        key: steering.key,
+        lane: steering.lane,
+        text: steering.text,
+        control: steering.control,
+        attachments: steering.attachments,
+        published: instant(0),
+        expires: steering.expires,
+        stage: body::SteeringStage::Published,
+        escalations: Vec::new(),
+        disposition: Disposition::Live,
+        origin: steering_origin,
+        created,
+        minted_millis: None,
+    });
     journal.apply(write).expect("fixture authority seeds");
 
     mint_claim(
@@ -173,7 +190,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         lane,
         occupant,
         epoch,
-        "spice.session",
+        SESSION_PROJECT,
         instant(1),
     );
     mint_claim(
@@ -183,7 +200,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         peer_lane,
         peer_occupant,
         epoch,
-        "spice.session",
+        SESSION_PROJECT,
         instant(2),
     );
 }
@@ -191,9 +208,9 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
 fn briefing_lanes(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    epoch: CanonicalUuid,
     peer_lane: CanonicalUuid,
     peer_occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
     thread: &str,
 ) -> Vec<LaneResidency> {
     vec![
@@ -240,6 +257,10 @@ fn briefing_lanes(
     ]
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "claim fixture states every durable identity and residency carrier"
+)]
 fn mint_claim(
     journal: &mut Journal,
     task: TaskStamp,

@@ -17,8 +17,12 @@ use super::*;
 // this resident root stays below the file-shape base, not merely its ratchet.
 #[path = "tests/canvas_announcement.rs"]
 mod canvas_announcement;
+#[path = "tests/media.rs"]
+mod media;
 #[path = "tests/message_unavailable.rs"]
 mod message_unavailable;
+#[path = "tests/startup.rs"]
+mod startup;
 #[path = "tests/startup_window.rs"]
 mod startup_window;
 
@@ -36,377 +40,76 @@ fn fixture(name: &str) -> PathBuf {
     ))
 }
 
-fn listen_for(argv: &[&str]) -> CommandResult<SocketAddr> {
-    let matches = spice::cli::command()
-        .try_get_matches_from(argv)
-        .expect("declared up operands parse");
-    requested_listen(spice::cli::selected_matches(&matches))
-}
-
-fn listen_refusal_for(argv: &[&str]) -> String {
-    match listen_for(argv) {
-        Ok(listen) => panic!("{argv:?} must not bind {listen}"),
-        Err(Outcome::Refusal(refusal)) => refusal.reason().to_owned(),
-        Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
-    }
-}
-
-fn access_for(argv: &[&str]) -> CommandResult<()> {
-    let matches = spice::cli::command()
-        .try_get_matches_from(argv)
-        .expect("declared up operands parse");
-    let leaf = spice::cli::selected_matches(&matches);
-    let listen = requested_listen(leaf)?;
-    requested_access(leaf, listen).map(|_| ())
-}
-
-fn access_refusal(argv: &[&str]) -> Refusal {
-    match access_for(argv) {
-        Ok(()) => panic!("{argv:?} must not admit access"),
-        Err(Outcome::Refusal(refusal)) => refusal,
-        Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
-    }
-}
-
-fn access_refusal_for(argv: &[&str]) -> String {
-    access_refusal(argv).reason().to_owned()
-}
-
-/// The surface listens exactly where the operator requested or at one stable default.
-///
-/// Both halves are load-bearing. An operator reaching this surface from another
-/// machine has to be able to say which address it answers on, and an operator
-/// who says nothing has to get the same URL back after a restart: an ephemeral
-/// port would hand them a new address every time, which no bookmark, open tab,
-/// or written-down instruction survives.
 #[test]
-fn the_listen_address_is_what_was_asked_for_or_one_stable_default() {
-    assert_eq!(listen_for(&["spice", "up"]), Ok(DEFAULT_LISTEN));
-    assert_eq!(DEFAULT_LISTEN.port(), 8767);
-    assert_ne!(
-        DEFAULT_LISTEN.port(),
-        0,
-        "an ephemeral default port changes the URL on every restart"
-    );
+fn effort_surface_binds_position_and_refuses_an_ahead_generation() {
+    let (root, paths) = resident_fixture("effort-authority");
+    let mut authority = journal::Journal::open(&paths.journal).expect("fixture authority opens");
+    authority
+        .apply(effort_recognition("authority", 1))
+        .expect("authority fact commits");
+    let authority_snapshot = authority.fact_snapshot().expect("authority snapshot");
 
-    assert_eq!(
-        listen_for(&["spice", "up", "--host", "0.0.0.0"]),
-        Ok(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            DEFAULT_LISTEN.port()
-        )),
-        "a named host keeps the default port"
-    );
-    assert_eq!(
-        listen_for(&["spice", "up", "--port", "9000"]),
-        Ok(SocketAddr::new(DEFAULT_LISTEN.ip(), 9000)),
-        "a named port keeps the default host"
-    );
-    assert_eq!(
-        listen_for(&["spice", "up", "--host", "10.0.0.5", "--port", "9000"]),
-        Ok("10.0.0.5:9000".parse().expect("fixture address")),
-        "both named is bound verbatim"
-    );
-}
+    let mut future = journal::Journal::in_memory().expect("future authority opens");
+    future
+        .apply(effort_recognition("authority", 1))
+        .expect("shared authority fact commits");
+    future
+        .apply(effort_recognition("future", 2))
+        .expect("future fact commits");
+    let future_snapshot = future.fact_snapshot().expect("future snapshot");
 
-/// An address this machine cannot listen on is named rather than approximated.
-///
-/// Resolving a host name here would bind whatever the resolver answered with,
-/// which is not what the operator asked for and not something they could check
-/// afterwards, so a name is refused instead of guessed at.
-#[test]
-fn an_unbindable_listen_request_is_refused_by_name() {
-    assert_eq!(
-        listen_refusal_for(&["spice", "up", "--host", "canvas.example"]),
-        "resident::host-invalid"
-    );
-    assert_eq!(
-        listen_refusal_for(&["spice", "up", "--port", "70000"]),
-        "resident::port-invalid"
-    );
-    assert_eq!(
-        listen_refusal_for(&["spice", "up", "--port", "http"]),
-        "resident::port-invalid"
-    );
-}
+    let mut store = fold::Store::open(&paths.folds).expect("fold store opens");
+    store
+        .read_or_rebuild_snapshot(&authority_snapshot, &fold::TaskEffortReducer)
+        .expect("authority generation materializes");
+    drop(store);
 
-#[test]
-fn remote_listening_requires_explicit_consent_and_a_url_safe_token() {
-    assert_eq!(
-        access_refusal_for(&["spice", "up", "--host", "0.0.0.0"]),
-        "resident::insecure-bind-consent-required"
-    );
-    assert_eq!(
-        access_refusal_for(&["spice", "up", "--host", "0.0.0.0", "--allow-insecure-bind",]),
-        "resident::auth-token-required"
-    );
-    let invalid = access_refusal(&[
-        "spice",
-        "up",
-        "--host",
-        "0.0.0.0",
-        "--allow-insecure-bind",
-        "--auth-token",
-        "too-short-token",
-    ]);
-    assert_eq!(invalid.reason(), "resident::auth-token-invalid");
-    assert_eq!(
-        invalid
-            .diagnostic()
-            .and_then(wire::RefusalDiagnostic::observed),
-        None,
-        "a refused credential is never echoed"
-    );
-    assert!(
-        access_for(&[
-            "spice",
-            "up",
-            "--host",
-            "0.0.0.0",
-            "--allow-insecure-bind",
-            "--auth-token",
-            "correct-horse-battery-staple",
-        ])
-        .is_ok(),
-        "explicit consent and a caller-held token admit the remote bind"
-    );
-    assert!(
-        access_for(&["spice", "up"]).is_ok(),
-        "the stable loopback default remains frictionless"
-    );
-}
-
-/// `::1` is loopback here and at the listener, because one predicate says so.
-///
-/// This gate and the canvas one both ask [`std::net::IpAddr::is_loopback`]. A
-/// narrowing on either side would split one decision in two: this side would
-/// admit `--host ::1` with no token, and the listener would refuse the address
-/// it had just admitted, telling the operator a machine-local bind is remote.
-///
-/// The wildcard cases sit beside the loopback one deliberately. An `is_ok` on
-/// `::1` alone passes just as well against a gate that admits everything, and
-/// `::` is the address that a rule reading only `Ipv4Addr` would wave through.
-#[test]
-fn ipv6_loopback_needs_no_consent_or_token_while_its_wildcard_needs_both() {
-    assert!(
-        access_for(&["spice", "up", "--host", "::1"]).is_ok(),
-        "IPv6 loopback is reachable from this machine alone"
-    );
-
-    assert_eq!(
-        access_refusal_for(&["spice", "up", "--host", "::"]),
-        "resident::insecure-bind-consent-required"
-    );
-    assert_eq!(
-        access_refusal_for(&["spice", "up", "--host", "::", "--allow-insecure-bind"]),
-        "resident::auth-token-required"
-    );
-}
-
-#[test]
-fn runtime_paths_follow_the_repository_common_directory() {
-    let root = fixture("main");
-    let nested = root.join("a/b");
-    fs::create_dir_all(root.join(".git")).expect("git directory");
-    fs::create_dir_all(&nested).expect("nested directory");
-
-    let paths = RuntimePaths::discover(&nested).expect("paths resolve");
-    let common = fs::canonicalize(root.join(".git")).expect("canonical common directory");
-
-    assert_eq!(paths.runtime, common.join(".spice-rs"));
-    assert_eq!(
-        paths.journal,
-        common.join(".spice-rs/data/spicejournal.sqlite3")
-    );
-    fs::remove_dir_all(root).expect("fixture cleanup");
-}
-
-/// A holder replacement never creates an empty observation for a contender.
-///
-/// The callback is the exact instant after the writer has prepared its one
-/// landing write and before that write occurs. The second acquisition therefore
-/// exercises the resident's real contended-refusal path while the replacement
-/// is in flight. Restoring a truncation before that callback makes this fixture
-/// observe `holder metadata unavailable` instead of the seeded holder.
-#[test]
-fn contended_resident_names_the_holder_while_its_record_is_rewritten() {
-    let root = fixture("holder-rewrite");
-    fs::create_dir_all(root.join(".git")).expect("git directory");
-    let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
-    fs::create_dir_all(&paths.runtime).expect("runtime directory");
-    let lock = LockFile::new(
-        LockName::new("resident").expect("resident lock name"),
-        &paths.resident,
-    );
-    let Acquisition::Acquired(possession) = lock.try_acquire().expect("holder acquires") else {
-        panic!("fresh resident lock unexpectedly contended");
+    let bus = Bus::start(authority).expect("authority bus starts");
+    let exact = effort_surface::read(&bus, &paths, &wire::intent::EffortRead { task: None });
+    let Outcome::Reply(Reply { position, body }) = exact else {
+        panic!("exact effort generation did not reply")
     };
-    let seeded = "pid=4242;epoch=seeded-holder";
-    possession
-        .rewrite_record(seeded.as_bytes())
-        .expect("seeded holder lands");
+    assert_eq!(position, ReplyPosition::Snapshot(seq(1)));
+    assert!(matches!(body, CommandAnswer::Effort(_)));
 
-    let mut observed = None;
-    possession
-        .rewrite_record_with(b"pid=4242;epoch=replacement", || {
-            let Err(Outcome::Refusal(refusal)) = ResidentLock::acquire(&paths) else {
-                panic!("the resident contender did not refuse");
-            };
-            assert_eq!(refusal.reason(), "resident::already-up");
-            observed = refusal
-                .diagnostic()
-                .and_then(wire::RefusalDiagnostic::observed)
-                .map(str::to_owned);
-            Ok(())
-        })
-        .expect("replacement holder lands");
+    let mut store = fold::Store::open(&paths.folds).expect("fold store reopens");
+    store
+        .read_or_rebuild_snapshot(&future_snapshot, &fold::TaskEffortReducer)
+        .expect("future generation publishes");
+    drop(store);
 
-    assert_eq!(observed.as_deref(), Some(seeded));
-    assert_eq!(
-        fs::read_to_string(&paths.resident)
-            .expect("replacement holder reads")
-            .trim(),
-        "pid=4242;epoch=replacement"
-    );
-    drop(possession);
-    fs::remove_dir_all(root).expect("fixture cleanup");
+    let refused = effort_surface::read(&bus, &paths, &wire::intent::EffortRead { task: None });
+    let Outcome::Fault(fault) = refused else {
+        panic!("resident effort read did not fail closed without an answer")
+    };
+    assert_eq!(fault.reason, "effort::fold-failed");
+
+    drop(bus);
+    fs::remove_dir_all(root).expect("remove effort authority fixture");
 }
 
-/// A liveness observation cannot impersonate the resident it is checking.
-///
-/// The probe hook freezes the shared observation lock after it lands. Only
-/// then does startup make its exclusive attempt; its contention hook releases
-/// the probe, proving the two operations overlapped at the kernel lock rather
-/// than merely running in nearby threads. Startup must retry that observation,
-/// while the same availability path must still distinguish its resulting live
-/// exclusive holder from the available lock after release.
-#[cfg(unix)]
-#[test]
-fn resident_start_survives_an_overlapping_liveness_probe() {
-    let root = fixture("startup-probe-overlap");
-    fs::create_dir_all(root.join(".git")).expect("git directory");
-    let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
-    fs::create_dir_all(&paths.runtime).expect("runtime directory");
-    fs::write(&paths.resident, b"stale holder record\n").expect("existing resident lock file");
-    let lock = LockFile::new(
-        LockName::new("resident").expect("resident lock name"),
-        &paths.resident,
+fn effort_recognition(label: &str, second: u8) -> JournalWrite {
+    let at = format!("2030-04-12T18:44:{second:02}.271Z")
+        .parse()
+        .expect("fixture instant");
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("recovery:{label}")
+            .parse()
+            .expect("fixture recovery origin"),
+        at,
+        Producer::ResidentRecognition,
     );
-    let (probe_held, probe_landed) = mpsc::sync_channel(0);
-    let (release_probe, released) = mpsc::sync_channel(0);
-
-    std::thread::scope(|scope| {
-        let observed_lock = lock.clone();
-        let observer = scope.spawn(move || {
-            observed_lock
-                .availability_with(|| {
-                    probe_held.send(()).expect("announce held probe");
-                    released.recv().expect("startup releases probe");
-                })
-                .expect("probe answers")
-        });
-        probe_landed.recv().expect("probe lands before startup");
-
-        let mut release_probe = Some(release_probe);
-        let resident = ResidentLock::acquire_with(&paths, || {
-            if let Some(release) = release_probe.take() {
-                release.send(()).expect("release overlapping probe");
-            }
-        })
-        .expect("probe-width contention cannot become already-up");
-
-        assert_eq!(
-            observer.join().expect("probe thread"),
-            sill::Availability::Available
-        );
-        assert_eq!(
-            lock.availability().expect("live resident probe"),
-            sill::Availability::Held
-        );
-        drop(resident);
-        assert_eq!(
-            lock.availability().expect("released resident probe"),
-            sill::Availability::Available
-        );
-    });
-
-    fs::remove_dir_all(root).expect("fixture cleanup");
-}
-
-#[test]
-fn stale_surface_cleanup_is_idempotent_and_leaves_inbox_authority() {
-    let root = fixture("stale-surfaces");
-    fs::create_dir_all(root.join(".git")).expect("git directory");
-    let paths = RuntimePaths::discover(&root).expect("paths resolve");
-    fs::create_dir_all(&paths.lane_canvas).expect("lane discovery directory");
-    fs::write(&paths.canvas, b"stale operator discovery").expect("operator discovery");
-    fs::write(paths.lane_canvas.join("lane"), b"stale lane discovery").expect("lane discovery");
-    fs::create_dir_all(&paths.inbox).expect("inbox directory");
-    fs::write(paths.inbox.join("lane"), b"durable pending direction").expect("lane inbox");
-
-    paths.clear_stale_surfaces().expect("stale surfaces clear");
-    paths
-        .clear_stale_surfaces()
-        .expect("repeated stale surface cleanup is ordinary");
-
-    assert!(!paths.canvas.exists());
-    assert!(!paths.lane_canvas.exists());
-    assert_eq!(
-        fs::read(paths.inbox.join("lane")).expect("inbox remains"),
-        b"durable pending direction"
-    );
-    fs::remove_dir_all(root).expect("fixture cleanup");
-}
-
-#[test]
-fn linked_worktrees_share_the_git_common_directory() {
-    let root = fixture("linked");
-    let worktree = root.join("worktree");
-    let common = root.join("common.git");
-    let git_dir = common.join("worktrees/linked");
-    fs::create_dir_all(&worktree).expect("worktree directory");
-    fs::create_dir_all(&git_dir).expect("git directory");
-    fs::write(
-        worktree.join(".git"),
-        format!("gitdir: {}\n", git_dir.display()),
-    )
-    .expect("git marker");
-    fs::write(git_dir.join("commondir"), "../..\n").expect("common marker");
-
-    let paths = RuntimePaths::discover(&worktree).expect("paths resolve");
-    let common = fs::canonicalize(&common).expect("canonical common directory");
-
-    assert_eq!(paths.runtime, common.join(".spice-rs"));
-    fs::remove_dir_all(root).expect("fixture cleanup");
-}
-
-#[test]
-fn startup_surface_captures_configured_hidden_project_policy_once() {
-    let root = fixture("hidden-project-policy");
-    fs::create_dir_all(root.join(".git")).expect("git directory");
-    fs::write(
-        root.join("spice-rust.toml"),
-        "[tasks]\nstems = ['board']\nhidden_stems = ['sandbox']\n",
-    )
-    .expect("tracked task metadata");
-    let repository = Repository::discover(&root).expect("fixture repository resolves");
-
-    let startup = load_startup_surface(&repository).expect("startup policy resolves");
-    assert_eq!(
-        startup.config.projects.hidden_stems(),
-        ["oops", "maxim_proposal", "sandbox"]
-    );
-    assert_eq!(
-        startup
-            .config
-            .projects
-            .admit(".sandbox.triage_1")
-            .expect("configured hidden descendant")
-            .visibility()
-            .hidden_stem(),
-        Some("sandbox")
-    );
-    fs::remove_dir_all(root).expect("fixture cleanup");
+    write
+        .fact(
+            wire::body::JournalBacked {
+                bundle: label.to_owned(),
+                manifest: Vec::new(),
+            },
+            FactCause::Root,
+        )
+        .expect("fixture recognition fact");
+    write
 }
 
 #[test]
@@ -430,7 +133,7 @@ fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
             process_spec("sleep 0.05", Duration::from_secs(5)),
         )
         .expect("cooperative group starts");
-    seed_lane(&bus, epoch, drained_lane, drained_occupant);
+    seed_lane(&bus, epoch, drained_lane, drained_occupant, &root);
 
     let killed_lane = test_uuid(4);
     let killed_occupant = test_uuid(5);
@@ -444,7 +147,7 @@ fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
             ),
         )
         .expect("non-cooperative group starts");
-    seed_lane(&bus, epoch, killed_lane, killed_occupant);
+    seed_lane(&bus, epoch, killed_lane, killed_occupant, &root);
 
     fs::create_dir_all(&paths.degraded).expect("degraded directory");
     fs::write(
@@ -567,7 +270,7 @@ fn a_group_that_never_trapped_termination_is_not_credited_with_an_exit() {
             process_spec("while :; do sleep 1; done", Duration::from_millis(100)),
         )
         .expect("untrapped group starts");
-    seed_lane(&bus, epoch, lane, occupant);
+    seed_lane(&bus, epoch, lane, occupant, &root);
 
     assert!(matches!(
         drive_shutdown(&bus, &paths, epoch, &mut seats),
@@ -651,7 +354,7 @@ fn capture_failure_vacates_and_durably_degrades_the_exact_occupant() {
             process_spec("exec /usr/bin/tail -f /dev/null", Duration::from_secs(5)),
         )
         .expect("capture fixture group starts");
-    seed_lane(&bus, epoch, lane, occupant);
+    seed_lane(&bus, epoch, lane, occupant, &root);
 
     super::lane_surface::capture_failed(
         &bus,
@@ -735,7 +438,7 @@ fn kernel_exit_event_vacates_and_records_only_the_exact_occupant() {
     seats
         .seat_observed(lane, occupant, spec, observation)
         .expect("exiting occupant starts");
-    seed_lane(&bus, epoch, lane, occupant);
+    seed_lane(&bus, epoch, lane, occupant, &root);
     exit_event
         .recv_timeout(Duration::from_secs(5))
         .expect("waitid callback reports the exit");
@@ -781,7 +484,7 @@ fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
     let lane = test_uuid(2);
     let occupant = test_uuid(3);
     let directive = test_uuid(4);
-    seed_lane(&bus, epoch, lane, occupant);
+    seed_lane(&bus, epoch, lane, occupant, &root);
     let observed = current_residency(&bus, epoch).expect("occupied residency reads");
     let mut vacant = observed.body().clone();
     let row = vacant
@@ -808,21 +511,26 @@ fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
     commit(&bus, ending).expect("vacancy commits");
     let residency = current_residency(&bus, epoch).expect("vacant residency reads");
     let expires: wire::Instant = "2026-08-10T07:07:19.000Z".parse().expect("fixture expiry");
-    let mut sent =
-        write(Actor::Operator, epoch, Producer::CommandDoor).expect("steering write starts");
-    sent.fact(
-        wire::body::SteerSent {
-            directive,
-            key: "1kJK6N3R".to_owned(),
-            lane,
-            text: "do not lose me".to_owned(),
-            control: None,
-            attachments: Vec::new(),
-            expires,
-        },
-        FactCause::Existing(residency.position()),
-    )
-    .expect("steering fact is valid");
+    let at = wire::Instant::new(jiff::Timestamp::now()).expect("steering instant");
+    let origin: wire::Origin = format!("resident:{epoch}")
+        .parse()
+        .expect("steering origin");
+    let mut sent = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let body = wire::body::SteerSent {
+        directive,
+        key: "1kJK6N3R".to_owned(),
+        lane,
+        text: "do not lose me".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires,
+    };
+    let pending = sent
+        .fact(body.clone(), FactCause::Existing(residency.position()))
+        .expect("steering fact is valid");
+    sent.steering_head(pending, move |seq| {
+        steer::Ledger::sent_head(&body, origin, at, seq).expect("steering head is valid")
+    });
     commit(&bus, sent).expect("pending steering commits");
     let cursor = bus
         .task_snapshot()
@@ -999,8 +707,8 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
             process_spec("sleep 0.05", Duration::from_secs(5)),
         )
         .expect("second supervised occupant starts");
-    seed_lane_in_lineage(&bus, epoch, first_lane, lineage, first_occupant);
-    seed_lane_in_lineage(&bus, epoch, second_lane, lineage, second_occupant);
+    seed_lane_in_lineage(&bus, epoch, first_lane, lineage, first_occupant, &root);
+    seed_lane_in_lineage(&bus, epoch, second_lane, lineage, second_occupant, &root);
 
     let request = wire::intent::LineageConfigure {
         topology_revision: current_residency(&bus, epoch)
@@ -1220,7 +928,7 @@ fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
                 process_spec("sleep 0.05", Duration::from_secs(5)),
             )
             .expect("supervised member starts");
-        seed_lane_in_lineage(&bus, epoch, lane, lineage, occupant);
+        seed_lane_in_lineage(&bus, epoch, lane, lineage, occupant, &root);
     }
 
     let same_team = arrange_lane_for_test(

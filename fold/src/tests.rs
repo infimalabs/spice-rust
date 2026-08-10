@@ -80,7 +80,7 @@ fn read_only_open_preserves_existing_store_bytes() {
 }
 
 #[test]
-fn stale_rebuild_advances_and_never_moves_the_cursor_backward() {
+fn an_ahead_generation_is_refused_without_returning_its_payload() {
     let mut store = Store::in_memory().expect("fold store");
     let reducer = KindReducer::new(FoldId::TaskEffort, 1);
     let first = store
@@ -89,16 +89,25 @@ fn stale_rebuild_advances_and_never_moves_the_cursor_backward() {
     let second = store
         .read_or_rebuild_snapshot(&snapshot(2), &reducer)
         .expect("stale generation rebuilds");
-    let older_read = store
-        .read_or_rebuild_snapshot(&snapshot(1), &reducer)
-        .expect("older snapshot cannot lower current");
+    let older_read = store.read_or_rebuild_snapshot(&snapshot(1), &reducer);
 
     assert_eq!(first.materialization.generation, 1);
     assert_eq!(second.rebuilt, Some(RebuildCause::Stale));
     assert_eq!(second.materialization.generation, 2);
     assert_eq!(second.materialization.cursor, Cursor::at(seq(2)));
-    assert_eq!(older_read.rebuilt, None);
-    assert_eq!(older_read.materialization, second.materialization);
+    assert_eq!(
+        refusal(older_read),
+        Refusal::GenerationAheadSnapshot {
+            fold: FoldId::TaskEffort,
+            current: Cursor::at(seq(2)),
+            authority: Cursor::at(seq(1)),
+        }
+    );
+    assert_eq!(
+        complete_read(store.read(FoldId::TaskEffort, seq(2))),
+        second.materialization,
+        "the refusal neither exposes nor replaces the future generation"
+    );
 }
 
 #[test]
@@ -224,24 +233,23 @@ fn replacement_keeps_old_readers_whole_and_payload_bytes_deterministic() {
 }
 
 #[test]
-fn a_replacement_may_never_retreat_the_applied_cursor() {
+fn an_ahead_generation_is_refused_before_a_version_rebuild() {
     let mut store = Store::in_memory().expect("fold store");
     let ahead = store
         .read_or_rebuild_snapshot(&snapshot(2), &KindReducer::new(FoldId::TaskEffort, 1))
         .expect("first generation");
     assert_eq!(ahead.materialization.cursor, Cursor::at(seq(2)));
 
-    // A new reducer version is stale against any snapshot, so this rebuilds
-    // rather than serving the current generation, and the replacement it
-    // derives sits behind what the fold already applied.
+    // A new reducer version would normally rebuild, but authority still cannot
+    // authorize serving or replacing a generation from its future.
     let retreat =
         store.read_or_rebuild_snapshot(&snapshot(1), &KindReducer::new(FoldId::TaskEffort, 2));
     assert_eq!(
         refusal(retreat),
-        Refusal::CursorMovedBackward {
+        Refusal::GenerationAheadSnapshot {
             fold: FoldId::TaskEffort,
             current: Cursor::at(seq(2)),
-            next: Cursor::at(seq(1)),
+            authority: Cursor::at(seq(1)),
         }
     );
     assert_eq!(
@@ -296,6 +304,11 @@ fn a_bounded_fold_marks_an_answer_that_trails_the_facts_it_applied() {
     assert_eq!(published.cursor, Cursor::at(seq(3)));
     assert_eq!(published.horizon, Horizon::at(seq(2)));
     assert_ne!(published.cursor.position(), published.horizon.position());
+    assert!(
+        task_effort_answer(&published)
+            .expect_err("task effort cannot report an incomplete generation")
+            .contains("is not complete through horizon")
+    );
 
     // The gap survives storage rather than being normalized away on read.
     let stored = complete_read(store.read(FoldId::TaskEffort, seq(2)));
@@ -426,6 +439,35 @@ fn a_fold_out_of_generation_numbers_refuses_rather_than_wrapping() {
 }
 
 #[test]
+fn a_generation_published_ahead_during_rebuild_refuses_the_older_payload() {
+    let path = store_path("publish-ahead");
+    let mut reader = Store::open(&path).expect("reader store");
+    reader
+        .read_or_rebuild_snapshot(&snapshot(1), &KindReducer::new(FoldId::TaskEffort, 1))
+        .expect("seed generation");
+
+    let raced =
+        reader.read_or_rebuild_snapshot(&snapshot(2), &PublishingReducer { path: path.clone() });
+    assert_eq!(
+        refusal(raced),
+        Refusal::CursorMovedBackward {
+            fold: FoldId::TaskEffort,
+            current: Cursor::at(seq(3)),
+            next: Cursor::at(seq(2)),
+        }
+    );
+
+    let current = reader
+        .current(FoldId::TaskEffort)
+        .expect("read winning generation")
+        .expect("winning generation exists");
+    assert_eq!(current.cursor, Cursor::at(seq(3)));
+    assert_ne!(current.payload(), &json!({"losing": "payload"}));
+    drop(reader);
+    fs::remove_file(path).expect("remove fixture store");
+}
+
+#[test]
 fn a_concurrent_reader_sees_one_whole_generation_across_a_publish() {
     let path = store_path("concurrent");
     let mut writer = Store::open(&path).expect("writer store");
@@ -497,6 +539,10 @@ struct KindReducer {
 
 struct MismatchedReducer;
 
+struct PublishingReducer {
+    path: PathBuf,
+}
+
 impl Reducer for MismatchedReducer {
     fn fold(&self) -> FoldId {
         FoldId::TaskEffort
@@ -512,6 +558,28 @@ impl Reducer for MismatchedReducer {
 
     fn rebuild(&self, _facts: &journal::FactSnapshot) -> Result<Reduction, String> {
         unreachable!("source admission runs before reduction")
+    }
+}
+
+impl Reducer for PublishingReducer {
+    fn fold(&self) -> FoldId {
+        FoldId::TaskEffort
+    }
+
+    fn sources(&self) -> &'static [Source] {
+        INVENTORY.definition(FoldId::TaskEffort).sources
+    }
+
+    fn version(&self) -> u32 {
+        2
+    }
+
+    fn rebuild(&self, facts: &journal::FactSnapshot) -> Result<Reduction, String> {
+        let mut publisher = Store::open(&self.path).expect("concurrent publisher store");
+        publisher
+            .read_or_rebuild_snapshot(&snapshot(3), &KindReducer::new(FoldId::TaskEffort, 1))
+            .expect("concurrent generation publishes ahead");
+        Ok(Reduction::complete(facts, json!({"losing": "payload"})))
     }
 }
 

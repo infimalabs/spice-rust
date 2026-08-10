@@ -52,6 +52,7 @@ pub mod ident;
 /// vocabularies apart, so flattening it away would forfeit that.
 pub mod intent;
 pub mod manifest;
+pub mod media;
 mod optional;
 pub mod packed;
 pub mod reply;
@@ -75,12 +76,13 @@ pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVe
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency,
-    LaneSession, LeaseHead, LineageSubscription, ResidencyHead, ResidentState, TapeLocus, TaskHead,
-    TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
-    WorkflowHead,
+    LaneSession, LeaseHead, LineageSubscription, ResidencyHead, ResidentState, SteeringHead,
+    TapeLocus, TaskHead, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
+    WitnessClass, WitnessHead, WorkflowHead,
 };
 pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected, SpeechPlayback, SpeechRequest};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
+pub use media::{Media, MediaError};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, FoldReport, FoldState, JournalBackup,

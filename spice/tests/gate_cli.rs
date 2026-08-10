@@ -97,6 +97,17 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
                 "  exit 0\n",
                 "fi\n",
                 "case \"$1\" in\n",
+                "  metadata)\n",
+                "    root=$(/bin/pwd -P)\n",
+                "    printf '%s\\n' ",
+                "'{{\"packages\":[{{\"id\":\"gate-fixture-id\",\"name\":\"gate-fixture\",",
+                "\"manifest_path\":\"'\"$root\"'/Cargo.toml\",\"dependencies\":[],",
+                "\"targets\":[{{\"name\":\"gate_fixture\",\"kind\":[\"lib\"],",
+                "\"test\":true,\"src_path\":\"'\"$root\"'/src/lib.rs\"}}]}}],",
+                "\"workspace_members\":[\"gate-fixture-id\"]}}'\n",
+                "    exit 0\n",
+                "    ;;\n",
+                "  test) exit 0 ;;\n",
                 "  fmt) exit 0 ;;\n",
                 "  check)\n",
                 "    /bin/sleep 30 & child=$!\n",
@@ -123,6 +134,10 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
     let terminal = scratch.path().join("terminal.bin");
     fs::write(&progress, []).expect("create deadline progress file");
     fs::write(&terminal, []).expect("create deadline terminal file");
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the process-boundary fixture must preserve the invoking test environment"
+    )]
     let mut environment = env::vars_os().collect::<BTreeMap<_, _>>();
     environment.insert(OsString::from(PROCESS_PATH), programs.into_os_string());
     let capture = StreamPolicy::Capture { limit: 1024 * 1024 };
@@ -237,6 +252,8 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).expect("make process tripwire executable");
     }
+    std::os::unix::fs::symlink(env!("CARGO"), tripwires.path().join("cargo"))
+        .expect("make canonical test runner Cargo available inside the process tripwire path");
 
     let gate = invoke_with_path(&["gate"], repository.path(), Some(tripwires.path()));
     let report = report_body(&gate);
@@ -662,6 +679,8 @@ impl GateRepository {
             ),
         )
         .expect("write fixture Cargo lockfile");
+        fs::write(scratch.path().join(".gitignore"), "/target/\n")
+            .expect("ignore the fixture's persistent Cargo build cache");
         let repository = Self { scratch };
         repository.write_source(1);
         repository.write_camp_lines(20);
@@ -791,14 +810,16 @@ impl Drop for Scratch {
 }
 
 fn remove_scratch(path: &Path) -> std::io::Result<()> {
-    for attempt in 0..20 {
+    const SCRATCH_REMOVE_ATTEMPTS: usize = 20;
+    const SCRATCH_REMOVE_RETRY: Duration = Duration::from_millis(25);
+    for attempt in 0..SCRATCH_REMOVE_ATTEMPTS {
         match fs::remove_dir_all(path) {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) if attempt == 19 => return Err(error),
+            Err(error) if attempt + 1 == SCRATCH_REMOVE_ATTEMPTS => return Err(error),
             Err(_) => {
                 make_tree_writable(path);
-                thread::sleep(Duration::from_millis(25));
+                thread::sleep(SCRATCH_REMOVE_RETRY);
             }
         }
     }

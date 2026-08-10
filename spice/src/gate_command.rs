@@ -110,26 +110,7 @@ fn pre_commit_report(
     match result {
         Ok(report) if report.admits() => direct(report),
         Ok(report) => {
-            let bytes = match report.encode() {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    return Outcome::Fault(Fault {
-                        class: FaultClass::Protocol,
-                        reason: "gate::battery-report-unencodable".to_owned(),
-                        detail: error.to_string(),
-                    });
-                }
-            };
-            let evidence = match String::from_utf8(bytes) {
-                Ok(evidence) => evidence,
-                Err(error) => {
-                    return Outcome::Fault(Fault {
-                        class: FaultClass::Protocol,
-                        reason: "gate::battery-report-non-utf8".to_owned(),
-                        detail: error.to_string(),
-                    });
-                }
-            };
+            let evidence = report.refusal_fold().to_string();
             Outcome::Refusal(Refusal::evidence(
                 "gate::battery-regressed",
                 evidence,
@@ -234,7 +215,7 @@ fn direct<B>(body: B) -> Outcome<B> {
     })
 }
 
-fn focused_report_evidence(
+pub(crate) fn focused_report_evidence(
     report: &gate::FocusedArmReport,
 ) -> Result<(Digest, String), Outcome<CommandAnswer>> {
     let bytes = report.encode().map_err(|error| {

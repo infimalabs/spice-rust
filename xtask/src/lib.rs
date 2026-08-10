@@ -207,7 +207,7 @@ const BROWSER_LABEL: &str = "npm run test:canvas (BROWSER-1kKSWhZk guard)";
 pub const VERIFY_ACTION_REFUSAL_EXIT: u8 = 3;
 const CANVAS_APP_LABEL: &str = "cargo xtask app (canvas compiler evidence)";
 const RESIDENT_BUILD_LABEL: &str = "cargo build --locked -p spice --bin spice (canvas resident)";
-const WORKSPACE_TEST_CONCURRENCY_CAP: usize = 4;
+const WORKSPACE_TEST_CONCURRENCY_CAP: usize = gate::WORKSPACE_TEST_CONCURRENCY_CAP;
 const WORKSPACE_TEST_LABEL: &str =
     "deterministic sharded cargo test --locked --workspace --all-targets";
 
@@ -405,7 +405,7 @@ enum BatteryRun {
 
 #[cfg(not(target_arch = "wasm32"))]
 struct SystemState {
-    battery: Option<spice::gate::PreparedBattery>,
+    battery: Option<spice::gate::PreparedBattery<'static>>,
     compiler_contracts: Vec<gate::VerifierCompilerContract>,
     compiler_processes: Vec<gate::VerifierCompilerProcessEvidence>,
 }

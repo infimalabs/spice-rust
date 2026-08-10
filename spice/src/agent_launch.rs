@@ -234,7 +234,7 @@ mod tests {
     const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c7";
     const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
     const FIXTURE_VENDOR: crate::extension::Vendor =
-        crate::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration);
+        crate::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
     const FIXTURE_DECLARATIONS: &[crate::extension::Declaration] =
         &[crate::extension::Declaration {
             namespace: crate::extension::Namespace::Vendor,

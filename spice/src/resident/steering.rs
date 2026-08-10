@@ -2,11 +2,11 @@
 //! Transcript-backed disposition is the sole acknowledgment path.
 
 use std::fs;
+use std::path::Path;
 use std::sync::Mutex;
 
 use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
-use steer::Standing as _;
 use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
 use wire::intent::{
@@ -20,7 +20,7 @@ use wire::{
 
 use super::{
     CommandResult, RuntimePaths, commit, current_residency, environment_fault, seq, store_fault,
-    typed_outcome, typed_protocol_fault, typed_store_fault, write, write_at_origin,
+    typed_outcome, typed_protocol_fault, typed_store_fault, write,
 };
 
 mod preview;
@@ -31,8 +31,20 @@ mod transitions;
 
 use preview::directive_preview;
 use transcript::transcript_recognition;
+use transitions::evidence_refusal;
 pub(super) use transitions::{cancel, dispose, recover, resend, send};
-use transitions::{evidence_refusal, miss_recorded};
+
+/// Admit or rebuild the bounded steering authority before the bus accepts work.
+pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
+    let snapshot = journal
+        .fact_snapshot()
+        .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
+    let index = steer::Ledger::authority_index(&snapshot)
+        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+    journal
+        .rebuild_steering_index(snapshot.horizon(), index.heads(), index.misses())
+        .map_err(|error| store_fault("steer::index-unwritable", &error.to_string()))
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct DeadLetter {
@@ -50,24 +62,27 @@ pub(super) fn dead_letter_pending(
     cursor: Seq,
     failure: &Outcome<()>,
 ) -> CommandResult<Vec<DeadLetter>> {
-    let snapshot = bus.task_snapshot().map_err(|error| {
-        store_fault("steer::dead-letter-snapshot-unreadable", &error.to_string())
-    })?;
-    if snapshot.cursor() != Some(cursor) {
+    let (observed_cursor, heads, residency) = bus
+        .read(move |read| {
+            Ok((
+                read.cursor()?,
+                read.pending_steering(Some(lane))?,
+                read.residency_head()?,
+            ))
+        })
+        .map_err(|error| store_fault("steer::dead-letter-index-unreadable", &error.to_string()))?;
+    if observed_cursor != Some(cursor) {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
                 "steer::dead-letter-snapshot-moved".to_owned(),
                 Some("task-snapshot-cursor".to_owned()),
                 Some(cursor.to_string()),
-                snapshot.cursor().map(|observed| observed.to_string()),
+                observed_cursor.map(|observed| observed.to_string()),
             )
             .with_detail("reconcile pending inbox standing before parking it"),
         )));
     }
-    let ledger = steer::Ledger::from_snapshot(snapshot.facts())
-        .map_err(|error| store_fault("steer::dead-letter-replay-invalid", &error.to_string()))?;
-    let pending = ledger.pending(lane);
-    if pending.is_empty() {
+    if heads.is_empty() {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
                 "steer::dead-letter-standing-moved".to_owned(),
@@ -79,8 +94,13 @@ pub(super) fn dead_letter_pending(
         )));
     }
     let reason = lifecycle_failure_reason(failure);
-    let mut parked = Vec::with_capacity(pending.len());
-    let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    let mut parked = Vec::with_capacity(heads.len());
+    let at = current_instant().map_err(|outcome| match outcome {
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Reply(_) => unreachable!("clock reads are not command replies"),
+    })?;
+    let mut proposal = write_at(Actor::Spice, epoch, at, Producer::ResidentRecognition)?;
     proposal.guard(JournalGuard::new(move |read| {
         if read.cursor()? == Some(cursor) {
             Ok(())
@@ -88,29 +108,33 @@ pub(super) fn dead_letter_pending(
             Err(GuardError::refused("steer::dead-letter-snapshot-moved"))
         }
     }));
-    for directive in pending {
-        let requeue = format!("spice steer recover {}", directive.directive());
-        let (_, cause) = directive_cause(snapshot.facts(), directive.directive());
-        proposal
-            .fact(
-                wire::steering::SteerDeadLettered {
-                    directive: directive.directive(),
-                    key: directive.key().to_string(),
-                    lane,
-                    reason: reason.clone(),
-                    requeue: requeue.clone(),
-                },
-                FactCause::Existing(cause),
-            )
+    for directive in &heads {
+        let requeue = format!("spice steer recover {}", directive.body().directive);
+        let body = wire::steering::SteerDeadLettered {
+            directive: directive.body().directive,
+            key: directive.body().key.clone(),
+            lane,
+            reason: reason.clone(),
+            requeue: requeue.clone(),
+        };
+        let pending = proposal
+            .fact(body.clone(), FactCause::Existing(directive.body().created))
             .map_err(|error| store_fault("steer::dead-letter-fact-invalid", &error.to_string()))?;
+        let next = steer::Ledger::transition_head(
+            directive.body(),
+            steer::Steering::DeadLettered(&body),
+            at,
+        )
+        .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
+        proposal.steering_head(pending, move |_| next);
         parked.push(DeadLetter {
-            directive: directive.directive(),
-            key: directive.key().to_string(),
+            directive: directive.body().directive,
+            key: directive.body().key.clone(),
             requeue,
         });
     }
     commit(bus, proposal)?;
-    if let Some(residency) = snapshot.residency() {
+    if let Some(residency) = residency {
         let _rendering = publish_inbox(bus, paths, residency.body(), lane);
     }
     Ok(parked)
@@ -147,64 +171,79 @@ pub(super) fn apply_deadline(
     expected: &SteeringDeadline,
     at: Instant,
 ) -> CommandResult<bool> {
-    let facts = bus
-        .fact_snapshot()
-        .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
-    let ledger = steer::Ledger::from_snapshot(&facts)
-        .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
-    let Some(current) = ledger.directive(expected.directive) else {
+    let (_, current) =
+        directive_head(bus, expected.directive).map_err(|outcome| match outcome {
+            Outcome::Fault(fault) => Outcome::Fault(fault),
+            Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+            Outcome::Reply(_) => unreachable!("an indexed directive read is not a command reply"),
+        })?;
+    let Some(current) = current else {
         return Ok(false);
     };
-    if current.key() != &expected.key
-        || current.lane() != expected.lane
-        || current.expires() != expected.expires
-        || current.disposition() != Disposition::Live
+    if current.body().key != expected.key.as_str()
+        || current.body().lane != expected.lane
+        || current.body().expires != expected.expires
+        || current.body().disposition != Disposition::Live
     {
         return Ok(false);
     }
     let transition_matches = match expected.transition {
-        DeadlineTransition::Escalate { from, .. } => current.stage() == from,
+        DeadlineTransition::Escalate { from, .. } => current.body().stage == from,
         DeadlineTransition::Lapse => true,
     };
     if !transition_matches {
         return Ok(false);
     }
-    let (origin, cause) = directive_cause(&facts, expected.directive);
-    let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::BusTimer);
-    match expected.transition {
+    let mut proposal = JournalWrite::new(
+        Actor::Spice,
+        current.body().origin.clone(),
+        at,
+        Producer::BusTimer,
+    );
+    let cause = FactCause::Existing(current.body().created);
+    let (pending, next) = match expected.transition {
         DeadlineTransition::Escalate { from, to } => {
-            proposal.guard(stage_guard(expected.directive, from));
-            proposal
-                .fact(
-                    wire::body::SteerEscalated {
-                        directive: expected.directive,
-                        key: expected.key.to_string(),
-                        lane: expected.lane,
-                        stage: to,
-                    },
-                    FactCause::Existing(cause),
-                )
+            proposal.guard(stage_guard(expected.directive, current.position(), from));
+            let body = wire::body::SteerEscalated {
+                directive: expected.directive,
+                key: expected.key.to_string(),
+                lane: expected.lane,
+                stage: to,
+            };
+            let pending = proposal
+                .fact(body.clone(), cause)
                 .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
+            let next = steer::Ledger::transition_head(
+                current.body(),
+                steer::Steering::Escalated(&body),
+                at,
+            )
+            .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
+            (pending, next)
         }
         DeadlineTransition::Lapse => {
             proposal.guard(lapse_guard(
                 expected.directive,
+                current.position(),
                 expected.key.clone(),
                 expected.lane,
                 expected.expires,
             ));
-            proposal
-                .fact(
-                    wire::body::SteerLapsed {
-                        key: expected.key.to_string(),
-                        lane: expected.lane,
-                        expires: expected.expires,
-                    },
-                    FactCause::Existing(cause),
-                )
+            let body = wire::body::SteerLapsed {
+                key: expected.key.to_string(),
+                lane: expected.lane,
+                expires: expected.expires,
+            };
+            let pending = proposal
+                .fact(body.clone(), cause)
                 .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
+            let next =
+                steer::Ledger::transition_head(current.body(), steer::Steering::Lapsed(&body), at)
+                    .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
+            (pending, next)
         }
-    }
+    };
+    proposal.steering_head(pending, move |_| next);
     match commit(bus, proposal) {
         Ok(_) => Ok(true),
         Err(Outcome::Refusal(_)) => Ok(false),
@@ -233,27 +272,33 @@ pub(super) fn publish_lane_discoveries(
 pub(super) fn publish_lane_surface(
     paths: &RuntimePaths,
     operator: &canvas::Discovery,
+    worktree: &str,
     lane: CanonicalUuid,
     capability: CanonicalUuid,
 ) -> CommandResult<()> {
+    let inbox = paths.inbox_for_worktree(worktree)?;
     fs::create_dir_all(&paths.lane_canvas).map_err(|error| {
         environment_fault("canvas::lane-directory-unavailable", &error.to_string())
     })?;
     publish_lane_discovery(paths, operator, lane, capability)?;
     let seal = steer::Key::for_identity(capability);
-    if let Err(error) = steer::inbox::publish(&paths.inbox, lane, &seal, &[]) {
-        remove_lane_surface(paths, lane);
+    if let Err(error) = steer::inbox::publish(&inbox, lane, &seal, &[]) {
+        remove_lane_surface(paths, worktree, lane);
         return Err(environment_fault(
             "steer::inbox-unwritable",
             &error.to_string(),
         ));
     }
+    remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane);
     Ok(())
 }
 
-pub(super) fn remove_lane_surface(paths: &RuntimePaths, lane: CanonicalUuid) {
+pub(super) fn remove_lane_surface(paths: &RuntimePaths, worktree: &str, lane: CanonicalUuid) {
     let _ = fs::remove_file(paths.lane_canvas.join(lane.to_string()));
-    let _ = fs::remove_file(steer::inbox::path(&paths.inbox, lane));
+    if let Ok(inbox) = paths.inbox_for_worktree(worktree) {
+        let _ = fs::remove_file(steer::inbox::path(&inbox, lane));
+        remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane);
+    }
 }
 
 fn publish_lane_discovery(
@@ -322,25 +367,31 @@ pub(super) fn fold_lane_inbox_with(
         .lock()
         .map_err(|error| store_fault("steer::fold-authority-poisoned", &error.to_string()))?;
     for attempt in 0..FOLD_RETRIES {
-        let snapshot = bus
-            .fact_snapshot()
-            .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
-        let source = snapshot.horizon().ok_or_else(|| {
+        let (source, heads) = bus
+            .read({
+                let selected = lane.lane;
+                move |read| Ok((read.cursor()?, read.pending_steering(Some(selected))?))
+            })
+            .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
+        let source = source.ok_or_else(|| {
             store_fault(
                 "steer::journal-empty",
                 "a running resident has no durable startup fact",
             )
         })?;
-        let ledger = steer::Ledger::from_snapshot(&snapshot)
-            .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+        let ledger = steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
+            .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
         let keys = pending_keys(&ledger, lane.lane);
         let publication = publish_lane_inbox(paths, lane, &ledger);
         after_publication(attempt);
         let current = bus
-            .fact_snapshot()
-            .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
-        let current = steer::Ledger::from_snapshot(&current)
-            .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
+            .read({
+                let selected = lane.lane;
+                move |read| read.pending_steering(Some(selected))
+            })
+            .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
+        let current = steer::Ledger::from_authority_heads(current.iter().map(|head| head.body()))
+            .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
         let moved = pending_keys(&current, lane.lane) != keys;
         if moved && attempt + 1 < FOLD_RETRIES {
             continue;
@@ -394,8 +445,17 @@ fn publish_lane_inbox(
     ledger: &steer::Ledger,
 ) -> CommandResult<()> {
     let seal = steer::Key::for_identity(lane_capability(lane)?);
-    steer::inbox::publish(&paths.inbox, lane.lane, &seal, &ledger.pending(lane.lane))
-        .map_err(|error| environment_fault("steer::inbox-unwritable", &error.to_string()))
+    let inbox = paths.inbox_for_worktree(&lane.worktree)?;
+    steer::inbox::publish(&inbox, lane.lane, &seal, &ledger.pending(lane.lane))
+        .map_err(|error| environment_fault("steer::inbox-unwritable", &error.to_string()))?;
+    remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane.lane);
+    Ok(())
+}
+
+fn remove_legacy_inbox(legacy: &Path, current: &Path, lane: CanonicalUuid) {
+    if current != legacy {
+        let _ = fs::remove_file(steer::inbox::path(legacy, lane));
+    }
 }
 
 pub(super) fn lane_capability(lane: &wire::LaneResidency) -> CommandResult<CanonicalUuid> {
@@ -423,10 +483,6 @@ pub(super) fn inbox(
         Ok(residency) => residency,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let snapshot = match snapshot(bus) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
     let selected = match command.actor() {
         Actor::Operator => request.lane,
         Actor::Lane(lane) if request.lane.is_none_or(|requested| requested == *lane) => Some(*lane),
@@ -444,6 +500,10 @@ pub(super) fn inbox(
                 "resident principal cannot submit an interactive inbox read",
             );
         }
+    };
+    let snapshot = match pending_snapshot(bus, selected) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
     };
     let mut lanes = Vec::new();
     for lane in &residency.body().lanes {
@@ -536,28 +596,91 @@ pub(super) fn repair(
 }
 
 struct SteeringSnapshot {
-    facts: journal::FactSnapshot,
     ledger: steer::Ledger,
     position: Seq,
 }
 
-fn snapshot(bus: &Bus) -> Result<SteeringSnapshot, Outcome<CommandAnswer>> {
-    let facts = bus
-        .fact_snapshot()
-        .map_err(|error| typed_store_fault("steer::journal-unreadable", &error.to_string()))?;
-    let position = facts.horizon().ok_or_else(|| {
+fn pending_snapshot(
+    bus: &Bus,
+    lane: Option<CanonicalUuid>,
+) -> Result<SteeringSnapshot, Outcome<CommandAnswer>> {
+    let (cursor, heads) = bus
+        .read(move |read| Ok((read.cursor()?, read.pending_steering(lane)?)))
+        .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))?;
+    let position = cursor.ok_or_else(|| {
         typed_store_fault(
             "steer::journal-empty",
             "a running resident has no durable startup fact",
         )
     })?;
-    let ledger = steer::Ledger::from_snapshot(&facts)
-        .map_err(|error| typed_store_fault("steer::replay-invalid", &error.to_string()))?;
-    Ok(SteeringSnapshot {
-        facts,
-        ledger,
-        position,
+    let ledger = steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
+        .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
+    Ok(SteeringSnapshot { ledger, position })
+}
+
+fn directive_head(
+    bus: &Bus,
+    directive: CanonicalUuid,
+) -> Result<(Seq, Option<journal::JournalHead<wire::SteeringHead>>), Outcome<CommandAnswer>> {
+    bus.read(move |read| {
+        let cursor = read
+            .cursor()?
+            .ok_or_else(|| GuardError::Invalid("running resident journal is empty".to_owned()))?;
+        Ok((cursor, read.steering_head(directive)?))
     })
+    .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))
+}
+
+fn key_head(
+    bus: &Bus,
+    key: &steer::Key,
+) -> Result<Option<journal::JournalHead<wire::SteeringHead>>, Outcome<CommandAnswer>> {
+    let key = key.to_string();
+    bus.read(move |read| read.steering_key(&key))
+        .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))
+}
+
+struct IndexedStanding {
+    key: Option<steer::Key>,
+    disposition: Option<Disposition>,
+}
+
+impl IndexedStanding {
+    fn new(
+        key: Option<steer::Key>,
+        head: Option<&journal::JournalHead<wire::SteeringHead>>,
+    ) -> Self {
+        Self {
+            key,
+            disposition: head.map(|head| head.body().disposition),
+        }
+    }
+}
+
+impl steer::Standing for IndexedStanding {
+    fn disposition(&self, key: &steer::Key) -> Option<Disposition> {
+        (self.key.as_ref() == Some(key))
+            .then_some(self.disposition)
+            .flatten()
+    }
+}
+
+type SteeringKeyspace = (
+    Option<journal::JournalHead<wire::SteeringHead>>,
+    Option<i64>,
+);
+
+fn keyspace(
+    bus: &Bus,
+    directive: CanonicalUuid,
+) -> Result<SteeringKeyspace, Outcome<CommandAnswer>> {
+    bus.read(move |read| {
+        Ok((
+            read.steering_head(directive)?,
+            read.steering_minted_millis()?,
+        ))
+    })
+    .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))
 }
 
 fn pending_directive(directive: &steer::Directive) -> PendingDirective {
@@ -577,11 +700,11 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
     }
 }
 
-fn live_directive(
-    ledger: &steer::Ledger,
+fn live_head(
+    head: Option<journal::JournalHead<wire::SteeringHead>>,
     id: CanonicalUuid,
-) -> Result<&steer::Directive, Outcome<CommandAnswer>> {
-    let Some(directive) = ledger.directive(id) else {
+) -> Result<journal::JournalHead<wire::SteeringHead>, Outcome<CommandAnswer>> {
+    let Some(head) = head else {
         return Err(refusal(
             "steer::directive-unknown",
             None,
@@ -589,15 +712,15 @@ fn live_directive(
             "read the current inbox and use a directive identity it names",
         ));
     };
-    if directive.disposition() != Disposition::Live {
+    if head.body().disposition != Disposition::Live {
         return Err(refusal(
             "steer::directive-retired",
             Some("live".to_owned()),
-            Some(format!("{:?}", directive.disposition()).to_lowercase()),
+            Some(format!("{:?}", head.body().disposition).to_lowercase()),
             "read the current inbox before retrying the disposition",
         ));
     }
-    Ok(directive)
+    Ok(head)
 }
 
 fn witness_refusal(observed: &[Witness], expected: &Witness) -> Outcome<CommandAnswer> {
@@ -636,22 +759,21 @@ fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {
 /// The journal guard repeats the collision check at commit time. Advancing a
 /// millisecond here matches the predecessor when a durable key already owns
 /// the clock's current millisecond.
-fn mint_key(ledger: &steer::Ledger, at: Instant) -> Result<steer::Key, Outcome<CommandAnswer>> {
-    let mut millis = at.get().as_millisecond();
-    loop {
-        let key = steer::Key::for_millis(millis).map_err(|error| {
-            typed_environment_fault("steer::key-clock-invalid", &error.to_string())
-        })?;
-        if ledger.disposition(&key).is_none() {
-            return Ok(key);
-        }
-        millis = millis.checked_add(1).ok_or_else(|| {
-            typed_environment_fault(
-                "steer::key-clock-invalid",
-                "epoch millisecond overflowed while advancing past a collision",
-            )
-        })?;
-    }
+fn mint_key(previous: Option<i64>, at: Instant) -> Result<steer::Key, Outcome<CommandAnswer>> {
+    let now = at.get().as_millisecond();
+    let millis = previous.map_or(Ok(now), |previous| {
+        previous
+            .checked_add(1)
+            .map(|next| next.max(now))
+            .ok_or_else(|| {
+                typed_environment_fault(
+                    "steer::key-clock-invalid",
+                    "epoch millisecond overflowed while advancing the indexed key clock",
+                )
+            })
+    })?;
+    steer::Key::for_millis(millis)
+        .map_err(|error| typed_environment_fault("steer::key-clock-invalid", &error.to_string()))
 }
 
 fn expiry(at: Instant, duration: std::time::Duration) -> Result<Instant, Outcome<CommandAnswer>> {
@@ -709,10 +831,18 @@ fn write_at(
     at: Instant,
     producer: Producer,
 ) -> CommandResult<JournalWrite> {
-    let origin = format!("resident:{epoch}")
+    Ok(JournalWrite::new(
+        actor,
+        resident_origin(epoch)?,
+        at,
+        producer,
+    ))
+}
+
+fn resident_origin(epoch: CanonicalUuid) -> CommandResult<wire::Origin> {
+    format!("resident:{epoch}")
         .parse::<wire::Origin>()
-        .map_err(|error| store_fault("resident::origin-invalid", &error.to_string()))?;
-    Ok(JournalWrite::new(actor, origin, at, producer))
+        .map_err(|error| store_fault("resident::origin-invalid", &error.to_string()))
 }
 
 fn typed_command<B: serde::Serialize>(command: &wire::AdmittedCommand, body: B) -> Command<B> {
@@ -758,164 +888,93 @@ fn send_guard(
         if !matches {
             return Err(GuardError::refused("steer::residency-moved"));
         }
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let ledger = steer::Ledger::from_snapshot(&snapshot)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        if ledger.directive(directive).is_some() || ledger.disposition(&key).is_some() {
+        if read.steering_head(directive)?.is_some() || read.steering_key(key.as_str())?.is_some() {
             return Err(GuardError::refused("steer::identity-taken"));
         }
         Ok(())
     })
 }
 
-fn live_guard(directive: CanonicalUuid) -> JournalGuard {
-    JournalGuard::new(move |read| {
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let ledger = steer::Ledger::from_snapshot(&snapshot)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        match ledger.directive(directive) {
-            Some(current) if current.disposition() == Disposition::Live => Ok(()),
-            _ => Err(GuardError::refused("steer::directive-moved")),
+fn live_guard(directive: CanonicalUuid, position: Seq) -> JournalGuard {
+    JournalGuard::new(move |read| match read.steering_head(directive)? {
+        Some(current)
+            if current.position() == position
+                && current.body().disposition == Disposition::Live =>
+        {
+            Ok(())
         }
+        _ => Err(GuardError::refused("steer::directive-moved")),
     })
 }
 
-fn stage_guard(directive: CanonicalUuid, stage: wire::body::SteeringStage) -> JournalGuard {
-    JournalGuard::new(move |read| {
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let ledger = steer::Ledger::from_snapshot(&snapshot)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        match ledger.directive(directive) {
-            Some(current)
-                if current.disposition() == Disposition::Live && current.stage() == stage =>
-            {
-                Ok(())
-            }
-            _ => Err(GuardError::refused("steer::presentation-moved")),
+fn stage_guard(
+    directive: CanonicalUuid,
+    position: Seq,
+    stage: wire::body::SteeringStage,
+) -> JournalGuard {
+    JournalGuard::new(move |read| match read.steering_head(directive)? {
+        Some(current)
+            if current.position() == position
+                && current.body().disposition == Disposition::Live
+                && current.body().stage == stage =>
+        {
+            Ok(())
         }
+        _ => Err(GuardError::refused("steer::presentation-moved")),
     })
 }
 
 fn lapse_guard(
     directive: CanonicalUuid,
+    position: Seq,
     key: steer::Key,
     lane: CanonicalUuid,
     expires: Instant,
 ) -> JournalGuard {
-    JournalGuard::new(move |read| {
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let ledger = steer::Ledger::from_snapshot(&snapshot)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        match ledger.directive(directive) {
-            Some(current)
-                if current.key() == &key
-                    && current.lane() == lane
-                    && current.expires() == expires
-                    && current.disposition() == Disposition::Live =>
-            {
-                Ok(())
-            }
-            _ => Err(GuardError::refused("steer::expiry-moved")),
+    JournalGuard::new(move |read| match read.steering_head(directive)? {
+        Some(current)
+            if current.position() == position
+                && current.body().key == key.as_str()
+                && current.body().lane == lane
+                && current.body().expires == expires
+                && current.body().disposition == Disposition::Live =>
+        {
+            Ok(())
         }
+        _ => Err(GuardError::refused("steer::expiry-moved")),
     })
 }
 
 fn recovery_guard(
     directive: CanonicalUuid,
+    position: Seq,
     key: steer::Key,
     lane: CanonicalUuid,
     lapsed_at: Instant,
     disposition: Disposition,
 ) -> JournalGuard {
-    JournalGuard::new(move |read| {
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let ledger = steer::Ledger::from_snapshot(&snapshot)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        match ledger.directive(directive) {
-            Some(current)
-                if current.key() == &key
-                    && current.lane() == lane
-                    && current.expires() == lapsed_at
-                    && current.disposition() == disposition =>
-            {
-                Ok(())
-            }
-            _ => Err(GuardError::refused("steer::recovery-moved")),
+    JournalGuard::new(move |read| match read.steering_head(directive)? {
+        Some(current)
+            if current.position() == position
+                && current.body().key == key.as_str()
+                && current.body().lane == lane
+                && current.body().expires == lapsed_at
+                && current.body().disposition == disposition =>
+        {
+            Ok(())
         }
+        _ => Err(GuardError::refused("steer::recovery-moved")),
     })
 }
 
 fn miss_guard(expected: wire::body::SteerMissed) -> JournalGuard {
     JournalGuard::new(move |read| {
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        if miss_recorded(&snapshot, &expected) {
+        if read.steering_miss_recorded(&expected)? {
             Err(GuardError::refused("steer::recognition-recorded"))
         } else {
             Ok(())
         }
     })
-}
-
-fn directive_cause(
-    snapshot: &journal::FactSnapshot,
-    directive: CanonicalUuid,
-) -> (wire::Origin, Seq) {
-    let envelope = directive_creation(snapshot, directive);
-    (envelope.origin.clone(), envelope.seq)
-}
-
-fn directive_creation(
-    snapshot: &journal::FactSnapshot,
-    directive: CanonicalUuid,
-) -> &wire::Envelope<wire::AnyFact> {
-    snapshot
-        .facts()
-        .iter()
-        .find_map(|envelope| match envelope.fact.kind() {
-            wire::FactKind::SteerSent => steering_body::<wire::body::SteerSent>(envelope)
-                .filter(|body| body.directive == directive)
-                .map(|_| envelope),
-            // A reminder publishes a directive exactly as a send does, so it
-            // is a creating fact here for the same reason. Every kind the
-            // ledger admits as a publication has to be findable, because the
-            // `expect` below reads a missing one as impossible rather than as absent.
-            wire::FactKind::TasteReminded => steering_body::<wire::body::TasteReminded>(envelope)
-                .filter(|body| body.directive == directive)
-                .map(|_| envelope),
-            wire::FactKind::TasteJudged => steering_body::<wire::body::TasteJudged>(envelope)
-                .filter(|body| {
-                    matches!(
-                        &body.decision,
-                        wire::body::TasteDecision::Confirmed {
-                            directive: published,
-                            ..
-                        } if *published == directive
-                    )
-                })
-                .map(|_| envelope),
-            _ => None,
-        })
-        .expect("a reduced directive has one creating fact")
-}
-
-fn steering_body<T: serde::de::DeserializeOwned>(
-    envelope: &wire::Envelope<wire::AnyFact>,
-) -> Option<T> {
-    wire::encode(envelope.fact.body())
-        .ok()
-        .and_then(|bytes| wire::decode(&bytes).ok())
 }
 
 fn finish(

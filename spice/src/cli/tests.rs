@@ -833,7 +833,7 @@ fn mutating_contract_syntax_mutates_registration_and_help() {
         .expect("doctor contract exists");
     doctor.syntax = "doctor REQUIRED";
 
-    let parser = command_from(&contracts);
+    let parser = command_from(&contracts, &[]);
     assert!(
         parser
             .clone()

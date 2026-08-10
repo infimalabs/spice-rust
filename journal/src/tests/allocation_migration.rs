@@ -15,7 +15,7 @@ fn schema_three_heads_gain_durable_queue_and_claim_origins_once() {
     let path = scratch.path().join("allocator-schema-three.sqlite3");
     schema_three_authority(&path);
 
-    let journal = Journal::open(&path).expect("schema three allocator evidence migrates");
+    let mut journal = Journal::open(&path).expect("schema three allocator evidence migrates");
 
     assert_eq!(
         journal
@@ -39,6 +39,7 @@ fn schema_three_heads_gain_durable_queue_and_claim_origins_once() {
             phase: phase("todo"),
         }
     );
+    admit_empty_steering_projection(&mut journal);
     journal.verify().expect("migrated authority verifies");
 }
 
@@ -212,6 +213,7 @@ fn seed_free(journal: &mut Journal, fixture: &AllocationFixture) {
 }
 
 fn downgrade(connection: &Connection) {
+    drop_steering_index(connection);
     downgrade_task_identity_to_five(connection);
     remove_fields(
         connection,

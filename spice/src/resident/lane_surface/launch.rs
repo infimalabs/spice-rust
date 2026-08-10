@@ -186,6 +186,7 @@ fn launch_environment(
     executable: &Path,
     lane: CanonicalUuid,
 ) -> CommandResult<Environment> {
+    let inbox = paths.inbox_for_repository(repository)?;
     let native_shell = crate::bootstrap_environment("SHELL").ok_or_else(|| {
         store_fault(
             "lane::native-shell-unavailable",
@@ -208,7 +209,7 @@ fn launch_environment(
         (OsString::from(steer::hook::NATIVE_SHELL), native_shell),
         (
             OsString::from(steer::hook::INBOX),
-            steer::inbox::path(&paths.inbox, lane).into_os_string(),
+            steer::inbox::path(&inbox, lane).into_os_string(),
         ),
     ]);
     values.push(("PATH".into(), appliance_path(executable)?));

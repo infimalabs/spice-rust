@@ -50,7 +50,7 @@ pub struct SteerSend {
     pub lane: CanonicalUuid,
     /// The intent being sent.
     pub message: String,
-    /// Opaque typed attachments retained with the directive.
+    /// Admitted browsable images retained with the directive.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<DirectiveAttachment>,
 }

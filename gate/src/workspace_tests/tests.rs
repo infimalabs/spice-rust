@@ -6,9 +6,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 
+mod selection;
+
 #[test]
 fn production_policy_uses_only_the_scheduler_granted_shard_workers() {
-    for concurrency in 1..=crate::WORKSPACE_TEST_CONCURRENCY_CAP {
+    for concurrency in 1..=WORKSPACE_TEST_CONCURRENCY_CAP {
         assert_eq!(
             RunPolicy::production(concurrency)
                 .expect("every bounded scheduler grant admits")
@@ -17,18 +19,62 @@ fn production_policy_uses_only_the_scheduler_granted_shard_workers() {
         );
     }
     assert_eq!(
-        RunPolicy::production(crate::WORKSPACE_TEST_CONCURRENCY_CAP)
+        RunPolicy::production(WORKSPACE_TEST_CONCURRENCY_CAP)
             .expect("bounded scheduler grant admits")
             .for_shards(2)
             .concurrency,
         2,
         "the coordinator never creates more workers than actual shards"
     );
-    for concurrency in [0, crate::WORKSPACE_TEST_CONCURRENCY_CAP + 1] {
+    for concurrency in [0, WORKSPACE_TEST_CONCURRENCY_CAP + 1] {
         let error = RunPolicy::production(concurrency)
             .expect_err("out-of-contract scheduler grant refuses")
             .to_string();
         assert!(error.contains("must be between 1 and 4"), "{error}");
+    }
+}
+
+#[test]
+fn selected_test_environment_cannot_inherit_the_parent_git_repository() {
+    let mut entries = BTreeMap::from([
+        (OsString::from("PATH"), OsString::from("/fixture/bin")),
+        (
+            OsString::from(CARGO_TARGET_DIR),
+            OsString::from("/fixture/target"),
+        ),
+    ]);
+    for variable in GIT_LOCAL_ENVIRONMENT {
+        entries.insert(
+            OsString::from(variable),
+            OsString::from("parent-repository"),
+        );
+    }
+    let environment = without_parent_repository(
+        Environment::new(entries).expect("declare inherited hook environment"),
+    )
+    .expect("selected test environment admits after isolation");
+    let value = |name: &str| {
+        environment
+            .entries()
+            .iter()
+            .find_map(|(key, value)| (key == OsStr::new(name)).then_some(value))
+    };
+
+    assert_eq!(
+        value("PATH"),
+        Some(&OsString::from("/fixture/bin")),
+        "ordinary process environment survives repository isolation"
+    );
+    assert_eq!(
+        value(CARGO_TARGET_DIR),
+        Some(&OsString::from("/fixture/target")),
+        "configured Cargo cache authority survives repository isolation"
+    );
+    for variable in GIT_LOCAL_ENVIRONMENT {
+        assert!(
+            value(variable).is_none(),
+            "selected tests retained parent repository variable {variable}"
+        );
     }
 }
 
@@ -83,6 +129,7 @@ fn partition_splits_large_packages_in_stable_target_order() {
             package: "fixture-a-id".to_owned(),
             kind: "test".to_owned(),
             name: format!("target-{index:02}"),
+            source: PathBuf::from(format!("/workspace/tests/target-{index:02}.rs")),
         })
         .collect();
 
@@ -120,19 +167,26 @@ fn cargo_target_arguments_preserve_library_binary_and_integration_semantics() {
 
 #[test]
 fn metadata_inventory_keeps_library_binary_and_integration_targets() {
-    let inventory = inventory_from_metadata(Metadata {
-        workspace_members: vec!["fixture-id".to_owned()],
-        packages: vec![MetadataPackage {
-            id: "fixture-id".to_owned(),
-            name: "fixture".to_owned(),
-            targets: vec![
-                target("fixture", &["lib"], true),
-                target("fixture", &["bin"], true),
-                target("resident", &["test"], true),
-                target("build-script-build", &["custom-build"], false),
-            ],
-        }],
-    })
+    let root = Path::new("/workspace");
+    let inventory = inventory_from_metadata(
+        Metadata {
+            workspace_members: vec!["fixture-id".to_owned()],
+            target_directory: root.join("target"),
+            build_directory: root.join("target/cargo-build"),
+            packages: vec![MetadataPackage {
+                id: "fixture-id".to_owned(),
+                name: "fixture".to_owned(),
+                manifest_path: root.join("Cargo.toml"),
+                targets: vec![
+                    target("fixture", &["lib"], true),
+                    target("fixture", &["bin"], true),
+                    target("resident", &["test"], true),
+                    target("build-script-build", &["custom-build"], false),
+                ],
+            }],
+        },
+        root,
+    )
     .expect("fixture metadata admits");
 
     assert_eq!(
@@ -150,7 +204,7 @@ fn successful_execution_publishes_one_exact_target_inventory_without_parsing_log
     let execution = WorkspaceTestExecution::from_inventory(&fixture_inventory());
     assert_eq!(
         execution.tests(),
-        ["fixture-a::test:resident", "fixture-b::bin:fixture-b"]
+        ["fixture-a::lib:fixture-a", "fixture-b::bin:fixture-b"]
     );
 
     let source = wire::Digest::compute(wire::Domain::GateTree, b"workspace tests");
@@ -165,36 +219,109 @@ fn successful_execution_publishes_one_exact_target_inventory_without_parsing_log
     assert!(unknown.test_coverage().is_empty());
     assert!(matches!(
         unknown.coverage(),
-        gate::CoverageCompleteness::Unknown { .. }
+        crate::CoverageCompleteness::Unknown { .. }
     ));
+}
+
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the end-to-end canonical runner fixture captures its test process environment"
+)]
+fn selected_workspace_runner_executes_the_reported_target_from_changed_rust_source() {
+    let root = fixture_root("workspace-selected-test");
+    fs::create_dir_all(root.join("src")).expect("create selected workspace fixture");
+    fs::write(
+        root.join("Cargo.toml"),
+        concat!(
+            "[package]\n",
+            "name = \"selected-fixture\"\n",
+            "version = \"0.0.0\"\n",
+            "edition = \"2024\"\n",
+        ),
+    )
+    .expect("write selected fixture manifest");
+    fs::write(
+        root.join("Cargo.lock"),
+        concat!(
+            "# This file is automatically @generated by Cargo.\n",
+            "# It is not intended for manual editing.\n",
+            "version = 4\n\n",
+            "[[package]]\n",
+            "name = \"selected-fixture\"\n",
+            "version = \"0.0.0\"\n",
+        ),
+    )
+    .expect("write selected fixture lock");
+    fs::write(
+        root.join("src/lib.rs"),
+        concat!(
+            "pub fn selected() -> bool { true }\n",
+            "#[test]\n",
+            "fn selected_runs() { assert!(selected()); }\n",
+        ),
+    )
+    .expect("write selected fixture source");
+    // This test itself runs inside Cargo. A selected workspace-test parent also
+    // supplies its output roots, so inheriting them here would make the nested
+    // Cargo wait on the parent test binary's own build-directory lock.
+    let environment = Environment::new(std::env::vars_os().filter(|(name, _)| {
+        name != OsStr::new(CARGO_TARGET_DIR) && name != OsStr::new(CARGO_BUILD_BUILD_DIR)
+    }))
+    .expect("capture isolated test environment");
+    let mut output = Vec::new();
+
+    let report = run_selected_at(
+        WorkspaceTestRoots::new(&root, &root),
+        wire::Digest::compute(wire::Domain::GateTree, b"selected fixture"),
+        &["src/lib.rs".to_owned()],
+        environment,
+        1,
+        &mut output,
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "selected runner failed: {error}; output={}",
+            String::from_utf8_lossy(&output)
+        )
+    });
+
+    assert!(report.admits());
+    assert_eq!(report.tests(), ["selected-fixture::lib:selected_fixture"]);
+    assert!(
+        String::from_utf8(output)
+            .unwrap()
+            .contains("[rust-test-selection] source=\"src/lib.rs\"")
+    );
+    fs::remove_dir_all(root).expect("remove selected workspace fixture");
 }
 
 #[test]
 fn complete_coverage_cannot_omit_an_executed_target_but_may_name_the_known_suite() {
     let execution = WorkspaceTestExecution::from_inventory(&fixture_inventory());
     let source = wire::Digest::compute(wire::Domain::GateTree, b"workspace tests");
-    let partial = vec![gate::TestCoverage::new("fixture-a::test:resident", Vec::new()).unwrap()];
+    let partial = vec![crate::TestCoverage::new("fixture-a::lib:fixture-a", Vec::new()).unwrap()];
     let error = execution
         .publish(
             source,
             Vec::new(),
             partial,
-            gate::CoverageCompleteness::Complete,
+            crate::CoverageCompleteness::Complete,
         )
         .expect_err("partial target coverage refuses");
     assert!(error.to_string().contains("omits executed test"));
 
     let complete = vec![
-        gate::TestCoverage::new("fixture-a::test:resident", Vec::new()).unwrap(),
-        gate::TestCoverage::new("fixture-b::bin:fixture-b", Vec::new()).unwrap(),
-        gate::TestCoverage::new("fixture-c::test:unrun", Vec::new()).unwrap(),
+        crate::TestCoverage::new("fixture-a::lib:fixture-a", Vec::new()).unwrap(),
+        crate::TestCoverage::new("fixture-b::bin:fixture-b", Vec::new()).unwrap(),
+        crate::TestCoverage::new("fixture-c::test:unrun", Vec::new()).unwrap(),
     ];
     let published = execution
         .publish(
             wire::Digest::compute(wire::Domain::GateTree, b"workspace tests"),
             Vec::new(),
             complete,
-            gate::CoverageCompleteness::Complete,
+            crate::CoverageCompleteness::Complete,
         )
         .expect("known-suite coverage may include an unexecuted target");
     assert_eq!(published.tests_run().len(), 2);
@@ -616,33 +743,41 @@ fn quick_package() -> PackageInventory {
     PackageInventory {
         id: "quick-id".to_owned(),
         name: "quick".to_owned(),
+        root: PathBuf::from("/workspace/quick"),
         targets: vec![TargetIdentity {
             package: "quick-id".to_owned(),
             kind: "test".to_owned(),
             name: "quick".to_owned(),
+            source: PathBuf::from("/workspace/quick/tests/quick.rs"),
         }],
     }
 }
 
 fn fixture_inventory() -> Inventory {
     Inventory {
+        target_directory: PathBuf::from("/workspace/target"),
+        build_directory: PathBuf::from("/workspace/target/cargo-build"),
         packages: vec![
             PackageInventory {
                 id: "fixture-a-id".to_owned(),
                 name: "fixture-a".to_owned(),
+                root: PathBuf::from("/workspace/fixture-a"),
                 targets: vec![TargetIdentity {
                     package: "fixture-a-id".to_owned(),
-                    kind: "test".to_owned(),
-                    name: "resident".to_owned(),
+                    kind: "lib".to_owned(),
+                    name: "fixture-a".to_owned(),
+                    source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
                 }],
             },
             PackageInventory {
                 id: "fixture-b-id".to_owned(),
                 name: "fixture-b".to_owned(),
+                root: PathBuf::from("/workspace/fixture-b"),
                 targets: vec![TargetIdentity {
                     package: "fixture-b-id".to_owned(),
                     kind: "bin".to_owned(),
                     name: "fixture-b".to_owned(),
+                    source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
                 }],
             },
         ],
@@ -650,10 +785,16 @@ fn fixture_inventory() -> Inventory {
 }
 
 fn target(name: &str, kind: &[&str], test: bool) -> MetadataTarget {
+    let source = match kind.first().copied() {
+        Some("lib") => "/workspace/src/lib.rs".to_owned(),
+        Some("bin") => "/workspace/src/main.rs".to_owned(),
+        _ => format!("/workspace/tests/{name}.rs"),
+    };
     MetadataTarget {
         name: name.to_owned(),
         kind: kind.iter().map(|kind| (*kind).to_owned()).collect(),
         test,
+        src_path: PathBuf::from(source),
     }
 }
 
@@ -662,6 +803,7 @@ fn target_identity(kind: &str, name: &str) -> TargetIdentity {
         package: "fixture-id".to_owned(),
         kind: kind.to_owned(),
         name: name.to_owned(),
+        source: PathBuf::from(format!("/workspace/{kind}/{name}.rs")),
     }
 }
 

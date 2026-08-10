@@ -672,6 +672,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 },
                 activity: AgentActivityKind::Prose,
                 text: "settled".to_owned(),
+                media: Vec::new(),
             },
             AgentMessage {
                 lane: second_id,
@@ -684,6 +685,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 },
                 activity: AgentActivityKind::Tool,
                 text: "Bash".to_owned(),
+                media: Vec::new(),
             },
         ],
     );

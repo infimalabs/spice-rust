@@ -12,6 +12,7 @@ mod claude;
 mod codex;
 pub mod config;
 mod event;
+mod media;
 mod residue;
 mod stream;
 mod surface;

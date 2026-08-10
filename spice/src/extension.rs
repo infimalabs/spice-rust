@@ -49,20 +49,66 @@ pub struct Gate {
 /// Typed configuration fold owned by one declared vendor.
 pub type ConfigFold = for<'a> fn(&'a crate::config::Root) -> vendor::LaunchValues<'a>;
 
-/// One complete declared vendor, including its typed configuration mapping.
+/// Session-study behavior carried by one declared vendor value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionStudy {
+    identity: &'static str,
+    dialect: listen::Dialect,
+    ambient_precedence: u16,
+}
+
+impl SessionStudy {
+    const fn new(
+        identity: &'static str,
+        dialect: listen::Dialect,
+        ambient_precedence: u16,
+    ) -> Self {
+        Self {
+            identity,
+            dialect,
+            ambient_precedence,
+        }
+    }
+
+    /// Stable identity retained in session reports.
+    #[must_use]
+    pub const fn identity(self) -> &'static str {
+        self.identity
+    }
+
+    /// Transcript decoder selected for declared sources.
+    #[must_use]
+    pub const fn dialect(self) -> listen::Dialect {
+        self.dialect
+    }
+
+    /// Deterministic priority among simultaneous ambient identities.
+    #[must_use]
+    pub const fn ambient_precedence(self) -> u16 {
+        self.ambient_precedence
+    }
+}
+
+/// One complete declared vendor, including configuration and session study.
 #[derive(Clone, Copy)]
 pub struct Vendor {
     dialect: &'static vendor::Vendor,
     configuration: ConfigFold,
+    session_study: SessionStudy,
 }
 
 impl Vendor {
-    /// Bind one raw vendor contract to its typed configuration fold.
+    /// Bind one raw vendor contract to configuration and ambient study order.
     #[must_use]
-    pub const fn new(dialect: &'static vendor::Vendor, configuration: ConfigFold) -> Self {
+    pub const fn new(
+        dialect: &'static vendor::Vendor,
+        configuration: ConfigFold,
+        ambient_precedence: u16,
+    ) -> Self {
         Self {
             dialect,
             configuration,
+            session_study: SessionStudy::new(dialect.name(), dialect.dialect(), ambient_precedence),
         }
     }
 
@@ -70,6 +116,12 @@ impl Vendor {
     #[must_use]
     pub fn launch_values<'a>(&self, root: &'a crate::config::Root) -> vendor::LaunchValues<'a> {
         (self.configuration)(root)
+    }
+
+    /// Declaration-owned session study contract.
+    #[must_use]
+    pub const fn session_study(&self) -> SessionStudy {
+        self.session_study
     }
 }
 
@@ -96,10 +148,10 @@ impl PartialEq for Vendor {
 impl Eq for Vendor {}
 
 /// Current Codex declaration.
-pub const CODEX: Vendor = Vendor::new(&vendor::CODEX, codex_configuration);
+pub const CODEX: Vendor = Vendor::new(&vendor::CODEX, codex_configuration, 0);
 
 /// Current Claude declaration.
-pub const CLAUDE: Vendor = Vendor::new(&vendor::CLAUDE, claude_configuration);
+pub const CLAUDE: Vendor = Vendor::new(&vendor::CLAUDE, claude_configuration, 1);
 
 /// Typed payload of one extension declaration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -284,6 +336,19 @@ impl<'a> Registry<'a> {
             })
             .collect()
     }
+
+    /// Every vendor in its declaration-owned ambient session order.
+    #[must_use]
+    pub fn session_vendors(&self) -> Vec<&'static Vendor> {
+        let mut vendors = self.vendors();
+        vendors.sort_by_key(|vendor| {
+            (
+                vendor.session_study().ambient_precedence(),
+                vendor.session_study().identity(),
+            )
+        });
+        vendors
+    }
 }
 
 /// Discover the current compiled registry.
@@ -432,7 +497,7 @@ mod tests {
     use super::*;
 
     const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
-    const FIXTURE_VENDOR: Vendor = Vendor::new(&FIXTURE_DIALECT, codex_configuration);
+    const FIXTURE_VENDOR: Vendor = Vendor::new(&FIXTURE_DIALECT, codex_configuration, 2);
 
     #[test]
     fn compiled_namespaces_are_complete_sorted_and_coherent() {
@@ -451,6 +516,14 @@ mod tests {
                 ("spice.gates", "hygiene"),
                 ("spice.gates", "toolchain"),
             ],
+        );
+        assert_eq!(
+            registry
+                .session_vendors()
+                .into_iter()
+                .map(|vendor| vendor.session_study().identity())
+                .collect::<Vec<_>>(),
+            ["codex", "claude"],
         );
     }
 
@@ -515,6 +588,9 @@ mod tests {
 
         assert_eq!(fixture.name(), "fixture");
         assert_eq!(fixture.dialect(), listen::Dialect::Codex);
+        assert_eq!(fixture.session_study().identity(), "fixture");
+        assert_eq!(fixture.session_study().dialect(), listen::Dialect::Codex);
+        assert_eq!(fixture.session_study().ambient_precedence(), 2);
         assert_eq!(fixture.stdout(), vendor::CODEX.stdout());
         assert_eq!(fixture.tool_envelope(), vendor::ToolEnvelope::Direct);
         assert_eq!(

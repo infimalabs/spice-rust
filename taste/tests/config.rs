@@ -39,6 +39,7 @@ fn prose(text: &str) -> Event {
         role: listen::ProseRole::Assistant,
         text: text.to_owned(),
         phase: Some("final".to_owned()),
+        media: Vec::new(),
         locus: Locus::new(7, 31, text.len() as u64),
     })
 }

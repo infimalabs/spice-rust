@@ -8,8 +8,7 @@ use wire::Refusal;
 
 use super::{
     CompactionHorizon, DecodedRow, MAX_LINE_BYTES, Marker, Residue, ResolvedSource, TypedRecord,
-    Vendor, decode_row, dialect_vendor, read_residue, record_refusal, record_timestamp, refusal,
-    vendor_dialect,
+    Vendor, decode_row, read_residue, record_refusal, record_timestamp, refusal,
 };
 
 const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
@@ -39,7 +38,7 @@ pub(super) fn read_records(
     start: Option<&str>,
 ) -> Result<(Vec<TypedRecord>, Vec<Residue>, Vendor), Refusal> {
     let mut reader = transcript_reader(source, start)?;
-    let mut dialect = vendor_dialect(source.vendor);
+    let mut dialect = source.dialect;
     let mut rows = Vec::new();
     let mut residues = Vec::new();
     let mut buffer = Vec::new();
@@ -73,7 +72,11 @@ pub(super) fn read_records(
             DecodedRow::Ignored => {}
         }
     }
-    let vendor = dialect.map_or(source.vendor, dialect_vendor);
+    let vendor = if source.vendor.is_unknown() {
+        dialect.map_or(source.vendor, Vendor::inferred)
+    } else {
+        source.vendor
+    };
     Ok((rows, residues, vendor))
 }
 
@@ -148,7 +151,7 @@ fn read_recent_compaction_markers_forward(
     end: Option<&str>,
 ) -> Result<Vec<Marker>, Refusal> {
     let mut reader = transcript_reader(source, None)?;
-    let mut dialect = vendor_dialect(source.vendor);
+    let mut dialect = source.dialect;
     let mut markers = Vec::new();
     let mut buffer = Vec::new();
     let mut line = 0_u64;
@@ -312,7 +315,7 @@ fn marker_from_line(
         ));
     }
     let locus = listen::Locus::new(1, 0, line.len() as u64);
-    let detected = listen::decode_record(vendor_dialect(source.vendor), line, locus)
+    let detected = listen::decode_record(source.dialect, line, locus)
         .map_err(|error| record_refusal(&source.path, 1, &error))?;
     let Decoded::Events { context, events } = detected.decoded else {
         return Ok(None);
@@ -341,7 +344,7 @@ fn timestamp_from_line(source: &ResolvedSource, line: &[u8]) -> Option<String> {
         return None;
     }
     let locus = listen::Locus::new(1, 0, line.len() as u64);
-    let detected = listen::decode_record(vendor_dialect(source.vendor), line, locus).ok()?;
+    let detected = listen::decode_record(source.dialect, line, locus).ok()?;
     let Decoded::Events { context, .. } = detected.decoded else {
         return None;
     };

@@ -17,7 +17,7 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
     let scratch = Scratch::new();
     let path = scratch.path().join("identity-v5.sqlite3");
     let journal = authority_file_fixture(&path);
-    downgrade_task_identity_to_five(&journal.connection);
+    downgrade_schema_five_authority(&journal.connection);
     store_bare_stamp_origin(&journal.connection, 2);
     insert_legacy_review_receipt(&journal.connection);
     insert_legacy_board_receipt(&journal.connection);
@@ -31,7 +31,7 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
         .expect("mark legacy identity fixture as schema five");
     drop(journal);
 
-    let journal = Journal::open(&path).expect("schema-five identity migrates");
+    let mut journal = Journal::open(&path).expect("schema-five identity migrates");
 
     assert_eq!(
         journal
@@ -90,6 +90,7 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
     assert_review_receipt(&journal.connection);
     assert_board_receipt(&journal.connection);
     assert_effort_receipt(&journal.connection);
+    admit_empty_steering_projection(&mut journal);
     journal
         .verify()
         .expect("migrated identity authority verifies");
@@ -129,7 +130,7 @@ fn schema_five_review_without_followups_migrates_as_the_canonical_empty_list() {
     let scratch = Scratch::new();
     let path = scratch.path().join("identity-v5-empty-review.sqlite3");
     let journal = authority_file_fixture(&path);
-    downgrade_task_identity_to_five(&journal.connection);
+    downgrade_schema_five_authority(&journal.connection);
     insert_legacy_empty_review_receipt(&journal.connection);
     journal
         .connection
@@ -140,7 +141,7 @@ fn schema_five_review_without_followups_migrates_as_the_canonical_empty_list() {
         .expect("mark empty-review fixture as schema five");
     drop(journal);
 
-    let journal = Journal::open(&path).expect("omitted review follow-ups migrate");
+    let mut journal = Journal::open(&path).expect("omitted review follow-ups migrate");
 
     let request = review_request(&journal.connection, EMPTY_REVIEW_COMMAND);
     let review: Command<wire::intent::TaskReview> =
@@ -161,6 +162,7 @@ fn schema_five_review_without_followups_migrates_as_the_canonical_empty_list() {
             .as_bytes(),
         request
     );
+    admit_empty_steering_projection(&mut journal);
     journal
         .verify()
         .expect("empty-review identity migration verifies");
@@ -171,7 +173,7 @@ fn schema_five_non_array_review_followups_refuse_and_roll_back() {
     let scratch = Scratch::new();
     let path = scratch.path().join("identity-v5-malformed-review.sqlite3");
     let journal = authority_file_fixture(&path);
-    downgrade_task_identity_to_five(&journal.connection);
+    downgrade_schema_five_authority(&journal.connection);
     insert_legacy_empty_review_receipt(&journal.connection);
     let request = review_request(&journal.connection, EMPTY_REVIEW_COMMAND);
     let mut document: Value = serde_json::from_slice(&request).expect("decode legacy review");
@@ -230,7 +232,7 @@ fn malformed_legacy_identity_refuses_and_rolls_back_the_whole_crossing() {
     let scratch = Scratch::new();
     let path = scratch.path().join("identity-v5-invalid.sqlite3");
     let journal = authority_file_fixture(&path);
-    downgrade_task_identity_to_five(&journal.connection);
+    downgrade_schema_five_authority(&journal.connection);
     let bytes: Vec<u8> = journal
         .connection
         .query_row(
@@ -273,6 +275,11 @@ fn malformed_legacy_identity_refuses_and_rolls_back_the_whole_crossing() {
     assert!(error.to_string().contains("inception stamp"));
     let after = Connection::open(&path).expect("reopen refused authority");
     assert_eq!(legacy_identity_state(&after), before);
+}
+
+fn downgrade_schema_five_authority(connection: &Connection) {
+    drop_steering_index(connection);
+    downgrade_task_identity_to_five(connection);
 }
 
 fn insert_legacy_review_receipt(connection: &Connection) {

@@ -15,7 +15,7 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
     let path = scratch.path().join("schema-four-release.sqlite3");
     schema_four_release_authority(&path, true);
 
-    let journal = Journal::open(&path).expect("schema-four publication authority migrates");
+    let mut journal = Journal::open(&path).expect("schema-four publication authority migrates");
     assert_eq!(
         journal
             .migration()
@@ -50,6 +50,7 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
         request.body.notes,
         wire::ReleaseNotesIdentity::HistoricalAbsent
     );
+    admit_empty_steering_projection(&mut journal);
     journal.verify().expect("migrated authority verifies");
     drop(journal);
 
@@ -91,7 +92,7 @@ fn schema_four_exact_note_identities_survive_the_combined_crossing() {
     schema_four_release_authority(&path, false);
     let before = release_carriers(&Connection::open(&path).expect("open exact fixture"));
 
-    let journal = Journal::open(&path).expect("exact schema-four rows migrate");
+    let mut journal = Journal::open(&path).expect("exact schema-four rows migrate");
 
     assert_eq!(release_carriers(&journal.connection), before);
     let published: wire::body::ReleasePublished = journal
@@ -114,6 +115,7 @@ fn schema_four_exact_note_identities_survive_the_combined_crossing() {
             .as_deref(),
         Some(NOTES)
     );
+    admit_empty_steering_projection(&mut journal);
     journal.verify().expect("exact migrated authority verifies");
 }
 
@@ -132,6 +134,7 @@ fn schema_four_release_authority(path: &Path, remove_note_identity: bool) {
             }),
         ),
     );
+    drop_steering_index(&journal.connection);
     journal
         .connection
         .execute(

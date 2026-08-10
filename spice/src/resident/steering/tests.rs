@@ -1,9 +1,49 @@
-use super::{directive_creation, due_stage, missing_stages};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
-const OCCUPANT: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
-const DIRECTIVE: &str = "a0ae31a7-eb68-463a-b3c0-272bfeaaa5d1";
-const EXPIRES: &str = "2026-08-01T07:07:19.000Z";
+use journal::{FactCause, JournalWrite};
+use serde_json::Value;
+use wire::body::{SteerSent, SteeringStage};
+use wire::{Actor, Disposition, Origin, Producer, SteeringHead};
+
+use super::{admit_index, due_stage, missing_stages};
+
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+const DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116399";
+const OTHER_DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116398";
+const KEY: &str = "1kJK6N3R";
+const OTHER_KEY: &str = "1kJK6N3S";
+
+#[test]
+fn successful_forward_publication_removes_only_the_obsolete_rendering() {
+    let scratch = std::env::temp_dir().join(format!(
+        "spice-inbox-forward-cleanup-{}",
+        std::process::id()
+    ));
+    let legacy = scratch.join("common");
+    let current = scratch.join("worktree");
+    let lane: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce913116302"
+        .parse()
+        .expect("fixture lane");
+    std::fs::create_dir_all(&legacy).expect("create legacy inbox");
+    std::fs::create_dir_all(&current).expect("create current inbox");
+    std::fs::write(steer::inbox::path(&legacy, lane), b"obsolete")
+        .expect("seed obsolete rendering");
+    std::fs::write(steer::inbox::path(&current, lane), b"current").expect("seed current rendering");
+
+    super::remove_legacy_inbox(&legacy, &current, lane);
+
+    assert!(!steer::inbox::path(&legacy, lane).exists());
+    assert_eq!(
+        std::fs::read(steer::inbox::path(&current, lane)).expect("read current rendering"),
+        b"current"
+    );
+
+    super::remove_legacy_inbox(&current, &current, lane);
+    assert!(steer::inbox::path(&current, lane).exists());
+    std::fs::remove_dir_all(&scratch).expect("clean fixture");
+}
 
 #[test]
 fn elapsed_time_from_publication_selects_each_named_stage_at_its_exact_horizon() {
@@ -65,69 +105,216 @@ fn repeated_delivery_appends_only_the_missing_ordered_stages() {
     assert_eq!(missing_stages(Overdue, Overdue), []);
 }
 
-/// Every kind that publishes a directive has to be findable as its creating fact.
-///
-/// `directive_creation` ends in `expect`, which reads a missing creating fact as
-/// impossible rather than as absent. `pending_directive` calls it for every
-/// pending directive while rendering the inbox, so a reminder the ledger admits
-/// but this cannot find is not a blank field -- it takes the resident down on
-/// publication, and again on cancel and recover.
-///
-/// This is the falsifier for that: it fails by panic, not by assertion, if the
-/// `taste::reminded` arm is dropped.
 #[test]
-fn a_reminder_is_findable_as_the_fact_that_created_its_directive() {
-    let snapshot = snapshot_of(&[reminded_bytes(1, "1kJK6N3R")]);
-    let directive: wire::CanonicalUuid = DIRECTIVE.parse().expect("fixture directive");
+fn startup_replay_repairs_cursor_current_predicate_corruption() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("journal.sqlite3");
+    let mut journal = journal::Journal::open(&path).expect("steering authority opens");
+    journal
+        .apply(send_write(DIRECTIVE, KEY))
+        .expect("steering head applies");
+    let facts = journal
+        .fact_snapshot()
+        .expect("pre-corruption facts")
+        .facts()
+        .len();
+    drop(journal);
 
-    let envelope = directive_creation(&snapshot, directive);
+    let connection = rusqlite::Connection::open(&path).expect("corruption fixture opens");
+    connection
+        .execute("UPDATE steering_heads SET disposition = 'canceled'", [])
+        .expect("corrupt indexed predicate");
+    drop(connection);
 
-    assert_eq!(envelope.seq.get(), 1);
-    assert_eq!(envelope.fact.kind(), wire::FactKind::TasteReminded);
+    let mut journal = journal::Journal::open(&path).expect("corrupt authority reopens");
+    assert!(
+        journal
+            .steering_index_current()
+            .expect("cursor-current corruption reads"),
+        "cursor equality alone must not admit the projection"
+    );
+    journal
+        .verify()
+        .expect_err("verification detects predicate corruption");
+
+    admit_index(&mut journal).expect("one canonical startup replay repairs projection");
+    journal.verify().expect("repaired authority verifies");
+    let pending = journal
+        .read(|read| read.pending_steering(None))
+        .expect("repaired inbox reads");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].body().disposition, Disposition::Live);
+    assert_eq!(
+        journal
+            .fact_snapshot()
+            .expect("post-repair facts")
+            .facts()
+            .len(),
+        facts,
+        "projection repair must not append immutable history"
+    );
 }
 
-/// The lookup is keyed on identity, not merely on carrying the right kind.
 #[test]
-fn another_reminders_identity_is_not_mistaken_for_this_one() {
-    let snapshot = snapshot_of(&[reminded_bytes(1, "1kJK6N3R"), reminded_bytes(2, "1kJK6M0V")]);
-    let second: wire::CanonicalUuid = "a0ae31a7-eb68-463a-b3c0-272bfeaaa5d2"
+fn contradictory_startup_replay_refuses_without_projection_mutation() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("contradictory.sqlite3");
+    let mut journal = journal::Journal::open(&path).expect("steering authority opens");
+    journal
+        .apply(send_write(DIRECTIVE, KEY))
+        .expect("first steering head applies");
+    journal
+        .apply(send_write(OTHER_DIRECTIVE, OTHER_KEY))
+        .expect("second steering head applies");
+    drop(journal);
+
+    let connection = rusqlite::Connection::open(&path).expect("contradiction fixture opens");
+    let envelope = connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = 2",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("read second steering fact");
+    let mut document: Value = serde_json::from_slice(&envelope).expect("decode steering envelope");
+    document["fact"]["key"] = Value::String(KEY.to_owned());
+    connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = 2",
+            [serde_json::to_vec(&document).expect("encode contradictory envelope")],
+        )
+        .expect("store contradictory steering history");
+    let before = stored_projection(&connection);
+    drop(connection);
+
+    let mut journal = journal::Journal::open(&path).expect("contradictory authority reopens");
+    admit_index(&mut journal).expect_err("duplicate canonical key refuses startup replay");
+    drop(journal);
+
+    let connection = rusqlite::Connection::open(&path).expect("refused authority reopens");
+    assert_eq!(
+        stored_projection(&connection),
+        before,
+        "replay must refuse before mutating any projection row"
+    );
+}
+
+fn send_write(directive: &str, key: &str) -> JournalWrite {
+    let body = SteerSent {
+        directive: uuid(directive),
+        key: key.to_owned(),
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+        text: "repair the startup projection".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: "2030-04-12T19:44:09.271Z".parse().expect("expiry"),
+    };
+    let mut write = JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
+    let pending = write
+        .fact(body.clone(), FactCause::Root)
+        .expect("sent fact builds");
+    write.steering_head(pending, move |seq| SteeringHead {
+        directive: body.directive,
+        key: body.key,
+        lane: body.lane,
+        text: body.text,
+        control: body.control,
+        attachments: body.attachments,
+        published: instant(),
+        expires: body.expires,
+        stage: SteeringStage::Published,
+        escalations: Vec::new(),
+        disposition: Disposition::Live,
+        origin: origin(),
+        created: seq,
+        minted_millis: None,
+    });
+    write
+}
+
+fn stored_projection(connection: &rusqlite::Connection) -> StoredProjection {
+    let cursor = connection
+        .query_row("SELECT indexed_seq FROM steering_index", [], |row| {
+            row.get::<_, Option<i64>>(0)
+        })
+        .expect("read steering cursor");
+    let mut statement = connection
+        .prepare(
+            "SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
+             head_seq, body FROM steering_heads ORDER BY directive",
+        )
+        .expect("prepare steering projection read");
+    let heads = statement
+        .query_map([], |row| {
+            Ok(StoredHead {
+                directive: row.get(0)?,
+                key: row.get(1)?,
+                lane: row.get(2)?,
+                disposition: row.get(3)?,
+                created: row.get(4)?,
+                minted_millis: row.get(5)?,
+                position: row.get(6)?,
+                body: row.get(7)?,
+            })
+        })
+        .expect("read steering projection")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("decode steering projection");
+    StoredProjection { cursor, heads }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct StoredProjection {
+    cursor: Option<i64>,
+    heads: Vec<StoredHead>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct StoredHead {
+    directive: String,
+    key: String,
+    lane: String,
+    disposition: String,
+    created: i64,
+    minted_millis: Option<i64>,
+    position: i64,
+    body: Vec<u8>,
+}
+
+fn uuid(text: &str) -> wire::CanonicalUuid {
+    text.parse().expect("canonical fixture uuid")
+}
+
+fn origin() -> Origin {
+    "resident:018f82d4-6f59-7d06-92e3-bce913116304"
         .parse()
-        .expect("fixture directive");
-
-    let envelope = directive_creation(&snapshot, second);
-
-    assert_eq!(envelope.seq.get(), 2);
+        .expect("fixture origin")
 }
 
-fn snapshot_of(facts: &[String]) -> journal::FactSnapshot {
-    let decoded = facts
-        .iter()
-        .map(|text| wire::decode(text.as_bytes()).expect("registered envelope"))
-        .collect();
-    journal::FactSnapshot::from_facts(decoded).expect("fixture snapshot")
+fn instant() -> wire::Instant {
+    "2030-04-12T18:44:09.271Z".parse().expect("fixture instant")
 }
 
-/// One `taste::reminded` envelope as the journal stores it.
-fn reminded_bytes(seq: u64, key: &str) -> String {
-    let content = wire::Digest::compute(wire::Domain::TasteProse, b"we will poll until it settles");
-    format!(
-        concat!(
-            r#"{{"v":1,"seq":{},"at":"2026-08-06T03:00:0{}.000Z","actor":"spice","#,
-            r#""origin":"resident:e2e9f1f2-19b2-4ddc-83fa-340b02dee2c4","#,
-            r#""fact":{{"kind":"taste::reminded","#,
-            r#""directive":"a0ae31a7-eb68-463a-b3c0-272bfeaaa5d{}","#,
-            r#""key":"{}","lane":"{}","taste":"polling","content":"{}","#,
-            r#""occupant":"{}","compaction":2,"#,
-            r#""locus":{{"member":1,"offset":40,"length":80,"event":0,"line":3,"column":1}},"#,
-            r#""text":"polling is not a completion event","expires":"{}"}}}}"#
-        ),
-        seq,
-        seq,
-        seq,
-        key,
-        LANE,
-        content.as_str(),
-        OCCUPANT,
-        EXPIRES
-    )
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "spice-steering-admission-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).expect("create steering scratch");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).expect("remove steering scratch");
+    }
 }

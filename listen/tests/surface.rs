@@ -532,6 +532,53 @@ fn finite_retro_accounts_one_terminal_partial_over_every_member() {
 }
 
 #[test]
+fn retro_backfills_tool_media_from_durable_tape_even_when_the_call_is_missing() {
+    let scratch = Scratch::new("tool-media-backfill");
+    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
+    let result = serde_json::to_vec(&serde_json::json!({
+        "type": "event_msg",
+        "payload": {
+            "type": "mcp_tool_call_end",
+            "call_id": "call-image",
+            "result": {
+                "Ok": {
+                    "content": [{
+                        "type": "image",
+                        "data": "iVBORw0KGgo=",
+                        "mimeType": "image/png",
+                    }],
+                    "isError": false,
+                },
+            },
+        },
+    }))
+    .expect("Codex MCP result encodes");
+    tape.tee(&record(&result))
+        .expect("tool image result is durable");
+
+    let replay = retro(scratch.path(), RetroSelector::Path(codex), DIALECTS)
+        .expect("finite replay reads the durable result");
+    assert!(matches!(
+        replay.observations.as_slice(),
+        [Observation::Event {
+            event: SurfaceEvent::Tool {
+                call_id,
+                moment: SurfaceToolMoment::Result {
+                    standing: SurfaceToolResult::Succeeded,
+                    media,
+                    ..
+                },
+            },
+            ..
+        }] if call_id == "call-image"
+            && media.len() == 1
+            && media[0].identity().is_ok()
+    ));
+
+    scratch.remove();
+}
+
+#[test]
 fn every_surface_event_has_one_closed_canonical_wire_shape() {
     let events = vec![
         SurfaceEvent::Session {
@@ -540,6 +587,7 @@ fn every_surface_event_has_one_closed_canonical_wire_shape() {
         SurfaceEvent::Prose {
             text: "hello".to_owned(),
             phase: Some("final".to_owned()),
+            media: Vec::new(),
         },
         SurfaceEvent::Reasoning {
             content: SurfaceReasoning::Plain {
@@ -553,30 +601,41 @@ fn every_surface_event_has_one_closed_canonical_wire_shape() {
             call_id: "call-1".to_owned(),
             moment: SurfaceToolMoment::Call {
                 name: "shell".to_owned(),
+                arguments: "{}".to_owned(),
             },
         },
         SurfaceEvent::Tool {
             call_id: "call-1".to_owned(),
             moment: SurfaceToolMoment::Update {
                 name: "shell".to_owned(),
+                arguments: "{}".to_owned(),
             },
         },
         SurfaceEvent::Tool {
             call_id: "call-1".to_owned(),
             moment: SurfaceToolMoment::Result {
                 standing: SurfaceToolResult::Succeeded,
+                output: None,
+                exit_code: None,
+                media: Vec::new(),
             },
         },
         SurfaceEvent::Tool {
             call_id: "call-2".to_owned(),
             moment: SurfaceToolMoment::Result {
                 standing: SurfaceToolResult::Failed,
+                output: None,
+                exit_code: None,
+                media: Vec::new(),
             },
         },
         SurfaceEvent::Tool {
             call_id: "call-3".to_owned(),
             moment: SurfaceToolMoment::Result {
                 standing: SurfaceToolResult::Unreported,
+                output: None,
+                exit_code: None,
+                media: Vec::new(),
             },
         },
         SurfaceEvent::Usage {
@@ -634,6 +693,7 @@ fn stream_identity_refuses_missing_extra_and_unknown_nested_shapes() {
             event: SurfaceEvent::Prose {
                 text: "hello".to_owned(),
                 phase: None,
+                media: Vec::new(),
             },
         }],
     };

@@ -100,6 +100,20 @@ impl BaselineCapture {
             Self::Unreachable(_) => false,
         }
     }
+
+    /// The committed bytes one current source is measured against.
+    ///
+    /// An unreachable committed tree has no baseline to offer. Selection among
+    /// reachable merge parents is identical to [`CommittedTexts::baseline`],
+    /// but retaining bytes lets file-shape apply its own UTF-8 parser instead
+    /// of inheriting the lossy text projection used by text-delta metrics.
+    #[must_use]
+    pub(crate) fn baseline_bytes(&self, path: &str, current: &[u8]) -> Option<&[u8]> {
+        match self {
+            Self::Reached(baselines) => baselines.baseline_bytes(path, current),
+            Self::Unreachable(_) => None,
+        }
+    }
 }
 
 /// Every selected blob captured from each parent of the pending commit.
@@ -141,22 +155,30 @@ impl CommittedTexts {
     /// happens to hold nothing.
     #[must_use]
     pub fn baseline(&self, path: &str, current: &[u8]) -> Option<&str> {
+        self.baseline_entry(path, current)
+            .map(|committed| committed.text.as_str())
+    }
+
+    /// The lossless committed bytes selected by the same ancestry rule as
+    /// [`Self::baseline`].
+    #[must_use]
+    fn baseline_bytes(&self, path: &str, current: &[u8]) -> Option<&[u8]> {
+        self.baseline_entry(path, current)
+            .map(|committed| committed.bytes.as_slice())
+    }
+
+    fn baseline_entry(&self, path: &str, current: &[u8]) -> Option<&CommittedText> {
         let mut nearest = None;
         for texts in &self.parents {
             let Some(committed) = texts.get(path) else {
                 continue;
             };
             if committed.bytes == current {
-                return Some(&committed.text);
+                return Some(committed);
             }
-            nearest = nearest.or(Some(committed.text.as_str()));
+            nearest = nearest.or(Some(committed));
         }
-        nearest.or_else(|| {
-            self.merge_base
-                .as_ref()?
-                .get(path)
-                .map(|committed| committed.text.as_str())
-        })
+        nearest.or_else(|| self.merge_base.as_ref()?.get(path))
     }
 
     /// The commit these texts were read from, absent on an unborn `HEAD`.

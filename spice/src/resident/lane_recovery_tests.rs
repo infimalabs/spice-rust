@@ -55,7 +55,7 @@ fn fixture() -> Fixture {
 const PREDECESSOR: &str = "/worktrees/predecessor";
 const SUCCESSOR: &str = "/worktrees/successor";
 const PRE_EXTENSION_RESIDENCY: &[u8] = concat!(
-    r#"{"epoch":"018f82d4-6f59-7d06-92e3-000000000001","state":"seated","lanes":[{"#,
+    r#"{"epoch":"018f82d4-6f59-7d06-92e3-000000000001","state":"seated","topology_revision":1,"lanes":[{"#,
     r#""lane":"018f82d4-6f59-7d06-92e3-000000000003","#,
     r#""lineage_id":"018f82d4-6f59-7d06-92e3-000000000003","name":"Ava","#,
     r#""worktree":"/worktrees/predecessor","life":"drive","vendor":"claude","#,
@@ -415,6 +415,7 @@ fn runtime_paths(fixture: &Fixture, common: std::path::PathBuf) -> RuntimePaths 
         canvas: fixture.root.join("canvas"),
         lane_canvas: fixture.root.join("lane-canvas"),
         inbox: fixture.root.join("inbox"),
+        legacy_inbox: fixture.root.join("inbox"),
         degraded: fixture.root.join("degraded"),
         tape: fixture.root.join("tape"),
         stage: fixture.root.join("stage"),

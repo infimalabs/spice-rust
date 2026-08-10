@@ -241,12 +241,10 @@ pub(crate) fn compose(draft: &ComposerDraft) -> String {
 mod tests {
     use super::*;
 
+    const PNG: &str = "iVBORw0KGgo=";
+
     fn attachment(name: &str) -> DirectiveAttachment {
-        DirectiveAttachment {
-            name: name.to_owned(),
-            content_type: "image/png".to_owned(),
-            data_url: format!("data:image/png;base64,{name}"),
-        }
+        DirectiveAttachment::from_base64(name, "image/png", PNG).expect("fixture attachment admits")
     }
 
     #[test]
@@ -300,6 +298,7 @@ mod tests {
             },
             activity: wire::AgentActivityKind::Prose,
             text: "quoted prose".to_owned(),
+            media: Vec::new(),
         }
     }
 
@@ -433,7 +432,7 @@ mod tests {
         let prepared = store.prepare("agent-a").unwrap();
         assert_eq!(
             prepared.message,
-            "> quoted\n> line\n\nreply\n\nbody\n\n![a](data:image/png;base64,a)"
+            format!("> quoted\n> line\n\nreply\n\nbody\n\n![a](data:image/png;base64,{PNG})")
         );
         assert_eq!(prepared.attachments, [attachment("a")]);
     }

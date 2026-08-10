@@ -115,6 +115,7 @@ pre_commit = [
 # name, and one written without being counted here is one nobody can find
 # again. Doctor reports only the names Spice owns, so these thirteen are the
 # difference wire pins between this manifest and SpiceVariable.
+# Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
@@ -128,22 +129,22 @@ env_names = [
     "SPICE_APP_SOURCE_IDENTITY",
     "SPICE_CANVAS_BINARY",
     "SPICE_HOOKS",
-    "SPICE_RS_HOOKS",
     "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
     "SPICE_HYGIENE_INTERPRETER_MARKER",
     "SPICE_INBOX",
-    "SPICE_RS_INBOX",
     "SPICE_INSTALL_TEST_PAUSE_ACTION",
     "SPICE_INSTALL_TEST_PAUSE_CONTROL",
     "SPICE_INSTALL_TEST_PAUSE_PATH",
     "SPICE_LANE",
-    "SPICE_RS_LANE",
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
     "SPICE_NATIVE_SHELL",
-    "SPICE_RS_NATIVE_SHELL",
     "SPICE_PROOF",
+    "SPICE_RS_HOOKS",
+    "SPICE_RS_INBOX",
+    "SPICE_RS_LANE",
+    "SPICE_RS_NATIVE_SHELL",
     "TMPDIR",
 ]
 

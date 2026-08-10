@@ -11,7 +11,9 @@ pub(super) struct RuntimePaths {
     pub(super) resident: PathBuf,
     pub(super) canvas: PathBuf,
     pub(super) lane_canvas: PathBuf,
+    #[cfg(test)]
     pub(super) inbox: PathBuf,
+    pub(super) legacy_inbox: PathBuf,
     pub(super) degraded: PathBuf,
     pub(super) tape: PathBuf,
     pub(super) stage: PathBuf,
@@ -110,11 +112,41 @@ impl RuntimePaths {
             resident: state.resident().to_path_buf(),
             canvas: state.canvas().to_path_buf(),
             lane_canvas: state.lane_canvas().to_path_buf(),
+            #[cfg(test)]
             inbox: state.inbox().to_path_buf(),
+            legacy_inbox: state.runtime().join("inbox"),
             degraded: state.degraded().to_path_buf(),
             tape: state.tape().to_path_buf(),
             stage: repository.worktree_root().join("dist/stage"),
         })
+    }
+
+    pub(super) fn inbox_for_worktree(&self, worktree: &str) -> CommandResult<PathBuf> {
+        let repository = Repository::discover(worktree).map_err(|error| {
+            environment_fault("steer::inbox-worktree-unresolved", &error.to_string())
+        })?;
+        if repository.common_dir() != self.common
+            || repository.worktree_root() != Path::new(worktree)
+        {
+            return Err(store_fault(
+                "steer::inbox-worktree-moved",
+                "durable lane worktree no longer names one current repository worktree root",
+            ));
+        }
+        self.inbox_for_repository(&repository)
+    }
+
+    pub(super) fn inbox_for_repository(&self, repository: &Repository) -> CommandResult<PathBuf> {
+        if repository.common_dir() != self.common {
+            return Err(store_fault(
+                "steer::inbox-repository-moved",
+                "lane repository no longer belongs to the resident Git-common authority",
+            ));
+        }
+        repository
+            .admit_state()
+            .map(|state| state.inbox().to_path_buf())
+            .map_err(|error| crate::state_failure(&error).outcome())
     }
 
     pub(super) fn clear_stale_surfaces(&self) -> CommandResult<()> {
@@ -411,11 +443,14 @@ fn up_from_with(
         return outcome;
     }
 
-    let journal = match journal::Journal::open(&paths.journal) {
+    let mut journal = match journal::Journal::open(&paths.journal) {
         Ok(journal) => journal,
         Err(error) => return journal_open_failure(error),
     };
     let migration = journal.migration();
+    if let Err(outcome) = steering::admit_index(&mut journal) {
+        return outcome;
+    }
     let epoch = new_uuid();
     if let Err(error) = resident_lock.set_epoch(epoch) {
         return environment_fault("resident::holder-unwritable", &error.to_string());

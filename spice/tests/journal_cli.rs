@@ -217,6 +217,53 @@ fn authority_only_backup_v1_uses_the_sole_current_restore_path() {
         .expect("restored v1 authority verifies through the current path");
 }
 
+#[test]
+fn restored_authority_refuses_ahead_effort_generation_in_cli() {
+    let fixture = Fixture::new();
+    fixture.reply::<JournalBackup>(&[
+        "backup",
+        fixture.bundle.to_str().expect("UTF-8 backup path"),
+    ]);
+    append_note_fact(&fixture.authority, 4, 2);
+    let resident = fixture.start();
+    let ahead = fixture.reply::<EffortAnswer>(&["task", "effort"]);
+    let wire::ReplyPosition::Snapshot(ahead_cursor) = ahead.position else {
+        panic!("ahead effort reply did not carry its materialization cursor")
+    };
+    assert!(ahead_cursor >= Seq::new(4).expect("pre-resident position"));
+    resident.stop(&fixture);
+
+    let preview = fixture.reply::<JournalRestore>(&[
+        "restore",
+        fixture.bundle.to_str().expect("UTF-8 backup path"),
+    ]);
+    let restored = fixture.reply::<JournalRestore>(&[
+        "restore",
+        fixture.bundle.to_str().expect("UTF-8 backup path"),
+        &format!("--apply={}", preview.body.plan),
+    ]);
+    assert!(restored.body.applied);
+    let restored_cursor = journal::JournalReader::open(&fixture.authority)
+        .expect("restored authority opens")
+        .fact_snapshot()
+        .expect("restored authority snapshot")
+        .horizon()
+        .expect("restore recognition supplies a cursor");
+    assert_eq!(restored_cursor, Seq::new(3).expect("restored position"));
+    assert!(restored_cursor < ahead_cursor);
+
+    let resident = fixture.start();
+    let routed = fixture.invoke(&["task", "effort"]);
+    assert!(routed.stdout.is_empty(), "a refusal carried answer bytes");
+    let Outcome::Refusal(refusal) =
+        wire::decode::<Outcome<EffortAnswer>>(&routed.stderr).expect("effort refusal decodes")
+    else {
+        panic!("CLI effort read did not refuse its ahead generation")
+    };
+    assert_eq!(refusal.reason(), "fold::materialization-refused");
+    resident.stop(&fixture);
+}
+
 fn assert_journal_thread_and_fold(fixture: &Fixture) {
     let reply = fixture.reply::<JournalReport>(&["journal"]);
     let wire::ReplyPosition::Snapshot(position) = reply.position else {
@@ -297,7 +344,9 @@ fn assert_journal_thread_and_fold(fixture: &Fixture) {
     let replay_answer: EffortAnswer =
         serde_json::from_value(effort.payload.clone().expect("typed task effort payload"))
             .expect("replay payload decodes as task effort");
-    let live_answer = fixture.reply::<EffortAnswer>(&["task", "effort"]).body;
+    let live = fixture.reply::<EffortAnswer>(&["task", "effort"]);
+    assert_eq!(live.position, wire::ReplyPosition::Snapshot(position));
+    let live_answer = live.body;
     assert_eq!(
         replay_answer, live_answer,
         "journal replay and the live CLI/Canvas resident surface use the same typed materialization"
@@ -765,6 +814,51 @@ fn append_note_facts(path: &Path, through: u64) {
             [i64::try_from(through).expect("fixture cursor fits")],
         )
         .expect("advance bounded-report cursor");
+}
+
+fn append_note_fact(path: &Path, seq: u64, cause: u64) {
+    let connection = Connection::open(path).expect("open authority for one note fact");
+    let envelope = fact(
+        seq,
+        Some(cause),
+        FactKind::TaskNoted,
+        json!({"task": "1kKRRsDP", "note": format!("note {seq}")}),
+    );
+    let bytes = wire::encode(&envelope).expect("encode note fact");
+    connection
+        .execute(
+            concat!(
+                "INSERT INTO fact_envelopes(seq, wire_version, instant, actor, origin, ",
+                "cause, kind, envelope) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+            ),
+            params![
+                i64::try_from(seq).expect("fixture sequence fits"),
+                envelope.v.0,
+                envelope.at.to_string(),
+                envelope.actor.to_string(),
+                envelope.origin.as_str(),
+                i64::try_from(cause).expect("fixture cause fits"),
+                envelope.fact.kind().as_str(),
+                bytes,
+            ],
+        )
+        .expect("insert note fact");
+    connection
+        .execute(
+            "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES (?1, ?2, ?3, 1, 2)",
+            params![
+                i64::try_from(seq).expect("fixture sequence fits"),
+                envelope.origin.as_str(),
+                i64::try_from(cause).expect("fixture cause fits"),
+            ],
+        )
+        .expect("insert note thread");
+    connection
+        .execute(
+            "UPDATE cursor_head SET seq = ?1, wake = 1 WHERE singleton = 1",
+            [i64::try_from(seq).expect("fixture cursor fits")],
+        )
+        .expect("advance cursor for one note fact");
 }
 
 fn fact(

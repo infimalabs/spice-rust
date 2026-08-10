@@ -15,6 +15,7 @@ const SEARCH_DEPTH: usize = 8;
 pub(crate) struct ResolvedSource {
     pub(crate) path: PathBuf,
     pub(crate) vendor: Vendor,
+    pub(crate) dialect: Option<listen::Dialect>,
     pub(crate) thread: Option<String>,
 }
 
@@ -55,13 +56,13 @@ fn resolve_thread_from_registry(
         )
     })?;
     let preferred = preferred_vendor(environment, registry);
-    let mut vendors = registry.vendors();
+    let mut vendors = registry.session_vendors();
     vendors.sort_by_key(|vendor| vendor.name() != preferred.name());
     let mut failures = Vec::new();
     for vendor in vendors {
         match find_thread(&thread, vendor, environment) {
             Ok(path) => {
-                return admit(path, Vendor::from_vendor(vendor), Some(thread));
+                return admit(path, Some(vendor), Some(thread));
             }
             Err(detail) => failures.push(detail),
         }
@@ -97,7 +98,7 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
                 })?;
             return Ok(vec![admit(
                 path,
-                Vendor::from_vendor(vendor_environment.vendor),
+                Some(vendor_environment.vendor),
                 Some(thread),
             )?]);
         }
@@ -132,14 +133,14 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
     }
     paths
         .into_iter()
-        .map(|path| admit(path, Vendor::Unknown, None))
+        .map(|path| admit(path, None, None))
         .collect()
 }
 
 fn resolve_input(value: &str, environment: &Environment) -> Result<ResolvedSource, Refusal> {
     let expanded = expand_home(value, environment);
     if expanded.exists() {
-        return admit(expanded, Vendor::Unknown, None);
+        return admit(expanded, None, None);
     }
     if canonical_thread(value).is_some() {
         return resolve_thread(value, environment);
@@ -151,7 +152,11 @@ fn resolve_input(value: &str, environment: &Environment) -> Result<ResolvedSourc
     ))
 }
 
-fn admit(path: PathBuf, vendor: Vendor, thread: Option<String>) -> Result<ResolvedSource, Refusal> {
+fn admit(
+    path: PathBuf,
+    declared: Option<&'static spice::extension::Vendor>,
+    thread: Option<String>,
+) -> Result<ResolvedSource, Refusal> {
     let metadata = fs::symlink_metadata(&path).map_err(|error| {
         refusal(
             "session::transcript-unavailable",
@@ -180,9 +185,16 @@ fn admit(path: PathBuf, vendor: Vendor, thread: Option<String>) -> Result<Resolv
             "restore stable read access to the transcript and retry",
         )
     })?;
+    let (vendor, dialect) = declared.map_or((Vendor::UNKNOWN, None), |vendor| {
+        (
+            Vendor::declared(vendor),
+            Some(vendor.session_study().dialect()),
+        )
+    });
     Ok(ResolvedSource {
         path: canonical,
         vendor,
+        dialect,
         thread,
     })
 }
@@ -222,8 +234,7 @@ fn preferred_vendor(
                 .find(|row| row.identity.is_some())
                 .map(|row| row.vendor)
         })
-        .or_else(|| registry.vendor("codex"))
-        .or_else(|| registry.vendors().into_iter().next())
+        .or_else(|| registry.session_vendors().into_iter().next())
         .expect("thread resolution requires at least one declared vendor")
 }
 
@@ -478,14 +489,15 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
     use super::{
-        Environment, SEARCH_DEPTH, find_named_transcript, find_thread, resolve_thread_from_registry,
+        Environment, SEARCH_DEPTH, find_named_transcript, find_thread, resolve_inputs,
+        resolve_thread_from_registry,
     };
     use crate::session_command::VendorEnvironment;
 
     const THREAD: &str = "0123456789abcdef0123456789abcdef";
     const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
     const FIXTURE_VENDOR: spice::extension::Vendor =
-        spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration);
+        spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
     const FIXTURE_DECLARATIONS: &[spice::extension::Declaration] =
         &[spice::extension::Declaration {
             namespace: spice::extension::Namespace::Vendor,
@@ -663,26 +675,95 @@ mod tests {
         let sessions = scratch.path().join("sessions");
         fs::create_dir_all(&sessions).expect("fixture sessions exist");
         let transcript = sessions.join(format!("rollout-{THREAD}.jsonl"));
-        fs::write(&transcript, b"\n").expect("fixture transcript exists");
-        let environment = Environment {
-            vendors: vec![VendorEnvironment {
-                vendor: &FIXTURE_VENDOR,
-                identity: None,
-                home: Some(scratch.path().to_path_buf()),
-            }],
-            preferred_vendor: Some(std::ffi::OsString::from("fixture")),
-            home: None,
-        };
+        fs::write(
+            &transcript,
+            concat!(
+                r#"{"timestamp":"2026-08-09T01:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-fixture"}}"#,
+                "\n",
+            ),
+        )
+        .expect("fixture transcript exists");
         let registry = spice::extension::Registry::discover(FIXTURE_DECLARATIONS)
             .expect("third declaration is coherent");
+        let fixture = registry.vendor("fixture").expect("fixture value resolves");
+        let environment = Environment::new(
+            vec![VendorEnvironment::new(
+                fixture,
+                Some(std::ffi::OsString::from(THREAD)),
+                Some(scratch.path().as_os_str().to_owned()),
+            )],
+            Some(std::ffi::OsString::from("fixture")),
+            None,
+        );
 
         let resolved = resolve_thread_from_registry(THREAD, &environment, &registry)
             .expect("third declaration resolves its transcript");
-        assert_eq!(resolved.vendor, super::Vendor::Codex);
+        assert_eq!(resolved.vendor, super::Vendor::declared(fixture));
+        assert_eq!(resolved.dialect, Some(listen::Dialect::Codex));
         assert_eq!(resolved.thread.as_deref(), Some(THREAD));
         assert_eq!(
             resolved.path,
             transcript.canonicalize().expect("fixture path")
+        );
+
+        let matches = crate::cli::command()
+            .try_get_matches_from(["spice", "session", "briefing", "--deadline-seconds", "5"])
+            .expect("briefing syntax parses");
+        let leaf = crate::cli::selected_matches(&matches);
+        let wire::Outcome::Reply(reply) =
+            crate::session_command::run(leaf, &["session", "briefing"], &environment)
+        else {
+            panic!("third declaration reaches briefing");
+        };
+        let crate::session_command::model::Report::Recall {
+            sources, window, ..
+        } = reply.body
+        else {
+            panic!("briefing returns recall");
+        };
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].vendor, super::Vendor::declared(fixture));
+        assert_eq!(window.turns.len(), 1);
+        assert_eq!(window.turns[0].vendor, super::Vendor::declared(fixture));
+    }
+
+    #[test]
+    fn dual_ambient_identities_follow_declared_codex_first_precedence() {
+        let scratch = Scratch::new("ambient-precedence");
+        let codex = scratch
+            .path()
+            .join("sessions")
+            .join(format!("codex-{THREAD}.jsonl"));
+        let claude = scratch
+            .path()
+            .join("projects")
+            .join(format!("claude-{THREAD}.jsonl"));
+        fs::create_dir_all(codex.parent().expect("Codex parent")).expect("Codex root exists");
+        fs::create_dir_all(claude.parent().expect("Claude parent")).expect("Claude root exists");
+        fs::write(&codex, b"\n").expect("Codex transcript exists");
+        fs::write(&claude, b"\n").expect("Claude transcript exists");
+        let identity = Some(std::ffi::OsString::from(THREAD));
+        let home = Some(scratch.path().as_os_str().to_owned());
+        let environment = Environment::new(
+            vec![
+                VendorEnvironment::new(&spice::extension::CLAUDE, identity.clone(), home.clone()),
+                VendorEnvironment::new(&spice::extension::CODEX, identity, home),
+            ],
+            None,
+            None,
+        );
+
+        let resolved = resolve_inputs(&[], &environment)
+            .expect("both valid ambient identities resolve one declared winner");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].vendor,
+            super::Vendor::declared(&spice::extension::CODEX)
+        );
+        assert_eq!(resolved[0].dialect, Some(listen::Dialect::Codex));
+        assert_eq!(
+            resolved[0].path,
+            codex.canonicalize().expect("Codex transcript path")
         );
     }
 }

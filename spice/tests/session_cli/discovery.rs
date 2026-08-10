@@ -197,12 +197,11 @@ fn public_thread_refusal_preserves_an_incomplete_claude_search_before_codex() {
     );
     let envelope: Value =
         serde_json::from_slice(&spoken.err).expect("refusal is a structured outcome DTO");
-    assert_eq!(envelope["kind"], "refusal");
-    assert_eq!(
-        refusal_value(&envelope, "reason"),
-        Some("session::thread-unresolved")
-    );
-    let remedy = refusal_value(&envelope, "remedy").expect("thread refusal carries a remedy");
+    let diagnostic = refusal_diagnostic(&envelope);
+    assert_eq!(diagnostic["reason"], "session::thread-unresolved");
+    let remedy = diagnostic["detail"]
+        .as_str()
+        .expect("thread refusal carries diagnostic detail");
     let claude_failure = format!(
         "transcript search was incomplete: could not read directory {}: {read_error}",
         denied.display()

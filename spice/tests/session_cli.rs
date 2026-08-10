@@ -9,10 +9,16 @@ use serde_json::{Value, json};
 mod authority;
 #[path = "session_cli/discovery.rs"]
 mod discovery;
+#[path = "session_cli/fixtures.rs"]
+mod fixtures;
+#[path = "session_cli/message_shape.rs"]
+mod message_shape;
 #[path = "session_cli/recovery.rs"]
 mod recovery;
 #[path = "session_cli/window_planner.rs"]
 mod window_planner;
+
+use fixtures::{codex_event, codex_message, token_payload, transcript_event};
 
 const REFUSAL_EXIT: i32 = 2;
 
@@ -140,30 +146,21 @@ fn refusal(argv: &[String], environment: &[(&str, String)], expected_reason: &st
     assert!(spoken.out.is_empty(), "refusals do not impersonate replies");
     let envelope: Value =
         serde_json::from_slice(&spoken.err).expect("refusal is a structured outcome DTO");
-    assert_eq!(envelope["kind"], "refusal");
-    let reason = envelope["reason"]
-        .as_str()
-        .or_else(|| envelope["diagnostic"]["reason"].as_str());
-    assert_eq!(reason, Some(expected_reason));
+    let diagnostic = refusal_diagnostic(&envelope);
+    assert_eq!(diagnostic["reason"], expected_reason);
     assert!(
-        envelope["remedy"]
+        diagnostic["detail"]
             .as_str()
-            .or_else(|| envelope["diagnostic"]["detail"].as_str())
             .is_some_and(|value| !value.is_empty()),
         "every refusal carries explicit recovery guidance"
     );
     envelope
 }
 
-fn refusal_value<'a>(envelope: &'a Value, field: &str) -> Option<&'a str> {
-    envelope[field]
-        .as_str()
-        .or_else(|| envelope["diagnostic"][field].as_str())
-        .or_else(|| {
-            (field == "remedy")
-                .then(|| envelope["diagnostic"]["detail"].as_str())
-                .flatten()
-        })
+fn refusal_diagnostic(envelope: &Value) -> &Value {
+    assert_eq!(envelope["kind"], "refusal");
+    assert_eq!(envelope["form"], "bare");
+    &envelope["diagnostic"]
 }
 
 fn utf8(bytes: &[u8]) -> String {
@@ -178,44 +175,6 @@ fn write_jsonl(path: &Path, rows: &[Value]) -> Vec<u8> {
     }
     fs::write(path, &bytes).expect("fixture transcript is written");
     bytes
-}
-
-fn transcript_event(timestamp: &str, kind: &str, fields: Value) -> Value {
-    let Value::Object(mut fields) = fields else {
-        panic!("transcript fixture fields must be an object");
-    };
-    fields.insert("timestamp".to_owned(), Value::String(timestamp.to_owned()));
-    fields.insert("type".to_owned(), Value::String(kind.to_owned()));
-    Value::Object(fields)
-}
-
-fn codex_event(timestamp: &str, kind: &str, payload: Value) -> Value {
-    transcript_event(timestamp, kind, json!({"payload": payload}))
-}
-
-fn codex_message(timestamp: &str, role: &str, phase: Option<&str>, text: &str) -> Value {
-    let mut payload = json!({
-        "type": "message",
-        "role": role,
-        "content": [{"type": "output_text", "text": text}],
-    });
-    if let Some(phase) = phase {
-        payload["phase"] = Value::String(phase.to_owned());
-    }
-    codex_event(timestamp, "response_item", payload)
-}
-
-fn token_payload(input: u64, cached: u64, output: u64, reasoning: u64, total: u64) -> Value {
-    json!({
-        "type": "token_count",
-        "info": {"last_token_usage": {
-            "input_tokens": input,
-            "cached_input_tokens": cached,
-            "output_tokens": output,
-            "reasoning_output_tokens": reasoning,
-            "total_tokens": total,
-        }},
-    })
 }
 
 fn codex_first_turn_rows() -> Vec<Value> {
@@ -783,185 +742,6 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     assert_sweep_and_timeline(&file, start, end);
     assert_tokens_turns_and_pipelines(&file, start, end);
     scratch.remove();
-}
-
-#[test]
-fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
-    let scratch = Scratch::new("message-shapes");
-    let transcript = scratch.path().join("message-shapes.jsonl");
-    write_jsonl(&transcript, &message_shape_rows());
-    let file = transcript.to_string_lossy().into_owned();
-
-    assert_message_shape_message_rows(&file);
-    assert_message_shape_summary(&file);
-    assert_message_shape_briefing(&file);
-    scratch.remove();
-}
-
-fn message_shape_rows() -> Vec<Value> {
-    vec![
-        codex_event(
-            "2026-01-03T00:00:00Z",
-            "event_msg",
-            json!({"type": "task_started", "turn_id": "shape-turn"}),
-        ),
-        codex_message(
-            "2026-01-03T00:00:01Z",
-            "user",
-            None,
-            "Please preserve the authored ask.",
-        ),
-        codex_message(
-            "2026-01-03T00:00:02Z",
-            "user",
-            None,
-            "[$spice](.agents/skills/spice/SKILL.md)",
-        ),
-        codex_message(
-            "2026-01-03T00:00:03Z",
-            "user",
-            None,
-            "1. Primary Request and Intent:\nContinue.\n2. Work Completed:\nNone.",
-        ),
-        codex_message(
-            "2026-01-03T00:00:04Z",
-            "user",
-            None,
-            "<future-envelope>tool output</future-envelope>",
-        ),
-        codex_message(
-            "2026-01-03T00:00:05Z",
-            "user",
-            None,
-            "[Please keep this bracketed ask.]",
-        ),
-        codex_message(
-            "2026-01-03T00:00:06Z",
-            "user",
-            None,
-            "The malformed tool call was discussed before retrying with valid syntax.",
-        ),
-        codex_message(
-            "2026-01-03T00:00:07Z",
-            "user",
-            None,
-            "Lead prose.\n[$spice](.agents/skills/spice/SKILL.md)\nTail prose.",
-        ),
-        codex_message(
-            "2026-01-03T00:00:08Z",
-            "user",
-            None,
-            "Malformed <future-envelope>tool output",
-        ),
-        codex_message(
-            "2026-01-03T00:00:09Z",
-            "user",
-            None,
-            "Same text at a distinct source position.",
-        ),
-        codex_message(
-            "2026-01-03T00:00:10Z",
-            "user",
-            None,
-            "Same text at a distinct source position.",
-        ),
-        codex_message(
-            "2026-01-03T00:00:11Z",
-            "assistant",
-            Some("commentary"),
-            "Authored commentary.\ndiff --git a/a.rs b/a.rs\n+generated body",
-        ),
-        codex_message(
-            "2026-01-03T00:00:12Z",
-            "assistant",
-            Some("commentary"),
-            "*** Begin Patch\n+generated body\n*** End Patch",
-        ),
-    ]
-}
-
-fn assert_message_shape_message_rows(file: &str) {
-    let messages = reply_forms(
-        &strings(&[
-            "session",
-            "messages",
-            file,
-            "--side",
-            "user",
-            "--oldest-first",
-        ]),
-        &[],
-        "messages",
-    );
-    assert_eq!(
-        messages["rows"]
-            .as_array()
-            .expect("message rows")
-            .iter()
-            .map(|row| row["shape"].as_str().expect("message shape"))
-            .collect::<Vec<_>>(),
-        [
-            "authored-ask",
-            "scaffolding",
-            "compaction-rehydration",
-            "tool-generated-envelope",
-            "authored-ask",
-            "authored-ask",
-            "authored-ask",
-            "authored-ask",
-            "authored-ask",
-            "authored-ask",
-        ]
-    );
-}
-
-fn assert_message_shape_summary(file: &str) {
-    let summary = reply_forms(
-        &strings(&["session", "summary", file, "--recent", "8"]),
-        &[],
-        "summary",
-    );
-    assert_eq!(
-        summary["recent_prompts"]
-            .as_array()
-            .expect("recent prompts")
-            .iter()
-            .map(|row| row["text"].as_str().expect("prompt text"))
-            .collect::<Vec<_>>(),
-        [
-            "Please preserve the authored ask.",
-            "[Please keep this bracketed ask.]",
-            "The malformed tool call was discussed before retrying with valid syntax.",
-            "Lead prose.\nTail prose.",
-            "Malformed <future-envelope>tool output",
-            "Same text at a distinct source position.",
-            "Same text at a distinct source position.",
-        ]
-    );
-}
-
-fn assert_message_shape_briefing(file: &str) {
-    let briefing = reply_forms(
-        &strings(&["session", "briefing", file, "--deadline-seconds", "5"]),
-        &[],
-        "recall",
-    );
-    assert_eq!(
-        briefing["window"]["turns"][0]["dialogue"],
-        json!([
-            {"side": "user", "text": "Please preserve the authored ask."},
-            {"side": "user", "text": "[Please keep this bracketed ask.]"},
-            {
-                "side": "user",
-                "text": "The malformed tool call was discussed before retrying with valid syntax."
-            },
-            {"side": "user", "text": "Lead prose. Tail prose."},
-            {"side": "user", "text": "Malformed <future-envelope>tool output"},
-            {"side": "user", "text": "Same text at a distinct source position."},
-            {"side": "user", "text": "Same text at a distinct source position."},
-            {"side": "assistant", "text": "Authored commentary."},
-        ])
-    );
 }
 
 fn assert_codex_final_rows(codex: &str) {
