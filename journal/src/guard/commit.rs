@@ -238,42 +238,34 @@ fn ensure_steering_index_current(
 }
 
 fn validate_steering_updates(write: &JournalWrite) -> Result<(), CommitError> {
-    let mut subjects = std::collections::BTreeMap::<String, Vec<usize>>::new();
+    let mut subjects = std::collections::BTreeMap::<String, usize>::new();
     let mut misses = Vec::new();
     for (index, proposed) in write.facts.iter().enumerate() {
         if let Some(subject) = steering_subject(&proposed.fact) {
-            subjects.entry(subject).or_default().push(index);
+            subjects.insert(subject, index);
         } else if proposed.fact.kind() == wire::FactKind::SteerMissed {
             misses.push(index);
         }
     }
-    let indexed_subjects = write
+    let mut final_subjects = subjects.into_values().collect::<Vec<_>>();
+    final_subjects.sort_unstable();
+    let mut indexed_subjects = write
         .heads
         .iter()
         .filter(|head| head.kind == HeadUpdateKind::Steering)
         .map(|head| head.fact.index)
-        .collect::<std::collections::BTreeSet<_>>();
-    let indexed_misses = write
+        .collect::<Vec<_>>();
+    indexed_subjects.sort_unstable();
+    let mut indexed_misses = write
         .heads
         .iter()
         .filter(|head| head.kind == HeadUpdateKind::SteeringMiss)
         .map(|head| head.fact.index)
-        .collect::<std::collections::BTreeSet<_>>();
-    let missing_subject = subjects
-        .values()
-        .any(|facts| facts.iter().all(|index| !indexed_subjects.contains(index)));
-    let stray_subject = indexed_subjects.iter().any(|index| {
-        write
-            .facts
-            .get(*index)
-            .and_then(|fact| steering_subject(&fact.fact))
-            .is_none()
-    });
-    let missing_miss = misses.iter().any(|index| !indexed_misses.contains(index));
-    let stray_miss = indexed_misses.iter().any(|index| !misses.contains(index));
-    if missing_subject || stray_subject || missing_miss || stray_miss {
+        .collect::<Vec<_>>();
+    indexed_misses.sort_unstable();
+    if indexed_subjects != final_subjects || indexed_misses != misses {
         return Err(CommitError::Refused(GuardRefusal::new(
-            "every affected steering identity must advance its authoritative head or evidence index",
+            "every affected steering subject's final fact and every missed fact must have exactly one authoritative index update",
         )));
     }
     Ok(())
