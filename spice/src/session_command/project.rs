@@ -40,6 +40,18 @@ const DEFAULT_COMMITS_LIMIT: usize = 25;
 const DEFAULT_COMMANDS_LIMIT: usize = 80;
 const DEFAULT_COMMAND_TEXT: usize = 220;
 
+struct WindowPlan<'a> {
+    horizon_start: Option<&'a str>,
+    selected: Vec<&'a CompactionRecord>,
+    intervals: Vec<WindowInterval<'a>>,
+}
+
+struct WindowInterval<'a> {
+    start: Option<&'a str>,
+    end: Option<&'a str>,
+    anchors: Vec<&'a CompactionRecord>,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Filters {
     start: Option<String>,
@@ -69,6 +81,14 @@ impl Filters {
             turn_ids: values(matches, "turn-id").into_iter().collect(),
             tools: values(matches, "tool").into_iter().collect(),
         })
+    }
+
+    pub(crate) fn start_bound(&self) -> Option<&str> {
+        self.start.as_deref()
+    }
+
+    pub(crate) fn end_bound(&self) -> Option<&str> {
+        self.end.as_deref()
     }
 
     fn turn_matches(&self, turn: &TurnRecord) -> bool {
@@ -132,6 +152,14 @@ impl Filters {
     }
 }
 
+pub(crate) fn horizon_count(matches: &ArgMatches, action: &str) -> Result<usize, Refusal> {
+    if action == "sweep" {
+        number(matches, "count", DEFAULT_HORIZON_COMPACTIONS)
+    } else {
+        Ok(DEFAULT_HORIZON_COMPACTIONS)
+    }
+}
+
 pub(crate) fn recall(
     dataset: &Dataset,
     matches: &ArgMatches,
@@ -141,28 +169,8 @@ pub(crate) fn recall(
     let max_lines = number(matches, "max-lines", DEFAULT_RECALL_MAX_LINES)?;
     let max_bytes = number(matches, "max-bytes", DEFAULT_RECALL_MAX_BYTES)?;
     let explain = flag(matches, "explain-pruning");
-    let selected_compactions = dataset
-        .compactions
-        .iter()
-        .filter(|row| filters.end.as_ref().is_none_or(|end| row.ts <= *end))
-        .rev()
-        .take(DEFAULT_HORIZON_COMPACTIONS)
-        .collect::<Vec<_>>();
-    let horizon_start = filters.start.clone().or_else(|| {
-        selected_compactions
-            .last()
-            .map(|compaction| compaction.ts.clone())
-    });
-    let mut turns = dataset
-        .turns
-        .iter()
-        .filter(|turn| filters.turn_matches(turn))
-        .filter(|turn| {
-            horizon_start
-                .as_ref()
-                .is_none_or(|start| turn_end(turn) >= *start)
-        })
-        .collect::<Vec<_>>();
+    let plan = window_plan(dataset, filters, DEFAULT_HORIZON_COMPACTIONS);
+    let mut turns = plan_turns(dataset, filters, plan.horizon_start, None);
     let before = turns.len();
     while turns.len() > 1 {
         let (lines, bytes) = estimated_budget(&turns);
@@ -174,24 +182,23 @@ pub(crate) fn recall(
     let window = recall_window(
         1,
         &turns,
-        dataset
-            .compactions
+        plan.selected
             .iter()
+            .copied()
             .filter(|row| filters.compaction_matches(row))
-            .filter(|row| horizon_start.as_ref().is_none_or(|start| row.ts >= *start))
             .collect(),
         false,
     );
     Ok(Report::Recall {
         sources: dataset.sources.clone(),
-        horizon_basis: if dataset.compactions.is_empty() {
+        horizon_basis: if plan.selected.is_empty() {
             "full-history-no-compactions"
         } else {
             "compaction-count"
         }
         .to_owned(),
         requested_compactions: DEFAULT_HORIZON_COMPACTIONS,
-        selected_compactions: selected_compactions.len(),
+        selected_compactions: plan.selected.len(),
         window,
         pruning: PruningView {
             max_lines,
@@ -215,65 +222,88 @@ pub(crate) fn sweep(
     filters: &Filters,
 ) -> Result<Report, Refusal> {
     filters.validate_turn_ids(dataset)?;
-    let count = number(matches, "count", DEFAULT_HORIZON_COMPACTIONS)?;
-    let compactions = dataset
-        .compactions
-        .iter()
-        .filter(|row| filters.end.as_ref().is_none_or(|end| row.ts <= *end))
-        .collect::<Vec<_>>();
-    let selected = compactions
-        .iter()
-        .rev()
-        .take(count)
-        .copied()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>();
+    let count = horizon_count(matches, "sweep")?;
+    let plan = window_plan(dataset, filters, count);
     let mut windows = Vec::new();
-    if selected.is_empty() {
-        let turns = dataset
-            .turns
-            .iter()
-            .filter(|turn| filters.turn_matches(turn))
-            .collect::<Vec<_>>();
-        windows.push(recall_window(1, &turns, Vec::new(), false));
-    } else {
-        let horizon_start = filters.start.as_deref().unwrap_or(selected[0].ts.as_str());
-        let boundaries = selected
-            .iter()
-            .filter(|compaction| compaction.ts.as_str() > horizon_start)
-            .collect::<Vec<_>>();
-        for index in 0..=boundaries.len() {
-            let start = index
-                .checked_sub(1)
-                .and_then(|prior| boundaries.get(prior))
-                .map_or(horizon_start, |compaction| compaction.ts.as_str());
-            let end = boundaries
-                .get(index)
-                .map(|compaction| compaction.ts.as_str());
-            let turns = dataset
-                .turns
-                .iter()
-                .filter(|turn| filters.turn_matches(turn))
-                .filter(|turn| {
-                    turn.start_ts.as_str() >= start
-                        && end.is_none_or(|end| turn.start_ts.as_str() < end)
-                })
-                .collect::<Vec<_>>();
-            let anchors = selected
-                .iter()
-                .copied()
-                .filter(|compaction| compaction.ts == start)
-                .collect();
-            windows.push(recall_window(index + 1, &turns, anchors, false));
-        }
+    for (index, interval) in plan.intervals.iter().enumerate() {
+        let turns = plan_turns(dataset, filters, interval.start, interval.end);
+        windows.push(recall_window(
+            index + 1,
+            &turns,
+            interval.anchors.clone(),
+            false,
+        ));
     }
     Ok(Report::Sweep {
         sources: dataset.sources.clone(),
         windows,
         residues: dataset.residues.clone(),
     })
+}
+
+fn window_plan<'a>(dataset: &'a Dataset, filters: &'a Filters, count: usize) -> WindowPlan<'a> {
+    let mut selected = dataset
+        .compactions
+        .iter()
+        .filter(|row| filters.end.as_ref().is_none_or(|end| row.ts <= *end))
+        .collect::<Vec<_>>();
+    let first = selected.len().saturating_sub(count);
+    selected.drain(..first);
+    let horizon_start = filters
+        .start
+        .as_deref()
+        .or_else(|| selected.first().map(|compaction| compaction.ts.as_str()));
+    let mut intervals = Vec::new();
+    let boundaries = selected
+        .iter()
+        .copied()
+        .filter(|compaction| horizon_start.is_none_or(|start| compaction.ts.as_str() > start))
+        .collect::<Vec<_>>();
+    for index in 0..=boundaries.len() {
+        let start = index
+            .checked_sub(1)
+            .and_then(|prior| boundaries.get(prior))
+            .map(|compaction| compaction.ts.as_str())
+            .or(horizon_start);
+        let end = boundaries
+            .get(index)
+            .map(|compaction| compaction.ts.as_str());
+        let anchors = selected
+            .iter()
+            .copied()
+            .filter(|compaction| Some(compaction.ts.as_str()) == start)
+            .collect();
+        intervals.push(WindowInterval {
+            start,
+            end,
+            anchors,
+        });
+    }
+    WindowPlan {
+        horizon_start,
+        selected,
+        intervals,
+    }
+}
+
+fn plan_turns<'a>(
+    dataset: &'a Dataset,
+    filters: &Filters,
+    start: Option<&str>,
+    end: Option<&str>,
+) -> Vec<&'a TurnRecord> {
+    dataset
+        .turns
+        .iter()
+        .filter(|turn| filters.turn_matches(turn))
+        .filter(|turn| turn_overlaps_interval(turn, start, end))
+        .collect()
+}
+
+fn turn_overlaps_interval(turn: &TurnRecord, start: Option<&str>, end: Option<&str>) -> bool {
+    let turn_end = turn_end(turn);
+    start.is_none_or(|start| turn_end.as_str() >= start)
+        && end.is_none_or(|end| turn.start_ts.as_str() < end)
 }
 
 pub(crate) fn summary(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, Refusal> {
