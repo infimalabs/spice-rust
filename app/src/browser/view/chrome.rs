@@ -17,51 +17,46 @@ use crate::watchband;
 const TICKER_BUDGET: usize = 160;
 
 /// The bar of view pills, each wearing what its axis currently counts.
-pub(super) fn render_command_bar(
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
-    active_axis: Axis,
-    surface: &SurfaceData,
-    cursor: &str,
-    sender: &SenderHandle,
-    submissions: &SubmissionStatus,
-) -> Html {
-    let runtime = surface.as_ref();
-    if **mosaic {
-        return render_mosaic_command_bar(
-            axis,
-            mosaic,
-            active_axis,
-            runtime,
-            cursor,
-            sender,
-            submissions,
-        );
+pub(super) struct CommandBarRender<'a> {
+    pub(super) axis: &'a UseStateHandle<Axis>,
+    pub(super) mosaic: &'a UseStateHandle<bool>,
+    pub(super) active_axis: Axis,
+    pub(super) surface: &'a SurfaceData,
+    pub(super) cursor: &'a str,
+    pub(super) sender: &'a SenderHandle,
+    pub(super) submissions: &'a SubmissionStatus,
+    pub(super) lineage_controls: &'a UseReducerHandle<LineageControls>,
+}
+
+pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
+    let runtime = render.surface.as_ref();
+    if **render.mosaic {
+        return render_mosaic_command_bar(&render, runtime);
     }
     html! {
         <header class="commandbar">
             <div class="brand">
-                {render_agent_roster(runtime, submissions)}
+                {render_agent_roster(runtime, render.submissions)}
                 <span class="brand-name">{"Spice Canvas"}</span>
             </div>
             <nav class="pills" aria-label="Canvas views">
                 {render_pill(
                     "Agents",
                     "Converse with seated agents",
-                    **mosaic,
-                    watchband::badge(waiting_directives(runtime, submissions)),
+                    **render.mosaic,
+                    watchband::badge(waiting_directives(runtime, render.submissions)),
                     {
-                        let mosaic = mosaic.clone();
+                        let mosaic = render.mosaic.clone();
                         Callback::from(move |_| mosaic.set(true))
                     },
                 )}
                 {for Axis::ALL.iter().copied().map(|candidate| {
-                    let axis = axis.clone();
-                    let mosaic = mosaic.clone();
+                    let axis = render.axis.clone();
+                    let mosaic = render.mosaic.clone();
                     render_pill(
                         &title(candidate.as_str()),
                         candidate.question(),
-                        !*mosaic && candidate == active_axis,
+                        !**render.mosaic && candidate == render.active_axis,
                         watchband::badge(axis_count(candidate, runtime)),
                         Callback::from(move |_| {
                             axis.set(candidate);
@@ -70,8 +65,8 @@ pub(super) fn render_command_bar(
                     )
                 })}
             </nav>
-            <span class="bar-meta">{format!("cursor {cursor}")}</span>
-            {render_canvas_menu(axis, mosaic, active_axis, runtime, sender)}
+            <span class="bar-meta">{format!("cursor {}", render.cursor)}</span>
+            {render_canvas_menu(&render, runtime)}
         </header>
     }
 }
@@ -106,13 +101,8 @@ impl TaskPill {
 }
 
 fn render_mosaic_command_bar(
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
-    active_axis: Axis,
+    render: &CommandBarRender<'_>,
     runtime: Option<&CanvasRuntime>,
-    cursor: &str,
-    sender: &SenderHandle,
-    submissions: &SubmissionStatus,
 ) -> Html {
     let task_pills = task_pills(runtime);
     html! {
@@ -122,8 +112,8 @@ fn render_mosaic_command_bar(
                     <span class="task-pill-empty">{"No open tasks"}</span>
                 } else {
                     {for task_pills.into_iter().map(|pill| {
-                        let axis = axis.clone();
-                        let mosaic = mosaic.clone();
+                        let axis = render.axis.clone();
+                        let mosaic = render.mosaic.clone();
                         html! {
                             <button
                                 class={classes!(
@@ -150,25 +140,25 @@ fn render_mosaic_command_bar(
                     })}
                 }
             </nav>
-            <span class="bar-meta">{format!("cursor {cursor}")}</span>
+            <span class="bar-meta">{format!("cursor {}", render.cursor)}</span>
             <nav class="canvas-shortcuts" aria-label="Canvas context views">
                 {render_pill(
                     "Agents",
                     "Converse with seated agents",
-                    **mosaic,
-                    watchband::badge(waiting_directives(runtime, submissions)),
+                    **render.mosaic,
+                    watchband::badge(waiting_directives(runtime, render.submissions)),
                     {
-                        let mosaic = mosaic.clone();
+                        let mosaic = render.mosaic.clone();
                         Callback::from(move |_| mosaic.set(true))
                     },
                 )}
                 {for [Axis::Topology, Axis::Chronology].map(|candidate| {
-                    let axis = axis.clone();
-                    let mosaic = mosaic.clone();
+                    let axis = render.axis.clone();
+                    let mosaic = render.mosaic.clone();
                     render_pill(
                         &title(candidate.as_str()),
                         candidate.question(),
-                        !*mosaic && candidate == active_axis,
+                        !**render.mosaic && candidate == render.active_axis,
                         watchband::badge(axis_count(candidate, runtime)),
                         Callback::from(move |_| {
                             axis.set(candidate);
@@ -177,18 +167,12 @@ fn render_mosaic_command_bar(
                     )
                 })}
             </nav>
-            {render_canvas_menu(axis, mosaic, active_axis, runtime, sender)}
+            {render_canvas_menu(render, runtime)}
         </header>
     }
 }
 
-fn render_canvas_menu(
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
-    active_axis: Axis,
-    runtime: Option<&CanvasRuntime>,
-    sender: &SenderHandle,
-) -> Html {
+fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
     html! {
         <details class="canvas-menu">
             <summary aria-label="Open Spice Canvas menu">
@@ -197,20 +181,21 @@ fn render_canvas_menu(
             </summary>
             <div class="canvas-menu-panel">
                 {super::lineage_menu::render(
-                    **mosaic,
-                    active_axis,
-                    axis_count(active_axis, runtime),
+                    **render.mosaic,
+                    render.active_axis,
+                    axis_count(render.active_axis, runtime),
                     runtime,
-                    sender,
+                    render.sender,
+                    render.lineage_controls,
                 )}
                 <nav class="canvas-menu-views" aria-label="More Canvas views">
                     {for [Axis::Magnitude, Axis::Flow].map(|candidate| {
-                        let axis = axis.clone();
-                        let mosaic = mosaic.clone();
+                        let axis = render.axis.clone();
+                        let mosaic = render.mosaic.clone();
                         render_pill(
                             &title(candidate.as_str()),
                             candidate.question(),
-                            !*mosaic && candidate == active_axis,
+                            !**render.mosaic && candidate == render.active_axis,
                             watchband::badge(axis_count(candidate, runtime)),
                             Callback::from(move |_| {
                                 axis.set(candidate);
