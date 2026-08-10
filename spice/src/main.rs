@@ -135,7 +135,13 @@ fn main() {
         terminate_code(code);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let mounts = mounted_registry();
+    let bootstrap_form = if cli::bootstrap_json_selected(std::env::args_os()) {
+        Form::Json
+    } else {
+        Form::Text
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let mounts = mounted_registry(bootstrap_form);
     #[cfg(not(target_arch = "wasm32"))]
     let matches = mounts.command().get_matches();
     #[cfg(target_arch = "wasm32")]
@@ -185,16 +191,29 @@ fn main() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn mounted_registry() -> cli::MountRegistry {
+fn mounted_registry(form: Form) -> cli::MountRegistry {
     let working_directory = std::env::current_dir().unwrap_or_else(|error| {
-        let mut stderr = io::stderr().lock();
-        let _ = writeln!(stderr, "spice: cannot read working directory: {error}");
-        terminate_code(FAULT_EXIT);
+        deliver_fault(
+            Fault {
+                class: FaultClass::Environment,
+                reason: "cli::working-directory-unavailable".to_owned(),
+                detail: error.to_string(),
+            },
+            form,
+        );
     });
     cli::MountRegistry::load(&working_directory).unwrap_or_else(|error| {
-        let mut stderr = io::stderr().lock();
-        let _ = writeln!(stderr, "spice: {error}");
-        terminate_code(REFUSAL_EXIT);
+        let observed = error.to_string();
+        let outcome: Outcome<()> = Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "cli::mount-registry-refused".to_owned(),
+                Some("repository-command-mounts".to_owned()),
+                Some("one valid tracked command mount registry".to_owned()),
+                Some(observed.clone()),
+            )
+            .with_detail(observed),
+        ));
+        deliver(&outcome, form)
     })
 }
 
