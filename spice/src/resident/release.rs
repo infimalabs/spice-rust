@@ -11,6 +11,24 @@ pub(super) fn dispatch_release_publish(
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
+    let notes = prepared.release.notes().clone();
+    if let Err(error) = crate::release_execution::verify_completed(
+        &paths.data.join("release-operations"),
+        &publish.key,
+        prepared.release.manifest(),
+        &notes,
+        prepared.release.targets(),
+    ) {
+        return Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::external-publication-incomplete".to_owned(),
+                Some("external-operation-journal".to_owned()),
+                Some("one complete plan-bound external release receipt chain".to_owned()),
+                Some(error),
+            )
+            .with_detail("apply the exact previewed release plan through the operator command"),
+        ));
+    }
     if let crate::release_command::PublicationState::Published { fact } = prepared.state {
         return release_recognition(publish.key.clone(), fact, fact, false);
     }
@@ -64,11 +82,9 @@ fn prepare_release_publish(
     let app = crate::release_command::app_digest(&paths.worktree)
         .map_err(|error| release_refusal("release::app-stage-refused", &error))?;
     let release = crate::release_command::admit_stage(&paths.stage, &app, notes)
-        .map_err(|error| release_refusal("release::manifest-refused", &error.to_string()))?;
-    if publish.key != *release.key()
-        || publish.manifest != *release.manifest()
-        || notes != release.notes()
-    {
+        .map_err(|error| release_refusal("release::manifest-refused", &error.to_string()))?
+        .with_key(publish.key.clone());
+    if publish.manifest != *release.manifest() || notes != release.notes() {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
                 "release::plan-moved".to_owned(),
@@ -145,7 +161,8 @@ fn propose_release_publish(
         let app = crate::release_command::app_digest(&guarded_worktree)
             .map_err(|_| GuardError::refused("release::app-stage-moved"))?;
         let current = crate::release_command::admit_stage(&guarded_stage, &app, &guarded_notes)
-            .map_err(|_| GuardError::refused("release::manifest-moved"))?;
+            .map_err(|_| GuardError::refused("release::manifest-moved"))?
+            .with_key(guarded_release.key().clone());
         if current != guarded_release {
             return Err(GuardError::refused("release::manifest-moved"));
         }

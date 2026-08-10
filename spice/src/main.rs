@@ -44,7 +44,11 @@ mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod release_execution;
+#[cfg(not(target_arch = "wasm32"))]
 mod release_history;
+#[cfg(not(target_arch = "wasm32"))]
+mod release_package;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
@@ -191,7 +195,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
-        ["gate", "pre-commit"] => deliver(&gate_command::pre_commit(), form),
+        ["gate", "pre-commit"] => deliver_commit_gate(&gate_command::pre_commit(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
         ["install"] => match install_command::run(leaf) {
             install_command::Answer::Plan(outcome) => deliver(&outcome, form),
@@ -585,7 +589,7 @@ fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> 
     }
 }
 
-/// Emits any pending direction and hands the caller's command through.
+/// Emits pending direction to this wrapper's stderr and waits on its one child.
 #[cfg(not(target_arch = "wasm32"))]
 fn run(command: Vec<OsString>) -> ! {
     let (program, arguments) = command
@@ -778,6 +782,24 @@ fn deliver<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
             rendering.speak();
             terminate(outcome);
         }
+        Err(error) => {
+            let fault: Outcome<()> = Outcome::Fault(render_fault(error));
+            render::render(&fault, Form::Text)
+                .expect("the text rendering of a fault encodes nothing")
+                .speak();
+            terminate(&fault);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_commit_gate<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
+    match render::render_commit_gate(outcome, form) {
+        Ok(Some(rendering)) => {
+            rendering.speak();
+            terminate(outcome);
+        }
+        Ok(None) => terminate(outcome),
         Err(error) => {
             let fault: Outcome<()> = Outcome::Fault(render_fault(error));
             render::render(&fault, Form::Text)

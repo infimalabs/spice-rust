@@ -1,4 +1,7 @@
 //! Task, claim, document, and task-effort command DTOs.
+//!
+//! Creation bodies carry authored causal authority only; the server resolves
+//! an omitted authority at the creation boundary.
 
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +33,7 @@ pub struct TaskAdd {
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
-    /// Caller-authored creation provenance, or the new task itself when absent.
+    /// Caller-authored creation provenance, or server-resolved causal authority.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -60,6 +63,13 @@ pub struct TaskOopsAdd {
     pub title: String,
     /// Durable detail attached as the first note.
     pub description: String,
+    /// Explicit causal authority when no active claim owns the filing.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub origin: Option<Origin>,
 }
 
 /// File the exact findings folded from one registered gate run.

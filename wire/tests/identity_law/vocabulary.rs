@@ -47,6 +47,7 @@ pub(super) fn cover_vocabularies(covered: &mut BTreeSet<String>) {
             Disposition::Acked,
             Disposition::Declined,
             Disposition::Lapsed,
+            Disposition::DeadLettered,
             Disposition::Canceled,
         ],
     );

@@ -15,6 +15,7 @@ fn add_oops(bus: &Bus, epoch: CanonicalUuid, actor: Actor, task: &str, title: &s
         &TaskOopsAdd {
             title: title.to_owned(),
             description: title.to_owned(),
+            origin: Some("fixture:oops".parse().expect("fixture origin")),
         },
     ));
     task
@@ -352,14 +353,36 @@ fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
     assert_manual_system_project_refuses(&bus, epoch, &lane);
     assert_forged_hidden_route_refuses(&bus, epoch, &lane);
 
-    add_oops(
+    let ungrounded = "SYSTEM-oops0"
+        .parse::<TaskHandle>()
+        .expect("ungrounded oops handle");
+    let before = facts_len(&bus, "facts before ungrounded oops");
+    let refused = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskOopsAdd,
+        vec![Witness::Absence { task: ungrounded }],
+        &TaskOopsAdd {
+            title: "Ungrounded system filing".to_owned(),
+            description: "The hidden route still needs causal authority".to_owned(),
+            origin: None,
+        },
+    );
+    assert!(matches!(
+        refused,
+        Outcome::Refusal(ref refusal) if refusal.reason() == "task::origin-required"
+    ));
+    assert_eq!(facts_len(&bus, "facts after ungrounded oops"), before);
+
+    let operator_oops = add_oops(
         &bus,
         epoch,
         Actor::Operator,
         "SYSTEM-oops1",
         "Operator oops route",
     );
-    add_oops(&bus, epoch, lane, "SYSTEM-oops2", "Lane oops route");
+    let lane_oops = add_oops(&bus, epoch, lane, "SYSTEM-oops2", "Lane oops route");
 
     let answer = board(&bus, epoch, Actor::Operator);
     assert_eq!(answer.tasks.len(), 2);
@@ -370,6 +393,11 @@ fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
             .iter()
             .all(|task| task.statement.body.project == ".oops")
     );
+    let expected: wire::Origin = "fixture:oops".parse().expect("fixture origin");
+    for task in [operator_oops, lane_oops] {
+        assert_eq!(at(&answer, &task).statement.body.provenance, expected);
+        assert_eq!(creation_fact_origin(&bus, &task), expected);
+    }
     clean(&root, bus);
 }
 

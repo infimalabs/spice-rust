@@ -728,17 +728,13 @@ impl Runner for SystemRunner {
 ///
 /// # Errors
 ///
-/// Returns gate acquisition, report encoding, or output failures.
+/// Returns gate acquisition or refusal-output failures.
 pub fn verify_battery_child(output: &mut impl Write) -> Result<bool, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let report =
             spice::gate::run(gate::Selector::staged()).map_err(|error| error.to_string())?;
         if report.admits() {
-            let document = report.encode().map_err(|error| error.to_string())?;
-            output
-                .write_all(&document)
-                .map_err(|error| error.to_string())?;
             Ok(true)
         } else {
             output

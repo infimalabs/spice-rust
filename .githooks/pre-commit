@@ -8,4 +8,4 @@ for variable in $git_local_environment; do
     unset "$variable"
 done
 cd "$root" # env-policy: allow
-exec cargo xtask verify
+exec cargo --quiet xtask verify-action battery

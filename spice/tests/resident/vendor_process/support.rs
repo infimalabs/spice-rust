@@ -282,6 +282,7 @@ pub(super) fn assert_launches_with_executable(
             &capture.environment,
             *dialect,
             *lane,
+            &row.worktree,
             executable,
             expected_path,
         );
@@ -406,6 +407,7 @@ fn assert_environment(
     captured: &BTreeMap<String, String>,
     dialect: Dialect,
     lane: wire::CanonicalUuid,
+    worktree: &str,
     executable: &Path,
     expected_path: Option<&Path>,
 ) {
@@ -438,7 +440,8 @@ fn assert_environment(
     } else {
         assert!(!observed.contains_key("GIT_CONFIG_SYSTEM"));
     }
-    let mut expected = ["HOME", "SHELL", "TMPDIR", "USER"]
+    let native_shell = std::env::var("SHELL").expect("supervised test has a native shell");
+    let mut expected = ["HOME", "TMPDIR", "USER"]
         .into_iter()
         .filter_map(|name| {
             std::env::var(name)
@@ -446,6 +449,30 @@ fn assert_environment(
                 .map(|value| (name.to_owned(), value))
         })
         .collect::<BTreeMap<_, _>>();
+    let repository = spice::repository::Repository::discover(worktree)
+        .expect("launch worktree discovers for its structural shell environment");
+    let state = repository
+        .admit_state()
+        .expect("launch state paths admit for expected inbox");
+    expected.insert(
+        "SHELL".to_owned(),
+        spice::install::installed_shell(&repository)
+            .display()
+            .to_string(),
+    );
+    expected.insert(
+        steer::hook::HOOKS.to_owned(),
+        spice::install::installed_shell_hooks(&repository)
+            .display()
+            .to_string(),
+    );
+    expected.insert(steer::hook::NATIVE_SHELL.to_owned(), native_shell);
+    expected.insert(
+        steer::hook::INBOX.to_owned(),
+        steer::inbox::path(state.inbox(), lane)
+            .display()
+            .to_string(),
+    );
     let mut search = vec![
         executable
             .parent()

@@ -26,11 +26,15 @@ mod allocation_guard;
 use allocation_guard::*;
 
 mod gate_findings;
+mod origin;
 
 // The order in which one claim's preconditions refuse is documented as a
 // contract on `ClaimGrant`, and a caller sees only the first refusal, so it
 // is pinned apart from the scenarios that drive a claim that succeeds.
 mod claim_grant;
+
+// Automatic capacity uses the same allocator guard and mint before launch.
+mod automatic_lifecycle;
 
 fn at<'a>(answer: &'a BoardAnswer, task: &TaskHandle) -> &'a BoardTask {
     task_heads(answer, task).expect("fixture task is visible")
@@ -130,6 +134,25 @@ fn clean(root: &Path, bus: Bus) {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
+fn creation_fact_origin(bus: &Bus, task: &TaskHandle) -> wire::Origin {
+    bus.fact_snapshot()
+        .expect("creation facts read")
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.fact.kind() == wire::FactKind::TaskAdded
+                && fact
+                    .fact
+                    .body()
+                    .get("task")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(task.as_str())
+        })
+        .unwrap_or_else(|| panic!("task {task} has one creation fact"))
+        .origin
+        .clone()
+}
+
 #[test]
 fn native_task_handles_use_the_predecessor_stamp_alphabet() {
     const PREDECESSOR_ALPHABET: &[u8; 52] = b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
@@ -191,7 +214,7 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
     let task = "CLI-context01"
         .parse::<TaskHandle>()
         .expect("fixture task handle");
-    let origin: wire::Origin = "task:CLI-parent".parse().expect("fixture origin");
+    let origin: wire::Origin = "ack:1kLGp2NJ".parse().expect("fixture origin");
     assert_committed(issue(
         &bus,
         epoch,
@@ -234,6 +257,7 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
         ]
     );
     assert_eq!(statement.provenance, origin);
+    assert_eq!(creation_fact_origin(&bus, &task), origin);
     assert_eq!(at(&answer, &task).origin_thread, "operator");
 
     let status = task_status(&answer).expect("validated board yields status");

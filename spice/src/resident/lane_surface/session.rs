@@ -293,6 +293,10 @@ impl CaptureReporter for DeclarationReporter {
         }
         self.inner.failed(failure);
     }
+
+    fn exited(&self, exit: CaptureExit) {
+        self.inner.exited(exit);
+    }
 }
 
 pub(in crate::resident) fn session_fact(

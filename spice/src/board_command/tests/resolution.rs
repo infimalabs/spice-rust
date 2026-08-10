@@ -484,6 +484,17 @@ fn assert_review_followup_tracking(
     linked: &TaskHandle,
 ) {
     let settled = board(bus, epoch, Actor::Operator);
+    let causal = task_origin(reviewed).expect("reviewed task forms follow-up origin");
+    assert_eq!(
+        at(&settled, created).statement.body.provenance,
+        causal,
+        "--then stored provenance diverged from its reviewed parent"
+    );
+    assert_eq!(
+        creation_fact_origin(bus, created),
+        causal,
+        "--then creation envelope diverged from stored provenance"
+    );
     assert_eq!(
         at(&settled, created).statement.body.dependencies,
         vec![reviewed.clone()],
@@ -577,7 +588,7 @@ fn authored_document_apply_is_atomic_idempotent_and_barrier_bound() {
         "# Goal\n\n- First task\n- Second task\n  After: first-task\n",
         &initial_board,
     );
-    assert_initial_document(&initial);
+    assert_initial_document(&bus, &initial);
     let edited = apply_document(
         &bus,
         epoch,
@@ -992,9 +1003,16 @@ fn apply_document(
     }
 }
 
-fn assert_initial_document(applied: &AppliedDocument) {
+fn assert_initial_document(bus: &Bus, applied: &AppliedDocument) {
     assert_eq!(applied.answer.touched.len(), 3);
     assert_eq!(applied.board.tasks.len(), 3);
+    let causal: wire::Origin = format!("doc:{}", applied.preview.digest())
+        .parse()
+        .expect("document digest forms an origin");
+    for task in &applied.answer.touched {
+        assert_eq!(at(&applied.board, task).statement.body.provenance, causal);
+        assert_eq!(creation_fact_origin(bus, task), causal);
+    }
     assert!(
         at(&applied.board, &applied.answer.touched[2])
             .statement
@@ -1117,7 +1135,7 @@ fn add_raw_task(
             project: Some("board.test".to_owned()),
             description: None,
             acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
-            origin: None,
+            origin: Some("fixture:board-command".parse().expect("fixture origin")),
             flow: flow.map(str::to_owned),
             depends: Vec::new(),
         },

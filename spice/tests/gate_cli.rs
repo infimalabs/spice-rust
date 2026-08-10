@@ -98,13 +98,17 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     );
     let pre_commit_report = BatteryReport::decode(evidence.as_bytes())
         .expect("pre-commit refusal carries a canonical report");
+    assert_eq!(
+        pre_commit_report.refusal_fold().as_str(),
+        report.refusal_fold().as_str(),
+        "the commit surface renders the same complete failure projection as the canonical report",
+    );
     let receipt = receipt_body(&invoke_with_path(
         &["gate", "receipt"],
         repository.path(),
         Some(tripwires.path()),
     ));
 
-    assert_equivalent_except_rust_elapsed(&pre_commit_report, &report);
     assert_eq!(receipt.tree(), report.context().source());
     assert_eq!(
         receipt.manifest(),

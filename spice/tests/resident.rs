@@ -1088,6 +1088,28 @@ fn wait_for_event<T>(
     }
 }
 
+fn wait_for_lane_exit(fixture: &Fixture, lane: wire::CanonicalUuid) {
+    wait_for_event(
+        &fixture.runtime.join("data"),
+        || {},
+        || {
+            let snapshot = journal::JournalReader::open(fixture.journal())
+                .ok()?
+                .fact_snapshot()
+                .ok()?;
+            snapshot
+                .facts()
+                .iter()
+                .any(|fact| {
+                    fact.fact.kind() == FactKind::LaneExited
+                        && fact.fact.body().get("lane")
+                            == Some(&serde_json::Value::String(lane.to_string()))
+                })
+                .then_some(())
+        },
+    );
+}
+
 fn effect_observers(path: &Path) -> Vec<readiness::filesystem_event::DirectObserver> {
     effect_observers_before_arm(path, |_| {})
 }
@@ -1369,6 +1391,9 @@ mod lane_continuity;
 
 #[path = "resident/lane_resume.rs"]
 mod lane_resume;
+
+#[path = "resident/automatic_lifecycle.rs"]
+mod automatic_lifecycle;
 
 #[path = "resident/steering_authority.rs"]
 mod steering_authority;

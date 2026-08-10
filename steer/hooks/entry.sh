@@ -1,19 +1,12 @@
 #!/bin/sh
-# The dynamic interception stage.
+# The outer interception stage.
 #
-# The first shell an agent-bound worktree starts arrives here and reexecs itself
-# through spice, so spice owns stderr steering before the requested command
-# runs. That happens exactly once: the reexec exports the activation proof, and
-# every descendant shell sees it and sources the static stage instead.
+# The agent's shell tool reaches this executable once with the complete shell
+# argument vector. It always reexecs through spice and into the separately
+# packaged inner stage. No marker decides whether interception happens.
 #
 # Nothing here opens authority or discovers a repository. Geometry arrives in
 # the environment the installer wrote, and direction arrives as a file that was
 # rendered ahead of time.
 
-if [ -n "${SPICE_PROOF-}" ]; then
-	. "${SPICE_HOOKS:?spice hooks directory}/static/stage.sh"
-else
-	SPICE_PROOF="${SPICE_LANE:?spice lane}"
-	export SPICE_PROOF
-	exec spice run -- "$@"
-fi
+exec spice run -- "${SPICE_HOOKS:?spice hooks directory}/static/stage.sh" "$@"

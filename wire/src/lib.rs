@@ -55,6 +55,8 @@ pub mod manifest;
 mod optional;
 pub mod packed;
 pub mod reply;
+/// Steering-specific bodies that sit outside the core body module's shape boundary.
+pub mod steering;
 pub mod stream;
 pub mod witness;
 
@@ -83,8 +85,9 @@ pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, FoldReport, FoldState, JournalBackup,
     JournalReindex, JournalReport, JournalRestore, JournalVerification, Outcome, ProofEvidence,
-    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan, Reply, ReplyPosition,
-    Response, RestoreVerification, SeqRange, SeqRangeError, SpiceCommand, ThreadReport, Version,
+    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
+    ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, Response,
+    RestoreVerification, SeqRange, SeqRangeError, SpiceCommand, ThreadReport, Version,
 };
 pub use stream::{
     AgentActivityKind, AgentMessage, MessageLocus, StreamAdmissionError, StreamCursor, StreamFact,

@@ -103,6 +103,22 @@ pub fn render<B: Serialize>(outcome: &Outcome<B>, form: Form) -> Result<Renderin
     })
 }
 
+/// Render the commit gate's evidence-first refusal while keeping admission silent.
+///
+/// The shared refusal renderer owns both text and JSON grammar. Successful
+/// forms return no rendering at all, so a caller cannot accidentally turn an
+/// admitted battery back into output.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn render_commit_gate<B: Serialize>(
+    outcome: &Outcome<B>,
+    form: Form,
+) -> Result<Option<Rendering>, String> {
+    match outcome {
+        Outcome::Reply(_) => Ok(None),
+        Outcome::Refusal(_) | Outcome::Fault(_) => render(outcome, form).map(Some),
+    }
+}
+
 /// Renders one successful transcript report in the requested form.
 pub fn render_stream(outcome: &StreamOutcome, form: Form) -> Result<Rendering, String> {
     let document = match form {
@@ -195,7 +211,7 @@ mod tests {
         Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply, ReplyPosition, SpiceCommand,
     };
 
-    use super::{Form, Stream, render};
+    use super::{Form, Stream, render, render_commit_gate};
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
@@ -251,6 +267,37 @@ mod tests {
             reason: "environment::unavailable".to_owned(),
             detail: "the resident socket is not there".to_owned(),
         })
+    }
+
+    #[test]
+    fn the_commit_gate_is_silent_on_success_in_both_forms() {
+        for form in [Form::Text, Form::Json] {
+            assert_eq!(
+                render_commit_gate(&reply(), form).expect("commit gate reply is representable"),
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn the_commit_gate_leads_with_its_board_and_keeps_json_typed() {
+        let outcome = evidence();
+        let text = render_commit_gate(&outcome, Form::Text)
+            .expect("commit gate refusal renders")
+            .expect("a refusal is loud");
+        assert_eq!(text.stream, Stream::Err);
+        assert_eq!(
+            text.document,
+            b"file-shape: regressed\nrust: held\nspice: gate::regressed; repair the reported regression\n"
+        );
+
+        let json = render_commit_gate(&outcome, Form::Json)
+            .expect("commit gate refusal encodes")
+            .expect("a refusal is loud");
+        assert_eq!(json.stream, Stream::Err);
+        let decoded: Outcome<()> =
+            wire::decode(&json.document).expect("JSON commit refusal stays typed");
+        assert_eq!(decoded, outcome);
     }
 
     /// Every outcome renders as the DTO it is.
