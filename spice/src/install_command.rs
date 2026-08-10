@@ -131,8 +131,6 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         InstallError::PathShape(_)
         | InstallError::PathOutsideRoot(_)
         | InstallError::ParentChanged(_)
-        | InstallError::ExclusionsNotUtf8
-        | InstallError::DivergentExclusions
         | InstallError::BinaryNotRegular(_)
         | InstallError::BinaryEmpty(_)
         | InstallError::BinaryContextChanged

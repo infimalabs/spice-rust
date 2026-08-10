@@ -18,6 +18,7 @@ mod handle;
 mod path;
 mod progress;
 mod record;
+mod validation;
 
 use binding::{BoundDestination, bind_destination, validate_operation_binding};
 pub use binding::{Generation, ParentObservation};
@@ -26,20 +27,22 @@ use files::{
     cleanup_operation, matches_generated, materialize_generated, observe, observe_bound,
     publish_operation, restore_operation,
 };
-use path::{relative_parents, validate_relative};
+use path::validate_relative;
 use progress::{
     apply_with_interruption, unapply_with_interruption, verify_progress, verify_refresh_progress,
 };
 use record::read_record;
 #[cfg(test)]
 use record::record_path;
+use validation::{asset_contract, validate_operation};
 
-const PLAN_VERSION: u16 = 5;
-const RECORD_VERSION: u16 = 5;
-const LEGACY_RECORD_VERSIONS: [(u16, &str); 3] = [
+const PLAN_VERSION: u16 = 6;
+const RECORD_VERSION: u16 = 6;
+const LEGACY_RECORD_VERSIONS: [(u16, &str); 4] = [
     (2, "SURFACE-1kJRGpf2"),
     (3, "HOOKS-1kJQnmG8"),
     (4, "INSTALL-1kKQTfBp"),
+    (5, "INSTALL-1kLW2GVN"),
 ];
 const RECORD_NAME: &str = "install.json";
 const RECORD_PATH: &str = ".spice-rs/install.json";
@@ -60,14 +63,6 @@ const STATIC_PATH: &str = ".spice-install/hooks/static/stage.sh";
 const SKILL_PATH: &str = ".spice-install/agents/skills/spice/SKILL.md";
 const BINARY_PATH: &str = ".spice-install/bin/spice";
 
-const EXCLUDE_BEGIN: &str = "# BEGIN Spice managed assets";
-const EXCLUDE_END: &str = "# END Spice managed assets";
-const EXCLUDE_BLOCK: &str = concat!(
-    "# BEGIN Spice managed assets\n",
-    "/.spice-rs/\n",
-    "/.agents/skills/spice/\n",
-    "# END Spice managed assets\n",
-);
 const SKILL: &str = include_str!("install/skill.md");
 const GIT_PRE_COMMIT: &str = include_str!("install/git-hooks/pre-commit");
 const GIT_COMMIT_MESSAGE: &str = include_str!("install/git-hooks/commit-msg");
@@ -101,6 +96,7 @@ pub fn configure_test_mutation_rendezvous(
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Asset {
+    /// Retired version-5 asset retained only so its record can name its owner.
     Exclusions,
     GitPreCommit,
     GitCommitMessage,
@@ -122,10 +118,8 @@ pub enum Location {
     /// all. A worktree-relative destination is therefore unresolvable from the
     /// record that owns it: one record serves every linked worktree, so the
     /// root this variant names is whichever worktree happened to run install
-    /// rather than a place the record can rediscover later. Reaching every
-    /// worktree is what `info/exclude` is for, and it lives under
-    /// [`Self::CommonGit`] precisely because that is the scope an install may
-    /// write.
+    /// rather than a place the record can rediscover later. Current appliance
+    /// assets therefore live exclusively below [`Self::CommonGit`].
     Worktree,
     CommonGit,
 }
@@ -432,7 +426,6 @@ impl InstallPlan {
             )));
         }
         let expected = [
-            Asset::Exclusions,
             Asset::GitPreCommit,
             Asset::GitCommitMessage,
             Asset::GitReferenceTransaction,
@@ -672,22 +665,6 @@ fn build_plan_over(
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
 
-    let (exclude_bound, observed_exclude) =
-        destination_state(repository, Location::CommonGit, EXCLUDE_PATH)?;
-    let (exclude_previous, exclude_superseded) =
-        reversal_context(installed, Asset::Exclusions, observed_exclude, None);
-    let exclude_image = exclude_previous.as_ref().map(|previous| &previous.image);
-    let exclude_bytes = exclusions(exclude_image.map(FileImage::bytes))?;
-    let exclude_mode = exclude_image.map_or(DATA_MODE, FileImage::mode);
-    operations.push(operation(
-        &mut virtual_directories,
-        Asset::Exclusions,
-        exclude_bound,
-        exclude_previous,
-        exclude_superseded,
-        GeneratedImage::new(exclude_mode, &exclude_bytes),
-    )?);
-
     for (asset, path, bytes, mode) in [
         (
             Asset::GitPreCommit,
@@ -829,25 +806,6 @@ fn destination_state(
     Ok((bound, previous))
 }
 
-fn exclusions(previous: Option<&[u8]>) -> Result<Vec<u8>, InstallError> {
-    let previous = previous.unwrap_or_default();
-    let text = std::str::from_utf8(previous).map_err(|_| InstallError::ExclusionsNotUtf8)?;
-    let begin_count = text.matches(EXCLUDE_BEGIN).count();
-    let end_count = text.matches(EXCLUDE_END).count();
-    if begin_count == 1 && end_count == 1 && text.matches(EXCLUDE_BLOCK).count() == 1 {
-        return Ok(previous.to_vec());
-    }
-    if begin_count != 0 || end_count != 0 {
-        return Err(InstallError::DivergentExclusions);
-    }
-    let mut generated = previous.to_vec();
-    if !generated.is_empty() && !generated.ends_with(b"\n") {
-        generated.push(b'\n');
-    }
-    generated.extend_from_slice(EXCLUDE_BLOCK.as_bytes());
-    Ok(generated)
-}
-
 fn read_binary(path: &Path) -> Result<Vec<u8>, InstallError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|source| InstallError::io("inspect Spice executable", path, source))?;
@@ -901,219 +859,6 @@ fn verify_binary_context(
             }
         }
         _ => Err(InstallError::BinaryContextChanged),
-    }
-}
-
-fn validate_operation(
-    operation: &Operation,
-    introduced: &mut BTreeSet<(Location, String)>,
-    content: GeneratedContentAuthority,
-) -> Result<(), InstallError> {
-    let (location, path, fixed_mode) = asset_contract(operation.asset);
-    let expected_mode = match operation.asset {
-        Asset::Exclusions => operation
-            .previous
-            .as_ref()
-            .map_or(DATA_MODE, |previous| previous.image.mode()),
-        _ => fixed_mode,
-    };
-    validate_operation_contract(operation, location, path, expected_mode)?;
-    validate_generated_content(operation, expected_mode, content)?;
-    validate_introduced_parents(operation, introduced)
-}
-
-fn validate_operation_contract(
-    operation: &Operation,
-    location: Location,
-    path: &str,
-    expected_mode: u32,
-) -> Result<(), InstallError> {
-    if operation.location != location
-        || operation.path != path
-        || operation.generated.mode != expected_mode
-    {
-        return Err(InstallError::InvalidRecord(format!(
-            "install operation {:?} does not match its fixed contract",
-            operation.asset
-        )));
-    }
-    validate_relative(&operation.path)?;
-    validate_relative(&operation.destination)?;
-    let expected_parent = Path::new(&operation.parent.ancestor).join(&operation.parent.missing);
-    if Path::new(&operation.destination).parent() != Some(expected_parent.as_path()) {
-        return Err(InstallError::InvalidRecord(
-            "install destination does not match its bound parent".to_owned(),
-        ));
-    }
-    if !operation.generated.validate()
-        || operation
-            .previous
-            .as_ref()
-            .is_some_and(|observed| !observed.image.validate())
-        || operation
-            .superseded
-            .as_ref()
-            .is_some_and(|superseded| !superseded.validate())
-    {
-        return Err(InstallError::InvalidRecord(
-            "install operation carries an invalid file image".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_generated_content(
-    operation: &Operation,
-    expected_mode: u32,
-    content: GeneratedContentAuthority,
-) -> Result<(), InstallError> {
-    match operation.asset {
-        Asset::Exclusions => {
-            let bytes = exclusions(
-                operation
-                    .previous
-                    .as_ref()
-                    .map(|previous| previous.image.bytes()),
-            )?;
-            let expected = GeneratedImage::new(expected_mode, &bytes);
-            if operation.generated != expected {
-                return Err(InstallError::InvalidRecord(
-                    "exclusion operation is not the exact managed block edit".to_owned(),
-                ));
-            }
-        }
-        Asset::HookEntry
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(
-                        EXECUTABLE_MODE,
-                        steer::hook::STAGES[0].bytes().as_bytes(),
-                    ) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "entry hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::GitPreCommit
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(EXECUTABLE_MODE, GIT_PRE_COMMIT.as_bytes()) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "Git pre-commit hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::GitCommitMessage
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(EXECUTABLE_MODE, GIT_COMMIT_MESSAGE.as_bytes()) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "Git commit-msg hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::GitReferenceTransaction
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(
-                        EXECUTABLE_MODE,
-                        GIT_REFERENCE_TRANSACTION.as_bytes(),
-                    ) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "Git reference-transaction hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::HookStatic
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated
-                    != GeneratedImage::new(
-                        EXECUTABLE_MODE,
-                        steer::hook::STAGES[1].bytes().as_bytes(),
-                    ) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "static hook differs from this build".to_owned(),
-            ));
-        }
-        Asset::Skill
-            if content == GeneratedContentAuthority::CurrentBuild
-                && operation.generated != GeneratedImage::new(DATA_MODE, SKILL.as_bytes()) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "generated skill differs from this build".to_owned(),
-            ));
-        }
-        Asset::Binary
-            if operation.generated.digest == Digest::compute(Domain::InstallArtifact, &[]) =>
-        {
-            return Err(InstallError::InvalidRecord(
-                "explicit Spice executable is empty".to_owned(),
-            ));
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn validate_introduced_parents(
-    operation: &Operation,
-    introduced: &mut BTreeSet<(Location, String)>,
-) -> Result<(), InstallError> {
-    let parents = relative_parents(&operation.destination)?;
-    if operation.previous.is_some() && !operation.introduced_parents.is_empty() {
-        return Err(InstallError::InvalidRecord(
-            "an existing target cannot have introduced parent directories".to_owned(),
-        ));
-    }
-    // A refresh is derived only over a verified-complete install, so every
-    // parent it needs is already there and already owned by the plan it
-    // supersedes. Claiming to introduce one would hand the same directory to
-    // two reversals.
-    if operation.superseded.is_some() && !operation.introduced_parents.is_empty() {
-        return Err(InstallError::InvalidRecord(
-            "a refreshed target cannot have introduced parent directories".to_owned(),
-        ));
-    }
-    let mut minimum_parent = 0;
-    for relative in &operation.introduced_parents {
-        validate_relative(relative)?;
-        let Some(offset) = parents[minimum_parent..]
-            .iter()
-            .position(|parent| parent == relative)
-        else {
-            return Err(InstallError::InvalidRecord(
-                "introduced directories are not canonical target parents".to_owned(),
-            ));
-        };
-        minimum_parent += offset + 1;
-        if !introduced.insert((operation.location, relative.clone())) {
-            return Err(InstallError::InvalidRecord(
-                "introduced directory is duplicated across operations".to_owned(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
-    match asset {
-        Asset::Exclusions => (Location::CommonGit, EXCLUDE_PATH, DATA_MODE),
-        Asset::GitPreCommit => (Location::CommonGit, GIT_PRE_COMMIT_PATH, EXECUTABLE_MODE),
-        Asset::GitCommitMessage => (
-            Location::CommonGit,
-            GIT_COMMIT_MESSAGE_PATH,
-            EXECUTABLE_MODE,
-        ),
-        Asset::GitReferenceTransaction => (
-            Location::CommonGit,
-            GIT_REFERENCE_TRANSACTION_PATH,
-            EXECUTABLE_MODE,
-        ),
-        Asset::HookEntry => (Location::CommonGit, ENTRY_PATH, EXECUTABLE_MODE),
-        Asset::HookStatic => (Location::CommonGit, STATIC_PATH, EXECUTABLE_MODE),
-        Asset::Skill => (Location::CommonGit, SKILL_PATH, DATA_MODE),
-        Asset::Binary => (Location::CommonGit, BINARY_PATH, EXECUTABLE_MODE),
     }
 }
 

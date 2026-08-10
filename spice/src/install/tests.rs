@@ -9,6 +9,8 @@ use std::thread;
 
 use super::*;
 
+mod safety;
+
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const LARGE_BINARY_BYTES: usize = 1024 * 1024;
 const MAX_COMPACT_PLAN_BYTES: usize = 32 * 1024;
@@ -37,7 +39,6 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
             .map(Operation::asset)
             .collect::<Vec<_>>(),
         [
-            Asset::Exclusions,
             Asset::GitPreCommit,
             Asset::GitCommitMessage,
             Asset::GitReferenceTransaction,
@@ -75,7 +76,6 @@ fn no_planned_operation_escapes_the_common_directory() {
     // Read the contract directly, so the assertion below is reachable even
     // for an asset whose worktree-scoped destination cannot be planned at all.
     for asset in [
-        Asset::Exclusions,
         Asset::GitPreCommit,
         Asset::GitCommitMessage,
         Asset::GitReferenceTransaction,
@@ -183,11 +183,7 @@ fn apply_is_idempotent_and_unapply_is_exact() {
         run(&repository.common_dir().join(BINARY_PATH)),
         b"spice-appliance\n"
     );
-    assert!(
-        fs::read_to_string(scratch.exclude())
-            .unwrap()
-            .contains(EXCLUDE_BLOCK)
-    );
+    assert_eq!(fs::read(scratch.exclude()).unwrap(), b"# local ignore\n");
     assert_eq!(
         fs::read_to_string(repository.common_dir().join(SKILL_PATH)).unwrap(),
         SKILL
@@ -426,37 +422,18 @@ fn a_foreign_reference_transaction_hook_is_refused() {
 }
 
 #[test]
-fn preserved_exclusions_keep_their_prior_mode() {
-    let scratch = Scratch::new("preserve");
-    let repository = scratch.repository();
-    set_test_mode(&scratch.exclude(), 0o600);
-
-    let planned = plan(&repository, None).unwrap();
-    let receipt = apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    assert_eq!(mode(&scratch.exclude()), 0o600);
-
-    unapply(&repository).unwrap();
-    assert_eq!(
-        receipt.plan().operations()[0].previous().unwrap().mode(),
-        0o600
-    );
-    assert_eq!(mode(&scratch.exclude()), 0o600);
-}
-
-#[test]
 fn stale_plan_refuses_before_record_or_target_mutation() {
     let scratch = Scratch::new("stale");
     let repository = scratch.repository();
     let planned = plan(&repository, None).unwrap();
     let stale = planned.digest().unwrap();
-    fs::write(scratch.exclude(), b"operator changed this\n").unwrap();
+    let target = repository.common_dir().join(GIT_PRE_COMMIT_PATH);
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    fs::write(&target, b"operator changed this\n").unwrap();
 
     let error = apply(&repository, None, &stale).unwrap_err();
     assert!(matches!(error, InstallError::DigestMismatch { .. }));
-    assert_eq!(
-        fs::read(scratch.exclude()).unwrap(),
-        b"operator changed this\n"
-    );
+    assert_eq!(fs::read(target).unwrap(), b"operator changed this\n");
     assert!(!record_path(&repository).unwrap().exists());
     assert!(!repository.common_dir().join(ENTRY_PATH).exists());
 }
@@ -795,7 +772,6 @@ fn generated_guidance_and_install_errors_name_spice() {
         InstallError::BinaryEmpty(PathBuf::from("fixture")),
         InstallError::BinaryNotRegular(PathBuf::from("fixture")),
         InstallError::BinaryContextChanged,
-        InstallError::DivergentExclusions,
         InstallError::RecordMissing,
         InstallError::ApplyInProgress,
         InstallError::UnapplyInProgress,
@@ -828,250 +804,6 @@ fn apply_resumes_a_write_interrupted_before_progress_publication() {
         let observed = observe(&operation.destination(&repository)).unwrap();
         matches_generated(observed.as_ref(), operation)
     }));
-}
-
-#[test]
-fn unapply_resumes_a_write_interrupted_before_progress_publication() {
-    const INTERRUPTION: usize = 2;
-
-    let scratch = Scratch::new("unapply-resume");
-    let repository = scratch.repository();
-    let planned = plan(&repository, None).unwrap();
-    apply(&repository, None, &planned.digest().unwrap()).unwrap();
-
-    let error = unapply_with_interruption(&repository, Some(INTERRUPTION)).unwrap_err();
-    assert!(matches!(
-        error,
-        InstallError::Interrupted {
-            operation: INTERRUPTION
-        }
-    ));
-    let interrupted = read_record(&repository).unwrap().unwrap().record;
-    assert_eq!(interrupted.status, InstallStatus::Unapplying);
-    assert_eq!(
-        interrupted.completed,
-        planned.operations().len() - 1 - INTERRUPTION
-    );
-    assert_eq!(
-        plan(&repository, None).unwrap().digest().unwrap(),
-        planned.digest().unwrap()
-    );
-
-    let completed = unapply(&repository).unwrap();
-    assert_eq!(completed.status(), InstallStatus::Uninstalled);
-    assert!(planned.operations().iter().all(|operation| {
-        observe(&operation.destination(&repository))
-            .unwrap()
-            .map(|observed| observed.image)
-            == operation.previous().cloned()
-    }));
-}
-
-#[test]
-fn operator_drift_refuses_unapply_before_any_reversal() {
-    let scratch = Scratch::new("drift");
-    let repository = scratch.repository();
-    let planned = plan(&repository, None).unwrap();
-    apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    let generated = images(&repository, &planned);
-    fs::write(
-        repository.common_dir().join(ENTRY_PATH),
-        b"operator-owned replacement\n",
-    )
-    .unwrap();
-
-    let error = unapply(&repository).unwrap_err();
-    assert!(matches!(
-        error,
-        InstallError::Drift { path, .. } if path == ENTRY_PATH
-    ));
-    let record = read_record(&repository).unwrap().unwrap().record;
-    assert_eq!(record.status, InstallStatus::Complete);
-    for (index, operation) in planned.operations().iter().enumerate() {
-        if operation.path() != ENTRY_PATH {
-            assert_eq!(
-                observe(&operation.destination(&repository)).unwrap(),
-                generated[index]
-            );
-        }
-    }
-}
-
-#[test]
-fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
-    let malformed = Scratch::new("malformed");
-    let repository = malformed.repository();
-    fs::create_dir_all(record_path(&repository).unwrap().parent().unwrap()).unwrap();
-    fs::write(
-        record_path(&repository).unwrap(),
-        b"{\"unexpected\":true}\n",
-    )
-    .unwrap();
-    let error = plan(&repository, None).unwrap_err();
-    assert!(matches!(error, InstallError::Decode(_)));
-    assert!(!repository.common_dir().join(ENTRY_PATH).exists());
-
-    let divergent = Scratch::new("divergent");
-    let repository = divergent.repository();
-    fs::write(divergent.exclude(), format!("{EXCLUDE_BEGIN}\nwrong\n")).unwrap();
-    let error = plan(&repository, None).unwrap_err();
-    assert!(matches!(error, InstallError::DivergentExclusions));
-    assert!(!record_path(&repository).unwrap().exists());
-
-    let duplicate = Scratch::new("duplicate-block");
-    let repository = duplicate.repository();
-    fs::write(
-        duplicate.exclude(),
-        format!("{EXCLUDE_BLOCK}{EXCLUDE_BLOCK}"),
-    )
-    .unwrap();
-    let error = plan(&repository, None).unwrap_err();
-    assert!(matches!(error, InstallError::DivergentExclusions));
-    assert!(!record_path(&repository).unwrap().exists());
-}
-
-#[test]
-fn python_state_root_is_not_an_install_input() {
-    let scratch = Scratch::new("python-state");
-    let repository = scratch.repository();
-    let python = repository.common_dir().join(".spice");
-    let sentinels = [
-        python.join("install"),
-        python.join("install.json"),
-        python.join("rust/install.json"),
-    ];
-    for (index, path) in sentinels.iter().enumerate() {
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, format!("python-owned-{index}\n")).unwrap();
-    }
-    let before = sentinels
-        .iter()
-        .map(|path| fs::read(path).unwrap())
-        .collect::<Vec<_>>();
-
-    let preview = plan(&repository, None).expect("Python state cannot block Rust preview");
-
-    assert!(!preview.operations().is_empty());
-    assert_eq!(
-        sentinels
-            .iter()
-            .map(|path| fs::read(path).unwrap())
-            .collect::<Vec<_>>(),
-        before
-    );
-    assert!(!record_path(&repository).unwrap().exists());
-    assert!(!repository.common_dir().join(ENTRY_PATH).exists());
-}
-
-#[test]
-fn prior_current_path_record_names_its_owning_release_before_mutation() {
-    for (version, owner) in LEGACY_RECORD_VERSIONS {
-        let scratch = Scratch::new(owner);
-        let repository = scratch.repository();
-        let planned = plan(&repository, None).unwrap();
-        apply(&repository, None, &planned.digest().unwrap()).unwrap();
-        let installed = images(&repository, &planned);
-        let mut record = read_record(&repository).unwrap().unwrap().record;
-        record.version = version;
-        let mut bytes = wire::encode(&record).unwrap();
-        if version == 4 {
-            let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            let worktree = serde_json::to_value(repository.worktree_root()).unwrap();
-            document["repository"]["worktree"] = worktree.clone();
-            document["plan"]["repository"]["worktree"] = worktree;
-            bytes = serde_json::to_vec(&document).unwrap();
-        }
-        fs::write(record_path(&repository).unwrap(), bytes).unwrap();
-
-        let error = plan(&repository, None).unwrap_err();
-        assert!(matches!(
-            &error,
-            InstallError::LegacyRecord { path, owner: observed }
-                if path == &record_path(&repository).unwrap() && observed == &owner
-        ));
-        assert!(error.to_string().contains(owner));
-        assert_eq!(images(&repository, &planned), installed);
-    }
-}
-
-#[test]
-fn record_digest_tampering_refuses_before_unapply_mutation() {
-    let scratch = Scratch::new("record-digest");
-    let repository = scratch.repository();
-    let planned = plan(&repository, None).unwrap();
-    apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    let generated = images(&repository, &planned);
-    let mut record = read_record(&repository).unwrap().unwrap().record;
-    record.plan_digest = Digest::compute(Domain::InstallPlan, b"tampered");
-    fs::write(
-        record_path(&repository).unwrap(),
-        wire::encode(&record).unwrap(),
-    )
-    .unwrap();
-
-    let error = unapply(&repository).unwrap_err();
-    assert!(matches!(error, InstallError::InvalidRecord(_)));
-    assert_eq!(images(&repository, &planned), generated);
-}
-
-#[cfg(unix)]
-#[test]
-fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
-    use std::os::unix::fs::symlink;
-
-    let scratch = Scratch::new("symlink");
-    let repository = scratch.repository();
-    let outside = repository.common_dir().join("outside");
-    fs::create_dir(&outside).unwrap();
-    symlink(&outside, repository.common_dir().join(".spice-install")).unwrap();
-
-    let planned = plan(&repository, None).unwrap();
-    let skill = planned
-        .operations()
-        .iter()
-        .find(|operation| operation.asset() == Asset::Skill)
-        .unwrap();
-    assert_eq!(skill.destination, "outside/agents/skills/spice/SKILL.md");
-    apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    assert!(outside.join("agents/skills/spice/SKILL.md").is_file());
-    unapply(&repository).unwrap();
-
-    let escaped = Scratch::new("symlink-escape");
-    let repository = escaped.repository();
-    let external = escaped.0.with_extension("external");
-    fs::create_dir(&external).unwrap();
-    let canonical_external = fs::canonicalize(&external).unwrap();
-    symlink(&external, repository.common_dir().join(".spice-install")).unwrap();
-    let error = plan(&repository, None).unwrap_err();
-    assert!(matches!(
-        error,
-        InstallError::PathOutsideRoot(path) if path == canonical_external
-    ));
-    assert!(
-        plan(&repository, None)
-            .unwrap_err()
-            .to_string()
-            .contains("canonical permitted root")
-    );
-    assert!(fs::read_dir(&external).unwrap().next().is_none());
-    fs::remove_dir(external).unwrap();
-
-    let state = Scratch::new("state-symlink");
-    let repository = state.repository();
-    let outside = state.join("outside-state");
-    fs::create_dir(&outside).unwrap();
-    let state_root = repository
-        .common_dir()
-        .join(crate::repository::STATE_DIRECTORY);
-    symlink(&outside, &state_root).unwrap();
-
-    let error = plan(&repository, None).unwrap_err();
-    assert!(matches!(
-        error,
-        InstallError::State(crate::repository::StateError::Linked { path })
-            if path == state_root
-    ));
-    assert!(fs::read_dir(&outside).unwrap().next().is_none());
 }
 
 /// Every path an install publishes and a refresh must never withdraw.

@@ -7,7 +7,7 @@ use crate::repository::Repository;
 use super::handle::AdmittedPath;
 use super::{
     Asset, FileImage, GIT_COMMIT_MESSAGE, GIT_PRE_COMMIT, GIT_REFERENCE_TRANSACTION, Generation,
-    InstallError, ObservedFile, Operation, ParentObservation, SKILL, exclusions, read_binary,
+    InstallError, ObservedFile, Operation, ParentObservation, SKILL, read_binary,
 };
 
 pub(super) fn publish_operation(
@@ -41,12 +41,11 @@ pub(super) fn materialize_generated(
     spice_binary: Option<&Path>,
 ) -> Result<FileImage, InstallError> {
     let bytes = match operation.asset {
-        Asset::Exclusions => exclusions(
-            operation
-                .previous
-                .as_ref()
-                .map(|previous| previous.image.bytes()),
-        )?,
+        Asset::Exclusions => {
+            return Err(InstallError::InvalidRecord(
+                "install plan contains the retired version-5 exclusions asset".to_owned(),
+            ));
+        }
         Asset::GitPreCommit => GIT_PRE_COMMIT.as_bytes().to_vec(),
         Asset::GitCommitMessage => GIT_COMMIT_MESSAGE.as_bytes().to_vec(),
         Asset::GitReferenceTransaction => GIT_REFERENCE_TRANSACTION.as_bytes().to_vec(),
