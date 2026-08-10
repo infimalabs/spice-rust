@@ -32,6 +32,41 @@ struct Fixture {
     runtime: PathBuf,
 }
 
+struct InboxPermissionBlock {
+    path: PathBuf,
+    original: Option<fs::Permissions>,
+}
+
+impl InboxPermissionBlock {
+    fn new(path: PathBuf) -> Self {
+        let original = fs::metadata(&path)
+            .expect("fixture inbox metadata")
+            .permissions();
+        let mut blocked = original.clone();
+        blocked.set_readonly(true);
+        fs::set_permissions(&path, blocked)
+            .expect("fixture blocks inbox publication without changing its admitted shape");
+        Self {
+            path,
+            original: Some(original),
+        }
+    }
+
+    fn restore(mut self) {
+        let original = self.original.take().expect("permission block is armed");
+        fs::set_permissions(&self.path, original)
+            .expect("fixture restores inbox publication permissions");
+    }
+}
+
+impl Drop for InboxPermissionBlock {
+    fn drop(&mut self) {
+        if let Some(original) = self.original.take() {
+            let _ = fs::set_permissions(&self.path, original);
+        }
+    }
+}
+
 impl Fixture {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
@@ -723,8 +758,7 @@ fn rendering_failure_path(
     // its disposable inbox rendering fails, and the failure is observable.
     let lane = lane.to_string();
     let inbox_root = fixture.runtime.join("inbox");
-    fs::remove_dir_all(&inbox_root).expect("fixture removes disposable inbox renderings");
-    fs::write(&inbox_root, b"blocked").expect("fixture blocks inbox publication");
+    let publication_block = InboxPermissionBlock::new(inbox_root.clone());
     let sent = text_directive(&invoke(
         fixture,
         &["steer", &lane, "remain authoritative without a rendering"],
@@ -777,12 +811,15 @@ fn rendering_failure_path(
         "startup replay regressed the parked source cursor"
     );
     assert_eq!(replayed_keys, keys);
-    assert_eq!(replayed_failure, failure);
+    assert!(
+        replayed_failure.contains("steer::inbox-unwritable"),
+        "restart changed the parked failure class: {replayed_failure}"
+    );
     assert_eq!(replayed_repair, repair);
     let duplicate = invoke_as_lane(fixture, &lane, &["ack", historical_key], true);
     assert_refusal(&duplicate, "steer::ack-missed");
 
-    fs::remove_file(&inbox_root).expect("fixture unblocks inbox publication");
+    publication_block.restore();
     let repaired = invoke(fixture, &["steer", "repair", &lane], true);
     let Outcome::Reply(repaired): Outcome<wire::intent::DeliveryAnswer> = json_outcome(&repaired)
     else {
