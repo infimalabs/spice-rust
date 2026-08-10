@@ -171,112 +171,33 @@ where
             .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
         let at = current_instant()?;
         let expires = expiry(at, steering_config.expiry().get())?;
-        let origin = format!("resident:{epoch}")
-            .parse::<wire::Origin>()
-            .map_err(|error| store_fault("resident::origin-invalid", &error.to_string()))?;
         let (openings, proposal) = if let Some(adjudicator) = judge.as_deref_mut() {
             let decisions =
                 adjudicate_candidates(unsuppressed, anchor, &mut decision_cache, adjudicator);
             if decisions.is_empty() {
                 return Ok(());
             }
-            let openings = openings(
-                decisions
-                    .iter()
-                    .filter(|decision| decision.judgment.confirmed)
-                    .map(|decision| decision.candidate.clone())
-                    .collect(),
+            judged_proposal(
+                epoch,
+                record.lane,
+                record.occupant,
+                anchor,
+                decisions,
                 minted_millis,
                 at,
-            )?;
-            let mut proposal = JournalWrite::new(Actor::Spice, origin.clone(), at, Producer::Judge);
-            proposal.guard(judgment_guard(
-                epoch,
-                record.lane,
-                record.occupant,
-                anchor,
-                decisions.clone(),
-                openings.clone(),
-            ));
-            for decided in &decisions {
-                let decision = if decided.judgment.confirmed {
-                    let opening = openings
-                        .iter()
-                        .find(|opening| opening.candidate.content == decided.candidate.content)
-                        .expect("every confirmed decision owns one opening");
-                    TasteDecision::Confirmed {
-                        directive: opening.directive,
-                        key: opening.key.to_string(),
-                        text: opening.candidate.text.clone(),
-                        expires,
-                    }
-                } else {
-                    TasteDecision::Cleared
-                };
-                let judged = TasteJudged {
-                    lane: record.lane,
-                    occupant: record.occupant,
-                    compaction: anchor.get(),
-                    taste: decided.candidate.taste.clone(),
-                    content: decided.candidate.content.clone(),
-                    bag: decided.candidate.bag.clone(),
-                    trigger: decided.candidate.trigger.clone(),
-                    driver: decided.candidate.driver.clone(),
-                    source: decided.candidate.source.clone(),
-                    locus: decided.candidate.locus,
-                    attempts: decided.judgment.attempts.clone(),
-                    decision,
-                };
-                let pending = proposal
-                    .fact(judged.clone(), FactCause::Existing(anchor))
-                    .map_err(|error| store_fault("taste::judgment-invalid", &error.to_string()))?;
-                if decided.judgment.confirmed {
-                    let head_origin = origin.clone();
-                    proposal.steering_head(pending, move |seq| {
-                        steer::Ledger::judged_head(&judged, head_origin, at, seq)
-                            .expect("the admitted judgment builds its authority head")
-                    });
-                }
-            }
-            (openings, proposal)
+                expires,
+            )?
         } else {
-            let openings = openings(unsuppressed, minted_millis, at)?;
-            let mut proposal = JournalWrite::new(
-                Actor::Spice,
-                origin.clone(),
-                at,
-                Producer::ResidentRecognition,
-            );
-            proposal.guard(reminder_guard(
+            reminder_proposal(
                 epoch,
                 record.lane,
                 record.occupant,
                 anchor,
-                openings.clone(),
-            ));
-            for opening in &openings {
-                let reminded = wire::body::TasteReminded {
-                    directive: opening.directive,
-                    key: opening.key.to_string(),
-                    lane: record.lane,
-                    taste: opening.candidate.taste.clone(),
-                    content: opening.candidate.content.clone(),
-                    occupant: record.occupant,
-                    compaction: anchor.get(),
-                    locus: opening.candidate.locus,
-                    text: opening.candidate.text.clone(),
-                    expires,
-                };
-                let pending = proposal
-                    .fact(reminded.clone(), FactCause::Existing(anchor))
-                    .map_err(|error| store_fault("taste::reminder-invalid", &error.to_string()))?;
-                let head_origin = origin.clone();
-                proposal.steering_head(pending, move |seq| {
-                    steer::Ledger::reminded_head(&reminded, head_origin, at, seq)
-                        .expect("the admitted reminder builds its authority head")
-                });
-            }
-            (openings, proposal)
+                unsuppressed,
+                minted_millis,
+                at,
+                expires,
+            )?
         };
 
         match commit_write(bus, &openings, proposal) {
@@ -299,6 +220,142 @@ where
         }
     }
     unreachable!("the final commit attempt returns instead of retrying")
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the proposal binds one judged capture epoch and its indexed key clock"
+)]
+fn judged_proposal(
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    anchor: Seq,
+    decisions: Vec<JudgedCandidate>,
+    minted_millis: Option<i64>,
+    at: Instant,
+    expires: Instant,
+) -> CommandResult<(Vec<Opening>, JournalWrite)> {
+    let openings = openings(
+        decisions
+            .iter()
+            .filter(|decision| decision.judgment.confirmed)
+            .map(|decision| decision.candidate.clone())
+            .collect(),
+        minted_millis,
+        at,
+    )?;
+    let origin = resident_origin(epoch)?;
+    let mut proposal = JournalWrite::new(Actor::Spice, origin.clone(), at, Producer::Judge);
+    proposal.guard(judgment_guard(
+        epoch,
+        lane,
+        occupant,
+        anchor,
+        decisions.clone(),
+        openings.clone(),
+    ));
+    for decided in &decisions {
+        let decision = if decided.judgment.confirmed {
+            let opening = openings
+                .iter()
+                .find(|opening| opening.candidate.content == decided.candidate.content)
+                .expect("every confirmed decision owns one opening");
+            TasteDecision::Confirmed {
+                directive: opening.directive,
+                key: opening.key.to_string(),
+                text: opening.candidate.text.clone(),
+                expires,
+            }
+        } else {
+            TasteDecision::Cleared
+        };
+        let judged = TasteJudged {
+            lane,
+            occupant,
+            compaction: anchor.get(),
+            taste: decided.candidate.taste.clone(),
+            content: decided.candidate.content.clone(),
+            bag: decided.candidate.bag.clone(),
+            trigger: decided.candidate.trigger.clone(),
+            driver: decided.candidate.driver.clone(),
+            source: decided.candidate.source.clone(),
+            locus: decided.candidate.locus,
+            attempts: decided.judgment.attempts.clone(),
+            decision,
+        };
+        let pending = proposal
+            .fact(judged.clone(), FactCause::Existing(anchor))
+            .map_err(|error| store_fault("taste::judgment-invalid", &error.to_string()))?;
+        if decided.judgment.confirmed {
+            let head_origin = origin.clone();
+            proposal.steering_head(pending, move |seq| {
+                steer::Ledger::judged_head(&judged, head_origin, at, seq)
+                    .expect("the admitted judgment builds its authority head")
+            });
+        }
+    }
+    Ok((openings, proposal))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the proposal binds one reminder capture epoch and its indexed key clock"
+)]
+fn reminder_proposal(
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    anchor: Seq,
+    candidates: Vec<Candidate>,
+    minted_millis: Option<i64>,
+    at: Instant,
+    expires: Instant,
+) -> CommandResult<(Vec<Opening>, JournalWrite)> {
+    let openings = openings(candidates, minted_millis, at)?;
+    let origin = resident_origin(epoch)?;
+    let mut proposal = JournalWrite::new(
+        Actor::Spice,
+        origin.clone(),
+        at,
+        Producer::ResidentRecognition,
+    );
+    proposal.guard(reminder_guard(
+        epoch,
+        lane,
+        occupant,
+        anchor,
+        openings.clone(),
+    ));
+    for opening in &openings {
+        let reminded = wire::body::TasteReminded {
+            directive: opening.directive,
+            key: opening.key.to_string(),
+            lane,
+            taste: opening.candidate.taste.clone(),
+            content: opening.candidate.content.clone(),
+            occupant,
+            compaction: anchor.get(),
+            locus: opening.candidate.locus,
+            text: opening.candidate.text.clone(),
+            expires,
+        };
+        let pending = proposal
+            .fact(reminded.clone(), FactCause::Existing(anchor))
+            .map_err(|error| store_fault("taste::reminder-invalid", &error.to_string()))?;
+        let head_origin = origin.clone();
+        proposal.steering_head(pending, move |seq| {
+            steer::Ledger::reminded_head(&reminded, head_origin, at, seq)
+                .expect("the admitted reminder builds its authority head")
+        });
+    }
+    Ok((openings, proposal))
+}
+
+fn resident_origin(epoch: CanonicalUuid) -> CommandResult<wire::Origin> {
+    format!("resident:{epoch}")
+        .parse::<wire::Origin>()
+        .map_err(|error| store_fault("resident::origin-invalid", &error.to_string()))
 }
 
 fn candidates(
