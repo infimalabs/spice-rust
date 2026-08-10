@@ -3,6 +3,7 @@ use super::*;
 fn sent(text: &str) -> SteerSent {
     SteerSent {
         directive: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+        fanout: Some("00000000-0000-4000-8000-000000000004".parse().unwrap()),
         key: "taste-1".to_owned(),
         lane: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
         text: text.to_owned(),
@@ -81,9 +82,9 @@ fn bridge_correction_cannot_synthesize_a_theme_shared_by_no_threshold_set() {
 }
 
 #[test]
-fn one_transcript_locus_fanned_to_two_lanes_counts_once() {
-    let shared = TranscriptLocus {
-        source: Some(directive(700)),
+fn one_operator_fanout_across_distinct_lane_tapes_counts_once() {
+    let first = TranscriptLocus {
+        source: Some(directive(701)),
         member: 1,
         offset: 10,
         length: 50,
@@ -91,23 +92,30 @@ fn one_transcript_locus_fanned_to_two_lanes_counts_once() {
         line: 1,
         column: 1,
     };
-    let distinct = TranscriptLocus {
+    let second = TranscriptLocus {
+        source: Some(directive(702)),
         member: 2,
         offset: 20,
-        ..shared
+        ..first
+    };
+    let distinct = TranscriptLocus {
+        source: Some(directive(703)),
+        member: 3,
+        offset: 30,
+        ..first
     };
     let evidence = [
         (
             1,
             "00000000-0000-4000-8000-000000000010",
             "Do not use grep; use rg instead.",
-            shared,
+            first,
         ),
         (
             2,
             "00000000-0000-4000-8000-000000000020",
             "Prefer rg rather than grep.",
-            shared,
+            second,
         ),
         (
             3,
@@ -123,6 +131,11 @@ fn one_transcript_locus_fanned_to_two_lanes_counts_once() {
             Actor::Operator,
             SteerSent {
                 directive: directive(position),
+                fanout: Some(if position <= 2 {
+                    directive(700)
+                } else {
+                    directive(703)
+                }),
                 key: format!("taste-{position}"),
                 lane: lane.parse().unwrap(),
                 text: text.to_owned(),
@@ -166,7 +179,7 @@ fn distinct_transcript_loci_still_satisfy_recurrence() {
 }
 
 #[test]
-fn unrelated_tape_sources_at_equal_local_coordinates_count_independently() {
+fn unrelated_fanouts_at_equal_local_coordinates_count_independently() {
     let mut corrections = vec![
         correction(1, "Do not use grep; use rg instead."),
         correction(2, "Prefer rg rather than grep."),
@@ -194,7 +207,34 @@ fn unrelated_tape_sources_at_equal_local_coordinates_count_independently() {
 }
 
 #[test]
-fn legacy_loci_are_scoped_by_lane_instead_of_guessed_as_fanout() {
+fn pre_fanout_source_aware_loci_remain_independent() {
+    let mut corrections = vec![
+        correction(1, "Do not use grep; use rg instead."),
+        correction(2, "Prefer rg rather than grep."),
+        correction(3, "Never use grep; always use rg."),
+    ];
+    let coordinates = TranscriptLocus {
+        source: None,
+        member: 1,
+        offset: 10,
+        length: 50,
+        event: 0,
+        line: 1,
+        column: 1,
+    };
+    for (index, correction) in corrections.iter_mut().enumerate() {
+        correction.fanout = None;
+        correction.locus = TranscriptLocus {
+            source: Some(directive(800 + u64::try_from(index).unwrap())),
+            ..coordinates
+        };
+    }
+
+    assert_eq!(cluster(&corrections, 3)[0].corrections.len(), 3);
+}
+
+#[test]
+fn pre_fanout_source_absence_is_scoped_by_lane() {
     let mut corrections = vec![
         correction(1, "Do not use grep; use rg instead."),
         correction(2, "Prefer rg rather than grep."),
@@ -210,6 +250,7 @@ fn legacy_loci_are_scoped_by_lane_instead_of_guessed_as_fanout() {
         column: 1,
     };
     for correction in &mut corrections {
+        correction.fanout = None;
         correction.locus = coordinates;
     }
 
@@ -292,6 +333,7 @@ fn correction(position: u64, text: &str) -> Correction {
     Correction {
         seq: Seq::new(position).unwrap(),
         directive: directive(position),
+        fanout: Some(directive(position + 300)),
         key: format!("taste-{position}"),
         excerpt: text.to_owned(),
         tokens: tokens(text),

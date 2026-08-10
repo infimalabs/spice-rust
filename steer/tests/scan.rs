@@ -252,6 +252,7 @@ fn the_ledger_answers_as_standing() {
             directive: "00000000-0000-4000-8000-000000000001"
                 .parse()
                 .expect("fixture directive UUID"),
+            fanout: None,
             key: "1kJK6N3R".to_owned(),
             lane: "018f82d4-6f59-7d06-92e3-bce913116302"
                 .parse()

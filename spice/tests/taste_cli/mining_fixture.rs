@@ -5,6 +5,7 @@ struct SeededCorrection {
     key: &'static str,
     text: &'static str,
     lane: u8,
+    fanout: u8,
     source: u8,
     coordinate: u32,
     decline_reason: Option<&'static str>,
@@ -243,15 +244,18 @@ fn mining_corrections() -> [SeededCorrection; 12] {
             0x47,
             8,
         ),
-        // This is the same durable transcript source and exact locus as the
-        // first correction, copied to another lane by fanout.
-        seeded(
-            "1kMine0A",
-            "Do not use grep for repository searches; use rg instead.",
-            0x22,
-            0x40,
-            1,
-        ),
+        // A second lane records the same operator fanout in a distinct real
+        // tape generation and at the same local coordinates.
+        SeededCorrection {
+            fanout: 0x40,
+            ..seeded(
+                "1kMine0A",
+                "Do not use grep for repository searches; use rg instead.",
+                0x22,
+                0x49,
+                1,
+            )
+        },
         seeded("1kMine0B", "Use alpha beta one.", 0x20, 0x50, 10),
         seeded("1kMine0C", "Use alpha beta gamma delta.", 0x20, 0x51, 11),
         seeded("1kMine0D", "Use gamma delta three.", 0x20, 0x52, 12),
@@ -270,6 +274,7 @@ fn publish_mining_corrections(bus: &Bus, rows: &[SeededCorrection]) {
     for row in rows {
         let body = SteerSent {
             directive: directive(row.key),
+            fanout: Some(uuid(row.fanout)),
             key: row.key.to_owned(),
             lane: uuid(row.lane),
             text: row.text.to_owned(),
@@ -359,6 +364,7 @@ const fn seeded(
         key,
         text,
         lane,
+        fanout: source,
         source,
         coordinate,
         decline_reason: None,
@@ -416,6 +422,7 @@ pub(super) fn seed_later_mining_correction(fixture: &Fixture) {
     );
     let body = SteerSent {
         directive: directive(key),
+        fanout: Some(uuid(0x53)),
         key: key.to_owned(),
         lane: uuid(0x20),
         text: "Do not run grep for repository searches; choose rg.".to_owned(),
