@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 #[cfg(not(target_arch = "wasm32"))]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -232,13 +232,49 @@ mod verifier_evidence;
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use acquire::{acquire_toolchain_arm, acquire_verifier_tools};
+pub(crate) use acquire::{
+    acquire_toolchain_arm, acquire_toolchain_observed, acquire_verifier_tools,
+};
 pub use declarations::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use verifier_evidence::{
     VerifierCompilerContract, VerifierCompilerEvidence, VerifierCompilerProcessEvidence,
     VerifierCompilerRun, VerifierCompilerStage,
 };
+
+/// Stable selected-source and Cargo output roots completed by native analysis.
+///
+/// Values can only be minted inside the toolchain acquisition that synchronized
+/// and successfully checked the selected source. A later coordinator can reuse
+/// the same immutable paths without recapturing live repository bytes.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RustAnalysisWorkspace {
+    source: PathBuf,
+    cargo_target: PathBuf,
+    cargo_build: PathBuf,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl RustAnalysisWorkspace {
+    /// Stable immutable source root checked by native analysis.
+    #[must_use]
+    pub fn source(&self) -> &Path {
+        &self.source
+    }
+
+    /// Shared Cargo target root owned by the live worktree.
+    #[must_use]
+    pub fn cargo_target(&self) -> &Path {
+        &self.cargo_target
+    }
+
+    /// Shared Cargo build root populated by native analysis.
+    #[must_use]
+    pub fn cargo_build(&self) -> &Path {
+        &self.cargo_build
+    }
+}
 
 /// Extensions selected by the compiled prose scanner, without their leading dot.
 ///

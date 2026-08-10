@@ -19,7 +19,9 @@ use super::{
     CompileInvocation, HOME_DIRECTORY, run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
-use crate::toolchain::{ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
+use crate::toolchain::{
+    ArmOutcome, ArmTiming, FindingDetail, RustAnalysisWorkspace, ToolchainDeclaration,
+};
 use sill::{Acquisition, Environment, Possession, WaitPolicy};
 
 /// The native analysis, kept in its declaration order.
@@ -172,15 +174,8 @@ const RUST_BUILD_DIRECTORY: &str = "spice-gate-native-build";
 
 impl RustWorkspace {
     fn create(selected: &Path, repository: &Path) -> Result<Self, String> {
-        let (worktree_git, _) = crate::tree::git_directories(repository).map_err(|error| {
-            format!(
-                "rust analysis cache could not resolve the Git directory for {}: {error}",
-                repository.display()
-            )
-        })?;
-        let cache = worktree_git.join("spice").join(RUST_SOURCE_DIRECTORY);
-        let target = repository.join("target");
-        Self::create_at(selected, &cache, &target)
+        let workspace = rust_analysis_workspace(repository)?;
+        Self::create_at(selected, workspace.source(), workspace.cargo_target())
     }
 
     fn create_at(selected: &Path, source: &Path, target: &Path) -> Result<Self, String> {
@@ -255,6 +250,25 @@ impl RustWorkspace {
         drop(self.possession.take());
         result
     }
+}
+
+pub(in crate::toolchain) fn rust_analysis_workspace(
+    repository: &Path,
+) -> Result<RustAnalysisWorkspace, String> {
+    let (worktree_git, _) = crate::tree::git_directories(repository).map_err(|error| {
+        format!(
+            "rust analysis cache could not resolve the Git directory for {}: {error}",
+            repository.display()
+        )
+    })?;
+    let source = worktree_git.join("spice").join(RUST_SOURCE_DIRECTORY);
+    let cargo_target = repository.join("target");
+    let cargo_build = cargo_target.join(RUST_BUILD_DIRECTORY);
+    Ok(RustAnalysisWorkspace {
+        source,
+        cargo_target,
+        cargo_build,
+    })
 }
 
 impl Drop for RustWorkspace {

@@ -5,9 +5,14 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead as _, BufReader, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
 use std::time::Duration;
 
-use gate::{ArmFamily, BatteryReport, GateId, RepositoryExecutionEvent, Selector};
+use gate::{
+    ArmFamily, BatteryReport, GateId, RepositoryExecutionEvent, Selector, TestSelectionReport,
+    WORKSPACE_TEST_CONCURRENCY_CAP,
+};
 use serde::{Deserialize, Serialize};
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
@@ -18,6 +23,7 @@ use wire::{Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic};
 const WORKER_ARGUMENT: &str = "__gate-pre-commit-worker";
 const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
+const SELECTION_RECORD: u8 = b'S';
 const HARD_DEADLINE: Duration = Duration::from_secs(180);
 const WORK_RUNTIME: Duration = Duration::from_secs(135);
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
@@ -37,6 +43,7 @@ const _: () = assert!(
 #[serde(tag = "phase", rename_all = "kebab-case")]
 enum WorkerPhase {
     Capture,
+    TestSelection,
     Family {
         family: ArmFamily,
     },
@@ -63,13 +70,15 @@ impl WorkerPhase {
             // Complete-family acquisition announces its analyses as a batch.
             // Those records are inventory, not a cursor, so they cannot name
             // which analysis owns the wall clock when a deadline lands.
-            RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+            RepositoryExecutionEvent::AnalysisInvoked { .. }
+            | RepositoryExecutionEvent::ToolchainAnalysisCompleted { .. } => None,
         }
     }
 
     fn render(&self) -> String {
         match self {
             Self::Capture => "capture".to_owned(),
+            Self::TestSelection => "test-selection".to_owned(),
             Self::Family { family } => format!("family family={}", family_name(*family)),
             Self::Arm {
                 ordinal,
@@ -91,6 +100,13 @@ struct WorkerFailure {
     detail: String,
     fault: bool,
 }
+
+enum SelectionExecution {
+    Reuse(gate::RustAnalysisWorkspace),
+    SelectedRoot,
+}
+
+type SelectionStart = Arc<(Mutex<Option<SelectionExecution>>, Condvar)>;
 
 struct WorkerFiles {
     root: PathBuf,
@@ -264,6 +280,13 @@ fn terminal(path: &Path, progress: &Path) -> Outcome<BatteryReport> {
                 format!("worker published an invalid failure record: {error}"),
             ),
         },
+        SELECTION_RECORD => match TestSelectionReport::decode(document) {
+            Ok(report) => selection_refusal(report),
+            Err(error) => worker_lost(
+                progress,
+                format!("worker published an invalid test-selection report: {error}"),
+            ),
+        },
         other => worker_lost(
             progress,
             format!("worker published unknown terminal record {other}"),
@@ -271,27 +294,151 @@ fn terminal(path: &Path, progress: &Path) -> Outcome<BatteryReport> {
     }
 }
 
-fn worker(progress: &Path, terminal: &Path) -> io::Result<()> {
+fn worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
-    let mut progress = OpenOptions::new().append(true).open(progress)?;
+    let mut progress = OpenOptions::new().append(true).open(progress_path)?;
     write_phase(&mut progress, &WorkerPhase::Capture)?;
-    let mut phase_failure = None;
-    let result = spice::gate::run_traced(Selector::staged(), &mut |event| {
+    let phase_failure = Arc::new(Mutex::new(None::<String>));
+    let trace_failure = Arc::clone(&phase_failure);
+    let selection_start = Arc::new((Mutex::new(None), Condvar::new()));
+    let trace_selection_start = Arc::clone(&selection_start);
+    let trace_path = progress_path.to_path_buf();
+    let mut trace = move |event| {
+        if let RepositoryExecutionEvent::ToolchainAnalysisCompleted {
+            gate_id: GateId::RustTypecheck,
+            reusable_workspace: Some(workspace),
+        } = &event
+        {
+            release_selection(&trace_selection_start, Some(workspace.clone()));
+        }
         let Some(phase) = WorkerPhase::from_event(event) else {
             return;
         };
-        if phase_failure.is_none()
-            && let Err(error) = write_phase(&mut progress, &phase)
-        {
-            phase_failure = Some(error);
+        let Ok(mut failure) = trace_failure.lock() else {
+            return;
+        };
+        if failure.is_some() {
+            return;
         }
-    });
+        let result = OpenOptions::new()
+            .append(true)
+            .open(&trace_path)
+            .and_then(|mut file| write_phase(&mut file, &phase));
+        if let Err(error) = result {
+            *failure = Some(error.to_string());
+        }
+    };
+    let mut prepared = match spice::gate::prepare_traced(Selector::staged(), &mut trace) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            return write_failure(
+                terminal,
+                &WorkerFailure {
+                    reason: error.reason().to_owned(),
+                    detail: error.detail().to_owned(),
+                    fault: error.is_fault(),
+                },
+            );
+        }
+    };
+    write_phase(&mut progress, &WorkerPhase::TestSelection)?;
+    let repository =
+        spice::repository::Repository::discover(Path::new(".")).map_err(io::Error::other)?;
+    let environment = ambient_environment().map_err(io::Error::other)?;
+    let selected_root = prepared.root().to_path_buf();
+    let writable_root = repository.worktree_root().to_path_buf();
+    let source = prepared.source().clone();
+    let changes = prepared.changes().to_vec();
+    let (selection, result) = thread::scope(|scope| -> io::Result<_> {
+        let selected_start = Arc::clone(&selection_start);
+        let selected = scope.spawn(move || {
+            let reusable_workspace = await_selection(&selected_start);
+            let mut output = Vec::new();
+            let roots = gate::WorkspaceTestRoots::new(&selected_root, &writable_root);
+            let roots = match reusable_workspace.as_ref() {
+                Some(workspace) => roots.with_reusable(workspace),
+                None => roots,
+            };
+            let report = gate::run_selected_workspace_tests_at(
+                roots,
+                source,
+                &changes,
+                environment,
+                WORKSPACE_TEST_CONCURRENCY_CAP,
+                &mut output,
+            );
+            (report, output)
+        });
+        let result = prepared.execute(&[]);
+        release_selection(&selection_start, None);
+        if !selected.is_finished() {
+            write_phase(&mut progress, &WorkerPhase::TestSelection)?;
+        }
+        Ok((selected.join(), result))
+    })?;
+    publish_worker_result(&mut progress, terminal, &phase_failure, selection, result)
+}
+
+fn publish_worker_result(
+    progress: &mut File,
+    terminal: &Path,
+    phase_failure: &Arc<Mutex<Option<String>>>,
+    selection: thread::Result<(
+        Result<TestSelectionReport, gate::WorkspaceTestError>,
+        Vec<u8>,
+    )>,
+    result: Result<BatteryReport, spice::gate::RunError>,
+) -> io::Result<()> {
+    let (selection, selection_output) = match selection {
+        Ok(selection) => selection,
+        Err(_) => {
+            return write_failure(
+                terminal,
+                &WorkerFailure {
+                    reason: "gate::test-selection-worker-lost".to_owned(),
+                    detail: "selected-test coordinator panicked".to_owned(),
+                    fault: true,
+                },
+            );
+        }
+    };
+    progress.write_all(&selection_output)?;
+    progress.flush()?;
+    let selection = match selection {
+        Ok(report) => report,
+        Err(error) => {
+            return write_failure(
+                terminal,
+                &WorkerFailure {
+                    reason: "gate::test-selection-refused".to_owned(),
+                    detail: error.to_string(),
+                    fault: false,
+                },
+            );
+        }
+    };
+    let encoded_selection = selection.encode().map_err(io::Error::other)?;
+    writeln!(
+        progress,
+        "[rust-test-selection-report] {}",
+        String::from_utf8_lossy(&encoded_selection),
+    )?;
+    progress.flush()?;
+    if !selection.admits() {
+        let mut document = vec![SELECTION_RECORD];
+        document.extend(encoded_selection);
+        return fs::write(terminal, document);
+    }
+    let phase_failure = phase_failure
+        .lock()
+        .ok()
+        .and_then(|failure| failure.clone());
     if let Some(error) = phase_failure {
         return write_failure(
             terminal,
             &WorkerFailure {
                 reason: "gate::pre-commit-progress-unavailable".to_owned(),
-                detail: error.to_string(),
+                detail: error,
                 fault: true,
             },
         );
@@ -310,6 +457,35 @@ fn worker(progress: &Path, terminal: &Path) -> io::Result<()> {
                 fault: error.is_fault(),
             },
         ),
+    }
+}
+
+fn release_selection(start: &SelectionStart, workspace: Option<gate::RustAnalysisWorkspace>) {
+    let (selected, signal) = &**start;
+    let mut selected = selected
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if selected.is_some() {
+        return;
+    }
+    *selected = Some(workspace.map_or(SelectionExecution::SelectedRoot, SelectionExecution::Reuse));
+    signal.notify_one();
+}
+
+fn await_selection(start: &SelectionStart) -> Option<gate::RustAnalysisWorkspace> {
+    let (selected, signal) = &**start;
+    let mut selected = selected
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    while selected.is_none() {
+        selected = signal
+            .wait(selected)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+    match selected.as_ref() {
+        Some(SelectionExecution::Reuse(workspace)) => Some(workspace.clone()),
+        Some(SelectionExecution::SelectedRoot) => None,
+        None => unreachable!("selection condition was observed ready"),
     }
 }
 
@@ -332,6 +508,12 @@ fn worker_failure(failure: WorkerFailure) -> Outcome<BatteryReport> {
             reason: failure.reason,
             detail: failure.detail,
         })
+    } else if failure.reason == "gate::test-selection-refused" {
+        Outcome::Refusal(Refusal::evidence(
+            failure.reason,
+            failure.detail,
+            "repair the named staged-source test selection or failing selected target",
+        ))
     } else {
         Outcome::Refusal(Refusal::bare(
             RefusalDiagnostic::new(
@@ -345,6 +527,27 @@ fn worker_failure(failure: WorkerFailure) -> Outcome<BatteryReport> {
             ),
         ))
     }
+}
+
+fn selection_refusal(report: TestSelectionReport) -> Outcome<BatteryReport> {
+    let evidence = match report.encode().and_then(|bytes| {
+        String::from_utf8(bytes).map_err(|error| {
+            serde_json::Error::io(io::Error::new(io::ErrorKind::InvalidData, error))
+        })
+    }) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            return fault("gate::test-selection-report-unavailable", error);
+        }
+    };
+    Outcome::Refusal(Refusal::evidence(
+        "gate::test-selection-coverage-unknown",
+        evidence,
+        concat!(
+            "publish complete staged-source-to-test reach evidence before narrowing the ",
+            "commit test set",
+        ),
+    ))
 }
 
 fn deadline(progress: &Path) -> Outcome<BatteryReport> {
@@ -468,6 +671,7 @@ fn ambient_environment() -> Result<Environment, sill::SpecError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gate::CoverageCompleteness;
     use std::thread;
     use std::time::Instant;
 
@@ -477,6 +681,31 @@ mod tests {
         let envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
         assert_eq!(envelope, Duration::from_secs(150));
         assert!(envelope < HARD_DEADLINE);
+    }
+
+    #[test]
+    fn unknown_staged_source_coverage_refuses_with_the_exact_selection_report() {
+        let report = gate::TestEvidenceGraph::select_tests(
+            wire::Digest::compute(wire::Domain::GateTree, b"unknown staged selection"),
+            vec!["tools/outside.rs".to_owned()],
+            Vec::new(),
+            Vec::new(),
+            CoverageCompleteness::unknown("changed Rust source is outside every workspace package")
+                .expect("unknown reason"),
+        )
+        .expect("unknown selection remains typed");
+
+        let Outcome::Refusal(Refusal::Evidence {
+            reason, evidence, ..
+        }) = selection_refusal(report.clone())
+        else {
+            panic!("unknown source-to-test coverage must refuse");
+        };
+        assert_eq!(reason, "gate::test-selection-coverage-unknown");
+        assert_eq!(
+            TestSelectionReport::decode(evidence.as_bytes()).expect("decode refusal evidence"),
+            report
+        );
     }
 
     #[test]

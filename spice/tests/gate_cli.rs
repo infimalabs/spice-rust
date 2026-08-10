@@ -97,6 +97,17 @@ fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
                 "  exit 0\n",
                 "fi\n",
                 "case \"$1\" in\n",
+                "  metadata)\n",
+                "    root=$(/bin/pwd -P)\n",
+                "    printf '%s\\n' ",
+                "'{{\"packages\":[{{\"id\":\"gate-fixture-id\",\"name\":\"gate-fixture\",",
+                "\"manifest_path\":\"'\"$root\"'/Cargo.toml\",\"dependencies\":[],",
+                "\"targets\":[{{\"name\":\"gate_fixture\",\"kind\":[\"lib\"],",
+                "\"test\":true,\"src_path\":\"'\"$root\"'/src/lib.rs\"}}]}}],",
+                "\"workspace_members\":[\"gate-fixture-id\"]}}'\n",
+                "    exit 0\n",
+                "    ;;\n",
+                "  test) exit 0 ;;\n",
                 "  fmt) exit 0 ;;\n",
                 "  check)\n",
                 "    /bin/sleep 30 & child=$!\n",
@@ -241,6 +252,8 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).expect("make process tripwire executable");
     }
+    std::os::unix::fs::symlink(env!("CARGO"), tripwires.path().join("cargo"))
+        .expect("make canonical test runner Cargo available inside the process tripwire path");
 
     let gate = invoke_with_path(&["gate"], repository.path(), Some(tripwires.path()));
     let report = report_body(&gate);
@@ -666,6 +679,8 @@ impl GateRepository {
             ),
         )
         .expect("write fixture Cargo lockfile");
+        fs::write(scratch.path().join(".gitignore"), "/target/\n")
+            .expect("ignore the fixture's persistent Cargo build cache");
         let repository = Self { scratch };
         repository.write_source(1);
         repository.write_camp_lines(20);
