@@ -625,6 +625,43 @@ fn initialized_authority_and_folds_are_diagnosed_without_writing_any_state() {
 }
 
 #[test]
+fn canonical_journal_violation_is_unavailable_without_writing_any_state() {
+    let repository = Scratch::repository("corrupt-journal");
+    repository.tracked("");
+    let journal_path = repository
+        .path()
+        .join(".git/.spice-rs/data/spicejournal.sqlite3");
+    drop(journal::Journal::open(&journal_path).expect("initialize journal fixture"));
+    let connection = rusqlite::Connection::open(&journal_path).expect("open corruption fixture");
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO thread_index(seq, origin, cause, root, depth)
+             VALUES (9, 'task:DOCTOR-review', NULL, 9, 0);",
+        )
+        .expect("insert orphan thread row");
+    drop(connection);
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+    let before = directory_state(repository.path());
+
+    let spoken = invoke(
+        repository.path(),
+        &["doctor", "--json"],
+        empty_path.as_os_str(),
+        &[],
+    );
+    let report = reply(&spoken).body;
+
+    assert!(matches!(
+        subsystem(&report, DoctorSubsystem::Journal).observation,
+        DoctorObservation::Unavailable { ref reason }
+            if reason.contains("journal authority verification failed")
+    ));
+    assert_eq!(directory_state(repository.path()), before);
+}
+
+#[test]
 fn missing_optional_rtk_is_an_unhealthy_row_inside_a_direct_reply() {
     let repository = Scratch::repository("missing-rtk");
     repository.tracked("");
