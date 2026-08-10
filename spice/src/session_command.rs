@@ -45,10 +45,16 @@ impl VendorEnvironment {
 
 impl Environment {
     pub(crate) fn new(
-        vendors: Vec<VendorEnvironment>,
+        mut vendors: Vec<VendorEnvironment>,
         preferred_vendor: Option<OsString>,
         home: Option<OsString>,
     ) -> Self {
+        vendors.sort_by_key(|row| {
+            (
+                row.vendor.session_study().ambient_precedence(),
+                row.vendor.session_study().identity(),
+            )
+        });
         Self {
             vendors,
             preferred_vendor,

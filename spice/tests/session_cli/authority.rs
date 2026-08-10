@@ -11,6 +11,8 @@ use wire::{
 
 use super::{Scratch, codex_rows, reply_forms_in, strings, write_jsonl};
 
+const SESSION_PROJECT: &str = "spice.session";
+
 fn fake_repository(root: &Path) {
     fs::create_dir(root.join(".git")).expect("fixture git directory is created");
     fs::write(
@@ -126,7 +128,77 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
     let seated = write
         .fact(body::UpSeated { epoch }, FactCause::Root)
         .expect("seating fact builds");
-    let lanes = vec![
+    let lanes = briefing_lanes(lane, occupant, peer_lane, peer_occupant, epoch, thread);
+    write.residency_head(seated, move |_| ResidencyHead {
+        epoch,
+        state: ResidentState::Seated,
+        topology_revision: 0,
+        lanes,
+        subscriptions: Vec::new(),
+    });
+    task_added(
+        &mut write,
+        origin.clone(),
+        held.clone(),
+        "Compose Rust briefings",
+        SESSION_PROJECT,
+        "todo",
+    );
+    task_added(
+        &mut write,
+        origin.clone(),
+        peer.clone(),
+        "Peer active claim",
+        SESSION_PROJECT,
+        "todo",
+    );
+    write
+        .fact(
+            body::SteerSent {
+                directive: uuid(0xaf),
+                key: "1kAsk001".to_owned(),
+                lane,
+                text: "Address this exact steering ask".to_owned(),
+                control: None,
+                attachments: Vec::new(),
+                expires: instant(30),
+            },
+            FactCause::Root,
+        )
+        .expect("steering fact builds");
+    journal.apply(write).expect("fixture authority seeds");
+
+    mint_claim(
+        &mut journal,
+        held,
+        Actor::Lane(lane),
+        lane,
+        occupant,
+        epoch,
+        SESSION_PROJECT,
+        instant(1),
+    );
+    mint_claim(
+        &mut journal,
+        peer,
+        Actor::Lane(peer_lane),
+        peer_lane,
+        peer_occupant,
+        epoch,
+        SESSION_PROJECT,
+        instant(2),
+    );
+}
+
+fn briefing_lanes(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    peer_lane: CanonicalUuid,
+    peer_occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    thread: &str,
+) -> Vec<LaneResidency> {
+    vec![
         LaneResidency {
             lane,
             lineage_id: lane,
@@ -167,66 +239,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
             session: None,
             disposition: "occupied".to_owned(),
         },
-    ];
-    write.residency_head(seated, move |_| ResidencyHead {
-        epoch,
-        state: ResidentState::Seated,
-        topology_revision: 0,
-        lanes,
-        subscriptions: Vec::new(),
-    });
-    task_added(
-        &mut write,
-        origin.clone(),
-        held.clone(),
-        "Compose Rust briefings",
-        "spice.session",
-        "todo",
-    );
-    task_added(
-        &mut write,
-        origin.clone(),
-        peer.clone(),
-        "Peer active claim",
-        "spice.session",
-        "todo",
-    );
-    write
-        .fact(
-            body::SteerSent {
-                directive: uuid(0xaf),
-                key: "1kAsk001".to_owned(),
-                lane,
-                text: "Address this exact steering ask".to_owned(),
-                control: None,
-                attachments: Vec::new(),
-                expires: instant(30),
-            },
-            FactCause::Root,
-        )
-        .expect("steering fact builds");
-    journal.apply(write).expect("fixture authority seeds");
-
-    mint_claim(
-        &mut journal,
-        held,
-        Actor::Lane(lane),
-        lane,
-        occupant,
-        epoch,
-        "spice.session",
-        instant(1),
-    );
-    mint_claim(
-        &mut journal,
-        peer,
-        Actor::Lane(peer_lane),
-        peer_lane,
-        peer_occupant,
-        epoch,
-        "spice.session",
-        instant(2),
-    );
+    ]
 }
 
 fn mint_claim(
@@ -318,7 +331,7 @@ fn briefing_authority_sources_asks_and_held_work_from_exact_state_authorities() 
     write_jsonl(&transcript, &codex_rows());
     let thread = uuid(0xaa).to_string().replace('-', "");
     seed_briefing_authority(&authority_path(scratch.path()), &thread);
-    let environment = [("CODEX_THREAD_ID", thread.clone())];
+    let environment = [("CODEX_THREAD_ID", thread.clone())]; // env-policy: allow
 
     let recall = reply_forms_in(
         Some(scratch.path()),
