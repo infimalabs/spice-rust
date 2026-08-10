@@ -517,6 +517,8 @@ impl SystemEffects {
         plan: &dist::ReleasePlan,
         prior: &dist::OperationState,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
+        // Materialization is deterministic; convergence depends on both the
+        // reconstructed package identity and its Git-tree identity.
         let package = crate::release_package::materialize(
             &self.root,
             &plan.requested_version,

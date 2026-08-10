@@ -239,6 +239,8 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let fixture = Fixture::new("durable");
     let resident = Resident::start(&fixture);
 
+    // Keep the lifecycle phases explicit so a failure identifies whether
+    // preview, application, recovery, or durable replay broke its contract.
     let (notes, plan) = preview_publication(&fixture);
     let (apply, first) = apply_publication(&fixture, &notes, &plan);
     recover_publication(&fixture, &notes);

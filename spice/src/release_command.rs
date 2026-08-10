@@ -508,6 +508,8 @@ struct LocalPreconditions<'a> {
 }
 
 fn validate_local_preconditions(observed: LocalPreconditions<'_>) -> Result<(), String> {
+    // Preserve the preflight refusal order: callers and tests surface the first
+    // violated publication invariant as the actionable diagnosis.
     if !observed.clean {
         return Err("the release worktree is dirty".to_owned());
     }
