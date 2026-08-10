@@ -352,32 +352,19 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
     let vendor = executable(
         &root,
         "vendor",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/vendor.pid\"\n",
-            "exec /usr/bin/tail -f /dev/null\n",
-        ),
+        concat!("#!/bin/sh\n", "exec /usr/bin/tail -f /dev/null\n",),
     );
     let waiter = executable(
         &root,
         "fifo-waiter",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/waiter.pid\"\n",
-            "exec /bin/cat \"$PID_ROOT/resident.fifo\"\n",
-        ),
+        concat!("#!/bin/sh\n", "exec /bin/cat \"$PID_ROOT/resident.fifo\"\n",),
     );
     let test_binary = executable(
         &root,
         "resident-test",
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' \"$$\" > \"$PID_ROOT/test.pid\"\n",
-            "\"$VENDOR\" &\n",
-            "\"$WAITER\" &\n",
-            "wait\n",
-        ),
+        concat!("#!/bin/sh\n", "exec /usr/bin/tail -f /dev/null\n",),
     );
+    // Publish each child PID in the launcher so timeout cannot win a child-startup race.
     let cargo = executable(
         &root,
         "cargo",
@@ -387,6 +374,11 @@ fn shard_timeout_reaps_cargo_test_vendor_and_fifo_waiter() {
             "printf '     Running tests/resident.rs (fixture)\\n' >&2\n",
             "printf 'test resident::fifo_wait ... '\n",
             "\"$TEST_BINARY\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/test.pid\"\n",
+            "\"$VENDOR\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/vendor.pid\"\n",
+            "\"$WAITER\" &\n",
+            "printf '%s\\n' \"$!\" > \"$PID_ROOT/waiter.pid\"\n",
             "wait\n",
         ),
     );
