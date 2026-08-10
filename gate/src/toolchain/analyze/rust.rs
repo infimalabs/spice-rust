@@ -523,10 +523,10 @@ version = \"0.0.0\"
     /// only: its `scan_item` reads `Item::Fn`'s `sig.ident` and `attrs` and
     /// never descends into `node.block`. Widening that walk is refused from
     /// inside by a law the same suite pins at line 219,
-    /// `a_local_binding_is_not_a_coined_name`, which asserts that a `let vendor`
-    /// binding coins nothing while `vendor` is a retired spelling; judging every
-    /// path expression turns that law red, and judging only qualified paths
-    /// still misses a bare call exactly like this one.
+    /// `a_local_binding_is_not_a_coined_name`, which asserts that a local binding
+    /// coins nothing even when its spelling is retired; judging every path
+    /// expression turns that law red, and judging only qualified paths still
+    /// misses a bare call exactly like this one.
     ///
     /// And it sits in a `#[cfg(test)]` body because that is what `--all-targets`
     /// buys. A plain `cargo check` builds no test target, so the canvas arm
