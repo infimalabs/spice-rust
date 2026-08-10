@@ -763,7 +763,8 @@ fn seed_authority(path: &Path) {
             "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                 (1, 'task:1kKRRsDP', NULL, 1, 0),
                 (2, 'task:1kKRRsDP', 1, 1, 1);
-             UPDATE cursor_head SET seq = 2, wake = 1 WHERE singleton = 1;",
+             UPDATE cursor_head SET seq = 2, wake = 1 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 2 WHERE singleton = 1;",
         )
         .expect("insert index and cursor fixture");
 }
