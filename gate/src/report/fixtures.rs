@@ -820,7 +820,7 @@ mod tests {
             ));
             fs::create_dir_all(root.join("src")).expect("create report fixture tree");
             fs::write(
-                root.join("spice.toml"),
+                root.join("spice-rust.toml"),
                 format!("{}[gate.walk]\nskip = []\n", crate::NARROWEST_FILE_CLASSES),
             )
             .expect("write report fixture policy");

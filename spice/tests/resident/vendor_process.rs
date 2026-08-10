@@ -112,7 +112,7 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
         binary.display().to_string(),
         CLAUDE_MODEL,
     );
-    fs::write(fixture.root.join("spice.toml"), document).expect("vendor configuration");
+    fs::write(fixture.root.join("spice-rust.toml"), document).expect("vendor configuration");
     // The seeded app stage is build output under the worktree root; without this
     // the fixture reads dirty and the clean-worktree assertions below fail on
     // `?? dist/` rather than on anything this test is about.
@@ -130,7 +130,7 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
         &fixture.root,
         &["config", "user.email", "spice@example.test"],
     );
-    fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
+    fixture_git(&fixture.root, &["add", ".gitignore", "spice-rust.toml"]);
     fixture_git(&fixture.root, &["commit", "-m", "fixture baseline"]);
     assert_fixture_repository_clean(&fixture.root);
     fixture_git(&fixture.root, &["branch", "integration"]);
@@ -334,7 +334,7 @@ fn cross_vendor_options_refuse_with_exact_paths_before_any_process_capture() {
     ] {
         let fixture = Fixture::linked(&format!("vendor-option-{}", dialect.name()));
         let rig = configure(&fixture);
-        let valid = fs::read_to_string(fixture.root.join("spice.toml")).expect("valid config");
+        let valid = fs::read_to_string(fixture.root.join("spice-rust.toml")).expect("valid config");
         let invalid = match dialect {
             Dialect::Claude => valid.replacen(
                 "effort = \"xhigh\"\n",
@@ -349,7 +349,7 @@ fn cross_vendor_options_refuse_with_exact_paths_before_any_process_capture() {
         };
         let mut resident = RunningResident::spawn(&fixture);
         resident.assert_ready(&fixture);
-        fs::write(fixture.root.join("spice.toml"), invalid).expect("invalid config installs");
+        fs::write(fixture.root.join("spice-rust.toml"), invalid).expect("invalid config installs");
 
         let output = operator(&fixture, &["lane", "add", "--vendor", dialect.name()], true);
         assert!(!output.status.success(), "unsupported option must refuse");
@@ -371,7 +371,7 @@ fn cross_vendor_options_refuse_with_exact_paths_before_any_process_capture() {
             "launch tape was created before configuration refusal"
         );
 
-        fs::write(fixture.root.join("spice.toml"), valid).expect("valid config restores");
+        fs::write(fixture.root.join("spice-rust.toml"), valid).expect("valid config restores");
         let down = operator(&fixture, &["down"], true);
         assert!(down.status.success(), "down failed: {:?}", down.stderr);
         assert!(resident.wait().status.success(), "resident failed");
@@ -586,7 +586,7 @@ fn a_vendor_that_never_traps_termination_is_not_recorded_as_choosing_its_exit() 
 fn the_shutdown_ladder_records_an_untrapped_vendor_the_way_the_drain_does() {
     let fixture = Fixture::linked("ladder-terminated");
     let rig = configure(&fixture);
-    let config = fixture.root.join("spice.toml");
+    let config = fixture.root.join("spice-rust.toml");
     let document = fs::read_to_string(&config).expect("fixture config reads");
     let shortened = document.replace("lease = \"30s\"", "lease = \"1s\"");
     assert_ne!(

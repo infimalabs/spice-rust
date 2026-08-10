@@ -16,7 +16,7 @@ mod tests {
             language: "python".to_owned(),
             selected_files: u32::from(applicable) * 6,
             project_markers: if applicable {
-                vec!["spice.toml".to_owned(), "pyproject.toml".to_owned()]
+                vec!["spice-rust.toml".to_owned(), "pyproject.toml".to_owned()]
             } else {
                 Vec::new()
             },
@@ -270,7 +270,7 @@ mod tests {
                     provenance: HygieneProvenance {
                         release: "current".to_owned(),
                         layer: "repository".to_owned(),
-                        document: "spice.toml".to_owned(),
+                        document: "spice-rust.toml".to_owned(),
                         field: "policy.exclude[0]".to_owned(),
                     },
                     reason: "generated fixture tree".to_owned(),
@@ -530,7 +530,7 @@ mod tests {
         }
 
         let stale = HygieneFinding {
-            path: "spice.toml".to_owned(),
+            path: "spice-rust.toml".to_owned(),
             line: None,
             detail: HygieneFindingDetail::StalePrivateException {
                 test_name: "test_private".to_owned(),
@@ -731,7 +731,7 @@ mod tests {
             provenance: HygieneProvenance {
                 release: "current".to_owned(),
                 layer: "repository".to_owned(),
-                document: "spice.toml".to_owned(),
+                document: "spice-rust.toml".to_owned(),
                 field: "gate.walk.skip[0]".to_owned(),
             },
         }

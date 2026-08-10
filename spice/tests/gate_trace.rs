@@ -77,7 +77,7 @@ impl Repository {
         git(&root, &["config", "user.name", "Trace Fixture"]);
         fs::create_dir_all(root.join("src")).expect("create source directory");
         fs::write(
-            root.join("spice.toml"),
+            root.join("spice-rust.toml"),
             format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
         )
         .expect("write policy");

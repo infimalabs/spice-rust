@@ -85,7 +85,10 @@ fn runner_executes_all_27_once_in_order_with_complete_context() {
         report.context().configuration()[0].layer(),
         OriginLayer::Repository
     );
-    assert_eq!(report.context().configuration()[0].document(), "spice.toml");
+    assert_eq!(
+        report.context().configuration()[0].document(),
+        "spice-rust.toml"
+    );
     assert_eq!(
         report.context().configuration()[0].field(),
         &["policy".to_owned(), "test_paths".to_owned()]
@@ -590,7 +593,7 @@ fn assert_captured_authorities(
     );
 
     let tracked: toml::Value = toml::from_str(
-        &fs::read_to_string(repository.join("spice.toml")).expect("tracked policy document"),
+        &fs::read_to_string(repository.join("spice-rust.toml")).expect("tracked policy document"),
     )
     .expect("tracked policy parses");
     let expected = tracked
@@ -604,7 +607,7 @@ fn assert_captured_authorities(
         .expect("the resolved configuration names every tracked leaf");
     assert_eq!(evidence.release(), "current");
     assert_eq!(evidence.layer(), OriginLayer::Repository);
-    assert_eq!(evidence.document(), "spice.toml");
+    assert_eq!(evidence.document(), "spice-rust.toml");
     assert_eq!(evidence.field(), ["policy", "env_names"]);
     assert_eq!(
         evidence.value_digest(),
@@ -617,7 +620,7 @@ fn assert_captured_authorities(
         context
             .configuration()
             .iter()
-            .all(|evidence| evidence.document() == "spice.toml"),
+            .all(|evidence| evidence.document() == "spice-rust.toml"),
         "every resolved value must name the document it was read from"
     );
 

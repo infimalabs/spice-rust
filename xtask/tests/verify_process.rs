@@ -957,7 +957,7 @@ impl Fixture {
             &["config", "user.name", "Verifier Process Fixture"],
         );
         fs::write(
-            repository.join("spice.toml"),
+            repository.join("spice-rust.toml"),
             format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
         )
         .expect("write verifier fixture policy");

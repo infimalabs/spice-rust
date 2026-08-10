@@ -347,7 +347,7 @@ fn seed_only_process_is_anchored_recoverable_and_ambient_inert() {
     );
     assert!(root.join(".spice-demo.json").is_file());
     assert_eq!(
-        fs::read(root.join("spice.toml")).expect("read seeded config"),
+        fs::read(root.join("spice-rust.toml")).expect("read seeded config"),
         b"[tasks]\nstems = [\"rim\"]\n"
     );
     let app = canvas::AppSource::resolve(&root).expect("demo lane app resolves");

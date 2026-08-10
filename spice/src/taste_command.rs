@@ -248,7 +248,8 @@ pub(crate) fn add(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAnsw
             project: Some(PROJECT.to_owned()),
             description: Some(description),
             acceptance: vec![
-                "Operator review adds one exact [taste.NAME] row to tracked spice.toml.".to_owned(),
+                "Operator review adds one exact [taste.NAME] row to tracked spice-rust.toml."
+                    .to_owned(),
                 concat!(
                     "Paired behavior and mention fixtures confirm and clear the proposed bag, ",
                     "and the standing non-hit corpus remains clear."
@@ -353,7 +354,7 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
                 format!(
                     concat!(
                         "Operator review narrows, revises, or deletes [taste.{}] in tracked ",
-                        "spice.toml."
+                        "spice-rust.toml."
                     ),
                     row.name
                 ),
