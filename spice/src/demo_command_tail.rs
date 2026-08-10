@@ -165,22 +165,22 @@ fn watch_environment(
 fn readiness_change(event: notify::Result<notify::Event>, journal: &Path) -> Result<(), String> {
     match event {
         Ok(_) => Ok(()),
-        Err(error) if is_missing_journal_sidecar(&error, journal) => Ok(()),
+        Err(error) if is_missing_readiness_transient(&error, journal) => Ok(()),
         Err(error) => Err(error.to_string()),
     }
 }
 
-fn is_missing_journal_sidecar(error: &notify::Error, journal: &Path) -> bool {
+fn is_missing_readiness_transient(error: &notify::Error, journal: &Path) -> bool {
     let notify::ErrorKind::Io(source) = &error.kind else {
         return false;
     };
-    // PollWatcher enumerates each path before reading its metadata. SQLite may
-    // remove a transient sidecar between those steps, but no other scan error
-    // should disappear into a generic change notification.
+    // PollWatcher enumerates each path before reading its metadata. SQLite and
+    // atomic publication may remove a known transient between those steps, but
+    // no other scan error should disappear into a generic change notification.
     source.kind() == io::ErrorKind::NotFound
         && !error.paths.is_empty()
         && error.paths.iter().all(|path| {
-            is_known_journal_sidecar(path, journal)
+            (is_known_journal_sidecar(path, journal) || atomic::is_temporary_path(path))
                 && matches!(
                     fs::symlink_metadata(path),
                     Err(source) if source.kind() == io::ErrorKind::NotFound

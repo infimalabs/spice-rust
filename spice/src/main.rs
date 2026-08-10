@@ -143,6 +143,9 @@ fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     let arguments = std::env::args_os().collect::<Vec<_>>();
     #[cfg(not(target_arch = "wasm32"))]
+    let bootstrap_configuration_owner =
+        cli::bootstrap_configuration_owner_selected(arguments.iter().cloned());
+    #[cfg(not(target_arch = "wasm32"))]
     let (mounts, matches) = match cli::command().try_get_matches_from(arguments.clone()) {
         Ok(builtin_matches) => match load_mounted_registry(bootstrap_form) {
             Ok(mounts) => {
@@ -155,7 +158,7 @@ fn main() {
             Err(error) => deliver_mount_refusal(error, bootstrap_form),
         },
         Err(_) => {
-            let mounts = mounted_registry(bootstrap_form);
+            let mounts = mounted_registry(bootstrap_form, bootstrap_configuration_owner);
             let matches = mounts.command().get_matches_from(arguments);
             (mounts, matches)
         }
@@ -207,8 +210,14 @@ fn main() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn mounted_registry(form: Form) -> cli::MountRegistry {
-    load_mounted_registry(form).unwrap_or_else(|error| deliver_mount_refusal(error, form))
+fn mounted_registry(form: Form, configuration_owner_selected: bool) -> cli::MountRegistry {
+    match load_mounted_registry(form) {
+        Ok(mounts) => mounts,
+        Err(error) if configuration_owner_selected && !error.affects_mounts() => {
+            cli::MountRegistry::default()
+        }
+        Err(error) => deliver_mount_refusal(error, form),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

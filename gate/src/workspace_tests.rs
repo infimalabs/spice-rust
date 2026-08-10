@@ -209,7 +209,7 @@ pub fn run_at(
 ) -> Result<WorkspaceTestExecution, WorkspaceTestError> {
     let policy = RunPolicy::production(concurrency)?;
     let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
-    let environment = inventory.execution_environment(environment, root, root)?;
+    let environment = inventory.execution_environment(environment, root, root, true)?;
     let execution = WorkspaceTestExecution::from_inventory(&inventory);
     let shards = partition(&inventory);
     validate_partition(&inventory, &shards)?;
@@ -272,7 +272,12 @@ pub fn run_selected_at(
     if !report.admits() || report.tests().is_empty() {
         return Ok(report);
     }
-    let environment = inventory.execution_environment(environment, root, roots.writable)?;
+    let environment = inventory.execution_environment(
+        environment,
+        root,
+        roots.writable,
+        roots.reusable.is_some(),
+    )?;
     let selected = inventory.selected(report.tests())?;
     let shards = partition(&selected);
     validate_partition(&selected, &shards)?;
@@ -383,6 +388,7 @@ impl Inventory {
         environment: Environment,
         selected_root: &Path,
         writable_root: &Path,
+        allow_configured_external: bool,
     ) -> Result<Environment, WorkspaceTestError> {
         let selected_root =
             fs::canonicalize(selected_root).unwrap_or_else(|_| selected_root.to_path_buf());
@@ -392,11 +398,13 @@ impl Inventory {
             &self.target_directory,
             &selected_root,
             &writable_root.join("target"),
+            allow_configured_external,
         );
         let build = writable_directory(
             &self.build_directory,
             &selected_root,
             &writable_root.join("target/cargo-build"),
+            allow_configured_external,
         );
         let mut entries = environment
             .entries()
@@ -460,8 +468,16 @@ impl Inventory {
     }
 }
 
-fn writable_directory(configured: &Path, selected_root: &Path, local: &Path) -> PathBuf {
-    if configured.as_os_str().is_empty() || configured.starts_with(selected_root) {
+fn writable_directory(
+    configured: &Path,
+    selected_root: &Path,
+    local: &Path,
+    allow_configured_external: bool,
+) -> PathBuf {
+    if configured.as_os_str().is_empty()
+        || configured.starts_with(selected_root)
+        || !allow_configured_external
+    {
         local.to_path_buf()
     } else {
         configured.to_path_buf()

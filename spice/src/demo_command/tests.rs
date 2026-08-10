@@ -447,7 +447,7 @@ fn clean_automatic_service_removes_only_its_demo_root() {
 }
 
 #[test]
-fn a_disappearing_known_sqlite_sidecar_is_a_benign_readiness_change() {
+fn disappearing_known_publication_files_are_a_benign_readiness_change() {
     let scratch = Scratch::new("transient-journal");
     let root = scratch.child("automatic-root");
     fs::create_dir(&root).expect("the automatic demo root is created");
@@ -460,9 +460,17 @@ fn a_disappearing_known_sqlite_sidecar_is_a_benign_readiness_change() {
     let error =
         notify::Error::io(io::Error::from(io::ErrorKind::NotFound)).add_path(sidecar.clone());
 
-    fs::remove_file(&sidecar).expect("the journal sidecar disappears before inspection");
+    let destination = atomic::Destination::new(root.join("published")).expect("atomic destination");
+    let staged = destination.stage().expect("atomic publication is staged");
+    let temporary = staged.temporary_path().to_path_buf();
 
-    assert_eq!(readiness_change(Err(error), journal), Ok(()));
+    fs::remove_file(&sidecar).expect("the journal sidecar disappears before inspection");
+    drop(staged);
+
+    assert_eq!(
+        readiness_change(Err(error.add_path(temporary)), journal),
+        Ok(())
+    );
 }
 
 #[test]
@@ -478,6 +486,20 @@ fn persistent_and_unrelated_readiness_scan_failures_are_preserved() {
     )
     .expect_err("a persistent path is not dismissed as a disappearance race");
     assert!(persistent.contains(&sidecar.display().to_string()));
+
+    let destination = atomic::Destination::new(scratch.child("published"))
+        .expect("persistent atomic destination");
+    let staged = destination.stage().expect("persistent atomic stage");
+    let temporary = staged.temporary_path().to_path_buf();
+    let persistent_atomic =
+        readiness_change(
+            Err(notify::Error::io(io::Error::from(io::ErrorKind::NotFound))
+                .add_path(temporary.clone())),
+            &journal,
+        )
+        .expect_err("a persistent atomic path is not dismissed as a disappearance race");
+    assert!(persistent_atomic.contains(&temporary.display().to_string()));
+    drop(staged);
 
     fs::remove_file(&sidecar).expect("the journal sidecar is absent for the I/O fixture");
     let unrelated_io = readiness_change(
@@ -498,6 +520,15 @@ fn persistent_and_unrelated_readiness_scan_failures_are_preserved() {
     )
     .expect_err("an unrelated missing path remains a readiness failure");
     assert!(unrelated_missing.contains(&unrelated_path.display().to_string()));
+
+    let malformed_atomic = scratch.child(".spice-atomic-01-2.tmp");
+    let malformed_missing = readiness_change(
+        Err(notify::Error::io(io::Error::from(io::ErrorKind::NotFound))
+            .add_path(malformed_atomic.clone())),
+        &journal,
+    )
+    .expect_err("a malformed atomic lookalike remains a readiness failure");
+    assert!(malformed_missing.contains(&malformed_atomic.display().to_string()));
 }
 
 /// A readiness scan that fails refuses under its own name.

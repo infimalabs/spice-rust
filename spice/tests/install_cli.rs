@@ -29,6 +29,7 @@ static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
     root: PathBuf,
     tracked_bytes: Vec<u8>,
+    local_bytes: Vec<u8>,
     exclude_bytes: Vec<u8>,
 }
 
@@ -50,16 +51,21 @@ impl Fixture {
             b"Spice state sentinel\n",
         )
         .expect("write Spice state sentinel");
-        fs::write(
-            root.join(".git/.spice-rs/config.toml"),
-            b"[operator]\nmode = 'native'\n",
+        let local_bytes =
+            b"[lock.worker]\ndirectory = 'fixture-locks/worker'\nshards = 2\n".to_vec();
+        fs::write(root.join(".git/.spice-rs/config.toml"), &local_bytes)
+            .expect("write Spice local configuration sentinel");
+        let tracked_bytes = concat!(
+            "[tasks]\nstems = ['fixture']\n\n",
+            "[policy]\nenv_names = ['FIXTURE_INSTALL_SENTINEL']\n",
         )
-        .expect("write Spice local configuration sentinel");
-        let tracked_bytes = b"[tasks]\nmax_parallel = 7\n\n[policy]\nowner = \"spice\"\n".to_vec();
+        .as_bytes()
+        .to_vec();
         fs::write(root.join("spice-rust.toml"), &tracked_bytes).expect("write tracked intent");
         Self {
             root,
             tracked_bytes,
+            local_bytes,
             exclude_bytes,
         }
     }
@@ -159,7 +165,7 @@ impl Fixture {
         );
         assert_eq!(
             fs::read(authority.join("config.toml")).unwrap(),
-            b"[operator]\nmode = 'native'\n"
+            self.local_bytes
         );
         let mut entries = fs::read_dir(authority)
             .unwrap()
