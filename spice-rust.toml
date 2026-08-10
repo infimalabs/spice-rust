@@ -102,7 +102,9 @@ admission = [
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
 # again. Doctor reports only the names Spice owns, so these thirteen are the
-# difference wire pins between this manifest and SpiceVariable.
+# difference wire pins between this manifest and SpiceVariable. The `SPICE_RS_`
+# rows are this runtime's live handoff names; the predecessor `SPICE_` rows are
+# retained only as coexistence sentinels.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
