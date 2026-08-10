@@ -1176,6 +1176,10 @@ fn reclaim_renews_only_the_lane_owned_claim_and_survives_restart() {
 mod resolution;
 use resolution::*;
 
+// Review diagrams join durable lifecycle facts, rather than current assignment
+// heads, through the same command surface operators use.
+mod review_graph;
+
 // The closing boundaries the completion and review transactions record.
 // Kept beside the resolution seam because they drive its helpers, and
 // separate from it because each fact is pinned on its own.
