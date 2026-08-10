@@ -663,23 +663,6 @@ impl VerifierCompilerEvidence {
         evidence
     }
 
-    /// Stable native workspace proven by this completed compiler evidence.
-    ///
-    /// Only the native Rust arm owns a workspace that later Rust test
-    /// execution can reuse. The returned paths name the stable source mirror
-    /// and Cargo roots populated by the successful compiler stages represented
-    /// by this opaque evidence.
-    ///
-    /// # Errors
-    ///
-    /// Returns repository or worktree path-resolution failures.
-    pub fn reusable_rust_workspace(&self) -> Result<Option<super::RustAnalysisWorkspace>, String> {
-        if self.gate_id != GateId::RustTypecheck {
-            return Ok(None);
-        }
-        rust_analysis_workspace(&self.repository).map(Some)
-    }
-
     pub(crate) fn admits(
         &self,
         gate_id: GateId,

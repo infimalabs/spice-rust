@@ -113,57 +113,6 @@ fn exact_complete_evidence_admits_each_compiler_arm() {
 }
 
 #[test]
-fn completed_native_evidence_names_its_stable_workspace() {
-    let root = crate::toolchain::exclusive_scratch_root("gate-verifier-reusable-workspace");
-    let repository = root.join("repository");
-    fs::create_dir(&repository).expect("create reusable workspace repository");
-    let initialized = Command::new("/usr/bin/git")
-        .args(["init", "--quiet"])
-        .arg(&repository)
-        .status()
-        .expect("initialize reusable workspace repository");
-    assert!(initialized.success());
-    let contract = VerifierCompilerContract::new(
-        GateId::RustTypecheck,
-        source(b"reusable workspace selected tree"),
-        repository.clone(),
-        repository.clone(),
-        vec![tool("cargo", "/usr/bin/true")],
-        Vec::new(),
-    )
-    .expect("declare native compiler contract");
-    let evidence = complete_evidence(&contract);
-
-    let workspace = evidence
-        .reusable_rust_workspace()
-        .expect("resolve proven native workspace")
-        .expect("native evidence owns a reusable workspace");
-
-    assert_eq!(
-        workspace.source(),
-        repository.join(".git/spice/gate-native-source")
-    );
-    assert_eq!(workspace.cargo_target(), repository.join("target"));
-    assert_eq!(
-        workspace.cargo_build(),
-        repository.join("target/spice-gate-native-build")
-    );
-    fs::remove_dir_all(root).expect("remove reusable workspace fixture");
-}
-
-#[test]
-fn completed_canvas_evidence_owns_no_native_workspace() {
-    let evidence = complete_evidence(&contract(GateId::CanvasWebTypecheck));
-
-    assert_eq!(
-        evidence
-            .reusable_rust_workspace()
-            .expect("classify completed canvas evidence"),
-        None
-    );
-}
-
-#[test]
 fn ordinary_verifier_compilers_own_their_process_group() {
     assert_eq!(crate::measure::bounded_process_group(), ProcessGroup::New);
 }

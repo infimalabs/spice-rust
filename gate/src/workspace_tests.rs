@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use sill::{
     Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Observation,
-    ObserveError, ObservedRecord, Output, OutputStream, RecordObserver, Redaction,
+    ObserveError, ObservedRecord, Output, OutputStream, ProcessGroup, RecordObserver, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
 };
 use syn::{Expr, Item, Lit, Meta};

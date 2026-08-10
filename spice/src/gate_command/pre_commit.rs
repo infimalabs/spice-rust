@@ -26,7 +26,7 @@ const REPORT_RECORD: u8 = b'R';
 const FAILURE_RECORD: u8 = b'F';
 const SELECTION_RECORD: u8 = b'S';
 const HARD_DEADLINE: Duration = Duration::from_secs(180);
-const WORK_RUNTIME: Duration = Duration::from_secs(135);
+const WORK_RUNTIME: Duration = Duration::from_secs(150);
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const REAP_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(5);
@@ -162,7 +162,6 @@ struct CompilerPreparation {
     cargo_jobs: usize,
     receipt: Vec<u8>,
     authority: Vec<u8>,
-    reusable_workspace: Option<gate::RustAnalysisWorkspace>,
 }
 
 fn prepare_compilers() -> Result<CompilerPreparation, WorkerFailure> {
@@ -174,15 +173,13 @@ fn prepare_compilers() -> Result<CompilerPreparation, WorkerFailure> {
         })?
         .get();
     let authority = fresh_authority();
-    let preparation =
-        spice::gate::verifier_compiler_preparation(Selector::staged(), cargo_jobs, &authority)
+    let receipt =
+        spice::gate::verifier_compiler_receipt(Selector::staged(), cargo_jobs, &authority)
             .map_err(run_error_failure)?;
-    let (receipt, reusable_workspace) = preparation.into_parts();
     Ok(CompilerPreparation {
         cargo_jobs,
         receipt,
         authority,
-        reusable_workspace,
     })
 }
 
@@ -365,24 +362,19 @@ fn worker(progress_path: &Path, terminal: &Path) -> io::Result<()> {
 
     write_phase(&mut progress, &WorkerPhase::TestSelection)?;
     let test_input = SelectedTestInput::capture(&prepared)?;
-    let compiler = thread::scope(|scope| {
-        let compiler = scope.spawn(prepare_compilers);
-        join_compiler(compiler.join())
-    });
-    let compiler = match compiler {
-        Ok(compiler) => compiler,
-        Err(error) => return write_failure(terminal, &error),
-    };
     let (selection, result) = thread::scope(|scope| -> io::Result<_> {
-        let selected = scope.spawn(|| test_input.execute(compiler.reusable_workspace.as_ref()));
-        let result = prepared
-            .admit_verifier_compiler_receipt(
-                &compiler.receipt,
-                compiler.cargo_jobs,
-                &compiler.authority,
-            )
-            .and_then(|evidence| prepared.execute(&evidence))
-            .map_err(run_error_failure);
+        let selected = scope.spawn(|| test_input.execute());
+        let compiler = scope.spawn(prepare_compilers);
+        let result = join_compiler(compiler.join()).and_then(|compiler| {
+            prepared
+                .admit_verifier_compiler_receipt(
+                    &compiler.receipt,
+                    compiler.cargo_jobs,
+                    &compiler.authority,
+                )
+                .and_then(|evidence| prepared.execute(&evidence))
+                .map_err(run_error_failure)
+        });
         if !selected.is_finished() {
             write_phase(&mut progress, &WorkerPhase::TestSelection)?;
         }
@@ -414,14 +406,12 @@ impl SelectedTestInput {
 
     fn execute(
         self,
-        reusable_workspace: Option<&gate::RustAnalysisWorkspace>,
     ) -> (
         Result<TestSelectionReport, gate::WorkspaceTestError>,
         Vec<u8>,
     ) {
         let mut output = Vec::new();
         let roots = gate::WorkspaceTestRoots::new(&self.selected_root, &self.writable_root);
-        let roots = reusable_workspace.map_or(roots, |workspace| roots.with_reusable(workspace));
         let report = gate::run_selected_workspace_tests_at(
             roots,
             self.source,
