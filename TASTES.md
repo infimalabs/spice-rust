@@ -34,8 +34,14 @@ Historical `taste::confirmed` and `taste::cleared` facts predate that law. They
 remain decodable and visible as curation evidence; current resident decisions
 use the provenance-complete `taste::judged` fact instead.
 
-The active set is the tracked `[taste]` configuration. `TASTES.md` owns the
-curation law and the rationale for the installed seeds; it does not form a
+The configured set is the tracked `[taste]` configuration. `enabled` defaults
+to true and `scopes` defaults to the universal selector. Each named row may set
+`enabled = false` while remaining visible and enumerable, and may carry a
+`scopes` selector using the same `paths`, `extensions`, `vendors`, `models`,
+and `phases` grammar as the rest of repository policy. Alternatives within one
+axis are ORed and constrained axes are ANDed; malformed selectors and missing
+runtime context refuse rather than widening applicability. `TASTES.md` owns
+the curation law and the rationale for the installed seeds; it does not form a
 second executable copy. Named entries exist only through operator commits.
 
 ## 2. Authoring rules
@@ -81,8 +87,9 @@ silently.
 
 `spice install` writes the starter set into tracked `spice-rust.toml`; the binary
 ships no named tastes. From that point the operator owns the set outright.
-Adding, editing, renaming, or removing a taste requires an operator commit.
-Deletion is the only disablement.
+Adding, editing, renaming, disabling, re-enabling, or removing a taste requires
+an operator commit. `enabled = false` is the named reversible disablement;
+deletion removes the row and its history from the current configured record.
 
 `spice taste add` and `spice taste drop` prepare curation proposals from the
 evidence that motivated them. A proposal inherits the operator's active task,

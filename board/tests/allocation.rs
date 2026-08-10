@@ -121,7 +121,7 @@ fn fixture() -> Journal {
         let statement_task = task.clone();
         let statement_origin = origin.clone();
         write.task_head(fact, move |position| TaskHead {
-            incepted: statement_task,
+            born: statement_task,
             queue_origin: position,
             title: format!("Allocate {name}"),
             description: None,

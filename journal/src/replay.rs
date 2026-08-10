@@ -626,7 +626,7 @@ fn verify_heads(
         "task_heads",
         violations,
         |key, seq, head| {
-            (head.incepted.as_str() == key && head.revision.get() == seq)
+            (head.born.as_str() == key && head.revision.get() == seq)
                 .then_some(())
                 .ok_or_else(|| "task stamp or revision disagrees with the row".to_owned())
         },

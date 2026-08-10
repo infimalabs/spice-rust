@@ -1,3 +1,4 @@
+use gate::PolicyContext;
 use listen::{Event, Locus, Prose, ProseRole, Usage};
 use taste::{
     Bag, REMINDER_MARKER, Taste, Trigger, TriggerError, bag_identity, is_reminder_echo,
@@ -31,10 +32,15 @@ fn fallback_taste() -> Taste {
     .expect("taste fixture")
 }
 
+fn matching_hits(bag: &Bag, event: &Event) -> Vec<taste::Hit> {
+    bag.hits(event, &PolicyContext::new())
+        .expect("unconstrained taste context")
+}
+
 #[test]
 fn exact_words_suffix_globs_and_phrases_follow_one_matching_rule() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
-    let hits = bag.hits(&prose(BEHAVIOR));
+    let hits = matching_hits(&bag, &prose(BEHAVIOR));
 
     assert_eq!(
         hits.iter().map(|hit| hit.trigger()).collect::<Vec<_>>(),
@@ -51,21 +57,20 @@ fn exact_words_suffix_globs_and_phrases_follow_one_matching_rule() {
         "Replace the old shape.",
     )
     .expect("taste fixture");
-    let exact_hits = Bag::new(vec![exact])
-        .expect("bag")
-        .hits(&prose("A shimmer is not a shim."));
+    let exact = Bag::new(vec![exact]).expect("bag");
+    let exact_hits = matching_hits(&exact, &prose("A shimmer is not a shim."));
     assert_eq!(exact_hits.len(), 1, "a bare word matches a whole token");
 }
 
 #[test]
 fn a_hit_names_the_exact_line_and_byte_column_of_its_first_token() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
-    let hits = bag.hits(&prose("prefix\n  Polling now"));
+    let hits = matching_hits(&bag, &prose("prefix\n  Polling now"));
 
     assert_eq!(hits.len(), 1);
     assert_eq!((hits[0].line(), hits[0].column()), (2, 3));
 
-    let unicode = bag.hits(&prose("é: polling"));
+    let unicode = matching_hits(&bag, &prose("é: polling"));
     assert_eq!(unicode.len(), 1);
     assert_eq!(unicode[0].column(), 5, "the column counts UTF-8 bytes");
 }
@@ -152,15 +157,14 @@ fn only_typed_assistant_prose_is_a_candidate_surface() {
         locus: Locus::new(1, 0, 10),
     });
 
-    assert!(bag.hits(&event).is_empty());
+    assert!(matching_hits(&bag, &event).is_empty());
 }
 
 #[test]
 fn a_harmless_mention_still_selects_a_candidate_the_runtime_must_weigh() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
 
-    let hit = bag
-        .hits(&prose(MENTION))
+    let hit = matching_hits(&bag, &prose(MENTION))
         .into_iter()
         .next()
         .expect("mention still selects a candidate");

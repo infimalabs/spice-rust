@@ -82,9 +82,9 @@ fn admitted(
 }
 
 fn statement(name: &str) -> TaskHead {
-    let incepted = stamp(name);
+    let born = stamp(name);
     TaskHead {
-        incepted: incepted.clone(),
+        born: born.clone(),
         queue_origin: seq(1),
         title: format!("Implement {name}"),
         description: None,
@@ -92,9 +92,7 @@ fn statement(name: &str) -> TaskHead {
         project: "board.kernel".to_owned(),
         tags: Vec::new(),
         dependencies: Vec::new(),
-        provenance: format!("task:{incepted}")
-            .parse::<Origin>()
-            .expect("origin"),
+        provenance: format!("task:{born}").parse::<Origin>().expect("origin"),
         revision: seq(1),
     }
 }
@@ -166,7 +164,7 @@ fn completed_entry(name: &str) -> Entry {
 
 fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journal {
     let mut journal = Journal::in_memory().expect("board journal fixture");
-    let task = statement.incepted.clone();
+    let task = statement.born.clone();
     let mut write = JournalWrite::new(
         Actor::Spice,
         statement.provenance.clone(),

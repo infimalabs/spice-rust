@@ -192,7 +192,7 @@ const fn seeded(
     }
 }
 
-pub(super) fn complete_mined_proposal(fixture: &Fixture, task: &wire::TaskHandle) {
+pub(super) fn complete_mined_proposal(fixture: &Fixture, proposal: &wire::TaskHandle) {
     let bus = open_bus(fixture);
     let completed_at = "2030-04-12T19:12:00.000Z".parse::<Instant>().unwrap();
     let mut write = JournalWrite::new(
@@ -204,7 +204,7 @@ pub(super) fn complete_mined_proposal(fixture: &Fixture, task: &wire::TaskHandle
     let done = write
         .fact(
             wire::body::TaskDone {
-                task: task.incepted().unwrap(),
+                task: proposal.born().unwrap(),
                 validation: "operator reviewed the first mined recurrence".to_owned(),
                 git: None,
                 source: wire::body::SourceBoundary::unrecorded(),
@@ -212,7 +212,7 @@ pub(super) fn complete_mined_proposal(fixture: &Fixture, task: &wire::TaskHandle
             FactCause::Root,
         )
         .unwrap();
-    write.workflow_head(task.incepted().unwrap(), done, move |_| {
+    write.workflow_head(proposal.born().unwrap(), done, move |_| {
         wire::WorkflowHead {
             flow: vec!["todo".parse().unwrap(), "review".parse().unwrap()],
             phase: "review".parse().unwrap(),

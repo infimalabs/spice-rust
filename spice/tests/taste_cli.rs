@@ -644,9 +644,9 @@ fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
     assert_eq!(proposals.len(), 2);
     let successor_add = proposals
         .iter()
-        .find(|added| added.task == successor.incepted().unwrap())
+        .find(|added| added.task == successor.born().unwrap())
         .unwrap();
-    assert_eq!(successor_add.depends, [predecessor.incepted().unwrap()]);
+    assert_eq!(successor_add.depends, [predecessor.born().unwrap()]);
     assert!(
         successor_add
             .description

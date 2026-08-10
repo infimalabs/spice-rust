@@ -124,7 +124,7 @@ pub(super) fn advance_task_to_review(
         vec![
             claim_witness(held_heads),
             Witness::Lease {
-                task: held_heads.statement.body.incepted.clone(),
+                task: held_heads.statement.body.born.clone(),
                 head: held_heads.lease.as_ref().expect("lease head").position,
             },
             residency(&held, seat),
@@ -249,7 +249,7 @@ fn assert_review_assignment_fact(
     let typed: wire::Envelope<wire::Fact<wire::body::TaskAssigned>> =
         wire::decode(&wire::encode(envelope).expect("opaque review assignment fact encodes"))
             .expect("workflow head is the registered review assignment fact");
-    assert_eq!(typed.fact.body.task, heads.statement.body.incepted);
+    assert_eq!(typed.fact.body.task, heads.statement.body.born);
     assert_eq!(typed.fact.body.reviewer, *reviewer);
     assert_eq!(typed.fact.body.phase.as_str(), "review");
     assert!(typed.is_root(), "assignment begins the claim causal chain");
@@ -445,8 +445,8 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
     expected.push(statement_witness(linked_heads));
     expected.push(workflow_witness(linked_heads));
     expected.push(Witness::Edge {
-        task: linked_heads.statement.body.incepted.clone(),
-        after: at(&assigned, &reviewed).statement.body.incepted.clone(),
+        task: linked_heads.statement.body.born.clone(),
+        after: at(&assigned, &reviewed).statement.body.born.clone(),
     });
     assert_committed(issue(
         &bus,
@@ -487,7 +487,7 @@ fn assert_review_followup_tracking(
     let settled = board(bus, epoch, Actor::Operator);
     let causal = task_origin(
         &reviewed
-            .incepted()
+            .born()
             .expect("reviewed handle carries an inception stamp"),
     )
     .expect("reviewed task forms follow-up origin");
@@ -503,7 +503,7 @@ fn assert_review_followup_tracking(
     );
     assert_eq!(
         at(&settled, created).statement.body.dependencies,
-        vec![at(&settled, reviewed).statement.body.incepted.clone()],
+        vec![at(&settled, reviewed).statement.body.born.clone()],
         "--then did not create a task behind the reviewed task"
     );
     assert!(
@@ -511,7 +511,7 @@ fn assert_review_followup_tracking(
             .statement
             .body
             .dependencies
-            .contains(&at(&settled, reviewed).statement.body.incepted),
+            .contains(&at(&settled, reviewed).statement.body.born),
         "--followup did not wire the existing task behind the review"
     );
     assert_eq!(at(&settled, reviewed).workflow.body.review, "finding");
@@ -670,7 +670,7 @@ fn shape_case_418_inserts_plan_for_bare_review_followup() {
     let assigned = board(&bus, epoch, lane_two.clone());
     let proposed: TaskHandle = "PLAN-1kLGp005".parse().expect("follow-up handle");
     let followup_stamp = proposed
-        .incepted()
+        .born()
         .expect("follow-up handle carries an inception stamp");
     let followup = TaskHandle::for_project("board.test", &followup_stamp);
     let mut expected = progress_witnesses(
@@ -846,7 +846,7 @@ fn wk_plan_phase_uses_connected_child_acceptance_with_atomic_witnesses() {
     .expect("connected child is witnessed");
     stale_proof.retain(|witness| match witness {
         Witness::Task { task, .. } | Witness::Workflow { task, .. } => {
-            child.incepted().is_ok_and(|incepted| task != &incepted)
+            child.born().is_ok_and(|born| task != &born)
         }
         _ => true,
     });
@@ -1034,7 +1034,7 @@ fn assert_initial_document(bus: &Bus, applied: &AppliedDocument) {
                 &at(&applied.board, &applied.answer.touched[1])
                     .statement
                     .body
-                    .incepted
+                    .born
             )
     );
 }
@@ -1141,16 +1141,16 @@ fn add_raw_task(
     flow: Option<&str>,
 ) -> TaskHandle {
     let requested = task.parse::<TaskHandle>().expect("fixture task handle");
-    let incepted = requested
-        .incepted()
+    let born = requested
+        .born()
         .expect("fixture task handle carries an inception stamp");
-    let task = TaskHandle::for_project("board.test", &incepted);
+    let task = TaskHandle::for_project("board.test", &born);
     assert_committed(issue(
         bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
-        vec![Witness::Absence { task: incepted }],
+        vec![Witness::Absence { task: born }],
         &TaskAdd {
             title: title.to_owned(),
             project: Some("board.test".to_owned()),
@@ -1223,8 +1223,8 @@ fn connect_child(bus: &Bus, epoch: CanonicalUuid, parent: &TaskHandle, child: &T
             statement_witness(child_heads),
             workflow_witness(child_heads),
             Witness::Edge {
-                task: parent_heads.statement.body.incepted.clone(),
-                after: child_heads.statement.body.incepted.clone(),
+                task: parent_heads.statement.body.born.clone(),
+                after: child_heads.statement.body.born.clone(),
             },
         ],
         &TaskDepends {
@@ -1247,7 +1247,7 @@ fn claim_free_witnesses(
     vec![
         claim_witness(heads),
         Witness::Lease {
-            task: heads.statement.body.incepted.clone(),
+            task: heads.statement.body.born.clone(),
             head: lease.position,
         },
         residency(&held, seat),

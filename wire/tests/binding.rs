@@ -332,7 +332,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         "position": 2,
         "body": {
           "handle": "SPICE-aBcD",
-          "incepted": "1kKRRsDP",
+          "born": "1kKRRsDP",
           "queue_origin": 2,
           "description": "One task spelled through every field the shape carries.",
           "acceptance": ["the row decodes", "the row re-encodes unchanged"],
@@ -899,7 +899,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             position: seq(2),
             body: BoardStatement {
                 handle: handle("SPICE-aBcD"),
-                incepted: "1kKRRsDP".parse().expect("a task stamp"),
+                born: "1kKRRsDP".parse().expect("a task stamp"),
                 queue_origin: seq(2),
                 description: Some(
                     "One task spelled through every field the shape carries.".to_owned(),

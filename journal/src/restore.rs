@@ -421,7 +421,7 @@ fn verify_authority(
         .read(|read| read.task_heads())
         .map_err(BackupVerifyError::AuthorityView)?
         .into_iter()
-        .map(|heads| heads.statement().body().incepted.clone())
+        .map(|heads| heads.statement().body().born.clone())
         .collect();
     Ok((verified, tasks))
 }

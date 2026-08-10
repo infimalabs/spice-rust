@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
+fn one_message_shape_fold_drives_session_reports_and_recall_dialogue() {
     let scratch = Scratch::new("message-shapes");
     let transcript = scratch.path().join("message-shapes.jsonl");
     write_jsonl(&transcript, &message_shape_rows());
@@ -11,7 +11,7 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
 
     assert_message_shape_message_rows(&file);
     assert_message_shape_summary(&file);
-    assert_message_shape_briefing(&file);
+    assert_message_shape_recall_dialogue(&file);
     scratch.remove();
 }
 
@@ -157,14 +157,14 @@ fn assert_message_shape_summary(file: &str) {
     );
 }
 
-fn assert_message_shape_briefing(file: &str) {
-    let briefing = reply_forms(
+fn assert_message_shape_recall_dialogue(file: &str) {
+    let recall = reply_forms(
         &strings(&["session", "briefing", file, "--deadline-seconds", "5"]),
         &[],
         "recall",
     );
     assert_eq!(
-        briefing["window"]["turns"][0]["dialogue"],
+        recall["window"]["turns"][0]["dialogue"],
         json!([
             {"side": "user", "text": "Please preserve the authored ask."},
             {"side": "user", "text": "[Please keep this bracketed ask.]"},

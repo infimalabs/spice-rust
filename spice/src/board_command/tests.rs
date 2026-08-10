@@ -134,21 +134,14 @@ fn clean(root: &Path, bus: Bus) {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-fn add_incepted(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    incepted: wire::TaskStamp,
-    title: &str,
-) -> TaskHandle {
-    let task = TaskHandle::for_project("board.identity", &incepted);
+fn add_born(bus: &Bus, epoch: CanonicalUuid, born: wire::TaskStamp, title: &str) -> TaskHandle {
+    let task = TaskHandle::for_project("board.identity", &born);
     assert_committed(issue(
         bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
-        vec![Witness::Absence {
-            task: incepted.clone(),
-        }],
+        vec![Witness::Absence { task: born.clone() }],
         &TaskAdd {
             title: title.to_owned(),
             project: Some("board.identity".to_owned()),
@@ -163,8 +156,8 @@ fn add_incepted(
 }
 
 fn creation_fact_origin(bus: &Bus, task: &TaskHandle) -> wire::Origin {
-    let incepted = task
-        .incepted()
+    let born = task
+        .born()
         .expect("fixture handle carries an inception stamp");
     bus.fact_snapshot()
         .expect("creation facts read")
@@ -177,7 +170,7 @@ fn creation_fact_origin(bus: &Bus, task: &TaskHandle) -> wire::Origin {
                     .body()
                     .get("task")
                     .and_then(serde_json::Value::as_str)
-                    == Some(incepted.as_str())
+                    == Some(born.as_str())
         })
         .unwrap_or_else(|| panic!("task {task} has one creation fact"))
         .origin
@@ -233,7 +226,7 @@ fn plain_string_stamp_and_handle_order_is_inception_order() {
     assert_eq!(
         handles
             .iter()
-            .map(|handle| handle.incepted().expect("sorted handle stamp"))
+            .map(|handle| handle.born().expect("sorted handle stamp"))
             .collect::<Vec<_>>(),
         expected
     );
@@ -260,7 +253,7 @@ fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps
     let candidate_millis = 90_000_i64;
     let first_stamp =
         wire::TaskStamp::for_millis(candidate_millis).expect("first fixture inception");
-    add_incepted(
+    add_born(
         &bus,
         epoch,
         first_stamp.clone(),
@@ -273,7 +266,7 @@ fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps
         second_stamp,
         wire::TaskStamp::for_millis(candidate_millis + 1).expect("second fixture inception")
     );
-    add_incepted(
+    add_born(
         &bus,
         epoch,
         second_stamp.clone(),
@@ -299,7 +292,7 @@ fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps
     assert_eq!(
         document
             .iter()
-            .map(|handle| handle.incepted().expect("document handle stamp"))
+            .map(|handle| handle.born().expect("document handle stamp"))
             .collect::<Vec<_>>(),
         expected,
         "authored-document creation advances over the same occupied instants"
@@ -344,15 +337,15 @@ fn a_nonfinal_review_phase_prints_the_transition_it_can_accept() {
 #[test]
 fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
     let (root, bus, epoch, _) = fixture("task-bootstrap", 1);
-    let incepted = wire::TaskStamp::for_millis(8_001).expect("fixture task stamp");
-    let task = TaskHandle::for_project("task.cli", &incepted);
+    let born = wire::TaskStamp::for_millis(8_001).expect("fixture task stamp");
+    let task = TaskHandle::for_project("task.cli", &born);
     let origin: wire::Origin = "ack:1kLGp2NJ".parse().expect("fixture origin");
     assert_committed(issue(
         &bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
-        vec![Witness::Absence { task: incepted }],
+        vec![Witness::Absence { task: born }],
         &TaskAdd {
             title: "Carry native bootstrap context".to_owned(),
             project: Some("task.cli".to_owned()),
@@ -485,12 +478,12 @@ fn default_task_list_selects_each_complete_actor_route_branch_only() {
         .origin_thread = "someone_else".to_owned();
 
     let mut actor_private = template.clone();
-    actor_private.statement.body.incepted =
+    actor_private.statement.body.born =
         wire::TaskStamp::for_millis(8_002).expect("fixture task stamp");
     actor_private.statement.body.project = answer.actor_route.project.clone();
     actor_private.statement.body.handle = TaskHandle::for_project(
         &actor_private.statement.body.project,
-        &actor_private.statement.body.incepted,
+        &actor_private.statement.body.born,
     );
     actor_private.statement.body.provenance = "task:0000002z"
         .parse()
@@ -499,12 +492,12 @@ fn default_task_list_selects_each_complete_actor_route_branch_only() {
     actor_private.presentation_title = "Actor-private route row".to_owned();
 
     let mut origin_thread = template.clone();
-    origin_thread.statement.body.incepted =
+    origin_thread.statement.body.born =
         wire::TaskStamp::for_millis(8_003).expect("fixture task stamp");
     origin_thread.statement.body.project = "external.route".to_owned();
     origin_thread.statement.body.handle = TaskHandle::for_project(
         &origin_thread.statement.body.project,
-        &origin_thread.statement.body.incepted,
+        &origin_thread.statement.body.born,
     );
     origin_thread.statement.body.provenance = "task:0000002B"
         .parse()
@@ -513,12 +506,11 @@ fn default_task_list_selects_each_complete_actor_route_branch_only() {
     origin_thread.presentation_title = "Origin-thread route row".to_owned();
 
     let mut outside = template;
-    outside.statement.body.incepted =
-        wire::TaskStamp::for_millis(8_004).expect("fixture task stamp");
+    outside.statement.body.born = wire::TaskStamp::for_millis(8_004).expect("fixture task stamp");
     outside.statement.body.project = "agent.someone_else.task".to_owned();
     outside.statement.body.handle = TaskHandle::for_project(
         &outside.statement.body.project,
-        &outside.statement.body.incepted,
+        &outside.statement.body.born,
     );
     outside.statement.body.provenance =
         "task:0000002C".parse().expect("outside fixture provenance");
@@ -1150,11 +1142,11 @@ fn reclaim_renews_only_the_lane_owned_claim_and_survives_restart() {
     let lease = before.lease.as_ref().expect("active lease");
     let expected = vec![
         Witness::Claim {
-            task: before.statement.body.incepted.clone(),
+            task: before.statement.body.born.clone(),
             head: Some(claim.position),
         },
         Witness::Lease {
-            task: before.statement.body.incepted.clone(),
+            task: before.statement.body.born.clone(),
             head: lease.position,
         },
         residency(&held, &seats[0]),

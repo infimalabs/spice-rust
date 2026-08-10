@@ -724,20 +724,19 @@ impl SystemEffects {
                 "release bump moved before commit: version={version} status={status:?}"
             )));
         }
-        let projection = crate::release_commit::project(
+        let fold = crate::release_commit::project(
             &self.root,
             &plan.source_commit,
             &plan.requested_version,
         )
         .map_err(dist::EffectError::Environment)?;
-        if projection.commit != plan.release_commit {
+        if fold.commit != plan.release_commit {
             return Err(dist::EffectError::Moved(
                 "deterministic release commit identity changed".to_owned(),
             ));
         }
-        let head =
-            crate::release_commit::materialize(&self.root, &projection, &plan.requested_version)
-                .map_err(dist::EffectError::Environment)?;
+        let head = crate::release_commit::materialize(&self.root, &fold, &plan.requested_version)
+            .map_err(dist::EffectError::Environment)?;
         Ok((
             dist::OperationState::Commit { head },
             dist::Convergence::Applied,

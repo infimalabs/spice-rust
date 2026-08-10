@@ -622,9 +622,7 @@ fn seed_journal(state: &spice::repository::StatePaths, root: &Path) -> DemoResul
 }
 
 fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoResult<wire::Seq> {
-    let incepted = task
-        .incepted()
-        .expect("demo task carries a canonical stamp");
+    let born = task.born().expect("demo task carries a canonical stamp");
     let phase: wire::Phase = "todo".parse().expect("demo phase is valid");
     let origin: wire::Origin = format!("task:{DEMO_STAMP}")
         .parse()
@@ -638,7 +636,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
     let added = write
         .fact(
             body::TaskAdded {
-                task: incepted.clone(),
+                task: born.clone(),
                 title: DEMO_TITLE.to_owned(),
                 description: None,
                 acceptance: Vec::new(),
@@ -653,11 +651,11 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
         )
         .map_err(build_failure)?;
     let statement_origin = origin;
-    let statement_task = incepted.clone();
-    let workflow_task = incepted.clone();
+    let statement_task = born.clone();
+    let workflow_task = born.clone();
     let workflow_phase = phase.clone();
     write.task_head(added, move |revision| TaskHead {
-        incepted: statement_task,
+        born: statement_task,
         queue_origin: revision,
         title: DEMO_TITLE.to_owned(),
         description: None,
@@ -697,9 +695,7 @@ fn seed_turns(
         write
             .fact(
                 body::TaskNoted {
-                    task: task
-                        .incepted()
-                        .expect("demo task carries a canonical stamp"),
+                    task: task.born().expect("demo task carries a canonical stamp"),
                     note: text.to_owned(),
                 },
                 FactCause::Existing(previous),

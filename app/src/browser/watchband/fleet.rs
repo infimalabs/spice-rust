@@ -358,7 +358,7 @@ fn render_lineage_toolbar(
     let control = render
         .lineage_controls
         .current(lineage.lane, lineage.subscription);
-    let actions = team_menu::Context {
+    let actions = lineage_menu::Context {
         controls: render.lineage_controls,
         sender: render.sender,
         topology: &render.topology,
@@ -416,9 +416,9 @@ fn render_lineage_toolbar(
                     }
                 })}
             </nav>
-            {team_menu::trigger(lineage.lane, &control, render.lineage_controls)}
+            {lineage_menu::trigger(lineage.lane, &control, render.lineage_controls)}
         </header>
-        {team_menu::render(lineage, &control, &actions)}
+        {lineage_menu::render(lineage, &control, &actions)}
         </>
     }
 }

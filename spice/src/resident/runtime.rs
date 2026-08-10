@@ -959,7 +959,11 @@ async fn run_surface(
     let timer_commits = bus.reader().subscribe();
     let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
     let lifecycle = lifecycle::Runtime::new(&config.lane);
-    let mut taste_judge = taste_surface::ProcessAdjudicator::default();
+    let mut taste_adjudication = if config.judge_enabled {
+        Some(taste_surface::start_adjudication()?)
+    } else {
+        None
+    };
     let started = start_surface(bus, paths, epoch, residency.body(), config, launch).await?;
     let StartedSurface {
         capabilities,
@@ -988,6 +992,12 @@ async fn run_surface(
         lane_recovery::Runtime::new(reporter),
         config,
     );
+    let (taste_submitter, taste_completions) = taste_adjudication
+        .as_mut()
+        .map(taste_surface::AdjudicationRuntime::parts)
+        .map_or((None, None), |(submitter, completions)| {
+            (Some(submitter), Some(completions))
+        });
     drive_surface(
         bus,
         epoch,
@@ -998,7 +1008,8 @@ async fn run_surface(
         shutdown,
         server_task,
         message_publisher,
-        &mut taste_judge,
+        taste_submitter,
+        taste_completions,
         records,
         failures,
         exits,
@@ -1103,7 +1114,8 @@ async fn drive_surface(
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
-    taste_judge: &mut dyn taste_surface::Adjudicator,
+    mut taste_submitter: Option<&mut taste_surface::AdjudicationSubmitter>,
+    mut taste_completions: Option<&mut taste_surface::AdjudicationCompletions>,
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
     mut failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
     mut exits: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureExit>,
@@ -1132,8 +1144,23 @@ async fn drive_surface(
             }
             record = records.recv() => accept_record(
                 bus, epoch, seats, command_surface, &message_publisher,
-                taste_judge, record, &mut tool_previews, diagnostic,
+                taste_submitter.as_deref_mut(), record, &mut tool_previews, diagnostic,
             )?,
+            completed = receive_judgment(&mut taste_completions) => {
+                let completed = completed?;
+                taste_submitter
+                    .as_deref_mut()
+                    .expect("a completion receiver always has its submitter")
+                    .finished(&completed);
+                taste_surface::complete_judgment(
+                    bus,
+                    command_surface.paths,
+                    epoch,
+                    &command_surface.config.taste,
+                    &command_surface.config.steering,
+                    completed,
+                )?;
+            }
             failure = failures.recv() => accept_failure(
                 bus, epoch, seats, command_surface, &mut lifecycle, failure,
             )?,
@@ -1157,6 +1184,15 @@ async fn drive_surface(
             )?,
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
+    }
+}
+
+async fn receive_judgment(
+    completions: &mut Option<&mut taste_surface::AdjudicationCompletions>,
+) -> CommandResult<taste_surface::CompletedJudgment> {
+    match completions.as_deref_mut() {
+        Some(completions) => completions.recv().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -1204,7 +1240,7 @@ fn accept_record(
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
     message_publisher: &canvas::stream::MessagePublisher,
-    taste_judge: &mut dyn taste_surface::Adjudicator,
+    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     record: Option<lane::capture::CaptureRecord>,
     tool_previews: &mut CallPreviews,
     diagnostic: &mut dyn io::Write,
@@ -1221,19 +1257,27 @@ fn accept_record(
         &command_surface.config.steering,
         message_publisher,
     );
-    let judge = command_surface
-        .config
-        .judge_enabled
-        .then_some(taste_judge as &mut dyn taste_surface::Adjudicator);
-    accept_capture_record(
-        bus,
-        epoch,
-        seats,
-        &surfaces,
-        judge,
-        &record,
-        message_surface::CaptureViews::new(tool_previews, diagnostic),
-    )
+    if let Some(taste_judge) = taste_judge {
+        message_surface::accept_capture_record_deferred(
+            bus,
+            epoch,
+            seats,
+            &surfaces,
+            taste_judge,
+            &record,
+            message_surface::CaptureViews::new(tool_previews, diagnostic),
+        )
+    } else {
+        accept_capture_record(
+            bus,
+            epoch,
+            seats,
+            &surfaces,
+            None,
+            &record,
+            message_surface::CaptureViews::new(tool_previews, diagnostic),
+        )
+    }
 }
 
 fn accept_failure(

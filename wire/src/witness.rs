@@ -112,7 +112,7 @@ impl TaskHandle {
 
     /// Render the current public name from a project and sole inception stamp.
     #[must_use]
-    pub fn for_project(project: &str, incepted: &TaskStamp) -> Self {
+    pub fn for_project(project: &str, born: &TaskStamp) -> Self {
         let source = project.rsplit('.').next().unwrap_or(project);
         let stem = source
             .bytes()
@@ -121,11 +121,11 @@ impl TaskHandle {
             .take(7)
             .collect::<String>();
         let stem = if stem.is_empty() { "TASK" } else { &stem };
-        Self(format!("{stem}-{incepted}"))
+        Self(format!("{stem}-{born}"))
     }
 
     /// Recover the inception stamp carried by a rendered handle.
-    pub fn incepted(&self) -> Result<TaskStamp, TaskStampError> {
+    pub fn born(&self) -> Result<TaskStamp, TaskStampError> {
         self.0
             .rsplit_once('-')
             .map_or(self.0.as_str(), |(_, stamp)| stamp)

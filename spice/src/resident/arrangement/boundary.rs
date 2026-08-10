@@ -129,9 +129,9 @@ fn seed_task(write: &mut JournalWrite, task: &wire::TaskStamp) -> journal::Pendi
             FactCause::Root,
         )
         .expect("task fact");
-    let incepted = task.clone();
+    let born = task.clone();
     write.task_head(added, move |position| wire::TaskHead {
-        incepted,
+        born,
         queue_origin: position,
         title: "Boundary fixture".into(),
         description: None,
@@ -144,8 +144,8 @@ fn seed_task(write: &mut JournalWrite, task: &wire::TaskStamp) -> journal::Pendi
             .expect("fixture origin"),
         revision: position,
     });
-    let incepted = task.clone();
-    write.workflow_head(incepted, added, move |_| wire::WorkflowHead {
+    let born = task.clone();
+    write.workflow_head(born, added, move |_| wire::WorkflowHead {
         flow: vec!["todo".parse().expect("fixture phase")],
         phase: "todo".parse().expect("fixture phase"),
         status: "pending".into(),

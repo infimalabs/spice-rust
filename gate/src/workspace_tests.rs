@@ -229,7 +229,8 @@ pub fn run_at(
 /// Select and run only test targets reached by staged Rust sources according to
 /// canonical Cargo target roots. A reached library target expands to every
 /// test-enabled target in that package because those targets may link the
-/// library.
+/// library. A non-library target reaches only its root and exact `#[path]`
+/// module declarations.
 ///
 /// Unknown or incomplete package reach returns a non-admitting typed report
 /// without launching a narrowed test set. A complete report is emitted only

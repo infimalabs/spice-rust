@@ -1,6 +1,9 @@
 use std::cell::Cell;
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::time::Duration;
 
 use super::*;
 use crate::resident::write;
@@ -12,6 +15,10 @@ use wire::{Disposition, ResidentState};
 mod fold;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+fn taste_context() -> gate::PolicyContext {
+    gate::PolicyContext::new().with_vendor("claude")
+}
 
 struct Fixture {
     root: std::path::PathBuf,
@@ -25,6 +32,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
+        Self::with_vendor(name, "claude")
+    }
+
+    fn with_vendor(name: &str, vendor: &str) -> Self {
+        let vendor = vendor.parse::<wire::Name>().expect("vendor name");
         let root = std::env::temp_dir().join(format!(
             "spice-taste-runtime-{name}-{}-{}",
             std::process::id(),
@@ -69,7 +81,7 @@ impl Fixture {
                     name: None,
                     worktree: worktree.clone(),
                     life: "drive".to_owned(),
-                    vendor: "claude".parse().expect("vendor name"),
+                    vendor: vendor.clone(),
                 },
                 FactCause::Existing(observed.position()),
             )
@@ -95,7 +107,7 @@ impl Fixture {
                 name: None,
                 worktree,
                 life: "drive".to_owned(),
-                vendor: "claude".parse().expect("vendor name"),
+                vendor,
                 occupant: Some(occupant),
                 lineage: vec![occupant],
                 capabilities: vec![capability],
@@ -276,11 +288,48 @@ fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
     let snapshot = fixture.bus.fact_snapshot().expect("snapshot");
     let ledger = steer::Ledger::from_snapshot(&snapshot).expect("reminders replay");
     assert_eq!(ledger.pending(fixture.lane).len(), 2);
-    let rendered = fs::read_to_string(steer::inbox::path(&fixture.paths.inbox, fixture.lane))
-        .expect("post-commit inbox renders");
+    let inbox = steer::inbox::path(&fixture.paths.inbox, fixture.lane);
+    let rendered = fs::read_to_string(&inbox)
+        .unwrap_or_else(|error| panic!("post-commit inbox {} renders: {error}", inbox.display()));
     assert!(rendered.contains("[TASTE] polling: Wait for the terminal event."));
     assert!(rendered.contains("[TASTE] fallbacks: Keep one current path."));
     fixture.finish();
+}
+
+#[test]
+fn driver_scoped_tastes_follow_the_durable_lane_vendor() {
+    let bag = taste::configured(
+        r#"
+[taste.polling]
+words = ["poll*"]
+message = "Wait for the terminal event."
+scopes = { vendors = ["codex"] }
+"#,
+    )
+    .expect("driver-scoped bag");
+    let codex = Fixture::with_vendor("scoped-codex", "codex");
+    let claude = Fixture::with_vendor("scoped-claude", "claude");
+    let codex_record = prose_record(codex.lane, codex.occupant, "Polling is not completion.");
+    let claude_record = prose_record(claude.lane, claude.occupant, "Polling is not completion.");
+
+    assert!(
+        prepare_judgment(&codex.bus, codex.epoch, &bag, &codex_record)
+            .expect("codex judgment preparation resolves")
+            .is_some()
+    );
+    assert!(
+        prepare_judgment(&claude.bus, claude.epoch, &bag, &claude_record)
+            .expect("claude judgment preparation resolves")
+            .is_none()
+    );
+
+    codex.recognize(&bag, &codex_record);
+    claude.recognize(&bag, &claude_record);
+
+    assert_eq!(codex.reminders().len(), 1);
+    assert!(claude.reminders().is_empty());
+    codex.finish();
+    claude.finish();
 }
 
 #[test]
@@ -357,7 +406,7 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
         calls.set(calls.get() + 1);
         assert_eq!(candidate.taste, "polling");
         assert_eq!(candidate.trigger, "poll*");
-        assert_eq!(candidate.driver, "Wait for the terminal event.");
+        assert_eq!(candidate.vendor, "Wait for the terminal event.");
         assert_eq!(candidate.source, "Polling is not completion.");
         Ok(judgment(
             true,
@@ -377,7 +426,7 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
     let evidence = &judgments[0];
     assert_eq!(evidence.bag, taste::bag_identity(&bag));
     assert_eq!(evidence.trigger, "poll*");
-    assert_eq!(evidence.driver, "Wait for the terminal event.");
+    assert_eq!(evidence.vendor, "Wait for the terminal event.");
     assert_eq!(evidence.source, "Polling is not completion.");
     assert_eq!(evidence.compaction, fixture.anchor.get());
     assert_eq!(evidence.attempts.len(), 2);
@@ -483,12 +532,183 @@ fn unavailable_judge_abandons_candidate_without_fact_or_reminder() {
 }
 
 #[test]
+fn current_thread_progresses_while_bounded_adjudication_is_held_open() {
+    let fixture = Fixture::new("judge-current-thread-progress");
+    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let worker_release = Arc::clone(&release);
+    let mut adjudication = start_adjudication_with(move |_| {
+        FunctionAdjudicator(move |_: &Candidate| {
+            entered_sender.send(()).expect("announce held judge");
+            let (lock, changed) = &*worker_release;
+            let released = lock.lock().expect("release lock");
+            let _released = changed
+                .wait_while(released, |released| !*released)
+                .expect("release wait");
+            Ok(judgment(
+                true,
+                vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+            ))
+        })
+    })
+    .expect("bounded adjudication starts");
+    let resident = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("current-thread runtime");
+
+    resident.block_on(async {
+        let (submitter, completions) = adjudication.parts();
+        submitter
+            .recognize(&fixture.bus, fixture.epoch, &bag, &record)
+            .expect("candidate submits without waiting for judge");
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker holds the judge open");
+
+        let (progressed, observed_progress) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            let _ = progressed.send(());
+        });
+        tokio::time::timeout(Duration::from_millis(100), observed_progress)
+            .await
+            .expect("resident executor remains live")
+            .expect("progress task reports");
+        assert!(
+            fixture.judgments().is_empty(),
+            "held external authority committed prematurely"
+        );
+
+        let (lock, changed) = &*release;
+        *lock.lock().expect("release lock") = true;
+        changed.notify_all();
+        let completed = tokio::time::timeout(Duration::from_secs(1), completions.recv())
+            .await
+            .expect("worker completes after release")
+            .expect("completion authority stays live");
+        submitter.finished(&completed);
+        complete_judgment(
+            &fixture.bus,
+            &fixture.paths,
+            fixture.epoch,
+            &bag,
+            &steer::Config::default(),
+            completed,
+        )
+        .expect("resident revalidates and commits completion");
+    });
+
+    drop(adjudication);
+    assert_eq!(fixture.judgments().len(), 1);
+    fixture.finish();
+}
+
+#[test]
+fn delayed_completion_is_abandoned_after_compaction_or_bag_movement() {
+    let mut fixture = Fixture::new("judge-delayed-authority");
+    let original_bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let changed_bag = bag(&[("polling", &["poll*"], "Choose another action.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let prepared = prepare_judgment(&fixture.bus, fixture.epoch, &original_bag, &record)
+        .expect("candidate prepares")
+        .expect("candidate exists");
+    let completed = CompletedJudgment {
+        decisions: vec![JudgedCandidate {
+            candidate: prepared.candidates[0].clone(),
+            judgment: judgment(
+                true,
+                vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+            ),
+        }],
+        prepared,
+    };
+
+    complete_judgment(
+        &fixture.bus,
+        &fixture.paths,
+        fixture.epoch,
+        &changed_bag,
+        &steer::Config::default(),
+        completed.clone(),
+    )
+    .expect("changed bag abandons stale answer");
+    fixture.compact();
+    complete_judgment(
+        &fixture.bus,
+        &fixture.paths,
+        fixture.epoch,
+        &original_bag,
+        &steer::Config::default(),
+        completed,
+    )
+    .expect("changed compaction abandons stale answer");
+
+    assert!(fixture.judgments().is_empty());
+    fixture.finish();
+}
+
+#[test]
+fn shutdown_cancels_and_joins_an_inflight_process_request() {
+    let fixture = Fixture::new("judge-shutdown");
+    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let script = std::env::temp_dir().join(format!(
+        "spice-taste-judge-shutdown-{}-{}",
+        std::process::id(),
+        NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(
+        &script,
+        "#!/bin/sh\ncat >/dev/null\nexec /usr/bin/tail -f /dev/null\n",
+    )
+    .expect("write shutdown judge fixture");
+    let mut permissions = fs::metadata(&script)
+        .expect("shutdown judge metadata")
+        .permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&script, permissions).expect("make shutdown judge executable");
+    let binary = script
+        .to_str()
+        .expect("UTF-8 shutdown judge path")
+        .to_owned();
+    let mut adjudication = start_adjudication_with(move |cancellation| ProcessAdjudicator {
+        process: crate::judge::Process::with_contract(
+            binary,
+            Duration::from_secs(30),
+            cancellation,
+        ),
+    })
+    .expect("cancellable adjudication starts");
+    {
+        let (submitter, _) = adjudication.parts();
+        submitter
+            .recognize(&fixture.bus, fixture.epoch, &bag, &record)
+            .expect("inflight request submits");
+    }
+
+    let started = std::time::Instant::now();
+    drop(adjudication);
+
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "shutdown waited for the process runtime deadline"
+    );
+    fs::remove_file(script).expect("remove shutdown judge fixture");
+    fixture.finish();
+}
+
+#[test]
 fn taste_framings_are_complete_and_deterministically_shuffled() {
     let bag = bag(&[("polling", &["poll*"], "Wait.")]);
     let candidate = (0..128)
         .find_map(|index| {
             let record = prose_record(uuid(2), uuid(3), &format!("polling candidate {index}"));
-            let candidate = candidates(&bag, &record).expect("candidate scan").remove(0);
+            let candidate = candidates(&bag, &taste_context(), &record)
+                .expect("candidate scan")
+                .remove(0);
             let order = judge_prompts(&candidate)
                 .iter()
                 .map(crate::judge::Prompt::framing)
@@ -509,7 +729,7 @@ fn taste_framings_are_complete_and_deterministically_shuffled() {
     assert!(first.iter().all(|prompt| {
         prompt.text().contains(&candidate.source)
             && prompt.text().contains(&candidate.trigger)
-            && prompt.text().contains(&candidate.driver)
+            && prompt.text().contains(&candidate.vendor)
     }));
 }
 
@@ -593,7 +813,11 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
             ],
         },
     );
-    assert!(candidates(&bag, &typed).expect("typed scan").is_empty());
+    assert!(
+        candidates(&bag, &taste_context(), &typed)
+            .expect("typed scan")
+            .is_empty()
+    );
     let residue = record(
         fixture.lane,
         fixture.occupant,
@@ -605,7 +829,11 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
             },
         }),
     );
-    assert!(candidates(&bag, &residue).expect("residue scan").is_empty());
+    assert!(
+        candidates(&bag, &taste_context(), &residue)
+            .expect("residue scan")
+            .is_empty()
+    );
     assert!(fixture.reminders().is_empty());
     fixture.finish();
 }
@@ -636,21 +864,25 @@ fn generated_patch_and_diff_bodies_never_become_taste_candidates() {
         "*** Begin Patch\n+polling forever\n*** End Patch\nPolling after the patch is authored.",
     );
 
-    assert!(candidates(&bag, &patch).expect("patch scans").is_empty());
     assert!(
-        candidates(&bag, &mixed)
+        candidates(&bag, &taste_context(), &patch)
+            .expect("patch scans")
+            .is_empty()
+    );
+    assert!(
+        candidates(&bag, &taste_context(), &mixed)
             .expect("mixed diff scans")
             .is_empty()
     );
     assert_eq!(
-        candidates(&bag, &authored)
+        candidates(&bag, &taste_context(), &authored)
             .expect("authored prefix scans")
             .len(),
         1,
         "only the authored prefix remains eligible"
     );
     assert_eq!(
-        candidates(&bag, &tail)
+        candidates(&bag, &taste_context(), &tail)
             .expect("post-patch authored tail scans")
             .len(),
         1,
@@ -927,7 +1159,7 @@ fn append_judgment(
         content: opening.candidate.content.clone(),
         bag: opening.candidate.bag.clone(),
         trigger: opening.candidate.trigger.clone(),
-        driver: opening.candidate.driver.clone(),
+        vendor: opening.candidate.vendor.clone(),
         source: opening.candidate.source.clone(),
         locus: opening.candidate.locus,
         attempts: vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],

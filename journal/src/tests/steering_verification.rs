@@ -9,7 +9,7 @@ const OTHER_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
 const KEY: &str = "1kJK6N3R";
 
 #[test]
-fn coherent_steering_projection_verifies_head_miss_and_cursor() {
+fn coherent_steering_fold_verifies_head_miss_and_cursor() {
     let journal = steering_fixture();
 
     let verified = journal.verify().expect("coherent steering authority");

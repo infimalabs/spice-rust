@@ -389,7 +389,7 @@ fn desired_claims(
                     "active task {} has no durable lease head",
                     wire::TaskHandle::for_project(
                         &heads.statement().body().project,
-                        &heads.statement().body().incepted,
+                        &heads.statement().body().born,
                     )
                 ),
             )
@@ -401,7 +401,7 @@ fn desired_claims(
                     "task {} claim and lease epochs disagree",
                     wire::TaskHandle::for_project(
                         &heads.statement().body().project,
-                        &heads.statement().body().incepted,
+                        &heads.statement().body().born,
                     )
                 ),
             ));
@@ -416,14 +416,14 @@ fn desired_claims(
                     "task {} lease does not satisfy start <= renewal <= expiry <= maximum",
                     wire::TaskHandle::for_project(
                         &heads.statement().body().project,
-                        &heads.statement().body().incepted,
+                        &heads.statement().body().born,
                     )
                 ),
             ));
         }
         let task = wire::TaskHandle::for_project(
             &heads.statement().body().project,
-            &heads.statement().body().incepted,
+            &heads.statement().body().born,
         );
         desired.insert(
             task.clone(),
@@ -534,8 +534,8 @@ mod tests {
     }
 
     impl Authority {
-        fn incepted(&self) -> wire::TaskStamp {
-            self.task.incepted().expect("fixture task carries a stamp")
+        fn born(&self) -> wire::TaskStamp {
+            self.task.born().expect("fixture task carries a stamp")
         }
     }
 
@@ -889,7 +889,7 @@ mod tests {
         let added = write
             .fact(
                 body::TaskAdded {
-                    task: authority.incepted(),
+                    task: authority.born(),
                     title: "Capture commit after lapse".to_owned(),
                     description: None,
                     acceptance: Vec::new(),
@@ -906,7 +906,7 @@ mod tests {
         let won = write
             .fact(
                 body::ClaimWon {
-                    task: authority.incepted(),
+                    task: authority.born(),
                     actor: Actor::Lane(authority.lane),
                     lane: authority.lane,
                     occupant: authority.occupant,
@@ -950,10 +950,10 @@ mod tests {
         seated: PendingFact,
     ) {
         let statement_origin = origin;
-        let statement_task = authority.incepted();
+        let statement_task = authority.born();
         let statement_phase = phase.clone();
         write.task_head(added, move |position| TaskHead {
-            incepted: statement_task,
+            born: statement_task,
             queue_origin: position,
             title: "Capture commit after lapse".to_owned(),
             description: None,
@@ -964,7 +964,7 @@ mod tests {
             provenance: statement_origin,
             revision: position,
         });
-        let workflow_task = authority.incepted();
+        let workflow_task = authority.born();
         write.workflow_head(workflow_task, added, move |_| WorkflowHead {
             flow: vec![statement_phase.clone()],
             phase: statement_phase,
@@ -974,7 +974,7 @@ mod tests {
             deferral: None,
             completion: None,
         });
-        let claim_task = authority.incepted();
+        let claim_task = authority.born();
         let lane = authority.lane;
         let occupant = authority.occupant;
         let epoch = authority.epoch;
@@ -991,7 +991,7 @@ mod tests {
             epoch,
             disposition: ClaimDisposition::Active,
         });
-        let lease_task = authority.incepted();
+        let lease_task = authority.born();
         let start = authority.start;
         let expiry = authority.expiry;
         let maximum = authority.maximum;
@@ -1035,7 +1035,7 @@ mod tests {
             .expect("lapsed heads read")
             .tasks()
             .iter()
-            .find(|heads| heads.statement().body().incepted == fixture.authority.incepted())
+            .find(|heads| heads.statement().body().born == fixture.authority.born())
             .expect("fixture task remains")
             .clone()
     }
@@ -1071,16 +1071,16 @@ mod tests {
             kind: CommandKind::ClaimWin,
             expected: vec![
                 Witness::Task {
-                    task: fixture.authority.incepted(),
+                    task: fixture.authority.born(),
                     head: heads.statement().position(),
                 },
                 Witness::Workflow {
-                    task: fixture.authority.incepted(),
+                    task: fixture.authority.born(),
                     head: heads.workflow().position(),
                     phase: heads.workflow().body().phase.clone(),
                 },
                 Witness::Claim {
-                    task: fixture.authority.incepted(),
+                    task: fixture.authority.born(),
                     head: Some(heads.claim().expect("lapsed claim head").position()),
                 },
                 Witness::Eligibility {

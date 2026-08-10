@@ -36,24 +36,24 @@ fn empty_database_reaches_the_same_finalized_baseline_once() {
 }
 
 #[test]
-fn schema_eight_steps_to_source_aware_loci_without_rewriting_authority() {
+fn schema_nine_steps_to_source_aware_loci_without_rewriting_authority() {
     let scratch = Scratch::new();
-    let path = scratch.path().join("schema-eight.sqlite3");
+    let path = scratch.path().join("schema-nine.sqlite3");
     let journal = authority_file_fixture(&path);
     journal
         .connection
         .execute_batch(
-            "UPDATE journal_schema SET version = 8 WHERE singleton = 1;
-             PRAGMA user_version = 8;",
+            "UPDATE journal_schema SET version = 9 WHERE singleton = 1;
+             PRAGMA user_version = 9;",
         )
         .expect("downgrade source-unaware fixture identity");
     let mut before = table_census(&journal.connection);
     before.remove("journal_schema");
     drop(journal);
 
-    let journal = Journal::open(&path).expect("schema-eight authority migrates");
+    let journal = Journal::open(&path).expect("schema-nine authority migrates");
     let migration = journal.migration().expect("source-aware step runs");
-    assert_eq!((migration.from(), migration.to()), (8, SCHEMA_VERSION));
+    assert_eq!((migration.from(), migration.to()), (9, SCHEMA_VERSION));
     assert_eq!(
         version_records(&journal.connection),
         (SCHEMA_VERSION, SCHEMA_VERSION)
@@ -228,7 +228,7 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         );
     }
 
-    admit_empty_steering_projection(&mut journal);
+    admit_empty_steering_fold(&mut journal);
     let verified = journal.verify().expect("the migrated authority verifies");
     assert_eq!(verified.facts, 2);
 }
