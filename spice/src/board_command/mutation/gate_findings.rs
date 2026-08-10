@@ -93,25 +93,26 @@ pub(in crate::board_command) fn gate_findings(
         Err(error) => return store_fault("gate::findings-build", &error.to_string()),
     };
     for plan in &plans {
-        if let GateFindingAction::Created {
+        let GateFindingAction::Created {
             task,
             finding,
             predecessor,
         } = &plan.action
-        {
-            if let Err(outcome) = write_gate_finding_task(
-                &mut write,
-                filed,
-                &project,
-                task,
-                finding,
-                predecessor.as_ref(),
-                &origin,
-                until,
-                &dispatch.report,
-            ) {
-                return outcome;
-            }
+        else {
+            continue;
+        };
+        if let Err(outcome) = write_gate_finding_task(
+            &mut write,
+            filed,
+            &project,
+            task,
+            finding,
+            predecessor.as_ref(),
+            &origin,
+            until,
+            &dispatch.report,
+        ) {
+            return outcome;
         }
     }
     let text = format!(

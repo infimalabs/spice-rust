@@ -8,6 +8,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+use wire::Phase;
 use wire::body::{self, SourceBoundary, TranscriptPosition};
 use wire::intent::{
     EffortAnswer, EffortAvailability, EffortIdentity, EffortPhaseAnswer, EffortSegmentAnswer,

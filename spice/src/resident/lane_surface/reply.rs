@@ -178,34 +178,8 @@ pub(super) fn recall_provenance(
     steering: &steer::Ledger,
 ) -> CommandResult<Option<RecallProvenance>> {
     let provenance = match fact.fact.kind() {
-        wire::FactKind::LaneSessionDeclared => {
-            let body: wire::body::LaneSessionDeclared = recall_body(fact)?;
-            Some(RecallProvenance::Session {
-                occupant: body.occupant,
-                worktree: body.worktree,
-                vendor: body.vendor,
-                epoch: body.epoch,
-                stream: body.stream,
-                identity: body.identity,
-                locus: wire::TapeLocus {
-                    member: body.member,
-                    offset: body.offset,
-                    length: body.length,
-                },
-            })
-        }
-        wire::FactKind::LaneCompacted => {
-            let body: wire::body::LaneCompacted = recall_body(fact)?;
-            Some(RecallProvenance::Compaction {
-                occupant: body.occupant,
-                stream: body.stream,
-                locus: wire::TapeLocus {
-                    member: body.member,
-                    offset: body.offset,
-                    length: body.length,
-                },
-            })
-        }
+        wire::FactKind::LaneSessionDeclared => Some(session_provenance(fact)?),
+        wire::FactKind::LaneCompacted => Some(compaction_provenance(fact)?),
         wire::FactKind::SteerSent => {
             let body: wire::body::SteerSent = recall_body(fact)?;
             Some(steering_provenance(
@@ -309,6 +283,36 @@ pub(super) fn recall_provenance(
         _ => None,
     };
     Ok(provenance)
+}
+
+fn session_provenance(fact: &wire::Envelope<wire::AnyFact>) -> CommandResult<RecallProvenance> {
+    let body: wire::body::LaneSessionDeclared = recall_body(fact)?;
+    Ok(RecallProvenance::Session {
+        occupant: body.occupant,
+        worktree: body.worktree,
+        vendor: body.vendor,
+        epoch: body.epoch,
+        stream: body.stream,
+        identity: body.identity,
+        locus: wire::TapeLocus {
+            member: body.member,
+            offset: body.offset,
+            length: body.length,
+        },
+    })
+}
+
+fn compaction_provenance(fact: &wire::Envelope<wire::AnyFact>) -> CommandResult<RecallProvenance> {
+    let body: wire::body::LaneCompacted = recall_body(fact)?;
+    Ok(RecallProvenance::Compaction {
+        occupant: body.occupant,
+        stream: body.stream,
+        locus: wire::TapeLocus {
+            member: body.member,
+            offset: body.offset,
+            length: body.length,
+        },
+    })
 }
 
 /// Name one steering fact as the provenance a recall answer carries.
