@@ -16,14 +16,14 @@ use syntax::register_syntax;
 #[cfg(test)]
 use syntax::{is_optional, syntax_tokens};
 pub use tools::ExternalTool;
+/// The one compiled optional judge executable shared by resident and task adjudication.
+pub const JUDGE_EXECUTABLE: &str = tools::JUDGE_EXECUTABLE;
 use tools::{
     CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NO_TOOLS, PROOF_TOOLS,
-    TASK_DONE_TOOLS, TASK_GIT_TOOLS,
+    TASK_DONE_TOOLS, TASK_GIT_TOOLS, UP_TOOLS,
 };
 #[cfg(test)]
-use tools::{
-    LEARNING_JUDGE_EXECUTABLE, ToolBounds, ToolCancellation, ToolNetwork, posture_violations,
-};
+use tools::{ToolBounds, ToolCancellation, ToolNetwork, posture_violations};
 
 /// The renderer flag, spelled once so its registration and its reader cannot
 /// drift into naming two different arguments that merely agree today.

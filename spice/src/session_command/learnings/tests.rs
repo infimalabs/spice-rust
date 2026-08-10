@@ -391,9 +391,9 @@ fn task_done_declares_the_compiled_independent_judge() {
         .find(|tool| tool.name == DEFAULT_JUDGE)
         .expect("compiled learning judge is declared");
 
-    assert_eq!(tool.owner, "session_command::learnings::ProcessJudge");
+    assert_eq!(tool.owner, "judge::Process");
     assert_eq!(tool.requirement, wire::DoctorToolRequirement::Optional);
-    assert_eq!(tool.bounds, wire::DoctorToolBounds::TaskBoundary);
+    assert_eq!(tool.bounds, wire::DoctorToolBounds::Adjudication);
     assert_eq!(tool.cancellation, wire::DoctorToolCancellation::Deadline);
 }
 

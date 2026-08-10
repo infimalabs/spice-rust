@@ -84,23 +84,23 @@ const TASK_GIT_TOOL: ExternalTool = ExternalTool {
 pub(super) const TASK_GIT_TOOLS: &[ExternalTool] = &[TASK_GIT_TOOL];
 
 #[cfg(target_os = "macos")]
-pub(super) const LEARNING_JUDGE_EXECUTABLE: &str = "afm-cli";
+pub(crate) const JUDGE_EXECUTABLE: &str = "afm-cli";
 #[cfg(not(target_os = "macos"))]
-pub(super) const LEARNING_JUDGE_EXECUTABLE: &str = "spice-judge";
+pub(crate) const JUDGE_EXECUTABLE: &str = "spice-judge";
 
-pub(super) const TASK_DONE_TOOLS: &[ExternalTool] = &[
-    TASK_GIT_TOOL,
-    ExternalTool {
-        name: LEARNING_JUDGE_EXECUTABLE,
-        owner: "session_command::learnings::ProcessJudge",
-        mode: ToolMode::Launch,
-        requirement: ToolRequirement::Optional,
-        source: ToolSource::TaskBoundaryContract,
-        bounds: ToolBounds::TaskBoundary,
-        cancellation: ToolCancellation::Deadline,
-        network: ToolNetwork::Permitted,
-    },
-];
+const JUDGE_TOOL: ExternalTool = ExternalTool {
+    name: JUDGE_EXECUTABLE,
+    owner: "judge::Process",
+    mode: ToolMode::Launch,
+    requirement: ToolRequirement::Optional,
+    source: ToolSource::AdjudicationContract,
+    bounds: ToolBounds::Adjudication,
+    cancellation: ToolCancellation::Deadline,
+    network: ToolNetwork::Permitted,
+};
+
+pub(super) const TASK_DONE_TOOLS: &[ExternalTool] = &[TASK_GIT_TOOL, JUDGE_TOOL];
+pub(super) const UP_TOOLS: &[ExternalTool] = &[JUDGE_TOOL];
 
 pub(super) const PROOF_TOOLS: &[ExternalTool] = &[
     ExternalTool {
@@ -236,6 +236,12 @@ fn validate_source_posture(path: &str, tool: &ExternalTool, violations: &mut Vec
         ToolSource::TaskBoundaryContract => (
             ToolMode::Launch,
             ToolBounds::TaskBoundary,
+            ToolCancellation::Deadline,
+            ToolNetwork::Permitted,
+        ),
+        ToolSource::AdjudicationContract => (
+            ToolMode::Launch,
+            ToolBounds::Adjudication,
             ToolCancellation::Deadline,
             ToolNetwork::Permitted,
         ),

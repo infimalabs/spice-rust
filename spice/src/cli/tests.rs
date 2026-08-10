@@ -562,12 +562,10 @@ fn tool_postures_follow_the_closed_command_order() {
                 "proof replay".to_owned(),
                 vec!["OCI runtime", "sealed battery member"],
             ),
+            ("up".to_owned(), vec![JUDGE_EXECUTABLE]),
             ("task next".to_owned(), vec!["git"]),
             ("task capture".to_owned(), vec!["git"]),
-            (
-                "task done".to_owned(),
-                vec!["git", LEARNING_JUDGE_EXECUTABLE],
-            ),
+            ("task done".to_owned(), vec!["git", JUDGE_EXECUTABLE],),
             ("task review".to_owned(), vec!["git"]),
             ("run".to_owned(), vec!["CMD"]),
         ]
