@@ -62,7 +62,7 @@ fn message(ts: &str, turn: &str, text: &str) -> MessageRecord {
         flavor_tags: Vec::new(),
         matched_cues: Vec::new(),
         shape: classified.shape,
-        authored: classified.authored.map(str::to_owned),
+        authored: classified.authored,
     }
 }
 
@@ -246,16 +246,24 @@ fn generated_patch_and_tool_output_bodies_do_not_seed_learnings() {
         &[
             "*** Begin Patch\n+Always adopt this generated patch sentence.\n*** End Patch",
             "Process exited with code 0\nAlways adopt this generated tool output.",
+            "*** Begin Patch\n+generated\n*** End Patch\nAlways retain this post-patch operational fact.",
             "Always retain this assistant-authored operational fact.",
         ],
     ));
 
     let candidates = extract(&data, &context(start, end));
+    let statements = candidates
+        .iter()
+        .map(|candidate| candidate.statement.as_str())
+        .collect::<Vec<_>>();
 
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(
-        candidates[0].statement,
-        "Always retain this assistant-authored operational fact"
+    assert_eq!(statements.len(), 2);
+    assert!(statements.contains(&"Always retain this post-patch operational fact"));
+    assert!(statements.contains(&"Always retain this assistant-authored operational fact"));
+    assert!(
+        statements
+            .iter()
+            .all(|statement| !statement.contains("generated"))
     );
 }
 

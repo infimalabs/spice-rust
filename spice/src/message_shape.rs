@@ -22,73 +22,78 @@ impl MessageShape {
     }
 }
 
-/// One classification plus the exact authored prefix consumers may inspect.
+/// One classification plus the exact authored projection consumers may inspect.
 ///
-/// Mixed assistant text is clipped at the first structural tool-output
-/// boundary. Operator-role machine messages begin at that boundary and thus
-/// carry no authored prefix at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MessageClassification<'a> {
+/// Mixed assistant text keeps every authored segment in order while excluding
+/// only structurally delimited generated spans.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MessageClassification {
     pub(crate) shape: MessageShape,
-    pub(crate) authored: Option<&'a str>,
+    pub(crate) authored: Option<String>,
 }
 
 /// Classify one message using only its own text.
-pub(crate) fn classify(text: &str) -> MessageClassification<'_> {
+pub(crate) fn classify(text: &str) -> MessageClassification {
     let trimmed = text.trim();
-    if complete_machine_envelope(trimmed) {
-        return generated();
-    }
     if is_rehydration(trimmed) {
         return MessageClassification {
             shape: MessageShape::CompactionRehydration,
             authored: None,
         };
     }
-    if is_scaffolding(trimmed) {
-        return MessageClassification {
-            shape: MessageShape::Scaffolding,
-            authored: None,
-        };
-    }
-    if let Some(boundary) = generated_boundary(text) {
-        let authored = text[..boundary].trim_end();
-        if authored.is_empty() {
-            return generated();
-        }
+
+    let spans = structural_spans(text);
+    if let Some(authored) = authored_projection(text, &spans) {
         return MessageClassification {
             shape: MessageShape::AuthoredAsk,
             authored: Some(authored),
         };
     }
+
+    if spans.iter().any(|span| span.kind == SpanKind::Scaffolding)
+        && spans.iter().all(|span| span.kind == SpanKind::Scaffolding)
+    {
+        return MessageClassification {
+            shape: MessageShape::Scaffolding,
+            authored: None,
+        };
+    }
+    if spans.iter().any(|span| span.kind == SpanKind::Generated) {
+        return generated();
+    }
+
     MessageClassification {
         shape: MessageShape::AuthoredAsk,
-        authored: Some(text),
+        authored: Some(text.to_owned()),
     }
 }
 
-fn generated() -> MessageClassification<'static> {
+fn generated() -> MessageClassification {
     MessageClassification {
         shape: MessageShape::ToolGeneratedEnvelope,
         authored: None,
     }
 }
 
-fn complete_machine_envelope(text: &str) -> bool {
-    let Some(open_end) = text.find('>') else {
-        return false;
-    };
-    if !text.starts_with('<') || text.starts_with("</") {
-        return false;
+fn machine_envelope_at(text: &str, start: usize) -> Option<usize> {
+    if !text[start..].starts_with('<') || text[start..].starts_with("</") {
+        return None;
     }
-    let opening = &text[1..open_end];
-    if opening.trim_end().ends_with('/') {
-        return open_end + 1 == text.len() && machine_tag(opening.trim_end_matches('/').trim());
+    let open_end = text[start..].find('>')? + start;
+    let opening = &text[start + 1..open_end];
+    let opening = opening.trim();
+    if opening.ends_with('/') {
+        let tag = opening.trim_end_matches('/').trim();
+        return machine_tag(tag).then_some(open_end + 1);
     }
-    let Some(tag) = opening.split_ascii_whitespace().next() else {
-        return false;
-    };
-    machine_tag(tag) && text.ends_with(&format!("</{tag}>"))
+    let tag = opening.split_ascii_whitespace().next()?;
+    if !machine_tag(tag) {
+        return None;
+    }
+    let closing = format!("</{tag}>");
+    text[open_end + 1..]
+        .find(&closing)
+        .map(|offset| open_end + 1 + offset + closing.len())
 }
 
 fn machine_tag(opening: &str) -> bool {
@@ -108,10 +113,6 @@ fn is_rehydration(text: &str) -> bool {
     }
 }
 
-fn is_scaffolding(text: &str) -> bool {
-    text.lines().any(is_skill_link) || bracketed_notice(text) || harness_retry(text)
-}
-
 fn is_skill_link(line: &str) -> bool {
     let line = line.trim();
     let Some(rest) = line.strip_prefix("[$") else {
@@ -129,49 +130,232 @@ fn is_skill_link(line: &str) -> bool {
         && target.ends_with("SKILL.md")
 }
 
-fn bracketed_notice(text: &str) -> bool {
-    text.starts_with('[') && text.ends_with(']') && !text.contains('\n')
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Span {
+    start: usize,
+    end: usize,
+    kind: SpanKind,
 }
 
-fn harness_retry(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    let words = lower
-        .split(|character: char| !character.is_ascii_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>();
-    words.contains(&"tool")
-        && words.contains(&"call")
-        && words
-            .iter()
-            .any(|word| matches!(*word, "malformed" | "parse" | "parsed"))
-        && words.iter().any(|word| matches!(*word, "retry" | "again"))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SpanKind {
+    Generated,
+    Scaffolding,
 }
 
-fn generated_boundary(text: &str) -> Option<usize> {
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
-        let stripped = line.trim();
-        if generated_line(stripped) || complete_machine_envelope(text[offset..].trim()) {
-            return Some(offset);
+fn structural_spans(text: &str) -> Vec<Span> {
+    let mut spans = machine_envelope_spans(text);
+    spans.extend(line_structural_spans(text));
+    merge_spans(spans)
+}
+
+fn machine_envelope_spans(text: &str) -> Vec<Span> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..].find('<') {
+        let start = cursor + relative;
+        if let Some(end) = machine_envelope_at(text, start) {
+            spans.push(Span {
+                start,
+                end,
+                kind: SpanKind::Generated,
+            });
+            cursor = end;
+        } else {
+            cursor = start + '<'.len_utf8();
         }
-        offset += line.len();
     }
-    None
+    spans
+}
+
+fn line_structural_spans(text: &str) -> Vec<Span> {
+    let lines = line_offsets(text);
+    let mut spans = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let (start, line) = lines[index];
+        let stripped = line.trim();
+        if stripped.is_empty() {
+            index += 1;
+            continue;
+        }
+        if is_skill_link(stripped) {
+            spans.push(Span {
+                start,
+                end: start + line.len(),
+                kind: SpanKind::Scaffolding,
+            });
+            index += 1;
+            continue;
+        }
+        if stripped.starts_with("*** Begin Patch")
+            && let Some(end_index) = patch_end(&lines, index)
+        {
+            let (end_start, end_line) = lines[end_index];
+            spans.push(Span {
+                start,
+                end: end_start + end_line.len(),
+                kind: SpanKind::Generated,
+            });
+            index = end_index + 1;
+            continue;
+        }
+        if stripped.starts_with("diff --git ") {
+            let end_index = diff_end(&lines, index);
+            let (end_start, end_line) = lines[end_index];
+            spans.push(Span {
+                start,
+                end: end_start + end_line.len(),
+                kind: SpanKind::Generated,
+            });
+            index = end_index + 1;
+            continue;
+        }
+        if terminal_output_start(stripped) {
+            spans.push(Span {
+                start,
+                end: text.len(),
+                kind: SpanKind::Generated,
+            });
+            break;
+        }
+        if complete_machine_line(stripped)
+            || generated_line(stripped)
+            || complete_bracketed_notice(stripped)
+        {
+            spans.push(Span {
+                start,
+                end: start + line.len(),
+                kind: SpanKind::Generated,
+            });
+        }
+        index += 1;
+    }
+    spans
+}
+
+fn line_offsets(text: &str) -> Vec<(usize, &str)> {
+    let mut offset = 0;
+    text.split_inclusive('\n')
+        .map(|line| {
+            let start = offset;
+            offset += line.len();
+            (start, line)
+        })
+        .collect()
+}
+
+fn patch_end(lines: &[(usize, &str)], start: usize) -> Option<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find(|(_, (_, line))| line.trim().starts_with("*** End Patch"))
+        .map(|(index, _)| index)
+}
+
+fn diff_end(lines: &[(usize, &str)], start: usize) -> usize {
+    let mut end = start;
+    for (index, (_, line)) in lines.iter().enumerate().skip(start + 1) {
+        if diff_continuation(line) {
+            end = index;
+        } else {
+            break;
+        }
+    }
+    end
+}
+
+fn diff_continuation(line: &str) -> bool {
+    let stripped = line.trim_end();
+    let trimmed = stripped.trim_start();
+    trimmed.starts_with("diff --git ")
+        || trimmed.starts_with("index ")
+        || trimmed.starts_with("new file mode ")
+        || trimmed.starts_with("deleted file mode ")
+        || trimmed.starts_with("similarity index ")
+        || trimmed.starts_with("rename from ")
+        || trimmed.starts_with("rename to ")
+        || trimmed.starts_with("--- ")
+        || trimmed.starts_with("+++ ")
+        || trimmed.starts_with("@@ ")
+        || trimmed.starts_with("\\ No newline at end of file")
+        || stripped.starts_with(['+', '-', ' '])
 }
 
 fn generated_line(line: &str) -> bool {
     line.eq_ignore_ascii_case("apply patch")
-        || line.starts_with("*** Begin Patch")
         || line.starts_with("patch:")
-        || line.starts_with("diff --git ")
         || line.starts_with("index ")
         || line.starts_with("--- a/")
         || line.starts_with("+++ b/")
         || line.starts_with("@@ ")
-        || line.starts_with("tool output:")
+}
+
+fn terminal_output_start(line: &str) -> bool {
+    line.starts_with("tool output:")
         || line.starts_with("tool_result:")
         || line.starts_with("Process exited with code ")
         || line.starts_with("Command exited with code ")
+}
+
+fn complete_machine_line(line: &str) -> bool {
+    machine_envelope_at(line, 0).is_some_and(|end| end == line.len())
+}
+
+fn complete_bracketed_notice(line: &str) -> bool {
+    let Some(body) = line
+        .strip_prefix('[')
+        .and_then(|body| body.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let Some((head, detail)) = body.split_once(':') else {
+        return false;
+    };
+    matches!(
+        head.trim(),
+        "tool-call" | "tool-result" | "harness-retry" | "harness-notice"
+    ) && !detail.trim().is_empty()
+}
+
+fn merge_spans(mut spans: Vec<Span>) -> Vec<Span> {
+    spans.sort_by_key(|span| (span.start, span.end));
+    let mut merged: Vec<Span> = Vec::new();
+    for span in spans {
+        let Some(last) = merged.last_mut() else {
+            merged.push(span);
+            continue;
+        };
+        if span.start <= last.end {
+            last.end = last.end.max(span.end);
+            if span.kind == SpanKind::Generated {
+                last.kind = SpanKind::Generated;
+            }
+        } else {
+            merged.push(span);
+        }
+    }
+    merged
+}
+
+fn authored_projection(text: &str, spans: &[Span]) -> Option<String> {
+    if spans.is_empty() {
+        return (!text.is_empty()).then(|| text.to_owned());
+    }
+    let mut authored = String::new();
+    let mut cursor = 0;
+    for span in spans {
+        if cursor < span.start {
+            authored.push_str(&text[cursor..span.start]);
+        }
+        cursor = span.end;
+    }
+    if cursor < text.len() {
+        authored.push_str(&text[cursor..]);
+    }
+    let authored = authored.trim();
+    (!authored.is_empty()).then(|| authored.to_owned())
 }
 
 /// Recover the primary intent section or return a visible unrecoverable marker.
@@ -265,14 +449,69 @@ mod tests {
     }
 
     #[test]
-    fn generated_diff_body_is_clipped_from_an_authored_prefix() {
+    fn generated_diff_body_is_removed_from_authored_segments() {
         let text = "I made the focused repair.\ndiff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n-old\n+new";
         let classified = classify(text);
         assert_eq!(classified.shape, MessageShape::AuthoredAsk);
-        assert_eq!(classified.authored, Some("I made the focused repair."));
+        assert_eq!(
+            classified.authored.as_deref(),
+            Some("I made the focused repair.")
+        );
         assert_eq!(
             classify("*** Begin Patch\n*** End Patch").shape,
             MessageShape::ToolGeneratedEnvelope
+        );
+    }
+
+    #[test]
+    fn ordinary_bracketed_prose_and_harness_discussion_remain_authored() {
+        for text in [
+            "[Please keep this bracketed ask.]",
+            "The malformed tool call was discussed, then I retried with valid syntax.",
+            "Here is a quoted tool result: `tool_result: not a real envelope`.",
+        ] {
+            let classified = classify(text);
+            assert_eq!(classified.shape, MessageShape::AuthoredAsk);
+            assert_eq!(classified.authored.as_deref(), Some(text));
+        }
+        assert_eq!(
+            classify("[tool-call: malformed retry]").shape,
+            MessageShape::ToolGeneratedEnvelope
+        );
+    }
+
+    #[test]
+    fn mixed_structural_segments_preserve_every_authored_segment() {
+        let classified = classify(concat!(
+            "First authored line.\n",
+            "[$spice](.agents/skills/spice/SKILL.md)\n",
+            "*** Begin Patch\n",
+            "+generated\n",
+            "*** End Patch\n",
+            "Second authored line.\n",
+            "<future-harness-block>generated</future-harness-block>\n",
+            "Third authored line."
+        ));
+        assert_eq!(classified.shape, MessageShape::AuthoredAsk);
+        assert_eq!(
+            classified.authored.as_deref(),
+            Some("First authored line.\nSecond authored line.\nThird authored line.")
+        );
+    }
+
+    #[test]
+    fn diff_blocks_stop_before_following_authored_prose() {
+        let classified = classify(concat!(
+            "Before diff.\n",
+            "diff --git a/a.rs b/a.rs\n",
+            "@@ -1 +1 @@\n",
+            "-old\n",
+            "+new\n",
+            "After diff."
+        ));
+        assert_eq!(
+            classified.authored.as_deref(),
+            Some("Before diff.\nAfter diff.")
         );
     }
 
