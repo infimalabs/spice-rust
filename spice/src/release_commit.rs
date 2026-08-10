@@ -1,4 +1,4 @@
-//! Deterministic projection and materialization of the release bump commit.
+//! Deterministic fold and materialization of the release bump commit.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -12,7 +12,7 @@ const ACTOR_NAME: &str = "Spice Release";
 const ACTOR_EMAIL: &str = "release@spice.local";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Projection {
+pub(super) struct Fold {
     pub(super) source: String,
     pub(super) tree: String,
     pub(super) commit: String,
@@ -24,11 +24,7 @@ enum Node {
     Object { mode: String, identity: Vec<u8> },
 }
 
-pub(super) fn project(
-    root: &Path,
-    source: &str,
-    version: &ProductVersion,
-) -> Result<Projection, String> {
+pub(super) fn project(root: &Path, source: &str, version: &ProductVersion) -> Result<Fold, String> {
     let mut tree = read_tree(root, source)?;
     let version_bytes = format!("{version}\n");
     let version_identity = object_identity(root, "blob", version_bytes.as_bytes())?;
@@ -45,7 +41,7 @@ pub(super) fn project(
     let message = message(version);
     let body = commit_body(&tree, source, &timestamp, &timezone, &message);
     let commit = object_identity(root, "commit", &body)?;
-    Ok(Projection {
+    Ok(Fold {
         source: source.to_owned(),
         tree,
         commit,
@@ -55,34 +51,28 @@ pub(super) fn project(
 
 pub(super) fn materialize(
     root: &Path,
-    projection: &Projection,
+    fold: &Fold,
     version: &ProductVersion,
 ) -> Result<String, String> {
     run_git(root, &["add", "--", VERSION_PATH])?;
     let tree = run_git(root, &["write-tree"])?;
-    if tree != projection.tree {
-        return Err(format!(
-            "release tree moved from {} to {tree}",
-            projection.tree
-        ));
+    if tree != fold.tree {
+        return Err(format!("release tree moved from {} to {tree}", fold.tree));
     }
     let message = message(version);
     let commit = run_git_input_with_identity(
         root,
-        &["commit-tree", &tree, "-p", &projection.source, "-F", "-"],
+        &["commit-tree", &tree, "-p", &fold.source, "-F", "-"],
         message.as_bytes(),
-        projection,
+        fold,
     )?;
-    if commit != projection.commit {
+    if commit != fold.commit {
         return Err(format!(
             "release commit moved from {} to {commit}",
-            projection.commit
+            fold.commit
         ));
     }
-    run_git(
-        root,
-        &["update-ref", "HEAD", &projection.commit, &projection.source],
-    )?;
+    run_git(root, &["update-ref", "HEAD", &fold.commit, &fold.source])?;
     run_git(root, &["rev-parse", "--verify", "HEAD^{commit}"])
 }
 
@@ -252,15 +242,15 @@ fn run_git_input_with_identity(
     root: &Path,
     arguments: &[&str],
     input: &[u8],
-    projection: &Projection,
+    fold: &Fold,
 ) -> Result<String, String> {
     let environment = [
         ("GIT_AUTHOR_NAME", ACTOR_NAME),
         ("GIT_AUTHOR_EMAIL", ACTOR_EMAIL),
-        ("GIT_AUTHOR_DATE", projection.timestamp.as_str()),
+        ("GIT_AUTHOR_DATE", fold.timestamp.as_str()),
         ("GIT_COMMITTER_NAME", ACTOR_NAME),
         ("GIT_COMMITTER_EMAIL", ACTOR_EMAIL),
-        ("GIT_COMMITTER_DATE", projection.timestamp.as_str()),
+        ("GIT_COMMITTER_DATE", fold.timestamp.as_str()),
     ];
     let output = git_output(root, arguments, Some(input), Some(&environment))?;
     String::from_utf8(output)
@@ -324,7 +314,7 @@ mod tests {
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
     #[test]
-    fn projection_is_read_only_and_materializes_the_exact_commit() {
+    fn fold_is_read_only_and_materializes_the_exact_commit() {
         let root = std::env::temp_dir().join(format!(
             "spice-release-commit-{}-{}",
             std::process::id(),
@@ -347,7 +337,7 @@ mod tests {
         assert_eq!(
             run_git(&root, &["count-objects", "-v"]).expect("object inventory"),
             objects,
-            "projection wrote Git objects"
+            "fold wrote Git objects"
         );
         assert_eq!(run_git(&root, &["rev-parse", "HEAD"]).unwrap(), source);
         assert_eq!(

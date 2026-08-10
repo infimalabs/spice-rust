@@ -51,8 +51,8 @@ fn refused_as(outcome: &Outcome<CommandAnswer>) -> (String, Option<String>) {
 
 /// Reason and overridden holder recorded by each withdrawal of this task.
 fn delete_facts(bus: &Bus, task: &TaskHandle) -> Vec<(String, Option<String>)> {
-    let incepted = task
-        .incepted()
+    let born = task
+        .born()
         .expect("fixture handle carries an inception stamp");
     bus.fact_snapshot()
         .expect("withdrawal facts read")
@@ -65,7 +65,7 @@ fn delete_facts(bus: &Bus, task: &TaskHandle) -> Vec<(String, Option<String>)> {
                     .body()
                     .get("task")
                     .and_then(serde_json::Value::as_str)
-                    == Some(incepted.as_str())
+                    == Some(born.as_str())
         })
         .map(|fact| {
             (

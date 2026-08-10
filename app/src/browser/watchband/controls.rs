@@ -134,10 +134,10 @@ pub(crate) enum LineageControlAction {
     ToggleImport {
         lineage: CanonicalUuid,
     },
-    CloseTeam {
+    CloseLineage {
         lineage: CanonicalUuid,
     },
-    OpenTeam {
+    OpenLineage {
         lineage: CanonicalUuid,
     },
     SaveSplit {
@@ -176,8 +176,8 @@ impl Reducible for LineageControls {
             LineageControlAction::SetMode { lineage, mode } => next.set_mode(lineage, mode),
             LineageControlAction::ToggleMenu { lineage } => next.toggle_menu(lineage),
             LineageControlAction::ToggleImport { lineage } => next.toggle_import(lineage),
-            LineageControlAction::CloseTeam { lineage } => next.close_team(lineage),
-            LineageControlAction::OpenTeam { lineage } => next.open_team(lineage),
+            LineageControlAction::CloseLineage { lineage } => next.close_lineage(lineage),
+            LineageControlAction::OpenLineage { lineage } => next.open_lineage(lineage),
             LineageControlAction::SaveSplit { lineage, topology } => {
                 next.save_split(lineage, topology);
             }
@@ -253,14 +253,14 @@ impl LineageControls {
         state.import_open = !state.import_open;
     }
 
-    fn close_team(&mut self, lineage: CanonicalUuid) {
+    fn close_lineage(&mut self, lineage: CanonicalUuid) {
         let state = self.lineages.entry(lineage).or_default();
         state.menu_open = false;
         state.import_open = false;
         self.closed.insert(lineage);
     }
 
-    fn open_team(&mut self, lineage: CanonicalUuid) {
+    fn open_lineage(&mut self, lineage: CanonicalUuid) {
         self.closed.remove(&lineage);
     }
 

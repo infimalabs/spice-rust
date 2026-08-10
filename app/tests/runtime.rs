@@ -155,7 +155,7 @@ fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::inten
     } else {
         wire::intent::ProjectVisibility::Public
     };
-    let incepted = fixture_stamp(label);
+    let born = fixture_stamp(label);
     wire::intent::BoardTask {
         visibility,
         origin_thread: "operator".to_owned(),
@@ -163,15 +163,15 @@ fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::inten
         statement: wire::intent::Positioned {
             position: seq(1),
             body: wire::intent::BoardStatement {
-                handle: wire::TaskHandle::for_project(project, &incepted),
-                incepted: incepted.clone(),
+                handle: wire::TaskHandle::for_project(project, &born),
+                born: born.clone(),
                 queue_origin: seq(1),
                 description: None,
                 acceptance: Vec::new(),
                 project: project.to_owned(),
                 tags: Vec::new(),
                 dependencies: Vec::new(),
-                provenance: format!("task:{incepted}").parse().expect("fixture origin"),
+                provenance: format!("task:{born}").parse().expect("fixture origin"),
                 revision: seq(1),
             },
         },

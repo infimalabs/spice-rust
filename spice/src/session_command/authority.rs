@@ -8,26 +8,26 @@ use spice::repository::Repository;
 use wire::{Actor, ResidencyHead};
 
 use super::model::{
-    AuthorityFoldView, AuthorityUnknown, BriefingAuthorities, DecisionPriorityView, HeldClaimView,
-    HeldWorkView, OutstandingAskView,
+    AuthorityFoldView, AuthorityUnknown, DecisionPriorityView, HeldClaimView, HeldWorkView,
+    OutstandingAskView, RecallAuthorities,
 };
 use super::{Environment, source};
 
 pub(crate) fn observe(
     sources: &[source::ResolvedSource],
     environment: &Environment,
-) -> BriefingAuthorities {
-    let mut briefing = empty_briefing_authorities();
+) -> RecallAuthorities {
+    let mut recall = empty_recall_authorities();
 
-    let thread = exact_thread(sources, environment, &mut briefing);
-    briefing.held_work.thread.clone_from(&thread);
+    let thread = exact_thread(sources, environment, &mut recall);
+    recall.held_work.thread.clone_from(&thread);
 
-    observe_current_authorities(thread.as_deref(), &mut briefing);
-    briefing
+    observe_current_authorities(thread.as_deref(), &mut recall);
+    recall
 }
 
-fn empty_briefing_authorities() -> BriefingAuthorities {
-    BriefingAuthorities {
+fn empty_recall_authorities() -> RecallAuthorities {
+    RecallAuthorities {
         fold: AuthorityFoldView {
             mode: "bounded-read-only".to_owned(),
             probes: vec![
@@ -69,51 +69,51 @@ struct ObservedAuthorities {
     peer_claims: Option<Result<usize, AuthorityReadError>>,
 }
 
-fn observe_current_authorities(thread: Option<&str>, briefing: &mut BriefingAuthorities) {
+fn observe_current_authorities(thread: Option<&str>, recall: &mut RecallAuthorities) {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => {
-            unknown(briefing, "repository", "current-directory", &error);
-            unavailable_probes(briefing, "current directory is unavailable");
+            unknown(recall, "repository", "current-directory", &error);
+            unavailable_probes(recall, "current directory is unavailable");
             return;
         }
     };
     let repository = match Repository::discover(&current) {
         Ok(repository) => repository,
         Err(error) => {
-            unknown(briefing, "repository", "discover", &error);
-            unavailable_probes(briefing, "repository discovery failed");
+            unknown(recall, "repository", "discover", &error);
+            unavailable_probes(recall, "repository discovery failed");
             return;
         }
     };
     let state = match repository.admit_state() {
         Ok(state) => state,
         Err(error) => {
-            unknown(briefing, "repository", "admit-state", &error);
-            unavailable_probes(briefing, "repository state is unavailable");
+            unknown(recall, "repository", "admit-state", &error);
+            unavailable_probes(recall, "repository state is unavailable");
             return;
         }
     };
     let projects = match spice::config::load_repository(&repository, &[]) {
         Ok(config) => Some(config.root().tasks().project_policy().clone()),
         Err(error) => {
-            unknown(briefing, "configuration", "load-repository", &error);
+            unknown(recall, "configuration", "load-repository", &error);
             None
         }
     };
     let reader = match JournalReader::open(state.journal()) {
         Ok(reader) => reader,
         Err(error) => {
-            unknown(briefing, "journal", "open-read-only", &error);
-            unavailable_probes(briefing, "read-only journal open failed");
+            unknown(recall, "journal", "open-read-only", &error);
+            unavailable_probes(recall, "read-only journal open failed");
             return;
         }
     };
     match reader.read_with(|read| read_authorities(read, thread, projects.as_ref())) {
-        Ok(observed) => apply_observed(briefing, thread, observed),
+        Ok(observed) => apply_observed(recall, thread, observed),
         Err(error) => {
-            unknown(briefing, "journal", "read-transaction", &error);
-            unavailable_probes(briefing, "journal read transaction failed");
+            unknown(recall, "journal", "read-transaction", &error);
+            unavailable_probes(recall, "journal read transaction failed");
         }
     }
 }
@@ -210,26 +210,26 @@ fn read_authorities(
 }
 
 fn apply_observed(
-    briefing: &mut BriefingAuthorities,
+    recall: &mut RecallAuthorities,
     thread: Option<&str>,
     observed: ObservedAuthorities,
 ) {
     if let Some(error) = observed.residency_error {
-        unknown(briefing, "journal", "residency-head", &error);
+        unknown(recall, "journal", "residency-head", &error);
         unavailable_probe(
-            briefing,
+            recall,
             "steering",
             "pending-thread-lane",
             "the current residency head is unavailable",
         );
         unavailable_probe(
-            briefing,
+            recall,
             "board",
             "exact-actor-claim",
             "the current residency head is unavailable",
         );
         unavailable_probe(
-            briefing,
+            recall,
             "board",
             "active-peer-count",
             "the current residency head is unavailable",
@@ -239,13 +239,13 @@ fn apply_observed(
     let Some(lane) = observed.lane else {
         if let Some(thread) = thread {
             unavailable_probe(
-                briefing,
+                recall,
                 "steering",
                 "thread-lane",
                 &format!("no current lane session matches thread {thread}"),
             );
             unavailable_probe(
-                briefing,
+                recall,
                 "board",
                 "thread-actor",
                 &format!("no current lane session matches thread {thread}"),
@@ -253,12 +253,12 @@ fn apply_observed(
         }
         return;
     };
-    briefing.held_work.lane = Some(lane.lane.to_string());
+    recall.held_work.lane = Some(lane.lane.to_string());
 
     if let Some(ledger) = observed.ledger {
         match ledger {
             Ok(ledger) => {
-                briefing.asks = ledger
+                recall.asks = ledger
                     .pending(lane.lane)
                     .into_iter()
                     .map(|directive| OutstandingAskView {
@@ -280,38 +280,33 @@ fn apply_observed(
                     })
                     .collect();
             }
-            Err(error) => unknown(briefing, "steering", "pending-thread-lane", &error),
+            Err(error) => unknown(recall, "steering", "pending-thread-lane", &error),
         }
     }
 
     if let Some(own_claim) = observed.own_claim {
         match own_claim {
-            Ok(Some(entry)) => briefing.held_work.own_claim = Some(held_claim(&entry)),
+            Ok(Some(entry)) => recall.held_work.own_claim = Some(held_claim(&entry)),
             Ok(None) => {}
-            Err(error) => unknown(briefing, "board", "exact-actor-claim", &error),
+            Err(error) => unknown(recall, "board", "exact-actor-claim", &error),
         }
     }
     if let Some(peer_claims) = observed.peer_claims {
         match peer_claims {
-            Ok(count) => briefing.held_work.peer_claims = Some(count),
-            Err(error) => unknown(briefing, "board", "active-peer-count", &error),
+            Ok(count) => recall.held_work.peer_claims = Some(count),
+            Err(error) => unknown(recall, "board", "active-peer-count", &error),
         }
     }
 }
 
-fn unavailable_probes(briefing: &mut BriefingAuthorities, detail: &str) {
-    unavailable_probe(briefing, "steering", "pending-thread-lane", detail);
-    unavailable_probe(briefing, "board", "exact-actor-claim", detail);
-    unavailable_probe(briefing, "board", "active-peer-count", detail);
+fn unavailable_probes(recall: &mut RecallAuthorities, detail: &str) {
+    unavailable_probe(recall, "steering", "pending-thread-lane", detail);
+    unavailable_probe(recall, "board", "exact-actor-claim", detail);
+    unavailable_probe(recall, "board", "active-peer-count", detail);
 }
 
-fn unavailable_probe(
-    briefing: &mut BriefingAuthorities,
-    authority: &str,
-    probe: &str,
-    detail: &str,
-) {
-    briefing.unknowns.push(AuthorityUnknown {
+fn unavailable_probe(recall: &mut RecallAuthorities, authority: &str, probe: &str, detail: &str) {
+    recall.unknowns.push(AuthorityUnknown {
         authority: authority.to_owned(),
         probe: probe.to_owned(),
         detail: detail.to_owned(),
@@ -345,7 +340,7 @@ fn lane_for_thread<'a>(
 fn exact_thread(
     sources: &[source::ResolvedSource],
     environment: &Environment,
-    briefing: &mut BriefingAuthorities,
+    recall: &mut RecallAuthorities,
 ) -> Option<String> {
     let mut threads = sources
         .iter()
@@ -362,7 +357,7 @@ fn exact_thread(
     match threads.len() {
         1 => threads.into_iter().next(),
         0 => {
-            briefing.unknowns.push(AuthorityUnknown {
+            recall.unknowns.push(AuthorityUnknown {
                 authority: "transcript".to_owned(),
                 probe: "exact-thread".to_owned(),
                 detail: "no ambient or resolved transcript thread identity is available".to_owned(),
@@ -370,7 +365,7 @@ fn exact_thread(
             None
         }
         _ => {
-            briefing.unknowns.push(AuthorityUnknown {
+            recall.unknowns.push(AuthorityUnknown {
                 authority: "transcript".to_owned(),
                 probe: "exact-thread".to_owned(),
                 detail: format!(
@@ -384,12 +379,12 @@ fn exact_thread(
 }
 
 fn unknown(
-    briefing: &mut BriefingAuthorities,
+    recall: &mut RecallAuthorities,
     authority: &str,
     probe: &str,
     error: &(dyn fmt::Display + '_),
 ) {
-    briefing.unknowns.push(AuthorityUnknown {
+    recall.unknowns.push(AuthorityUnknown {
         authority: authority.to_owned(),
         probe: probe.to_owned(),
         detail: error.to_string(),

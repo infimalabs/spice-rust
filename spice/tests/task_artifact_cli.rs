@@ -167,7 +167,7 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
         .body
         .task;
     assert_ne!(rehomed, task);
-    assert_eq!(rehomed.incepted(), task.incepted());
+    assert_eq!(rehomed.born(), task.born());
     let ArtifactAnswer::Listed { artifacts, .. } = fixture
         .reply::<ArtifactAnswer>(&[
             "task".to_owned(),
@@ -431,14 +431,14 @@ fn assert_backup_restore(
     second: artifact::Artifact,
 ) {
     fixture.reply::<JournalBackup>(&["backup".to_owned(), fixture.bundle.display().to_string()]);
-    let incepted = task
-        .incepted()
+    let born = task
+        .born()
         .expect("fixture handle carries its inception stamp");
     assert!(
         fixture
             .bundle
             .join(format!(
-                "artifacts/tasks/{incepted}/objects/{}/payload",
+                "artifacts/tasks/{born}/objects/{}/payload",
                 first.digest
             ))
             .is_file(),

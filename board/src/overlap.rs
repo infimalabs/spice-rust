@@ -36,7 +36,7 @@ pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> 
             let claim = entry
                 .claim()
                 .filter(|claim| claim.disposition == ClaimDisposition::Active)?;
-            if entry.incepted() == selected.incepted() {
+            if entry.born() == selected.born() {
                 return None;
             }
             let entry_acceptance = acceptance_terms(entry);

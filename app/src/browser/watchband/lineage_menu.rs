@@ -48,7 +48,7 @@ pub(super) fn render(
     let member_count = lineage.members.len();
     let close = context.controls.clone();
     let import = context.controls.clone();
-    let split = watchband::split_team(context.topology, identity).map(|rows| topology(&rows));
+    let split = watchband::split_lineage(context.topology, identity).map(|rows| topology(&rows));
     let split_enabled = context.can_arrange && split.is_some();
     let split_controls = context.controls.clone();
     let split_sender = context.sender.clone();
@@ -73,7 +73,7 @@ pub(super) fn render(
                 class="team-action"
                 role="menuitem"
                 onclick={Callback::from(move |_| {
-                    close.dispatch(LineageControlAction::CloseTeam { lineage: identity });
+                    close.dispatch(LineageControlAction::CloseLineage { lineage: identity });
                 })}
             >
                 <span class="team-action-label">{"Close team"}</span>

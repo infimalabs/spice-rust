@@ -509,8 +509,8 @@ pub struct TasteJudged {
     pub bag: Digest,
     /// Exact configured trigger that selected the candidate.
     pub trigger: String,
-    /// Exact configured reminder driver.
-    pub driver: String,
+    /// Exact configured reminder vendor.
+    pub vendor: String,
     /// Exact authored source prose supplied to the judge.
     pub source: String,
     /// Exact transcript locus of the selected trigger.

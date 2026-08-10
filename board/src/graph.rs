@@ -125,7 +125,7 @@ pub fn review_history(
 ) -> Result<Vec<ReviewEdge>, ReviewHistoryError> {
     let handles = entries
         .iter()
-        .map(|entry| (entry.incepted().clone(), entry.handle().clone()))
+        .map(|entry| (entry.born().clone(), entry.handle().clone()))
         .collect::<BTreeMap<_, _>>();
     let mut ordered = facts.iter().collect::<Vec<_>>();
     ordered.sort_by_key(|envelope| envelope.seq);
@@ -220,7 +220,7 @@ pub fn render(view: View, entries: &[Entry], reviews: &[ReviewEdge]) -> Diagram 
     ordered.sort_by(|left, right| left.handle().cmp(right.handle()));
     let handles = entries
         .iter()
-        .map(|entry| (entry.incepted(), entry.handle()))
+        .map(|entry| (entry.born(), entry.handle()))
         .collect::<std::collections::BTreeMap<_, _>>();
 
     let mut text = String::new();

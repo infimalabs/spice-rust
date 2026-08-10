@@ -529,7 +529,7 @@ fn prior_proposals(
         .iter()
         .map(|task| {
             (
-                task.statement.body.incepted.clone(),
+                task.statement.body.born.clone(),
                 (
                     task.statement.body.handle.clone(),
                     task.workflow.body.completion.is_some(),

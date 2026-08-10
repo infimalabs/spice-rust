@@ -209,7 +209,7 @@ pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
 /// is already showing, writing a durable fact that records no change.
 #[must_use]
 pub fn arrangement(
-    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    lineages: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     dragged: CanonicalUuid,
     target: CanonicalUuid,
     drop: LineageDrop,
@@ -217,21 +217,23 @@ pub fn arrangement(
     if dragged == target {
         return None;
     }
-    let mut arranged = teams.to_vec();
-    let dragged_at = arranged.iter().position(|(team, _)| *team == dragged)?;
-    if !arranged.iter().any(|(team, _)| *team == target) {
+    let mut arranged = lineages.to_vec();
+    let dragged_at = arranged
+        .iter()
+        .position(|(lineage, _)| *lineage == dragged)?;
+    if !arranged.iter().any(|(lineage, _)| *lineage == target) {
         return None;
     }
     let (_, moved) = arranged.remove(dragged_at);
     let target_at = arranged
         .iter()
-        .position(|(team, _)| *team == target)
+        .position(|(lineage, _)| *lineage == target)
         .expect("the target survives removing a different team");
     match drop {
         LineageDrop::Reorder => arranged.insert(target_at, (dragged, moved)),
         LineageDrop::Join => arranged[target_at].1.extend(moved),
     }
-    (arranged != teams).then_some(arranged)
+    (arranged != lineages).then_some(arranged)
 }
 
 /// Replace one multi-agent team with one team per agent.
@@ -241,18 +243,22 @@ pub fn arrangement(
 /// Every later agent becomes an individual team under its own stable lane
 /// identity. Teams outside the target keep both their identity and order.
 #[must_use]
-pub fn split_team(
-    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+pub fn split_lineage(
+    lineages: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     target: CanonicalUuid,
 ) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
-    let members = teams.iter().find(|(team, _)| *team == target)?.1.as_slice();
+    let members = lineages
+        .iter()
+        .find(|(lineage, _)| *lineage == target)?
+        .1
+        .as_slice();
     if members.len() < 2 {
         return None;
     }
-    let mut split = Vec::with_capacity(teams.len() + members.len() - 1);
-    for (team, lanes) in teams {
-        if *team != target {
-            split.push((*team, lanes.clone()));
+    let mut split = Vec::with_capacity(lineages.len() + members.len() - 1);
+    for (lineage, lanes) in lineages {
+        if *lineage != target {
+            split.push((*lineage, lanes.clone()));
             continue;
         }
         split.extend(

@@ -48,7 +48,7 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
         .expect("read migrated statement head");
     assert_eq!(stamp, STAMP);
     let head: TaskHead = wire::decode(&head).expect("migrated task head is current wire");
-    assert_eq!(head.incepted.as_str(), STAMP);
+    assert_eq!(head.born.as_str(), STAMP);
     assert_eq!(head.provenance.as_str(), format!("task:{STAMP}"));
     let head_json = serde_json::to_value(&head).expect("task head JSON");
     assert!(
@@ -90,7 +90,7 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
     assert_review_receipt(&journal.connection);
     assert_board_receipt(&journal.connection);
     assert_effort_receipt(&journal.connection);
-    admit_empty_steering_projection(&mut journal);
+    admit_empty_steering_fold(&mut journal);
     journal
         .verify()
         .expect("migrated identity authority verifies");
@@ -162,7 +162,7 @@ fn schema_five_review_without_followups_migrates_as_the_canonical_empty_list() {
             .as_bytes(),
         request
     );
-    admit_empty_steering_projection(&mut journal);
+    admit_empty_steering_fold(&mut journal);
     journal
         .verify()
         .expect("empty-review identity migration verifies");
@@ -555,9 +555,7 @@ fn insert_legacy_board_receipt(connection: &Connection) {
     let statement = response["outcome"]["body"]["tasks"][0]["statement"]["body"]
         .as_object_mut()
         .expect("board statement");
-    statement
-        .remove("incepted")
-        .expect("current statement stamp");
+    statement.remove("born").expect("current statement stamp");
     statement.insert(
         "uuid".to_owned(),
         Value::String("018f82d4-6f59-7d06-92e3-bce913116301".to_owned()),
@@ -720,7 +718,7 @@ fn assert_board_receipt(connection: &Connection) {
         panic!("board receipt must remain a reply");
     };
     let statement = &reply.body.tasks[0].statement.body;
-    assert_eq!(statement.incepted.as_str(), STAMP);
+    assert_eq!(statement.born.as_str(), STAMP);
     assert_eq!(statement.handle.as_str(), HANDLE);
     assert_eq!(statement.provenance.as_str(), format!("task:{STAMP}"));
 }

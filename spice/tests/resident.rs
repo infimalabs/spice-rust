@@ -900,7 +900,7 @@ fn seed_active_claim(fixture: &Fixture) {
     let task_for_head = task.clone();
     let origin_for_head = origin.clone();
     add.task_head(added, move |seq| TaskHead {
-        incepted: task_for_head,
+        born: task_for_head,
         queue_origin: seq,
         title: "Preserve an active claim".to_owned(),
         description: None,

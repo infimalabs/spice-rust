@@ -36,7 +36,7 @@ pub(super) fn next_action(
     let entries = snapshot
         .entries
         .iter()
-        .filter(|entry| entry.incepted() != post.incepted())
+        .filter(|entry| entry.born() != post.born())
         .cloned()
         .chain(std::iter::once(post.clone()))
         .collect::<Vec<_>>();

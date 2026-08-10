@@ -194,7 +194,7 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         );
     }
 
-    admit_empty_steering_projection(&mut journal);
+    admit_empty_steering_fold(&mut journal);
     let verified = journal.verify().expect("the migrated authority verifies");
     assert_eq!(verified.facts, 2);
 }

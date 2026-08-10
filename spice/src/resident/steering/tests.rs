@@ -131,13 +131,13 @@ fn startup_replay_repairs_cursor_current_predicate_corruption() {
         journal
             .steering_index_current()
             .expect("cursor-current corruption reads"),
-        "cursor equality alone must not admit the projection"
+        "cursor equality alone must not admit the fold"
     );
     journal
         .verify()
         .expect_err("verification detects predicate corruption");
 
-    admit_index(&mut journal).expect("one canonical startup replay repairs projection");
+    admit_index(&mut journal).expect("one canonical startup replay repairs fold");
     journal.verify().expect("repaired authority verifies");
     let pending = journal
         .read(|read| read.pending_steering(None))
@@ -151,12 +151,12 @@ fn startup_replay_repairs_cursor_current_predicate_corruption() {
             .facts()
             .len(),
         facts,
-        "projection repair must not append immutable history"
+        "fold repair must not append immutable history"
     );
 }
 
 #[test]
-fn contradictory_startup_replay_refuses_without_projection_mutation() {
+fn contradictory_startup_replay_refuses_without_fold_mutation() {
     let scratch = Scratch::new();
     let path = scratch.path().join("contradictory.sqlite3");
     let mut journal = journal::Journal::open(&path).expect("steering authority opens");
@@ -184,7 +184,7 @@ fn contradictory_startup_replay_refuses_without_projection_mutation() {
             [serde_json::to_vec(&document).expect("encode contradictory envelope")],
         )
         .expect("store contradictory steering history");
-    let before = stored_projection(&connection);
+    let before = stored_fold(&connection);
     drop(connection);
 
     let mut journal = journal::Journal::open(&path).expect("contradictory authority reopens");
@@ -193,9 +193,9 @@ fn contradictory_startup_replay_refuses_without_projection_mutation() {
 
     let connection = rusqlite::Connection::open(&path).expect("refused authority reopens");
     assert_eq!(
-        stored_projection(&connection),
+        stored_fold(&connection),
         before,
-        "replay must refuse before mutating any projection row"
+        "replay must refuse before mutating any fold row"
     );
 }
 
@@ -204,7 +204,7 @@ fn send_write(directive: &str, key: &str) -> JournalWrite {
         directive: uuid(directive),
         key: key.to_owned(),
         lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
-        text: "repair the startup projection".to_owned(),
+        text: "repair the startup fold".to_owned(),
         control: None,
         attachments: Vec::new(),
         expires: "2030-04-12T19:44:09.271Z".parse().expect("expiry"),
@@ -232,7 +232,7 @@ fn send_write(directive: &str, key: &str) -> JournalWrite {
     write
 }
 
-fn stored_projection(connection: &rusqlite::Connection) -> StoredProjection {
+fn stored_fold(connection: &rusqlite::Connection) -> StoredFold {
     let cursor = connection
         .query_row("SELECT indexed_seq FROM steering_index", [], |row| {
             row.get::<_, Option<i64>>(0)
@@ -243,7 +243,7 @@ fn stored_projection(connection: &rusqlite::Connection) -> StoredProjection {
             "SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
              head_seq, body FROM steering_heads ORDER BY directive",
         )
-        .expect("prepare steering projection read");
+        .expect("prepare steering fold read");
     let heads = statement
         .query_map([], |row| {
             Ok(StoredHead {
@@ -257,14 +257,14 @@ fn stored_projection(connection: &rusqlite::Connection) -> StoredProjection {
                 body: row.get(7)?,
             })
         })
-        .expect("read steering projection")
+        .expect("read steering fold")
         .collect::<Result<Vec<_>, _>>()
-        .expect("decode steering projection");
-    StoredProjection { cursor, heads }
+        .expect("decode steering fold");
+    StoredFold { cursor, heads }
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct StoredProjection {
+struct StoredFold {
     cursor: Option<i64>,
     heads: Vec<StoredHead>,
 }

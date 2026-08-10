@@ -470,7 +470,7 @@ fn rust_resident_carries_a_held_claim_to_the_successor_without_python() {
         ),
         (
             task.task
-                .incepted()
+                .born()
                 .expect("claimed handle carries its inception stamp"),
             seated.lane,
             successor,
@@ -536,7 +536,7 @@ fn rust_resident_claims_one_of_two_settled_ready_tasks_without_python() {
         [first_task.task, second_task.task].iter().any(|task| {
             won[0].fact.body()["task"]
                 == serde_json::json!(
-                    task.incepted()
+                    task.born()
                         .expect("created handle carries its inception stamp")
                 )
         }),
@@ -616,7 +616,7 @@ fn available_work_startup_failure_frees_only_its_automatic_claim() {
         [first_task.task, second_task.task].iter().any(|task| {
             won[0].fact.body()["task"]
                 == serde_json::json!(
-                    task.incepted()
+                    task.born()
                         .expect("created handle carries its inception stamp")
                 )
         }),

@@ -24,7 +24,7 @@ pub(super) struct ValidatedSnapshot {
 
 struct PreparedTask {
     task: TaskHandle,
-    incepted: wire::TaskStamp,
+    born: wire::TaskStamp,
     project: String,
     flow: Vec<wire::Phase>,
     phase: wire::Phase,
@@ -177,7 +177,7 @@ where
     extra_guard(&mut write);
     let added = match write.fact(
         body::TaskAdded {
-            task: prepared.incepted.clone(),
+            task: prepared.born.clone(),
             title: add.title.clone(),
             description: add.description.clone(),
             acceptance: add.acceptance.clone(),
@@ -199,8 +199,8 @@ where
         revision: position,
         ..statement
     });
-    write.workflow_head(prepared.incepted.clone(), added, move |_| prepared.workflow);
-    if let Err(outcome) = add_oops_note(&mut write, project, add, &prepared.incepted, added) {
+    write.workflow_head(prepared.born.clone(), added, move |_| prepared.workflow);
+    if let Err(outcome) = add_oops_note(&mut write, project, add, &prepared.born, added) {
         return outcome;
     }
     let answer = wire::intent::TaskAnswer {
@@ -240,8 +240,8 @@ fn prepare_task(
             "task add requires exactly one intended absent inception stamp",
         ));
     };
-    let incepted = task.clone();
-    if origin == task_origin(&incepted)? {
+    let born = task.clone();
+    if origin == task_origin(&born)? {
         return Err(refusal(
             "task::origin-self",
             Some(origin.to_string()),
@@ -249,12 +249,12 @@ fn prepare_task(
         ));
     }
     let project_text = project.as_str().to_owned();
-    let task = TaskHandle::for_project(&project_text, &incepted);
+    let task = TaskHandle::for_project(&project_text, &born);
     let flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
     let phase = flow[0].clone();
     let at = current_instant()?;
     let statement = TaskHead {
-        incepted: incepted.clone(),
+        born: born.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: add.title.clone(),
         description: add.description.clone(),
@@ -264,7 +264,7 @@ fn prepare_task(
         dependencies: add
             .depends
             .iter()
-            .map(TaskHandle::incepted)
+            .map(TaskHandle::born)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| {
                 refusal(
@@ -294,7 +294,7 @@ fn prepare_task(
     }
     Ok(PreparedTask {
         task,
-        incepted,
+        born,
         project: project_text,
         flow,
         phase,
@@ -354,7 +354,7 @@ pub(super) fn task_note(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(entry.incepted()) {
+    let origin = match task_origin(entry.born()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -362,7 +362,7 @@ pub(super) fn task_note(
     guard(&mut write, command.expected().to_vec());
     if let Err(error) = write.fact(
         body::TaskNoted {
-            task: entry.incepted().clone(),
+            task: entry.born().clone(),
             note: note.note.clone(),
         },
         FactCause::Root,
@@ -456,7 +456,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(entry.incepted()) {
+    let origin = match task_origin(entry.born()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -465,7 +465,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
     let fact = if let Some(until) = deferral {
         write.fact(
             body::TaskDeferred {
-                task: entry.incepted().clone(),
+                task: entry.born().clone(),
                 until,
             },
             FactCause::Root,
@@ -473,7 +473,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
     } else {
         write.fact(
             body::TaskWoken {
-                task: entry.incepted().clone(),
+                task: entry.born().clone(),
             },
             FactCause::Root,
         )
@@ -484,7 +484,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
     };
     let mut workflow = entry.workflow().clone();
     workflow.deferral = deferral;
-    write.workflow_head(entry.incepted().clone(), fact, move |_| workflow);
+    write.workflow_head(entry.born().clone(), fact, move |_| workflow);
     let status = if deferral.is_some() {
         "deferred"
     } else {
@@ -579,7 +579,7 @@ pub(super) fn task_delete(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(entry.incepted()) {
+    let origin = match task_origin(entry.born()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -587,7 +587,7 @@ pub(super) fn task_delete(
     guard(&mut write, command.expected().to_vec());
     let deleted = match write.fact(
         body::TaskDeleted {
-            task: entry.incepted().clone(),
+            task: entry.born().clone(),
             reason: delete.reason.clone(),
             claimed: claimed.clone(),
         },
@@ -600,11 +600,11 @@ pub(super) fn task_delete(
     workflow.status = "deleted".to_owned();
     workflow.completion = Some(at);
     workflow.assignment = None;
-    write.workflow_head(entry.incepted().clone(), deleted, move |_| workflow);
+    write.workflow_head(entry.born().clone(), deleted, move |_| workflow);
     if claimed.is_some() {
         let mut claim = entry.claim().expect("a held claim was just read").clone();
         claim.disposition = ClaimDisposition::Freed;
-        write.claim_head(entry.incepted().clone(), deleted, move |fact| ClaimHead {
+        write.claim_head(entry.born().clone(), deleted, move |fact| ClaimHead {
             fact,
             ..claim
         });
@@ -670,8 +670,8 @@ pub(super) fn task_depends(
                 "read board and name an existing prerequisite",
             );
         };
-        if prerequisite.incepted() == entry.incepted()
-            || statement.dependencies.contains(prerequisite.incepted())
+        if prerequisite.born() == entry.born()
+            || statement.dependencies.contains(prerequisite.born())
         {
             return refusal(
                 "task::dependency-refused",
@@ -679,7 +679,7 @@ pub(super) fn task_depends(
                 "name a distinct dependency edge that is not already present",
             );
         }
-        statement.dependencies.push(prerequisite.incepted().clone());
+        statement.dependencies.push(prerequisite.born().clone());
     }
     let post = match Entry::new(
         statement.clone(),
@@ -702,7 +702,7 @@ pub(super) fn task_depends(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(entry.incepted()) {
+    let origin = match task_origin(entry.born()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -713,7 +713,7 @@ pub(super) fn task_depends(
         .saturating_add(1);
     let edited = match write.fact(
         body::TaskEdited {
-            task: entry.incepted().clone(),
+            task: entry.born().clone(),
             revision,
         },
         FactCause::Root,
@@ -902,7 +902,7 @@ fn publish_correction(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&statement.incepted) {
+    let origin = match task_origin(&statement.born) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
@@ -910,7 +910,7 @@ fn publish_correction(
     guard(&mut write, command.expected().to_vec());
     let edited = match write.fact(
         body::TaskEdited {
-            task: statement.incepted.clone(),
+            task: statement.born.clone(),
             revision,
         },
         FactCause::Root,
@@ -918,7 +918,7 @@ fn publish_correction(
         Ok(fact) => fact,
         Err(error) => return store_fault("task::edit-build", &error.to_string()),
     };
-    let rendered = TaskHandle::for_project(&statement.project, &statement.incepted);
+    let rendered = TaskHandle::for_project(&statement.project, &statement.born);
     write.task_head(edited, move |position| TaskHead {
         revision: position,
         ..statement
