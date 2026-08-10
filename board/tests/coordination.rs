@@ -279,6 +279,92 @@ fn statement_views_preserve_project_family_handle_and_dependency_heads() {
 }
 
 #[test]
+fn board_graph_views_render_independent_relations_in_stable_order() {
+    let reviewer = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e411"));
+    let mut alpha_head = statement("BOARD-a1");
+    alpha_head.provenance = "task:BOARD-root".parse().expect("fixture origin");
+    alpha_head.dependencies.push(stamp("BOARD-b2"));
+    let mut alpha_workflow = workflow("review");
+    alpha_workflow.review = "assigned".to_owned();
+    alpha_workflow.assignment = Some(reviewer.clone());
+    let alpha = admitted(
+        alpha_head,
+        alpha_workflow,
+        Some(claim(ClaimDisposition::Active)),
+        Some(lease()),
+    )
+    .expect("valid reviewed and claimed entry");
+    let beta = entry("BOARD-b2");
+    let entries = vec![beta.clone(), alpha.clone()];
+    let stable_entries = vec![alpha.clone(), beta.clone()];
+
+    for view in View::ALL {
+        assert_eq!(
+            graph::render(view, &entries).text(),
+            graph::render(view, &stable_entries).text(),
+            "{} graph depends on input order",
+            view.as_str()
+        );
+    }
+    assert_eq!(
+        View::ALL.map(View::as_str),
+        ["origin", "dependencies", "review", "workflow", "claims"]
+    );
+
+    let origin = graph::render(View::Origin, &entries).text().to_owned();
+    assert!(origin.contains(&format!("task:BOARD-root -> {}", alpha.handle())));
+    assert!(origin.contains(&format!(
+        "{} -> {}",
+        beta.statement().provenance,
+        beta.handle()
+    )));
+    assert!(!origin.contains("[assigned]"));
+
+    let dependencies = graph::render(View::Dependencies, &entries)
+        .text()
+        .to_owned();
+    assert_eq!(
+        dependencies,
+        format!(
+            "graph dependencies\n{} -> {}\n",
+            alpha.handle(),
+            beta.handle()
+        )
+    );
+
+    let review = graph::render(View::Review, &entries).text().to_owned();
+    assert_eq!(
+        review,
+        format!(
+            "graph review\n{} -> {} [assigned]\n",
+            reviewer,
+            alpha.handle()
+        )
+    );
+    assert!(!review.contains("active"));
+
+    let workflow = graph::render(View::Workflow, &entries).text().to_owned();
+    assert!(workflow.contains(&format!("{}: review [pending]\n", alpha.handle())));
+    assert!(workflow.contains(&format!("{}: todo [pending]\n", beta.handle())));
+    assert!(!workflow.contains(&reviewer.to_string()));
+
+    let claims = graph::render(View::Claims, &entries).text().to_owned();
+    assert!(claims.contains(&format!("{}: {} [active]\n", alpha.handle(), Actor::Spice)));
+    assert!(!claims.contains("assigned"));
+
+    let handout = handout::compose(&entries);
+    let sections = [
+        "## origin",
+        "## dependencies",
+        "## review",
+        "## workflow",
+        "## claims",
+    ];
+    let positions = sections.map(|section| handout.find(section).expect("section is present"));
+    assert!(positions.windows(2).all(|window| window[0] < window[1]));
+}
+
+#[test]
 fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_law() {
     let projects = board::ProjectPolicy::new(
         ["board".to_owned()],

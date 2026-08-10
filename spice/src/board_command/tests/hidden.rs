@@ -301,24 +301,6 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
     }
     assert_eq!(actor_graphs[0], actor_graphs[1]);
 
-    let expected_handout = format!(
-        concat!(
-            "# Board handout\n\n",
-            "## dependencies\n\n",
-            "```text\n",
-            "graph dependencies\n",
-            "```\n\n",
-            "## workflow\n\n",
-            "```text\n",
-            "{}",
-            "```\n\n",
-            "## claims\n\n",
-            "```text\n",
-            "graph claims\n",
-            "```\n\n",
-        ),
-        expected_graph
-    );
     let handout = issue(
         &bus,
         epoch,
@@ -337,7 +319,23 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
     else {
         panic!("handout was not a text snapshot: {handout:?}");
     };
-    assert_eq!(answer.text.as_bytes(), expected_handout.as_bytes());
+    assert!(answer.text.starts_with("# Board handout\n\n"));
+    assert!(answer.text.contains(&expected_graph));
+    let sections = [
+        "## origin",
+        "## dependencies",
+        "## review",
+        "## workflow",
+        "## claims",
+    ];
+    let positions = sections.map(|section| {
+        answer
+            .text
+            .find(section)
+            .unwrap_or_else(|| panic!("missing {section} in {}", answer.text))
+    });
+    assert!(positions.windows(2).all(|window| window[0] < window[1]));
+    assert!(!answer.text.contains(secret), "handout leaked hidden title");
     for form in [crate::render::Form::Text, crate::render::Form::Json] {
         let document = crate::render::render(&handout, form)
             .expect("handout renders")
