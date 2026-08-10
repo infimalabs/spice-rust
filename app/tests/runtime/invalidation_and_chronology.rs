@@ -410,7 +410,9 @@ fn one_lineage_groups_multiple_steerable_worktrees_without_losing_member_order()
 
     runtime.apply_lanes(&admitted);
 
-    let lanes = &runtime.lanes().expect("the roster is retained").lanes;
+    let lane_view = runtime.lanes().expect("the roster is retained");
+    assert_eq!(lane_view.topology_revision, 9);
+    let lanes = &lane_view.lanes;
     assert_eq!(lanes.len(), 2);
     assert_eq!(lanes[0].lane, uuid(EPOCH));
     assert_eq!(lanes[0].members.len(), 2);
@@ -519,6 +521,7 @@ fn a_seating_receipt_names_the_lane_and_the_dispositions_it_moved_between() {
             position: ReplyPosition::Snapshot(seq(17)),
             body: wire::intent::LaneChangeAnswer {
                 lane: uuid(LANE),
+                topology_revision: 10,
                 from: "absent".to_owned(),
                 to: "occupied".to_owned(),
                 git: Some("current".into()),

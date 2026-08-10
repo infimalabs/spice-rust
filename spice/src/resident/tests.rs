@@ -1003,6 +1003,10 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
     seed_lane_in_lineage(&bus, epoch, second_lane, lineage, second_occupant);
 
     let request = wire::intent::LineageConfigure {
+        topology_revision: current_residency(&bus, epoch)
+            .expect("fixture residency reads")
+            .body()
+            .topology_revision,
         lineage_id: lineage,
         member: None,
         life: wire::intent::LineageLife::Drain,
@@ -1085,7 +1089,14 @@ fn arrange_lane_for_test(
     lane: CanonicalUuid,
     before: CanonicalUuid,
 ) -> wire::intent::LaneAnswer {
-    let request = wire::intent::LaneArrange { lane, before };
+    let request = wire::intent::LaneArrange {
+        topology_revision: current_residency(bus, epoch)
+            .expect("fixture residency reads")
+            .body()
+            .topology_revision,
+        lane,
+        before,
+    };
     let command = Command {
         v: wire::WireVersion::CURRENT,
         id,

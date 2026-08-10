@@ -218,6 +218,7 @@ fn board_response(
             body: wire::ResidencyHead {
                 epoch: uuid(EPOCH),
                 state: wire::ResidentState::Seated,
+                topology_revision: 0,
                 lanes: Vec::new(),
                 subscriptions: Vec::new(),
             },
@@ -297,6 +298,7 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
             body: wire::intent::LaneAnswer {
                 epoch: uuid(EPOCH),
                 state: wire::ResidentState::Seated,
+                topology_revision: 9,
                 lanes,
                 subscriptions,
             },

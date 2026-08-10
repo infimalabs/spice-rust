@@ -33,6 +33,7 @@ fn head(rows: &[(u8, u8)]) -> wire::ResidencyHead {
     wire::ResidencyHead {
         epoch: uuid(99),
         state: wire::ResidentState::Seated,
+        topology_revision: 0,
         lanes,
         subscriptions: lineages
             .into_iter()

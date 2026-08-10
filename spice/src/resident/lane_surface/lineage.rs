@@ -44,6 +44,11 @@ pub(in crate::resident) fn configure(
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let topology_revision = match next_topology_revision(observed.body(), request.topology_revision)
+    {
+        Ok(revision) => revision,
+        Err(outcome) => return outcome,
+    };
     let previous = match previous_subscription(observed.body(), request) {
         Ok(previous) => previous,
         Err(outcome) => return outcome,
@@ -54,6 +59,7 @@ pub(in crate::resident) fn configure(
         Err(outcome) => return outcome,
     };
     let mut next = observed.body().clone();
+    next.topology_revision = topology_revision;
     let membership = match request.member {
         Some(member) => match move_member(&mut next, member, request.lineage_id) {
             Ok(change) => Some(change),
@@ -486,11 +492,17 @@ pub(in crate::resident) fn arrange(
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let topology_revision = match next_topology_revision(observed.body(), request.topology_revision)
+    {
+        Ok(revision) => revision,
+        Err(outcome) => return outcome,
+    };
     if let Err(outcome) = admit_arrangement(observed.body(), request) {
         return outcome;
     }
     let from = standings(&observed.body().lanes);
     let mut next = observed.body().clone();
+    next.topology_revision = topology_revision;
     let mut arranged = Vec::with_capacity(next.lanes.len());
     for lineage in &request.lineages {
         for lane in &lineage.lanes {

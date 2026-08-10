@@ -112,7 +112,12 @@ fn add(
         },
         None => lane,
     };
+    let topology_revision = match observe_topology(canvas) {
+        Ok(revision) => revision,
+        Err(outcome) => return outcome,
+    };
     let body = LaneSeat {
+        topology_revision,
         lane,
         lineage_id,
         name: matches
@@ -125,6 +130,22 @@ fn add(
         resume: matches.get_one::<String>("resume").cloned(),
     };
     command_client::execute(canvas, contract, SelectedCommand::LaneSeat { body: &body })
+}
+
+fn observe_topology(canvas: &Path) -> Result<u64, Outcome<CommandAnswer>> {
+    let contract = crate::cli::contract(&["lane"])
+        .expect("the generated CLI registry carries the lane-read contract");
+    match command_client::execute(canvas, contract, SelectedCommand::LaneRead) {
+        Outcome::Reply(reply) => match reply.body {
+            CommandAnswer::Lane(answer) => Ok(answer.topology_revision),
+            _ => Err(protocol_fault(
+                "lane::answer-invalid",
+                "resident lane read returned a non-lane answer",
+            )),
+        },
+        Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
+        Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

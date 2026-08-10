@@ -25,6 +25,7 @@ use yew::prelude::*;
 
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
+use crate::runtime::topology_mutation_requires_refresh;
 use crate::speech_queue::{
     Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
     SpeechRequest,
@@ -349,16 +350,19 @@ enum ClientAction {
     DrainSubmissions,
     Refresh,
     Seat {
+        topology_revision: u64,
         name: Option<String>,
         worktree: String,
         life: String,
         vendor: wire::Name,
     },
     ArrangeLane {
+        topology_revision: u64,
         lane: CanonicalUuid,
         before: CanonicalUuid,
     },
     ConfigureLineage {
+        topology_revision: u64,
         lineage: CanonicalUuid,
         member: Option<CanonicalUuid>,
         life: LineageLife,
@@ -369,6 +373,7 @@ enum ClientAction {
     /// admits: a drop states an arrangement, not a move, so the surface that
     /// drew the teams is the one that says where they all now stand.
     ArrangeLineages {
+        topology_revision: u64,
         lineages: Vec<LineageArrangement>,
     },
     Note {
@@ -410,6 +415,8 @@ enum PendingKind {
     Policy,
     Effort,
     LaneSeat,
+    /// One member arrangement whose stale refusal must refresh the roster.
+    LaneArrange,
     WakeSubmission {
         lane: CanonicalUuid,
         submission: CanonicalUuid,
@@ -418,8 +425,9 @@ enum PendingKind {
     /// A team arrangement in flight.
     ///
     /// No lineage travels with it: an arrangement names every team, so there is
-    /// no one team a refusal belongs to. The answer replaces the whole lane
-    /// table, which is exactly what a refused arrangement leaves unchanged.
+    /// no one team a refusal belongs to. A successful answer replaces the
+    /// whole lane table; a refusal re-reads it so a losing client redraws the
+    /// winning topology and revision.
     LineageArrange,
     /// Direction in flight, carrying the lane it was aimed at.
     ///
@@ -475,7 +483,7 @@ fn canvas_app() -> Html {
     };
     let narration_cursors = use_mut_ref(load_narration_cursors);
     let narrate = narration_callback(narration_cursors, speak.clone());
-    let agents = use_agent_controls(sender.clone(), speak.clone(), narrate);
+    let agents = use_agent_controls(sender.clone(), surface.clone(), speak.clone(), narrate);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     use_surface_connection(
         sender.clone(),
@@ -660,6 +668,7 @@ fn use_unsafe_intent_guard(unsafe_intent: bool) {
 #[hook]
 fn use_agent_controls(
     sender: SenderHandle,
+    surface: UseStateHandle<SurfaceData>,
     speak: Callback<SpeechRequest>,
     narrate: Callback<NarrationBatch>,
 ) -> view::AgentControls {
@@ -671,6 +680,7 @@ fn use_agent_controls(
     view::AgentControls {
         submit_seat: seat_submit(
             sender,
+            surface,
             seat_name.clone(),
             seat_worktree.clone(),
             seat_vendor.clone(),
@@ -689,6 +699,7 @@ fn use_agent_controls(
 
 fn seat_submit(
     sender: SenderHandle,
+    surface: UseStateHandle<SurfaceData>,
     name: UseStateHandle<String>,
     worktree: UseStateHandle<String>,
     vendor: UseStateHandle<String>,
@@ -697,12 +708,21 @@ fn seat_submit(
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
+        let Some(topology_revision) = surface
+            .as_ref()
+            .as_ref()
+            .and_then(|runtime| runtime.lanes())
+            .map(|lanes| lanes.topology_revision)
+        else {
+            return;
+        };
         match compose::seat(&name, &worktree, &vendor, &life) {
             Ok(seat) => {
                 notice.set(Notice::none());
                 send_action(
                     &sender,
                     ClientAction::Seat {
+                        topology_revision,
                         name: seat.name,
                         worktree: seat.worktree,
                         life: seat.life,
@@ -784,29 +804,27 @@ fn apply_lineage_configuration(
 ) -> Result<bool, String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
         admit_response(session, bytes)?;
-    let refresh = match &admitted.get().outcome {
+    let refresh = topology_mutation_requires_refresh(&admitted.get().outcome);
+    match &admitted.get().outcome {
         wire::Outcome::Reply(reply) => {
             lineage_controls.dispatch(LineageControlAction::SyncLanes {
                 answer: reply.body.clone(),
                 settle: true,
             });
-            false
         }
         wire::Outcome::Refusal(refusal) => {
             lineage_controls.dispatch(LineageControlAction::SettleIssue {
                 lineage,
                 issue: format!("{}: {}", refusal.reason(), refusal.explanation()),
             });
-            true
         }
         wire::Outcome::Fault(fault) => {
             lineage_controls.dispatch(LineageControlAction::SettleIssue {
                 lineage,
                 issue: format!("{}: {}", fault.reason, fault.detail),
             });
-            true
         }
-    };
+    }
     runtime.apply_lanes(&admitted);
     Ok(refresh)
 }

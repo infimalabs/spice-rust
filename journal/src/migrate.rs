@@ -10,6 +10,7 @@ mod release_notes;
 mod residency_lineage;
 mod steering_identity;
 mod task_allocation;
+mod topology_revision;
 
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
@@ -457,6 +458,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (2, MigrationStep::Rust(residency_lineage::migrate)),
     (3, MigrationStep::Rust(migrate_schema_3)),
     (4, MigrationStep::Rust(release_notes::migrate)),
+    (5, MigrationStep::Rust(topology_revision::migrate)),
 ];
 
 /// Schema 1 to 2: the table transcript accounting reads its heads from.
@@ -592,7 +594,7 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 5, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 6, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 "#;
