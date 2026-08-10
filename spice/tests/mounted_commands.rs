@@ -112,15 +112,10 @@ fn malformed_mount_configuration_refuses_loudly() {
         ),
     ] {
         let repository = Repository::new(configuration);
-        let output = repository.invoke(&["doctor"]);
-        let stderr = String::from_utf8(output.stderr).expect("refusal emits UTF-8");
-
-        assert_eq!(output.status.code(), Some(2), "{configuration:?}");
-        assert!(output.stdout.is_empty(), "{configuration:?}");
-        assert!(
-            stderr.contains(expected),
-            "{configuration:?} refused as {stderr}"
-        );
+        for owner in ["config", "doctor"] {
+            let output = repository.invoke(&["--json", owner]);
+            assert_mount_refusal(&output, &[expected]);
+        }
     }
 }
 
@@ -132,14 +127,28 @@ fn local_configuration_cannot_introduce_an_executable_mount() {
         .expect("create local configuration parent");
     fs::write(&local, "[commands]\nlocal = ['unused']\n").expect("write local executable intent");
 
-    let output = repository.invoke(&["doctor"]);
-    let stderr = String::from_utf8(output.stderr).expect("refusal emits UTF-8");
+    for owner in ["config", "doctor"] {
+        let output = repository.invoke(&["--json", owner]);
+        assert_mount_refusal(
+            &output,
+            &["commands.local", "commands.<name> is tracked policy"],
+        );
+    }
+}
 
+fn assert_mount_refusal(output: &Output, expected: &[&str]) {
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
-    assert!(stderr.contains("commands.local"), "refusal was {stderr}");
-    assert!(
-        stderr.contains("commands.<name> is tracked policy"),
-        "refusal was {stderr}"
-    );
+    let outcome: wire::Outcome<serde_json::Value> =
+        wire::decode(&output.stderr).expect("mount refusal is typed JSON");
+    let wire::Outcome::Refusal(refusal) = outcome else {
+        panic!("mount loading must refuse: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "cli::mount-registry-refused");
+    for text in expected {
+        assert!(
+            refusal.explanation().contains(text),
+            "refusal was {refusal:?}"
+        );
+    }
 }
