@@ -234,7 +234,7 @@ fn direct<B>(body: B) -> Outcome<B> {
     })
 }
 
-fn focused_report_evidence(
+pub(crate) fn focused_report_evidence(
     report: &gate::FocusedArmReport,
 ) -> Result<(Digest, String), Outcome<CommandAnswer>> {
     let bytes = report.encode().map_err(|error| {
