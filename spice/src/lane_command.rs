@@ -112,7 +112,12 @@ fn add(
         },
         None => lane,
     };
+    let topology_revision = match observe_topology(canvas) {
+        Ok(revision) => revision,
+        Err(outcome) => return outcome,
+    };
     let body = LaneSeat {
+        topology_revision,
         lane,
         lineage_id,
         name: matches
@@ -125,6 +130,22 @@ fn add(
         resume: matches.get_one::<String>("resume").cloned(),
     };
     command_client::execute(canvas, contract, SelectedCommand::LaneSeat { body: &body })
+}
+
+fn observe_topology(canvas: &Path) -> Result<u64, Outcome<CommandAnswer>> {
+    let contract = crate::cli::contract(&["lane"])
+        .expect("the generated CLI registry carries the lane-read contract");
+    match command_client::execute(canvas, contract, SelectedCommand::LaneRead) {
+        Outcome::Reply(reply) => match reply.body {
+            CommandAnswer::Lane(answer) => Ok(answer.topology_revision),
+            _ => Err(protocol_fault(
+                "lane::answer-invalid",
+                "resident lane read returned a non-lane answer",
+            )),
+        },
+        Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
+        Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,15 +182,12 @@ fn resolve_vendor(
 }
 
 fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: "lane::configuration-refused".to_owned(),
-        witness: Some("effective-configuration".to_owned()),
-        expected: Some(
-            "tracked and local inputs admitted by the configuration registry".to_owned(),
-        ),
-        observed: Some(error.diagnostic()),
-        remedy: "correct the named configuration inputs before seating the lane".to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        "lane::configuration-refused".to_owned(),
+        Some("effective-configuration".to_owned()),
+        Some("tracked and local inputs admitted by the configuration registry".to_owned()),
+        Some(error.diagnostic()),
+    )))
 }
 
 fn state(
@@ -275,15 +293,17 @@ fn refusal(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,
-    remedy: &str,
+    detail: &str,
 ) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("worktree".to_owned()),
-        expected,
-        observed,
-        remedy: remedy.to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some("worktree".to_owned()),
+            expected,
+            observed,
+        )
+        .with_detail(detail),
+    ))
 }
 
 fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {

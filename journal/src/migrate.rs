@@ -11,6 +11,7 @@ mod release_notes;
 mod residency_lineage;
 mod steering_identity;
 mod task_allocation;
+mod topology_revision;
 
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
@@ -453,12 +454,17 @@ fn migrate_schema_3(connection: &Connection) -> Result<(), OpenError> {
     task_allocation::migrate(connection)
 }
 
+fn migrate_schema_5(connection: &Connection) -> Result<(), OpenError> {
+    identity_stamp::migrate(connection)?;
+    topology_revision::migrate(connection)
+}
+
 const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (1, MigrationStep::Sql(MIGRATE_1_TO_2_SQL)),
     (2, MigrationStep::Rust(residency_lineage::migrate)),
     (3, MigrationStep::Rust(migrate_schema_3)),
     (4, MigrationStep::Rust(release_notes::migrate)),
-    (5, MigrationStep::Rust(identity_stamp::migrate)),
+    (5, MigrationStep::Rust(migrate_schema_5)),
 ];
 
 /// Schema 1 to 2: the table transcript accounting reads its heads from.

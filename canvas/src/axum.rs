@@ -159,15 +159,12 @@ impl Capabilities {
             .get(&hello.capability)
             .map(|binding| (binding.actor.clone(), binding.retired.clone()))
             .ok_or_else(|| {
-                OpeningError::Refused(wire::Refusal {
-                    reason: "hello::capability-unknown".to_owned(),
-                    witness: None,
-                    expected: None,
-                    observed: None,
-                    remedy:
-                        "read the current owner-only canvas discovery file and open a new session"
-                            .to_owned(),
-                })
+                OpeningError::Refused(wire::Refusal::bare(wire::RefusalDiagnostic::new(
+                    "hello::capability-unknown",
+                    None,
+                    None,
+                    None,
+                )))
             })?;
         Ok(CapabilityAdmission {
             accepted: wire::Accepted {
@@ -246,7 +243,7 @@ impl fmt::Display for OpeningError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Refused(refusal) => {
-                write!(formatter, "socket opening refused: {}", refusal.reason)
+                write!(formatter, "socket opening refused: {}", refusal.reason())
             }
             Self::Fault(fault) => write!(formatter, "socket opening faulted: {}", fault.reason),
         }

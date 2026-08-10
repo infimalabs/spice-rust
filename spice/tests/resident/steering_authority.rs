@@ -50,8 +50,8 @@ fn a_lane_cannot_recover_operator_direction() {
     assert_eq!((response.id, response.epoch), (request, discovery.epoch));
     assert!(matches!(
         response.outcome,
-        Outcome::Refusal(wire::Refusal { ref reason, .. })
-            if reason == "command::authority"
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "command::authority"
     ));
 
     let down = invoke(&fixture, "down");

@@ -647,26 +647,18 @@ async fn a_held_recall_does_not_block_a_probe_or_sibling_recall_on_one_socket() 
     ));
 
     let second_sent = second
-        .respond(wire::Outcome::Refusal(wire::Refusal {
-            reason: "fixture::lane-b".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "release lane A after observing lane B".to_owned(),
-        }))
+        .respond(wire::Outcome::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new("fixture::lane-b".to_owned(), None, None, None),
+        )))
         .expect("sibling response receiver remains open");
     let answered_b = response(&mut socket).await;
     assert_eq!(answered_b.id, recall_b);
     second_sent.wait().await;
 
     let first_sent = first
-        .respond(wire::Outcome::Refusal(wire::Refusal {
-            reason: "fixture::lane-a".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "finish the held fixture response".to_owned(),
-        }))
+        .respond(wire::Outcome::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new("fixture::lane-a".to_owned(), None, None, None),
+        )))
         .expect("held response receiver remains open");
     let answered_a = response(&mut socket).await;
     assert_eq!(answered_a.id, recall_a);
@@ -1030,13 +1022,9 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         commit_stream(&bus, &format!("queued {index}"), false);
     }
     request
-        .respond(wire::Outcome::Refusal(wire::Refusal {
-            reason: "fixture::released".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "continue the fixture".to_owned(),
-        }))
+        .respond(wire::Outcome::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new("fixture::released".to_owned(), None, None, None),
+        )))
         .expect("response returns");
     let _ = response(&mut socket).await;
     let overflow = stream_frame(&mut socket).await;

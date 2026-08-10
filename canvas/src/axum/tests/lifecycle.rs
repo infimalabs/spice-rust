@@ -117,13 +117,14 @@ async fn exact_capability_retirement_cancels_a_held_command_only_socket() {
         .expect("Control remains open");
     assert_eq!(sibling.command().id(), sibling_id);
     let sibling_sent = sibling
-        .respond(wire::Outcome::Refusal(wire::Refusal {
-            reason: "fixture::unrelated-capability-survived".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "retire the authenticating capability to close this session".to_owned(),
-        }))
+        .respond(wire::Outcome::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "fixture::unrelated-capability-survived".to_owned(),
+                None,
+                None,
+                None,
+            ),
+        )))
         .expect("sibling response receiver remains open");
     assert_eq!(response(&mut socket).await.id, sibling_id);
     sibling_sent.wait().await;
@@ -141,13 +142,9 @@ async fn exact_capability_retirement_cancels_a_held_command_only_socket() {
     ));
     assert_socket_terminated(&mut socket).await;
     assert!(
-        held.respond(wire::Outcome::Refusal(wire::Refusal {
-            reason: "fixture::too-late".to_owned(),
-            witness: None,
-            expected: None,
-            observed: None,
-            remedy: "open a session with a current capability".to_owned(),
-        }))
+        held.respond(wire::Outcome::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new("fixture::too-late".to_owned(), None, None, None)
+        )))
         .is_err(),
         "session retirement drops every unresolved response receiver"
     );
@@ -342,8 +339,8 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     );
     assert!(matches!(
         lane_response.outcome,
-        wire::Outcome::Refusal(wire::Refusal { ref reason, .. })
-            if reason == "command::authority"
+        wire::Outcome::Refusal(ref refusal)
+            if refusal.reason() == "command::authority"
     ));
     assert!(control.receiver.try_recv().is_err());
 
@@ -412,7 +409,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     .await;
     let removed_refusal: wire::Refusal =
         wire::decode(&next_frame(&mut removed).await).expect("removed capability refusal");
-    assert_eq!(removed_refusal.reason, "hello::capability-unknown");
+    assert_eq!(removed_refusal.reason(), "hello::capability-unknown");
 
     let (mut current, accepted) = authenticate(address, operator(), replacement_epoch).await;
     assert_eq!(accepted.actor, wire::Actor::Lane(lane));
@@ -494,8 +491,8 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
     assert_eq!((refused.id, refused.epoch), (refused_id, epoch()));
     assert!(matches!(
         refused.outcome,
-        wire::Outcome::Refusal(wire::Refusal { ref reason, .. })
-            if reason == "resident::not-admitting"
+        wire::Outcome::Refusal(ref refusal)
+            if refusal.reason() == "resident::not-admitting"
     ));
 
     let request = control.recv().await.expect("Dark request");
@@ -658,13 +655,12 @@ async fn answer_commands(control: &mut Control) {
 }
 
 fn transition_refusal() -> wire::Outcome<wire::intent::CommandAnswer> {
-    wire::Outcome::Refusal(wire::Refusal {
-        reason: "resident::transition-moved".to_owned(),
-        witness: Some("transition".to_owned()),
-        expected: Some("seated->dark".to_owned()),
-        observed: Some("quiescing->dark".to_owned()),
-        remedy: "refresh the transition".to_owned(),
-    })
+    wire::Outcome::Refusal(wire::Refusal::bare(wire::RefusalDiagnostic::new(
+        "resident::transition-moved".to_owned(),
+        Some("transition".to_owned()),
+        Some("seated->dark".to_owned()),
+        Some("quiescing->dark".to_owned()),
+    )))
 }
 
 fn state_reply(to: wire::ResidentState) -> wire::Outcome<wire::intent::CommandAnswer> {
@@ -718,8 +714,8 @@ fn unknown_capability_refuses_without_echoing_the_credential() {
 
     assert!(matches!(
         refusal,
-        OpeningError::Refused(wire::Refusal { ref reason, .. })
-            if reason == "hello::capability-unknown"
+        OpeningError::Refused(ref refusal)
+            if refusal.reason() == "hello::capability-unknown"
     ));
     assert!(!format!("{refusal:?}").contains(&unknown.to_string()));
 }

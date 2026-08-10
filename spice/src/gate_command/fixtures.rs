@@ -130,7 +130,12 @@ fn bounded_parser_failure_crosses_the_ordinary_production_mapper() {
 
     let outcome = run_report(Err(error));
     let refusal = expect_refusal(&outcome, "gate::run-refused");
-    assert_eq!(refusal.observed.as_deref(), Some(observed.as_str()));
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        Some(observed.as_str())
+    );
     assert!(observed.contains("rust.lines"));
     assert!(observed.contains("TimedOut"));
     assert_rim_semantics(&outcome, "gate::run-refused");
@@ -162,12 +167,11 @@ fn confirmed_mutation_results_cross_the_production_mapper() {
     assert_eq!(survived_report.proposed_floor(), None);
     let rendered = survived_report.render();
     let refusal = kill_report(survived_report);
-    assert_eq!(
-        expect_refusal(&refusal, "gate::kill-regressed")
-            .observed
-            .as_deref(),
-        Some(rendered.as_str())
-    );
+    let refusal = expect_refusal(&refusal, "gate::kill-regressed");
+    let wire::Refusal::Evidence { evidence, .. } = refusal else {
+        panic!("kill regression must carry evidence: {refusal:?}")
+    };
+    assert_eq!(evidence, &rendered);
     survived.assert_unchanged();
 }
 
@@ -197,12 +201,11 @@ fn flaky_and_timed_out_mutants_retain_ordered_unconfirmed_evidence() {
 
     let rendered = report.render();
     let refusal = kill_report(report);
-    assert_eq!(
-        expect_refusal(&refusal, "gate::kill-unconfirmed")
-            .observed
-            .as_deref(),
-        Some(rendered.as_str())
-    );
+    let refusal = expect_refusal(&refusal, "gate::kill-unconfirmed");
+    let wire::Refusal::Evidence { evidence, .. } = refusal else {
+        panic!("unconfirmed kill must carry evidence: {refusal:?}")
+    };
+    assert_eq!(evidence, &rendered);
     fixture.assert_unchanged();
 }
 
@@ -245,7 +248,7 @@ fn expect_refusal<'a, B>(outcome: &'a Outcome<B>, reason: &str) -> &'a wire::Ref
     let Outcome::Refusal(refusal) = outcome else {
         panic!("expected {reason} refusal")
     };
-    assert_eq!(refusal.reason, reason);
+    assert_eq!(refusal.reason(), reason);
     refusal
 }
 

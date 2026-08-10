@@ -530,6 +530,12 @@ pub struct ResidencyHead {
     pub epoch: CanonicalUuid,
     /// Durable resident life.
     pub state: ResidentState,
+    /// Monotonic authority for Canvas team membership, order, and policy.
+    ///
+    /// Zero is the legacy and freshly seated baseline. Every transaction that
+    /// changes topology advances this value exactly once, while lifecycle-only
+    /// residency writes preserve it.
+    pub topology_revision: u64,
     /// Current lanes, occupants, lineage, capabilities, and dispositions.
     pub lanes: Vec<LaneResidency>,
     /// One durable task-subscription policy per Canvas lineage.

@@ -658,13 +658,12 @@ fn send_capability_echo<S: Read + Write>(
 ) {
     send_server(
         socket,
-        &wire::Refusal {
-            reason: "hello::fixture".to_owned(),
-            witness: None,
-            expected: None,
-            observed: Some(capability.to_string()),
-            remedy: "read current discovery".to_owned(),
-        },
+        &wire::Refusal::bare(wire::RefusalDiagnostic::new(
+            "hello::fixture".to_owned(),
+            None,
+            None,
+            Some(capability.to_string()),
+        )),
     );
 }
 
@@ -838,8 +837,8 @@ fn assert_lane_session(
     assert_eq!((response.id, response.epoch), (request_id, discovery.epoch));
     assert!(matches!(
         response.outcome,
-        Outcome::Refusal(wire::Refusal { ref reason, .. })
-            if reason == "command::authority"
+        Outcome::Refusal(ref refusal)
+            if refusal.reason() == "command::authority"
     ));
 }
 

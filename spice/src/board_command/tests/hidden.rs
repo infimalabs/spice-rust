@@ -377,7 +377,7 @@ fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
     );
     assert!(matches!(
         refused,
-        Outcome::Refusal(Refusal { ref reason, .. }) if reason == "task::origin-required"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "task::origin-required"
     ));
     assert_eq!(facts_len(&bus, "facts after ungrounded oops"), before);
 
@@ -442,9 +442,9 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
         );
         assert!(matches!(
             outcome,
-            Outcome::Refusal(Refusal { ref reason, ref observed, .. })
-                if reason == "task::project-system-reserved"
-                    && observed.as_deref().is_some_and(|detail| {
+            Outcome::Refusal(ref refusal)
+                if refusal.reason() == "task::project-system-reserved"
+                    && refusal.diagnostic().and_then(wire::RefusalDiagnostic::observed).is_some_and(|detail| {
                         detail.contains("reserved for system task creation")
                     })
         ));
@@ -576,7 +576,7 @@ pub(super) fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha
     );
     assert!(matches!(
         stale,
-        Outcome::Refusal(Refusal { ref reason, .. }) if reason == "board::witness-moved"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"
     ));
     let deferred = board(bus, epoch, Actor::Operator);
     assert_eq!(at(&deferred, alpha).workflow.body.deferral, Some(until));

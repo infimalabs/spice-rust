@@ -364,15 +364,17 @@ impl Failure {
         reason: impl Into<String>,
         expected: impl Into<String>,
         observed: impl Into<String>,
-        remedy: impl Into<String>,
+        detail: impl Into<String>,
     ) -> Self {
-        Self::Refusal(Refusal {
-            reason: reason.into(),
-            witness: Some("task-artifact".to_owned()),
-            expected: Some(expected.into()),
-            observed: Some(observed.into()),
-            remedy: remedy.into(),
-        })
+        Self::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                reason.into(),
+                Some("task-artifact".to_owned()),
+                Some(expected.into()),
+                Some(observed.into()),
+            )
+            .with_detail(detail),
+        ))
     }
 
     fn fault(class: FaultClass, reason: impl Into<String>, detail: impl Into<String>) -> Self {

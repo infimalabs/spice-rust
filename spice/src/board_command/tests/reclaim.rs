@@ -43,7 +43,7 @@ pub(super) fn renew_and_assert(
                 lease_seconds: 30 * 60,
             },
         ),
-        Outcome::Refusal(Refusal { ref reason, .. }) if reason == "board::witness-moved"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"
     ));
     assert!(
         bus.fact_snapshot()

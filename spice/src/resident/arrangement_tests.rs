@@ -15,6 +15,8 @@ use super::*;
 // module otherwise never touches.
 #[path = "arrangement/boundary.rs"]
 mod boundary;
+#[path = "arrangement/concurrency.rs"]
+mod concurrency;
 
 /// Supervised lanes standing in two teams, the shape an arrangement starts from.
 struct Arranged {
@@ -74,7 +76,19 @@ impl Arranged {
         id: u8,
         lineages: Vec<wire::intent::LineageArrangement>,
     ) -> Outcome<CommandAnswer> {
-        let request = wire::intent::LineageArrange { lineages };
+        self.arrange_at(id, self.head().topology_revision, lineages)
+    }
+
+    fn arrange_at(
+        &self,
+        id: u8,
+        topology_revision: u64,
+        lineages: Vec<wire::intent::LineageArrangement>,
+    ) -> Outcome<CommandAnswer> {
+        let request = wire::intent::LineageArrange {
+            topology_revision,
+            lineages,
+        };
         let command = arrange_command(self.epoch, test_uuid(id), &request);
         lane_surface::arrange_lineages(&self.bus, self.epoch, &self.seats, &command, &request)
     }
@@ -85,14 +99,7 @@ impl Arranged {
         id: u8,
         lineages: Vec<wire::intent::LineageArrangement>,
     ) -> Box<wire::intent::LaneAnswer> {
-        let Outcome::Reply(reply) = self.arrange(id, lineages) else {
-            panic!("lineage arrangement replies");
-        };
-        assert!(matches!(reply.position, ReplyPosition::Committed(_)));
-        let CommandAnswer::Lane(answer) = reply.body else {
-            panic!("lineage arrangement returns the authoritative lane table");
-        };
-        answer
+        committed_lane_answer(self.arrange(id, lineages))
     }
 
     /// The standing the resident would restart from.
@@ -132,6 +139,17 @@ impl Arranged {
         self.bus.shutdown().expect("fixture bus stops");
         fs::remove_dir_all(self.root).expect("fixture cleanup");
     }
+}
+
+fn committed_lane_answer(outcome: Outcome<CommandAnswer>) -> Box<wire::intent::LaneAnswer> {
+    let Outcome::Reply(reply) = outcome else {
+        panic!("topology mutation replies: {outcome:?}");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
+    let CommandAnswer::Lane(answer) = reply.body else {
+        panic!("topology mutation returns the authoritative lane table");
+    };
+    answer
 }
 
 /// One arranged lineage, stated as the operator's canvas states it.
@@ -375,8 +393,13 @@ fn an_arrangement_that_is_not_a_faithful_restatement_of_the_lane_table_is_refuse
         let Outcome::Refusal(refusal) = outcome else {
             panic!("{reason} must refuse rather than commit: {outcome:?}");
         };
-        assert_eq!(refusal.reason, reason);
-        assert_eq!(refusal.witness.as_deref(), Some("lane"));
+        assert_eq!(refusal.reason(), reason);
+        assert_eq!(
+            refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::witness),
+            Some("lane")
+        );
         assert_eq!(
             fixture.durable_membership(),
             seated,

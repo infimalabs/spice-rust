@@ -76,6 +76,7 @@ pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, Canonical
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
+        topology_revision: 0,
         lanes,
         subscriptions,
     });

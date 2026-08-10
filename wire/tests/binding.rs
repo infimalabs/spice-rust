@@ -166,6 +166,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::LaneSeat,
         r#"{
+  "topology_revision": 9,
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "worktree": "worktrees/h",
@@ -184,6 +185,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::LaneArrange,
         r#"{
+  "topology_revision": 9,
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "before": "018f82d4-6f59-7d06-92e3-bce9131163c3"
 }"#,
@@ -191,6 +193,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::LineageConfigure,
         r#"{
+  "topology_revision": 9,
   "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "life": "drain"
 }"#,
@@ -198,6 +201,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::LineageArrange,
         r#"{
+  "topology_revision": 9,
   "lineages": [
     {
       "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -371,6 +375,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "body": {
       "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
       "state": "seated",
+      "topology_revision": 0,
       "lanes": [{
         "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
         "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -597,6 +602,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "state": "seated",
+  "topology_revision": 9,
   "subscriptions": [{
     "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
     "policy": "drive"
@@ -633,6 +639,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         AnswerShape::LaneChange,
         r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "topology_revision": 10,
   "from": "occupied",
   "to": "vacant"
 }"#,
@@ -649,6 +656,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
   "residency": {
     "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
     "state": "seated",
+    "topology_revision": 9,
     "lanes": [{
       "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
       "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",

@@ -68,13 +68,21 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             depends: Vec::new(),
         },
     );
-    assert!(matches!(
-        refused,
-        Outcome::Refusal(Refusal { ref reason, ref remedy, .. })
-            if reason == "task::origin-required"
-                && remedy.contains("--origin ack:<steering-key>")
-                && remedy.contains("task:<parent-inception-stamp>")
-    ));
+    let Outcome::Refusal(ref refusal) = refused else {
+        panic!("ungrounded task creation must refuse: {refused:?}")
+    };
+    assert_eq!(refusal.reason(), "task::origin-required");
+    assert!(refusal.diagnostic().is_some());
+    assert!(
+        refusal
+            .explanation()
+            .contains("--origin ack:<steering-key>")
+    );
+    assert!(
+        refusal
+            .explanation()
+            .contains("task:<parent-inception-stamp>")
+    );
     assert!(
         board(bus, epoch, Actor::Operator)
             .tasks
@@ -104,12 +112,16 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
         },
     );
     let self_origin_text = self_origin.to_string();
-    assert!(matches!(
-        refused,
-        Outcome::Refusal(Refusal { ref reason, ref observed, .. })
-            if reason == "task::origin-self"
-                && observed.as_deref() == Some(self_origin_text.as_str())
-    ));
+    let Outcome::Refusal(ref refusal) = refused else {
+        panic!("self-originating task creation must refuse: {refused:?}")
+    };
+    assert_eq!(refusal.reason(), "task::origin-self");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        Some(self_origin_text.as_str())
+    );
     assert!(
         board(bus, epoch, Actor::Operator)
             .tasks

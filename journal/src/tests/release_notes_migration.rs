@@ -72,7 +72,7 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
     );
     drop(reader);
 
-    let reopened = Journal::open(&path).expect("current authority reopens");
+    let reopened = Journal::open(&path).expect("migrated authority reopens");
     assert_eq!(
         reopened.migration(),
         None,

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Actor, AnyFact, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name, Origin,
-    Packed, Refusal, Seq, TrustHead, WireVersion,
+    Packed, Refusal, RefusalDiagnostic, Seq, TrustHead, WireVersion,
 };
 
 /// Stable source position of one decoded event in a lane transcript tape.
@@ -207,13 +207,14 @@ impl StreamRequest {
             Self::Ping { v, epoch, .. } => (*v, *epoch, None),
         };
         if !wire.is_current() {
-            return Err(StreamAdmissionError::Wire(Refusal {
-                reason: "stream::wire-mismatch".to_owned(),
-                witness: None,
-                expected: Some(WireVersion::CURRENT.to_string()),
-                observed: Some(wire.to_string()),
-                remedy: "reconnect with the canvas embedded by this resident".to_owned(),
-            }));
+            return Err(StreamAdmissionError::Wire(Refusal::bare(
+                RefusalDiagnostic::new(
+                    "stream::wire-mismatch",
+                    None,
+                    Some(WireVersion::CURRENT.to_string()),
+                    Some(wire.to_string()),
+                ),
+            )));
         }
         if epoch != resident_epoch {
             return Err(StreamAdmissionError::Epoch(stale_epoch(

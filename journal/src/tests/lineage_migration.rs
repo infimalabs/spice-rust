@@ -51,7 +51,13 @@ fn current_rows_cross_schema_two_without_an_alternate_rewrite() {
 
     let journal = Journal::open(&path).expect("the current authority migrates");
 
-    assert_eq!(lineage_payloads(&journal.connection), before);
+    let mut after = lineage_payloads(&journal.connection);
+    after[2]
+        .as_object_mut()
+        .expect("lane seat request body")
+        .remove("topology_revision")
+        .expect("schema-six request carries topology revision");
+    assert_eq!(after, before);
     assert_all_carriers(&journal.connection, LINEAGE);
 }
 
@@ -327,7 +333,7 @@ fn carrier_bytes(connection: &Connection) -> Vec<Vec<u8>> {
             .query_row(sql, [], |row| row.get(0))
             .expect("read lineage carrier")
     })
-    .collect()
+        .collect()
 }
 
 fn lineage_payloads(connection: &Connection) -> Vec<Value> {

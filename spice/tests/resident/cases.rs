@@ -339,9 +339,11 @@ fn resident_lock_precedes_journal_open_and_names_the_holder() {
     let Outcome::Refusal(refusal) = outcome(&output) else {
         panic!("a contended lock must refuse");
     };
-    assert_eq!(refusal.reason, "resident::already-up");
+    assert_eq!(refusal.reason(), "resident::already-up");
     assert_eq!(
-        refusal.observed.as_deref(),
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
         Some("pid=4242;epoch=fixture-epoch")
     );
 }
@@ -773,11 +775,11 @@ fn unfinalized_rust_schema_refuses_startup_with_its_exact_state() {
     let Outcome::Refusal(refusal) = outcome(&output) else {
         panic!("an unfinalized Rust journal must refuse");
     };
-    assert_eq!(refusal.reason, "journal::schema-refused");
+    assert_eq!(refusal.reason(), "journal::schema-refused");
     assert!(
         refusal
-            .observed
-            .as_deref()
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
             .is_some_and(|observed| observed.contains("prepared and unfinalized")),
         "refusal omitted the exact schema state: {refusal:?}",
     );
@@ -816,7 +818,7 @@ fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
         let Outcome::Refusal(refusal) = outcome(&output) else {
             panic!("{linked} startup did not return a typed refusal");
         };
-        assert_eq!(refusal.reason, "resident::configuration-refused");
+        assert_eq!(refusal.reason(), "resident::configuration-refused");
         assert_eq!(
             fs::read(fixture.journal()).expect("journal bytes after refusal"),
             before,
@@ -1005,7 +1007,7 @@ fn assert_noncurrent_trust_refusals(fixture: &Fixture, stale: &str) {
         let Outcome::Refusal(refusal) = value_outcome(&refused) else {
             panic!("{label} digest must return a typed refusal");
         };
-        assert_eq!(refusal.reason, "trust::digest-not-current");
+        assert_eq!(refusal.reason(), "trust::digest-not-current");
         assert_eq!(journal_cursor(fixture), before, "{label} changed authority");
     }
 }
@@ -1036,7 +1038,7 @@ fn grant_and_revoke_changed_trust(fixture: &Fixture, digest: &str) {
     let Outcome::Refusal(refusal) = value_outcome(&duplicate) else {
         panic!("duplicate revoke must return one typed refusal");
     };
-    assert_eq!(refusal.reason, "trust::standing-moved");
+    assert_eq!(refusal.reason(), "trust::standing-moved");
     assert_eq!(journal_cursor(fixture), before);
 }
 
@@ -1053,7 +1055,10 @@ fn authenticated_down_rejects_a_stale_epoch_then_reaches_verified_dark() {
     let Outcome::Refusal(refusal) = outcome(&contender) else {
         panic!("second resident must refuse");
     };
-    let observed = refusal.observed.expect("holder identity");
+    let observed = refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::observed)
+        .expect("holder identity");
     assert!(
         observed.contains("pid="),
         "holder names its process: {observed}"
@@ -1223,7 +1228,7 @@ fn replaced_resident_generations_install_durable_lane_capabilities() {
     );
     let (_, frame) = hello(&replacement_discovery, initial_discovery.capability);
     let refusal: wire::Refusal = wire::decode(&frame).expect("replaced capability refuses");
-    assert_eq!(refusal.reason, "hello::capability-unknown");
+    assert_eq!(refusal.reason(), "hello::capability-unknown");
     let (_operator, accepted) =
         authenticate(&replacement_discovery, replacement_discovery.capability);
     assert_eq!(accepted.actor, Actor::Operator);
@@ -1249,7 +1254,7 @@ fn replaced_resident_generations_install_durable_lane_capabilities() {
     let reconnected_discovery = fixture.discovery();
     let (_, frame) = hello(&reconnected_discovery, replacement_discovery.capability);
     let refusal: wire::Refusal = wire::decode(&frame).expect("prior capability refuses");
-    assert_eq!(refusal.reason, "hello::capability-unknown");
+    assert_eq!(refusal.reason(), "hello::capability-unknown");
     assert_lane_session(
         &reconnected_discovery,
         lane,

@@ -454,7 +454,7 @@ fn refusal(spoken: Spoken, reason: &str) {
     let Outcome::Refusal(refusal) = outcome else {
         panic!("config request must refuse: {outcome:?}");
     };
-    assert_eq!(refusal.reason, reason);
+    assert_eq!(refusal.reason(), reason);
 }
 
 fn fault(spoken: Spoken, reason: &str) {

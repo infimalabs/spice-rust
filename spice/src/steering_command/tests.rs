@@ -126,7 +126,7 @@ fn hook_refuses_outside_an_activated_lane_shell() {
     let Err(Outcome::Refusal(refusal)) = select(&leaf, contract, None, None) else {
         panic!("hook without SPICE_LANE refuses");
     };
-    assert_eq!(refusal.reason, "steer::lane-context-absent");
+    assert_eq!(refusal.reason(), "steer::lane-context-absent");
 }
 
 #[test]

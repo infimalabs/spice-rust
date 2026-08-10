@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -174,8 +174,13 @@ fn malformed_locus_is_a_typed_refusal_without_selector_fallthrough() {
     let Outcome::Refusal(refusal) = decoded else {
         panic!("malformed selector must refuse: {decoded:?}");
     };
-    assert_eq!(refusal.reason, "retro::selector");
-    assert_eq!(refusal.observed.as_deref(), Some("one:two:three"));
+    assert_eq!(refusal.reason(), "retro::selector");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        Some("one:two:three")
+    );
 }
 
 #[test]
@@ -374,17 +379,24 @@ fn version_refuses_unfinalized_and_incompatible_schema_without_mutation() {
         let Outcome::Refusal(refusal) = decoded else {
             panic!("{name} schema refuses: {decoded:?}");
         };
-        assert_eq!(refusal.reason, "journal::schema-refused", "{name}");
+        assert_eq!(refusal.reason(), "journal::schema-refused", "{name}");
         assert!(
             refusal
-                .observed
-                .as_deref()
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
                 .is_some_and(|observed| observed.contains(expected)),
             "{name} did not preserve the schema error: {refusal:?}",
         );
         assert_eq!(
             utf8(text.err),
-            format!("spice: {}; {}\n", refusal.reason, refusal.remedy),
+            format!(
+                "spice: {}; {}\n",
+                refusal.reason(),
+                refusal
+                    .diagnostic()
+                    .and_then(wire::RefusalDiagnostic::detail)
+                    .expect("schema refusal carries detail")
+            ),
             "{name}",
         );
         assert_eq!(directory_state(repository.path()), before, "{name}");
@@ -537,6 +549,10 @@ fn run_preserves_the_childs_argument_vector() {
 
 #[test]
 #[cfg(unix)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the integration fixture acquires ambient PATH at its process boundary"
+)]
 fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -706,6 +722,138 @@ fn run_waits_through_exec_and_closes_capture_while_an_unredirected_descendant_li
             .success()
     );
     scratch.remove();
+}
+
+const RELAY_PAYLOAD_BYTES: usize = 512 * 1024;
+
+#[test]
+#[cfg(unix)]
+fn run_drains_complete_foreground_output_under_backpressure() {
+    let scratch = Scratch::new("run-relay-backpressure");
+    let descendant = scratch.path().join("descendant-pid");
+    let helper = std::env::current_exe().expect("locate CLI test executable");
+    let mut wrapper = Command::new(env!("CARGO_BIN_EXE_spice"));
+    wrapper
+        .args(["run", "--"])
+        .arg(helper)
+        .args([
+            "--exact",
+            "relay_backpressure_child_fixture",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env_remove(steer::hook::INBOX)
+        .current_dir(scratch.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let started = Instant::now();
+    let mut wrapper = wrapper.spawn().expect("relayed wrapper launches");
+    let stdout = slow_capture(
+        wrapper
+            .stdout
+            .take()
+            .expect("relayed wrapper stdout is captured"),
+    );
+    let stderr = slow_capture(
+        wrapper
+            .stderr
+            .take()
+            .expect("relayed wrapper stderr is captured"),
+    );
+    let status = wrapper.wait().expect("relayed wrapper exits");
+    let elapsed = started.elapsed();
+    let stdout = stdout.join().expect("slow stdout reader joins");
+    let stderr = stderr.join().expect("slow stderr reader joins");
+
+    assert!(status.success(), "relayed wrapper failed with {status}");
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "wrapper waited {elapsed:?} for its ten-second descendant"
+    );
+    assert_eq!(
+        stdout.iter().filter(|byte| **byte == 0).count(),
+        RELAY_PAYLOAD_BYTES,
+        "foreground stdout was truncated behind the throttled capture"
+    );
+    assert_eq!(
+        stderr.iter().filter(|byte| **byte == u8::MAX).count(),
+        RELAY_PAYLOAD_BYTES,
+        "foreground stderr was truncated behind the throttled capture"
+    );
+
+    let pid = fs::read_to_string(&descendant).expect("descendant pid was published");
+    let pid = pid.trim();
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-0", pid])
+            .status()
+            .expect("descendant liveness probe runs")
+            .success(),
+        "descendant ended before the wrapper returned"
+    );
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-TERM", pid])
+            .status()
+            .expect("descendant termination runs")
+            .success(),
+        "descendant could not be terminated"
+    );
+    scratch.remove();
+}
+
+#[cfg(unix)]
+fn slow_capture(mut stream: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut captured = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let read = stream.read(&mut buffer).expect("capture remains readable");
+            if read == 0 {
+                return captured;
+            }
+            captured.extend_from_slice(&buffer[..read]);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    })
+}
+
+#[test]
+#[ignore = "launched as the direct child of the relay backpressure test"]
+#[cfg(unix)]
+fn relay_backpressure_child_fixture() {
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    socket2::SockRef::from(&stdout)
+        .set_send_buffer_size(1024 * 1024)
+        .expect("stdout socket buffer grows");
+    socket2::SockRef::from(&stderr)
+        .set_send_buffer_size(1024 * 1024)
+        .expect("stderr socket buffer grows");
+    let descendant = Command::new("/bin/sleep")
+        .arg("10")
+        .spawn()
+        .expect("background descendant launches");
+    let pid_path = std::env::current_dir()
+        .expect("helper working directory resolves")
+        .join("descendant-pid");
+    fs::write(pid_path, descendant.id().to_string()).expect("descendant pid publishes");
+    drop(descendant);
+
+    let stdout = std::thread::spawn(|| {
+        std::io::stdout()
+            .lock()
+            .write_all(&vec![0; RELAY_PAYLOAD_BYTES])
+            .expect("foreground stdout writes")
+    });
+    let stderr = std::thread::spawn(|| {
+        std::io::stderr()
+            .lock()
+            .write_all(&vec![u8::MAX; RELAY_PAYLOAD_BYTES])
+            .expect("foreground stderr writes")
+    });
+    stdout.join().expect("foreground stdout writer joins");
+    stderr.join().expect("foreground stderr writer joins");
 }
 
 #[test]

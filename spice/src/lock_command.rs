@@ -287,15 +287,17 @@ impl Failure {
         reason: &'static str,
         expected: impl Into<String>,
         observed: impl Into<String>,
-        remedy: impl Into<String>,
+        detail: impl Into<String>,
     ) -> Self {
-        Self::Refusal(Refusal {
-            reason: reason.to_owned(),
-            witness: None,
-            expected: Some(expected.into()),
-            observed: Some(observed.into()),
-            remedy: remedy.into(),
-        })
+        Self::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                reason.to_owned(),
+                None,
+                Some(expected.into()),
+                Some(observed.into()),
+            )
+            .with_detail(detail),
+        ))
     }
 
     fn fault(class: FaultClass, reason: &'static str, detail: impl Into<String>) -> Self {

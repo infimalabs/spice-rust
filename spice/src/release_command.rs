@@ -156,23 +156,25 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
     let applied = match apply.parse::<Digest>() {
         Ok(applied) => applied,
         Err(error) => {
-            return RunResult::Published(Outcome::Refusal(Refusal {
-                reason: "release::apply-digest-refused".to_owned(),
-                witness: Some("publication-plan".to_owned()),
-                expected: Some(prepared.release.key().to_string()),
-                observed: Some(error.to_string()),
-                remedy: "preview the current release and apply its exact key".to_owned(),
-            }));
+            return RunResult::Published(Outcome::Refusal(Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "release::apply-digest-refused".to_owned(),
+                    Some("publication-plan".to_owned()),
+                    Some(prepared.release.key().to_string()),
+                    Some(error.to_string()),
+                ),
+            )));
         }
     };
     if applied != *prepared.release.key() {
-        return RunResult::Published(Outcome::Refusal(Refusal {
-            reason: "release::plan-moved".to_owned(),
-            witness: Some("publication-plan".to_owned()),
-            expected: Some(prepared.release.key().to_string()),
-            observed: Some(applied.to_string()),
-            remedy: "preview the current sealed manifest and apply its new key".to_owned(),
-        }));
+        return RunResult::Published(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "release::plan-moved".to_owned(),
+                Some("publication-plan".to_owned()),
+                Some(prepared.release.key().to_string()),
+                Some(applied.to_string()),
+            ),
+        )));
     }
     if let Err(outcome) = crate::release_execution::execute(
         &prepared.worktree,
@@ -760,14 +762,12 @@ impl fmt::Display for ObservationError {
 impl Error for ObservationError {}
 
 fn refusal<B>(reason: &str, error: &impl fmt::Display) -> Outcome<B> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("sealed-release".to_owned()),
-        expected: Some("one current complete two-target proof and manifest chain".to_owned()),
-        observed: Some(error.to_string()),
-        remedy: "restore and recognize the exact current sealed release before publishing"
-            .to_owned(),
-    })
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        reason.to_owned(),
+        Some("sealed-release".to_owned()),
+        Some("one current complete two-target proof and manifest chain".to_owned()),
+        Some(error.to_string()),
+    )))
 }
 
 fn environment<B>(reason: &str, detail: &str) -> Outcome<B> {
@@ -807,15 +807,13 @@ pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
 }
 
 fn notes_refusal<B>(reason: &str, error: &impl fmt::Display) -> Outcome<B> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("first-parent-release-notes".to_owned()),
-        expected: Some(
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        reason.to_owned(),
+        Some("first-parent-release-notes".to_owned()),
+        Some(
             "reachable release history and curated highlights above the generated inventory"
                 .to_owned(),
         ),
-        observed: Some(error.to_string()),
-        remedy: "generate a fresh release notes draft, curate Highlights, and retry its file"
-            .to_owned(),
-    })
+        Some(error.to_string()),
+    )))
 }

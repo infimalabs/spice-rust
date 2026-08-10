@@ -15,6 +15,7 @@ pub(super) fn wake(
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let topology_revision = observed.body().topology_revision;
     let Some(row) = observed
         .body()
         .lanes
@@ -83,6 +84,7 @@ pub(super) fn wake(
     };
     let answer = LaneChangeAnswer {
         lane: request.lane,
+        topology_revision,
         from: row.disposition.clone(),
         to: OCCUPIED.to_owned(),
         git: Some(proven.git.clone().into_boxed_str()),
@@ -116,6 +118,24 @@ pub(in crate::resident) enum AutomaticWake {
     Unstarted(Outcome<()>),
 }
 
+fn automatic_refusal(
+    reason: &str,
+    witness: &str,
+    expected: &str,
+    observed: &str,
+    detail: &str,
+) -> Outcome<()> {
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            reason.to_owned(),
+            Some(witness.to_owned()),
+            Some(expected.to_owned()),
+            Some(observed.to_owned()),
+        )
+        .with_detail(detail),
+    ))
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one automatic wake owns the complete resident launch boundary"
@@ -146,22 +166,22 @@ pub(in crate::resident) fn wake_automatic(
             )
         })?;
     if row.occupant.is_some() || seats.occupied(lane) {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lifecycle::wake-capacity-moved".to_owned(),
-            witness: Some("lane".to_owned()),
-            expected: Some(VACANT.to_owned()),
-            observed: Some(row.disposition.clone()),
-            remedy: "reconcile after observing the current occupant".to_owned(),
-        }));
+        return Err(automatic_refusal(
+            "lifecycle::wake-capacity-moved",
+            "lane",
+            VACANT,
+            &row.disposition,
+            "reconcile after observing the current occupant",
+        ));
     }
     if row.life == "drain" {
-        return Err(Outcome::Refusal(Refusal {
-            reason: "lifecycle::wake-life-ended".to_owned(),
-            witness: Some("lane.life".to_owned()),
-            expected: Some("steer or drive".to_owned()),
-            observed: Some(row.life.clone()),
-            remedy: "seat new capacity instead of re-seating a terminal lane".to_owned(),
-        }));
+        return Err(automatic_refusal(
+            "lifecycle::wake-life-ended",
+            "lane.life",
+            "steer or drive",
+            &row.life,
+            "seat new capacity instead of re-seating a terminal lane",
+        ));
     }
     super::super::steering::lane_capability(&row)?;
     let claim = automatic_claim_authority(bus, decision, lane)?;

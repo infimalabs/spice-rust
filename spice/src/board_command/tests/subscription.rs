@@ -192,7 +192,7 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
     assert!(
         matches!(
             stale,
-            Outcome::Refusal(Refusal { ref reason, .. }) if reason == "board::witness-moved"
+            Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"
         ),
         "a command prepared under Steer crossed into Drive: {stale:?}",
     );
