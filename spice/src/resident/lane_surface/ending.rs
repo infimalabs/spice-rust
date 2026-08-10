@@ -13,6 +13,7 @@ pub(super) fn drain(
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let topology_revision = observed.body().topology_revision;
     let Some(row) = observed
         .body()
         .lanes
@@ -49,7 +50,7 @@ pub(super) fn drain(
     let disposition = evidence.disposition();
     let answer = LaneChangeAnswer {
         lane: request.lane,
-        topology_revision: observed.body().topology_revision,
+        topology_revision,
         from: OCCUPIED.to_owned(),
         to: disposition.to_owned(),
         git: None,

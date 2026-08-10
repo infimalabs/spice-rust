@@ -15,6 +15,7 @@ pub(super) fn wake(
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let topology_revision = observed.body().topology_revision;
     let Some(row) = observed
         .body()
         .lanes
@@ -83,7 +84,7 @@ pub(super) fn wake(
     };
     let answer = LaneChangeAnswer {
         lane: request.lane,
-        topology_revision: observed.body().topology_revision,
+        topology_revision,
         from: row.disposition.clone(),
         to: OCCUPIED.to_owned(),
         git: Some(proven.git.clone().into_boxed_str()),

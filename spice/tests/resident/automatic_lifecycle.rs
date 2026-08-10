@@ -96,6 +96,11 @@ fn configure_lineage(
         "lineage configuration failed: {:?}",
         response.outcome,
     );
+    assert_eq!(
+        durable_head(fixture).topology_revision,
+        topology_revision + 1,
+        "lineage configuration advances the shared topology authority",
+    );
 }
 
 fn invoke_lane(fixture: &Fixture, lane: wire::CanonicalUuid, arguments: &[&str]) -> Output {
