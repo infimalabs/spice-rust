@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use sill::Environment;
 use spice::agent_launch::{
-    CLAUDE_ATTRIBUTION_TRAILER, CLAUDE_AUTO_COMPACT_WINDOW, ComposeError, Inputs, SPICE_LANE,
+    CLAUDE_ATTRIBUTION_TRAILER, CLAUDE_AUTO_COMPACT_WINDOW, ComposeError, Inputs, SPICE_RS_LANE,
     compose,
 };
 use spice::config::Root;
@@ -105,7 +105,7 @@ auto_compact_window_tokens = 123456
         1
     );
     assert_eq!(
-        environment_value(plan.environment(), SPICE_LANE),
+        environment_value(plan.environment(), SPICE_RS_LANE),
         Some(LANE)
     );
 
@@ -235,9 +235,9 @@ fn composition_refuses_unsupported_vendor_and_reserved_lane_environment() {
         ComposeError::UnsupportedVendor("gemini".to_owned())
     );
 
-    let reserved = Environment::new([(OsString::from(SPICE_LANE), OsString::from(LANE))])
+    let reserved = Environment::new([(OsString::from(SPICE_RS_LANE), OsString::from(LANE))])
         .expect("reserved fixture environment itself admits");
     let error = compose(&Root::default(), inputs("codex", reserved, Resume::Fresh))
         .expect_err("caller-supplied lane identity refuses");
-    assert_eq!(error, ComposeError::ReservedEnvironment(SPICE_LANE));
+    assert_eq!(error, ComposeError::ReservedEnvironment(SPICE_RS_LANE));
 }

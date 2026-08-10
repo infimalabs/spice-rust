@@ -233,15 +233,16 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
     );
     // Doctor reports the variables Spice owns, while the tracked vocabulary also
     // accounts the ones its fixtures and Git shadow use: three local Git
-    // names, three Git configuration names, the hygiene fixture's TMPDIR, and
-    // the verifier's isolated Canvas binary path, and the proof harness path.
+    // names, three Git configuration names, the hygiene fixture's TMPDIR, the
+    // verifier's isolated Canvas/proof binary paths, and predecessor Spice
+    // handoff names used as coexistence sentinels.
     // The gate's name ledger accounts every name the tree references. That the
     // manifest holds these and nothing besides Doctor's rows is stated once in
     // wire/tests/environment_vocabulary.rs. The class is spelled again here
     // rather than derived from the list under test, so this stays an equality
     // rather than a containment that could not see an added row; both pins read
     // the one document, so a copy that fell out of step reds itself.
-    const UNOWNED: [&str; 9] = [
+    const UNOWNED: [&str; 13] = [
         "GIT_CONFIG_COUNT",    // env-policy: allow
         "GIT_CONFIG_SYSTEM",   // env-policy: allow
         "GIT_DIR",             // env-policy: allow
@@ -249,6 +250,10 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         "GIT_INDEX_FILE",      // env-policy: allow
         "GIT_WORK_TREE",       // env-policy: allow
         "SPICE_CANVAS_BINARY", // env-policy: allow
+        "SPICE_HOOKS",         // env-policy: allow
+        "SPICE_INBOX",         // env-policy: allow
+        "SPICE_LANE",          // env-policy: allow
+        "SPICE_NATIVE_SHELL",  // env-policy: allow
         "SPICE_PROOF",         // env-policy: allow
         "TMPDIR",              // env-policy: allow
     ];
