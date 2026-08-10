@@ -99,10 +99,10 @@ impl ProjectVisibility {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardStatement {
-    /// Public task name derived from `project` and `incepted`.
+    /// Public task name derived from `project` and `born`.
     pub handle: crate::TaskHandle,
     /// Sole durable task identity.
-    pub incepted: crate::TaskStamp,
+    pub born: crate::TaskStamp,
     /// Fact that first placed this task in the queue.
     pub queue_origin: crate::Seq,
     /// Longer authored context.
@@ -130,8 +130,8 @@ pub struct BoardStatement {
 impl From<&crate::TaskHead> for BoardStatement {
     fn from(statement: &crate::TaskHead) -> Self {
         Self {
-            handle: crate::TaskHandle::for_project(&statement.project, &statement.incepted),
-            incepted: statement.incepted.clone(),
+            handle: crate::TaskHandle::for_project(&statement.project, &statement.born),
+            born: statement.born.clone(),
             queue_origin: statement.queue_origin,
             description: statement.description.clone(),
             acceptance: statement.acceptance.clone(),
@@ -149,7 +149,7 @@ impl BoardStatement {
     #[must_use]
     pub fn with_title(&self, title: &str) -> crate::TaskHead {
         crate::TaskHead {
-            incepted: self.incepted.clone(),
+            born: self.born.clone(),
             queue_origin: self.queue_origin,
             title: title.to_owned(),
             description: self.description.clone(),

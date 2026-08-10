@@ -44,7 +44,7 @@ pub(crate) fn claim_automatic(
     );
     match committed(bus, prepared.write, CommandAnswer::Claim(answer)) {
         Outcome::Reply(_) => Ok(AutomaticClaim {
-            task: prepared.incepted,
+            task: prepared.born,
             lane,
             occupant,
         }),
@@ -58,7 +58,7 @@ struct PreparedClaim {
     selected: Entry,
     entries: Vec<Entry>,
     task: TaskHandle,
-    incepted: TaskStamp,
+    born: TaskStamp,
     actor: Actor,
 }
 
@@ -82,11 +82,11 @@ fn prepare_claim(
     let subscription = available_subscription(&snapshot, row)?;
     let selected = select_task(&snapshot, &actor, subscription)?;
     let task = selected.handle().clone();
-    let incepted = selected.incepted().clone();
+    let born = selected.born().clone();
     let (at, expiry, maximum) = claim_deadlines()?;
     let git = prepare_git(repository, &row.worktree)?;
     let source = claim_source_boundary(bus, &lane)?;
-    let origin = task_origin(&incepted)?;
+    let origin = task_origin(&born)?;
     let mut write = JournalWrite::new(actor.clone(), origin, at, Producer::CommandDoor);
     guard_allocation(
         &mut write,
@@ -103,7 +103,7 @@ fn prepare_claim(
         },
     );
     mint_claim(
-        &mut write, &selected, &incepted, &actor, lane, occupant, epoch, at, expiry, maximum, git,
+        &mut write, &selected, &born, &actor, lane, occupant, epoch, at, expiry, maximum, git,
         source,
     )?;
     Ok(PreparedClaim {
@@ -111,7 +111,7 @@ fn prepare_claim(
         selected,
         entries: snapshot.entries,
         task,
-        incepted,
+        born,
         actor,
     })
 }
@@ -357,7 +357,7 @@ fn active_claim(
     let heads = snapshot
         .tasks()
         .iter()
-        .find(|heads| heads.statement().body().incepted == automatic.task)
+        .find(|heads| heads.statement().body().born == automatic.task)
         .ok_or_else(|| {
             store_fault(
                 "lifecycle::claim-release-task-missing",
@@ -393,7 +393,7 @@ fn active_claim(
     }
     let handle = TaskHandle::for_project(
         &heads.statement().body().project,
-        &heads.statement().body().incepted,
+        &heads.statement().body().born,
     );
     Ok((observed, actor, handle))
 }

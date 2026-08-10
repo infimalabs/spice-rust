@@ -253,6 +253,34 @@ fn staged_rust_source_selects_its_direct_cargo_test_target_with_exact_edge() {
 }
 
 #[test]
+fn staged_integration_test_module_selects_its_parent_cargo_test_target() {
+    let mut inventory = fixture_inventory();
+    inventory.packages[0].targets.push(TargetIdentity {
+        package: "fixture-a-id".to_owned(),
+        kind: "test".to_owned(),
+        name: "session_cli".to_owned(),
+        source: PathBuf::from("/workspace/fixture-a/tests/session_cli.rs"),
+    });
+
+    let report = selection_report(
+        &inventory,
+        Path::new("/workspace"),
+        wire::Digest::compute(wire::Domain::GateTree, b"integration test module"),
+        &["fixture-a/tests/session_cli/authority.rs".to_owned()],
+    )
+    .expect("integration test module reaches its parent target");
+
+    assert!(report.admits());
+    assert_eq!(report.tests(), ["fixture-a::test:session_cli"]);
+    assert_eq!(report.edges().len(), 1);
+    assert_eq!(
+        report.edges()[0].source(),
+        "fixture-a/tests/session_cli/authority.rs"
+    );
+    assert_eq!(report.edges()[0].test(), "fixture-a::test:session_cli");
+}
+
+#[test]
 fn staged_library_source_selects_every_test_enabled_target_that_may_link_it() {
     let mut inventory = fixture_inventory();
     inventory.packages[0].targets.push(TargetIdentity {

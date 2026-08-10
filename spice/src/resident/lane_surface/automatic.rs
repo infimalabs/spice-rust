@@ -300,7 +300,7 @@ fn automatic_claim_authority(
             ));
         }
         authority = Some(AutomaticClaimAuthority {
-            task: heads.statement().body().incepted.clone(),
+            task: heads.statement().body().born.clone(),
             claim: claim.clone(),
             lease: lease.clone(),
             source: bus.source_boundary(&lane).map_err(|error| {

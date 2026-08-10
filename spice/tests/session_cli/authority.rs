@@ -92,7 +92,7 @@ fn task_added(
         .expect("task fact builds");
     let statement_task = task.clone();
     write.task_head(fact, move |position| wire::TaskHead {
-        incepted: statement_task,
+        born: statement_task,
         queue_origin: position,
         title,
         description: None,
@@ -106,7 +106,7 @@ fn task_added(
     write.workflow_head(task, fact, move |_| workflow);
 }
 
-fn seed_briefing_authority(path: &Path, thread: &str) {
+fn seed_recall_authority(path: &Path, thread: &str) {
     fs::create_dir_all(path.parent().expect("authority path has a parent"))
         .expect("authority parent is created");
     let mut journal = Journal::open(path).expect("fixture journal opens");
@@ -129,7 +129,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
     let seated = write
         .fact(body::UpSeated { epoch }, FactCause::Root)
         .expect("seating fact builds");
-    let lanes = briefing_lanes(lane, occupant, peer_lane, peer_occupant, epoch, thread);
+    let lanes = recall_lanes(lane, occupant, peer_lane, peer_occupant, epoch, thread);
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
@@ -277,7 +277,7 @@ fn seed_retired_peer_steering(path: &Path) {
         .expect("peer steering retirement commits");
 }
 
-fn briefing_lanes(
+fn recall_lanes(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     peer_lane: CanonicalUuid,
@@ -373,7 +373,7 @@ fn mint_claim(
 }
 
 #[test]
-fn briefing_authority_probe_is_read_only_when_repository_state_is_absent() {
+fn recall_authority_probe_is_read_only_when_repository_state_is_absent() {
     let scratch = Scratch::new("authority-absent");
     fake_repository(scratch.path());
     let transcript = scratch.path().join("codex.jsonl");
@@ -415,13 +415,13 @@ fn briefing_authority_probe_is_read_only_when_repository_state_is_absent() {
 }
 
 #[test]
-fn briefing_authority_sources_asks_and_held_work_from_exact_state_authorities() {
+fn recall_authority_sources_asks_and_held_work_from_exact_state_authorities() {
     let scratch = Scratch::new("authority-present");
     fake_repository(scratch.path());
     let transcript = scratch.path().join("codex.jsonl");
     write_jsonl(&transcript, &codex_rows());
     let thread = uuid(0xaa).to_string().replace('-', "");
-    seed_briefing_authority(&authority_path(scratch.path()), &thread);
+    seed_recall_authority(&authority_path(scratch.path()), &thread);
     let environment = [("CODEX_THREAD_ID", thread.clone())]; // env-policy: allow
 
     let recall = reply_forms_in(
@@ -516,14 +516,14 @@ fn briefing_authority_sources_asks_and_held_work_from_exact_state_authorities() 
 }
 
 #[test]
-fn briefing_ignores_corrupt_fact_and_retired_steering_outside_the_exact_locus() {
+fn recall_ignores_corrupt_fact_and_retired_steering_outside_the_exact_locus() {
     let scratch = Scratch::new("authority-bounded-corruption");
     fake_repository(scratch.path());
     let transcript = scratch.path().join("codex.jsonl");
     write_jsonl(&transcript, &codex_rows());
     let thread = uuid(0xaa).to_string().replace('-', "");
     let authority = authority_path(scratch.path());
-    seed_briefing_authority(&authority, &thread);
+    seed_recall_authority(&authority, &thread);
     seed_retired_peer_steering(&authority);
     let connection = Connection::open(&authority).expect("fixture authority opens for corruption");
     connection
@@ -576,7 +576,7 @@ fn a_failed_steering_probe_does_not_hide_independent_board_answers() {
     write_jsonl(&transcript, &codex_rows());
     let thread = uuid(0xaa).to_string().replace('-', "");
     let authority = authority_path(scratch.path());
-    seed_briefing_authority(&authority, &thread);
+    seed_recall_authority(&authority, &thread);
     let connection = Connection::open(&authority).expect("fixture authority opens for corruption");
     connection
         .execute(

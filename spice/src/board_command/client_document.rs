@@ -129,7 +129,7 @@ pub(super) fn document_handles(
             }) {
                 return existing.statement.body.handle.clone();
             }
-            let incepted = loop {
+            let born = loop {
                 let candidate = allocate_inception(board, epoch_millis);
                 epoch_millis = epoch_millis
                     .checked_add(1)
@@ -138,8 +138,8 @@ pub(super) fn document_handles(
                     break candidate;
                 }
             };
-            planned.push(incepted.clone());
-            TaskHandle::for_project(project, &incepted)
+            planned.push(born.clone());
+            TaskHandle::for_project(project, &born)
         })
         .collect()
 }

@@ -102,10 +102,10 @@ fn inbox(id: &str, directives: &[(&str, Option<&str>)]) -> LaneInbox {
 
 /// A board task whose claim names `lane` and whose lease began `held` ago.
 fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> BoardTask {
-    let incepted = handle
+    let born = handle
         .parse::<wire::TaskHandle>()
         .expect("fixture task handle")
-        .incepted()
+        .born()
         .expect("fixture handle carries an inception stamp");
     serde_json::from_value(serde_json::json!({
         "visibility": {"kind": "public"},
@@ -115,12 +115,12 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
             "position": 1,
             "body": {
                 "handle": handle,
-                "incepted": incepted,
+                "born": born,
                 "queue_origin": 1,
                 "project": "canvas.fidelity",
                 "tags": [],
                 "dependencies": [],
-                "provenance": format!("task:{incepted}"),
+                "provenance": format!("task:{born}"),
                 "revision": 1,
             },
         },

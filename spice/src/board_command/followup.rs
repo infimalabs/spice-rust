@@ -97,10 +97,9 @@ pub(super) fn plan_followups(
             .map_err(|error| refusal("review::followup-invalid", Some(spec.clone()), &error))?;
         parsed.push(add);
     }
-    let incepted =
-        allocate_inceptions(board, jiff::Timestamp::now().as_millisecond(), parsed.len());
+    let born = allocate_inceptions(board, jiff::Timestamp::now().as_millisecond(), parsed.len());
     let mut planned: Vec<ReviewFollowup> = Vec::new();
-    for (add, task) in parsed.into_iter().zip(incepted) {
+    for (add, task) in parsed.into_iter().zip(born) {
         expected.push(Witness::Absence { task: task.clone() });
         planned.push(ReviewFollowup { task, add });
     }
@@ -127,8 +126,8 @@ pub(super) fn plan_followup_edges(
         expected.push(statement_witness(heads));
         expected.push(workflow_witness(heads));
         expected.push(Witness::Edge {
-            task: heads.statement.body.incepted.clone(),
-            after: task_heads(board, task)?.statement.body.incepted.clone(),
+            task: heads.statement.body.born.clone(),
+            after: task_heads(board, task)?.statement.body.born.clone(),
         });
         linked.push(handle);
     }
@@ -213,14 +212,14 @@ fn create_followup(
     let flow = task_flow(followup.add.flow.as_deref(), &followup.add.acceptance)?;
     let phase = flow[0].clone();
     let statement = TaskHead {
-        incepted: followup.task.clone(),
+        born: followup.task.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: followup.add.title.clone(),
         description: followup.add.description.clone(),
         acceptance: followup.add.acceptance.clone(),
         project: project.as_str().to_owned(),
         tags: Vec::new(),
-        dependencies: vec![reviewed_entry.incepted().clone()],
+        dependencies: vec![reviewed_entry.born().clone()],
         provenance: context.origin.clone(),
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
@@ -305,8 +304,8 @@ fn wire_followup_edge(
         .iter()
         .find(|candidate| candidate.handle() == &review.task)
         .expect("reviewed task belongs to the validated snapshot");
-    if entry.incepted() == reviewed_entry.incepted()
-        || statement.dependencies.contains(reviewed_entry.incepted())
+    if entry.born() == reviewed_entry.born()
+        || statement.dependencies.contains(reviewed_entry.born())
     {
         return Err(refusal(
             "task::dependency-refused",
@@ -314,9 +313,7 @@ fn wire_followup_edge(
             "name a distinct follow-up that does not already follow the reviewed task",
         ));
     }
-    statement
-        .dependencies
-        .push(reviewed_entry.incepted().clone());
+    statement.dependencies.push(reviewed_entry.born().clone());
     if let Err(error) = Entry::new(
         statement.clone(),
         entry.workflow().clone(),
@@ -336,7 +333,7 @@ fn wire_followup_edge(
     let edited = write
         .fact(
             body::TaskEdited {
-                task: entry.incepted().clone(),
+                task: entry.born().clone(),
                 revision,
             },
             FactCause::Pending(reviewed),

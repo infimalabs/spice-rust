@@ -219,7 +219,9 @@ pub fn run_at(
 /// Select and run only test targets reached by staged Rust sources according to
 /// canonical Cargo target roots. A reached library target expands to every
 /// test-enabled target in that package because those targets may link the
-/// library.
+/// library. A non-library target also reaches the conventional sibling module
+/// tree beneath its source stem (`tests/session.rs` reaches
+/// `tests/session/*.rs`).
 ///
 /// Unknown or incomplete package reach returns a non-admitting typed report
 /// without launching a narrowed test set. A complete report is emitted only
@@ -674,7 +676,10 @@ fn target_reaches_source(target: &TargetIdentity, source: &Path) -> bool {
     let direct_root = target_is_library(target)
         .then(|| target.source.parent())
         .flatten();
-    source == target.source || direct_root.is_some_and(|root| source.starts_with(root))
+    let module_root = target.source.with_extension("");
+    source == target.source
+        || direct_root.is_some_and(|root| source.starts_with(root))
+        || source.starts_with(module_root)
 }
 
 fn target_is_library(target: &TargetIdentity) -> bool {

@@ -5,9 +5,9 @@ use clap::ArgMatches;
 use wire::Refusal;
 
 use super::model::{
-    ActivityView, BriefingAuthorities, CommandAudit, CommandRecord, CommandView, CommitView,
-    CompactionRecord, CompactionView, Dataset, DialogueLine, MessageRecord, MessageView,
-    PhaseExample, PhaseView, PruningView, RecallWindow, Report, SliceView, SourceView, ThreadView,
+    ActivityView, CommandAudit, CommandRecord, CommandView, CommitView, CompactionRecord,
+    CompactionView, Dataset, DialogueLine, MessageRecord, MessageView, PhaseExample, PhaseView,
+    PruningView, RecallAuthorities, RecallWindow, Report, SliceView, SourceView, ThreadView,
     TimelineView, TokenRecord, TokenView, TurnRecord, TurnView,
 };
 
@@ -164,7 +164,7 @@ pub(crate) fn recall(
     dataset: &Dataset,
     matches: &ArgMatches,
     filters: &Filters,
-    authorities: BriefingAuthorities,
+    authorities: RecallAuthorities,
 ) -> Result<Report, Refusal> {
     filters.validate_turn_ids(dataset)?;
     let max_lines = number(matches, "max-lines", DEFAULT_RECALL_MAX_LINES)?;

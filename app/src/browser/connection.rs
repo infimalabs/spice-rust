@@ -618,14 +618,14 @@ async fn send_task_note(
     task: TaskHandle,
     note: String,
 ) -> Result<(), String> {
-    let incepted = task
-        .incepted()
+    let born = task
+        .born()
         .map_err(|error| format!("task handle {task} has no canonical inception stamp: {error}"))?;
     let body = TaskNote {
         task: task.clone(),
         note,
     };
-    let expected = vec![Witness::Existence { task: incepted }];
+    let expected = vec![Witness::Existence { task: born }];
     send_typed(
         principal,
         writer,

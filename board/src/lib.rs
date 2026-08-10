@@ -88,7 +88,7 @@ impl Snapshot {
             .into_iter()
             .map(|heads| {
                 let (statement, workflow, claim, lease) = heads.into_bodies();
-                let handle = wire::TaskHandle::for_project(&statement.project, &statement.incepted);
+                let handle = wire::TaskHandle::for_project(&statement.project, &statement.born);
                 Entry::new(statement, workflow, claim, lease, projects)
                     .map_err(|source| SnapshotReadError::Task { handle, source })
             })

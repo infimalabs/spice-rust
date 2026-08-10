@@ -517,7 +517,7 @@ fn project_targets(
                     "lifecycle::task-head-invalid",
                     &format!(
                         "task {} current heads are invalid: {error}",
-                        heads.statement().body().incepted
+                        heads.statement().body().born
                     ),
                 )
             })
@@ -629,7 +629,7 @@ fn ready_instants(
     let heads = snapshot
         .tasks()
         .iter()
-        .map(|heads| (heads.statement().body().incepted.clone(), heads))
+        .map(|heads| (heads.statement().body().born.clone(), heads))
         .collect::<BTreeMap<_, _>>();
     let facts = snapshot
         .facts()
@@ -640,7 +640,7 @@ fn ready_instants(
     entries
         .iter()
         .map(|entry| {
-            let task = entry.incepted();
+            let task = entry.born();
             let task_heads = heads.get(task).ok_or_else(|| {
                 store_fault(
                     "lifecycle::task-head-missing",
@@ -689,7 +689,7 @@ fn available_deadline(
     let mut eligible = entries
         .iter()
         .filter(|entry| board::selectable_entry(entries, entry, actor, subscription))
-        .filter_map(|entry| ready_at.get(entry.incepted()).copied())
+        .filter_map(|entry| ready_at.get(entry.born()).copied())
         .collect::<Vec<_>>();
     available_from_ready_instants(&mut eligible)
 }

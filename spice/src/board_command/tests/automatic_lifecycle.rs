@@ -65,8 +65,8 @@ fn vacant_lane_claims_once_and_exact_launch_cleanup_frees_it() {
     )
     .expect("automatic capacity claims");
     assert!(
-        claimed.task == first.incepted().expect("first handle stamp")
-            || claimed.task == second.incepted().expect("second handle stamp")
+        claimed.task == first.born().expect("first handle stamp")
+            || claimed.task == second.born().expect("second handle stamp")
     );
     assert_eq!(claimed.lane, seat.lane);
     assert_eq!(claimed.occupant, future);
@@ -75,7 +75,7 @@ fn vacant_lane_claims_once_and_exact_launch_cleanup_frees_it() {
         .expect("claimed snapshot reads")
         .tasks()
         .iter()
-        .find(|heads| heads.statement().body().incepted == claimed.task)
+        .find(|heads| heads.statement().body().born == claimed.task)
         .and_then(journal::TaskHeads::claim)
         .expect("automatic claim head exists")
         .body()
@@ -90,7 +90,7 @@ fn vacant_lane_claims_once_and_exact_launch_cleanup_frees_it() {
         .expect("freed snapshot reads")
         .tasks()
         .iter()
-        .find(|heads| heads.statement().body().incepted == claimed.task)
+        .find(|heads| heads.statement().body().born == claimed.task)
         .and_then(journal::TaskHeads::claim)
         .expect("freed claim head remains")
         .body()

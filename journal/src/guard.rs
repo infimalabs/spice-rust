@@ -254,11 +254,11 @@ impl JournalRead<'_> {
     ) -> Result<Option<JournalHead<wire::TaskHead>>, GuardError> {
         let head = self.text_head::<wire::TaskHead>("task_heads", "stamp", stamp.as_str())?;
         if let Some(head) = &head
-            && head.body.incepted != *stamp
+            && head.body.born != *stamp
         {
             return Err(GuardError::Invalid(format!(
                 "task head indexed as {stamp} carries body stamp {}",
-                head.body.incepted
+                head.body.born
             )));
         }
         if let Some(head) = &head
@@ -846,7 +846,7 @@ impl JournalWrite {
             HeadUpdateKind::Ordinary,
             move |seq| {
                 let head = build(seq);
-                let key = head.incepted.as_str().to_owned();
+                let key = head.born.as_str().to_owned();
                 if head.revision != seq {
                     return Err("task head revision does not name its assigned fact".to_owned());
                 }

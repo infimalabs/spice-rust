@@ -188,7 +188,7 @@ struct TasteJudgment {
     #[serde(skip_serializing_if = "Option::is_none")]
     trigger: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    driver: Option<String>,
+    vendor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -507,7 +507,7 @@ fn collect_judgments(snapshot: &journal::FactSnapshot) -> BTreeMap<String, Vec<T
                     content: Some(body.content),
                     bag: Some(body.bag),
                     trigger: Some(body.trigger),
-                    driver: Some(body.driver),
+                    vendor: Some(body.vendor),
                     source: Some(body.source),
                     compaction: Some(body.compaction),
                     attempts: body.attempts,
@@ -534,7 +534,7 @@ fn historical_judgment(
         content: None,
         bag: None,
         trigger: None,
-        driver: None,
+        vendor: None,
         source: None,
         compaction: None,
         attempts: Vec::new(),

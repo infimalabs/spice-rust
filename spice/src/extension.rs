@@ -49,15 +49,15 @@ pub struct Gate {
 /// Typed configuration fold owned by one declared vendor.
 pub type ConfigFold = for<'a> fn(&'a crate::config::Root) -> vendor::LaunchValues<'a>;
 
-/// Session-study behavior carried by one declared vendor value.
+/// Session-gate behavior carried by one declared vendor value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SessionStudy {
+pub struct SessionGate {
     identity: &'static str,
     dialect: listen::Dialect,
     ambient_precedence: u16,
 }
 
-impl SessionStudy {
+impl SessionGate {
     const fn new(
         identity: &'static str,
         dialect: listen::Dialect,
@@ -89,16 +89,16 @@ impl SessionStudy {
     }
 }
 
-/// One complete declared vendor, including configuration and session study.
+/// One complete declared vendor, including configuration and session gate.
 #[derive(Clone, Copy)]
 pub struct Vendor {
     dialect: &'static vendor::Vendor,
     configuration: ConfigFold,
-    session_study: SessionStudy,
+    session_gate: SessionGate,
 }
 
 impl Vendor {
-    /// Bind one raw vendor contract to configuration and ambient study order.
+    /// Bind one raw vendor contract to configuration and ambient gate order.
     #[must_use]
     pub const fn new(
         dialect: &'static vendor::Vendor,
@@ -108,7 +108,7 @@ impl Vendor {
         Self {
             dialect,
             configuration,
-            session_study: SessionStudy::new(dialect.name(), dialect.dialect(), ambient_precedence),
+            session_gate: SessionGate::new(dialect.name(), dialect.dialect(), ambient_precedence),
         }
     }
 
@@ -118,10 +118,10 @@ impl Vendor {
         (self.configuration)(root)
     }
 
-    /// Declaration-owned session study contract.
+    /// Declaration-owned session gate contract.
     #[must_use]
-    pub const fn session_study(&self) -> SessionStudy {
-        self.session_study
+    pub const fn session_gate(&self) -> SessionGate {
+        self.session_gate
     }
 }
 
@@ -343,8 +343,8 @@ impl<'a> Registry<'a> {
         let mut vendors = self.vendors();
         vendors.sort_by_key(|vendor| {
             (
-                vendor.session_study().ambient_precedence(),
-                vendor.session_study().identity(),
+                vendor.session_gate().ambient_precedence(),
+                vendor.session_gate().identity(),
             )
         });
         vendors
@@ -521,7 +521,7 @@ mod tests {
             registry
                 .session_vendors()
                 .into_iter()
-                .map(|vendor| vendor.session_study().identity())
+                .map(|vendor| vendor.session_gate().identity())
                 .collect::<Vec<_>>(),
             ["codex", "claude"],
         );
@@ -588,9 +588,9 @@ mod tests {
 
         assert_eq!(fixture.name(), "fixture");
         assert_eq!(fixture.dialect(), listen::Dialect::Codex);
-        assert_eq!(fixture.session_study().identity(), "fixture");
-        assert_eq!(fixture.session_study().dialect(), listen::Dialect::Codex);
-        assert_eq!(fixture.session_study().ambient_precedence(), 2);
+        assert_eq!(fixture.session_gate().identity(), "fixture");
+        assert_eq!(fixture.session_gate().dialect(), listen::Dialect::Codex);
+        assert_eq!(fixture.session_gate().ambient_precedence(), 2);
         assert_eq!(fixture.stdout(), vendor::CODEX.stdout());
         assert_eq!(fixture.tool_envelope(), vendor::ToolEnvelope::Direct);
         assert_eq!(

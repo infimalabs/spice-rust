@@ -61,7 +61,7 @@ fn workflow(current: &str) -> WorkflowHead {
 
 fn statement(name: &str) -> TaskHead {
     TaskHead {
-        incepted: stamp(name),
+        born: stamp(name),
         queue_origin: seq(1),
         title: format!("Implement {name}"),
         description: None,
@@ -140,12 +140,12 @@ fn peer_spread_reads_the_whole_board_cell_and_never_excludes_crowded_work() {
 
     let selected = board::select(&entries, &actor, &all_projects(), 2, None)
         .expect("an uncrowded cell is preferred");
-    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
+    assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
     assert_eq!(
         selected.entry().handle(),
         &wire::TaskHandle::for_project(
             &selected.entry().statement().project,
-            selected.entry().incepted(),
+            selected.entry().born(),
         ),
         "selection exposes the project-sensitive rendering of the durable stamp",
     );
@@ -154,7 +154,7 @@ fn peer_spread_reads_the_whole_board_cell_and_never_excludes_crowded_work() {
     let all_crowded = [crowded, open, entries[2].clone(), second_peer];
     let selected = board::select(&all_crowded, &actor, &all_projects(), 2, None)
         .expect("crowding remains a preference rather than an exclusion");
-    assert_eq!(selected.entry().incepted(), &stamp("BOARD-a1"));
+    assert_eq!(selected.entry().born(), &stamp("BOARD-a1"));
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn peer_spread_precedes_movement_inside_the_shared_cell_vocabulary() {
 
     let selected = board::select(&entries, &actor, &all_projects(), 2, Some(&recent))
         .expect("peer spread speaks before affinity");
-    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
+    assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn movement_counts_project_and_phase_separately_from_only_the_recent_cell() {
     let entries = [both.clone(), phase_only.clone(), project_only.clone(), same];
     let selected = board::select(&entries, &Actor::Spice, &all_projects(), 2, Some(&recent))
         .expect("cost zero wins");
-    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z0"));
+    assert_eq!(selected.entry().born(), &stamp("BOARD-z0"));
 
     let one_coordinate = [project_only, phase_only.clone()];
     let selected = board::select(
@@ -205,12 +205,12 @@ fn movement_counts_project_and_phase_separately_from_only_the_recent_cell() {
         Some(&recent),
     )
     .expect("changing project and changing phase each cost one");
-    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
+    assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
 
     let moved = [both, phase_only];
     let selected = board::select(&moved, &Actor::Spice, &all_projects(), 2, Some(&recent))
         .expect("one-coordinate movement beats changing both");
-    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
+    assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
 }
 
 #[test]
@@ -226,12 +226,12 @@ fn locality_is_neutral_outside_the_narrow_urgency_band() {
 
     let selected = board::select(&entries, &Actor::Spice, &all_projects(), 2, Some(&recent))
         .expect("locality may speak only for the in-band rows");
-    assert_eq!(selected.entry().incepted(), &stamp("BOARD-y1"));
+    assert_eq!(selected.entry().born(), &stamp("BOARD-y1"));
 
     let outside = [far_local, oldest_remote];
     let selected = board::select(&outside, &Actor::Spice, &all_projects(), 2, Some(&recent))
         .expect("the out-of-band local row remains workable but cannot jump age");
-    assert_eq!(selected.entry().incepted(), &stamp("BOARD-z1"));
+    assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
 }
 
 #[test]

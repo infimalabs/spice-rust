@@ -885,13 +885,13 @@ fn assert_recent_prompt_shapes(file: &str) {
 }
 
 fn assert_rehydration_dialogue(file: &str) {
-    let briefing = reply_forms(
+    let recall = reply_forms(
         &strings(&["session", "briefing", file, "--deadline-seconds", "5"]),
         &[],
         "recall",
     );
     assert_eq!(
-        briefing["window"]["turns"][0]["dialogue"],
+        recall["window"]["turns"][0]["dialogue"],
         json!([
             {"side": "user", "text": "Please preserve the authored ask."},
             {"side": "user", "text": "[Please keep this bracketed ask.]"},
@@ -909,7 +909,7 @@ fn assert_rehydration_dialogue(file: &str) {
 }
 
 #[test]
-fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
+fn one_message_shape_fold_drives_reports_and_rehydration_dialogue() {
     let scratch = Scratch::new("message-shapes");
     let transcript = scratch.path().join("message-shapes.jsonl");
     write_jsonl(&transcript, &message_shape_rows());
@@ -1077,7 +1077,7 @@ fn assert_claude_identity_rows(claude: &str) {
 }
 
 #[test]
-fn provider_turn_identity_and_final_deduplication_cross_query_projections() {
+fn provider_turn_identity_and_final_deduplication_cross_query_folds() {
     let scratch = Scratch::new("provider-identity");
     let codex_path = scratch.path().join("codex.jsonl");
     let claude_path = scratch.path().join("claude.jsonl");

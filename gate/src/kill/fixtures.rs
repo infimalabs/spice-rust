@@ -364,7 +364,7 @@ esac
                     fs::read_to_string(&log)
                 )
             });
-        assert_graph_projection(&run, floor);
+        assert_graph_fold(&run, floor);
 
         assert_eq!(run.inventory().targets(), ["src/lib.rs", "src/z.rs"]);
         assert_eq!(run.inventory().mutants(), ["Killed", "Survived"]);
@@ -422,7 +422,7 @@ esac
         assert_baseline_precedes_mutants(&log);
     }
 
-    fn assert_graph_projection(run: &KillRun, floor: SurvivorRate) {
+    fn assert_graph_fold(run: &KillRun, floor: SurvivorRate) {
         let graph_evidence = crate::test_evidence::MutationExecution::from_kill(run)
             .expect("completed KillRun projects typed graph evidence");
         assert_eq!(graph_evidence.source(), run.source());

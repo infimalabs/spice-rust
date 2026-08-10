@@ -277,7 +277,7 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
         "TaskHead",
         &[
             TaskHead {
-                incepted: task.clone(),
+                born: task.clone(),
                 queue_origin: seq(9),
                 title: "Build the gate".to_owned(),
                 description: None,
@@ -289,7 +289,7 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
                 revision: seq(10),
             },
             TaskHead {
-                incepted: task.clone(),
+                born: task.clone(),
                 queue_origin: seq(9),
                 title: "Review the gate".to_owned(),
                 description: Some("Confirm every edge".to_owned()),

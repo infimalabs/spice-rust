@@ -208,7 +208,7 @@ impl Store {
             if status != "completed" {
                 skipped.push(PruneSkip {
                     order: count(skipped.len() + 1, "prune skip")?,
-                    incepted: task,
+                    born: task,
                     handle: current.map(|(handle, _)| handle.clone()),
                     status: status.to_owned(),
                 });
@@ -224,7 +224,7 @@ impl Store {
                 if artifact.retention == Retention::Prunable && old_enough {
                     operations.push(PruneOperation {
                         order: count(operations.len() + 1, "prune operation")?,
-                        incepted: task.clone(),
+                        born: task.clone(),
                         handle: handle.clone(),
                         artifact_id: artifact.id.clone(),
                         name: artifact.name.clone(),
