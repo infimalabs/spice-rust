@@ -1,17 +1,188 @@
 #![cfg(unix)]
 
+use std::collections::BTreeMap;
+use std::env;
+use std::ffi::OsString;
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use gate::{BatteryReceipt, BatteryReport, BatteryState, CampReport, CampStanding};
+use sill::{
+    Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction, Spec,
+    StdinPolicy, StreamPolicy, WaitPolicy,
+};
 use spice::placeholder::PlaceholderReason;
 use wire::{Digest, Domain, Outcome, ReplyPosition};
 
 const REFUSAL_EXIT: i32 = 2;
 const FAULT_EXIT: i32 = 1;
 const PROCESS_PATH: &str = concat!("PA", "TH");
+
+#[test]
+fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_180_seconds() {
+    let repository = GateRepository::new();
+    repository.write_source(2);
+    repository.add("src/lib.rs");
+    repository.install_pre_commit();
+    let before = git_stdout(repository.path(), &["rev-list", "--count", "HEAD"]);
+    let started = Instant::now();
+
+    let output = Command::new("/usr/bin/git")
+        .args(["commit", "-qm", "Exercise bounded commit gate"])
+        .current_dir(repository.path())
+        .output()
+        .expect("launch normal fixture commit");
+
+    assert!(
+        output.status.success(),
+        "normal commit failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(180),
+        "normal commit crossed the fixed 180-second gate deadline"
+    );
+    let after = git_stdout(repository.path(), &["rev-list", "--count", "HEAD"]);
+    assert_eq!(
+        String::from_utf8(before)
+            .unwrap()
+            .trim()
+            .parse::<u64>()
+            .unwrap()
+            + 1,
+        String::from_utf8(after)
+            .unwrap()
+            .trim()
+            .parse::<u64>()
+            .unwrap(),
+        "one successful gate permits exactly one commit",
+    );
+    assert_eq!(
+        String::from_utf8(git_stdout(
+            repository.path(),
+            &["show", "-s", "--format=%s", "HEAD"],
+        ))
+        .unwrap()
+        .trim(),
+        "Exercise bounded commit gate",
+    );
+    assert!(
+        git_stdout(repository.path(), &["diff", "--cached", "--name-only"]).is_empty(),
+        "the successful commit left staged bytes behind"
+    );
+}
+
+#[test]
+fn commit_worker_deadline_terminates_the_active_gate_tool_process_group() {
+    let repository = GateRepository::new();
+    repository.write_source(2);
+    repository.add("src/lib.rs");
+    let scratch = Scratch::new("deadline-process-tree");
+    let programs = scratch.path().join("programs");
+    fs::create_dir(&programs).expect("create deadline program directory");
+    let tool_pid = scratch.path().join("tool.pid");
+    executable(
+        &programs.join("cargo"),
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$*\" = \"--version\" ]; then\n",
+                "  printf '%s\\n' 'cargo 1.97.1 (c980f4866 2026-06-30)'\n",
+                "  exit 0\n",
+                "fi\n",
+                "case \"$1\" in\n",
+                "  fmt) exit 0 ;;\n",
+                "  check)\n",
+                "    /bin/sleep 30 & child=$!\n",
+                "    printf '%s\\n' \"$child\" > '{}'\n",
+                "    wait\n",
+                "    ;;\n",
+                "  *) exit 0 ;;\n",
+                "esac\n",
+            ),
+            tool_pid.display(),
+        ),
+    );
+    executable(
+        &programs.join("rustfmt"),
+        concat!(
+            "#!/bin/sh\n",
+            "if [ \"$*\" = \"--version\" ]; then\n",
+            "  printf '%s\\n' 'rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)'\n",
+            "fi\n",
+            "exit 0\n",
+        ),
+    );
+    let progress = scratch.path().join("progress.jsonl");
+    let terminal = scratch.path().join("terminal.bin");
+    fs::write(&progress, []).expect("create deadline progress file");
+    fs::write(&terminal, []).expect("create deadline terminal file");
+    let mut environment = env::vars_os().collect::<BTreeMap<_, _>>();
+    environment.insert(OsString::from(PROCESS_PATH), programs.into_os_string());
+    let capture = StreamPolicy::Capture { limit: 1024 * 1024 };
+    let spec = Spec {
+        argv: Argv::new(
+            env!("CARGO_BIN_EXE_spice"),
+            [
+                OsString::from("__gate-pre-commit-worker"),
+                progress.as_os_str().to_owned(),
+                terminal.as_os_str().to_owned(),
+            ],
+        )
+        .expect("declare hidden commit worker"),
+        cwd: repository.path().to_path_buf(),
+        environment: Environment::new(environment).expect("capture deadline environment"),
+        group: ProcessGroup::New,
+        deadlines: Deadlines::new(
+            Duration::from_secs(6),
+            Duration::from_millis(200),
+            Duration::from_millis(200),
+        )
+        .expect("declare scaled deadline"),
+        wait: WaitPolicy::new(
+            "commit worker process-tree fixture",
+            Cancellation::Never,
+            sill::RestartDisposition::Never,
+        )
+        .expect("declare worker wait"),
+        output: Output::new(StdinPolicy::Null, capture, capture),
+        redaction: Redaction::All,
+        grace: Duration::from_millis(200),
+    };
+
+    let waited = sill::spawn(spec)
+        .expect("launch hidden commit worker")
+        .wait()
+        .expect("terminate and reap hidden commit worker group");
+
+    assert!(matches!(waited.completion(), Completion::TimedOut(_)));
+    let pid = fs::read_to_string(&tool_pid)
+        .expect("the active Cargo tool published its descendant")
+        .trim()
+        .parse::<u32>()
+        .expect("tool descendant pid is numeric");
+    for _ in 0..100 {
+        if !process_exists(pid) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !process_exists(pid),
+        "commit worker deadline leaked gate-tool descendant {pid}"
+    );
+    let progress = fs::read_to_string(progress).expect("read worker phase evidence");
+    assert!(
+        progress.contains("\"phase\":\"family\",\"family\":\"toolchain\""),
+        "deadline phase evidence omitted the active toolchain family: {progress}"
+    );
+}
 
 struct Spoken {
     code: Option<i32>,
@@ -500,6 +671,30 @@ impl GateRepository {
         git(self.path(), &["add", path]);
     }
 
+    fn install_pre_commit(&self) {
+        let executable = Path::new(env!("CARGO_BIN_EXE_spice"));
+        assert!(!executable.to_string_lossy().contains('\''));
+        let path = self.path().join(".git/hooks/pre-commit");
+        fs::write(
+            &path,
+            format!(
+                concat!(
+                    "#!/bin/sh\n",
+                    "set -eu\n",
+                    "root=$(git rev-parse --show-toplevel)\n",
+                    "git_local_environment=$(git rev-parse --local-env-vars)\n",
+                    "for variable in $git_local_environment; do unset \"$variable\"; done\n",
+                    "cd \"$root\"\n",
+                    "exec '{}' gate pre-commit\n",
+                ),
+                executable.display(),
+            ),
+        )
+        .expect("install commit-gate hook");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("make commit-gate hook executable");
+    }
+
     fn write_source(&self, long_lines: usize) {
         let mut source = String::from("pub fn fixture() {}\n");
         for _ in 0..long_lines {
@@ -546,6 +741,20 @@ fn git_output(root: &Path, arguments: &[&str]) -> std::process::Output {
         String::from_utf8_lossy(&output.stderr)
     );
     output
+}
+
+fn executable(path: &Path, text: &str) {
+    fs::write(path, text).expect("write gate fixture executable");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .expect("make gate fixture executable");
+}
+
+fn process_exists(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: signal zero changes no process state and probes this exact pid.
+    unsafe { libc::kill(pid, 0) == 0 }
 }
 
 struct Scratch(PathBuf);

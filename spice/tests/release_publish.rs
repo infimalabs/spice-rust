@@ -234,12 +234,7 @@ fn the_client_grants_a_publication_the_bound_this_battery_needs() {
     );
 }
 
-#[test]
-fn publication_plans_commits_replays_and_survives_restart() {
-    let fixture = Fixture::new("durable");
-    let resident = Resident::start(&fixture);
-
-    let notes = fixture.notes.to_str().expect("notes path is UTF-8");
+fn preview_publication(fixture: &Fixture, notes: &str) -> ReleasePlan {
     let text = fixture.invoke(&["release", "publish", "--notes-file", notes]);
     assert!(
         text.status.success(),
@@ -288,10 +283,13 @@ fn publication_plans_commits_replays_and_survives_restart() {
     assert_eq!(text_plan.notes, expected_notes.identity);
     assert_eq!(text_plan.notes_document, expected_notes.document);
     assert!(
-        remote_refs(&fixture).is_empty(),
+        remote_refs(fixture).is_empty(),
         "preview changed remote refs"
     );
+    text_plan
+}
 
+fn assert_json_preview(fixture: &Fixture, notes: &str, text_plan: &ReleasePlan) {
     let json = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes]);
     assert!(
         json.status.success(),
@@ -304,17 +302,16 @@ fn publication_plans_commits_replays_and_survives_restart() {
         panic!("JSON preview did not reply")
     };
     assert_eq!(json_plan.position, ReplyPosition::Direct {});
-    assert_eq!(json_plan.body, text_plan);
+    assert_eq!(&json_plan.body, text_plan);
+}
 
-    let apply = format!("--apply={}", text_plan.key);
-    let first = fixture.invoke(&[
-        "--json",
-        "release",
-        "publish",
-        "--notes-file",
-        notes,
-        &apply,
-    ]);
+fn apply_publication(
+    fixture: &Fixture,
+    notes: &str,
+    apply: &str,
+    text_plan: &ReleasePlan,
+) -> (ReplyPosition, RecognitionAnswer) {
+    let first = fixture.invoke(&["--json", "release", "publish", "--notes-file", notes, apply]);
     assert!(
         first.status.success(),
         "first apply failed: {}",
@@ -323,7 +320,7 @@ fn publication_plans_commits_replays_and_survives_restart() {
     let first = recognition(&first);
     assert!(first.1.fresh);
     assert_eq!(
-        remote_refs(&fixture),
+        remote_refs(fixture),
         [
             "refs/heads/main",
             "refs/spice/packages/v0.0.0",
@@ -332,11 +329,11 @@ fn publication_plans_commits_replays_and_survives_restart() {
         ]
     );
     assert_eq!(
-        remote_object_type(&fixture, "refs/spice/packages/v0.0.0"),
+        remote_object_type(fixture, "refs/spice/packages/v0.0.0"),
         "tree"
     );
     assert_eq!(
-        remote_object(&fixture, "refs/spice/packages/v0.0.0"),
+        remote_object(fixture, "refs/spice/packages/v0.0.0"),
         text_plan.package_object
     );
     let operation_journal = fixture
@@ -363,7 +360,10 @@ fn publication_plans_commits_replays_and_survives_restart() {
             .len(),
         text_plan.operations.len()
     );
+    first
+}
 
+fn recover_publication(fixture: &Fixture, notes: &str) {
     let recovery = fixture.invoke(&[
         "--json",
         "release",
@@ -420,6 +420,18 @@ fn publication_plans_commits_replays_and_survives_restart() {
         spoken(&recovered)
     );
     assert!(!recognition(&recovered).1.fresh);
+}
+
+#[test]
+fn publication_plans_commits_replays_and_survives_restart() {
+    let fixture = Fixture::new("durable");
+    let resident = Resident::start(&fixture);
+    let notes = fixture.notes.to_str().expect("notes path is UTF-8");
+    let text_plan = preview_publication(&fixture, notes);
+    assert_json_preview(&fixture, notes, &text_plan);
+    let apply = format!("--apply={}", text_plan.key);
+    let first = apply_publication(&fixture, notes, &apply, &text_plan);
+    recover_publication(&fixture, notes);
 
     let replay = fixture.invoke(&["release", "publish", "--notes-file", notes, &apply]);
     assert!(
