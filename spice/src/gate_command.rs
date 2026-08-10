@@ -17,6 +17,8 @@ use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosi
 use crate::cli::Contract;
 use spice::repository::Repository;
 
+mod pre_commit;
+
 /// Run the ordinary gate against the captured index or one selected commit.
 pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {
     let selector = matches
@@ -93,7 +95,19 @@ fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport>
 
 /// Run the release-scoped native pre-commit battery without command recursion.
 pub(crate) fn pre_commit() -> Outcome<BatteryReport> {
-    match spice::gate::run(Selector::staged()) {
+    pre_commit::run()
+}
+
+pub(crate) fn pre_commit_worker_entry(
+    arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Option<i32> {
+    pre_commit::worker_entry(arguments)
+}
+
+fn pre_commit_report(
+    result: Result<BatteryReport, spice::gate::RunError>,
+) -> Outcome<BatteryReport> {
+    match result {
         Ok(report) if report.admits() => direct(report),
         Ok(report) => {
             let bytes = match report.encode() {
