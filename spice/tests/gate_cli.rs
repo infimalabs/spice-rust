@@ -11,7 +11,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gate::{BatteryReceipt, BatteryReport, BatteryState, CampReport, CampStanding};
+use gate::{
+    BatteryReceipt, BatteryReport, BatteryState, CampReport, CampStanding, CoverageCompleteness,
+    TestSelectionReport,
+};
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction, Spec,
     StdinPolicy, StreamPolicy, WaitPolicy,
@@ -75,6 +78,67 @@ fn normal_git_commit_with_the_installed_gate_creates_exactly_one_commit_inside_1
     assert!(
         git_stdout(repository.path(), &["diff", "--cached", "--name-only"]).is_empty(),
         "the successful commit left staged bytes behind"
+    );
+}
+
+#[test]
+fn commit_worker_executes_the_exact_staged_rust_target_and_refuses_unknown_sources() {
+    let marker_scratch = Scratch::new("selected-test-marker");
+    let marker = marker_scratch.path().join("executed");
+    let repository = GateRepository::new();
+    repository.write_selected_test(&marker);
+    repository.add("src/lib.rs");
+
+    let known = run_commit_worker(repository.path());
+    let Some((kind, document)) = known.terminal.split_first() else {
+        panic!("known staged source produced no terminal record");
+    };
+    assert_eq!(*kind, b'R', "known staged source did not admit: {known:?}");
+    BatteryReport::decode(document).expect("known worker terminal is a battery report");
+    assert_eq!(
+        fs::read_to_string(&marker).expect("selected target wrote its execution marker"),
+        "canonical selected target executed",
+    );
+    let report = selection_report(&known.progress);
+    assert!(report.admits());
+    assert_eq!(report.changed_sources(), &["src/lib.rs"]);
+    assert_eq!(report.tests(), &["gate-fixture::lib:gate_fixture"]);
+    assert_eq!(report.edges().len(), 1);
+    assert_eq!(report.edges()[0].source(), "src/lib.rs");
+    assert_eq!(report.edges()[0].test(), "gate-fixture::lib:gate_fixture");
+    assert_eq!(report.coverage(), &CoverageCompleteness::Complete);
+
+    let repository = GateRepository::new();
+    fs::create_dir(repository.path().join("tools")).expect("create unknown-source directory");
+    fs::write(
+        repository.path().join("tools/outside.rs"),
+        "pub fn outside_every_package() {}\n",
+    )
+    .expect("write unknown staged Rust source");
+    repository.add("tools/outside.rs");
+
+    let unknown = run_commit_worker(repository.path());
+    let Some((kind, document)) = unknown.terminal.split_first() else {
+        panic!("unknown staged source produced no terminal record");
+    };
+    assert_eq!(
+        *kind, b'S',
+        "unknown staged source did not refuse through selection: {unknown:?}"
+    );
+    let terminal_report =
+        TestSelectionReport::decode(document).expect("unknown terminal is a selection report");
+    let progress_report = selection_report(&unknown.progress);
+    assert_eq!(terminal_report, progress_report);
+    assert!(!terminal_report.admits());
+    assert_eq!(terminal_report.changed_sources(), &["tools/outside.rs"]);
+    assert!(terminal_report.tests().is_empty());
+    assert!(terminal_report.edges().is_empty());
+    assert_eq!(
+        terminal_report.coverage(),
+        &CoverageCompleteness::Unknown {
+            reason: "changed Rust source \"tools/outside.rs\" reaches no direct Cargo test target"
+                .to_owned(),
+        },
     );
 }
 
@@ -203,6 +267,52 @@ struct Spoken {
     code: Option<i32>,
     out: Vec<u8>,
     err: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct WorkerBoundary {
+    progress: String,
+    terminal: Vec<u8>,
+}
+
+fn run_commit_worker(root: &Path) -> WorkerBoundary {
+    let scratch = Scratch::new("commit-worker-boundary");
+    let progress = scratch.path().join("progress.jsonl");
+    let terminal = scratch.path().join("terminal.bin");
+    fs::write(&progress, []).expect("create worker progress file");
+    fs::write(&terminal, []).expect("create worker terminal file");
+    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .arg("__gate-pre-commit-worker")
+        .arg(&progress)
+        .arg(&terminal)
+        .current_dir(root)
+        .env_remove(steer::hook::INBOX)
+        .output()
+        .expect("launch normal commit worker boundary");
+    assert!(
+        output.status.success(),
+        "commit worker failed before publishing its boundary: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    WorkerBoundary {
+        progress: fs::read_to_string(progress).expect("read commit worker progress"),
+        terminal: fs::read(terminal).expect("read commit worker terminal"),
+    }
+}
+
+fn selection_report(progress: &str) -> TestSelectionReport {
+    const PREFIX: &str = "[rust-test-selection-report] ";
+    let encoded = progress
+        .lines()
+        .filter_map(|line| line.strip_prefix(PREFIX))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        encoded.len(),
+        1,
+        "worker must publish exactly one selection report: {progress}"
+    );
+    TestSelectionReport::decode(encoded[0].as_bytes()).expect("decode worker selection report")
 }
 
 fn invoke(argv: &[&str], current: &Path) -> Spoken {
@@ -729,6 +839,28 @@ impl GateRepository {
             source.push('\n');
         }
         fs::write(self.path().join("src/lib.rs"), source).expect("write fixture source");
+    }
+
+    fn write_selected_test(&self, marker: &Path) {
+        let marker = format!("{:?}", marker.to_string_lossy());
+        fs::write(
+            self.path().join("src/lib.rs"),
+            format!(
+                concat!(
+                    "pub fn fixture() {{}}\n\n",
+                    "#[test]\n",
+                    "fn canonical_selected_target() {{\n",
+                    "    std::fs::write(\n",
+                    "        {marker},\n",
+                    "        \"canonical selected target executed\",\n",
+                    "    )\n",
+                    "    .expect(\"write selected-target execution marker\");\n",
+                    "}}\n",
+                ),
+                marker = marker,
+            ),
+        )
+        .expect("write staged source with selected-target marker");
     }
 
     fn write_camp_lines(&self, length: usize) {

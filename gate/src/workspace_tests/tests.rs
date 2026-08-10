@@ -130,6 +130,7 @@ fn partition_splits_large_packages_in_stable_target_order() {
             kind: "test".to_owned(),
             name: format!("target-{index:02}"),
             source: PathBuf::from(format!("/workspace/tests/target-{index:02}.rs")),
+            declared_path_sources: Vec::new(),
         })
         .collect();
 
@@ -749,6 +750,7 @@ fn quick_package() -> PackageInventory {
             kind: "test".to_owned(),
             name: "quick".to_owned(),
             source: PathBuf::from("/workspace/quick/tests/quick.rs"),
+            declared_path_sources: Vec::new(),
         }],
     }
 }
@@ -767,6 +769,7 @@ fn fixture_inventory() -> Inventory {
                     kind: "lib".to_owned(),
                     name: "fixture-a".to_owned(),
                     source: PathBuf::from("/workspace/fixture-a/src/lib.rs"),
+                    declared_path_sources: Vec::new(),
                 }],
             },
             PackageInventory {
@@ -778,6 +781,7 @@ fn fixture_inventory() -> Inventory {
                     kind: "bin".to_owned(),
                     name: "fixture-b".to_owned(),
                     source: PathBuf::from("/workspace/fixture-b/src/main.rs"),
+                    declared_path_sources: Vec::new(),
                 }],
             },
         ],
@@ -804,6 +808,7 @@ fn target_identity(kind: &str, name: &str) -> TargetIdentity {
         kind: kind.to_owned(),
         name: name.to_owned(),
         source: PathBuf::from(format!("/workspace/{kind}/{name}.rs")),
+        declared_path_sources: Vec::new(),
     }
 }
 

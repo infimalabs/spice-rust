@@ -115,6 +115,7 @@ impl Directive {
 
     fn from_head(head: &wire::SteeringHead) -> Result<Self, Refusal> {
         let key = read("key", &head.key)?;
+        admit_attachments(head.directive, &head.attachments)?;
         Ok(Self {
             directive: head.directive,
             key,
@@ -195,6 +196,13 @@ pub enum Refusal {
         field: &'static str,
         /// Text exactly as it arrived.
         text: String,
+    },
+    /// A durable directive carried media outside the shared admission law.
+    InvalidMedia {
+        /// Directive whose attachment set was refused.
+        directive: CanonicalUuid,
+        /// Exact shared media admission error.
+        error: wire::MediaError,
     },
     /// A directive already carries this key.
     Duplicate {
@@ -284,6 +292,12 @@ impl fmt::Display for Refusal {
         match self {
             Self::Malformed { field, text } => {
                 write!(formatter, "{field} does not spell a steering key: {text:?}")
+            }
+            Self::InvalidMedia { directive, error } => {
+                write!(
+                    formatter,
+                    "directive {directive} carries invalid media: {error}"
+                )
             }
             Self::Duplicate { key } => write!(formatter, "a directive already carries {key}"),
             Self::IdentityDuplicate { directive } => {
@@ -629,6 +643,7 @@ impl Ledger {
 
     fn send(&mut self, body: &SteerSent, published: Option<Instant>) -> Result<(), Refusal> {
         let key = read("key", &body.key)?;
+        admit_attachments(body.directive, &body.attachments)?;
         self.open(Directive {
             directive: body.directive,
             key,
@@ -1038,6 +1053,14 @@ fn read(field: &'static str, text: &str) -> Result<Key, Refusal> {
         field,
         text: text.to_owned(),
     })
+}
+
+fn admit_attachments(
+    directive: CanonicalUuid,
+    attachments: &[DirectiveAttachment],
+) -> Result<(), Refusal> {
+    wire::media::admit_media(attachments)
+        .map_err(|error| Refusal::InvalidMedia { directive, error })
 }
 
 #[cfg(test)]

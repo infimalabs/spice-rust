@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use board::allocate::{Mint, mint};
 use journal::{FactCause, Journal, JournalWrite};
+use rusqlite::{Connection, params};
 use serde_json::json;
 use wire::{
     Actor, CanonicalUuid, Disposition, Instant, LaneResidency, Origin, Phase, Producer,
@@ -158,7 +159,10 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         lane,
         text: "Address this exact steering ask".to_owned(),
         control: None,
-        attachments: Vec::new(),
+        attachments: vec![
+            wire::Media::from_base64("operator-capture.png", "image/png", "iVBORw0KGgo=")
+                .expect("fixture media admits"),
+        ],
         expires: instant(30),
     };
     let steering_fact = write
@@ -203,6 +207,74 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         SESSION_PROJECT,
         instant(2),
     );
+}
+
+fn seed_retired_peer_steering(path: &Path) {
+    let mut journal = Journal::open(path).expect("fixture journal reopens");
+    let directive = uuid(0xb0);
+    let lane = uuid(0xad);
+    let origin = "task:SESSION-fixture"
+        .parse::<Origin>()
+        .expect("fixture origin");
+    let mut sent = JournalWrite::new(
+        Actor::Spice,
+        origin.clone(),
+        instant(3),
+        Producer::CommandDoor,
+    );
+    let body = body::SteerSent {
+        directive,
+        key: "1kRetire".to_owned(),
+        lane,
+        text: "unrelated retired steering".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: instant(30),
+    };
+    let fact = sent
+        .fact(body.clone(), FactCause::Root)
+        .expect("peer steering fact builds");
+    let head_origin = origin.clone();
+    sent.steering_head(fact, move |created| SteeringHead {
+        directive: body.directive,
+        key: body.key,
+        lane: body.lane,
+        text: body.text,
+        control: body.control,
+        attachments: body.attachments,
+        published: instant(3),
+        expires: body.expires,
+        stage: body::SteeringStage::Published,
+        escalations: Vec::new(),
+        disposition: Disposition::Live,
+        origin: head_origin,
+        created,
+        minted_millis: None,
+    });
+    journal
+        .apply(sent)
+        .expect("peer steering publication commits");
+    let current = journal
+        .read(|read| read.steering_head(directive))
+        .expect("peer steering head reads")
+        .expect("peer steering head exists");
+    let mut canceled =
+        JournalWrite::new(Actor::Operator, origin, instant(4), Producer::CommandDoor);
+    let cancellation = canceled
+        .fact(
+            body::SteerCanceled {
+                key: current.body().key.clone(),
+                lane,
+            },
+            FactCause::Existing(current.body().created),
+        )
+        .expect("peer cancellation fact builds");
+    let mut retired = current.into_body();
+    retired.disposition = Disposition::Canceled;
+    canceled.steering_head(cancellation, move |_| retired);
+    journal
+        .apply(canceled)
+        .expect("peer steering retirement commits");
 }
 
 fn briefing_lanes(
@@ -377,6 +449,14 @@ fn briefing_authority_sources_asks_and_held_work_from_exact_state_authorities() 
         "Address this exact steering ask"
     );
     assert_eq!(
+        recall["authorities"]["asks"][0]["attachments"][0]["name"],
+        "operator-capture.png",
+    );
+    assert_eq!(
+        recall["authorities"]["asks"][0]["attachments"][0]["data_url"],
+        "data:image/png;base64,iVBORw0KGgo=",
+    );
+    assert_eq!(
         recall["authorities"]["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
@@ -420,12 +500,122 @@ fn briefing_authority_sources_asks_and_held_work_from_exact_state_authorities() 
     );
     assert_eq!(pruned["authorities"]["asks"][0]["key"], "1kAsk001");
     assert_eq!(
+        pruned["authorities"]["asks"][0]["attachments"][0]["name"], "operator-capture.png",
+        "end pruning preserves typed outstanding-ask media",
+    );
+    assert_eq!(
         pruned["authorities"]["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
     assert_eq!(
         pruned["authorities"]["priority"]["end_pruning_preserves"],
         json!(["outstanding-asks", "held-work"])
+    );
+
+    scratch.remove();
+}
+
+#[test]
+fn briefing_ignores_corrupt_fact_and_retired_steering_outside_the_exact_locus() {
+    let scratch = Scratch::new("authority-bounded-corruption");
+    fake_repository(scratch.path());
+    let transcript = scratch.path().join("codex.jsonl");
+    write_jsonl(&transcript, &codex_rows());
+    let thread = uuid(0xaa).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_briefing_authority(&authority, &thread);
+    seed_retired_peer_steering(&authority);
+    let connection = Connection::open(&authority).expect("fixture authority opens for corruption");
+    connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = ?1 \
+             WHERE seq = (SELECT max(seq) FROM fact_envelopes WHERE kind = 'task::added')",
+            params![b"corrupt unrelated fact".to_vec()],
+        )
+        .expect("corrupt one unrelated fact body");
+    connection
+        .execute(
+            "UPDATE steering_heads SET body = ?1 WHERE disposition = 'canceled'",
+            params![b"corrupt retired steering".to_vec()],
+        )
+        .expect("corrupt retired steering body");
+    drop(connection);
+
+    let recall = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&[
+            "session",
+            "briefing",
+            &transcript.to_string_lossy(),
+            "--deadline-seconds",
+            "5",
+        ]),
+        &[("CODEX_THREAD_ID", thread)], // env-policy: allow
+        "recall",
+    );
+
+    assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
+    assert_eq!(
+        recall["authorities"]["held_work"]["own_claim"]["title"],
+        "Compose Rust briefings"
+    );
+    assert_eq!(recall["authorities"]["held_work"]["peer_claims"], 1);
+    assert!(
+        recall["authorities"].get("unknowns").is_none(),
+        "corruption outside every selected keyspace is not decoded"
+    );
+
+    scratch.remove();
+}
+
+#[test]
+fn a_failed_steering_probe_does_not_hide_independent_board_answers() {
+    let scratch = Scratch::new("authority-probe-isolation");
+    fake_repository(scratch.path());
+    let transcript = scratch.path().join("codex.jsonl");
+    write_jsonl(&transcript, &codex_rows());
+    let thread = uuid(0xaa).to_string().replace('-', "");
+    let authority = authority_path(scratch.path());
+    seed_briefing_authority(&authority, &thread);
+    let connection = Connection::open(&authority).expect("fixture authority opens for corruption");
+    connection
+        .execute(
+            "UPDATE steering_heads SET body = ?1 WHERE disposition = 'live'",
+            params![b"corrupt selected steering".to_vec()],
+        )
+        .expect("corrupt selected steering body");
+    drop(connection);
+
+    let recall = reply_forms_in(
+        Some(scratch.path()),
+        &strings(&[
+            "session",
+            "briefing",
+            &transcript.to_string_lossy(),
+            "--deadline-seconds",
+            "5",
+        ]),
+        &[("CODEX_THREAD_ID", thread)], // env-policy: allow
+        "recall",
+    );
+
+    assert!(
+        recall["authorities"].get("asks").is_none(),
+        "failed selected steering is not rendered as an empty known inbox"
+    );
+    assert_eq!(
+        recall["authorities"]["held_work"]["own_claim"]["title"],
+        "Compose Rust briefings"
+    );
+    assert_eq!(recall["authorities"]["held_work"]["peer_claims"], 1);
+    assert_eq!(
+        recall["authorities"]["unknowns"]
+            .as_array()
+            .expect("failed probe is explicit")
+            .iter()
+            .filter(|row| row["authority"] == "steering")
+            .count(),
+        1
     );
 
     scratch.remove();

@@ -20,6 +20,7 @@ use crate::{Journal, JournalReader, MigrationError, OpenError, SCHEMA_VERSION, V
 
 mod allocation_migration;
 mod boundary;
+mod claim_index;
 mod identity_migration;
 mod lineage_migration;
 mod read;
@@ -438,6 +439,9 @@ fn populate_authority(journal: Journal) -> Journal {
 /// fixtures must also restore its old columns and bodies rather than lying
 /// about their version while retaining schema-4 content.
 pub(super) fn downgrade_task_identity_to_five(connection: &Connection) {
+    connection
+        .execute_batch("DROP TABLE IF EXISTS claim_index;")
+        .expect("remove schema-8 claim index before restoring older task heads");
     downgrade_fact_identity_to_three(connection);
     downgrade_head_identity_to_three(connection);
 }
@@ -727,6 +731,14 @@ fn insert_heads(journal: &Journal) {
         2,
         &claim_head(),
     );
+    journal
+        .connection
+        .execute(
+            "INSERT INTO claim_index(stamp, actor, disposition, head_seq) \
+             VALUES ('1kKRRsDP', 'spice', 'active', 2)",
+            [],
+        )
+        .expect("insert claim index fixture");
     insert_head(
         &journal.connection,
         "lease_heads",
@@ -1078,6 +1090,7 @@ fn authority_tables(journal: &Journal) -> BTreeSet<String> {
 fn expected_tables() -> BTreeSet<String> {
     [
         "claim_heads",
+        "claim_index",
         "command_receipts",
         "cursor_head",
         "fact_envelopes",
@@ -1100,15 +1113,16 @@ fn expected_tables() -> BTreeSet<String> {
     .collect()
 }
 
-/// Remove the schema-7 authority index when constructing an older authority.
+/// Remove indexes introduced after schema 6 when constructing an older authority.
 fn drop_steering_index(connection: &Connection) {
     connection
         .execute_batch(
-            "DROP TABLE steering_index;
+            "DROP TABLE IF EXISTS claim_index;
+             DROP TABLE steering_index;
              DROP TABLE steering_misses;
              DROP TABLE steering_heads;",
         )
-        .expect("remove schema-7 steering index from older fixture");
+        .expect("remove post-schema-6 indexes from older fixture");
 }
 
 fn admit_empty_steering_projection(journal: &mut Journal) {

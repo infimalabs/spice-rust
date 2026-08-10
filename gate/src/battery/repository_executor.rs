@@ -205,8 +205,12 @@ impl<'trace> RepositoryExecutor<'trace> {
             );
             selected.sort();
             selected.dedup();
-            let baselines =
-                BaselineCapture::capture_with_paths(&repository, &selected, rim.changes());
+            let baselines = BaselineCapture::capture_with_paths(
+                &repository,
+                &selected,
+                rim.changes(),
+                captured.clean_merge_tree(),
+            );
             (captured.digest().clone(), core, bounds, baselines)
         };
         let (metrics, metric_bounds) = match selected {

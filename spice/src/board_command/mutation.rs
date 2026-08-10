@@ -17,6 +17,7 @@ pub(super) struct ValidatedSnapshot {
     pub(super) cursor: wire::Seq,
     pub(super) answer: BoardAnswer,
     pub(super) entries: Vec<Entry>,
+    pub(super) review_history: Result<Vec<board::graph::ReviewEdge>, String>,
 }
 
 struct PreparedTask {

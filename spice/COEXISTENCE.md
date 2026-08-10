@@ -86,7 +86,7 @@ Python resolves a worktree-local thread pointer at
 `spice-z/spice/mail/ackstate.py#ACK_STATE_DATABASE_FILENAME`, and its live side
 channel through `spice-z/spice/agent/sidechannel.py#spice-agent-side-`.
 
-Rust binds a lane capability with `spice/src/agent_launch.rs#SPICE_LANE`, stores
+Rust binds a lane capability with `spice/src/agent_launch.rs#SPICE_RS_LANE`, stores
 directions and ACK facts in its own journal, and publishes resident discovery
 below the root exposed by `spice/src/repository.rs#pub fn runtime`. A Python and
 Rust agent may carry the exact same UUID: UUID equality is data equality, not a

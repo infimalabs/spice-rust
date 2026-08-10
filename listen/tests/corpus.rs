@@ -608,6 +608,59 @@ fn codex_and_claude_tool_results_preserve_one_admitted_image_per_call() {
 }
 
 #[test]
+fn codex_and_claude_authored_directives_retain_delivered_media_beside_the_text() {
+    let name = r"operator](capture)\雪.png";
+    let media = wire::Media::from_base64(name, "image/png", "iVBORw0KGgo=")
+        .expect("fixture attachment admits");
+    let rendered = format!(
+        "<1kInbox>\ndirective=018f82d4-6f59-7d06-92e3-bce9131163af \
+         key=1kAsk001 stage=published expires=2026-08-01T06:30:00.000Z\n\
+         inspect this capture\n\n{}\n</1kInbox>\n",
+        media.markdown().expect("fixture Markdown renders"),
+    );
+    let codex = serde_json::to_vec(&serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": rendered}],
+        },
+    }))
+    .expect("Codex authored directive encodes");
+    let codex =
+        decode(Dialect::Codex, &codex, locus(&codex)).expect("Codex authored directive decodes");
+    let [Event::Prose(codex)] = codex.events() else {
+        panic!("Codex directive stays one authored prose event");
+    };
+
+    let claude = serde_json::to_vec(&serde_json::json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": rendered}],
+        },
+    }))
+    .expect("Claude authored directive encodes");
+    let claude = decode(Dialect::Claude, &claude, locus(&claude))
+        .expect("Claude authored directive decodes");
+    let [Event::Prose(claude)] = claude.events() else {
+        panic!("Claude directive stays one authored prose event");
+    };
+
+    assert_eq!(codex.text, rendered);
+    assert_eq!(claude.text, rendered);
+    assert_eq!(codex.media.len(), 1);
+    assert_eq!(claude.media.len(), 1);
+    assert_eq!(codex.media[0].name, name);
+    assert_eq!(claude.media[0].name, name);
+    assert_eq!(
+        codex.media[0].identity().unwrap(),
+        claude.media[0].identity().unwrap(),
+        "the same delivered directive bytes retain one vendor-neutral identity",
+    );
+}
+
+#[test]
 fn automatic_ownership_refuses_disagreement_without_a_fallback() {
     let codex = br#"{"timestamp":"2026-08-09T01:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#;
     assert!(matches!(

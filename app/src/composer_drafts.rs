@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use wire::body::DirectiveAttachment;
 use wire::{AgentMessage, CanonicalUuid};
 
-use crate::composer_markdown::{Attachment, QuotedReply};
+use crate::composer_markdown::QuotedReply;
 use crate::runtime::LaneMember;
 
 /// Every draft belonging to one independently steerable target.
@@ -226,15 +226,7 @@ pub(crate) fn compose(draft: &ComposerDraft) -> String {
             body: &quote.body,
         })
         .collect::<Vec<_>>();
-    let attachments = draft
-        .attachments
-        .iter()
-        .map(|attachment| Attachment {
-            name: &attachment.name,
-            data_url: &attachment.data_url,
-        })
-        .collect::<Vec<_>>();
-    crate::composer_markdown::compose(&draft.body, &quotes, &attachments)
+    crate::composer_markdown::compose(&draft.body, &quotes, &draft.attachments)
 }
 
 #[cfg(test)]
@@ -411,6 +403,7 @@ mod tests {
     #[test]
     fn preparation_builds_one_markdown_file_and_carries_only_target_images() {
         let mut store = DraftStore::default();
+        let target_attachment = attachment(r"a](one)\雪.png");
         store.set_body("agent-a".to_owned(), "body".to_owned());
         store.add_quote(
             "agent-a".to_owned(),
@@ -423,7 +416,7 @@ mod tests {
         store
             .draft_mut("agent-a".to_owned())
             .attachments
-            .push(attachment("a"));
+            .push(target_attachment.clone());
         store
             .draft_mut("agent-b".to_owned())
             .attachments
@@ -432,9 +425,21 @@ mod tests {
         let prepared = store.prepare("agent-a").unwrap();
         assert_eq!(
             prepared.message,
-            format!("> quoted\n> line\n\nreply\n\nbody\n\n![a](data:image/png;base64,{PNG})")
+            format!(
+                "> quoted\n> line\n\nreply\n\nbody\n\n{}",
+                target_attachment
+                    .markdown()
+                    .expect("fixture Markdown renders"),
+            ),
         );
-        assert_eq!(prepared.attachments, [attachment("a")]);
+        assert_eq!(
+            prepared
+                .message
+                .matches(&target_attachment.data_url)
+                .count(),
+            1,
+        );
+        assert_eq!(prepared.attachments, [target_attachment]);
     }
 
     #[test]
