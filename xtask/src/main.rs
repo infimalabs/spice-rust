@@ -43,7 +43,8 @@ fn main() -> ExitCode {
     let result: CommandResult = match command.as_deref() {
         Some(value) if value == OsStr::new("verify-action") && arguments.len() == 1 => {
             let action = arguments.next().expect("one verifier action was admitted");
-            return run_verify_action(&action, &mut output);
+            drop(output);
+            return run_verify_action(&action, &mut io::stderr().lock());
         }
         Some(value) if value == OsStr::new("help") && arguments.len() == 0 => {
             writeln!(output, "{}", help()).map_err(Into::into)

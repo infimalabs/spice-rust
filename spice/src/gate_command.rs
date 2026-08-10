@@ -99,10 +99,7 @@ pub(crate) fn pre_commit() -> Outcome<BatteryReport> {
             reason: "gate::battery-regressed".to_owned(),
             witness: Some(report.gate_set().to_string()),
             expected: Some("every canonical Rust battery result to admit publication".to_owned()),
-            observed: report
-                .encode()
-                .ok()
-                .and_then(|bytes| String::from_utf8(bytes).ok()),
+            observed: Some(report.refusal_fold().to_string()),
             remedy: "repair the typed failing results; never launch a predecessor gate. A \
                      merge is recorded by plain git commit like any other commit: the gate \
                      measures each file against the parent that carries it, so what refuses \
