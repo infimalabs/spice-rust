@@ -128,6 +128,7 @@ fn spawn_inner_with_guardian(
         wake_receiver: wakes.receiver,
         cancellation_wake: wakes.cancellation,
         child: Some(child),
+        stdin: None,
         process,
         stdout,
         stderr,
@@ -249,6 +250,7 @@ fn command(spec: &Spec, guardian: Option<&PendingGuardian>) -> Command {
     match spec.output.stdin() {
         StdinPolicy::Inherit => command.stdin(Stdio::inherit()),
         StdinPolicy::Null => command.stdin(Stdio::null()),
+        StdinPolicy::Pipe => command.stdin(Stdio::piped()),
     };
     configure_stream(&mut command, true, spec.output.stdout());
     configure_stream(&mut command, false, spec.output.stderr());

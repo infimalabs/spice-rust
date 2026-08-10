@@ -60,6 +60,12 @@ pub(super) trait AgentMessagePublisher {
     ) -> Result<bool, canvas::stream::MessagePublishError>;
 }
 
+enum TasteRecognition<'a> {
+    Direct,
+    Immediate(&'a mut dyn taste_surface::Adjudicator),
+    Deferred(&'a mut taste_surface::AdjudicationSubmitter),
+}
+
 impl AgentMessagePublisher for canvas::stream::MessagePublisher {
     fn publish(
         &self,
@@ -78,6 +84,39 @@ pub(super) fn accept_capture_record<P: AgentMessagePublisher>(
     record: &lane::capture::CaptureRecord,
     views: CaptureViews<'_>,
 ) -> CommandResult<()> {
+    let recognition = judge.map_or(TasteRecognition::Direct, TasteRecognition::Immediate);
+    accept_capture_record_with(bus, epoch, seats, surfaces, recognition, record, views)
+}
+
+pub(super) fn accept_capture_record_deferred<P: AgentMessagePublisher>(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    surfaces: &CaptureSurfaces<'_, P>,
+    judge: &mut taste_surface::AdjudicationSubmitter,
+    record: &lane::capture::CaptureRecord,
+    views: CaptureViews<'_>,
+) -> CommandResult<()> {
+    accept_capture_record_with(
+        bus,
+        epoch,
+        seats,
+        surfaces,
+        TasteRecognition::Deferred(judge),
+        record,
+        views,
+    )
+}
+
+fn accept_capture_record_with<P: AgentMessagePublisher>(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    surfaces: &CaptureSurfaces<'_, P>,
+    recognition: TasteRecognition<'_>,
+    record: &lane::capture::CaptureRecord,
+    views: CaptureViews<'_>,
+) -> CommandResult<()> {
     if !lane_surface::capture_record(bus, epoch, seats, record)? {
         return Ok(());
     }
@@ -86,15 +125,33 @@ pub(super) fn accept_capture_record<P: AgentMessagePublisher>(
     // responsibility for, rather than leaving the gap for the next start to
     // find. A record the resident did not accept above does not account either.
     super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), views.diagnostic)?;
-    taste_surface::recognize(
-        bus,
-        surfaces.paths,
-        epoch,
-        surfaces.tastes,
-        surfaces.steering,
-        judge,
-        record,
-    )?;
+    match recognition {
+        TasteRecognition::Deferred(judge) => {
+            judge.recognize(bus, epoch, surfaces.tastes, record)?;
+        }
+        TasteRecognition::Immediate(judge) => taste_surface::recognize(
+            bus,
+            surfaces.paths,
+            epoch,
+            surfaces.tastes,
+            surfaces.steering,
+            Some(judge),
+            record,
+        )?,
+        TasteRecognition::Direct => {
+            // Disabled adjudication is deliberately direct: it starts no process
+            // or worker and publishes the deterministic reminder immediately.
+            taste_surface::recognize(
+                bus,
+                surfaces.paths,
+                epoch,
+                surfaces.tastes,
+                surfaces.steering,
+                None,
+                record,
+            )?;
+        }
+    }
     match publish_agent_messages(surfaces.publisher, record, views.previews) {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {

@@ -1,6 +1,9 @@
 use std::cell::Cell;
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::time::Duration;
 
 use super::*;
 use crate::resident::write;
@@ -276,8 +279,9 @@ fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
     let snapshot = fixture.bus.fact_snapshot().expect("snapshot");
     let ledger = steer::Ledger::from_snapshot(&snapshot).expect("reminders replay");
     assert_eq!(ledger.pending(fixture.lane).len(), 2);
-    let rendered = fs::read_to_string(steer::inbox::path(&fixture.paths.inbox, fixture.lane))
-        .expect("post-commit inbox renders");
+    let inbox = steer::inbox::path(&fixture.paths.inbox, fixture.lane);
+    let rendered = fs::read_to_string(&inbox)
+        .unwrap_or_else(|error| panic!("post-commit inbox {} renders: {error}", inbox.display()));
     assert!(rendered.contains("[TASTE] polling: Wait for the terminal event."));
     assert!(rendered.contains("[TASTE] fallbacks: Keep one current path."));
     fixture.finish();
@@ -479,6 +483,175 @@ fn unavailable_judge_abandons_candidate_without_fact_or_reminder() {
             .pending(fixture.lane)
             .is_empty()
     );
+    fixture.finish();
+}
+
+#[test]
+fn current_thread_progresses_while_bounded_adjudication_is_held_open() {
+    let fixture = Fixture::new("judge-current-thread-progress");
+    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let worker_release = Arc::clone(&release);
+    let mut adjudication = start_adjudication_with(move |_| {
+        FunctionAdjudicator(move |_: &Candidate| {
+            entered_sender.send(()).expect("announce held judge");
+            let (lock, changed) = &*worker_release;
+            let released = lock.lock().expect("release lock");
+            let _released = changed
+                .wait_while(released, |released| !*released)
+                .expect("release wait");
+            Ok(judgment(
+                true,
+                vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+            ))
+        })
+    })
+    .expect("bounded adjudication starts");
+    let resident = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("current-thread runtime");
+
+    resident.block_on(async {
+        let (submitter, completions) = adjudication.parts();
+        submitter
+            .recognize(&fixture.bus, fixture.epoch, &bag, &record)
+            .expect("candidate submits without waiting for judge");
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker holds the judge open");
+
+        let (progressed, observed_progress) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            let _ = progressed.send(());
+        });
+        tokio::time::timeout(Duration::from_millis(100), observed_progress)
+            .await
+            .expect("resident executor remains live")
+            .expect("progress task reports");
+        assert!(
+            fixture.judgments().is_empty(),
+            "held external authority committed prematurely"
+        );
+
+        let (lock, changed) = &*release;
+        *lock.lock().expect("release lock") = true;
+        changed.notify_all();
+        let completed = tokio::time::timeout(Duration::from_secs(1), completions.recv())
+            .await
+            .expect("worker completes after release")
+            .expect("completion authority stays live");
+        submitter.finished(&completed);
+        complete_judgment(
+            &fixture.bus,
+            &fixture.paths,
+            fixture.epoch,
+            &bag,
+            &steer::Config::default(),
+            completed,
+        )
+        .expect("resident revalidates and commits completion");
+    });
+
+    drop(adjudication);
+    assert_eq!(fixture.judgments().len(), 1);
+    fixture.finish();
+}
+
+#[test]
+fn delayed_completion_is_abandoned_after_compaction_or_bag_movement() {
+    let mut fixture = Fixture::new("judge-delayed-authority");
+    let original_bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let changed_bag = bag(&[("polling", &["poll*"], "Choose another action.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let prepared = prepare_judgment(&fixture.bus, fixture.epoch, &original_bag, &record)
+        .expect("candidate prepares")
+        .expect("candidate exists");
+    let completed = CompletedJudgment {
+        decisions: vec![JudgedCandidate {
+            candidate: prepared.candidates[0].clone(),
+            judgment: judgment(
+                true,
+                vec![attempt(0, "YES", wire::body::TasteJudgeReply::Yes)],
+            ),
+        }],
+        prepared,
+    };
+
+    complete_judgment(
+        &fixture.bus,
+        &fixture.paths,
+        fixture.epoch,
+        &changed_bag,
+        &steer::Config::default(),
+        completed.clone(),
+    )
+    .expect("changed bag abandons stale answer");
+    fixture.compact();
+    complete_judgment(
+        &fixture.bus,
+        &fixture.paths,
+        fixture.epoch,
+        &original_bag,
+        &steer::Config::default(),
+        completed,
+    )
+    .expect("changed compaction abandons stale answer");
+
+    assert!(fixture.judgments().is_empty());
+    fixture.finish();
+}
+
+#[test]
+fn shutdown_cancels_and_joins_an_inflight_process_request() {
+    let fixture = Fixture::new("judge-shutdown");
+    let bag = bag(&[("polling", &["poll*"], "Wait.")]);
+    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
+    let script = std::env::temp_dir().join(format!(
+        "spice-taste-judge-shutdown-{}-{}",
+        std::process::id(),
+        NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(
+        &script,
+        "#!/bin/sh\ncat >/dev/null\nexec /usr/bin/tail -f /dev/null\n",
+    )
+    .expect("write shutdown judge fixture");
+    let mut permissions = fs::metadata(&script)
+        .expect("shutdown judge metadata")
+        .permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&script, permissions).expect("make shutdown judge executable");
+    let binary = script
+        .to_str()
+        .expect("UTF-8 shutdown judge path")
+        .to_owned();
+    let mut adjudication = start_adjudication_with(move |cancellation| ProcessAdjudicator {
+        process: crate::judge::Process::with_contract(
+            binary,
+            Duration::from_secs(30),
+            cancellation,
+        ),
+    })
+    .expect("cancellable adjudication starts");
+    {
+        let (submitter, _) = adjudication.parts();
+        submitter
+            .recognize(&fixture.bus, fixture.epoch, &bag, &record)
+            .expect("inflight request submits");
+    }
+
+    let started = std::time::Instant::now();
+    drop(adjudication);
+
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "shutdown waited for the process runtime deadline"
+    );
+    fs::remove_file(script).expect("remove shutdown judge fixture");
     fixture.finish();
 }
 
