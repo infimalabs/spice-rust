@@ -69,7 +69,7 @@ fn message(ts: &str, turn: &str, text: &str) -> MessageRecord {
 fn turn(id: &str, start: &str, end: &str, texts: &[&str]) -> TurnRecord {
     TurnRecord {
         source: "fixture.jsonl".to_owned(),
-        vendor: Vendor::Codex,
+        vendor: Vendor::inferred(listen::Dialect::Codex),
         turn_id: Some(id.to_owned()),
         start_ts: start.to_owned(),
         end_ts: Some(end.to_owned()),

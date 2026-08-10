@@ -492,52 +492,9 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
         .expect("current capture admits");
     }
 
-    let snapshot = bus.fact_snapshot().expect("capture facts read");
-    assert_eq!(
-        snapshot
-            .facts()
-            .iter()
-            .filter(|fact| fact.fact.kind() == wire::FactKind::TasteReminded)
-            .count(),
-        1,
-        "the duplicate durable vendor record is suppressed in the same epoch"
-    );
-    assert_eq!(
-        steer::Ledger::from_snapshot(&snapshot)
-            .expect("reminder replay")
-            .pending(lane)
-            .len(),
-        1
-    );
-    assert!(
-        fs::read_to_string(steer::inbox::path(&paths.inbox, lane))
-            .expect("inbox rendering")
-            .contains("[TASTE] polling: Wait for a terminal event.")
-    );
+    assert_reminder_published(&bus, &paths, lane);
 
-    let judged_locus = listen::Locus::new(4, 180, 48);
-    let judged_record = lane::capture::CaptureRecord {
-        locus: judged_locus,
-        decoded: listen::Decoded::Events {
-            context: Default::default(),
-            events: vec![listen::Event::Prose(listen::Prose {
-                role: listen::ProseRole::Assistant,
-                text: "A fallback path is masking the failure.".to_owned(),
-                phase: None,
-                locus: judged_locus,
-            })],
-        },
-        ..record.clone()
-    };
-    let judged_bag = taste::Bag::new(vec![
-        taste::Taste::new(
-            "fallbacks".parse().expect("taste name"),
-            ["fallback*"],
-            "Keep one deterministic path.",
-        )
-        .expect("taste row"),
-    ])
-    .expect("taste bag");
+    let (judged_record, judged_bag) = judged_capture(&record);
     let mut judge = taste_surface::FunctionAdjudicator(|_: &taste_surface::Candidate| {
         Ok(taste_surface::Judgment {
             confirmed: true,
@@ -585,6 +542,60 @@ fn the_admitted_capture_path_commits_taste_before_projecting_activity() {
     drop(source);
     bus.shutdown().expect("message bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+fn assert_reminder_published(bus: &Bus, paths: &RuntimePaths, lane: CanonicalUuid) {
+    let snapshot = bus.fact_snapshot().expect("capture facts read");
+    assert_eq!(
+        snapshot
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::TasteReminded)
+            .count(),
+        1,
+        "the duplicate durable vendor record is suppressed in the same epoch"
+    );
+    assert_eq!(
+        steer::Ledger::from_snapshot(&snapshot)
+            .expect("reminder replay")
+            .pending(lane)
+            .len(),
+        1
+    );
+    assert!(
+        fs::read_to_string(steer::inbox::path(&paths.inbox, lane))
+            .expect("inbox rendering")
+            .contains("[TASTE] polling: Wait for a terminal event.")
+    );
+}
+
+fn judged_capture(
+    record: &lane::capture::CaptureRecord,
+) -> (lane::capture::CaptureRecord, taste::Bag) {
+    let judged_locus = listen::Locus::new(4, 180, 48);
+    let judged_record = lane::capture::CaptureRecord {
+        locus: judged_locus,
+        decoded: listen::Decoded::Events {
+            context: Default::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: "A fallback path is masking the failure.".to_owned(),
+                phase: None,
+                locus: judged_locus,
+            })],
+        },
+        ..record.clone()
+    };
+    let judged_bag = taste::Bag::new(vec![
+        taste::Taste::new(
+            "fallbacks".parse().expect("taste name"),
+            ["fallback*"],
+            "Keep one deterministic path.",
+        )
+        .expect("taste row"),
+    ])
+    .expect("taste bag");
+    (judged_record, judged_bag)
 }
 
 fn assert_tool_and_prose_activity(

@@ -13,10 +13,14 @@ use wire::{
 
 #[path = "session_cli/discovery.rs"]
 mod discovery;
+#[path = "session_cli/fixtures.rs"]
+mod fixtures;
 #[path = "session_cli/recovery.rs"]
 mod recovery;
 #[path = "session_cli/window_planner.rs"]
 mod window_planner;
+
+use fixtures::{codex_event, codex_message, token_payload, transcript_event};
 
 const REFUSAL_EXIT: i32 = 2;
 
@@ -182,44 +186,6 @@ fn write_jsonl(path: &Path, rows: &[Value]) -> Vec<u8> {
     }
     fs::write(path, &bytes).expect("fixture transcript is written");
     bytes
-}
-
-fn transcript_event(timestamp: &str, kind: &str, fields: Value) -> Value {
-    let Value::Object(mut fields) = fields else {
-        panic!("transcript fixture fields must be an object");
-    };
-    fields.insert("timestamp".to_owned(), Value::String(timestamp.to_owned()));
-    fields.insert("type".to_owned(), Value::String(kind.to_owned()));
-    Value::Object(fields)
-}
-
-fn codex_event(timestamp: &str, kind: &str, payload: Value) -> Value {
-    transcript_event(timestamp, kind, json!({"payload": payload}))
-}
-
-fn codex_message(timestamp: &str, role: &str, phase: Option<&str>, text: &str) -> Value {
-    let mut payload = json!({
-        "type": "message",
-        "role": role,
-        "content": [{"type": "output_text", "text": text}],
-    });
-    if let Some(phase) = phase {
-        payload["phase"] = Value::String(phase.to_owned());
-    }
-    codex_event(timestamp, "response_item", payload)
-}
-
-fn token_payload(input: u64, cached: u64, output: u64, reasoning: u64, total: u64) -> Value {
-    json!({
-        "type": "token_count",
-        "info": {"last_token_usage": {
-            "input_tokens": input,
-            "cached_input_tokens": cached,
-            "output_tokens": output,
-            "reasoning_output_tokens": reasoning,
-            "total_tokens": total,
-        }},
-    })
 }
 
 fn codex_first_turn_rows() -> Vec<Value> {
@@ -602,48 +568,7 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
     let seated = write
         .fact(body::UpSeated { epoch }, FactCause::Root)
         .expect("seating fact builds");
-    let lanes = vec![
-        LaneResidency {
-            lane,
-            lineage_id: lane,
-            name: None,
-            worktree: "/fixture".to_owned(),
-            life: "drive".to_owned(),
-            vendor: "codex".parse().expect("fixture vendor"),
-            occupant: Some(occupant),
-            lineage: vec![occupant],
-            capabilities: Vec::new(),
-            session: Some(wire::LaneSession {
-                lane,
-                occupant,
-                worktree: "/fixture".to_owned(),
-                vendor: "codex".parse().expect("fixture vendor"),
-                launch: None,
-                epoch,
-                stream: "session".to_owned(),
-                identity: thread.to_owned(),
-                locus: wire::TapeLocus {
-                    member: 0,
-                    offset: 0,
-                    length: thread.len() as u64,
-                },
-            }),
-            disposition: "occupied".to_owned(),
-        },
-        LaneResidency {
-            lane: peer_lane,
-            lineage_id: peer_lane,
-            name: None,
-            worktree: "/fixture-peer".to_owned(),
-            life: "drive".to_owned(),
-            vendor: "codex".parse().expect("fixture vendor"),
-            occupant: Some(peer_occupant),
-            lineage: vec![peer_occupant],
-            capabilities: Vec::new(),
-            session: None,
-            disposition: "occupied".to_owned(),
-        },
-    ];
+    let lanes = briefing_lanes(lane, occupant, peer_lane, peer_occupant, epoch, thread);
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
@@ -703,6 +628,58 @@ fn seed_briefing_authority(path: &Path, thread: &str) {
         "spice.session",
         instant(2),
     );
+}
+
+fn briefing_lanes(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    peer_lane: CanonicalUuid,
+    peer_occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+    thread: &str,
+) -> Vec<LaneResidency> {
+    vec![
+        LaneResidency {
+            lane,
+            lineage_id: lane,
+            name: None,
+            worktree: "/fixture".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "codex".parse().expect("fixture vendor"),
+            occupant: Some(occupant),
+            lineage: vec![occupant],
+            capabilities: Vec::new(),
+            session: Some(wire::LaneSession {
+                lane,
+                occupant,
+                worktree: "/fixture".to_owned(),
+                vendor: "codex".parse().expect("fixture vendor"),
+                launch: None,
+                epoch,
+                stream: "session".to_owned(),
+                identity: thread.to_owned(),
+                locus: wire::TapeLocus {
+                    member: 0,
+                    offset: 0,
+                    length: thread.len() as u64,
+                },
+            }),
+            disposition: "occupied".to_owned(),
+        },
+        LaneResidency {
+            lane: peer_lane,
+            lineage_id: peer_lane,
+            name: None,
+            worktree: "/fixture-peer".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "codex".parse().expect("fixture vendor"),
+            occupant: Some(peer_occupant),
+            lineage: vec![peer_occupant],
+            capabilities: Vec::new(),
+            session: None,
+            disposition: "occupied".to_owned(),
+        },
+    ]
 }
 
 fn mint_claim(
@@ -1366,7 +1343,7 @@ fn briefing_authority_sources_asks_and_held_work_from_exact_state_authorities() 
     write_jsonl(&transcript, &codex_rows());
     let thread = uuid(0xaa).to_string().replace('-', "");
     seed_briefing_authority(&authority_path(scratch.path()), &thread);
-    let environment = [("CODEX_THREAD_ID", thread.clone())];
+    let environment = [("CODEX_THREAD_ID", thread.clone())]; // env-policy: allow
 
     let recall = reply_forms_in(
         Some(scratch.path()),

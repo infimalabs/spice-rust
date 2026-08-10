@@ -923,7 +923,7 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 pub(crate) fn session_environment() -> session_command::Environment {
     let vendors = spice::extension::registry()
         .expect("compiled extension declarations are validated by the test gate")
-        .vendors()
+        .session_vendors()
         .into_iter()
         .map(|vendor| {
             let layout = vendor.transcript_layout();
