@@ -11,6 +11,18 @@ use spice::config::{Document, Inputs, PreCommitStep, predecessor_bridge, resolve
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn only_the_python_owned_document_declares_the_predecessor_bridge() {
+    let python = resolve_document("spice.toml");
+    let rust = resolve_document("spice-rust.toml");
+
+    assert!(predecessor_bridge(python.root()).is_some());
+    assert!(
+        predecessor_bridge(rust.root()).is_none(),
+        "Rust policy must not duplicate the predecessor-owned hook bridge"
+    );
+}
+
+#[test]
 fn the_predecessor_step_executes_the_current_source_rust_gate_once() {
     let scratch = Scratch::new("dispatch");
     let cargo = scratch.path().join("cargo");
@@ -74,16 +86,16 @@ fn a_missing_cargo_executable_refuses_without_another_route() {
 }
 
 fn declared_command() -> PreCommitStep {
-    let document = fs::read_to_string(workspace().join("spice.toml")).unwrap();
-    let resolved = resolve(Inputs::new(
-        Some(Document::new("spice.toml", &document)),
-        None,
-        &[],
-    ))
-    .expect("tracked policy resolves through the current registry");
+    let resolved = resolve_document("spice.toml");
     predecessor_bridge(resolved.root())
         .expect("Python builtins must be off with exactly one predecessor bridge")
         .clone()
+}
+
+fn resolve_document(name: &str) -> spice::config::Resolved {
+    let document = fs::read_to_string(workspace().join(name)).unwrap();
+    resolve(Inputs::new(Some(Document::new(name, &document)), None, &[]))
+        .unwrap_or_else(|error| panic!("{name} resolves through the current registry: {error}"))
 }
 
 fn workspace() -> PathBuf {

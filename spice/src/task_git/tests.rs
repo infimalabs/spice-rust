@@ -671,9 +671,9 @@ fn manifest_fixture_with_admission(name: &str, admission: bool) -> Fixture {
     fs::write(fixture.agent.join("Cargo.toml"), MANIFEST_BASE).expect("write fixture manifest");
     let mut tracked = vec!["add", "src/lib.rs", "Cargo.toml"];
     if admission {
-        fs::write(fixture.agent.join("spice.toml"), admission_document())
+        fs::write(fixture.agent.join("spice-rust.toml"), admission_document())
             .expect("write fixture admission policy");
-        tracked.push("spice.toml");
+        tracked.push("spice-rust.toml");
     }
     git(&fixture.agent, &tracked);
     git(&fixture.agent, &["commit", "-m", "manifest base"]);
@@ -751,11 +751,11 @@ fn an_ungated_baseline_commit_refuses_a_lane_that_only_moved_a_document() {
 fn an_ungated_baseline_can_introduce_the_command_that_refuses_it() {
     let fixture = manifest_fixture_with_admission("baseline-introduces-admission", false);
     let agent = fixture.agent_commit("NOTES.md", "lane work\n");
-    fs::write(fixture.peer.join("spice.toml"), admission_document())
+    fs::write(fixture.peer.join("spice-rust.toml"), admission_document())
         .expect("write baseline admission policy");
     fs::write(fixture.peer.join("Cargo.toml"), MANIFEST_DUPLICATED)
         .expect("write unreadable baseline manifest");
-    git(&fixture.peer, &["add", "spice.toml", "Cargo.toml"]);
+    git(&fixture.peer, &["add", "spice-rust.toml", "Cargo.toml"]);
     git(
         &fixture.peer,
         &["commit", "-m", "introduce admission with broken manifest"],
@@ -777,7 +777,8 @@ fn an_ungated_baseline_can_introduce_the_command_that_refuses_it() {
 fn an_ungated_baseline_cannot_remove_the_lanes_admission() {
     let fixture = manifest_fixture("baseline-removes-admission");
     fixture.agent_commit("NOTES.md", "lane work\n");
-    fs::remove_file(fixture.peer.join("spice.toml")).expect("remove baseline admission policy");
+    fs::remove_file(fixture.peer.join("spice-rust.toml"))
+        .expect("remove baseline admission policy");
     fs::write(fixture.peer.join("Cargo.toml"), MANIFEST_DUPLICATED)
         .expect("write unreadable baseline manifest");
     git(&fixture.peer, &["add", "--all"]);
@@ -857,8 +858,8 @@ fn a_tree_built_by_losing_the_publication_race_is_refused() {
             ": > {counter}\n",
             "git -C {peer} pull --ff-only origin main\n",
             "cp {broken} {peer}/Cargo.toml\n",
-            "cp {policy} {peer}/spice.toml\n",
-            "git -C {peer} add Cargo.toml spice.toml\n",
+            "cp {policy} {peer}/spice-rust.toml\n",
+            "git -C {peer} add Cargo.toml spice-rust.toml\n",
             "git -C {peer} commit -m \"peer manifest\"\n",
             "git -C {peer} push origin main\n",
         ),

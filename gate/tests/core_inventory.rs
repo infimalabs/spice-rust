@@ -17,7 +17,7 @@ use support::{
 fn configuration_key_admission_names_the_unknown_active_layer_key() {
     let repository = git_repository("core-acquire-config-key-unknown");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document(concat!(
             "[tasks]\n",
             "stems = ['rim']\n",
@@ -54,7 +54,7 @@ fn configuration_key_admission_names_the_unknown_active_layer_key() {
 fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer() {
     let repository = git_repository("core-acquire-config-key-layer");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document("[say]\ncommand = ['/usr/bin/say']\n"),
     );
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
@@ -98,7 +98,7 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
 fn configuration_key_admission_separates_required_file_classes_from_migrated_subtables() {
     let repository = git_repository("core-acquire-config-key-migrated");
     repository.write(
-        "spice.toml",
+        "spice-rust.toml",
         &policy_document(concat!(
             "[policy.limits]\n",
             "file_loc = 1234\n",

@@ -79,7 +79,7 @@ silently.
 
 ## 3. Curation lifecycle
 
-`spice install` writes the starter set into tracked `spice.toml`; the binary
+`spice install` writes the starter set into tracked `spice-rust.toml`; the binary
 ships no named tastes. From that point the operator owns the set outright.
 Adding, editing, renaming, or removing a taste requires an operator commit.
 Deletion is the only disablement.

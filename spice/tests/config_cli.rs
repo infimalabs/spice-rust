@@ -37,7 +37,7 @@ impl Fixture {
         )
         .as_bytes()
         .to_vec();
-        fs::write(root.join("spice.toml"), &tracked).expect("write tracked current config");
+        fs::write(root.join("spice-rust.toml"), &tracked).expect("write tracked current config");
         Self { root, tracked }
     }
 
@@ -61,7 +61,7 @@ impl Fixture {
 
     fn assert_tracked_unchanged(&self) {
         assert_eq!(
-            fs::read(self.root.join("spice.toml")).expect("read tracked config"),
+            fs::read(self.root.join("spice-rust.toml")).expect("read tracked config"),
             self.tracked
         );
     }
@@ -222,7 +222,7 @@ fn stale_and_malformed_apply_digests_refuse_without_mutation() {
     let moved = String::from_utf8(fixture.tracked.clone())
         .expect("tracked fixture is UTF-8")
         .replace("use events", "prefer events");
-    fs::write(fixture.root.join("spice.toml"), moved).expect("move tracked generation");
+    fs::write(fixture.root.join("spice-rust.toml"), moved).expect("move tracked generation");
 
     refusal(
         fixture.invoke(&[

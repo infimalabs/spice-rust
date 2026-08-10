@@ -73,7 +73,7 @@ impl Fixture {
         fs::create_dir_all(requested.join(".git")).expect("fixture Git directory");
         let root = fs::canonicalize(requested).expect("fixture root canonicalizes");
         staged_app::seed(&root);
-        fs::write(root.join("spice.toml"), POLICY).expect("tracked taste policy");
+        fs::write(root.join("spice-rust.toml"), POLICY).expect("tracked taste policy");
         let runtime = root.join(".git/.spice-rs");
         let fixture = Self {
             journal: runtime.join("data/spicejournal.sqlite3"),
@@ -597,7 +597,7 @@ fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
     assert_eq!(report["provenance"]["present"], true);
     assert_eq!(
         report["provenance"]["location"],
-        fixture.root.join("spice.toml").display().to_string()
+        fixture.root.join("spice-rust.toml").display().to_string()
     );
     assert_eq!(report["provenance"]["digest"], report["digest"]);
     assert_eq!(

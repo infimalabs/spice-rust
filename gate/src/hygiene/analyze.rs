@@ -623,7 +623,7 @@ impl<'a> AnalyzerRun<'a> {
     ) -> Self {
         let project_markers = jurisdiction
             .measurable()
-            .filter(|entry| matches!(entry.path(), "pyproject.toml" | "spice.toml"))
+            .filter(|entry| matches!(entry.path(), "pyproject.toml" | "spice-rust.toml"))
             .map(|entry| entry.path().to_owned())
             .collect();
         let (selected_files, corpus, terminal) = Corpus::load(jurisdiction, configuration, started);

@@ -37,10 +37,12 @@ struct EnvironmentPolicy {
 /// asserting the child sees none of them. The Git shadow owns three more Git
 /// configuration references, and the hygiene acquisition fixture fixes
 /// `TMPDIR` at private writable scratch. The verifier passes Canvas its binary
-/// inside an isolated build root. Those references oblige the ledger to account
-/// all nine names. They are named here rather than added to [`SpiceVariable`],
-/// because Doctor reports the variables Spice owns and a row for one of these
-/// would claim ownership Spice does not have.
+/// inside an isolated build root. The four predecessor Spice names are
+/// collision sentinels in the coexistence tests, not variables this port owns.
+/// Those references oblige the ledger to account all thirteen names. They are
+/// named here rather than added to [`SpiceVariable`], because Doctor reports
+/// the variables Spice owns and a row for one of these would claim ownership
+/// Spice does not have.
 ///
 /// Membership turns on ownership alone, never on when a name is read. A build
 /// stamp Spice owns still gets a row: `SPICE_NATIVE_PINS` is sealed into the
@@ -54,6 +56,10 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "GIT_INDEX_FILE",      // env-policy: allow
     "GIT_WORK_TREE",       // env-policy: allow
     "SPICE_CANVAS_BINARY", // env-policy: allow
+    "SPICE_HOOKS",         // env-policy: allow
+    "SPICE_INBOX",         // env-policy: allow
+    "SPICE_LANE",          // env-policy: allow
+    "SPICE_NATIVE_SHELL",  // env-policy: allow
     "SPICE_PROOF",         // env-policy: allow
     "TMPDIR",              // env-policy: allow
 ];
@@ -68,8 +74,8 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
 /// that refuses the commit, which is a far later and much less legible door.
 #[test]
 fn the_tracked_vocabulary_is_doctor_rows_plus_the_named_foreign_class() {
-    let tracked: WorkspacePolicy =
-        toml::from_str(include_str!("../../spice.toml")).expect("tracked workspace policy decodes");
+    let tracked: WorkspacePolicy = toml::from_str(include_str!("../../spice-rust.toml"))
+        .expect("tracked workspace policy decodes");
     let reported: Vec<_> = SpiceVariable::ALL
         .iter()
         .map(|variable| variable.as_str())

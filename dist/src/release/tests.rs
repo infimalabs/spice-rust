@@ -13,6 +13,8 @@ fn digest(domain: Domain, value: &[u8]) -> Digest {
 
 fn input(action: ReleaseAction) -> PlanInput {
     let version = ProductVersion::parse("1.2.3").expect("fixture version");
+    let source_version = ProductVersion::parse("1.2.2").expect("source version");
+    let recovering = action == ReleaseAction::TagAndAnnounce;
     let package = digest(Domain::DistReleasePackage, b"package");
     let registry = (action == ReleaseAction::TagAndAnnounce).then(|| RegistryEvidence {
         version: version.clone(),
@@ -43,12 +45,12 @@ fn input(action: ReleaseAction) -> PlanInput {
             },
         ],
         observations: ReleaseObservations {
-            head: RELEASE.to_owned(),
+            head: if recovering { RELEASE } else { SOURCE }.to_owned(),
             clean: true,
-            bump_claimed: true,
+            bump_claimed: recovering,
             unrecorded_local_commits: 0,
-            source_version: ProductVersion::parse("1.2.2").expect("source version"),
-            release_version: version,
+            source_version: source_version.clone(),
+            release_version: if recovering { version } else { source_version },
             credentials_valid: true,
             source_ref: None,
             package_ref: None,
@@ -120,7 +122,7 @@ impl FakeEffects {
                 identity: plan.repository.clone(),
             },
             Operation::RunCorrectnessGate => OperationState::Gate {
-                receipt: Some(plan.manifest.clone()),
+                receipt: Some(plan.gate_receipt()),
             },
             Operation::BumpAndVerifyVersion => OperationState::Version {
                 version: plan.requested_version.clone(),
@@ -248,21 +250,24 @@ fn every_bound_value_moves_the_plan_digest() {
     assert!(!recovery.operations.contains(&Operation::UploadPackage));
 
     let moved = |plan: ReleasePlan| {
-        assert!(matches!(plan.verify(), Err(PlanError::KeyMoved { .. })));
+        let result = plan.verify();
+        assert!(
+            matches!(result, Err(PlanError::KeyMoved { .. })),
+            "unexpected verification result: {result:?}"
+        );
     };
     let mut plan = baseline.clone();
     plan.repository = digest(Domain::DistSourceCommit, b"other repository");
     moved(plan);
     let mut plan = baseline.clone();
     plan.requested_version = ProductVersion::parse("1.2.4").expect("moved version");
-    plan.observations.release_version = plan.requested_version.clone();
     moved(plan);
     let mut plan = baseline.clone();
     plan.source_commit = RELEASE.to_owned();
+    plan.observations.head = RELEASE.to_owned();
     moved(plan);
     let mut plan = baseline.clone();
     plan.release_commit = SOURCE.to_owned();
-    plan.observations.head = SOURCE.to_owned();
     moved(plan);
     let mut plan = baseline.clone();
     plan.manifest = digest(Domain::DistReleaseManifest, b"other manifest");
@@ -281,6 +286,7 @@ fn every_bound_value_moves_the_plan_digest() {
     moved(plan);
     let mut plan = baseline.clone();
     plan.observations.source_version = ProductVersion::parse("1.2.1").expect("moved source");
+    plan.observations.release_version = plan.observations.source_version.clone();
     moved(plan);
     let mut plan = baseline;
     plan.operations.swap(0, 1);
@@ -293,10 +299,6 @@ fn all_no_effect_preconditions_refuse_during_planning() {
     dirty.observations.clean = false;
     assert!(matches!(plan_release(dirty), Err(PlanError::Dirty)));
 
-    let mut bump = input(ReleaseAction::Publish);
-    bump.observations.bump_claimed = false;
-    assert!(matches!(plan_release(bump), Err(PlanError::UnclaimedBump)));
-
     let mut local = input(ReleaseAction::Publish);
     local.observations.unrecorded_local_commits = 1;
     assert!(matches!(
@@ -305,7 +307,7 @@ fn all_no_effect_preconditions_refuse_during_planning() {
     ));
 
     let mut non_head = input(ReleaseAction::Publish);
-    non_head.observations.head = SOURCE.to_owned();
+    non_head.observations.head = RELEASE.to_owned();
     assert!(matches!(
         plan_release(non_head),
         Err(PlanError::NonHeadPublication { .. })
@@ -313,7 +315,7 @@ fn all_no_effect_preconditions_refuse_during_planning() {
 
     let mut version = input(ReleaseAction::Publish);
     version.observations.release_version =
-        ProductVersion::parse("1.2.4").expect("different release version");
+        ProductVersion::parse("1.2.1").expect("different release version");
     assert!(matches!(
         plan_release(version),
         Err(PlanError::VersionDisagreement { .. })
@@ -352,6 +354,13 @@ fn all_no_effect_preconditions_refuse_during_planning() {
 
 #[test]
 fn recovery_requires_exact_registry_visible_evidence() {
+    let mut unclaimed = input(ReleaseAction::TagAndAnnounce);
+    unclaimed.observations.bump_claimed = false;
+    assert!(matches!(
+        plan_release(unclaimed),
+        Err(PlanError::UnclaimedBump)
+    ));
+
     let mut absent = input(ReleaseAction::TagAndAnnounce);
     absent.observations.registry = None;
     assert!(matches!(

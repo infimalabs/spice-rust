@@ -32,7 +32,7 @@ use crate::policy::{Policy as RulePolicy, RepoTruthPolicy, migrate_predecessor_p
 use crate::ratchet::Ratchet;
 
 /// Fixed tracked policy path within a selected repository tree.
-pub const POLICY_PATH: &str = "spice.toml";
+pub const POLICY_PATH: &str = "spice-rust.toml";
 /// Fixed tracked lower-is-better state path within a selected repository tree.
 pub const BASELINE_PATH: &str = "baseline.toml";
 /// The one baseline schema this build executes.

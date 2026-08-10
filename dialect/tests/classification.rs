@@ -17,7 +17,7 @@ fn segments_of_depth(depth: usize) -> Vec<String> {
 /// A project of exactly this many segments.
 ///
 /// Fixtures that merely need *a* valid project call this rather than spelling
-/// one out, so a change to the declared depth in `spice.toml` cannot turn them
+/// one out, so a change to the declared depth in `spice-rust.toml` cannot turn them
 /// red for a reason they are not about.
 fn project_of_depth(depth: usize) -> String {
     segments_of_depth(depth).join(".")
@@ -161,7 +161,7 @@ fn invalid_context_is_a_named_refusal() {
 /// Depth is declared law, so the fixture asks the declaration what to try.
 ///
 /// Spelling the depths out here would restate the bound the classifier just
-/// stopped restating: changing the declared number in `spice.toml` would turn
+/// stopped restating: changing the declared number in `spice-rust.toml` would turn
 /// this red and force exactly the Rust edit the declaration exists to avoid.
 #[test]
 fn project_depth_follows_the_declared_bounds() {

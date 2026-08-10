@@ -306,13 +306,13 @@ impl Fixture {
                 Digest::compute(Domain::ConfigExecutableSurface, b"tests"),
                 "current",
                 OriginLayer::Repository,
-                "spice.toml",
+                "spice-rust.toml",
                 vec!["policy".to_owned(), "test_paths".to_owned()],
             )
             .expect("configuration provenance"),
         ];
         let policy = crate::migrate_predecessor_policy(
-            "spice.toml",
+            "spice-rust.toml",
             &format!(
                 "{}{}",
                 crate::NARROWEST_FILE_CLASSES,
@@ -411,10 +411,10 @@ fn production_repository(root: &Path) -> PathBuf {
         .parent()
         .expect("workspace root");
     fs::write(
-        repository.join("spice.toml"),
-        fs::read(workspace.join("spice.toml")).expect("workspace spice.toml"),
+        repository.join("spice-rust.toml"),
+        fs::read(workspace.join("spice-rust.toml")).expect("workspace spice-rust.toml"),
     )
-    .expect("fixture spice.toml");
+    .expect("fixture spice-rust.toml");
     fs::write(
         repository.join("baseline.toml"),
         fs::read(workspace.join("baseline.toml")).expect("workspace baseline.toml"),

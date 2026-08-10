@@ -1,5 +1,6 @@
-# Tracked repository policy for Spice. Every active entry is admitted through
-# Spice's typed configuration registry and compiled Gate implementation.
+# Tracked repository policy owned by Python Spice. Rust Spice reads
+# `spice-rust.toml`; this file retains the predecessor's scheduler, judge,
+# policy, and sole normal pre-commit bridge without becoming a Rust input.
 
 [tasks]
 # Public scheduler stems beyond the packaged `task` and `serve` defaults.
@@ -95,7 +96,7 @@ pre_commit = [
 # private writable scratch so that isolation remains valid on a read-only proof
 # host.
 #
-# Eight foreign environment names are admitted here. The installed pre-commit
+# Nine foreign environment names are admitted here. The installed pre-commit
 # hook unsets Git's three local-environment names before it execs verify, and
 # the hooks fixture exports exactly those three to prove the child sees none of
 # them. The Git shadow writes three more, and it is production rather than a
@@ -112,7 +113,7 @@ pre_commit = [
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the names Spice owns, so these nine are the
+# again. Doctor reports only the names Spice owns, so these thirteen are the
 # difference wire pins between this manifest and SpiceVariable.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
@@ -127,17 +128,21 @@ env_names = [
     "SPICE_APP_SOURCE_IDENTITY",
     "SPICE_CANVAS_BINARY",
     "SPICE_HOOKS",
+    "SPICE_RS_HOOKS",
     "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
     "SPICE_HYGIENE_INTERPRETER_MARKER",
     "SPICE_INBOX",
+    "SPICE_RS_INBOX",
     "SPICE_INSTALL_TEST_PAUSE_ACTION",
     "SPICE_INSTALL_TEST_PAUSE_CONTROL",
     "SPICE_INSTALL_TEST_PAUSE_PATH",
     "SPICE_LANE",
+    "SPICE_RS_LANE",
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
     "SPICE_NATIVE_SHELL",
+    "SPICE_RS_NATIVE_SHELL",
     "SPICE_PROOF",
     "TMPDIR",
 ]
