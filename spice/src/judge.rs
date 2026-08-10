@@ -324,16 +324,7 @@ pub(crate) fn compact(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-#[cfg(test)]
 pub(crate) fn failure(reason: &'static str, detail: &str) -> Error {
-    Error {
-        reason,
-        detail: detail.to_owned(),
-    }
-}
-
-#[cfg(not(test))]
-fn failure(reason: &'static str, detail: &str) -> Error {
     Error {
         reason,
         detail: detail.to_owned(),
