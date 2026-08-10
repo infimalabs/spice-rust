@@ -257,18 +257,9 @@ fn client_add(
         .flatten()
         .cloned()
         .collect();
-    let origin = match matches.get_one::<String>("origin") {
-        Some(written) => match written.parse::<wire::Origin>() {
-            Ok(origin) => Some(origin),
-            Err(error) => {
-                return refusal(
-                    "task::origin-invalid",
-                    Some(written.clone()),
-                    &error.to_string(),
-                );
-            }
-        },
-        None => None,
+    let origin = match authored_origin(matches) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
     };
     submit_add(
         repository,
@@ -289,7 +280,10 @@ fn client_capture(
     let stealing = matches.get_flag("steal");
     let task = match matches.get_one::<String>("HANDLE") {
         Some(written) => {
-            if matches.contains_id("title") || matches.contains_id("project") {
+            if matches.contains_id("title")
+                || matches.contains_id("project")
+                || matches.contains_id("origin")
+            {
                 return refusal(
                     "task::capture-shape",
                     Some(written.clone()),
@@ -330,6 +324,10 @@ fn client_capture(
                 .get_one::<String>("title")
                 .cloned()
                 .unwrap_or(candidate.subject);
+            let origin = match authored_origin(matches) {
+                Ok(origin) => origin,
+                Err(outcome) => return outcome,
+            };
             let add_contract =
                 crate::cli::contract(&["task", "add"]).expect("task add contract is registered");
             match submit_add(
@@ -339,7 +337,7 @@ fn client_capture(
                 Some(project),
                 None,
                 Vec::new(),
-                None,
+                origin,
             ) {
                 Outcome::Reply(Reply {
                     body: CommandAnswer::Task(answer),
@@ -382,14 +380,34 @@ fn client_oops(
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     let text = required(matches, "TEXT");
+    let origin = match authored_origin(matches) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
     submit_oops_add(
         repository,
         contract,
         TaskOopsAdd {
             title: text.clone(),
             description: text,
+            origin,
         },
     )
+}
+
+fn authored_origin(matches: &ArgMatches) -> Result<Option<wire::Origin>, Outcome<CommandAnswer>> {
+    matches
+        .get_one::<String>("origin")
+        .map(|written| {
+            written.parse::<wire::Origin>().map_err(|error| {
+                refusal(
+                    "task::origin-invalid",
+                    Some(written.clone()),
+                    &error.to_string(),
+                )
+            })
+        })
+        .transpose()
 }
 
 fn client_note(
