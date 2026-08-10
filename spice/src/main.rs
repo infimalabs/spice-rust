@@ -347,6 +347,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         ["taste"] => deliver(&taste_command::report(contract), form),
         ["taste", "add"] => deliver(&taste_command::add(leaf, contract), form),
         ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract), form),
+        ["taste", "mine"] => deliver(&taste_command::mine(contract), form),
         _ => {}
     }
 }
@@ -925,7 +926,7 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 pub(crate) fn session_environment() -> session_command::Environment {
     let vendors = spice::extension::registry()
         .expect("compiled extension declarations are validated by the test gate")
-        .vendors()
+        .session_vendors()
         .into_iter()
         .map(|vendor| {
             let layout = vendor.transcript_layout();

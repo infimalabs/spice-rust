@@ -153,15 +153,7 @@ where
             .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
         let anchor = context_anchor(&snapshot, record.lane, record.occupant)
             .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
-        let mut unsuppressed = Vec::new();
-        for candidate in &candidates {
-            let already_recorded =
-                was_judged(&snapshot, &candidate.content, &candidate.bag, anchor)
-                    || was_reminded(&snapshot, &candidate.content, anchor);
-            if !already_recorded {
-                unsuppressed.push(candidate.clone());
-            }
-        }
+        let unsuppressed = unsuppressed(&candidates, &snapshot, anchor);
         if unsuppressed.is_empty() {
             return Ok(());
         }
@@ -220,6 +212,21 @@ where
         }
     }
     unreachable!("the final commit attempt returns instead of retrying")
+}
+
+fn unsuppressed(
+    candidates: &[Candidate],
+    snapshot: &journal::FactSnapshot,
+    anchor: Seq,
+) -> Vec<Candidate> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            !was_judged(snapshot, &candidate.content, &candidate.bag, anchor)
+                && !was_reminded(snapshot, &candidate.content, anchor)
+        })
+        .cloned()
+        .collect()
 }
 
 #[allow(

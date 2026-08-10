@@ -63,6 +63,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["gate", "findings"] => CommandKind::GateFindings,
         ["task", "oops"] => CommandKind::TaskOopsAdd,
         ["taste", "add"] | ["taste", "drop"] => CommandKind::TaskAdd,
+        ["taste", "mine"] => CommandKind::TasteProposalAdd,
         ["task", "done"] => CommandKind::TaskDone,
         ["task", "review"] => CommandKind::TaskReview,
         ["task", "note"] => CommandKind::TaskNote,

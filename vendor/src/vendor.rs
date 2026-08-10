@@ -358,83 +358,89 @@ fn claude_eval_word(command: &str) -> Option<(usize, usize)> {
 }
 
 fn shell_word_end(text: &str, start: usize) -> Option<usize> {
-    let bytes = text.as_bytes();
     let mut cursor = start;
     let mut quote = None;
-    while cursor < bytes.len() {
-        let byte = bytes[cursor];
+    while cursor < text.len() {
+        let character = text[cursor..].chars().next()?;
         match quote {
-            Some(b'\'') => {
-                if byte == b'\'' {
+            Some('\'') => {
+                if character == '\'' {
                     quote = None;
                 }
-                cursor += 1;
+                cursor += character.len_utf8();
             }
-            Some(b'"') => {
-                if byte == b'\\' && cursor + 1 < bytes.len() {
-                    cursor += 2;
+            Some('"') => {
+                if character == '\\' {
+                    cursor += character.len_utf8();
+                    let escaped = text[cursor..].chars().next()?;
+                    cursor += escaped.len_utf8();
                 } else {
-                    if byte == b'"' {
+                    if character == '"' {
                         quote = None;
                     }
-                    cursor += 1;
+                    cursor += character.len_utf8();
                 }
             }
             Some(_) => unreachable!("the parser admits only shell quote bytes"),
-            None if byte.is_ascii_whitespace() => break,
-            None if matches!(byte, b'\'' | b'"') => {
-                quote = Some(byte);
-                cursor += 1;
+            None if character.is_ascii_whitespace() => break,
+            None if matches!(character, '\'' | '"') => {
+                quote = Some(character);
+                cursor += character.len_utf8();
             }
-            None if byte == b'\\' && cursor + 1 < bytes.len() => cursor += 2,
-            None => cursor += 1,
+            None if character == '\\' => {
+                cursor += character.len_utf8();
+                let escaped = text[cursor..].chars().next()?;
+                cursor += escaped.len_utf8();
+            }
+            None => cursor += character.len_utf8(),
         }
     }
     quote.is_none().then_some(cursor)
 }
 
 fn shell_word(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
     let mut value = String::new();
     let mut cursor = 0;
     let mut quote = None;
-    while cursor < bytes.len() {
-        let byte = bytes[cursor];
+    while cursor < text.len() {
+        let character = text[cursor..].chars().next()?;
         match quote {
-            Some(b'\'') => {
-                if byte == b'\'' {
+            Some('\'') => {
+                if character == '\'' {
                     quote = None;
                 } else {
-                    value.push(char::from(byte));
+                    value.push(character);
                 }
-                cursor += 1;
+                cursor += character.len_utf8();
             }
-            Some(b'"') => {
-                if byte == b'"' {
+            Some('"') => {
+                if character == '"' {
                     quote = None;
-                    cursor += 1;
-                } else if byte == b'\\' && cursor + 1 < bytes.len() {
-                    cursor += 1;
-                    value.push(char::from(bytes[cursor]));
-                    cursor += 1;
+                    cursor += character.len_utf8();
+                } else if character == '\\' {
+                    cursor += character.len_utf8();
+                    let escaped = text[cursor..].chars().next()?;
+                    value.push(escaped);
+                    cursor += escaped.len_utf8();
                 } else {
-                    value.push(char::from(byte));
-                    cursor += 1;
+                    value.push(character);
+                    cursor += character.len_utf8();
                 }
             }
             Some(_) => unreachable!("the parser admits only shell quote bytes"),
-            None if matches!(byte, b'\'' | b'"') => {
-                quote = Some(byte);
-                cursor += 1;
+            None if matches!(character, '\'' | '"') => {
+                quote = Some(character);
+                cursor += character.len_utf8();
             }
-            None if byte == b'\\' && cursor + 1 < bytes.len() => {
-                cursor += 1;
-                value.push(char::from(bytes[cursor]));
-                cursor += 1;
+            None if character == '\\' => {
+                cursor += character.len_utf8();
+                let escaped = text[cursor..].chars().next()?;
+                value.push(escaped);
+                cursor += escaped.len_utf8();
             }
             None => {
-                value.push(char::from(byte));
-                cursor += 1;
+                value.push(character);
+                cursor += character.len_utf8();
             }
         }
     }
@@ -502,5 +508,52 @@ mod tests {
                 .rewrite_tool_envelope("git status", |command| Some(command.to_owned()))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn claude_envelope_words_preserve_unicode_across_every_quoted_shape() {
+        let cases = [
+            (
+                "source 'café-snapshot' && eval 'printf \"café 東京\"' < /dev/null && pwd -P",
+                "printf \"café 東京\"",
+                "source 'café-snapshot' && eval 'printf \"café 東京\"' < /dev/null && pwd -P",
+            ),
+            (
+                "source '/tmp/snapshot' && eval \"printf \\\"café 東京\\\"\" < /dev/null && pwd -P",
+                "printf \"café 東京\"",
+                "source '/tmp/snapshot' && eval 'printf \"café 東京\"' < /dev/null && pwd -P",
+            ),
+            (
+                "source '/tmp/snapshot' && eval printf\\ café\\ 東京 < /dev/null && pwd -P",
+                "printf café 東京",
+                "source '/tmp/snapshot' && eval 'printf café 東京' < /dev/null && pwd -P",
+            ),
+        ];
+
+        for (envelope, nested, expected) in cases {
+            let rewritten = CLAUDE
+                .rewrite_tool_envelope(envelope, |command| {
+                    assert_eq!(command, nested);
+                    Some(command.to_owned())
+                })
+                .expect("the complete Unicode shell word is recognized");
+            assert_eq!(rewritten, expected);
+        }
+    }
+
+    #[test]
+    fn malformed_claude_envelopes_never_offer_a_partial_shell_word() {
+        for envelope in [
+            "source '/tmp/snapshot' && eval 'printf café",
+            "source '/tmp/snapshot' && eval printf\\",
+            "source '/tmp/snapshot' && printf 'café'",
+        ] {
+            assert!(
+                CLAUDE
+                    .rewrite_tool_envelope(envelope, |_| Some("unreachable".to_owned()))
+                    .is_none(),
+                "malformed envelope was admitted: {envelope}"
+            );
+        }
     }
 }

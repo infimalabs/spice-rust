@@ -171,28 +171,7 @@ fn same_report(text: &Spoken, json: &Spoken) -> DoctorReport<Root> {
     json_reply.body
 }
 
-#[test]
-fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
-    let repository = Scratch::repository("shared-metadata");
-    let tracked = include_bytes!("../../spice-rust.toml");
-    fs::write(repository.path().join("spice-rust.toml"), tracked)
-        .expect("copy exact tracked configuration");
-    let hook = repository.path().join(".git/.spice/hooks/pre-commit");
-    fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hook directory");
-    fs::write(&hook, b"active operator hook sentinel\n").expect("write active hook sentinel");
-    let empty_path = repository.path().join("empty-path");
-    fs::create_dir(&empty_path).expect("create empty executable search path");
-    let before = directory_state(repository.path());
-
-    let text = invoke(repository.path(), &["doctor"], empty_path.as_os_str(), &[]);
-    let json = invoke(
-        repository.path(),
-        &["--json", "doctor"],
-        empty_path.as_os_str(),
-        &[],
-    );
-    let report = same_report(&text, &json);
-
+fn assert_task_metadata(report: &DoctorReport<Root>) {
     assert_eq!(
         report.configuration.tasks().stems(),
         [
@@ -231,6 +210,31 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         report.configuration.tasks().project_max_depth(),
         dialect::PROJECT_MAX_DEPTH as u64
     );
+}
+
+#[test]
+fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
+    let repository = Scratch::repository("shared-metadata");
+    let tracked = include_bytes!("../../spice-rust.toml");
+    fs::write(repository.path().join("spice-rust.toml"), tracked)
+        .expect("copy exact tracked configuration");
+    let hook = repository.path().join(".git/.spice/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hook directory");
+    fs::write(&hook, b"active operator hook sentinel\n").expect("write active hook sentinel");
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+    let before = directory_state(repository.path());
+
+    let text = invoke(repository.path(), &["doctor"], empty_path.as_os_str(), &[]);
+    let json = invoke(
+        repository.path(),
+        &["--json", "doctor"],
+        empty_path.as_os_str(),
+        &[],
+    );
+    let report = same_report(&text, &json);
+
+    assert_task_metadata(&report);
     // Doctor reports the variables Spice owns, while the tracked vocabulary also
     // accounts the ones its fixtures and Git shadow use: three local Git
     // names, three Git configuration names, the hygiene fixture's TMPDIR, the

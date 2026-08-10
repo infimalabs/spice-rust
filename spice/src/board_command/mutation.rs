@@ -101,6 +101,45 @@ pub(super) fn task_oops_add(
     )
 }
 
+pub(super) fn taste_proposal_add(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    add: &TasteProposalAdd,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Outcome<CommandAnswer> {
+    let project = match projects.admit_system_creation(&SystemTaskRoute::proposal([
+        "taste".to_owned(),
+        add.finding.to_string(),
+    ])) {
+        Ok(project) => project,
+        Err(error) => {
+            return protocol_fault(
+                "taste::proposal-route-invalid",
+                &format!("resident-owned taste proposal route is not admitted: {error}"),
+            );
+        }
+    };
+    let normalized = TaskAdd {
+        title: add.title.clone(),
+        project: None,
+        description: Some(add.description.clone()),
+        acceptance: add.acceptance.clone(),
+        origin: Some(add.origin.clone()),
+        flow: Some("todo,review".to_owned()),
+        depends: add.depends.clone(),
+    };
+    create_task(
+        bus,
+        command,
+        &normalized,
+        project,
+        add.clone(),
+        projects,
+        allocation,
+    )
+}
+
 fn create_task<B: serde::Serialize>(
     bus: &Bus,
     command: &wire::AdmittedCommand,

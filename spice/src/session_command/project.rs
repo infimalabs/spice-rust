@@ -200,7 +200,7 @@ pub(crate) fn recall(
         .to_owned(),
         requested_compactions: DEFAULT_HORIZON_COMPACTIONS,
         selected_compactions: plan.selected.len(),
-        authorities,
+        authorities: Box::new(authorities),
         window,
         pruning: PruningView {
             max_lines,

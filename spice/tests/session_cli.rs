@@ -9,10 +9,14 @@ use serde_json::{Value, json};
 mod authority;
 #[path = "session_cli/discovery.rs"]
 mod discovery;
+#[path = "session_cli/fixtures.rs"]
+mod fixtures;
 #[path = "session_cli/recovery.rs"]
 mod recovery;
 #[path = "session_cli/window_planner.rs"]
 mod window_planner;
+
+use fixtures::{codex_event, codex_message, token_payload, transcript_event};
 
 const REFUSAL_EXIT: i32 = 2;
 
@@ -178,44 +182,6 @@ fn write_jsonl(path: &Path, rows: &[Value]) -> Vec<u8> {
     }
     fs::write(path, &bytes).expect("fixture transcript is written");
     bytes
-}
-
-fn transcript_event(timestamp: &str, kind: &str, fields: Value) -> Value {
-    let Value::Object(mut fields) = fields else {
-        panic!("transcript fixture fields must be an object");
-    };
-    fields.insert("timestamp".to_owned(), Value::String(timestamp.to_owned()));
-    fields.insert("type".to_owned(), Value::String(kind.to_owned()));
-    Value::Object(fields)
-}
-
-fn codex_event(timestamp: &str, kind: &str, payload: Value) -> Value {
-    transcript_event(timestamp, kind, json!({"payload": payload}))
-}
-
-fn codex_message(timestamp: &str, role: &str, phase: Option<&str>, text: &str) -> Value {
-    let mut payload = json!({
-        "type": "message",
-        "role": role,
-        "content": [{"type": "output_text", "text": text}],
-    });
-    if let Some(phase) = phase {
-        payload["phase"] = Value::String(phase.to_owned());
-    }
-    codex_event(timestamp, "response_item", payload)
-}
-
-fn token_payload(input: u64, cached: u64, output: u64, reasoning: u64, total: u64) -> Value {
-    json!({
-        "type": "token_count",
-        "info": {"last_token_usage": {
-            "input_tokens": input,
-            "cached_input_tokens": cached,
-            "output_tokens": output,
-            "reasoning_output_tokens": reasoning,
-            "total_tokens": total,
-        }},
-    })
 }
 
 fn codex_first_turn_rows() -> Vec<Value> {
@@ -785,11 +751,8 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     scratch.remove();
 }
 
-#[test]
-fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
-    let scratch = Scratch::new("message-shapes");
-    let transcript = scratch.path().join("message-shapes.jsonl");
-    let rows = vec![
+fn message_shape_rows() -> Vec<Value> {
+    vec![
         codex_event(
             "2026-01-03T00:00:00Z",
             "event_msg",
@@ -867,15 +830,15 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
             Some("commentary"),
             "*** Begin Patch\n+generated body\n*** End Patch",
         ),
-    ];
-    write_jsonl(&transcript, &rows);
-    let file = transcript.to_string_lossy().into_owned();
+    ]
+}
 
+fn assert_message_shapes(file: &str) {
     let messages = reply_forms(
         &strings(&[
             "session",
             "messages",
-            &file,
+            file,
             "--side",
             "user",
             "--oldest-first",
@@ -903,9 +866,11 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
             "authored-ask",
         ]
     );
+}
 
+fn assert_recent_prompt_shapes(file: &str) {
     let summary = reply_forms(
-        &strings(&["session", "summary", &file, "--recent", "8"]),
+        &strings(&["session", "summary", file, "--recent", "8"]),
         &[],
         "summary",
     );
@@ -926,9 +891,11 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
             "Same text at a distinct source position.",
         ]
     );
+}
 
+fn assert_rehydration_dialogue(file: &str) {
     let briefing = reply_forms(
-        &strings(&["session", "briefing", &file, "--deadline-seconds", "5"]),
+        &strings(&["session", "briefing", file, "--deadline-seconds", "5"]),
         &[],
         "recall",
     );
@@ -948,6 +915,18 @@ fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
             {"side": "assistant", "text": "Authored commentary."},
         ])
     );
+}
+
+#[test]
+fn one_message_shape_projection_drives_reports_and_rehydration_dialogue() {
+    let scratch = Scratch::new("message-shapes");
+    let transcript = scratch.path().join("message-shapes.jsonl");
+    write_jsonl(&transcript, &message_shape_rows());
+    let file = transcript.to_string_lossy().into_owned();
+
+    assert_message_shapes(&file);
+    assert_recent_prompt_shapes(&file);
+    assert_rehydration_dialogue(&file);
     scratch.remove();
 }
 

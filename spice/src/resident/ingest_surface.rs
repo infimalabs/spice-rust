@@ -148,7 +148,7 @@ mod extension_tests {
 
     const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
     const FIXTURE_VENDOR: spice::extension::Vendor =
-        spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration);
+        spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
     const FIXTURE_DECLARATIONS: &[spice::extension::Declaration] =
         &[spice::extension::Declaration {
             namespace: spice::extension::Namespace::Vendor,
