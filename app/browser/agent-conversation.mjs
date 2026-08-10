@@ -434,10 +434,11 @@ export async function assertAgentConversation(
   const inbox = await reply(fixture, ["inbox", seated[0].lane]);
   assert.equal(inbox.body.lanes.length, 1);
   assert.equal(inbox.body.lanes[0].pending.length, 1);
-  assert.equal(inbox.body.lanes[0].pending[0].text, messages[0]);
+  const pendingDirective = inbox.body.lanes[0].pending[0];
+  assert.equal(pendingDirective.text, messages[0]);
   assert.equal(
     await outgoing.locator(".message-key").innerText(),
-    inbox.body.lanes[0].pending[0].key,
+    `${pendingDirective.key} · ${pendingDirective.stage}`,
   );
   await assertQueuedRosterPip(page, console, seated[0]);
   const age = outgoing.locator(".message-age");
@@ -451,7 +452,7 @@ export async function assertAgentConversation(
   );
   assert.equal(
     await age.getAttribute("title"),
-    `authored ${inbox.body.lanes[0].pending[0].authored}; expires ${inbox.body.lanes[0].pending[0].expires}`,
+    `stage ${pendingDirective.stage}; authored ${pendingDirective.authored}; expires ${pendingDirective.expires}`,
   );
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
