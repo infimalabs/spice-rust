@@ -11,6 +11,6 @@
 
 native_shell=${SPICE_NATIVE_SHELL:?spice native shell}
 unset SPICE_HOOKS SPICE_NATIVE_SHELL
-SHELL=$native_shell
+SHELL=$native_shell # env-policy: allow
 export SHELL
-exec "$native_shell" "$@"
+exec "$native_shell" "$@" # env-policy: allow
