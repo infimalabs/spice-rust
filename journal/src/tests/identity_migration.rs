@@ -31,7 +31,7 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
         .expect("mark legacy identity fixture as schema five");
     drop(journal);
 
-    let journal = Journal::open(&path).expect("schema-five identity migrates");
+    let mut journal = Journal::open(&path).expect("schema-five identity migrates");
 
     assert_eq!(
         journal
@@ -90,6 +90,7 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
     assert_review_receipt(&journal.connection);
     assert_board_receipt(&journal.connection);
     assert_effort_receipt(&journal.connection);
+    admit_empty_steering_projection(&mut journal);
     journal
         .verify()
         .expect("migrated identity authority verifies");
@@ -140,7 +141,7 @@ fn schema_five_review_without_followups_migrates_as_the_canonical_empty_list() {
         .expect("mark empty-review fixture as schema five");
     drop(journal);
 
-    let journal = Journal::open(&path).expect("omitted review follow-ups migrate");
+    let mut journal = Journal::open(&path).expect("omitted review follow-ups migrate");
 
     let request = review_request(&journal.connection, EMPTY_REVIEW_COMMAND);
     let review: Command<wire::intent::TaskReview> =
@@ -161,6 +162,7 @@ fn schema_five_review_without_followups_migrates_as_the_canonical_empty_list() {
             .as_bytes(),
         request
     );
+    admit_empty_steering_projection(&mut journal);
     journal
         .verify()
         .expect("empty-review identity migration verifies");

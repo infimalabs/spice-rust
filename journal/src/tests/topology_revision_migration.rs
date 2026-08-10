@@ -50,7 +50,7 @@ fn schema_five_derives_one_revision_authority_from_topology_facts() {
     let path = scratch.path().join("schema-five-topology.sqlite3");
     schema_five_topology_authority(&path, StoredRevision::Missing);
 
-    let journal = Journal::open(&path).expect("schema-five topology authority migrates");
+    let mut journal = Journal::open(&path).expect("schema-five topology authority migrates");
 
     assert_eq!(
         journal
@@ -121,6 +121,7 @@ fn schema_five_derives_one_revision_authority_from_topology_facts() {
         4,
         "lifecycle-only receipts retain the current topology revision"
     );
+    admit_empty_steering_projection(&mut journal);
     journal.verify().expect("migrated authority verifies");
     drop(journal);
 
@@ -139,9 +140,10 @@ fn exact_schema_five_revisions_cross_without_an_alternate_rewrite() {
     schema_five_topology_authority(&path, StoredRevision::Current);
     let before = topology_carriers(&Connection::open(&path).expect("open exact fixture"));
 
-    let journal = Journal::open(&path).expect("exact topology authority migrates");
+    let mut journal = Journal::open(&path).expect("exact topology authority migrates");
 
     assert_eq!(topology_carriers(&journal.connection), before);
+    admit_empty_steering_projection(&mut journal);
     journal.verify().expect("exact migrated authority verifies");
 }
 
